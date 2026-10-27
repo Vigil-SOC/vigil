@@ -1036,6 +1036,14 @@ export const workflowApi = {
     api.post('/workflows/generate', { description }, { timeout: LLM_TIMEOUT }),
 }
 
+// The autonomy ceiling (#2918). Stop is orchestratorApi.kill; PUT has no stopped field.
+export type Ceiling = Schema<'CeilingResponse'>
+export const autonomyApi = {
+  get: () => api.get<Ceiling>('/autonomy'),
+  update: (body: Schema<'CeilingBody'>) => api.put<Ceiling>('/autonomy', body),
+  resume: () => api.post<Ceiling>('/autonomy/resume'),
+}
+
 export const orchestratorApi = {
   getStatus: () => api.get('/orchestrator/status'),
   enable: () => api.post('/orchestrator/enable'),

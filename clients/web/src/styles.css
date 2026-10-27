@@ -4793,14 +4793,16 @@
       min-width: 0;
    }
 
+   /* Tool-class cards and their segment: SettingsLimits.dc.html and tokens.json (meta 12px, label 12px/600) */
    .lim-class {
       display: flex;
       flex-direction: column;
-      gap: 6px;
-      padding: 12px 14px;
+      gap: 8px;
+      padding: 14px;
       border-radius: 12px;
       background: var(--bg2);
-      font-size: 12.5px;
+      font-size: 12px;
+      line-height: 1.45;
       color: var(--tx2);
    }
 
@@ -4818,35 +4820,43 @@
       display: flex;
       align-items: center;
       gap: 6px;
-      font-weight: 600;
+      font-weight: 650;
       color: var(--tx0);
    }
 
    .lim-seg {
-      display: flex;
+      display: inline-flex;
       gap: 2px;
       padding: 3px;
       border-radius: 10px;
-      background: var(--bg1);
+      background: var(--bg2);
       border: 1px solid var(--ln1);
    }
 
    .lim-seg button {
-      flex: 1;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
       height: 28px;
-      padding: 0 10px;
+      padding: 0 12px;
       border-radius: 8px;
       background: transparent;
       color: var(--tx2);
-      font-size: 12.5px;
+      font-size: 12px;
+      font-weight: 600;
       white-space: nowrap;
       cursor: pointer;
    }
 
    .lim-seg button[aria-pressed='true'] {
-      background: var(--bg3);
+      background: var(--bg1);
       color: var(--tx0);
-      font-weight: 600;
+      box-shadow: 0 1px 2px var(--shadow);
+   }
+
+   .lim-seg button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
    }
 
    .lim-seg button:focus-visible {

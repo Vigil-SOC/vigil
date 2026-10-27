@@ -1278,8 +1278,8 @@ describe('SocConsole', () => {
     expect(await screen.findByText('Act · reversible changes on its own')).toBeInTheDocument()
     expect(screen.getByText('Autonomy', { selector: '.vg-autonomy-label' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'How autonomy is derived' }))
-    expect(screen.getByRole('tooltip')).toHaveTextContent('force_manual_approval')
-    expect(screen.getByRole('tooltip')).toHaveTextContent('auto_response_enabled')
+    expect(screen.getByRole('tooltip')).toHaveTextContent('The autonomy ceiling')
+    expect(screen.getByRole('tooltip')).toHaveTextContent('while autonomy is stopped')
     unmount()
 
     vi.mocked(configApi.getAutonomy).mockResolvedValueOnce({
