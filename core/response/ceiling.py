@@ -3,7 +3,8 @@
 The stored row is ``autonomy.ceiling``. Read, write of Vigil's own records,
 and propose are on unless ``stopped``. The act flags are off until a person
 raises them. ``DAEMON_FORCE_APPROVAL`` and ``DAEMON_AUTO_RESPONSE`` can only
-force the effective act flags off. Four-eyes is stored and not enforced.
+force the effective act flags off. Four-eyes is enforced where an approval
+is recorded, in ``ApprovalService.approve_action`` (#2932).
 An unbound caller is not denied here; the HTTP gates are the permission
 checks on the routes.
 """

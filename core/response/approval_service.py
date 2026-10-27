@@ -52,6 +52,23 @@ class AlreadyDecided(Exception):
         super().__init__(f"Action {action_id} is already {status}")
 
 
+FOUR_EYES_REFUSAL = (
+    "Four-eyes is on: someone other than who proposed this action, or the "
+    "person its run acted for, must approve it"
+)
+
+
+class FourEyesRefused(Exception):
+    """The approver proposed the action, or its run acted for them (#2932).
+
+    Raised after the refusal's trail entry commits; the row stays pending.
+    """
+
+    def __init__(self, action_id: str):
+        super().__init__(FOUR_EYES_REFUSAL)
+        self.action_id = action_id
+
+
 def register_pending_gauge(service: "ApprovalService") -> None:
     """Export the approval queue depth as an observable gauge, once per process.
 
@@ -142,6 +159,27 @@ class PendingAction:
     workflow_phase_id: Optional[str] = None
     reversibility: str = Reversibility.REVERSIBLE.value
     idempotency_key: Optional[str] = None
+
+
+def _proposers(session, row: ApprovalActionRow) -> set[str]:
+    """The creator's principal and the proposing run's person, when known.
+
+    Hunt proposals keep ``workflow_run_id`` null and name the run in
+    ``parameters["run_id"]``.
+    """
+    found = {row.created_by_principal_id}
+    params = row.parameters if isinstance(row.parameters, dict) else {}
+    run_id = row.workflow_run_id or _text_id(params.get("run_id"))
+    if run_id:
+        found.add(
+            session.execute(
+                select(WorkflowRun.triggered_by_principal_id).where(
+                    WorkflowRun.run_id == run_id
+                )
+            ).scalar_one_or_none()
+        )
+    found.discard(None)
+    return found
 
 
 def _row_to_pending(row: ApprovalActionRow) -> PendingAction:
@@ -431,10 +469,19 @@ class ApprovalService:
         approved_by: str = "analyst",
         approved_by_principal_id: Optional[str] = None,
     ) -> Optional[PendingAction]:
-        """Approve a pending action. Raises ``AlreadyDecided`` if it is not pending."""
+        """Approve a pending action. Raises ``AlreadyDecided`` if it is not pending.
+
+        With the ceiling's ``four_eyes`` on, raises ``FourEyesRefused`` when the
+        approver created the action or is the person its run acted for. Checked
+        here, at approve time, so rows already pending are covered.
+        """
+        from core.response.ceiling import read_ceiling
+
+        four_eyes = read_ceiling().four_eyes
         try:
             db = get_db_manager()
             decided: Optional[str] = None
+            refused = False
             pending: Optional[PendingAction] = None
             with db.session_scope() as session:
                 row = session.get(ApprovalActionRow, action_id, with_for_update=True)
@@ -443,6 +490,13 @@ class ApprovalService:
                     return None
                 if row.status != ActionStatus.PENDING.value:
                     decided = row.status
+                elif (
+                    four_eyes
+                    and approved_by_principal_id is not None
+                    and approved_by_principal_id in _proposers(session, row)
+                ):
+                    refused = True
+                    _trail_refusal(session, action_id, approved_by_principal_id)
                 else:
                     row.status = ActionStatus.APPROVED.value
                     row.approved_at = utcnow()
@@ -461,6 +515,11 @@ class ApprovalService:
                     decided,
                 )
                 raise AlreadyDecided(action_id, decided)
+            if refused:
+                logger.warning(
+                    "Action %s: four-eyes refused %s", action_id, approved_by
+                )
+                raise FourEyesRefused(action_id)
             logger.info("Action %s approved by %s", action_id, approved_by)
             return pending
         except SQLAlchemyError as e:
@@ -600,6 +659,23 @@ class ApprovalService:
     def list_pending_approvals(self) -> List[PendingAction]:
         """List all pending actions requiring approval."""
         return self.list_actions(status=ActionStatus.PENDING, requires_approval=True)
+
+
+def _trail_refusal(session, action_id: str, approver: str) -> None:
+    """One entry per refusal, in the decision's transaction."""
+    from core.agents.attribution import append_here
+    from core.audit import trail
+
+    append_here(
+        session,
+        {
+            trail.ACTION: "approval.approve",
+            trail.ACTOR: approver,
+            trail.OBJECT: action_id,
+            trail.OUTCOME: trail.OUTCOME_DENIED,
+            "reason": "four_eyes",
+        },
+    )
 
 
 def _text_id(value: Any) -> Optional[str]:

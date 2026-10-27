@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import func
 
 from core.agents.builtins import ORCHESTRATION_DECISION_ID, ORCHESTRATOR_ACTOR
+from core.auth.principals import agent_principal_id
 from core.config import get_settings
 from core.time import utcnow
 from services.daemon.config import OrchestratorConfig
@@ -2027,6 +2028,8 @@ class Orchestrator:
                 reason=f"[Auto-investigation {inv_id}] {action.get('reason', '')}",
                 evidence=[inv_id],
                 created_by=ORCHESTRATOR_ACTOR,
+                # The id string only; no principal row is seeded or minted for it.
+                created_by_principal_id=agent_principal_id(ORCHESTRATOR_ACTOR),
                 # The 0.8 is a constant, and the proposal is the agent's.
                 human_only=True,
             )
