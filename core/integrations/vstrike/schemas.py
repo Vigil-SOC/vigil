@@ -72,7 +72,6 @@ class VStrikeFinding(BaseModel):
     anomaly_score: Optional[float] = None
     severity: Optional[Literal["low", "medium", "high", "critical"]] = None
     mitre_predictions: Optional[Dict[str, float]] = None
-    predicted_techniques: Optional[List[Dict[str, Any]]] = None
     description: Optional[str] = None
 
     # Merged into entity_context alongside the vstrike sub-dict

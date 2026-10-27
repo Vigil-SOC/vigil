@@ -94,7 +94,11 @@ from core.storage.models import (
     IntakeTrigger,
     Investigation,
 )
-from core.threat_intel.mitre_lookup import iter_techniques, resolve_technique
+from core.threat_intel.mitre_lookup import (
+    iter_techniques,
+    resolve_technique,
+    top_technique,
+)
 from core.workflows.enablement import is_enabled
 from core.workflows.hypothesis_subjects import kept_subjects
 from core.workflows.routing import FALLBACK_WORKFLOW, SHADOW_WORKFLOW_ID
@@ -526,10 +530,9 @@ def _shadow_hypothesis(findings: List[Dict]) -> str:
     where = f" involving {', '.join(entities)}" if entities else ""
 
     # iter_techniques spans every shape mitre_predictions is stored in.
-    techniques = list(iter_techniques(finding))
+    top = top_technique(iter_techniques(finding))
     intent = ""
-    if techniques:
-        top = max(techniques, key=lambda t: _confidence(t.get("confidence")))
+    if top:
         tid, name, tactic = resolve_technique(top)
         if tid:
             technique = f"{tid} {name}" if name and name != tid else tid
@@ -540,13 +543,6 @@ def _shadow_hypothesis(findings: List[Dict]) -> str:
                 else f" and is {tactic} activity ({technique})"
             )
     return f"{subject}{where} is what intake says it is{intent}"
-
-
-def _confidence(value: Any) -> float:
-    try:
-        return float(value or 0)
-    except (TypeError, ValueError):
-        return 0.0
 
 
 def _mint_case(session, spec: CaseSpec) -> str:

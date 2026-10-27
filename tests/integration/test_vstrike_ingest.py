@@ -250,9 +250,6 @@ def test_auto_cluster_creates_case(fake_service):
 def test_mitre_fields_propagate_on_update(fake_service):
     payload = _push_payload("f-existing-1")
     payload["findings"][0]["mitre_predictions"] = {"T1021.002": 0.87}
-    payload["findings"][0]["predicted_techniques"] = [
-        {"technique_id": "T1021.002", "confidence": 0.87}
-    ]
     payload["findings"][0]["severity"] = "high"
 
     _invoke_ingest(fake_service, payload)
@@ -260,7 +257,7 @@ def test_mitre_fields_propagate_on_update(fake_service):
     stored = fake_service.get_finding("f-existing-1")
     assert stored["mitre_predictions"] == {"T1021.002": 0.87}
     assert stored["severity"] == "high"
-    assert stored["predicted_techniques"][0]["technique_id"] == "T1021.002"
+    assert "predicted_techniques" not in stored
 
 
 def test_auth_bypass_in_dev_mode(monkeypatch):

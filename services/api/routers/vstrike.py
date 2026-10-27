@@ -138,8 +138,6 @@ def ingest_findings(
                 updates: dict = {"entity_context": merged_ctx}
                 if item.mitre_predictions is not None:
                     updates["mitre_predictions"] = item.mitre_predictions
-                if item.predicted_techniques is not None:
-                    updates["predicted_techniques"] = item.predicted_techniques
                 if item.severity is not None:
                     updates["severity"] = item.severity
                 if item.description is not None:
@@ -192,8 +190,6 @@ def ingest_findings(
                 "description": item.description,
                 "mitre_predictions": item.mitre_predictions or {},
             }
-            if item.predicted_techniques is not None:
-                finding_data["predicted_techniques"] = item.predicted_techniques
 
             created_finding = data_service.create_finding(finding_data)
             if created_finding:
