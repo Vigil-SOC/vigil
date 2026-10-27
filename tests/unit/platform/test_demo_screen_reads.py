@@ -62,7 +62,7 @@ def test_generated_set_matches_the_dashboard_counts(demo_service):
 
 
 def test_case_queue_lists_the_open_demo_cases_and_keeps_the_closed_one(demo_service):
-    from core.platform.demo_reads import case_queue
+    from core.findings.demo_reads import case_queue
 
     findings = demo_service.get_findings()
     cases = demo_service.get_cases()
@@ -89,7 +89,7 @@ def test_case_queue_lists_the_open_demo_cases_and_keeps_the_closed_one(demo_serv
 
 
 def test_case_queue_filters_without_dropping_the_strip(demo_service):
-    from core.platform.demo_reads import case_queue
+    from core.findings.demo_reads import case_queue
 
     findings = demo_service.get_findings()
     cases = demo_service.get_cases()
@@ -153,7 +153,7 @@ def test_get_cases_uses_demo_rows_and_does_not_open_the_database(demo_service, m
 
 
 def test_linked_findings_come_from_demo_rows(demo_service):
-    from core.platform.demo_reads import linked_findings
+    from core.findings.demo_reads import linked_findings
 
     findings = demo_service.get_findings()
     case = demo_service.get_cases()[0]
@@ -261,7 +261,7 @@ def test_needs_you_lists_open_demo_cases(demo_service, monkeypatch):
 def test_a_dismissed_demo_finding_stays_in_todays_inflow(demo_service):
     from datetime import timezone
 
-    from core.platform.demo_reads import overview_parts
+    from core.findings.demo_reads import overview_parts
 
     findings = demo_service.get_findings()
     cases = demo_service.get_cases()

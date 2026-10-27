@@ -267,7 +267,7 @@ def get_cases(
     """
     # Demo cases live in memory. The database being down is a different empty.
     if data_service.is_demo_mode():
-        from core.platform.demo_reads import case_queue, load_demo
+        from core.findings.demo_reads import case_queue, load_demo
 
         findings, cases = load_demo()
         return case_queue(
@@ -411,7 +411,7 @@ def get_case(case_id: str, session: OptionalUnitOfWorkSession):
         )
     case.update(detail_fields(case.get("status"), investigations, closure, runs, steps))
     if data_service.is_demo_mode():
-        from core.platform.demo_reads import linked_findings, load_demo
+        from core.findings.demo_reads import linked_findings, load_demo
 
         findings, _cases = load_demo()
         case["linked_findings"] = linked_findings(case.get("finding_ids"), findings)

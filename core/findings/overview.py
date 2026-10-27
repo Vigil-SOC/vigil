@@ -285,8 +285,8 @@ def _demo_agents() -> list[dict]:
 def overview_alert(finding_id: str) -> Optional[dict]:
     """One alert in the feed item's shape, noise-marked or older than the feed; None when unknown."""
     if _demo_on():
-        from core.platform.demo_reads import load_demo
-        from core.platform.demo_reads import overview_alert as demo_alert
+        from core.findings.demo_reads import load_demo
+        from core.findings.demo_reads import overview_alert as demo_alert
 
         findings, cases = load_demo()
         return demo_alert(findings, cases, finding_id)
@@ -307,7 +307,7 @@ def overview_payload(
     if now is None:
         now = utcnow()
     if _demo_on():
-        from core.platform.demo_reads import load_demo, overview_parts
+        from core.findings.demo_reads import load_demo, overview_parts
 
         findings, cases = load_demo()
         parts = overview_parts(findings, cases, day=day, feed_limit=FEED_LIMIT)

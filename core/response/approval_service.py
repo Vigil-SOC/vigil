@@ -843,7 +843,7 @@ def needs_you(case_id: Optional[str] = None) -> Dict[str, Any]:
     from core.config import is_demo_mode
 
     if is_demo_mode():
-        from core.platform.demo_reads import load_demo, needs_you_items
+        from core.findings.demo_reads import load_demo, needs_you_items
 
         _findings, cases = load_demo()
         return needs_you_items(cases, case_id)

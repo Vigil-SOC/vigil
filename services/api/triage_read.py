@@ -432,6 +432,167 @@ def _strip(session, counts: dict, day: date) -> dict:
     }
 
 
+def _finding_view(finding: dict) -> dict:
+    data_source = finding.get("data_source")
+    title = finding.get("title")
+    description = finding.get("description")
+    return {
+        "finding_id": finding.get("finding_id"),
+        "severity": finding.get("severity"),
+        "data_source": data_source if isinstance(data_source, str) else "",
+        "external_id": finding.get("external_id"),
+        "evidence_links": list(finding.get("evidence_links") or []),
+        "entity_context": finding.get("entity_context"),
+        "title": title if isinstance(title, str) else None,
+        "description": description if isinstance(description, str) else None,
+    }
+
+
+def _demo_triage(
+    findings: list[dict],
+    cases: list[dict],
+    *,
+    kind: Optional[str],
+    source: Optional[str],
+    state: Optional[str],
+    day: date,
+    now: datetime,
+) -> dict:
+    """One detection row per demo finding. A linked case counts as launched."""
+    from core.findings.demo_reads import _ord, _when, best_case_by_finding, parse_utc
+    from services.daemon.orchestrator import rank_intake_row
+
+    linked = best_case_by_finding(cases)
+    case_ids = {
+        case_id
+        for case in cases
+        if isinstance((case_id := case.get("case_id")), str) and case_id
+    }
+    config = OrchestratorConfig()
+    built: list[dict] = []
+    for index, finding in enumerate(
+        sorted(findings, key=lambda row: row.get("finding_id") or ""), start=1
+    ):
+        finding_id = finding.get("finding_id")
+        if not isinstance(finding_id, str):
+            continue
+        case = linked.get(finding_id)
+        created = _when(finding)
+        decided = parse_utc(case.get("created_at")) if case else None
+        view = _finding_view(finding)
+        case_id = case.get("case_id") if case else None
+        built.append(
+            {
+                "id": index,
+                "kind": "detection",
+                "state": "launched" if case else "queued",
+                "source": view["data_source"],
+                "priority": None,
+                "finding_id": finding_id,
+                "payload": {},
+                "investigation_id": None,
+                "case_id": case_id if isinstance(case_id, str) else None,
+                "merged_into": None,
+                "created_at": created,
+                "decided_at": decided,
+                "_finding": view,
+            }
+        )
+
+    counts_kind: dict[str, int] = {}
+    counts_source: dict[str, int] = {}
+    counts_state: dict[str, int] = {}
+    for row in built:
+        row_kind = str(row["kind"])
+        row_state = str(row["state"])
+        row_source = row["source"] if isinstance(row["source"], str) else ""
+        counts_kind[row_kind] = counts_kind.get(row_kind, 0) + 1
+        counts_state[row_state] = counts_state.get(row_state, 0) + 1
+        if row_source:
+            counts_source[row_source] = counts_source.get(row_source, 0) + 1
+
+    def _at(row: dict, field: str) -> Optional[datetime]:
+        value = row.get(field)
+        return value if isinstance(value, datetime) else None
+
+    today = [
+        row
+        for row in built
+        if (stamp := _at(row, "created_at")) and stamp.date() == day
+    ]
+    launched_today = sum(1 for row in today if row["state"] in _PICKUP_STATES)
+    cases_today = {
+        row["case_id"]
+        for row in built
+        if row["state"] == "launched"
+        and isinstance(row["case_id"], str)
+        and (stamp := _at(row, "decided_at")) is not None
+        and stamp.date() == day
+    }
+    arrivals: dict[str, int] = {}
+    for row in today:
+        name = row["source"] if isinstance(row["source"], str) else ""
+        if name:
+            arrivals[name] = arrivals.get(name, 0) + 1
+
+    selected = [
+        row
+        for row in built
+        if (not kind or row["kind"] == kind)
+        and (not state or row["state"] == state)
+        and (not source or row["source"] == source)
+    ]
+    queued = [row for row in selected if row["state"] == "queued"]
+    queued.sort(
+        key=lambda row: rank_intake_row(
+            row,
+            now=now,
+            ttl_seconds=config.intake_ttl_seconds,
+            promote_fraction=config.intake_ttl_promote_fraction,
+        )
+    )
+    decided_rows = [row for row in selected if row["state"] != "queued"]
+    decided_rows.sort(key=lambda row: (-_ord(_at(row, "decided_at")), row["id"]))
+    shown = (queued + decided_rows)[:ROW_CAP]
+    link_configs: dict[str, dict[str, str]] = {}
+    presented = [
+        _present(row, row["_finding"], "", case_ids, now, config, link_configs)
+        for row in shown
+    ]
+    denominator = len(today)
+    return {
+        "rows": presented,
+        "matched": len(selected),
+        "strip": {
+            "picked_up": {
+                "launched_or_merged": launched_today,
+                "created_today": denominator,
+                "share": None if denominator == 0 else launched_today / denominator,
+            },
+            "waiting": counts_state.get("queued", 0),
+            "cases_created_today": len(cases_today),
+        },
+        "counts": {
+            "total": len(built),
+            "kind": counts_kind,
+            "source": counts_source,
+            "state": counts_state,
+        },
+        "sources": [
+            {
+                "data_source": name,
+                "arrivals": arrivals[name],
+                "lag_seconds": None,
+                "quiet": None,
+            }
+            for name in sorted(arrivals)
+        ],
+        "arrival_info": ARRIVAL_INFO,
+        "strip_info": STRIP_INFO,
+        "breakdown_info": BREAKDOWN_INFO,
+    }
+
+
 def triage_payload(
     *,
     kind: Optional[str] = None,
@@ -450,10 +611,10 @@ def triage_payload(
     from core.config import is_demo_mode
 
     if is_demo_mode():
-        from core.platform.demo_reads import load_demo, triage_rows
+        from core.findings.demo_reads import load_demo
 
         findings, cases = load_demo()
-        return triage_rows(
+        return _demo_triage(
             findings, cases, kind=kind, source=source, state=state, day=day, now=now
         )
     config = OrchestratorConfig()
