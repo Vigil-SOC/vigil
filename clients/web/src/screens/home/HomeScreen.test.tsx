@@ -154,6 +154,26 @@ describe('Home', () => {
     expect(screen.queryByText(/picked up automatically today/)).not.toBeInTheDocument()
   })
 
+  it('lists a demo case as something to open, not an approval', async () => {
+    mockQueue([
+      item({
+        kind: 'open_case',
+        source_id: 'case-demo',
+        title: 'Investigation: Beaconing',
+        reason: 'Demo case with 3 correlated findings',
+        case_id: 'case-demo',
+        run_id: null,
+      }),
+    ])
+    renderHome()
+    const card = (await screen.findByRole('heading', { name: 'Investigation: Beaconing' })).closest('article') as HTMLElement
+    expect(within(card).getByText('Case')).toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument()
+    expect(within(card).getByRole('link', { name: 'Open case' })).toHaveAttribute('href', '/cases?case=case-demo')
+    expect(screen.getByText('1 open · oldest first')).toBeInTheDocument()
+  })
+
   it('lists a hunt stopped at a limit as waiting, answered on its case rather than approved here', async () => {
     mockQueue([item({ kind: 'parked', source_id: 'run-9', run_id: 'run-9', title: 'Keep the hunt going?', reason: 'Ran out of turns: iteration 48 of 48', created_at: '' })])
     renderHome()

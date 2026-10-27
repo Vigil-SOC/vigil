@@ -447,6 +447,15 @@ def triage_payload(
         now = now.replace(tzinfo=None)
     if day is None:
         day = now.date()
+    from core.config import is_demo_mode
+
+    if is_demo_mode():
+        from core.platform.demo_reads import load_demo, triage_rows
+
+        findings, cases = load_demo()
+        return triage_rows(
+            findings, cases, kind=kind, source=source, state=state, day=day, now=now
+        )
     config = OrchestratorConfig()
     with get_db_manager().session_scope() as session:
         # One snapshot for every read: a row claimed between the queued and

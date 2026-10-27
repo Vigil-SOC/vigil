@@ -836,7 +836,17 @@ def needs_you(case_id: Optional[str] = None) -> Dict[str, Any]:
 
     Not ``list_pending_approvals`` or ``list_actions``: those are newest-first,
     and ``list_actions`` stops at 500, which hides the oldest asks.
+
+    Demo mode has no approval rows. The open cases are what Home lists, and
+    opening one is the answer, so this does not read the approval table.
     """
+    from core.config import is_demo_mode
+
+    if is_demo_mode():
+        from core.platform.demo_reads import load_demo, needs_you_items
+
+        _findings, cases = load_demo()
+        return needs_you_items(cases, case_id)
     db = get_db_manager()
     with db.session_scope() as session:
         stmt = (

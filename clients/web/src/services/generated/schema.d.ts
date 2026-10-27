@@ -9507,10 +9507,10 @@ export interface components {
             hypotheses?: components["schemas"]["NeedsYouHypothesis"][];
             /**
              * Kind
-             * @description parked: a hunt stopped at a limit, answered with Keep going on its case; its source_id is the run id.
+             * @description parked: a hunt stopped at a limit, answered with Keep going on its case; its source_id is the run id. open_case: a demo-mode case that is not closed, answered by opening the case; its source_id is the case id.
              * @enum {string}
              */
-            kind: "approval" | "checkpoint" | "parked";
+            kind: "approval" | "checkpoint" | "parked" | "open_case";
             /** Reason */
             reason: string;
             /**

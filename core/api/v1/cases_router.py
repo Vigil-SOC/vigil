@@ -43,7 +43,7 @@ from core.deps import provide_workflows
 from core.findings.source_link import resolve_source_link
 from core.integrations.elastic.ingestion import ElasticIngestion
 from core.response.approval_service import needs_you_case_ids
-from core.routing import Auth, RouterMeta, UnitOfWorkSession
+from core.routing import Auth, OptionalUnitOfWorkSession, RouterMeta, UnitOfWorkSession
 from core.storage.case_repository import PAGE_LIMIT, CaseRepository
 from core.storage.database_data_service import DatabaseDataService
 from core.storage.models import CaseClosureInfo, Finding, User, case_findings
@@ -222,7 +222,7 @@ def _blank(value: Optional[str]) -> Optional[str]:
 
 
 def _empty_queue(limit: int, offset: int) -> dict:
-    """Demo mode, and a database that is not connected, have nothing to page."""
+    """A database that is not connected has nothing to page."""
     return {
         "cases": [],
         "total": 0,
@@ -265,6 +265,27 @@ def get_cases(
     latest investigation ran a workflow of that ``run_kind`` (none when no
     workflow has it); both compose with the other filters.
     """
+    # Demo cases live in memory. The database being down is a different empty.
+    if data_service.is_demo_mode():
+        from core.platform.demo_reads import case_queue, load_demo
+
+        findings, cases = load_demo()
+        return case_queue(
+            cases,
+            findings,
+            now=utcnow(),
+            limit=limit,
+            offset=offset,
+            query=_blank(query),
+            priority=_blank(priority),
+            assignee=_blank(assignee),
+            state=_blank(state),
+            closed=closed,
+            sla_at_risk=sla_at_risk,
+            needs_you_only=needs_you_only,
+            workflow_constrained=bool(_blank(workflow) or _blank(kind)),
+            data_source=_blank(data_source),
+        )
     if not data_service.is_using_database():
         return _empty_queue(limit, offset)
 
@@ -347,8 +368,17 @@ def _linked_findings(session, finding_ids: object) -> List[CaseLinkedFinding]:
     return entries
 
 
+def _load_case(case_id: str) -> Optional[dict]:
+    """Demo rows come from the in-memory service even if this process's snapshot is stale."""
+    if data_service.is_demo_mode():
+        from core.platform.demo_data_service import DemoDataService
+
+        return DemoDataService().get_case(case_id)
+    return data_service.get_case(case_id)
+
+
 @router.get("/{case_id}", response_model=CaseDetailResponse)
-def get_case(case_id: str, session: UnitOfWorkSession):
+def get_case(case_id: str, session: OptionalUnitOfWorkSession):
     """
     Get a specific case by ID.
 
@@ -363,17 +393,30 @@ def get_case(case_id: str, session: UnitOfWorkSession):
     Returns:
         Case details
     """
-    loaded = data_service.get_case(case_id)
+    loaded = _load_case(case_id)
     if not loaded:
         raise HTTPException(status_code=404, detail="Case not found")
+    if session is None and not data_service.is_demo_mode():
+        raise HTTPException(status_code=503, detail="Database not initialized")
     # Copy: a demo-mode case is the stored dict, and this read must not write it.
     case = dict(loaded)
-    investigations = case_records_service.list_case_investigations(session, case_id)
-    closure = session.get(CaseClosureInfo, case_id)
-    runs = case_records_service.list_case_runs(session, case_id)
-    steps = case_records_service.run_step_counts(session, [run.run_id for run in runs])
+    if session is None:
+        investigations, closure, runs, steps = [], None, [], {}
+    else:
+        investigations = case_records_service.list_case_investigations(session, case_id)
+        closure = session.get(CaseClosureInfo, case_id)
+        runs = case_records_service.list_case_runs(session, case_id)
+        steps = case_records_service.run_step_counts(
+            session, [run.run_id for run in runs]
+        )
     case.update(detail_fields(case.get("status"), investigations, closure, runs, steps))
-    case["linked_findings"] = _linked_findings(session, case.get("finding_ids"))
+    if data_service.is_demo_mode():
+        from core.platform.demo_reads import linked_findings, load_demo
+
+        findings, _cases = load_demo()
+        case["linked_findings"] = linked_findings(case.get("finding_ids"), findings)
+    else:
+        case["linked_findings"] = _linked_findings(session, case.get("finding_ids"))
     return case
 
 

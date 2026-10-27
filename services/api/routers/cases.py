@@ -31,7 +31,7 @@ from core.cases.case_sla_service import CaseSLAService, SlaOutcome
 from core.cases.case_state import case_run_refs, primary_ref
 from core.cases.case_workflow_service import CaseWorkflowService
 from core.documents.extract import ACCEPTED_TYPES, DocumentRefused, spool_upload
-from core.routing import Auth, RouterMeta, UnitOfWorkSession
+from core.routing import Auth, OptionalUnitOfWorkSession, RouterMeta, UnitOfWorkSession
 from core.storage.config_service import get_config_service
 from core.storage.database_data_service import DatabaseDataService
 from core.storage.models import Case, User
@@ -712,7 +712,7 @@ async def _run_events(ref: dict) -> tuple[Optional[list], str]:
 
 
 @router.get("/{case_id}/record", response_model=CaseRecordResponse)
-async def get_case_record(case_id: str, session: UnitOfWorkSession):
+async def get_case_record(case_id: str, session: OptionalUnitOfWorkSession):
     """The case record: every run's ledger, audit rows and activities.
 
     Newest first. The agent returns each ledger with snapshots off, read
@@ -721,9 +721,25 @@ async def get_case_record(case_id: str, session: UnitOfWorkSession):
     the table has no ``case_id`` column. ``run_id`` is the case's run
     (``primary_ref``), which Replay, Verify chain and Export audit read.
     """
-    case = data_service.get_case(case_id)
+    if data_service.is_demo_mode():
+        from core.platform.demo_data_service import DemoDataService
+
+        case = DemoDataService().get_case(case_id)
+    else:
+        case = data_service.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
+    if session is None:
+        if not data_service.is_demo_mode():
+            raise HTTPException(status_code=503, detail="Database not initialized")
+        # No runs and no audit table. The case's own activities are the record.
+        return {
+            "run_id": None,
+            "investigation_id": None,
+            "rows": merge_record(
+                [], [], case.get("activities") or [], [], case_id=case_id
+            ),
+        }
 
     refs = [
         ref
