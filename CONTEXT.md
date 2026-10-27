@@ -241,12 +241,15 @@ _Avoid_: corroboration (that is the effect of several sources agreeing, not one
 source's direction), confidence, polarity, sentiment
 
 **Trust**:
-Who concluded — `analyst` when a person closed it at a keyboard, `agent` when a
-program did. A program holding a credential minted by a person is still a
-program: it acts with that person's standing, `closed_by` records whose, and
-`analyst` is the one record this system will not let an agent claim on its own
-behalf. The other axis on a **Verdict**'s sources, alongside **Source Tier**.
-Unrelated to **Connector Trust**, which is about admitting a third-party origin.
+Who concluded. `analyst` only when a person closed the case through the console
+sign-in, the access cookie. A bearer access token, a program holding a
+credential, a verified tool principal, and a close with no caller are `agent`,
+and so is the development bypass, which is not a cookie. The person is still
+the actor: when the stored name is a live username, `closed_by` becomes that
+principal and the name stays beside it. A program cannot claim `analyst` by
+sending a field. The other axis on a **Verdict**'s sources, alongside **Source
+Tier**. Unrelated to **Connector Trust**, which is about admitting a
+third-party origin.
 _Avoid_: connector trust, source tier, confidence
 
 **Verdict**:
@@ -407,10 +410,11 @@ _Avoid_: page, tab, view
 - **Episodic Memory** derives **Verdicts** from a **Ledger** after a hunt
   terminates, and from a **Case** when it closes; it never writes during a run,
   and a run reads it once at start (ADR 0015)
-- Closing a **Case** writes one **Verdict**, whose Trust is `analyst` when a
-  person closed it and `agent` otherwise — including when a program closed it
-  with a person's credential, which `closed_by` names; reopening the Case
-  withdraws the Verdict
+- Closing a **Case** writes one **Verdict**, whose Trust is `analyst` only when
+  a person closed it through the console cookie, and `agent` otherwise — a
+  bearer token, a program holding a person's credential (which the actor
+  names), a tool principal, or no caller; reopening the Case withdraws the
+  Verdict
 - A **Verdict**'s sources each carry a **Source Tier** and the Verdict carries
   one **Trust**. The two are independent axes: **Trust** is who concluded, and
   a `feed`-tier source can be cited by an `analyst`

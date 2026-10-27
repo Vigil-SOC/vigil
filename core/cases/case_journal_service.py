@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
+from core.cases.agent_closure import activity_actor
 from core.storage.database_data_service import DatabaseDataService
 from core.time import utcnow
 
@@ -63,11 +64,14 @@ def append_activity(
     if activities is None:
         return None
 
+    # The actor is the session (cookie user, bound caller, or nobody). The
+    # body does not name one: a client-supplied actor would be a claim.
     entry = {
         "timestamp": _now(),
         "activity_type": activity_type,
         "description": description,
         "details": details or {},
+        **activity_actor(),
     }
     activities.append(entry)
 

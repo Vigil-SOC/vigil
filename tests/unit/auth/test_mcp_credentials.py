@@ -75,19 +75,20 @@ def test_a_token_says_what_it_is(session):
 def test_a_credential_stands_for_its_user(session):
     minted = svc.mint("u-1", "the platform", session=session)
 
-    user = svc.authenticate(minted.token, session=session)
+    found = svc.authenticate(minted.token, session=session)
 
-    assert user is not None
-    assert user.user_id == "u-1"
+    assert found is not None
+    assert found.user.user_id == "u-1"
+    assert found.credential_id == minted.record.credential_id
 
 
 def test_a_credential_carries_no_permissions_of_its_own(session):
     """What the holder may do is what the user may do, through one role model."""
     minted = svc.mint("u-1", "the platform", session=session)
 
-    user = svc.authenticate(minted.token, session=session)
+    found = svc.authenticate(minted.token, session=session)
 
-    assert user.role_id == "r-analyst"
+    assert found.user.role_id == "r-analyst"
     assert not hasattr(minted.record, "permissions")
 
 

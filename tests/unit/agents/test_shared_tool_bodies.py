@@ -13,7 +13,7 @@ from core.agents import tool_registry
 from core.agents.tool_registry import MANIFEST, execute_backend_tool
 from core.auth import permissions
 from core.cases.case_workflow_service import CaseWorkflowService
-from core.cases.closure import ClosedByKind, ClosureCategory
+from core.cases.closure import ClosureCategory
 from core.integrations.mcp import in_process
 from core.integrations.mcp.surface import acting_as
 from tools.mcp import vigil
@@ -119,7 +119,7 @@ async def test_closing_a_case_through_the_backend_records_a_closure(monkeypatch)
     assert result == {"success": True, "case_id": "case-1"}
     assert recorded[0][0] == "case-1"
     assert recorded[0][1]["closure_category"] == ClosureCategory.UNSPECIFIED
-    assert recorded[0][1]["closed_by_kind"] == ClosedByKind.AGENT
+    assert "closed_by_kind" not in recorded[0][1]
     assert recorded[0][1]["closed_by"] == "agent"
 
 

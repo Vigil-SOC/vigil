@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from core.agents.attribution import note_child, note_terminal
 from core.agents.internal_auth import authorise
+from core.cases.agent_closure import activity_actor
 from core.deps import provide_approvals, provide_mcp_registry, provide_workflow_runs
 from core.integrations.mcp.registry import MCPRegistry
 from core.response.approval_service import ApprovalService
@@ -435,6 +436,7 @@ def _add_activity(
             "activity_type": activity_type,
             "description": description,
             "details": details,
+            **activity_actor(),
         }
     )
     data.update_case(case_id, activities=activities)
@@ -620,7 +622,7 @@ DISMISSALS = {"benign", "false_positive"}
 def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
     from core.cases.agent_closure import service_session
     from core.cases.case_workflow_service import CaseWorkflowService
-    from core.cases.closure import ClosedByKind, ClosureCategory
+    from core.cases.closure import ClosureCategory
     from core.storage.models import Case
 
     disposition = (update.disposition or "").strip().lower()
@@ -638,7 +640,6 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
                 case_id,
                 closure_category=ClosureCategory.FALSE_POSITIVE,
                 closed_by=run_id,
-                closed_by_kind=ClosedByKind.AGENT,
                 closure_notes=update.summary or None,
             )
         _add_activity(

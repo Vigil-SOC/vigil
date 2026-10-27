@@ -314,7 +314,6 @@ def update_case(
     if status is not None and (refusal := _status_refusal(status)):
         return refusal
     from core.cases.agent_closure import actor, service_session
-    from core.cases.closure import ClosedByKind
     from core.time import utcnow
 
     data = _data()
@@ -353,7 +352,6 @@ def update_case(
                 case_id,
                 change,
                 closed_by=actor(),
-                closed_by_kind=ClosedByKind.AGENT,
             )
     return {"success": True, "case_id": case_id}
 

@@ -1208,7 +1208,7 @@ def close_case(
     """
     try:
         from core.cases.case_workflow_service import CaseWorkflowService
-        from core.cases.closure import ClosedByKind, ClosureCategory
+        from core.cases.closure import ClosureCategory
 
         # Stated here rather than left to the mapping. An unknown category
         # closes the Case and then reaches memory as nothing -- the Distil has
@@ -1235,12 +1235,6 @@ def close_case(
                 case_id,
                 closure_category=category,
                 closed_by=actor(),
-                # A credential here is one a program holds, so this is a
-                # program acting with someone's standing rather than that
-                # person closing it. Episodic memory reads this as Trust, and
-                # `analyst` is the one record this system will not let an agent
-                # claim on its own behalf.
-                closed_by_kind=ClosedByKind.AGENT,
                 root_cause=root_cause,
                 lessons_learned=lessons_learned,
                 recommendations=recommendations,

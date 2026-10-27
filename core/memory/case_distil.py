@@ -38,7 +38,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from core.cases.closure import ClosedByKind, ClosureCategory
+from core.cases.closure import ClosureCategory, trust_word
 from core.memory.distil import (
     DEFAULT_BATCH,
     FailureKey,
@@ -209,10 +209,8 @@ class ClosedCase:
         highest-trust record this system produces, and a close nobody can
         attribute has not earned it.
         """
-        kind = (self.closure.closed_by_kind if self.closure is not None else "") or ""
-        return (
-            Trust.ANALYST if kind.strip() == ClosedByKind.ANALYST.value else Trust.AGENT
-        )
+        channel = (self.closure.close_channel if self.closure is not None else "") or ""
+        return Trust.ANALYST if trust_word(channel) == "analyst" else Trust.AGENT
 
 
 def _utc(value: Optional[datetime]) -> Optional[datetime]:
