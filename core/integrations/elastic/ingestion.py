@@ -305,7 +305,7 @@ class ElasticIngestion(SIEMIngestionService):
                 "title": title,
                 "description": description[:500] if description else "",
                 "entity_context": entity_context,
-                "raw_event": alert,
+                "raw_data": alert,
                 "anomaly_score": 0.5,
                 "mitre_predictions": mitre_predictions,
                 "metadata": {
@@ -381,7 +381,7 @@ class ElasticIngestion(SIEMIngestionService):
             "title": title,
             "description": str(description)[:500],
             "entity_context": entity_context,
-            "raw_event": alert,
+            "raw_data": alert,
             "anomaly_score": (
                 round(min(max(parsed_level, 0), 15) / 15, 2)
                 if parsed_level is not None

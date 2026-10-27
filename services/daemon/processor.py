@@ -535,7 +535,7 @@ class FindingProcessor:
     async def _update_finding(self, finding: Dict[str, Any]):
         """Persist only what triage/enrich produced — severity and the cached
         AI analysis. This is a targeted partial update: the in-memory copy
-        carries transient, source-derived keys (raw_event, entity context, etc.)
+        carries transient, source-derived keys (raw_data, entity context, etc.)
         that shouldn't be written back over the stored row, so only the
         whitelisted fields are sent."""
         finding_id = finding.get("finding_id")
