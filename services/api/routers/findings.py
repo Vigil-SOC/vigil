@@ -125,6 +125,33 @@ async def get_or_generate_enrichment(
     return {"finding_id": finding_id, "cached": False, "enrichment": enrichment}
 
 
+@router.get("/{finding_id}/similar")
+async def similar_findings(
+    finding_id: str,
+    limit: int = Query(8, ge=1, le=25),
+    window: int = Query(
+        500, ge=10, le=2000, description="How many recent findings to compare against"
+    ),
+):
+    """Recent findings that look like this one: the same behaviour, or the same
+    hosts, users, addresses or hashes. Each comes with the reasons it matched."""
+    import asyncio
+
+    from core.findings.similarity import candidate_from_row, similar
+
+    target = await asyncio.to_thread(data_service.get_finding, finding_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    rows = await asyncio.to_thread(data_service.get_findings, limit=window)
+    result = await asyncio.to_thread(
+        similar,
+        candidate_from_row(target),
+        [candidate_from_row(r) for r in rows],
+        limit=limit,
+    )
+    return {"finding_id": finding_id, "compared": len(rows), **result}
+
+
 @router.delete("/all", dependencies=[permission_gate("findings.delete")])
 def clear_all_findings(
     session: UnitOfWorkSession,

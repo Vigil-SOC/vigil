@@ -23,6 +23,7 @@ import {
   type OverviewPayload,
 } from '../../services/api'
 import { errorText } from '../../shared/errorText'
+import FindingDetails from '../../shared/FindingDetails'
 
 const NOISE_INFO =
   'The alert reads Dropped and leaves this feed and any read of open findings. Triage does not learn from the mark yet. Undo clears it.'
@@ -330,6 +331,7 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
             </dl>
             {open.title && open.description && <p className="ov-pop-desc">{open.description}</p>}
             <EvidenceBody item={open} />
+            <FindingDetails findingId={open.finding_id} />
             <div className="flex items-center gap-2 flex-wrap">
               <button type="button" className="btn ghost" onClick={markNoise} disabled={marking}>
                 {marked ? 'Undo' : 'Mark as noise'}

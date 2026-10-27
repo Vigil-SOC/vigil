@@ -12,6 +12,7 @@ import type { ConsoleScreenProps } from '../../shared/types'
 import { parseSourceEvidence } from '../../data/sourceEvidence'
 import { SourceEvidenceSection } from '../dashboard/SourceEvidenceSection'
 import { triageApi, type TriagePayload, type TriageRow, type TriageSource } from '../../services/api'
+import FindingDetails from '../../shared/FindingDetails'
 
 const POLL_MS = 10_000
 const ROW_CAP = 200 // the server stops at this many rows
@@ -237,7 +238,7 @@ function Expanded({ row, data }: { row: TriageRow; data: TriagePayload }) {
       <BreakdownRow label="Source trust"><NotMeasured align="end" tip={tips.trust} /></BreakdownRow>
       <BreakdownRow label="Weight"><NotMeasured align="end" tip={tips.weight} /></BreakdownRow>
       <BreakdownRow label="Score against a floor"><NotMeasured align="end" tip={tips.score} /></BreakdownRow>
-      {row.kind === 'detection' && <div className="tq-evidence"><EvidenceBody row={row} /></div>}
+      {row.kind === 'detection' && <div className="tq-evidence"><EvidenceBody row={row} />{row.finding_id && <FindingDetails findingId={row.finding_id} />}</div>}
       <div className="tq-actions">
         {row.source_link && (
           <a href={row.source_link} target="_blank" rel="noopener noreferrer">Open in source</a>
