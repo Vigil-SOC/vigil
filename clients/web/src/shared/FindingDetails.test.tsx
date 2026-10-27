@@ -43,6 +43,20 @@ describe('FindingDetails', () => {
     expect(screen.getByText('Isolate FIN-WS10')).toBeInTheDocument()
   })
 
+  it('does not put a late summary or error on the next alert', async () => {
+    let fail: (e: Error) => void = () => {}
+    vi.mocked(findingsApi.getEnrichment).mockReturnValue(new Promise((_, reject) => { fail = reject }) as never)
+    vi.mocked(findingsApi.getById).mockImplementation(async (id: string) => ({ data: { ...finding, finding_id: id } }) as never)
+    const { rerender } = render(<FindingDetails findingId="f-1" />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Summarise with AI' }))
+    rerender(<FindingDetails findingId="f-2" />)
+    const button = await screen.findByRole('button', { name: 'Summarise with AI' })
+    fail(new Error('timeout'))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(screen.queryByText('The AI summary could not be generated right now.')).toBeNull()
+    expect(button).not.toBeDisabled()
+  })
+
   it('renders nothing when the finding cannot be read', async () => {
     vi.mocked(findingsApi.getById).mockRejectedValue(new Error('404'))
     const { container } = render(<FindingDetails findingId="f-1" />)

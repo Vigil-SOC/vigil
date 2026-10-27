@@ -1,7 +1,7 @@
 // What a finding is about, under its source evidence: the AI read of it, the
 // ATT&CK techniques, the entities and indicators it names, and the recent
 // alerts that look like it. Everything here is read from the finding itself.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { findingsApi, type SimilarFinding } from '../services/api'
 
 interface Enrichment {
@@ -60,11 +60,16 @@ export default function FindingDetails({ findingId }: { findingId: string }) {
   const [similar, setSimilar] = useState<SimilarFinding[] | null>(null)
   const [generating, setGenerating] = useState(false)
   const [genError, setGenError] = useState<string | null>(null)
+  // The alert on screen now: a summary started for another one must not touch this one's state.
+  const current = useRef(findingId)
 
   useEffect(() => {
     let cancelled = false
+    current.current = findingId
     setFinding(null)
     setSimilar(null)
+    setGenerating(false)
+    setGenError(null)
     // Through a resolved promise, so an API without these calls (an older server, a test double) only skips the section.
     Promise.resolve().then(() => findingsApi.getById(findingId)).then((r) => { if (!cancelled && r?.data) setFinding(r.data as FullFinding) }).catch(() => {})
     Promise.resolve().then(() => findingsApi.similar(findingId, 5)).then((r) => { if (!cancelled) setSimilar(r?.data?.similar ?? []) }).catch(() => { if (!cancelled) setSimilar([]) })
@@ -77,11 +82,12 @@ export default function FindingDetails({ findingId }: { findingId: string }) {
     try {
       const r = await findingsApi.getEnrichment(findingId)
       const enrichment = (r.data as { enrichment?: Enrichment }).enrichment
-      setFinding((f) => (f ? { ...f, ai_enrichment: enrichment ?? f.ai_enrichment } : f))
+      // The popup may have moved to another alert while this one was summarised.
+      setFinding((f) => (f && f.finding_id === findingId ? { ...f, ai_enrichment: enrichment ?? f.ai_enrichment } : f))
     } catch {
-      setGenError('The AI summary could not be generated right now.')
+      if (current.current === findingId) setGenError('The AI summary could not be generated right now.')
     } finally {
-      setGenerating(false)
+      if (current.current === findingId) setGenerating(false)
     }
   }
 

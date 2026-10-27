@@ -109,17 +109,27 @@ def test_endpoint_compares_against_recent_findings_and_404s_an_unknown_one(
             "entity_context": {"host": "FIN-WS10"},
         },
         {"finding_id": "y", "title": "Printer firmware check"},
+        {
+            "finding_id": "p",
+            "title": "Probe: encoded PowerShell from Office",
+            "data_source": "probe",
+            "entity_context": {"host": "FIN-WS10"},
+        },
     ]
+    seen = {}
 
     class _Data:
         def get_finding(self, finding_id):
             return next((r for r in rows if r["finding_id"] == finding_id), None)
 
-        def get_findings(self, limit):
+        def get_findings(self, limit, exclusions="include"):
+            seen["exclusions"] = exclusions
             return rows[:limit]
 
     monkeypatch.setattr(findings, "data_service", _Data())
     out = asyncio.run(findings.similar_findings("t", limit=5, window=100))
+    # probe findings and analyst-excluded traffic are left out
+    assert seen["exclusions"] == "hide"
     assert out["compared"] == 3
     assert [r["finding_id"] for r in out["similar"]] == ["x"]
     assert out["similar"][0]["reasons"] == ["same FIN-WS10"]

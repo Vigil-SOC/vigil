@@ -142,7 +142,11 @@ async def similar_findings(
     target = await asyncio.to_thread(data_service.get_finding, finding_id)
     if not target:
         raise HTTPException(status_code=404, detail="Finding not found")
-    rows = await asyncio.to_thread(data_service.get_findings, limit=window)
+    # Analyst-excluded traffic and the daemon's probe findings are not alerts to take on.
+    rows = await asyncio.to_thread(
+        data_service.get_findings, limit=window, exclusions="hide"
+    )
+    rows = [r for r in rows if r.get("data_source") != "probe"]
     result = await asyncio.to_thread(
         similar,
         candidate_from_row(target),
