@@ -390,6 +390,7 @@ function AttackTab() {
   const sevTotal = sevList.reduce((a, s) => a + s[1], 0)
   const sevSegs = sevList.map((s) => ({ v: sevTotal ? s[1] / sevTotal : 0, color: s[2] }))
   const cols = coverage ? 6 : 9
+  const excluded = coverage ? 0 : data?.excludedOccurrences ?? 0
 
   return (
     <>
@@ -476,6 +477,11 @@ function AttackTab() {
                 : `${techniques.length} techniques · click a row for findings`}
             </span>
           </div>
+          {excluded > 0 && (
+            <div className="px-[18px] py-2 border-b border-line-soft text-xs text-tx-3">
+              {excluded} {excluded === 1 ? 'sighting' : 'sightings'} with no confidence not counted
+            </div>
+          )}
           <div className="table-wrap list-scroll list-scroll-attack">
             <table className="tbl attack-tbl">
               <thead>
@@ -499,7 +505,7 @@ function AttackTab() {
                   <tr><td colSpan={cols}><EmptyState table icon="alert" title="Couldn’t read that run" body={data.runError} /></td></tr>
                 )}
                 {phase === 'ready' && !data?.runError && techniques.length === 0 && (
-                  <tr><td colSpan={cols}><EmptyState table icon="filter" title={coverage ? 'No techniques on this run' : 'No techniques at this confidence threshold'} body={coverage ? 'The run has no action-trace steps with a technique id.' : 'Lower the confidence threshold or load findings with ATT&CK mappings.'} /></td></tr>
+                  <tr><td colSpan={cols}><EmptyState table icon="filter" title={coverage ? 'No techniques on this run' : 'No techniques at this confidence threshold'} body={coverage ? 'The run has no action-trace steps with a technique id.' : conf > 0 ? 'Techniques with no confidence are not counted above 0. Lower the threshold to 0 to include them.' : 'Lower the confidence threshold or load findings with ATT&CK mappings.'} /></td></tr>
                 )}
                 {phase === 'ready' && !data?.runError && techniques.map((t) => (
                   <Fragment key={t.id}>
@@ -527,7 +533,7 @@ function AttackTab() {
                       </td>
                     </tr>
                     {expanded === t.id && (
-                      <tr className="tech-expand"><td colSpan={cols}><AttackTechniqueFindings techniqueId={t.id} coverage={coverage ? t : undefined} /></td></tr>
+                      <tr className="tech-expand"><td colSpan={cols}><AttackTechniqueFindings techniqueId={t.id} coverage={coverage ? t : undefined} minConfidence={conf} timeRange={range.toLowerCase()} /></td></tr>
                     )}
                   </Fragment>
                 ))}
