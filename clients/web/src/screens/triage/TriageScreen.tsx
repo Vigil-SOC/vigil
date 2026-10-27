@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type React
 import { Link, useSearchParams } from 'react-router-dom'
 import { DataTable, type ColumnDef } from '../../shared/DataTable'
 import { Icon } from '../../shared/icons'
+import { usePageSnapshot } from '../../shell/pageSnapshot'
 import { FilterChip } from '../../shared/FilterChip'
 import { InfoTip } from '../../shared/InfoTip'
 import { NotMeasured } from '../../shared/NotMeasured'
@@ -257,6 +258,11 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
   const state = searchParams.get('state') ?? ''
   const [phase, setPhase] = useState<Phase>('loading')
   const [data, setData] = useState<TriagePayload | null>(null)
+  usePageSnapshot('triage', data ? [
+    `Triage queue: ${data.matched} items. Picked up automatically ${data.strip.picked_up.launched_or_merged} of ${data.strip.picked_up.created_today} today; cases created today ${data.strip.cases_created_today}; waiting in line ${data.strip.waiting}.`,
+    'Rows (arrived | kind | source | alert | severity | what happened | picked up in | grouped into | finding):',
+    ...data.rows.slice(0, 60).map((r) => [r.created_at ?? '-', r.kind_label, r.source || '-', r.title || r.description || r.document || '-', r.severity_band, r.state_label, r.pickup_seconds ?? '-', r.case_door ?? r.workflow_id ?? '-', r.finding_id ?? '-'].join(' | ')),
+  ].join('\n') : '')
   const [openId, setOpenId] = useState<number | null>(null)
   const loadTicket = useRef(0)
   const loadedFilter = useRef('')

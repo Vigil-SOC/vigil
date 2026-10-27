@@ -8197,6 +8197,8 @@ export interface components {
             messages: components["schemas"]["ChatMessage"][];
             /** Page Context */
             page_context?: string | null;
+            /** Page Snapshot */
+            page_snapshot?: string | null;
             /** Parent Run Id */
             parent_run_id?: string | null;
             /** Session Id */

@@ -1,3 +1,4 @@
+import { getPageSnapshot } from './pageSnapshot'
 import {
   useEffect,
   useMemo,
@@ -561,12 +562,15 @@ export default function Chat({
         messages: { role: string; content: string }[]
         session_id: string
         page_context?: string
+        page_snapshot?: string
         case_id?: string
       } = {
         messages: askedOf(next).map((m) => ({ role: m.role === 'vigil' ? 'assistant' : 'user', content: m.text })),
         session_id: sessionRef.current,
       }
       if (pageKey) payload.page_context = pageKey
+      const snapshot = getPageSnapshot(pageKey)
+      if (snapshot) payload.page_snapshot = snapshot
       if (sentCase !== null) payload.case_id = sentCase
       const res = await streamFetch('/claude/chat/stream', {
         method: 'POST',
