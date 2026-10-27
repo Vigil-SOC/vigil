@@ -1,6 +1,6 @@
 """Join the two 0012 revisions, both written against 0011, into one head.
 
-#3231 (audit feed pause) and #3230 (closure channel) landed side by side,
+#3191 (audit feed pause) and #3192 (closure channel) landed side by side,
 leaving two heads, and the API refuses to start on more than one. Neither
 touches the other's tables, so there is nothing to run here.
 """
