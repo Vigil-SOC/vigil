@@ -474,7 +474,7 @@ export default function WorkflowBuilder({ initial, workflowId = null, origin, in
 
         <section className="wb-canvas-wrap" aria-label="Flow">
           <div className="wb-views" role="tablist" aria-label="Builder view">
-            <button type="button" role="tab" aria-selected={view === 'flow'} onClick={() => setView('flow')}><Icon name="flow" size={13} /> Flow</button>
+            <button type="button" role="tab" aria-selected={view === 'flow'} disabled={defPending} title={defPending ? 'Apply or undo your edits to the definition first' : undefined} onClick={() => setView('flow')}><Icon name="flow" size={13} /> Flow</button>
             <button type="button" role="tab" aria-selected={view === 'code'} onClick={() => setView('code')}><Icon name="doc" size={13} /> Definition</button>
             <span className="wb-views-meta">
               {draft.phases.length} step{draft.phases.length === 1 ? '' : 's'}

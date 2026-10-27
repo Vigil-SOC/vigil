@@ -126,6 +126,8 @@ describe('building a workflow by hand', () => {
     fireEvent.keyDown(window, { key: 's', metaKey: true })
     expect(workflowApi.createCustom).not.toHaveBeenCalled()
     expect(await screen.findByText(/Apply or undo your edits to the definition first/)).toBeInTheDocument()
+    // the edits cannot be dropped by going back to the flow
+    expect(screen.getByRole('tab', { name: /Flow/ })).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(onCancel).not.toHaveBeenCalled()
   })
