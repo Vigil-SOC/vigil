@@ -172,7 +172,7 @@ def _detection_to_finding(detection: Dict[str, Any]) -> Optional[Dict[str, Any]]
         "title": detection.get("scenario") or "CrowdStrike Detection",
         "description": detection.get("description", ""),
         "entity_context": entity_context,
-        "raw_event": detection,
+        "raw_data": detection,
         "anomaly_score": _confidence_to_score(detection.get("max_confidence")),
         "mitre_predictions": mitre_predictions,
     }
