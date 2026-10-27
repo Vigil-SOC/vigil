@@ -7,6 +7,7 @@ import { ToastProvider } from '../../shell/toast'
 import { approvalsApi, auditApi, casesApi, streamFetch, workflowApi, type NeedsYouItem } from '../../services/api'
 import investigateProjection from '../workflows/__fixtures__/kernel-investigate-projection.json'
 import heldProjection from '../workflows/__fixtures__/kernel-investigate-held-projection.json'
+import casesCss from './cases.css?inline'
 
 const testState = vi.hoisted(() => ({
   canDelete: true,
@@ -3311,5 +3312,16 @@ describe('a kernel hunt on its case', () => {
     expect(await screen.findByRole('button', { name: 'Record a blind spot' })).toHaveAttribute('title', 'Coming in a later release')
     expect(document.querySelector('[title*="phase-2"], [aria-label*="phase-2"]')).toBeNull()
     expect(screen.getByRole('button', { name: 'Tell' })).toHaveAttribute('title', 'Coming in a later release')
+  })
+})
+
+describe('the case actions menu', () => {
+  it('opens leftward from its button, in an unlayered rule so shell.css’s left: 0 cannot win', () => {
+    const at = casesCss.indexOf('.vg-more-menu.dh-menu {')
+    expect(at, '.vg-more-menu.dh-menu rule').toBeGreaterThanOrEqual(0)
+    const rule = casesCss.slice(at, casesCss.indexOf('}', at))
+    expect(rule).toMatch(/left:\s*auto/)
+    expect(rule).toMatch(/right:\s*0/)
+    expect(casesCss).not.toMatch(/@layer\s+[\w-]+\s*\{/)
   })
 })
