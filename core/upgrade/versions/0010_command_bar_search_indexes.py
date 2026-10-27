@@ -2,8 +2,8 @@
 
 from core.upgrade.revision import run_sql
 
-revision = "0011_command_bar_indexes"
-down_revision = "0010_autonomy_ceiling"
+revision = "0010_command_bar_search_indexes"
+down_revision = "0009_drop_origin_run_ids"
 
 
 def upgrade() -> None:
