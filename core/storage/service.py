@@ -62,21 +62,81 @@ def _external_key(row: Dict[str, Any]) -> Optional[tuple]:
     return (row.get("data_source", "imported"), external_id)
 
 
-def _numeric_prediction_items(mitre_predictions: Any) -> List[tuple[str, float]]:
-    """Persist numeric map values only; keys stay text (tactic names included)."""
+# Sentinels for a map value that is not a stored score. None is a real
+# confidence (unknown), so it cannot mark "warn" or "skip" by itself.
+_UNKNOWN = object()
+_SKIP = object()
+
+
+def _parse_confidence(value: Any) -> Any:
+    """A float to store, None for unknown, or a sentinel to warn or skip.
+
+    Numeric strings are scores (``"0.4"`` is 0.4). ``is_score`` rejects those,
+    so this does not call it. Values outside 0–1 stay as given.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return _UNKNOWN
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return _UNKNOWN
+    if isinstance(value, (list, dict)):
+        return _SKIP
+    return _UNKNOWN
+
+
+def _mitre_prediction_items(
+    mitre_predictions: Any,
+    *,
+    finding_id: Optional[str] = None,
+    data_source: Optional[str] = None,
+) -> List[tuple[str, Optional[float]]]:
+    """Rows for a technique map. Keys stay text (tactic names included).
+
+    A number or numeric string is that number. None is null. A bool or any
+    other string is null and logged. A list or object is skipped and logged.
+    The log names the finding's data_source or id, the key, and the value.
+    """
     if not isinstance(mitre_predictions, dict):
         return []
-    items: List[tuple[str, float]] = []
+    who = data_source or finding_id or "unknown"
+    items: List[tuple[str, Optional[float]]] = []
     for key, value in mitre_predictions.items():
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+        technique_id = str(key)
+        parsed = _parse_confidence(value)
+        if parsed is _SKIP:
+            logger.warning(
+                "mitre_predictions %s=%r on %s skipped",
+                technique_id,
+                value,
+                who,
+            )
             continue
-        items.append((str(key), float(value)))
+        if parsed is _UNKNOWN:
+            logger.warning(
+                "mitre_predictions %s=%r on %s stored as unknown",
+                technique_id,
+                value,
+                who,
+            )
+            items.append((technique_id, None))
+            continue
+        items.append((technique_id, parsed))
     return items
 
 
 def _set_mitre_prediction_rows(finding: Finding, mitre_predictions: Any) -> None:
     finding.mitre_prediction_rows.clear()
-    for technique_id, confidence in _numeric_prediction_items(mitre_predictions):
+    for technique_id, confidence in _mitre_prediction_items(
+        mitre_predictions,
+        finding_id=finding.finding_id,
+        data_source=finding.data_source,
+    ):
         finding.mitre_prediction_rows.append(
             FindingMitrePrediction(
                 technique_id=technique_id,

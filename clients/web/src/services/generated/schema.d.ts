@@ -8781,9 +8781,12 @@ export interface components {
             evidence_links?: string[] | null;
             /** Mitre Predictions */
             mitre_predictions?: {
-                [key: string]: number;
+                [key: string]: number | null;
             } | null;
-            /** Predicted Techniques */
+            /**
+             * Predicted Techniques
+             * @description Deprecated and ignored.
+             */
             predicted_techniques?: {
                 [key: string]: unknown;
             }[] | null;
@@ -10821,7 +10824,7 @@ export interface components {
             finding_id: string;
             /** Mitre Predictions */
             mitre_predictions?: {
-                [key: string]: number;
+                [key: string]: number | null;
             } | null;
             /** Severity */
             severity?: ("low" | "medium" | "high" | "critical") | null;

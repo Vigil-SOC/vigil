@@ -4,9 +4,12 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.dialects import postgresql
 
+from core.api.v1.findings_router import router as findings_router
 from core.reporting.analytics_service import get_mitre_technique_distribution
 from core.storage.models import FindingMitrePrediction
 from core.storage.schemas.finding import FindingSchema
@@ -35,7 +38,23 @@ def _create(service: DatabaseService, finding_id: str, predictions: dict, **kwar
     )
 
 
-def test_create_update_and_bulk_persist_numeric_rows_only():
+def test_patch_returns_null_and_does_not_store_true_as_one(authenticate_app, caplog):
+    service = DatabaseService()
+    assert _create(service, "f-mitre-patch", {"T1059": 0.2})
+    app = FastAPI()
+    app.include_router(findings_router, prefix="/api/v1/findings")
+    authenticate_app(app)
+    response = TestClient(app).patch(
+        "/api/v1/findings/f-mitre-patch",
+        json={"mitre_predictions": {"T1059": None, "T1071": "0.4", "T1000": True}},
+    )
+    assert response.status_code == 200, response.text
+    stored = response.json()["finding"]["mitre_predictions"]
+    assert stored == {"T1059": None, "T1071": 0.4, "T1000": None}
+    assert "T1000=True on test stored as unknown" in caplog.text
+
+
+def test_create_update_and_bulk_persist_scores_and_nulls():
     service = DatabaseService()
     created = _create(
         service,
@@ -51,6 +70,7 @@ def test_create_update_and_bulk_persist_numeric_rows_only():
     assert dumped["mitre_predictions"] == {
         "T1071.001": 0.875,
         "Initial Access": 0.5,
+        "label": None,
     }
 
     reread = FindingSchema.dump(service.get_finding("f-mitre-write-1"))

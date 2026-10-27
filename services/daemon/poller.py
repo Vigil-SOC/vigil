@@ -27,6 +27,7 @@ from core.federation.runner import FederationRunner
 from core.ingestion.dedup import RedisDedupSet
 from core.integrations._base.ids import FINDING_ID_MAX, fit_id
 from core.integrations.crowdstrike.adapter import _confidence_to_score
+from core.storage.service import _mitre_prediction_items
 from core.time import utcnow
 from core.webhook_rejections import (
     BAD_TOKEN,
@@ -44,52 +45,54 @@ class IngestionError(RuntimeError):
     """An ingestion service reported success=False for a poll."""
 
 
-def normalize_mitre_predictions(raw: Any, finding_id: str) -> Dict[str, float]:
-    """Coerce a webhook ``mitre_predictions`` value to the canonical
-    ``{technique_id: confidence}`` dict every consumer assumes.
+def normalize_mitre_predictions(
+    raw: Any,
+    finding_id: str,
+    data_source: Optional[str] = None,
+) -> Dict[str, Optional[float]]:
+    """Coerce a webhook ``mitre_predictions`` value to ``{technique_id: score}``.
 
-    Accepted: dict (passed through as-is, values unvalidated), list/tuple of
-    technique ids, list of ``{"technique"|"id": ..., "confidence"|"score": ...}``
-    dicts, a single id string, or None. 1.0 is the "present, no score"
-    precedent used by the internal producers. Any other type, or a list entry
-    with no technique id, raises ValueError so the request fails with a 400
-    rather than the field being silently emptied downstream.
+    Accepted: a dict, a list or tuple of technique ids, a list of
+    ``{"technique"|"id": ..., "confidence"|"score": ...}`` dicts, a single id
+    string, or None. A missing score is null. Numbers and numeric strings keep
+    their value; a bool or other string is null. Any other raw type, or a list
+    entry with no technique id, raises ValueError so the request fails with a
+    400 rather than the field being silently emptied downstream.
     """
     if raw is None:
         return {}
     if isinstance(raw, dict):
-        return raw
-    if isinstance(raw, str):
-        items: list = [raw]
-    elif isinstance(raw, (list, tuple)):
-        items = list(raw)
+        shaped = raw
     else:
-        raise ValueError(
-            f"finding {finding_id}: mitre_predictions must be a dict, list or "
-            f"string, got {type(raw).__name__}"
-        )
-
-    out: Dict[str, float] = {}
-    for item in items:
-        score: Any = 1.0
-        if isinstance(item, dict):
-            # `or` rather than .get(default): a present-but-null key falls through.
-            technique = item.get("technique") or item.get("id")
-            score = item.get("confidence")
-            if score is None:
-                score = item.get("score")
-            # bool is an int subclass; True/False are not confidences.
-            if isinstance(score, bool) or not isinstance(score, (int, float)):
-                score = 1.0
+        if isinstance(raw, str):
+            entries: list = [raw]
+        elif isinstance(raw, (list, tuple)):
+            entries = list(raw)
         else:
-            technique = item
-        if not isinstance(technique, str) or not technique.strip():
             raise ValueError(
-                f"finding {finding_id}: mitre_predictions entry {item!r} has no "
-                "technique id"
+                f"finding {finding_id}: mitre_predictions must be a dict, list or "
+                f"string, got {type(raw).__name__}"
             )
-        out[technique.strip()] = float(score)
-    return out
+        shaped = {}
+        for item in entries:
+            score: Any = None
+            if isinstance(item, dict):
+                # `or` rather than .get(default): a present-but-null key falls through.
+                technique = item.get("technique") or item.get("id")
+                score = item.get("confidence")
+                if score is None:
+                    score = item.get("score")
+            else:
+                technique = item
+            if not isinstance(technique, str) or not technique.strip():
+                raise ValueError(
+                    f"finding {finding_id}: mitre_predictions entry {item!r} has no "
+                    "technique id"
+                )
+            shaped[technique.strip()] = score
+    return dict(
+        _mitre_prediction_items(shaped, finding_id=finding_id, data_source=data_source)
+    )
 
 
 @dataclass
@@ -689,14 +692,14 @@ class DataPoller:
                         finding_id = f"webhook-{uuid.uuid4().hex[:16]}"
                         finding_data["finding_id"] = finding_id
 
-                # Untrusted payload: coerce to the canonical {technique: score}
-                # dict once here, before anything is enqueued, so a bad entry
-                # 400s the whole batch (via the except below) instead of
-                # breaking triage and dropping technique rows downstream.
+                # Untrusted payload: coerce to {technique: score or null} once
+                # here, before anything is enqueued, so a bad entry 400s the
+                # whole batch (via the except below) instead of breaking triage.
                 for finding_data in findings:
                     finding_data["mitre_predictions"] = normalize_mitre_predictions(
                         finding_data.get("mitre_predictions"),
                         finding_data["finding_id"],
+                        data_source=finding_data.get("data_source"),
                     )
 
                 count = 0

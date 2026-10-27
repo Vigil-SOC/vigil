@@ -2261,7 +2261,14 @@
             "anyOf": [
               {
                 "additionalProperties": {
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "type": "object"
               },
@@ -2284,6 +2291,7 @@
                 "type": "null"
               }
             ],
+            "description": "Deprecated and ignored.",
             "title": "Predicted Techniques"
           },
           "severity": {

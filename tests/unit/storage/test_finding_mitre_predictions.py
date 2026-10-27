@@ -6,11 +6,14 @@ from unittest.mock import MagicMock
 import pytest
 from sqlalchemy.dialects import postgresql
 
+from core.api.v1.findings_router import FindingUpdate
+from core.integrations.vstrike.schemas import VStrikeEnrichment, VStrikeFinding
 from core.storage.models import Case, Finding, FindingMitrePrediction
 from core.storage.schemas.case import CaseWithFindingsSchema
 from core.storage.schemas.finding import FindingSchema
 from core.storage.service import (
-    _numeric_prediction_items,
+    _mitre_prediction_items,
+    _set_mitre_prediction_rows,
     findings_by_technique_stmt,
     technique_severity_counts_stmt,
 )
@@ -57,19 +60,76 @@ def test_nested_case_dump_reconstructs_predictions_from_rows():
     assert dumped["findings"][0]["mitre_predictions"] == {"T1071.001": 0.875}
 
 
-def test_numeric_items_keep_tactic_names_and_skip_non_numeric():
+def test_prediction_items_store_null_for_a_missing_score_and_skip_a_list(caplog):
     items = dict(
-        _numeric_prediction_items(
+        _mitre_prediction_items(
             {
+                "T1059": None,
+                "T1071": "0.4",
+                "T1000": True,
                 "T1071.001": 0.875,
                 "Initial Access": 1,
                 "nested": {"nope": 1},
                 "label": "ransomware",
-                "flag": True,
-            }
+                "outside": 1.5,
+            },
+            finding_id="f-1",
+            data_source="webhook",
         )
     )
-    assert items == {"T1071.001": 0.875, "Initial Access": 1.0}
+    assert items == {
+        "T1059": None,
+        "T1071": 0.4,
+        "T1000": None,
+        "T1071.001": 0.875,
+        "Initial Access": 1.0,
+        "label": None,
+        "outside": 1.5,
+    }
+    assert "nested" not in items
+    assert "webhook" in caplog.text
+    assert "True" in caplog.text
+    assert "ransomware" in caplog.text
+    assert "skipped" in caplog.text
+    assert "T1059" not in caplog.text
+
+
+def test_set_rows_persists_null_and_warns_with_the_finding_source(caplog):
+    finding = Finding(
+        finding_id="f-1",
+        anomaly_score=0.1,
+        timestamp=datetime(2024, 1, 1),
+        data_source="webhook",
+    )
+    _set_mitre_prediction_rows(
+        finding, {"T1059": None, "T1071": "0.4", "T1000": True, "nested": [1]}
+    )
+    assert {
+        row.technique_id: row.confidence for row in finding.mitre_prediction_rows
+    } == {"T1059": None, "T1071": 0.4, "T1000": None}
+    assert "webhook" in caplog.text and "True" in caplog.text
+
+
+def test_write_models_accept_null_and_do_not_coerce_bool():
+    update = FindingUpdate(
+        mitre_predictions={"T1059": None, "T1071": 0.4, "T1000": True}
+    )
+    assert update.model_dump(exclude_none=True)["mitre_predictions"] == {
+        "T1059": None,
+        "T1071": 0.4,
+        "T1000": True,
+    }
+    pushed = VStrikeFinding(
+        finding_id="f-1",
+        vstrike_enrichment=VStrikeEnrichment(
+            asset_id="a",
+            segment="s",
+            criticality="high",
+            enriched_at=datetime(2024, 1, 1),
+        ),
+        mitre_predictions={"T1059": None, "T1000": True},
+    )
+    assert pushed.mitre_predictions == {"T1059": None, "T1000": True}
 
 
 def test_get_findings_by_technique_queries_child_table(monkeypatch):
@@ -175,7 +235,7 @@ def _sql(stmt) -> str:
     )
 
 
-# The column is NOT NULL until #3221, so the threshold is pinned on the SQL.
+# A null counts as 0: it passes a threshold of 0 and fails anything higher.
 @pytest.mark.parametrize(
     "stmt", [technique_severity_counts_stmt, findings_by_technique_stmt]
 )

@@ -11,7 +11,9 @@ Enrichment is persisted inside `finding.entity_context["vstrike"]`.
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from core.storage.technique_confidence import restore_bool_confidences
 
 
 class VStrikeAdjacentAsset(BaseModel):
@@ -71,11 +73,22 @@ class VStrikeFinding(BaseModel):
     timestamp: Optional[datetime] = None
     anomaly_score: Optional[float] = None
     severity: Optional[Literal["low", "medium", "high", "critical"]] = None
-    mitre_predictions: Optional[Dict[str, float]] = None
+    mitre_predictions: Optional[Dict[str, Optional[float]]] = None
     description: Optional[str] = None
 
     # Merged into entity_context alongside the vstrike sub-dict
     entity_context_extra: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _bool_confidence_is_not_a_score(cls, data: Any, handler):
+        # Copy first: float validation would turn true into 1.0 in place.
+        raw = data.get("mitre_predictions") if isinstance(data, dict) else None
+        if isinstance(raw, dict):
+            raw = dict(raw)
+        model = handler(data)
+        model.mitre_predictions = restore_bool_confidences(raw, model.mitre_predictions)
+        return model
 
 
 class VStrikePushRequest(BaseModel):
