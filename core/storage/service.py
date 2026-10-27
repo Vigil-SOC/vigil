@@ -30,7 +30,7 @@ from core.storage.models import (
     case_findings,
 )
 from core.storage.schemas import FindingSchema
-from core.threat_intel.mitre_lookup import rank_by_confidence
+from core.storage.technique_confidence import rank_by_confidence
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)

@@ -7,13 +7,22 @@ Single source of truth used by:
 Findings carry MITRE data in `mitre_predictions: dict | list` (multiple
 formats — see iter_techniques below for the dispatching). A confidence that is
 not a score (null, a bool, a string) means the source named the technique and
-gave no confidence; rank_by_confidence is the one display order for both.
+gave no confidence. ``is_score``, ``meets_threshold``, ``rank_by_confidence``
+and ``top_technique`` are defined in ``core.storage.technique_confidence`` and
+re-exported here, so every reader shares that order and storage can rank
+without importing this module.
 """
 
 from datetime import datetime, timedelta
-from typing import Any, Callable, Iterable, Optional, TypeVar
+from typing import Iterable, Optional
 
+from core.storage import technique_confidence
 from core.time import utcnow
+
+is_score = technique_confidence.is_score
+meets_threshold = technique_confidence.meets_threshold
+rank_by_confidence = technique_confidence.rank_by_confidence
+top_technique = technique_confidence.top_technique
 
 
 def get_time_range(time_range: str) -> tuple[datetime, datetime]:
@@ -125,43 +134,6 @@ def resolve_technique(
     name = explicit_name or fallback_name or tid
     tactic = explicit_tactic or fallback_tactic or "Unknown"
     return (tid, name, tactic)
-
-
-T = TypeVar("T")
-
-
-def is_score(value: Any) -> bool:
-    """A real confidence: an int or float, not a bool (an int subclass)."""
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-
-def meets_threshold(confidence: Any, min_confidence: float) -> bool:
-    """The ATT&CK threshold: a score at or above it; an unknown only at 0."""
-    if is_score(confidence):
-        return confidence >= min_confidence
-    return min_confidence <= 0
-
-
-def rank_by_confidence(
-    items: Iterable[T],
-    confidence: Callable[[T], Any] = lambda t: t.get("confidence"),
-) -> list[T]:
-    """Scored items highest first, then unknowns; ties and unknowns keep source order.
-
-    An unknown is never ranked against a score: below a 0.3 it would read as
-    less likely than 0.3, above it as more certain than anything scored.
-    """
-    items = list(items)
-    scored = [i for i in items if is_score(confidence(i))]
-    unknown = [i for i in items if not is_score(confidence(i))]
-    # sorted() is stable, so equal scores stay in source order.
-    return sorted(scored, key=confidence, reverse=True) + unknown
-
-
-def top_technique(techniques: Iterable[dict]) -> Optional[dict]:
-    """The highest-scored technique, or the first source-named one when none is."""
-    ranked = rank_by_confidence(techniques)
-    return ranked[0] if ranked else None
 
 
 def iter_techniques(finding: dict) -> Iterable[dict]:
