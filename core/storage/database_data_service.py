@@ -342,7 +342,7 @@ class DatabaseDataService:
                 start_time=start_time, end_time=end_time, exclusions=exclusions
             )
         except Exception as e:
-            logger.error(f"Error counting unscored technique occurrences from DB: {e}")
+            logger.error("Error counting unscored technique occurrences from DB: %s", e)
             return 0
 
     def create_finding(self, finding_data: Dict) -> Optional[Dict]:
