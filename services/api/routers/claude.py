@@ -275,7 +275,7 @@ def _page_snapshot_block(snapshot: Optional[str]) -> str:
     text = "".join(
         ch
         for ch in (snapshot or "")
-        if ch in "\n\t" or (ord(ch) >= 0x20 and ord(ch) != 0x7F)
+        if ch in "\n\t" or (ord(ch) >= 0x20 and not 0x7F <= ord(ch) <= 0x9F)
     )
     text = text.strip().replace("<", "&lt;")
     if not text:
