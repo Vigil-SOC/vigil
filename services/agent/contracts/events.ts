@@ -192,6 +192,9 @@ export interface TerminalPayload {
   // The run's verdict, after the guard, for the case it was started from. Only a
   // completed run whose plugin names a disposition_field sets it.
   disposition?: string;
+  // When the run finished, chosen as the terminal was sealed. The workflow row
+  // stores this as finished_at, and the hunt report's Ended line is the same instant.
+  finished_at?: string;
 }
 
 // The ratings a run may conclude with: the case priorities, less unknown.

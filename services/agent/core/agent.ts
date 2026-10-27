@@ -126,6 +126,10 @@ export interface PluginHooks {
   finish?(ctx: PluginContext, outcome: Outcome<unknown>): Promise<Ending | Parked | null>;
   // What a run an operator stopped leaves behind.
   stopped?(ctx: PluginContext, directive: DirectivePayload): Promise<string | undefined>;
+  // The summary is about to be journaled, after the review. A hunt's header was
+  // written when it stopped reasoning, before the account and the review, both of
+  // which the run still pays for. finished_at is the instant the row should record.
+  seal?(ctx: PluginContext, summary: string): Promise<{ summary: string; finished_at?: string }>;
   // Once the terminal is on the ledger, for a plugin that reports it elsewhere too.
   ended?(ctx: PluginContext, terminal: TerminalPayload): Promise<void>;
 }
@@ -1366,7 +1370,14 @@ async function end(
   if (ended !== null) return report(ctx, ended.outcome, ended.reason, null);
   // As every workflow does: a failure with nothing to deliver leaves the summary
   // unset, since its reason is already the error column.
-  const deliver = summary === null ? undefined : (summary ?? (outcome === "failed" ? undefined : reason));
+  let deliver = summary === null ? undefined : (summary ?? (outcome === "failed" ? undefined : reason));
+  // After every charge this ending still takes, so the sealed header and the row agree.
+  let finished_at: string | undefined;
+  if (typeof deliver === "string" && ctx.options.hooks?.seal !== undefined) {
+    const sealed = await ctx.options.hooks.seal(ctx, deliver);
+    deliver = sealed.summary;
+    finished_at = sealed.finished_at;
+  }
   const payload: TerminalPayload = {
     outcome,
     reason,
@@ -1374,6 +1385,7 @@ async function end(
     ...(handoffs === undefined ? {} : { handoffs: [...handoffs] }),
     ...(severity === undefined ? {} : { severity }),
     ...(proposed.length === 0 ? {} : { proposed_actions: [...proposed] }),
+    ...(finished_at === undefined ? {} : { finished_at }),
     ...(disposition === undefined ? {} : { disposition }),
   };
   await ctx.harness.state.append(ctx.options.run_id, [event(ctx.options, "terminal", payload)]);

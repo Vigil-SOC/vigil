@@ -33,6 +33,8 @@ export interface TerminalResult {
   reason: string;
   summary: string;
   cost_usd?: number;
+  // The instant the run finished. The row's finished_at, not the arrival of this post.
+  finished_at?: string;
   handoffs?: TerminalHandoff[];
   proposed_actions?: ProposedAction[];
   severity?: Severity;
