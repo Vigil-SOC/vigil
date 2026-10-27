@@ -27,6 +27,7 @@
   font-weight: 700;
 }
 .audit-note { font-size: 12px; color: var(--tx2); line-height: 1.45; }
+.audit-note b { color: var(--tx0); font-weight: 650; }
 
 .audit-verify { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; font-size: 12px; color: var(--tx2); }
 .audit-verify label { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }

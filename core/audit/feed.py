@@ -342,6 +342,7 @@ def _import_history(session, offset: int) -> int:
                 "to": entry.get("to"),
                 "restore_point": entry.get("restore_point"),
             },
+            gated=False,
             operator_text=operator,
         )
     return start
@@ -366,6 +367,7 @@ def _checkpoint(session, state: State) -> None:
             trail.ACTOR: trail.SYSTEM,
             "checkpoint": {"seq": tip.seq, "hash": tip.entry_hash},
         },
+        gated=False,
     )
     state.checkpoint_through = trail.current_tip(session).seq
     state.last_checkpoint_at = now
@@ -407,11 +409,34 @@ def _destination(session) -> Destination:
     )
 
 
+def pause_after_restore(session, seq: int) -> None:
+    """Flag the restore entry ``seq`` as not yet off the box (decision 11).
+
+    Writes wait for it only when the feed is on; a feed-off restore never
+    pauses, and its flag clears on a poll or an export.
+    """
+    if not _table(session) or not trail.pause_ready(session):
+        return
+    session.execute(
+        text("""
+            UPDATE public.audit_feed_state
+            SET unconfirmed_seq = :seq,
+                pause_until = CASE WHEN EXISTS (
+                    SELECT 1 FROM public.integration_configs
+                    WHERE integration_id = :id AND enabled
+                ) THEN now() + :pause END
+            WHERE id = 1
+        """),
+        {"seq": seq, "id": INTEGRATION_ID, "pause": trail.PAUSE},
+    )
+
+
 def _fail(session, state: State, error: str) -> None:
     if not state.failing:
         trail.append(
             session,
             {trail.ACTION: ACTION_FAILED, trail.ACTOR: trail.SYSTEM, "error": error},
+            gated=False,
         )
         state.failing = True
     session.execute(_MARK_FAIL, {"error": error})
@@ -474,9 +499,12 @@ def _send(clock: SendClock) -> None:
             return
         if state.failing:
             trail.append(
-                session, {trail.ACTION: ACTION_RECOVERED, trail.ACTOR: trail.SYSTEM}
+                session,
+                {trail.ACTION: ACTION_RECOVERED, trail.ACTOR: trail.SYSTEM},
+                gated=False,
             )
         session.execute(_MARK_OK, {"seq": rows[-1]["seq"]})
+        trail.confirm(session, through=rows[-1]["seq"])
     clock.ok()
 
 
@@ -614,6 +642,7 @@ def health(session) -> dict:
                 SELECT last_delivered_seq, last_delivered_at, last_error
                 FROM public.audit_feed_state WHERE id = 1
             """)).mappings().first()
+    unconfirmed = trail.unconfirmed(session)
     dest = _destination(session)
     tip = trail.current_tip(session) if trail.trail_ready(session) else trail.Tip(0, "")
     delivered = row["last_delivered_seq"] if row else None
@@ -629,6 +658,7 @@ def health(session) -> dict:
         "last_error": row["last_error"] if row else None,
         "behind": behind,
         "tip_seq": tip.seq,
+        "unconfirmed": unconfirmed,
     }
 
 

@@ -1085,6 +1085,17 @@ export interface AuditEntry {
 
 export interface AuditTip { seq: number; hash: string }
 
+/** The feed as the Audit section sees it: no host, no certificates (#3191). */
+export interface AuditFeedHealth {
+  enabled: boolean
+  behind: number | null
+  last_delivered_at: string | null
+  last_delivered_seq: number | null
+  last_error: string | null
+  /** A restore entry not yet pushed, polled or exported. */
+  unconfirmed: number | null
+}
+
 export interface AuditVerify {
   first: number | null
   last: number | null
@@ -1107,7 +1118,7 @@ export function auditParams(filter: AuditFilter): Record<string, string> {
 
 export const auditApi = {
   entries: (filter: AuditFilter, after?: number, limit = AUDIT_PAGE) =>
-    api.get<{ entries: AuditEntry[]; tip: AuditTip }>('/audit/entries', {
+    api.get<{ entries: AuditEntry[]; tip: AuditTip; feed?: AuditFeedHealth }>('/audit/entries', {
       params: { ...auditParams(filter), ...(after != null ? { after } : {}), limit },
     }),
   exportTrail: (filter: AuditFilter) =>
