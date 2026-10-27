@@ -163,16 +163,30 @@ def test_logs_non_follow(live):
 
 
 def test_events_type_forced_to_container(live):
-    now = int(time.time())
-    window = f"since={now - 600}&until={now}"
-    # Negative control: `docker run` emits a non-container event, so the
-    # assertion below is not vacuous. API 1.48 (the CI runner) records the
-    # image pull and no network event; a newer engine records the network too.
+    # Emit our own non-container event: every engine records network
+    # create/destroy, cached image or not. `since` also covers the fixture's
+    # container events; `until` is a second past now, since Docker floors it
+    # and the events land in the current second.
+    since = int(time.time()) - 600
+    net = f"medic-s5p-net-{os.getpid()}"
+    try:
+        subprocess.run(
+            ["docker", "network", "create", net], capture_output=True, check=True
+        )
+    finally:
+        subprocess.run(
+            ["docker", "network", "rm", net], capture_output=True, check=False
+        )
+    window = f"since={since}&until={int(time.time()) + 1}"
+    # Negative control: the raw reply carries our network event.
     raw = raw_docker(f"/events?{window}")
-    assert b'"Type":"image"' in raw or b'"Type":"network"' in raw
+    assert b'"Type":"network"' in raw and net.encode() in raw
     st, resp = get(live, f"/events?{window}")
     assert st == 200
-    assert b'"Type":"image"' not in body(resp) and b'"Type":"network"' not in body(resp)
+    b = body(resp)
+    assert b'"Type":"container"' in b  # not vacuously empty
+    assert b'"Type":"image"' not in b and b'"Type":"network"' not in b
+    assert net.encode() not in b
 
 
 # ---- refused (C3 §7 check 4 + bypass shapes): SP2's 32 rows -----------------
