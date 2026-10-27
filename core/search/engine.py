@@ -111,8 +111,15 @@ STANDIN_BODY = 0.6
 # Meaning alone ranks below words at the same strength, and must be close to the
 # best meaning match, so a loose resemblance never floods the results.
 MEANING = 0.75
-MEANING_FLOOR = 0.4
+MEANING_FLOOR = 0.45
 MEANING_BAND = 0.2
+# When the query names a security concept, these must say it in words: an alert,
+# case or skill that only resembles "credential access" is not about it. Workflows
+# and agents describe what they do loosely, so meaning still finds them.
+WORDS_ONLY_FOR_CONCEPTS = ("alert", "case", "skill")
+# Within one kind, a hit under this share of the kind's best is noise beside it,
+# and left out before anything is counted.
+KIND_SHARE = 0.5
 # Routine alerts repeat by the hundred, so a band alone still floods: past this many
 # per kind, meaning alone is left out.
 MEANING_ONLY_MAX = 10
@@ -423,11 +430,18 @@ def search(
         else:
             by = "both" if ws > 0.15 else "meaning"
             why = why if by == "both" else "similar meaning"
+        if by == "meaning" and related and d.kind in WORDS_ONLY_FOR_CONCEPTS:
+            continue
         hits.append(Hit(d, round(score, 3), why or "similar meaning", by))
     hits.sort(key=lambda h: (h.score, h.doc.when or ""), reverse=True)
+    best: Dict[str, float] = {}
+    for h in hits:
+        best.setdefault(h.doc.kind, h.score)
     alone: Dict[str, int] = {}
     kept: List[Hit] = []
     for h in hits:
+        if h.score < KIND_SHARE * best[h.doc.kind]:
+            continue
         if h.by == "meaning":
             alone[h.doc.kind] = alone.get(h.doc.kind, 0) + 1
             if alone[h.doc.kind] > MEANING_ONLY_MAX:

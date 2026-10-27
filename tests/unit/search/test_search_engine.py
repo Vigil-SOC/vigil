@@ -243,7 +243,28 @@ def test_meaning_alone_keeps_only_the_closest_few_per_kind():
     ]
     cache = VectorCache(fake_model({"Multiple authentication": 0.7}))
     cache.fill(many, wait=True)
-    hits, method = search("account takeover attempts", many, cache)
+    # names no security concept, so meaning alone may find alerts
+    hits, method = search("people keep getting locked out", many, cache)
     assert method == "embeddings"
     assert 0 < len(hits) <= MEANING_ONLY_MAX
     assert all(h.by == "meaning" for h in hits)
+
+
+def test_a_named_concept_needs_words_on_alerts_but_not_on_workflows():
+    said = Doc("alert", "f-said", "Credential dumping from LSASS", "")
+    like = Doc("alert", "f-like", "Unusual process on a server", "")
+    play = Doc("workflow", "wf-c", "Contain a compromised host", "")
+    cache = VectorCache(fake_model({"Unusual process": 0.8, "Contain": 0.8}))
+    docs = [said, like, play]
+    cache.fill(docs, wait=True)
+    hits, _ = search("credential access", docs, cache)
+    got = {h.doc.id: h.by for h in hits}
+    assert "f-said" in got and "f-like" not in got
+    assert got.get("wf-c") == "meaning"
+
+
+def test_a_hit_far_below_its_kinds_best_is_left_out():
+    strong = Doc("alert", "f-strong", "Exfiltration over C2 channel", "T1041")
+    weak = Doc("alert", "f-weak", "Routine backup job", "copied data to the archive")
+    hits, _ = search("exfiltration", [strong, weak])
+    assert [h.doc.id for h in hits] == ["f-strong"]

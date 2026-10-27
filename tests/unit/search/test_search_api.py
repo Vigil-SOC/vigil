@@ -137,4 +137,3 @@ def test_agents_skills_and_workflows_are_searched_too(client):
 def test_the_query_is_bounded(client):
     assert client.get("/api/search", params={"q": ""}).status_code == 422
     assert client.get("/api/search", params={"q": "x" * 301}).status_code == 422
-
