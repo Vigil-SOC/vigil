@@ -435,7 +435,7 @@ def update_case(
         updates["priority"] = case_data.priority
     if case_data.assignee is not None:
         # The case owner. Task assignee stays cases.write.
-        deny_unless(current_user.user_id, "cases.assign")
+        deny_unless(current_user.user_id, "cases.assign", session)
         # Empty or whitespace unassigns; anything else must name one person.
         stored = (data_service.get_case(case_id) or {}).get("assignee")
         updates["assignee"] = resolve_assignee(

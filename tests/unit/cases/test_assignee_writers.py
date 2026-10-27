@@ -43,8 +43,11 @@ def template(monkeypatch):
 
 
 def _from_template(assignee):
+    # The route reads the signed-in user for cases.assign. The suite calls it
+    # directly, so the user is passed the same way FastAPI would inject it.
+    user = SimpleNamespace(user_id="nestor", username="nestor")
     return create_case_from_template(
-        "t-1", CaseFromTemplate(title="x", assignee=assignee), people()
+        "t-1", CaseFromTemplate(title="x", assignee=assignee), people(), user
     )
 
 

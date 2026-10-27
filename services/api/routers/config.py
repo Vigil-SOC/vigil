@@ -1677,7 +1677,9 @@ def get_force_manual_approval():
 
 @router.post(
     "/force-manual-approval",
-    dependencies=[permission_gate("ai_autonomy.write")],
+    dependencies=[
+        permission_gate("ai_autonomy.write", before_revision="ai_autonomy.write")
+    ],
     response_model=ForceManualApprovalResponse,
 )
 def set_force_manual_approval(

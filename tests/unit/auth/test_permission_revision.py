@@ -50,6 +50,58 @@ def test_a_route_that_had_no_gate_stays_open_until_the_revision(monkeypatch):
     assert enforced_permission("automation.write", session) == "settings.write"
 
 
+def test_ceiling_gates_keep_their_live_name_until_the_revision(monkeypatch):
+    """Kill and the autonomy routes already check ai_autonomy.* on main."""
+    monkeypatch.setattr(
+        "core.auth.permissions.catalog_revision_applied", lambda session: False
+    )
+
+    assert (
+        enforced_permission(
+            "ai_autonomy.read", object(), before_revision="ai_autonomy.read"
+        )
+        == "ai_autonomy.read"
+    )
+    assert (
+        enforced_permission(
+            "ai_autonomy.write", object(), before_revision="ai_autonomy.write"
+        )
+        == "ai_autonomy.write"
+    )
+    assert (
+        enforced_permission(
+            "ai_autonomy.stop", object(), before_revision="ai_autonomy.stop"
+        )
+        == "ai_autonomy.stop"
+    )
+    # Without that pin, the catalog split opens the read and rewrites the write.
+    assert enforced_permission("ai_autonomy.read", object()) is None
+    assert enforced_permission("ai_autonomy.stop", object()) == "settings.write"
+
+    from fastapi.params import Depends as DependsParam
+
+    from services.api.routers import config as config_router
+    from services.api.routers.autonomy import _READ, _WRITE
+    from services.api.routers.orchestrator import _STOP
+
+    def _gate(dep):
+        return dep.dependency if isinstance(dep, DependsParam) else dep
+
+    assert _gate(_READ[0]).before_revision == "ai_autonomy.read"
+    assert _gate(_WRITE[0]).before_revision == "ai_autonomy.write"
+    assert _gate(_STOP[0]).before_revision == "ai_autonomy.stop"
+    assert _gate(_STOP[0]).permission == "ai_autonomy.stop"
+    force = next(
+        route
+        for route in config_router.router.routes
+        if route.path == "/force-manual-approval" and "POST" in route.methods
+    )
+    assert any(
+        getattr(dep.call, "before_revision", None) == "ai_autonomy.write"
+        for dep in force.dependant.dependencies
+    )
+
+
 def test_a_retargeted_write_keeps_the_live_check_until_the_revision(monkeypatch):
     monkeypatch.setattr(
         "core.auth.permissions.catalog_revision_applied", lambda session: False

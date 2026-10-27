@@ -33,8 +33,10 @@ ROUTER_META = RouterMeta(
     auth=Auth.REQUIRED,
 )
 
-_READ = [permission_gate("ai_autonomy.read")]
-_WRITE = [permission_gate("ai_autonomy.write")]
+# These names are already the live checks. The catalog records them as splits
+# of settings.*, which would open the read and rewrite the write until 0008.
+_READ = [permission_gate("ai_autonomy.read", before_revision="ai_autonomy.read")]
+_WRITE = [permission_gate("ai_autonomy.write", before_revision="ai_autonomy.write")]
 
 
 class CeilingBody(BaseModel):

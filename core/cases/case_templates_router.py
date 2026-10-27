@@ -188,7 +188,7 @@ async def create_case_from_template(
         Created case
     """
     if data.assignee:
-        deny_unless(current_user.user_id, "cases.assign")
+        deny_unless(current_user.user_id, "cases.assign", session)
     # Before the call: it swallows errors, so a refusal inside would read as
     # "Failed to create case from template".
     assignee = resolve_assignee(session, data.assignee)

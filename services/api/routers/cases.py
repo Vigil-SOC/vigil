@@ -119,7 +119,7 @@ async def clear_all_cases(
     current_user: User = Depends(get_current_user),
 ):
     """Delete all cases and case-derived generated data (requires cases.delete)."""
-    deny_unless(current_user.user_id, "cases.delete")
+    deny_unless(current_user.user_id, "cases.delete", session)
 
     result = case_records_service.purge_all_cases(session)
     killed = len(result.killed_investigation_ids)
@@ -669,7 +669,7 @@ async def escalate_case(
 ):
     """Escalate case. Who escalated it is the signed-in user."""
     # Escalation hands the case to escalated_to, which is an owner change.
-    deny_unless(current_user.user_id, "cases.assign")
+    deny_unless(current_user.user_id, "cases.assign", session)
     # Before the call: it swallows errors into "Failed to escalate case".
     escalated_to = resolve_escalation_target(session, data.escalated_to)
     workflow_service = CaseWorkflowService()
