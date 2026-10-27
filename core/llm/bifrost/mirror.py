@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -51,7 +52,10 @@ _MIRROR_PREFIX = "bifrost-"
 # demands a quota project the gateway does not send while ``generateContent`` on
 # the same credential works. The check is broken, not the credential — the same
 # conclusion ``_UNMANAGED_PROVIDER_TYPES`` in admin.py reaches about vertex's
-# catalogue. A provider that CAN be listed and failed stays a real failure.
+# catalogue. An express (API-key) key is therefore probed with a real call,
+# pinned to that key (see ``_express_verdict``). A provider that CAN be listed
+# and failed stays a real failure. A service-account key stays unverifiable:
+# the probe only speaks for an API key.
 #
 # This module is the ONLY implementation. The console and scripts/reset-setup.sh
 # used to restate it in TypeScript and in bash-embedded Python; all three drifted
@@ -318,22 +322,154 @@ HEALTH_DISABLED = "disabled"
 # (``_cred_from_env``): nothing was ever configured here, which the console
 # tells apart from a key it should show as unverified or rejected.
 HEALTH_PLACEHOLDER = "placeholder"
+# The express probe did not run (network, gateway down, timeout, or a pin
+# that did not land on this key). Not a claim that the key is good.
+HEALTH_NOT_CHECKED = "not_checked"
 
-# What the console shows for ``unverifiable``. The gateway's own description
-# ("not supported for list models") names a check that cannot run and, used as
-# the badge, reads as a fault. The credential was not refused: calls still
-# route on the static catalogue, and nothing needs fixing.
-UNVERIFIABLE_NOTE = (
-    "Nothing to fix. Calls still route. The model list was not verified: "
-    "the gateway cannot list models for this key and uses its static catalogue."
+# Shown as the title of the Not checked chip. One sentence, no claim the key works.
+NOT_CHECKED_TITLE = "Couldn't reach Vertex to check this key."
+
+# Bifrost v2.2.1 pins one request to one stored key with ``x-bf-api-key-id``.
+# ``POST /v1/responses/input_tokens`` is count_tokens (free; not a generate)
+# and the response names the key that answered, so another key cannot stand in.
+# Express keys only reach Gemini models, so the model is a Gemini one.
+_PROBE_MODEL = "vertex/gemini-2.5-flash"
+_PROBE_TTL_S = 600.0
+_PROBE_TIMEOUT_S = 10.0
+_REASON_LIMIT = 140
+_INVALID_KEY = re.compile(
+    r"api key not valid|invalid(?: api)? key|unauthenticated|permission denied",
+    re.I,
 )
 
+# key id -> (monotonic time, verdict). A write drops the entry; see
+# ``invalidate_express_probe``.
+_express_probe_cache: Dict[str, tuple] = {}
+_express_probe_locks: Dict[str, asyncio.Lock] = {}
 
-def health_note(key: Dict[str, Any], health: str) -> Optional[str]:
-    """The line the console shows under a key's health, if it has one."""
-    if health == HEALTH_UNVERIFIABLE:
-        return UNVERIFIABLE_NOTE
-    return key.get("description") or None
+
+def _secret_text(value: Any) -> str:
+    if isinstance(value, dict):
+        text = value.get("value")
+        return text if isinstance(text, str) else ""
+    return value if isinstance(value, str) else ""
+
+
+def is_express_api_key(key: Dict[str, Any]) -> bool:
+    """A Vertex key whose credential is an API key, not a service account.
+
+    Bifrost picks the mode by whether ``value`` is set. A service account
+    lives in ``vertex_key_config.auth_credentials`` and leaves ``value`` empty.
+    """
+    auth = _secret_text((key.get("vertex_key_config") or {}).get("auth_credentials"))
+    if auth:
+        return False
+    return bool(_secret_text(key.get("value")))
+
+
+def invalidate_express_probe(key_id: str) -> None:
+    """Drop a cached probe. A key edit must not keep the previous verdict."""
+    _express_probe_cache.pop(key_id, None)
+
+
+def _probe_not_checked() -> Dict[str, Any]:
+    # Routable, as an unverifiable key with a resolved credential already is:
+    # the probe produced no evidence either way, so a missing network must not
+    # take a previously trusted key out of rotation.
+    return {
+        "health": HEALTH_NOT_CHECKED,
+        "routable": True,
+        "description": NOT_CHECKED_TITLE,
+    }
+
+
+def _short_reason(message: str) -> str:
+    text = " ".join(message.split())
+    if not text:
+        return "Vertex rejected this key."
+    if len(text) <= _REASON_LIMIT:
+        return text
+    return text[: _REASON_LIMIT - 1].rstrip() + "…"
+
+
+def _probe_message(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    err = payload.get("error")
+    if isinstance(err, dict):
+        message = err.get("message")
+        return message if isinstance(message, str) else ""
+    return ""
+
+
+def _routing(payload: Any) -> Dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    extra = payload.get("extra_fields")
+    if not isinstance(extra, dict):
+        return {}
+    info = extra.get("routing_info")
+    return info if isinstance(info, dict) else {}
+
+
+def classify_probe(response: httpx.Response, key_name: str) -> Dict[str, Any]:
+    """Healthy, rejected, or not checked, from one pinned countTokens response."""
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    routed = _routing(payload)
+    provider = routed.get("provider")
+    answered = routed.get("key")
+    if isinstance(provider, str) and provider and provider != "vertex":
+        return _probe_not_checked()
+    if isinstance(answered, str) and answered and key_name and answered != key_name:
+        return _probe_not_checked()
+    message = _probe_message(payload)
+    if response.status_code == 200 and not message:
+        return {"health": HEALTH_HEALTHY, "routable": True, "description": None}
+    if response.status_code in (401, 403) or _INVALID_KEY.search(message):
+        return {
+            "health": HEALTH_REJECTED,
+            "routable": False,
+            "description": _short_reason(message),
+        }
+    return _probe_not_checked()
+
+
+async def _post_count_tokens(key_id: str) -> httpx.Response:
+    """countTokens through Bifrost, pinned to ``key_id``.
+
+    No admin credential: inference does not require one. The provider key
+    stays in Bifrost; this request never carries it and nothing here logs
+    the response body, which can echo upstream detail.
+    """
+    url = f"{get_settings().bifrost_url.rstrip('/')}/v1/responses/input_tokens"
+    async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT_S) as client:
+        return await client.post(
+            url,
+            json={"model": _PROBE_MODEL, "input": "hi"},
+            headers={"x-bf-api-key-id": key_id},
+        )
+
+
+async def _express_verdict(key: Dict[str, Any]) -> Dict[str, Any]:
+    """Cached probe for one express key. A hit within the TTL does not call out."""
+    key_id = key.get("id") or ""
+    lock = _express_probe_locks.setdefault(key_id, asyncio.Lock())
+    async with lock:
+        now = time.monotonic()
+        hit = _express_probe_cache.get(key_id)
+        if hit is not None and now - hit[0] < _PROBE_TTL_S:
+            return hit[1]
+        try:
+            response = await _post_count_tokens(key_id)
+        except httpx.HTTPError:
+            verdict = _probe_not_checked()
+        else:
+            verdict = classify_probe(response, key.get("name") or "")
+        _express_probe_cache[key_id] = (time.monotonic(), verdict)
+        return verdict
 
 
 def key_health(key: Dict[str, Any], provider: Optional[str] = None) -> str:
@@ -382,15 +518,30 @@ async def routability() -> Dict[str, Any]:
         routable_here = is_key_less(p)
         for k in keys:
             key_id = k.get("id")
-            verdict = key_is_routable(k, name)
+            # An express key's list status cannot tell a bad key from a good
+            # one. The probe can. Anything else keeps the list verdict.
+            if (
+                name == "vertex"
+                and key_id
+                and k.get("enabled", True)
+                and is_express_api_key(k)
+                and not _cred_from_env(k)
+            ):
+                probed = await _express_verdict(k)
+                verdict = probed["routable"]
+                health = probed["health"]
+                description = probed["description"]
+            else:
+                verdict = key_is_routable(k, name)
+                health = key_health(k, name)
+                description = k.get("description") or None
             routable_here = routable_here or verdict
             if key_id:
-                health = key_health(k, name)
                 key_verdicts[key_id] = {
                     "provider": name,
                     "routable": verdict,
                     "health": health,
-                    "description": health_note(k, health),
+                    "description": description,
                 }
         provider_verdicts[name] = routable_here
 

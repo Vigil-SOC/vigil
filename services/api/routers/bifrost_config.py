@@ -514,7 +514,13 @@ class KeyVerdict(BaseModel):
     provider: str
     routable: bool
     health: Literal[
-        "healthy", "unverified", "unverifiable", "rejected", "disabled", "placeholder"
+        "healthy",
+        "unverified",
+        "unverifiable",
+        "rejected",
+        "disabled",
+        "placeholder",
+        "not_checked",
     ]
     description: Optional[str] = None
 
@@ -545,6 +551,29 @@ async def routability(
         # is still an upstream failure, not a bug in this handler.
         logger.warning("Routability check failed: %s", exc)
         raise HTTPException(status_code=502, detail=f"Bifrost unreachable: {exc}")
+
+
+@router.post("/routability/recheck/{key_id}", response_model=KeyVerdict)
+async def recheck_key(
+    key_id: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> Dict[str, Any]:
+    """Run the express probe again for one key, ignoring the cached verdict.
+
+    The following routability read hits that fresh cache entry, so the page
+    does not call the model a second time.
+    """
+    _require_settings_admin(current_user)
+    mirror.invalidate_express_probe(key_id)
+    try:
+        verdicts = await mirror.routability()
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("Routability recheck failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"Bifrost unreachable: {exc}")
+    verdict = (verdicts.get("keys") or {}).get(key_id)
+    if verdict is None:
+        raise HTTPException(status_code=404, detail="No such key")
+    return verdict
 
 
 @router.api_route("/{path:path}", methods=list(_METHODS))
@@ -613,6 +642,9 @@ async def proxy(
     if keys_match and request.method in _WRITE_METHODS and upstream.status_code < 400:
         provider = keys_match.group("provider")
         _persist_key_secret(request.method, key_id, body, upstream, provider)
+        written = _written_key_id(key_id, upstream)
+        if written:
+            mirror.invalidate_express_probe(written)
         await mirror.sync_provider(provider)
     elif upstream.status_code < 400 and (creates_provider or deletes_provider):
         # A key-less provider has no key write to trigger its row, and a

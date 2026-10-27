@@ -18,7 +18,7 @@ sys.path.insert(0, str(REPO))
 
 from core.llm.bifrost.mirror import (  # noqa: E402
     _cred_from_env,
-    health_note,
+    classify_probe,
     key_health,
     key_is_routable,
 )
@@ -78,24 +78,23 @@ def test_resolved_and_literal_keys_are_routable_without_status():
     assert key_is_routable({"value": LITERAL}, "openai") is True
 
 
-def test_a_vertex_key_that_cannot_list_models_is_not_a_refusal():
-    """Express mode cannot list models; the key still routes, and the note
-    says so instead of repeating the gateway's raw error."""
-    key = {
-        "value": LITERAL,
-        "status": "list_models_failed",
-        "description": "api key auth not supported for list models",
-    }
-    assert key_health(key, "vertex") == "unverifiable"
-    assert key_is_routable(key, "vertex") is True
-    note = health_note(key, "unverifiable")
-    assert note is not None
-    assert "Nothing to fix" in note
-    assert "not supported" not in note
-    # The same raw description on a provider that can be listed is a refusal.
-    refused = {**key, "description": "API key is invalid."}
-    assert key_health(refused, "openai") == "rejected"
-    assert health_note(refused, "rejected") == "API key is invalid."
+def test_probe_reason_is_shortened():
+    import httpx
+
+    message = "API key not valid. " + ("detail " * 40)
+    response = httpx.Response(
+        401,
+        json={
+            "error": {"message": message},
+            "extra_fields": {
+                "routing_info": {"provider": "vertex", "key": "vertex-express"}
+            },
+        },
+    )
+    verdict = classify_probe(response, "vertex-express")
+    assert verdict["health"] == "rejected"
+    assert len(verdict["description"]) <= 140
+    assert verdict["description"].endswith("…")
 
 
 def test_unverifiable_vertex_with_unresolved_creds_is_not_routable():
@@ -162,7 +161,10 @@ def test_unresolved_seed_is_a_placeholder_whatever_bifrost_tried():
 def _custom(name, *, key_less=False):
     return {
         "name": name,
-        "custom_provider_config": {"base_provider_type": "openai", "is_key_less": key_less},
+        "custom_provider_config": {
+            "base_provider_type": "openai",
+            "is_key_less": key_less,
+        },
     }
 
 
@@ -197,36 +199,162 @@ def _applied(monkeypatch, routes):
 KEY_OK = {"id": "k1", "status": "success", "value": LITERAL}
 
 
-@pytest.mark.asyncio
-async def test_routability_explains_an_unverifiable_key(monkeypatch):
+EXPRESS = {
+    "id": "vk",
+    "name": "vertex-express",
+    "status": "list_models_failed",
+    "description": "api key auth not supported for list models",
+    "value": LITERAL,
+    "enabled": True,
+    "vertex_key_config": {
+        "project_id": {"value": "vigil-lab"},
+        "region": {"value": "us-central1"},
+        "auth_credentials": {"value": ""},
+    },
+}
+
+GOOGLE_401 = {
+    "error": {
+        "type": "UNAUTHENTICATED",
+        "message": "API key not valid. Please pass a valid API key.",
+    },
+    "extra_fields": {
+        "routing_info": {
+            "provider": "vertex",
+            "model": "gemini-2.5-flash",
+            "key": "vertex-express",
+        }
+    },
+}
+
+
+def _probe_routes(keys):
+    return {
+        "providers": {"providers": [{"name": "vertex"}, {"name": "openai"}]},
+        "providers/vertex/keys": {"keys": keys},
+        "providers/openai/keys": {
+            "keys": [
+                {
+                    "id": "ok",
+                    "name": "openai-key",
+                    "status": "list_models_failed",
+                    "description": "API key is invalid.",
+                    "value": LITERAL,
+                    "enabled": True,
+                }
+            ]
+        },
+    }
+
+
+def _http_response(status, payload):
+    import httpx
+
+    return httpx.Response(status, json=payload)
+
+
+@pytest.fixture
+def probe(monkeypatch):
+    """Replace the countTokens call. The rest of routability runs for real."""
     from core.llm.bifrost import mirror
 
-    monkeypatch.setattr(
-        mirror,
-        "_get",
-        _Gateway(
-            {
-                "providers": {"providers": [{"name": "vertex"}]},
-                "providers/vertex/keys": {
-                    "keys": [
-                        {
-                            "id": "vk",
-                            "status": "list_models_failed",
-                            "description": "api key auth not supported for list models",
-                            "value": LITERAL,
-                            "enabled": True,
-                        }
-                    ]
-                },
-            }
-        ).get,
+    mirror._express_probe_cache.clear()
+    calls = []
+
+    async def fake(key_id):
+        calls.append(key_id)
+        outcome = fake.outcome
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    fake.outcome = _http_response(
+        200, {"input_tokens": 1, "extra_fields": GOOGLE_401["extra_fields"]}
     )
+    monkeypatch.setattr(mirror, "_post_count_tokens", fake)
+    monkeypatch.setattr(mirror, "_get", _Gateway(_probe_routes([EXPRESS])).get)
+    return fake, calls, mirror
+
+
+@pytest.mark.asyncio
+async def test_express_probe_healthy_rejected_and_not_checked(probe):
+    from core.llm.bifrost import mirror
+
+    fake, calls, _mirror = probe
+    healthy = await mirror.routability()
+    assert healthy["keys"]["vk"]["health"] == "healthy"
+    assert healthy["keys"]["vk"]["routable"] is True
+    assert healthy["keys"]["vk"]["description"] is None
+    # A provider the list check can judge is untouched, and was not probed.
+    assert healthy["keys"]["ok"]["health"] == "rejected"
+    assert healthy["keys"]["ok"]["description"] == "API key is invalid."
+    assert calls == ["vk"]
+
+    mirror.invalidate_express_probe("vk")
+    fake.outcome = _http_response(401, GOOGLE_401)
+    rejected = await mirror.routability()
+    assert rejected["keys"]["vk"]["health"] == "rejected"
+    assert rejected["keys"]["vk"]["routable"] is False
+    assert (
+        rejected["keys"]["vk"]["description"]
+        == "API key not valid. Please pass a valid API key."
+    )
+    assert "Nothing to fix" not in rejected["keys"]["vk"]["description"]
+
+    mirror.invalidate_express_probe("vk")
+    import httpx
+
+    fake.outcome = httpx.TimeoutException("timed out")
+    missed = await mirror.routability()
+    assert missed["keys"]["vk"]["health"] == "not_checked"
+    assert missed["keys"]["vk"]["routable"] is True
+    assert (
+        missed["keys"]["vk"]["description"]
+        == "Couldn't reach Vertex to check this key."
+    )
+
+
+@pytest.mark.asyncio
+async def test_express_probe_is_cached_until_the_key_is_edited(probe, monkeypatch):
+    from core.llm.bifrost import mirror
+
+    fake, calls, _mirror = probe
+    clock = {"t": 1_000.0}
+    monkeypatch.setattr(mirror.time, "monotonic", lambda: clock["t"])
+
+    await mirror.routability()
+    await mirror.routability()
+    assert calls == ["vk"]
+
+    clock["t"] += 60
+    await mirror.routability()
+    assert calls == ["vk"]
+
+    # A key edit drops the cache; the next read probes again.
+    mirror.invalidate_express_probe("vk")
+    await mirror.routability()
+    assert calls == ["vk", "vk"]
+
+
+@pytest.mark.asyncio
+async def test_a_vertex_service_account_is_not_probed(probe, monkeypatch):
+    from core.llm.bifrost import mirror
+
+    _fake, calls, _mirror = probe
+    service_account = {
+        "id": "sa",
+        "name": "vertex-sa",
+        "status": "list_models_failed",
+        "description": "quota project",
+        "value": {"value": ""},
+        "enabled": True,
+        "vertex_key_config": {"auth_credentials": {"value": "{***}"}},
+    }
+    monkeypatch.setattr(mirror, "_get", _Gateway(_probe_routes([service_account])).get)
     out = await mirror.routability()
-    verdict = out["keys"]["vk"]
-    assert verdict["health"] == "unverifiable"
-    assert verdict["routable"] is True
-    assert verdict["description"].startswith("Nothing to fix.")
-    assert "not supported" not in verdict["description"]
+    assert calls == []
+    assert out["keys"]["sa"]["health"] == "unverifiable"
+    assert out["keys"]["ok"]["health"] == "rejected"
 
 
 @pytest.mark.asyncio
@@ -235,7 +363,10 @@ async def test_a_key_less_provider_routes_with_no_key(monkeypatch):
 
     calls = _applied(
         monkeypatch,
-        {"providers/lab-gw": _custom("lab-gw", key_less=True), "providers/lab-gw/keys": {"keys": None}},
+        {
+            "providers/lab-gw": _custom("lab-gw", key_less=True),
+            "providers/lab-gw/keys": {"keys": None},
+        },
     )
     await mirror.sync_provider("lab-gw")
     assert calls == [("lab-gw", True)]
@@ -247,7 +378,10 @@ async def test_a_custom_provider_without_a_key_does_not_route(monkeypatch):
 
     calls = _applied(
         monkeypatch,
-        {"providers/lan-vllm": _custom("lan-vllm"), "providers/lan-vllm/keys": {"keys": None}},
+        {
+            "providers/lan-vllm": _custom("lan-vllm"),
+            "providers/lan-vllm/keys": {"keys": None},
+        },
     )
     await mirror.sync_provider("lan-vllm")
     assert calls == [("lan-vllm", False)]
@@ -267,7 +401,9 @@ async def test_two_custom_providers_are_judged_separately(monkeypatch):
     from core.llm.bifrost import mirror
 
     routes = {
-        "providers": {"providers": [_custom("lan-vllm"), _custom("lab-gw", key_less=True)]},
+        "providers": {
+            "providers": [_custom("lan-vllm"), _custom("lab-gw", key_less=True)]
+        },
         "providers/lan-vllm/keys": {"keys": [KEY_OK]},
         "providers/lab-gw/keys": {"keys": None},
     }

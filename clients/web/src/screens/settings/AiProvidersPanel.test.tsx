@@ -13,6 +13,7 @@ const modelParameters = vi.fn()
 const createKey = vi.fn(() => Promise.resolve({ data: { id: 'k1', status: 'success' } }))
 const updateKey = vi.fn(() => Promise.resolve({ data: { id: 'k1', status: 'success' } }))
 const routability = vi.fn()
+const recheckKey = vi.fn(() => Promise.resolve({ data: {} }))
 const createProvider = vi.fn(() => Promise.resolve({ data: { name: 'openai' } }))
 const setProviderBaseUrl = vi.fn(() => Promise.resolve({ data: {} }))
 const keyRefusal = vi.fn<(id?: string) => Promise<string | null>>(() => Promise.resolve(null))
@@ -37,6 +38,7 @@ vi.mock('../../services/bifrostApi', async (importOriginal) => ({
     setProviderBaseUrl: (...a: unknown[]) => setProviderBaseUrl(...(a as [])),
     removeProvider: (...a: unknown[]) => removeProvider(...(a as [])),
     removeKey: vi.fn(),
+    recheckKey: (...a: unknown[]) => recheckKey(...(a as [])),
   },
   secretText: (v: unknown) => (typeof v === 'string' ? v : ((v as { value?: string })?.value ?? '')),
   isMasked: (v: unknown) =>
@@ -193,9 +195,39 @@ describe('the keys table', () => {
     expect(screen.getAllByText('Good')).toHaveLength(2)
   })
 
-  it('explains a key whose model list cannot be checked, and does not call it a fault', async () => {
-    const note =
-      'Nothing to fix. Calls still route. The model list was not verified: the gateway cannot list models for this key and uses its static catalogue.'
+  it('badges an express key from the probe, and never claims a key is fine unasked', async () => {
+    const express = {
+      id: 'vk',
+      name: 'vertex-express',
+      value: { value: 'AQ.***key' },
+      models: ['*'],
+      weight: 1,
+      enabled: true,
+      status: 'list_models_failed',
+      description: 'api key auth not supported for list models',
+      vertex_key_config: { auth_credentials: { value: '' } },
+    }
+    const mountExpress = async (health: string, description?: string) => {
+      listProviders.mockResolvedValue({ data: { providers: [{ name: 'vertex' }] } })
+      listKeys.mockResolvedValue({ data: { keys: [express], total: 1 } })
+      providerModels.mockResolvedValue({ data: { models: [], total: 0 } })
+      routability.mockResolvedValue({
+        data: {
+          providers: { vertex: health !== 'rejected' },
+          keys: { vk: { provider: 'vertex', routable: health !== 'rejected', health, description } },
+        },
+      })
+      render(<AiProvidersPanel notify={() => {}} />)
+      expect(await screen.findByText('vertex-express')).toBeInTheDocument()
+    }
+
+    await mountExpress('healthy')
+    expect(screen.getByText('Good')).toBeInTheDocument()
+    expect(screen.queryByText('Nothing to fix')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Calls still route/)).not.toBeInTheDocument()
+  })
+
+  it('shows a rejected express key as Poor with the probe reason', async () => {
     listProviders.mockResolvedValue({ data: { providers: [{ name: 'vertex' }] } })
     listKeys.mockResolvedValue({
       data: {
@@ -206,8 +238,39 @@ describe('the keys table', () => {
           models: ['*'],
           weight: 1,
           enabled: true,
-          status: 'list_models_failed',
-          description: 'api key auth not supported for list models',
+          vertex_key_config: { auth_credentials: { value: '' } },
+        }],
+        total: 1,
+      },
+    })
+    providerModels.mockResolvedValue({ data: { models: [], total: 0 } })
+    routability.mockResolvedValue({
+      data: {
+        providers: { vertex: false },
+        keys: { vk: { provider: 'vertex', routable: false, health: 'rejected', description: 'API key not valid. Please pass a valid API key.' } },
+      },
+    })
+    render(<AiProvidersPanel notify={() => {}} />)
+    expect(await screen.findByText('Poor')).toBeInTheDocument()
+    expect(screen.getByText('Poor').closest('span')?.parentElement).toHaveAttribute(
+      'title',
+      'API key not valid. Please pass a valid API key.',
+    )
+    expect(screen.queryByText('Nothing to fix')).not.toBeInTheDocument()
+  })
+
+  it('shows Not checked when the express probe could not run, and Test again runs it', async () => {
+    listProviders.mockResolvedValue({ data: { providers: [{ name: 'vertex' }] } })
+    listKeys.mockResolvedValue({
+      data: {
+        keys: [{
+          id: 'vk',
+          name: 'vertex-express',
+          value: { value: 'AQ.***key' },
+          models: ['*'],
+          weight: 1,
+          enabled: true,
+          vertex_key_config: { auth_credentials: { value: '' } },
         }],
         total: 1,
       },
@@ -216,16 +279,16 @@ describe('the keys table', () => {
     routability.mockResolvedValue({
       data: {
         providers: { vertex: true },
-        keys: { vk: { provider: 'vertex', routable: true, health: 'unverifiable', description: note } },
+        keys: { vk: { provider: 'vertex', routable: true, health: 'not_checked', description: "Couldn't reach Vertex to check this key." } },
       },
     })
     render(<AiProvidersPanel notify={() => {}} />)
-    const shown = await screen.findByText(/Nothing to fix/)
-    expect(shown).toHaveAttribute('title', note)
-    expect(screen.getByText('vertex-express')).toBeInTheDocument()
-    expect(screen.queryByText('Unverifiable')).not.toBeInTheDocument()
-    expect(screen.queryByText('Poor')).not.toBeInTheDocument()
-    expect(screen.queryByText(/not supported for list models/)).not.toBeInTheDocument()
+    const chip = await screen.findByText('Not checked')
+    expect(chip).toHaveAttribute('title', "Couldn't reach Vertex to check this key.")
+    expect(screen.queryByText('Nothing to fix')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Calls still route/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Test again' }))
+    await waitFor(() => expect(recheckKey).toHaveBeenCalledWith('vk'))
   })
 
   it('shows a rejected key as Poor, and never invents Fair', async () => {
