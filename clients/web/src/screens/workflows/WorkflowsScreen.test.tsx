@@ -79,6 +79,6 @@ describe('Agents & workflows header', () => {
     fireEvent.click(await screen.findByRole('tab', { name: 'Agents 3' }))
     expect(screen.queryByRole('dialog')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'New workflow' }))
-    expect(screen.getByRole('dialog')).toHaveTextContent('Generate with AI')
+    expect(screen.getByRole('dialog')).toHaveTextContent('Build it yourself')
   })
 })
