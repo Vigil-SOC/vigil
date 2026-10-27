@@ -64,17 +64,21 @@ function alertOf(item: unknown): Hit | null {
   return hitFrom(data?.finding_id, data?.title, { dataSource: str(data?.data_source), severity: str(data?.severity) })
 }
 
-async function searchAll(query: string): Promise<SearchHits> {
+// Below this a trigram index can't serve the match, and an id isn't this short.
+const MIN_SEARCH_CHARS = 3
+
+async function searchAll(query: string, signal: AbortSignal): Promise<SearchHits> {
+  const broad = query.length >= MIN_SEARCH_CHARS
   const [caseExact, findingExact, text, ioc, alerts] = await Promise.all([
-    casesApi.getById(query).then((res) => {
+    casesApi.getById(query, signal).then((res) => {
       const data = res.data as { priority?: unknown; status?: unknown }
       return hitFrom(res.data.case_id, res.data.title, { priority: str(data.priority), status: str(data.status) })
     }).catch(() => null),
-    findingsApi.getById(query).then((res) => alertOf(res.data)).catch(() => null),
-    api.get('/cases/search/full-text', { params: { query } }).then((res) => res.data).catch(() => null),
-    api.get('/cases/search/by-ioc', { params: { ioc_value: query } }).then((res) => res.data).catch(() => null),
+    findingsApi.getById(query, signal).then((res) => alertOf(res.data)).catch(() => null),
+    broad ? api.get('/cases/search/full-text', { params: { query, limit: 5 }, signal }).then((res) => res.data).catch(() => null) : null,
+    broad ? api.get('/cases/search/by-ioc', { params: { ioc_value: query }, signal }).then((res) => res.data).catch(() => null) : null,
     // Matches entity_context too, so a host, user or IP finds its alerts.
-    findingsApi.getAll({ search: query, limit: 5 }).then((res) => (res.data as { findings?: unknown })?.findings).catch(() => null),
+    broad ? findingsApi.getAll({ search: query, limit: 5 }, signal).then((res) => (res.data as { findings?: unknown })?.findings).catch(() => null) : null,
   ])
   const textData = text as { cases?: unknown; comments?: unknown; evidence?: unknown } | null
   return {
@@ -181,8 +185,9 @@ export default function CommandBar({
       return
     }
     let live = true
+    const round = new AbortController()
     const timer = setTimeout(() => {
-      void searchAll(q).then((next) => {
+      void searchAll(q, round.signal).then((next) => {
         if (!live) return
         setHits(next)
         setActive(0)
@@ -190,6 +195,7 @@ export default function CommandBar({
     }, 150)
     return () => {
       live = false
+      round.abort()
       clearTimeout(timer)
     }
   }, [open, query])

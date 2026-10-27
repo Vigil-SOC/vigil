@@ -9,7 +9,7 @@ import re
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import String, and_
+from sqlalchemy import String, Text, and_
 from sqlalchemy import case as sql_case
 from sqlalchemy import cast, distinct, exists, func, literal, or_, select, true
 from sqlalchemy.dialects.postgresql import JSONB
@@ -218,7 +218,7 @@ def _finding_filters(
             or_(
                 Finding.finding_id.ilike(pattern),
                 Finding.description.ilike(pattern),
-                cast(Finding.entity_context, String).ilike(pattern),
+                cast(Finding.entity_context, Text).ilike(pattern),
             )
         )
     exclusion_filter = exclusion_view_filter(exclusions)
