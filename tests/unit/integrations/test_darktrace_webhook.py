@@ -128,8 +128,22 @@ class TestTransforms:
             "mac": "aa:bb:cc:dd:ee:ff",
             "dst_ip": "203.0.113.9",
         }
-        assert f["mitre_predictions"] == {"T1071.001": 0.7, "T1048": 0.7}
+        assert f["mitre_predictions"] == {"T1071.001": None, "T1048": None}
         assert f["evidence_links"][0]["ref"].endswith("/#modelbreach/4242")
+
+    def test_model_score_stays_beside_an_unscored_technique(self):
+        svc = DarktraceIngestionService()
+        payload = {
+            **MODEL_BREACH_SAMPLE,
+            "model": {
+                "name": "Device / Anomalous Connection",
+                "tags": [{"name": "T1071.001", "score": 0.4}, "T1048"],
+            },
+        }
+        f = svc.transform_model_breach(payload)
+        assert f["anomaly_score"] == pytest.approx(0.87)
+        assert f["severity"] == "high"
+        assert f["mitre_predictions"] == {"T1071.001": None, "T1048": None}
 
     def test_model_breach_idempotent_finding_id(self):
         svc = DarktraceIngestionService()
@@ -148,7 +162,7 @@ class TestTransforms:
         # groupScore 92 is on 0-100 scale -> clamped to 0.92
         assert f["anomaly_score"] == pytest.approx(0.92)
         assert f["severity"] == "critical"
-        assert f["mitre_predictions"] == {"T1071": 0.7}
+        assert f["mitre_predictions"] == {"T1071": None}
         assert f["entity_context"]["src_ip"] == "10.0.0.5"
         assert "aianalyst/incident" in f["evidence_links"][0]["ref"]
 
@@ -182,18 +196,64 @@ class TestTransforms:
         assert f["severity"] == severity
 
     @pytest.mark.parametrize(
-        "score,anomaly", [(0.8, 0.8), (80, 0.8), (None, 0.5), ("junk", 0.5)]
+        "score,anomaly", [(0.8, 0.8), (80, 0.8), (0, 0.0), (None, None), ("junk", None)]
     )
     def test_ai_analyst_score_fallback_guesses_scale(self, score, anomaly):
         svc = DarktraceIngestionService()
         f = svc.transform_ai_analyst({"uuid": "sc", "score": score})
-        assert f["anomaly_score"] == pytest.approx(anomaly)
+        if anomaly is None:
+            assert f["anomaly_score"] is None
+            assert f["severity"] == "medium"
+        else:
+            assert f["anomaly_score"] == pytest.approx(anomaly)
+
+    @pytest.mark.parametrize(
+        "group",
+        ["missing", None, "", "  ", "junk", float("nan"), float("inf"), float("-inf")],
+    )
+    def test_unusable_group_score_falls_back_to_score(self, group):
+        svc = DarktraceIngestionService()
+        payload = {"uuid": "fb", "score": 80}
+        if group != "missing":
+            payload["groupScore"] = group
+        f = svc.transform_ai_analyst(payload)
+        assert f["anomaly_score"] == pytest.approx(0.8)
+        assert f["severity"] == "high"
+
+    def test_real_group_score_wins_over_score(self):
+        svc = DarktraceIngestionService()
+        f = svc.transform_ai_analyst({"uuid": "both", "groupScore": 50, "score": 0.1})
+        assert f["anomaly_score"] == pytest.approx(0.5)
+
+    @pytest.mark.parametrize(
+        "group,score",
+        [
+            ("junk", None),
+            (float("nan"), float("inf")),
+            (float("-inf"), "  "),
+        ],
+    )
+    def test_unusable_scores_are_unscored_medium_not_critical(self, group, score):
+        svc = DarktraceIngestionService()
+        f = svc.transform_ai_analyst(
+            {"uuid": "none", "groupScore": group, "score": score}
+        )
+        assert f["anomaly_score"] is None
+        assert f["severity"] == "medium"
+
+    @pytest.mark.parametrize("score", [None, float("nan"), float("inf"), float("-inf")])
+    def test_model_breach_without_usable_score_is_medium(self, score):
+        svc = DarktraceIngestionService()
+        f = svc.transform_model_breach({"pbid": 9, "score": score})
+        assert f is not None
+        assert f["anomaly_score"] is None
+        assert f["severity"] == "medium"
 
     def test_system_status_warning_maps_to_medium(self):
         svc = DarktraceIngestionService()
         f = svc.transform_system_status(SYSTEM_STATUS_SAMPLE)
         assert f is not None
-        assert f["anomaly_score"] == pytest.approx(0.2)
+        assert f["anomaly_score"] is None
         assert f["severity"] == "medium"  # "warning" -> medium via normalize
         assert f["data_source"] == "darktrace"
 

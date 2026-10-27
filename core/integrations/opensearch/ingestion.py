@@ -86,14 +86,17 @@ def severity_of(source: Mapping[str, Any]) -> Optional[str]:
     return None
 
 
-def mitre_from_tags(source: Mapping[str, Any]) -> Dict[str, float]:
-    """MITRE ATT&CK technique ids from Sigma ``attack.*`` tags on the rules."""
-    predictions: Dict[str, float] = {}
+def mitre_from_tags(source: Mapping[str, Any]) -> Dict[str, Optional[float]]:
+    """MITRE ATT&CK technique ids from Sigma ``attack.*`` tags on the rules.
+
+    A tag names the technique. Sigma does not put a confidence on it.
+    """
+    predictions: Dict[str, Optional[float]] = {}
     for query in _queries(source):
         for tag in _as_list(query.get("tags")):
             match = _TECHNIQUE_TAG.match(str(tag).strip())
             if match:
-                predictions[match.group(1).upper()] = 0.9
+                predictions[match.group(1).upper()] = None
     return predictions
 
 
@@ -288,8 +291,8 @@ class OpenSearchIngestion(SIEMIngestionService):
                 "title": title,
                 "description": description[:500],
                 "entity_context": entity_context,
-                "raw_event": alert,
-                "anomaly_score": 0.5,
+                "raw_data": alert,
+                "anomaly_score": None,
                 "mitre_predictions": mitre_from_tags(source),
                 "metadata": {
                     "opensearch_finding_id": finding_ref,

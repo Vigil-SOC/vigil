@@ -204,8 +204,9 @@
     "findings": [
       {
         "finding_id": "dl-001",
+        "title": "Email with ISO attachment delivered to finance user",
         "severity": "medium",
-        "anomaly_score": 0.0,
+        "anomaly_score": null,
         "data_source": "proofpoint",
         "cluster_id": null,
         "timestamp": "2026-10-10T13:02:11Z",
@@ -225,8 +226,9 @@
       },
       {
         "finding_id": "dl-002",
+        "title": "Shortcut executed from mounted ISO volume",
         "severity": "medium",
-        "anomaly_score": 0.0,
+        "anomaly_score": null,
         "data_source": "crowdstrike",
         "cluster_id": null,
         "timestamp": "2026-10-10T13:09:44Z",
@@ -243,8 +245,9 @@
       },
       {
         "finding_id": "dl-003",
+        "title": "Rundll32 loading DLL from user Temp directory",
         "severity": "high",
-        "anomaly_score": 0.0,
+        "anomaly_score": null,
         "data_source": "crowdstrike",
         "cluster_id": null,
         "timestamp": "2026-10-10T13:09:47Z",
@@ -270,8 +273,9 @@
       },
       {
         "finding_id": "dl-004",
+        "title": "Periodic HTTPS connections to rare domain",
         "severity": "high",
-        "anomaly_score": 0.0,
+        "anomaly_score": null,
         "data_source": "zscaler",
         "cluster_id": null,
         "timestamp": "2026-10-10T17:30:00Z",
@@ -292,8 +296,9 @@
       },
       {
         "finding_id": "dl-005",
+        "title": "LSASS memory access via comsvcs.dll MiniDump",
         "severity": "critical",
-        "anomaly_score": 0.0,
+        "anomaly_score": null,
         "data_source": "crowdstrike",
         "cluster_id": null,
         "timestamp": "2026-10-10T19:41:05Z",
@@ -314,8 +319,9 @@
       },
       {
         "finding_id": "dl-006",
+        "title": "New SMB sessions from workstation to payment file server",
         "severity": "high",
-        "anomaly_score": 0.0,
+        "anomaly_score": null,
         "data_source": "darktrace",
         "cluster_id": null,
         "timestamp": "2026-10-11T02:14:22Z",

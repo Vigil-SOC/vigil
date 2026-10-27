@@ -49,6 +49,17 @@ class MintedCredential(NamedTuple):
     record: McpCredential
 
 
+class AuthenticatedCredential(NamedTuple):
+    """The user a credential stands for, and which credential it was.
+
+    ``authenticate`` used to return only the user, and the credential id was
+    gone before the MCP surface could put it on the close.
+    """
+
+    user: User
+    credential_id: str
+
+
 def looks_like_mcp_token(value: str) -> bool:
     """Whether ``value`` is presented as one of these credentials.
 
@@ -109,8 +120,10 @@ def mint(
         return MintedCredential(token=token, record=record)
 
 
-def authenticate(token: str, session: Optional[Session] = None) -> Optional[User]:
-    """The user a token stands for, or None.
+def authenticate(
+    token: str, session: Optional[Session] = None
+) -> Optional[AuthenticatedCredential]:
+    """The user a token stands for, and the credential id, or None.
 
     None covers every way this can fail -- not one of ours, unknown, revoked,
     expired, or belonging to a deactivated account -- because a caller holding
@@ -149,7 +162,7 @@ def authenticate(token: str, session: Optional[Session] = None) -> Optional[User
             # later. The Ledger records what was done; this only records that
             # something was.
             record.last_used_at = utcnow()
-            return user
+            return AuthenticatedCredential(user, record.credential_id)
     except Exception:  # noqa: BLE001 - a database that cannot answer is not a yes
         # A store this cannot read has not authenticated anybody. Saying so is
         # a refusal, not an error: the caller is told it is not authenticated,

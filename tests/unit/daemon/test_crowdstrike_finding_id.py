@@ -27,6 +27,23 @@ def test_legacy_converter_keeps_same_host_detections_distinct():
     assert all(len(i) <= FINDING_ID_MAX for i in ids)
 
 
+def test_legacy_technique_is_unknown_and_max_confidence_stays():
+    finding = DataPoller._crowdstrike_detection_to_finding(
+        None,
+        {
+            "detection_id": "det-1",
+            "max_severity_displayname": "High",
+            "max_confidence": 80,
+            "behaviors": [
+                {"technique": "T1059", "confidence": 40},
+                {"technique": "T1071"},
+            ],
+        },
+    )
+    assert finding["anomaly_score"] == 0.8
+    assert finding["mitre_predictions"] == {"T1059": None, "T1071": None}
+
+
 def test_legacy_converter_leaves_a_short_id_intact():
     finding = DataPoller._crowdstrike_detection_to_finding(
         None, {"detection_id": "det-1", "max_severity_displayname": "High"}

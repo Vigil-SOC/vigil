@@ -33,10 +33,10 @@ def test_schema_is_valid_2020_12() -> None:
 def test_sample_pack_is_accepted() -> None:
     res = check_pack(BUILT.read_bytes(), **OK)
     assert res.ok, res.errors
-    assert len(res.rules) == 12 and res.skipped_rules == []
+    assert len(res.rules) == 13 and res.skipped_rules == []
     assert res.manifest["counts"] == {
-        "rules": 12,
-        "runbooks": 1,
+        "rules": 13,
+        "runbooks": 2,
         "suppressions": 4,
         "catalog_entries": 16,
     }
@@ -63,6 +63,12 @@ def test_sample_covers_every_pack_item_and_all_three_fault_classes() -> None:
         if p.startswith("rules/")
     }
     assert lanes == {1, 2, 3}
+    actions = {
+        yaml.safe_load(t)["action"]["type"]
+        for p, t in doc["files"].items()
+        if p.startswith("runbooks/")
+    }
+    assert actions == {"restart_service", "stop_stale_listener"}
 
 
 @pytest.mark.parametrize("name", sorted(EXPECTED), ids=str)

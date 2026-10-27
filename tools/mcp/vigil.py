@@ -9,6 +9,7 @@ from mcp.server.mcpserver import MCPServer
 from core.agents import tool_registry
 from core.auth.permissions import permission_refusal
 from core.cases.agent_closure import actor, service_session
+from core.cases.assignee import resolve_assignee, resolve_escalation_target
 from core.cases.case_status import CaseStatus
 from core.response.approval_service import ActionStatus, ActionType, ApprovalService
 from core.storage.schemas.case_entities import (
@@ -144,7 +145,7 @@ def list_findings(
 
 @mcp.tool()
 def get_finding(finding_id: str) -> str:
-    """Get a specific finding by ID."""
+    """Get a specific finding by ID. A null confidence in mitre_predictions means the source named the technique and gave no confidence: it is unknown, not 0."""
     return _call(tool_registry.get_finding, finding_id=finding_id)
 
 
@@ -190,7 +191,7 @@ async def replay_hunt(
 
 @mcp.tool()
 def get_technique_rollup(min_confidence: float = 0.0, time_range: str = "all") -> str:
-    """Roll up ATT&CK techniques by finding count and severity."""
+    """Roll up ATT&CK techniques by finding count and severity. min_confidence applies only to techniques with a confidence: at 0 an occurrence with no confidence is counted, above 0 it is excluded and counted in excluded_occurrences on the response."""
     return _call(
         tool_registry.get_technique_rollup,
         min_confidence=min_confidence,
@@ -217,7 +218,7 @@ def list_cases(
 
 @mcp.tool()
 def get_case(case_id: str) -> str:
-    """Get one case."""
+    """Get one case. A null confidence in mitre_predictions means the source named the technique and gave no confidence: it is unknown, not 0."""
     return _call(tool_registry.get_case, case_id=case_id)
 
 
@@ -930,7 +931,7 @@ def add_case_task(
                 case_id,
                 title=title,
                 description=description,
-                assignee=assignee,
+                assignee=resolve_assignee(session, assignee),
                 priority=priority,
                 due_date=(
                     datetime.fromisoformat(due_date.replace("Z", "+00:00"))
@@ -978,7 +979,7 @@ def update_case_task(
     try:
         from core.cases import case_records_service
 
-        updates = {"status": status, "assignee": assignee}
+        updates = {"status": status}
         if status == "completed":
             updates["completed_at"] = utcnow()
 
@@ -986,6 +987,12 @@ def update_case_task(
             task = case_records_service.update_task(session, task_id, updates)
             if task is None:
                 return jdump({"error": f"Task {task_id} not found"})
+            if assignee is not None:
+                # Blank unassigns. A refusal raises before the commit.
+                task.assignee = resolve_assignee(
+                    session, assignee, current=task.assignee
+                )
+                session.flush()
             payload = CaseTaskSchema.dump(task)
             case_id = task.case_id
             title = task.title
@@ -1126,6 +1133,8 @@ def escalate_case(
         from core.cases.case_workflow_service import CaseWorkflowService
 
         with service_session() as session:
+            # Before the call: it swallows errors into a bare False.
+            escalated_to = resolve_escalation_target(session, escalated_to)
             escalated = CaseWorkflowService().escalate_case(
                 case_id=case_id,
                 escalated_from=actor(),
@@ -1199,7 +1208,7 @@ def close_case(
     """
     try:
         from core.cases.case_workflow_service import CaseWorkflowService
-        from core.cases.closure import ClosedByKind, ClosureCategory
+        from core.cases.closure import ClosureCategory
 
         # Stated here rather than left to the mapping. An unknown category
         # closes the Case and then reaches memory as nothing -- the Distil has
@@ -1226,12 +1235,6 @@ def close_case(
                 case_id,
                 closure_category=category,
                 closed_by=actor(),
-                # A credential here is one a program holds, so this is a
-                # program acting with someone's standing rather than that
-                # person closing it. Episodic memory reads this as Trust, and
-                # `analyst` is the one record this system will not let an agent
-                # claim on its own behalf.
-                closed_by_kind=ClosedByKind.AGENT,
                 root_cause=root_cause,
                 lessons_learned=lessons_learned,
                 recommendations=recommendations,

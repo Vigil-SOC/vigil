@@ -1,12 +1,12 @@
 """Which retention and erasure announcements have not left the box (#2769).
 
-Continues the single chain at ``0009_drop_origin_run_ids``.
+Continues the single chain at ``0015_clear_invented_mitre_conf``.
 """
 
 from core.upgrade.revision import run_sql
 
 revision = "0009_retention"
-down_revision = "0009_drop_origin_run_ids"
+down_revision = "0015_clear_invented_mitre_conf"
 
 
 def upgrade() -> None:

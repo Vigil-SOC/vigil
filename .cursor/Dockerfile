@@ -425,3 +425,13 @@ RUN sudo apt-get update \
        shellcheck=0.9.0-1 \
     && sudo rm -rf /var/lib/apt/lists/* \
     && shellcheck --version
+
+# medic.yml (and medic-helm.yml) export this for the whole workflow, then run
+# `uv run --project services/medic --frozen pytest` with no variable on the
+# command. `install` already syncs that project into the repo-root `.venv`.
+# The path is relative to the project directory, which is how those workflows
+# resolve it. Without the variable, that command creates services/medic/.venv
+# and installs the lockfile again. Gateway and dockerproxy jobs in the same
+# workflow use this path too; their READMEs pass a different value on the
+# command, and that overrides this.
+ENV UV_PROJECT_ENVIRONMENT=../../.venv

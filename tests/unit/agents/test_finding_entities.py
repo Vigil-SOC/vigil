@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from core.agents import tool_registry
-from core.agents.tool_registry import execute_backend_tool
+from core.agents.tool_registry import _compact, execute_backend_tool
 from core.cases.linked_entities import finding_entity_summary
 from core.ingestion.ingestion_service import to_internal_finding
 
@@ -103,6 +103,19 @@ def test_the_keys_sources_write_are_read_under_one_kind_each():
         "hashes": ["ab" * 32],
         "processes": ["rundll32.exe"],
     }
+
+
+@pytest.mark.parametrize(
+    "finding,expected",
+    [
+        ({"finding_id": "x"}, None),
+        ({"finding_id": "x", "anomaly_score": None}, None),
+        ({"finding_id": "x", "anomaly_score": 0.0}, 0.0),
+        ({"finding_id": "x", "anomaly_score": 0.91}, 0.91),
+    ],
+)
+def test_compact_keeps_a_real_zero_and_returns_null_when_unscored(finding, expected):
+    assert _compact(finding)["anomaly_score"] == expected
 
 
 def test_a_finding_with_no_context_names_nothing():

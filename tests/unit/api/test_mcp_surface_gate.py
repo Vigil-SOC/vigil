@@ -8,6 +8,7 @@ acts as the person its credential belongs to.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -174,6 +175,7 @@ def test_the_development_credential_resolves_to_the_developer():
 
 class _SomeoneWithACredential:
     username = "nestor"
+    user_id = "u-nestor"
 
 
 @pytest.fixture
@@ -190,7 +192,9 @@ def test_a_caller_on_a_domain_reaches_the_server(client_on_a_domain):
     """A deployment behind a domain name is the point, not an edge case."""
     with patch("services.api.mcp_surface.is_enabled", return_value=True), patch(
         "services.api.mcp_surface.authenticate",
-        return_value=_SomeoneWithACredential(),
+        return_value=SimpleNamespace(
+            user=_SomeoneWithACredential(), credential_id="mcpc-1"
+        ),
     ):
         response = client_on_a_domain.post(
             "/mcp",
@@ -257,7 +261,10 @@ _MCP_HEADERS = {
 def test_one_callers_session_is_not_another_callers(client_on_a_domain):
     """Learning a session id must not be enough to act on that session."""
     with patch("services.api.mcp_surface.is_enabled", return_value=True):
-        with patch("services.api.mcp_surface.authenticate", return_value=_Alice()):
+        with patch(
+            "services.api.mcp_surface.authenticate",
+            return_value=SimpleNamespace(user=_Alice(), credential_id="mcpc-alice"),
+        ):
             opened = client_on_a_domain.post(
                 "/mcp", json=_INITIALIZE, headers=_MCP_HEADERS
             )
@@ -265,7 +272,10 @@ def test_one_callers_session_is_not_another_callers(client_on_a_domain):
         session_id = opened.headers.get("mcp-session-id")
         assert session_id, "the server did not hand back a session id"
 
-        with patch("services.api.mcp_surface.authenticate", return_value=_Bob()):
+        with patch(
+            "services.api.mcp_surface.authenticate",
+            return_value=SimpleNamespace(user=_Bob(), credential_id="mcpc-bob"),
+        ):
             borrowed = client_on_a_domain.post(
                 "/mcp",
                 json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"},

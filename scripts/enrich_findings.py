@@ -191,6 +191,14 @@ def bulk_enrich_from_file(file_path: Path) -> int:
         return 0
 
 
+def _score_label(finding: Dict[str, Any]) -> str:
+    """A source score as ``0.00``, or ``not scored`` when the source sent none."""
+    score = finding.get('anomaly_score')
+    if score is None:
+        return 'not scored'
+    return f'{float(score):.2f}'
+
+
 def list_unenriched_findings(data_source: str = None, limit: int = 20):
     """
     List findings that haven't been enriched with MITRE techniques.
@@ -213,9 +221,9 @@ def list_unenriched_findings(data_source: str = None, limit: int = 20):
     for finding in unenriched[:limit]:
         finding_id = finding.get('finding_id', '')
         source = finding.get('data_source', 'unknown')
-        score = finding.get('anomaly_score', 0.0)
+        score = _score_label(finding)
         severity = finding.get('severity', 'unset')
-        print(f"{finding_id:<30} {source:<15} {score:<15.2f} {severity:<10}")
+        print(f"{finding_id:<30} {source:<15} {score:<15} {severity:<10}")
     
     if len(unenriched) > limit:
         print(f"\n... and {len(unenriched) - limit} more")
@@ -242,7 +250,7 @@ def export_enrichment_template(output_file: Path, data_source: str = None):
         finding_id = finding.get('finding_id')
         template[finding_id] = {
             "_comment": f"Data source: {finding.get('data_source')}, "
-                       f"Score: {finding.get('anomaly_score', 0):.2f}",
+                       f"Score: {_score_label(finding)}",
             "mitre_predictions": {},
             "severity": finding.get('severity', 'medium'),
         }

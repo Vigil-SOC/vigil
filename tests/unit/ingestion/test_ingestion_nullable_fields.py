@@ -15,6 +15,7 @@ from core.ingestion.ingestion_service import (  # noqa: E402
     ID_HASH_WIDTH,
     MITRE_TACTIC_MAP,
     IngestionService,
+    _optional_float,
 )
 
 pytestmark = pytest.mark.unit
@@ -61,7 +62,7 @@ def test_parquet_null_score_severity_and_time_stay_null(service):
     assert finding["anomaly_score"] is None
     assert finding["severity"] is None
     assert finding["timestamp"] is None
-    assert finding["mitre_predictions"]["Discovery"] == 1.0
+    assert finding["mitre_predictions"]["Discovery"] is None
 
 
 def test_mitre_tactic_map_matches_loglm_class_order():
@@ -89,14 +90,22 @@ def test_mitre_tactic_map_matches_loglm_class_order():
 )
 def test_parquet_mitre_pred_maps_class_index(service, pred, key):
     finding = service._parquet_row_to_finding(_parquet_classified(mitre_pred=pred))
-    assert finding["mitre_predictions"] == {key: 1.0}
+    assert finding["mitre_predictions"] == {key: None}
 
 
 def test_parquet_mitre_logits_index_names_tactic(service):
     logits = [0.0] * 10
     logits[7] = 10.0
     finding = service._parquet_row_to_finding(_parquet_classified(mitre_logits=logits))
-    assert list(finding["mitre_predictions"]) == ["Discovery"]
+    assert finding["mitre_predictions"] == {"Discovery": 0.9996}
+
+
+def test_parquet_argmax_is_unknown_beside_a_confidence_score(service):
+    finding = service._parquet_row_to_finding(
+        _parquet_classified(confidence_score=0.42)
+    )
+    assert finding["mitre_predictions"] == {"Discovery": None}
+    assert finding["anomaly_score"] == 0.42
 
 
 def test_parquet_does_not_derive_score_or_severity_from_incident_pred(service):
@@ -123,7 +132,53 @@ def test_tempo_csv_null_confidence_and_time_stay_null(service):
     assert finding["anomaly_score"] is None
     assert finding["severity"] is None
     assert finding["timestamp"] is None
-    assert finding["mitre_predictions"] == {"Command and Control": 1.0}
+    assert finding["mitre_predictions"] == {"Command and Control": None}
+
+
+def test_tempo_tactic_is_unknown_beside_incident_confidence(service):
+    finding = service._tempo_csv_row_to_finding(
+        {
+            "sequence_id": "s-1",
+            "mitre_tactic": "Command and Control",
+            "incident_confidence": "85",
+        }
+    )
+    assert finding["mitre_predictions"] == {"Command and Control": None}
+    assert finding["anomaly_score"] == 0.85
+    assert finding["entity_context"]["confidence_score"] == 0.85
+
+
+def test_csv_mitre_cell_keeps_a_score_beside_an_unscored_technique(service):
+    finding = service._csv_row_to_finding(
+        {"finding_id": "f-mix", "mitre_predictions": "T1059,T1071:0.8"}
+    )
+    assert finding["mitre_predictions"] == {"T1059": None, "T1071": 0.8}
+
+    scored = service._csv_row_to_finding(
+        {
+            "finding_id": "f-scored",
+            "mitre_predictions": "T1071.001:0.85,T1048.003:0.72",
+        }
+    )
+    assert scored["mitre_predictions"] == {"T1071.001": 0.85, "T1048.003": 0.72}
+
+    continued = service._csv_row_to_finding(
+        {"finding_id": "f-bad", "mitre_predictions": "T1059:high,T1071:0.4"}
+    )
+    assert continued["mitre_predictions"] == {"T1059": None, "T1071": 0.4}
+
+    listed = service._csv_row_to_finding(
+        {"finding_id": "f-list", "mitre_predictions": '["T1059", "T1071"]'}
+    )
+    assert listed["mitre_predictions"] == {"T1059": None, "T1071": None}
+
+    supplied = service._csv_row_to_finding(
+        {
+            "finding_id": "f-obj",
+            "mitre_predictions": '{"T1059": null, "T1071": 0.8}',
+        }
+    )
+    assert supplied["mitre_predictions"] == {"T1059": None, "T1071": 0.8}
 
 
 def test_generic_row_does_not_invent_score_or_time(service):
@@ -219,6 +274,107 @@ def test_ingest_finding_persists_null_score_severity_and_time(service):
     assert db.created["anomaly_score"] is None
     assert db.created["timestamp"] is None
     assert db.created["severity"] is None
+
+
+def test_optional_float_keeps_numbers_and_drops_unusable_values():
+    assert _optional_float("  0.8 ") == 0.8
+    assert _optional_float("1e3") == 1000.0
+    assert _optional_float(True) == 1.0
+    assert _optional_float(False) == 0.0
+    assert _optional_float(0) == 0.0
+    assert _optional_float(5) == 5.0
+    for value in (
+        None,
+        "",
+        "   ",
+        "high",
+        "NaN",
+        "Infinity",
+        "-Infinity",
+        "1e999",
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        10**400,
+        {"n": 1},
+        [1],
+    ):
+        assert _optional_float(value) is None
+
+
+def test_ingest_finding_stores_an_unusable_score_and_succeeds(service):
+    """Kafka and the daemon webhook store through this path, then ack."""
+    db = _CaptureDb()
+    service.use_database = True
+    service.db_service = db
+
+    assert (
+        service.ingest_finding(
+            {
+                "finding_id": "f-high",
+                "anomaly_score": "high",
+                "data_source": "kafka",
+            }
+        )
+        is True
+    )
+    assert db.created["anomaly_score"] is None
+
+    assert (
+        service.ingest_finding(
+            {
+                "finding_id": "f-num",
+                "anomaly_score": "0.8",
+                "data_source": "json",
+            }
+        )
+        is True
+    )
+    assert db.created["anomaly_score"] == 0.8
+
+
+def test_csv_unusable_score_is_stored_unscored_not_a_row_error(service):
+    db = _CaptureDb()
+    service.use_database = True
+    service.db_service = db
+    service._ingest_csv_rows(
+        [
+            "finding_id,anomaly_score",
+            "f-nan,NaN",
+            "f-inf,Infinity",
+            "f-ws,   ",
+            "f-high,high",
+            "f-ok,0.8",
+        ],
+        "finding",
+    )
+
+    assert service.stats["findings_errors"] == 0
+    by_id = {row["finding_id"]: row["anomaly_score"] for row in db.batch}
+    assert by_id["f-ok"] == 0.8
+    assert by_id["f-nan"] is None
+    assert by_id["f-inf"] is None
+    assert by_id["f-ws"] is None
+    assert by_id["f-high"] is None
+
+
+@pytest.mark.parametrize(
+    "confidence,score",
+    [("85", 0.85), ("   ", None), ("Infinity", None), ("1e999", None), ("0", 0.0)],
+)
+def test_tempo_confidence_blank_or_nonfinite_is_no_score(service, confidence, score):
+    finding = service._tempo_csv_row_to_finding(
+        {
+            "sequence_id": "s-1",
+            "mitre_tactic": "Command and Control",
+            "incident_confidence": confidence,
+        }
+    )
+    assert finding["anomaly_score"] == score
+    if score is None:
+        assert "confidence_score" not in finding["entity_context"]
+    else:
+        assert finding["entity_context"]["confidence_score"] == score
 
 
 def test_batch_ingest_does_not_fill_null_score_or_time(service):

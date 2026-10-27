@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from 'react'
 import { exclusionsApi, findingsApi } from '../../services/api'
 import { findingIps } from '../../data/findingIps'
 import { useToast } from '../../shell/toast'
-import { mapApiFinding, formatFindingScore, type ApiFinding } from '../../data/mappers'
+import { mapApiFinding, formatFindingScore, rankTechniques, type ApiFinding } from '../../data/mappers'
+import { NO_CONFIDENCE } from '../../data/data'
 import { techniqueName } from '../../data/mitre'
 import { EmptyState, Popup } from '../../shared/ui'
 import { stateWord } from '../../shared/findingState'
@@ -329,7 +330,7 @@ export default function FindingPopup({
   }
 
   const f = raw ? mapApiFinding(raw) : null
-  const preds = Object.entries(raw?.mitre_predictions || {}).sort((a, b) => b[1] - a[1])
+  const preds = rankTechniques(raw?.mitre_predictions)
   const ec = raw?.entity_context || {}
   const sourceEvidence = parseSourceEvidence(ec.source_evidence)
   const ips = findingIps(ec)
@@ -370,7 +371,9 @@ export default function FindingPopup({
               <div className="fp-tactic">{f.tactic}</div>
             </div>
             <div className="fp-metrics">
-              <div className="fp-metric"><span className="fp-m-val">{f.conf}%</span><span className="fp-m-lab">confidence</span></div>
+              <div className="fp-metric">{f.conf === null
+                ? <span className="muted fp-m-none">{NO_CONFIDENCE}</span>
+                : <span className="fp-m-val">{f.conf}%</span>}<span className="fp-m-lab">confidence</span></div>
               <div className="fp-metric"><span className="fp-m-val">{formatFindingScore(f.score)}</span><span className="fp-m-lab">anomaly</span></div>
             </div>
           </div>
@@ -405,8 +408,12 @@ export default function FindingPopup({
                   <div className="fp-pred" key={tid}>
                     <span className="tag">{tid}</span>
                     <span className="fp-pred-name">{techniqueName(tid)}</span>
-                    <span className="fp-pred-bar"><i style={{ width: `${Math.round(c * 100)}%` }} /></span>
-                    <span className="mono fp-pred-pct">{Math.round(c * 100)}%</span>
+                    {c !== null && (
+                      <>
+                        <span className="fp-pred-bar"><i style={{ width: `${Math.round(c * 100)}%` }} /></span>
+                        <span className="mono fp-pred-pct">{Math.round(c * 100)}%</span>
+                      </>
+                    )}
                   </div>
                 ))}
               </div>
@@ -477,7 +484,7 @@ export default function FindingPopup({
               </ul>
               {excludeError && <div className="field-hint err" role="alert">{excludeError}</div>}
               <p className="fp-ip-note muted">
-                Excluding hides this address’s findings from every analyst’s queue. LogLM keeps scoring them,
+                Excluding hides this address’s findings from every analyst’s queue. Vigil keeps ingesting and storing them,
                 and removing the exclusion (Dashboard → Excluded IPs) brings them back unchanged.
               </p>
             </div>

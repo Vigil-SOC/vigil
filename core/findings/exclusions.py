@@ -2,9 +2,9 @@
 hunt or investigation may not start from, and which the daemon stores but does
 not triage or open a detection for.
 
-An exclusion never touches a finding. Ingest does not read the table, so LogLM
-keeps scoring and storing findings for an excluded address with their original
-severity and status; removing the exclusion shows them again unchanged.
+An exclusion never touches a finding. The daemon stores findings for an
+excluded address with their original severity and status; removing the
+exclusion shows them again unchanged.
 Exclusions are org-wide: a Vigil deployment is one organisation, and every
 analyst's queue hides the same addresses.
 

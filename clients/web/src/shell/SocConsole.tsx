@@ -359,7 +359,7 @@ function SocConsoleInner() {
         })
         .catch(() => {})
     read()
-    // Settings saves Ask first / Act; re-read so the badge follows without a reload
+    // Settings saves, stops and resumes the ceiling; re-read so the badge follows without a reload
     window.addEventListener(AUTONOMY_CHANGED, read)
     return () => {
       live = false
@@ -528,9 +528,9 @@ function SocConsoleInner() {
                 </button>
                 <InfoTip
                   label="How autonomy is derived"
-                  source="force_manual_approval and auto_response_enabled."
-                  calculation="Assist when the first is set or the second is off; otherwise Act."
-                  limit="Both are set in Settings › Limits & autonomy."
+                  source="The autonomy ceiling: whether tools that change something may act on their own."
+                  calculation="Act when they may; Assist when they ask first, while autonomy is stopped, or while the environment locks Act off."
+                  limit="Set in Settings › Limits & autonomy."
                 />
               </div>
             )}

@@ -34,14 +34,16 @@ function renderSection(onChanged = vi.fn(), onShowExcluded = vi.fn()) {
 describe('ExclusionsSection', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('is collapsed, and says how much it is hiding and that LogLM still scores it', async () => {
+  it('is collapsed, and says how much it is hiding and that findings are still stored', async () => {
     // two exclusions both naming one finding: the header counts it once
     listing([active, { ...active, exclusion_id: 'excl-2', ip: '198.51.100.23', hidden_findings: 1 }], 4)
     renderSection()
     const toggle = await screen.findByRole('button', { name: /Excluded IPs/ })
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
     expect(await screen.findByText(/hiding 4 findings from the queue/)).toBeInTheDocument()
-    expect(screen.getByText(/still ingested and scored by LogLM/)).toBeInTheDocument()
+    expect(screen.getByText(/still ingested and stored/)).toBeInTheDocument()
+    expect(screen.queryByText(/scored by LogLM/)).not.toBeInTheDocument()
+    expect(document.body).not.toHaveTextContent('LogLM')
     expect(screen.queryByText('known scanner')).not.toBeInTheDocument()
   })
 

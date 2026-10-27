@@ -12,7 +12,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -22,6 +22,10 @@ ROOT = Path(__file__).resolve().parents[2]
 for _p in (ROOT,):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
+
+from core.integrations.vstrike.schemas import VStrikePushRequest  # noqa: E402
+from core.storage.database_data_service import DatabaseDataService  # noqa: E402
+from services.api.routers import vstrike as vstrike_module  # noqa: E402
 
 
 class _FakeDataService:
@@ -128,8 +132,8 @@ def _invoke_ingest(fake_service: _FakeDataService, payload: Dict[str, Any]):
     Patches both the imported reference in `services.api.routers.vstrike` and the
     one used by `core.cases.case_automation_service.cluster_findings_by_attack_path`.
     """
-    from services.api.routers import vstrike as vstrike_module
     from core.integrations.vstrike.schemas import VStrikePushRequest
+    from services.api.routers import vstrike as vstrike_module
 
     req = VStrikePushRequest(**payload)
 
@@ -193,6 +197,37 @@ def test_create_path_when_finding_is_new(fake_service):
     assert stored["entity_context"]["vstrike"]["asset_id"] == "srv-01"
 
 
+def test_create_with_infinite_score_stores_null():
+    svc = DatabaseDataService()
+    svc._demo_mode = False
+    svc._db_connected = True
+    captured: Dict[str, Any] = {}
+
+    def _create(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    db = MagicMock()
+    db.get_finding.return_value = None
+    db.create_finding.side_effect = _create
+    svc._db_service = db
+
+    payload = _push_payload("f-new-inf")
+    payload["auto_cluster_cases"] = False
+    payload["findings"][0]["timestamp"] = "2026-05-20T14:00:00Z"
+    payload["findings"][0]["anomaly_score"] = float("inf")
+
+    with patch.object(vstrike_module, "data_service", svc), patch(
+        "core.storage.database_data_service.FindingSchema.dump",
+        lambda finding: {"finding_id": "f-new-inf"},
+    ):
+        response = vstrike_module.ingest_findings(VStrikePushRequest(**payload))
+
+    assert response.created == 1
+    assert response.failed == 0
+    assert captured["anomaly_score"] is None
+
+
 def test_create_path_fails_without_minimum_fields(fake_service):
     payload = _push_payload("f-new-broken")
     # No timestamp / anomaly_score supplied
@@ -215,9 +250,6 @@ def test_auto_cluster_creates_case(fake_service):
 def test_mitre_fields_propagate_on_update(fake_service):
     payload = _push_payload("f-existing-1")
     payload["findings"][0]["mitre_predictions"] = {"T1021.002": 0.87}
-    payload["findings"][0]["predicted_techniques"] = [
-        {"technique_id": "T1021.002", "confidence": 0.87}
-    ]
     payload["findings"][0]["severity"] = "high"
 
     _invoke_ingest(fake_service, payload)
@@ -225,7 +257,7 @@ def test_mitre_fields_propagate_on_update(fake_service):
     stored = fake_service.get_finding("f-existing-1")
     assert stored["mitre_predictions"] == {"T1021.002": 0.87}
     assert stored["severity"] == "high"
-    assert stored["predicted_techniques"][0]["technique_id"] == "T1021.002"
+    assert "predicted_techniques" not in stored
 
 
 def test_auth_bypass_in_dev_mode(monkeypatch):

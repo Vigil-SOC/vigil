@@ -55,6 +55,7 @@ class TestTransformFinding:
         assert finding["title"] == "Suspicious PowerShell Execution"
         assert finding["severity"] == "high"
         assert finding["timestamp"] == "2026-10-04T15:04:05.123000Z"
+        assert finding["anomaly_score"] is None
 
     def test_metadata_carries_finding_context(self, ingestion, sample_findings):
         finding = ingestion.transform_alert_to_finding(sample_findings[0])
@@ -71,7 +72,7 @@ class TestTransformFinding:
         self, ingestion, sample_findings
     ):
         finding = ingestion.transform_alert_to_finding(sample_findings[0])
-        assert finding["mitre_predictions"] == {"T1059.001": 0.9}
+        assert finding["mitre_predictions"] == {"T1059.001": None}
 
     def test_bare_rule_reference_falls_back(self, ingestion, sample_findings):
         """A finding whose queries carry only rule ids still transforms."""
@@ -90,6 +91,7 @@ class TestTransformFinding:
         assert finding["finding_id"] == "opensearch-sparse-1"
         assert finding["title"] == "OpenSearch Security Analytics Finding"
         assert finding["severity"] == "medium"
+        assert finding["anomaly_score"] is None
         assert finding["entity_context"]["src_ips"] == []
 
     def test_long_finding_id_fits_finding_id_column(self, ingestion):
@@ -132,8 +134,12 @@ class TestFindingHelpers:
         assert finding_time({}) is None
 
     def test_mitre_from_tags_ignores_non_technique_tags(self):
-        source = {"queries": [{"tags": ["attack.execution", "attack.t1110.001"]}]}
-        assert mitre_from_tags(source) == {"T1110.001": 0.9}
+        source = {
+            "queries": [
+                {"tags": ["attack.execution", "attack.t1110.001", "attack.t1059"]}
+            ]
+        }
+        assert mitre_from_tags(source) == {"T1110.001": None, "T1059": None}
 
     def test_log_type_of(self):
         assert log_type_of(".opensearch-sap-ad_ldap-findings-2026.10.04") == "ad_ldap"

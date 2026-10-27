@@ -93,7 +93,7 @@ INTENT_FIELDS: Tuple[IntentField, ...] = (
         HIGHER_TIGHTER,
     ),
     # Act flags: off is tighter. The named settings are the env floor, which
-    # can only force them off. four_eyes on is tighter and is not enforced.
+    # can only force them off. four_eyes on is tighter.
     IntentField(
         "act.reversible",
         "ceiling.act_reversible",

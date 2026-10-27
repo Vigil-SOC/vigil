@@ -13,7 +13,8 @@
 # Stage 1: build the React frontend
 # ---------------------------------------------------------------------------
 # Pin to the build host's arch: the output is arch-independent static assets,
-# and running esbuild under QEMU (cross-arch build) crashes it (write EPIPE).
+# and Vite's bundler, Rolldown, is a native binary that we keep off QEMU
+# (cross-arch build), where esbuild, its predecessor, crashed (write EPIPE).
 # The Python version comes from .python-version, the repo's single pin. The
 # default below only applies to a bare `docker build` with no --build-arg; every
 # path that ships an image (docker-compose.yml, release.yml) passes the value

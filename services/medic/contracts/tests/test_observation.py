@@ -173,7 +173,8 @@ def test_fingerprint_refuses_an_unlisted_service() -> None:
 
 def test_runbook_targets_are_listed_services() -> None:
     manifest = json.loads((ROOT / "pack-manifest.schema.json").read_text())
-    targets = manifest["$defs"]["runbook"]["properties"]["action"]["properties"][
-        "target"
-    ]["enum"]
-    assert set(targets) <= set(SERVICES)
+    branches = manifest["$defs"]["runbook"]["properties"]["action"]["oneOf"]
+    services = [branch["properties"]["service"]["enum"] for branch in branches]
+    assert len(services) == 2
+    for names in services:
+        assert set(names) <= set(SERVICES)

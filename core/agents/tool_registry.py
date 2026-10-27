@@ -21,6 +21,7 @@ from core.cases.case_status import (
     status_change,
 )
 from core.cases.linked_entities import finding_entity_summary
+from core.findings.anomaly_score import stored_anomaly_score
 from core.llm.tool_schemas import ALL_TOOLS as BACKEND_TOOLS
 from core.llm.tool_schemas import FIND_INTEGRATION_TOOLS, INTEGRATION_TOOLS
 from core.memory.recall_contract import RECALL_TOOL
@@ -46,8 +47,9 @@ Args = Dict[str, Any]
 def _compact(finding: Args, state: Optional[str] = None) -> Args:
     return {
         "finding_id": finding.get("finding_id"),
+        "title": finding.get("title"),
         "severity": finding.get("severity"),
-        "anomaly_score": float(finding.get("anomaly_score") or 0),
+        "anomaly_score": stored_anomaly_score(finding),
         "data_source": finding.get("data_source"),
         "cluster_id": finding.get("cluster_id"),
         "timestamp": finding.get("timestamp"),
@@ -235,6 +237,20 @@ def _status_refusal(status: str) -> Optional[Args]:
     }
 
 
+def _resolve_assignee(
+    raw: str, current: Optional[str] = None
+) -> Tuple[Optional[str], Optional[Args]]:
+    """The username ``raw`` names, or the refusal to hand back to the agent."""
+    from core.cases.agent_closure import service_session
+    from core.cases.assignee import AssigneeRefused, resolve_assignee
+
+    try:
+        with service_session() as session:
+            return resolve_assignee(session, raw, current=current), None
+    except AssigneeRefused as exc:
+        return None, {"error": exc.message}
+
+
 def create_case(
     *,
     title: str,
@@ -250,6 +266,11 @@ def create_case(
         return refusal
     if refusal := _status_refusal(status):
         return refusal
+    if assignee is not None:
+        # Before the case is opened, so a refusal leaves no case behind.
+        assignee, refusal = _resolve_assignee(assignee)
+        if refusal:
+            return refusal
     data = _data()
     ids = finding_ids or []
     case = open_case(
@@ -295,7 +316,6 @@ def update_case(
     if status is not None and (refusal := _status_refusal(status)):
         return refusal
     from core.cases.agent_closure import actor, service_session
-    from core.cases.closure import ClosedByKind
     from core.time import utcnow
 
     data = _data()
@@ -312,8 +332,13 @@ def update_case(
         updates["status"] = status
     if priority:
         updates["priority"] = priority
-    if assignee:
-        updates["assignee"] = assignee
+    if assignee is not None:
+        # Blank unassigns; re-sending the stored value keeps it.
+        updates["assignee"], refusal = _resolve_assignee(
+            assignee, current=case.get("assignee")
+        )
+        if refusal:
+            return refusal
     if add_note:
         notes = list(case.get("notes") or [])
         notes.append({"timestamp": utcnow().isoformat() + "Z", "content": add_note})
@@ -329,24 +354,56 @@ def update_case(
                 case_id,
                 change,
                 closed_by=actor(),
-                closed_by_kind=ClosedByKind.AGENT,
             )
     return {"success": True, "case_id": case_id}
 
 
+# The case's findings ride beside its tasks and escalations, paged: under
+# "findings", not an envelope key tools_router would unwrap and drop siblings of.
 def _case_records(args: Args) -> Args:
+    from sqlalchemy import func
+    from sqlalchemy.orm import noload
+
     from core.cases.case_records_service import list_escalations, tasks_on_case
+    from core.storage.models import Finding, case_findings
+    from core.storage.schemas import FindingSchema
     from core.storage.schemas.case_entities import CaseEscalationSchema, CaseTaskSchema
     from core.storage.unit_of_work import unit_of_work
 
     case_id = str(args.get("case_id") or "")
+    offset = max(int(args.get("offset") or 0), 0)
+    limit = max(int(args.get("limit") or 100), 1)
     with unit_of_work() as session:
-        return {
+        on_case = (
+            session.query(Finding)
+            .join(case_findings, case_findings.c.finding_id == Finding.finding_id)
+            .filter(case_findings.c.case_id == case_id)
+        )
+        total = on_case.with_entities(func.count()).scalar() or 0
+        page = (
+            on_case.options(
+                noload(Finding.cases), noload(Finding.mitre_prediction_rows)
+            )
+            .order_by(Finding.timestamp.desc().nulls_last(), Finding.finding_id)
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+        records = {
             "tasks": CaseTaskSchema.dump_many(tasks_on_case(session, case_id)),
             "escalations": CaseEscalationSchema.dump_many(
                 list_escalations(session, case_id)
             ),
         }
+        findings = FindingSchema.dump_many(page)
+    return {
+        **records,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "has_more": (offset + limit) < total,
+        "findings": _compact_page(_data(), findings),
+    }
 
 
 def add_finding_to_case(*, case_id: str, finding_id: str) -> Args:

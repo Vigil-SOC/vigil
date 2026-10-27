@@ -30,6 +30,7 @@ from core.storage.models import (
     case_findings,
 )
 from core.storage.schemas import FindingSchema
+from core.storage.technique_confidence import rank_by_confidence
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -61,21 +62,81 @@ def _external_key(row: Dict[str, Any]) -> Optional[tuple]:
     return (row.get("data_source", "imported"), external_id)
 
 
-def _numeric_prediction_items(mitre_predictions: Any) -> List[tuple[str, float]]:
-    """Persist numeric map values only; keys stay text (tactic names included)."""
+# Sentinels for a map value that is not a stored score. None is a real
+# confidence (unknown), so it cannot mark "warn" or "skip" by itself.
+_UNKNOWN = object()
+_SKIP = object()
+
+
+def _parse_confidence(value: Any) -> Any:
+    """A float to store, None for unknown, or a sentinel to warn or skip.
+
+    Numeric strings are scores (``"0.4"`` is 0.4). ``is_score`` rejects those,
+    so this does not call it. Values outside 0–1 stay as given.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return _UNKNOWN
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return _UNKNOWN
+    if isinstance(value, (list, dict)):
+        return _SKIP
+    return _UNKNOWN
+
+
+def _mitre_prediction_items(
+    mitre_predictions: Any,
+    *,
+    finding_id: Optional[str] = None,
+    data_source: Optional[str] = None,
+) -> List[tuple[str, Optional[float]]]:
+    """Rows for a technique map. Keys stay text (tactic names included).
+
+    A number or numeric string is that number. None is null. A bool or any
+    other string is null and logged. A list or object is skipped and logged.
+    The log names the finding's data_source or id, the key, and the value.
+    """
     if not isinstance(mitre_predictions, dict):
         return []
-    items: List[tuple[str, float]] = []
+    who = data_source or finding_id or "unknown"
+    items: List[tuple[str, Optional[float]]] = []
     for key, value in mitre_predictions.items():
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+        technique_id = str(key)
+        parsed = _parse_confidence(value)
+        if parsed is _SKIP:
+            logger.warning(
+                "mitre_predictions %s=%r on %s skipped",
+                technique_id,
+                value,
+                who,
+            )
             continue
-        items.append((str(key), float(value)))
+        if parsed is _UNKNOWN:
+            logger.warning(
+                "mitre_predictions %s=%r on %s stored as unknown",
+                technique_id,
+                value,
+                who,
+            )
+            items.append((technique_id, None))
+            continue
+        items.append((technique_id, parsed))
     return items
 
 
 def _set_mitre_prediction_rows(finding: Finding, mitre_predictions: Any) -> None:
     finding.mitre_prediction_rows.clear()
-    for technique_id, confidence in _numeric_prediction_items(mitre_predictions):
+    for technique_id, confidence in _mitre_prediction_items(
+        mitre_predictions,
+        finding_id=finding.finding_id,
+        data_source=finding.data_source,
+    ):
         finding.mitre_prediction_rows.append(
             FindingMitrePrediction(
                 technique_id=technique_id,
@@ -125,26 +186,89 @@ _FINDING_READ_OPTIONS = (
 )
 
 
-def findings_by_technique_stmt(
-    technique_id: str, limit: Optional[int] = None, exclusions: str = "include"
+def technique_confidence_filter(min_confidence: float):
+    """A prediction row the ATT&CK threshold keeps.
+
+    An unknown (NULL) confidence counts at 0 and is excluded above it: ``NULL >=
+    0`` is not true, so the comparison alone would drop it even at 0.
+    """
+    known = FindingMitrePrediction.confidence >= min_confidence
+    if min_confidence > 0:
+        return known
+    return or_(known, FindingMitrePrediction.confidence.is_(None))
+
+
+def _technique_occurrence_scope(
+    stmt,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
+    exclusions: str = "include",
 ):
-    """Findings predicting ``technique_id``, highest confidence first."""
+    """The time window and exclusion view shared by the rollup and its drill-down."""
+    if start_time is not None:
+        stmt = stmt.where(Finding.timestamp >= start_time)
+    if end_time is not None:
+        stmt = stmt.where(Finding.timestamp <= end_time)
+    exclusion_filter = exclusion_view_filter(exclusions)
+    if exclusion_filter is not None:
+        stmt = stmt.where(exclusion_filter)
+    return stmt
+
+
+def findings_by_technique_stmt(
+    technique_id: str,
+    min_confidence: float = 0.0,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
+    exclusions: str = "include",
+):
+    """(Finding, confidence) rows predicting ``technique_id``, unordered.
+
+    The caller ranks them with ``rank_by_confidence``: ``confidence DESC`` would
+    put unknowns first.
+    """
     stmt = (
-        select(Finding)
+        select(Finding, FindingMitrePrediction.confidence)
         .join(
             FindingMitrePrediction,
             FindingMitrePrediction.finding_id == Finding.finding_id,
         )
         .where(FindingMitrePrediction.technique_id == technique_id)
-        .order_by(FindingMitrePrediction.confidence.desc())
+        .where(technique_confidence_filter(min_confidence))
         .options(*_FINDING_READ_OPTIONS)
     )
-    exclusion_filter = exclusion_view_filter(exclusions)
-    if exclusion_filter is not None:
-        stmt = stmt.where(exclusion_filter)
-    if limit is not None:
-        stmt = stmt.limit(limit)
-    return stmt
+    return _technique_occurrence_scope(stmt, start_time, end_time, exclusions)
+
+
+def technique_severity_counts_stmt(
+    min_confidence: float = 0.0,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
+    exclusions: str = "include",
+):
+    """(technique_id, severity, count) over the prediction rows the threshold keeps."""
+    stmt = (
+        select(FindingMitrePrediction.technique_id, Finding.severity, func.count())
+        .join(Finding, Finding.finding_id == FindingMitrePrediction.finding_id)
+        .where(technique_confidence_filter(min_confidence))
+        .group_by(FindingMitrePrediction.technique_id, Finding.severity)
+    )
+    return _technique_occurrence_scope(stmt, start_time, end_time, exclusions)
+
+
+def unscored_technique_occurrences_stmt(
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
+    exclusions: str = "include",
+):
+    """How many prediction rows have no confidence, in the rollup's scope."""
+    stmt = (
+        select(func.count())
+        .select_from(FindingMitrePrediction)
+        .join(Finding, Finding.finding_id == FindingMitrePrediction.finding_id)
+        .where(FindingMitrePrediction.confidence.is_(None))
+    )
+    return _technique_occurrence_scope(stmt, start_time, end_time, exclusions)
 
 
 # entity_context keys naming a finding's source and destination addresses, as
@@ -576,10 +700,19 @@ class DatabaseService:
                 "data_source": Finding.data_source,
             }
             sort_col = sort_column_map.get(sort_by, Finding.timestamp)
-            if sort_order == "asc":
-                query = query.order_by(sort_col.asc())
-            else:
-                query = query.order_by(sort_col.desc())
+            # An empty value is neither high nor low: nulls last in both
+            # directions. A page of equals needs a stable order, so newest
+            # event time (unless that is already the sort) then finding_id.
+            primary = (
+                sort_col.asc().nullslast()
+                if sort_order == "asc"
+                else sort_col.desc().nullslast()
+            )
+            order = [primary]
+            if sort_by != "timestamp":
+                order.append(Finding.timestamp.desc().nullslast())
+            order.append(Finding.finding_id.asc())
+            query = query.order_by(*order)
 
             query = query.limit(limit).offset(offset)
 
@@ -839,18 +972,24 @@ class DatabaseService:
         technique_id: str,
         limit: Optional[int] = None,
         exclusions: str = "include",
+        min_confidence: float = 0.0,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
     ) -> List[Finding]:
-        """Findings predicting ``technique_id``, ordered by confidence descending."""
+        """Findings predicting ``technique_id``: scored by confidence, then unknowns."""
         with self.db_manager.session_scope() as session:
-            findings = (
-                session.execute(
-                    findings_by_technique_stmt(
-                        technique_id, limit=limit, exclusions=exclusions
-                    )
+            rows = session.execute(
+                findings_by_technique_stmt(
+                    technique_id,
+                    min_confidence=min_confidence,
+                    start_time=start_time,
+                    end_time=end_time,
+                    exclusions=exclusions,
                 )
-                .scalars()
-                .all()
-            )
+            ).all()
+            findings = [
+                row[0] for row in rank_by_confidence(rows, confidence=lambda r: r[1])
+            ][:limit]
             for finding in findings:
                 session.expunge(finding)
             return findings
@@ -864,31 +1003,26 @@ class DatabaseService:
         exclusions: str = "include",
     ) -> List[tuple]:
         """(technique_id, severity, count) from the child table."""
+        stmt = technique_severity_counts_stmt(
+            min_confidence, start_time, end_time, exclusions
+        )
         with self.db_manager.session_scope() as session:
-            stmt = (
-                select(
-                    FindingMitrePrediction.technique_id,
-                    Finding.severity,
-                    func.count(),
-                )
-                .join(
-                    Finding,
-                    Finding.finding_id == FindingMitrePrediction.finding_id,
-                )
-                .where(FindingMitrePrediction.confidence >= min_confidence)
-                .group_by(FindingMitrePrediction.technique_id, Finding.severity)
-            )
-            if start_time is not None:
-                stmt = stmt.where(Finding.timestamp >= start_time)
-            if end_time is not None:
-                stmt = stmt.where(Finding.timestamp <= end_time)
-            exclusion_filter = exclusion_view_filter(exclusions)
-            if exclusion_filter is not None:
-                stmt = stmt.where(exclusion_filter)
             return [
                 (tid, severity, int(count))
                 for tid, severity, count in session.execute(stmt).all()
             ]
+
+    @default_on_error(int)
+    def count_unscored_technique_occurrences(
+        self,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        exclusions: str = "include",
+    ) -> int:
+        """Prediction rows with no confidence, which a threshold above 0 excludes."""
+        stmt = unscored_technique_occurrences_stmt(start_time, end_time, exclusions)
+        with self.db_manager.session_scope() as session:
+            return int(session.execute(stmt).scalar() or 0)
 
     # ========== Case Operations ==========
 

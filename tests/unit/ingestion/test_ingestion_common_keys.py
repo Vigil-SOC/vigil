@@ -67,7 +67,7 @@ def test_sample_findings_import_with_every_field_kept(service):
         assert evidence["telemetry_kind"] == "generic_log"
         assert evidence["status"] == "available"
         assert evidence["records"] == [src["raw_data"]]
-        assert row["mitre_predictions"] == {t: 1.0 for t in src["mitre_techniques"]}
+        assert row["mitre_predictions"] == {t: None for t in src["mitre_techniques"]}
 
 
 def test_id_keyed_top_level_array_with_nan_is_recognised_on_the_json_retry(
@@ -111,6 +111,16 @@ def test_mixed_shapes_import_and_the_internal_key_wins(service):
     }
     assert internal["mitre_predictions"] == {"T1059": 0.4}
     assert "id" not in internal and "source" not in internal
+
+
+def test_technique_map_keeps_a_score_beside_an_unknown():
+    mapped = to_internal_finding(
+        {
+            "id": "f-mix",
+            "mitre_techniques": {"T1059": None, "T1071": 0.4},
+        }
+    )
+    assert mapped["mitre_predictions"] == {"T1059": None, "T1071": 0.4}
 
 
 def test_mapping_does_not_mutate_the_callers_row():

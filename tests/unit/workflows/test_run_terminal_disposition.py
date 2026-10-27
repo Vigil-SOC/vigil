@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.cases.closure import ClosedByKind, ClosureCategory
+from core.cases.closure import ClosureCategory
 from core.workflows import run_bridge_router as rbr
 from core.workflows.run_bridge_router import TerminalUpdate, record_terminal
 
@@ -105,7 +105,6 @@ def test_a_dismissal_closes_the_case_as_a_false_positive_by_the_agent(
             "case_id": CASE,
             "closure_category": ClosureCategory.FALSE_POSITIVE,
             "closed_by": "run-1",
-            "closed_by_kind": ClosedByKind.AGENT,
             "closure_notes": "a scheduled task",
         }
     ]

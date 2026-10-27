@@ -4,16 +4,25 @@ Single source of truth used by:
 - services/api/routers/analytics.py — get_mitre_technique_distribution
 - the ATT&CK agent tool (get_technique_rollup)
 
-Findings in this codebase carry MITRE data in two shapes:
-- Demo path: `predicted_techniques: list[{technique_id, confidence, technique_name}]`
-- Production path: `mitre_predictions: dict | list` (multiple formats — see
-  iter_techniques below for the dispatching).
+Findings carry MITRE data in `mitre_predictions: dict | list` (multiple
+formats — see iter_techniques below for the dispatching). A confidence that is
+not a score (null, a bool, a string) means the source named the technique and
+gave no confidence. ``is_score``, ``meets_threshold``, ``rank_by_confidence``
+and ``top_technique`` are defined in ``core.storage.technique_confidence`` and
+re-exported here, so every reader shares that order and storage can rank
+without importing this module.
 """
 
 from datetime import datetime, timedelta
 from typing import Iterable, Optional
 
+from core.storage import technique_confidence
 from core.time import utcnow
+
+is_score = technique_confidence.is_score
+meets_threshold = technique_confidence.meets_threshold
+rank_by_confidence = technique_confidence.rank_by_confidence
+top_technique = technique_confidence.top_technique
 
 
 def get_time_range(time_range: str) -> tuple[datetime, datetime]:
@@ -135,35 +144,29 @@ def iter_techniques(finding: dict) -> Iterable[dict]:
     `resolve_technique` to fill in name/tactic.
 
     Handles:
-      - Demo shape: `predicted_techniques: list[{technique_id, confidence, ...}]`
-      - Production `mitre_predictions: dict[tech_id, confidence]`
-      - Production `mitre_predictions: {"techniques": [...]}` /
-        `{"predicted_techniques": [...]}`
-      - Production `mitre_predictions: list[dict]`
+      - `mitre_predictions: dict[tech_id, confidence]`. A value that is not a
+        score yields the technique with `confidence: None`.
+      - `mitre_predictions: {"techniques": [...]}` (a map value is a list or dict)
+      - `mitre_predictions: {technique_id | id, confidence, ...}`, one technique
+      - `mitre_predictions: list[dict]`
     """
-    pt = finding.get("predicted_techniques")
-    if isinstance(pt, list) and pt:
-        for tech in pt:
-            if isinstance(tech, dict) and tech.get("technique_id"):
-                yield tech
-        return
-
     predictions = finding.get("mitre_predictions")
     if not predictions:
         return
 
     if isinstance(predictions, dict):
-        if predictions and all(
-            isinstance(v, (int, float)) for v in predictions.values()
+        # A single technique dict (its own id key) is not a technique map.
+        single = "technique_id" in predictions or "id" in predictions
+        if not single and not any(
+            isinstance(v, (list, dict)) for v in predictions.values()
         ):
             for tech_id, confidence in predictions.items():
-                yield {"technique_id": tech_id, "confidence": confidence}
+                yield {
+                    "technique_id": tech_id,
+                    "confidence": confidence if is_score(confidence) else None,
+                }
             return
-        nested = (
-            predictions.get("techniques")
-            or predictions.get("predicted_techniques")
-            or [predictions]
-        )
+        nested = predictions.get("techniques") or [predictions]
         for tech in nested:
             if isinstance(tech, dict) and (tech.get("technique_id") or tech.get("id")):
                 yield tech

@@ -176,7 +176,8 @@ def test_transform_maps_wazuh_fields():
     assert finding["title"] == ALERT["_source"]["rule"]["description"]
     assert finding["description"].startswith("Sep 28 11:17:17 web01")
     assert finding["timestamp"] == "2026-09-28T11:17:18.394Z"
-    assert finding["mitre_predictions"] == {"T1110": 0.9}
+    assert finding["anomaly_score"] == round(10 / 15, 2)
+    assert finding["mitre_predictions"] == {"T1110": None}
     assert finding["entity_context"] == {
         "src_ips": ["203.0.113.7"],
         "dest_ips": [],
@@ -215,7 +216,7 @@ def test_transform_manager_syslog_and_windows_fields():
     assert finding["entity_context"]["usernames"] == ["mallory", "admin"]
     assert finding["entity_context"]["src_ips"] == ["10.1.2.3"]
     assert finding["description"] == "An account failed to log on."
-    assert finding["mitre_predictions"] == {"T1078": 0.9}
+    assert finding["mitre_predictions"] == {"T1078": None}
 
 
 def test_elastic_security_alerts_keep_the_ecs_transform():
@@ -232,4 +233,37 @@ def test_elastic_security_alerts_keep_the_ecs_transform():
     assert finding["title"] == "Suspicious PowerShell"
     assert finding["severity"] == "high"
     assert finding["entity_context"]["hostnames"] == ["WS-01"]
+    assert finding["anomaly_score"] is None
     assert "vendor" not in finding["metadata"]
+
+
+def _wazuh_alert(level):
+    source = {"rule": {"description": "rule"}}
+    if level != "missing":
+        source["rule"]["level"] = level
+    return {"_id": "w1", "_source": source}
+
+
+@pytest.mark.parametrize(
+    "level,score",
+    [
+        (0, 0.0),
+        (7, round(7 / 15, 2)),
+        (7.5, round(7 / 15, 2)),
+        (15, 1.0),
+        ("15", 1.0),
+        ("missing", None),
+        (None, None),
+        ("7.0", None),
+        ("high", None),
+        (float("nan"), None),
+        (float("inf"), None),
+        (float("-inf"), None),
+    ],
+)
+def test_wazuh_level_is_a_source_score_or_absent(level, score):
+    finding = _ingestion().transform_alert_to_finding(_wazuh_alert(level))
+    assert finding is not None
+    assert finding["anomaly_score"] == score
+    if score is None:
+        assert finding["severity"] == "medium"

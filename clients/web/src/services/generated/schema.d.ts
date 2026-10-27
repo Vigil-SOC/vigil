@@ -663,6 +663,10 @@ export interface paths {
          *             and return per-technique verdicts; occurrence counts are unchanged
          *             when omitted.
          *
+         *     min_confidence applies only to techniques with a confidence: at 0 an
+         *     occurrence with no confidence is counted, above 0 it is excluded and counted
+         *     in excluded_occurrences on the response.
+         *
          *     Returns:
          *         Technique statistics sorted by occurrence count, or coverage rows with
          *         layer verdicts and missed-step evidence when a run is selected.
@@ -685,13 +689,16 @@ export interface paths {
         };
         /**
          * Get Findings By Technique
-         * @description Get all findings associated with a specific technique.
+         * @description Get the findings associated with a specific technique.
          *
          *     Args:
          *         technique_id: MITRE ATT&CK technique ID
+         *         min_confidence: The rollup's threshold, applied to this technique.
+         *         time_range: The rollup's window — '24h', '7d', '30d', or 'all' (default).
          *
          *     Returns:
-         *         List of findings
+         *         Findings with a confidence for the technique, highest first, then those
+         *         the source named it on without one.
          */
         get: operations["get_api_attack_techniques_technique_id_findings"];
         put?: never;
@@ -8215,10 +8222,9 @@ export interface components {
          * ClosureInfo
          * @description Close case with metadata.
          *
-         *     No ``closed_by``: who closed it is the authenticated principal, not
-         *     something a client says about itself. Episodic memory reads it as Trust
-         *     (#733), and a client-supplied name would let any caller claim an analyst
-         *     concluded.
+         *     No ``closed_by`` and no channel: who closed it, and whether that was the
+         *     console cookie, come from the session. A client-supplied name or kind
+         *     would let any caller claim an analyst concluded.
          */
         ClosureInfo: {
             closure_category: components["schemas"]["ClosureCategory"];
@@ -8832,9 +8838,12 @@ export interface components {
             evidence_links?: string[] | null;
             /** Mitre Predictions */
             mitre_predictions?: {
-                [key: string]: number;
+                [key: string]: number | null;
             } | null;
-            /** Predicted Techniques */
+            /**
+             * Predicted Techniques
+             * @description Deprecated and ignored.
+             */
             predicted_techniques?: {
                 [key: string]: unknown;
             }[] | null;
@@ -10880,12 +10889,8 @@ export interface components {
             finding_id: string;
             /** Mitre Predictions */
             mitre_predictions?: {
-                [key: string]: number;
+                [key: string]: number | null;
             } | null;
-            /** Predicted Techniques */
-            predicted_techniques?: {
-                [key: string]: unknown;
-            }[] | null;
             /** Severity */
             severity?: ("low" | "medium" | "high" | "critical") | null;
             /** Timestamp */
@@ -12440,7 +12445,10 @@ export interface operations {
     };
     get_api_attack_techniques_technique_id_findings: {
         parameters: {
-            query?: never;
+            query?: {
+                min_confidence?: number;
+                time_range?: string;
+            };
             header?: {
                 authorization?: string | null;
             };
