@@ -456,6 +456,9 @@ def maintenance_and_send(clock: SendClock, *, now: Optional[datetime] = None) ->
         state = _load(session)
         if state is None:
             return
+        # Accounts before the trail lock. A due erasure updates the principal
+        # and the user, and deletion locks those and then appends.
+        retention.lock_due_accounts(session, wall)
         trail.drain_late(session)
         trail.close_windows(session)
         retention.apply_due(session, wall)

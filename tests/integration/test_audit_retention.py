@@ -9,6 +9,7 @@ outside file. Clocks are passed in; nothing sleeps.
 from __future__ import annotations
 
 import json
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -551,6 +552,98 @@ def test_a_rolled_back_tick_does_not_keep_the_erasure_id(db, tmp_path, monkeypat
     feed.maintenance_and_send(feed.SendClock(), now=NOW + timedelta(days=7))
     assert _label(db, ned)[0] is None
     assert retention.read_ids(tmp_path / retention.LIST_NAME) == [ned]
+
+
+def test_an_export_does_not_deadlock_with_the_leader(db):
+    """The leader holds the feed row, then the trail lock. Export does too."""
+    factory = sessionmaker(bind=db)
+    leader = factory()
+    leader.begin()
+    held = threading.Event()
+    release = threading.Event()
+    errors: list[BaseException] = []
+
+    def _export() -> None:
+        session = factory()
+        session.begin()
+        try:
+            assert held.wait(5)
+            threading.Timer(0.4, release.set).start()
+            session.execute(text("SET LOCAL lock_timeout = '4s'"))
+            retention.carry_export(session, trail.make_query(), trail.SYSTEM)
+            session.commit()
+        except BaseException as exc:  # noqa: BLE001 - the assertion reports it
+            errors.append(exc)
+            session.rollback()
+        finally:
+            session.close()
+
+    worker = threading.Thread(target=_export)
+    worker.start()
+    try:
+        leader.execute(
+            text(
+                "SELECT pending_announcements FROM audit_feed_state"
+                " WHERE id = 1 FOR UPDATE"
+            )
+        )
+        held.set()
+        assert release.wait(5)
+        trail._lock(leader)
+        leader.commit()
+    finally:
+        worker.join(8)
+        if leader.in_transaction():
+            leader.rollback()
+        leader.close()
+    assert errors == []
+
+
+def test_a_due_erasure_does_not_deadlock_with_an_account_update(
+    db, tmp_path, monkeypatch
+):
+    """Deletion locks the user, then appends. The tick locks that user first."""
+    monkeypatch.setenv("VIGIL_UPGRADE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    ada = _user("ada", "role-admin")
+    ned = _user("ned", "role-admin")
+    _activate(ada, ned)
+    with unit_of_work() as session:
+        retention.erase(session, ada, ned, "leaving", NOW)
+
+    factory = sessionmaker(bind=db)
+    other = factory()
+    other.begin()
+    held = threading.Event()
+    release = threading.Event()
+    errors: list[BaseException] = []
+
+    def _tick() -> None:
+        try:
+            assert held.wait(5)
+            threading.Timer(0.4, release.set).start()
+            feed.maintenance_and_send(feed.SendClock(), now=NOW + timedelta(days=7))
+        except BaseException as exc:  # noqa: BLE001 - the assertion reports it
+            errors.append(exc)
+
+    worker = threading.Thread(target=_tick)
+    worker.start()
+    try:
+        other.execute(
+            text("SELECT user_id FROM users WHERE principal_id = :id FOR UPDATE"),
+            {"id": ned},
+        )
+        held.set()
+        assert release.wait(5)
+        trail._lock(other)
+        other.commit()
+    finally:
+        worker.join(8)
+        if other.in_transaction():
+            other.rollback()
+        other.close()
+    assert errors == []
+    assert _label(db, ned)[0] is None
 
 
 def test_the_first_retention_write_locks_the_row(db):

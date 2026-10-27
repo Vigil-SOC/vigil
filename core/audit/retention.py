@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from sqlalchemy import event, text
+from sqlalchemy import bindparam, event, text
 
 from core.audit import trail
 from core.auth import mcp_credential_service, principals, sign_ins
@@ -170,6 +170,55 @@ def carried(session, seqs: list[int]) -> None:
     drop = {int(seq) for seq in seqs}
     _write_announcements(
         session, [seq for seq in _announcements(session) if seq not in drop]
+    )
+
+
+def carry_export(session, query, actor: str):
+    """Export, after locking the feed row.
+
+    ``trail.export`` appends, and the insert takes the trail lock. The leader
+    holds the feed row and then that lock. Locking the feed row first is that
+    order; taking the trail lock and then this row deadlocks with the tick.
+    """
+    _lock_feed(session)
+    rows, tip = trail.export(session, query, actor)
+    carried(session, [row["seq"] for row in rows if "seq" in row])
+    return rows, tip
+
+
+def lock_due_accounts(session, now: datetime) -> None:
+    """Lock accounts a due erasure will change, before the trail lock.
+
+    The leader calls this before it drains late rows. Account deletion locks
+    the principal, then the user, then appends. Blanking those rows after the
+    trail lock is already held deadlocks with that.
+    """
+    now = _aware(now)
+    if outside_path() is None:
+        return
+    stored = _load(session, lock=True)
+    ids = sorted(
+        {
+            item["principal_id"]
+            for item in stored["erasures"]
+            if _stamp(item) + WAIT <= now
+        }
+    )
+    if not ids:
+        return
+    session.execute(
+        text(
+            "SELECT principal_id FROM public.principals"
+            " WHERE principal_id IN :ids ORDER BY principal_id FOR UPDATE"
+        ).bindparams(bindparam("ids", expanding=True)),
+        {"ids": ids},
+    )
+    session.execute(
+        text(
+            "SELECT user_id FROM public.users"
+            " WHERE principal_id IN :ids ORDER BY user_id FOR UPDATE"
+        ).bindparams(bindparam("ids", expanding=True)),
+        {"ids": ids},
     )
 
 

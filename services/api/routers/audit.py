@@ -190,8 +190,7 @@ def export_entries(
     """NDJSON of the filter, closed by a checkpoint line. Writes one export entry."""
     if not user.principal_id:
         raise HTTPException(status_code=403, detail="A principal is required")
-    rows, tip = trail.export(session, query, user.principal_id)
-    _carried(session, rows)
+    rows, tip = retention.carry_export(session, query, user.principal_id)
     return StreamingResponse(
         _ndjson(rows, tip),
         media_type="application/x-ndjson",
