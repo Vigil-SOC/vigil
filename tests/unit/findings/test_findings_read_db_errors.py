@@ -17,6 +17,12 @@ os.environ.setdefault("DEV_MODE", "true")
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _demo_off():
+    with patch("core.storage.database_data_service.is_demo_mode", return_value=False):
+        yield
+
+
 class _DeadManager:
     @contextmanager
     def session_scope(self):
@@ -30,8 +36,6 @@ def _failing_data_service() -> DatabaseDataService:
     svc = DatabaseDataService()
     db = DatabaseService.__new__(DatabaseService)
     db.db_manager = _DeadManager()
-    svc._demo_mode = False
-    svc._demo_service = None
     svc._db_service = db
     svc._db_connected = True
     return svc
@@ -52,7 +56,6 @@ def test_read_raises_when_the_query_fails(read):
 
 def test_no_database_is_still_an_empty_read():
     svc = DatabaseDataService()
-    svc._demo_mode = False
     with patch(
         "core.storage.database_data_service.init_database",
         side_effect=RuntimeError("postgres down"),

@@ -39,7 +39,7 @@ import HealthScreen from '../screens/health/HealthScreen'
 import HomeScreen from '../screens/home/HomeScreen'
 import { HOME_SETUP_HREF, SETUP_HIDDEN_CHANGED, openSetupSteps, readSetupHidden } from '../screens/home/setupHidden'
 import SettingsScreen from '../screens/settings/SettingsScreen'
-import { AUTONOMY_CHANGED } from '../screens/settings/useSettings'
+import { AUTONOMY_CHANGED, DEMO_MODE_CHANGED } from '../screens/settings/useSettings'
 import NotFoundScreen from '../screens/notfound/NotFoundScreen'
 import OverviewScreen from '../screens/overview/OverviewScreen'
 import TriageScreen from '../screens/triage/TriageScreen'
@@ -305,18 +305,23 @@ function SocConsoleInner() {
     }
   }, [])
 
+  // Demo mode switches at runtime: re-read on each screen change and when Settings turns it off
   useEffect(() => {
     let live = true
-    configApi
-      .getDemoMode()
-      .then((res) => {
-        if (live) setDemoOn(Boolean(res.data?.enabled))
-      })
-      .catch(() => {})
+    const reread = () =>
+      configApi
+        .getDemoMode()
+        .then((res) => {
+          if (live) setDemoOn(Boolean(res.data?.enabled))
+        })
+        .catch(() => {})
+    reread()
+    window.addEventListener(DEMO_MODE_CHANGED, reread)
     return () => {
       live = false
+      window.removeEventListener(DEMO_MODE_CHANGED, reread)
     }
-  }, [])
+  }, [current])
 
   // re-read on each screen change so finishing a step shows without a reload
   useEffect(() => {

@@ -2616,7 +2616,8 @@ export interface paths {
          * Set Demo Mode
          * @description Set demo mode configuration.
          *
-         *     Note: Setting via API updates the config file. Environment variable takes precedence.
+         *     Updates the config file and takes effect at once. DEMO_MODE in the environment
+         *     takes precedence; the response reports the effective mode.
          *
          *     Args:
          *         config: Demo mode configuration

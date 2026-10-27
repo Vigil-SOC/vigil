@@ -529,6 +529,11 @@ export const AUTONOMY_CHANGED = 'vigil:autonomy-changed'
 /** Tells the header autonomy badge to re-read, e.g. after Ask first / Act is saved. */
 export const notifyAutonomyChanged = () => window.dispatchEvent(new Event(AUTONOMY_CHANGED))
 
+export const DEMO_MODE_CHANGED = 'vigil:demo-mode-changed'
+
+/** Tells the shell's demo banner to re-read, e.g. after demo data is turned off. */
+export const notifyDemoModeChanged = () => window.dispatchEvent(new Event(DEMO_MODE_CHANGED))
+
 export function useCeiling() {
   const [ceiling, setCeiling] = useState<Ceiling | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
