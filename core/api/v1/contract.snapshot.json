@@ -2665,6 +2665,18 @@
             "title": "Created At",
             "type": "string"
           },
+          "finding_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The first stored alert the approval's evidence names, so an item with no case can open it.",
+            "title": "Finding Id"
+          },
           "hypotheses": {
             "description": "A hypothesis approval's explanations, each with where it came from; base_rate is the benign one to beat.",
             "items": {

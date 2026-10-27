@@ -163,6 +163,11 @@ function DecisionCard({
             Open case
           </Link>
         )}
+        {!caseId && item.finding_id && (
+          <Link className="home-btn ghost" to={`/overview?alert=${encodeURIComponent(item.finding_id)}`}>
+            Open alert
+          </Link>
+        )}
       </div>
     </article>
   )

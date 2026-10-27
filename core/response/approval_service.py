@@ -31,7 +31,7 @@ from core.response.config import (
 )
 from core.storage.connection import get_db_manager
 from core.storage.models import ApprovalAction as ApprovalActionRow
-from core.storage.models import Investigation, WorkflowRun
+from core.storage.models import Case, Finding, Investigation, WorkflowRun, case_findings
 from core.storage.schemas.base import _iso_utc
 from core.telemetry import get_meter
 from core.time import utcnow
@@ -689,6 +689,7 @@ def _case_id_for_action(
     action: PendingAction,
     runs: Dict[str, Any],
     investigations: Dict[str, Optional[str]],
+    evidence_cases: Optional[Dict[str, str]] = None,
 ) -> Optional[str]:
     """One case id, in the order #1301 settled. Later sources fill a gap only."""
     params = action.parameters if isinstance(action.parameters, dict) else {}
@@ -702,14 +703,27 @@ def _case_id_for_action(
             return from_run
     investigation_id = _text_id(params.get("investigation_id"))
     if investigation_id:
-        return _text_id(investigations.get(investigation_id))
+        from_investigation = _text_id(investigations.get(investigation_id))
+        if from_investigation:
+            return from_investigation
+    # The responder saves its approval before intake makes the alert's case, so
+    # the alert ids in evidence are the only link until then.
+    for finding_id in _evidence_ids(action):
+        found = (evidence_cases or {}).get(finding_id)
+        if found:
+            return found
     return None
+
+
+def _evidence_ids(action: PendingAction) -> List[str]:
+    return [one for one in map(_text_id, action.evidence or []) if one]
 
 
 def _case_lookups(
     actions: List[PendingAction],
-) -> tuple[Dict[str, Any], Dict[str, Optional[str]]]:
-    """Run trigger contexts and investigation case ids those actions can name."""
+) -> tuple[Dict[str, Any], Dict[str, Optional[str]], Dict[str, str], set[str]]:
+    """What those actions can name: run trigger contexts, investigation case ids,
+    the newest case of each stored alert in their evidence, and those alerts."""
     run_ids = {action.workflow_run_id for action in actions if action.workflow_run_id}
     investigation_ids: set[str] = set()
     for action in actions:
@@ -717,10 +731,13 @@ def _case_lookups(
         investigation_id = _text_id(params.get("investigation_id"))
         if investigation_id:
             investigation_ids.add(investigation_id)
+    evidence_ids = {one for action in actions for one in _evidence_ids(action)}
     runs: Dict[str, Any] = {}
     investigations: Dict[str, Optional[str]] = {}
-    if not run_ids and not investigation_ids:
-        return runs, investigations
+    evidence_cases: Dict[str, str] = {}
+    stored: set[str] = set()
+    if not run_ids and not investigation_ids and not evidence_ids:
+        return runs, investigations, evidence_cases, stored
     db = get_db_manager()
     with db.session_scope() as session:
         if run_ids:
@@ -734,7 +751,27 @@ def _case_lookups(
             )
             for row in rows:
                 investigations[row.investigation_id] = row.case_id
-    return runs, investigations
+        if evidence_ids:
+            stored = {
+                fid
+                for (fid,) in session.query(Finding.finding_id).filter(
+                    Finding.finding_id.in_(evidence_ids)
+                )
+            }
+            rows = (
+                session.query(case_findings.c.finding_id, Case.case_id, Case.updated_at)
+                .join(Case, Case.case_id == case_findings.c.case_id)
+                .filter(case_findings.c.finding_id.in_(evidence_ids))
+                .all()
+            )
+            # The newest case, as alert_outcomes._cases_for picks it.
+            newest: Dict[str, tuple] = {}
+            for finding_id, linked, updated_at in rows:
+                key = (updated_at, linked)
+                if finding_id not in newest or key > newest[finding_id]:
+                    newest[finding_id] = key
+            evidence_cases = {fid: key[1] for fid, key in newest.items()}
+    return runs, investigations, evidence_cases, stored
 
 
 def _kind_for_action(action: PendingAction) -> str:
@@ -821,6 +858,7 @@ def _parked_runs(pending_runs: set[str]) -> List[Dict[str, Any]]:
                     "created_at": "",
                     "reversibility": Reversibility.REVERSIBLE.value,
                     "case_id": _text_id(ctx.get("case_id")),
+                    "finding_id": None,
                     "run_id": row.run_id,
                     "checkpoint_id": None,
                     "checkpoint_class": None,
@@ -848,11 +886,11 @@ def needs_you(case_id: Optional[str] = None) -> Dict[str, Any]:
         actions = [
             _row_to_pending(row) for row in session.execute(stmt).scalars().all()
         ]
-    runs, investigations = _case_lookups(actions)
+    runs, investigations, evidence_cases, stored = _case_lookups(actions)
     wanted = _text_id(case_id)
     items: List[Dict[str, Any]] = []
     for action in actions:
-        resolved = _case_id_for_action(action, runs, investigations)
+        resolved = _case_id_for_action(action, runs, investigations, evidence_cases)
         if wanted is not None and resolved != wanted:
             continue
         items.append(
@@ -864,6 +902,10 @@ def needs_you(case_id: Optional[str] = None) -> Dict[str, Any]:
                 "created_at": action.created_at,
                 "reversibility": action.reversibility,
                 "case_id": resolved,
+                # Agent-written evidence is any text: only a stored alert counts.
+                "finding_id": next(
+                    (one for one in _evidence_ids(action) if one in stored), None
+                ),
                 "run_id": action.workflow_run_id,
                 **_checkpoint_fields(action),
             }

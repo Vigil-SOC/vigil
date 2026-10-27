@@ -121,6 +121,10 @@ class NeedsYouItem(BaseModel):
     )
     reversibility: Literal["reversible", "irreversible"]
     case_id: Optional[str] = None
+    finding_id: Optional[str] = Field(
+        default=None,
+        description="The first stored alert the approval's evidence names, so an item with no case can open it.",
+    )
     run_id: Optional[str] = None
     checkpoint_id: Optional[str] = Field(
         default=None,
