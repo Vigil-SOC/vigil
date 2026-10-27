@@ -114,6 +114,17 @@ class TestBeginAndFinalize:
         assert row["result_summary"] == "All good."
         assert row["error"] is None
 
+    def test_finalize_uses_the_instant_the_report_was_sealed(self, service, clean_runs):
+        from datetime import datetime
+
+        run_id = service.begin_run(workflow_id="test-wf-002b", workflow_name="Test WF")
+        finished = datetime(2026, 10, 27, 11, 15, 20)
+        assert service.finalize_run(run_id, status="completed", cost_usd=0.115, finished_at=finished)
+        row = service.get_run(run_id)
+        assert row["finished_at"] == "2026-10-27T11:15:20+00:00"
+        started = datetime.fromisoformat(row["started_at"])
+        assert row["duration_ms"] == int((finished.replace(tzinfo=started.tzinfo) - started).total_seconds() * 1000)
+
     def test_set_status_pauses_with_reason_and_cost_and_a_terminal_still_finalizes(
         self, service, clean_runs
     ):

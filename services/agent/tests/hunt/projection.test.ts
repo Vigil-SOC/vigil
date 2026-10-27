@@ -325,3 +325,55 @@ describe("what the Watch page reads off a hunt", () => {
     expect("duration_ms" in replay(stripped).decisions[0]!).toBe(false);
   });
 });
+
+// The report is finalized when the hunt stops reasoning. The narrator and the
+// review are charged after that, and a later rewrite is not part of the run.
+describe("the report header follows the run record", () => {
+  it("counts spend through the terminal and dates Ended when the run was sealed", async () => {
+    const started = await newLedger();
+    bookOf(started.ledger).terminate("completed", "done");
+    await started.ledger.flush();
+    await started.spend(0.1, "lead");
+    await started.spend(0.008, "narrator");
+    const finished_at = "2026-10-27T11:15:20.000Z";
+    await started.state.append(started.runId, [
+      {
+        run_id: started.runId,
+        run_kind: "hunt",
+        kind: "terminal",
+        payload: { outcome: "completed", reason: "done", finished_at },
+      },
+    ]);
+    await started.spend(1, "narrator");
+
+    const events = await started.state.read(started.runId);
+    const view = huntProjection(started.runId, events);
+
+    expect(view.report?.cost_usd).toBe(0);
+    expect(view.cost_usd).toBeCloseTo(1.108);
+    expect(view.report_markdown).toMatch(/^- \*\*Cost:\*\* \$0\.1080 of /m);
+    expect(view.report_markdown).toMatch(/^- \*\*Ended:\*\* 2026-10-27T11:15:20\.000Z$/m);
+  });
+
+  it("keeps the finalized cost and end time when the ledger has no spend to sum", async () => {
+    const started = await newLedger();
+    bookOf(started.ledger).terminate("completed", "done");
+    const view = await project(started);
+
+    expect(view.report_markdown).toContain(`**Cost:** $${view.report!.cost_usd.toFixed(4)} of`);
+    expect(view.report_markdown).toContain(`**Ended:** ${view.report!.terminated_at}`);
+  });
+
+  it("dates an older terminal from when it was written", async () => {
+    const started = await newLedger();
+    bookOf(started.ledger).terminate("completed", "done");
+    await started.ledger.flush();
+    await started.state.append(started.runId, [
+      { run_id: started.runId, run_kind: "hunt", kind: "terminal", payload: { outcome: "completed", reason: "done" } },
+    ]);
+    const events = await started.state.read(started.runId);
+    const terminal = events.find((event) => event.kind === "terminal");
+
+    expect(huntProjection(started.runId, events).report_markdown).toContain(`**Ended:** ${terminal!.ts}`);
+  });
+});

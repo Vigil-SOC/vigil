@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { costOf, roundCost } from "../../contracts/budget.js";
 import { archFor } from "../../plugins/kinds.js";
 import type { TerminalHandoff } from "../../contracts/events.js";
 import { InProcessState } from "../../core/state.js";
@@ -56,6 +57,14 @@ describe("a hunt run by one agent", () => {
     const terminal = await state.terminal(RUN);
     expect(terminal?.handoffs).toHaveLength(1);
     expect(terminal?.summary).toContain("#");
+    // Cost and Ended are the run's, including the account written after the hunt stopped.
+    const terminalEvent = events.findLast((event) => event.kind === "terminal");
+    const cost = roundCost(costOf(events, terminalEvent?.seq));
+    expect(terminal?.finished_at).toBeTruthy();
+    expect(terminal?.summary).toContain(`**Ended:** ${terminal?.finished_at}`);
+    expect(terminal?.summary).toContain(`**Cost:** $${cost.toFixed(4)} of`);
+    expect(huntProjection(RUN, events).report_markdown).toContain(`**Ended:** ${terminal?.finished_at}`);
+    expect(huntProjection(RUN, events).report_markdown).toContain(`**Cost:** $${cost.toFixed(4)} of`);
 
     // What episodic memory reads, folded off a kernel ledger exactly as off a controller one.
     const distil = huntDistil(RUN, events);

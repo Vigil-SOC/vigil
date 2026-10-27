@@ -3,7 +3,7 @@
 // same records.
 import { describe, expect, it } from "vitest";
 import { citedTechniques } from "../../plugins/hunt/strength.js";
-import { buildReport, groupedGaps, renderReport, type HuntReport, type VisibilityGap } from "../../plugins/hunt/report.js";
+import { alignReport, buildReport, groupedGaps, renderReport, sealReport, type HuntReport, type VisibilityGap } from "../../plugins/hunt/report.js";
 import { DEFAULT_BUDGETS } from "../../plugins/hunt/types.js";
 import { evidenceOn, newLedger } from "../support/hunt.js";
 
@@ -27,6 +27,49 @@ const fannedOut: VisibilityGap[] = [
   gap({ evidence_id: "ev-3", summary: "worker failed: timeout" }),
   gap({ evidence_id: "ev-4" }),
 ];
+
+const HEADER = [
+  "# Hunt report — threat-hunt",
+  "",
+  "- **Outcome:** completed",
+  "- **Hunt:** hunt-1",
+  "- **Iterations:** 2 of 8",
+  "- **Cost:** $0.1073 of $5.00",
+  "- **Started:** 2026-10-27T11:00:00.000Z",
+  "- **Ended:** 2026-10-27T11:15:07.000Z",
+  "",
+  "Nothing was proven.",
+].join("\n");
+
+describe("the header matches the run record", () => {
+  it("moves Cost and Ended forward and leaves the ceiling and the body", () => {
+    const aligned = alignReport(HEADER, 0.115, "2026-10-27T11:15:20.000Z");
+
+    expect(aligned).toMatch(/^- \*\*Cost:\*\* \$0\.1150 of \$5\.00$/m);
+    expect(aligned).toMatch(/^- \*\*Ended:\*\* 2026-10-27T11:15:20\.000Z$/m);
+    expect(aligned).toContain("Nothing was proven.");
+    expect(aligned).toContain("**Started:** 2026-10-27T11:00:00.000Z");
+  });
+
+  it("keeps a cost of a dollar or more, which a replacement string would read as a backreference", () => {
+    const aligned = alignReport(HEADER, 1.108, "2026-10-27T11:15:20.000Z");
+    expect(aligned).toMatch(/^- \*\*Cost:\*\* \$1\.1080 of \$5\.00$/m);
+  });
+
+  it("seals the cost of every spend so far, and ignores a summary that is not a report", () => {
+    const events = [
+      { kind: "spend", payload: { cost_usd: 0.1 } },
+      { kind: "spend", payload: { cost_usd: 0.008 } },
+      { kind: "spend", payload: { cost_usd: null } },
+    ];
+
+    expect(sealReport(HEADER, events, "2026-10-27T11:15:20.000Z")).toEqual({
+      summary: alignReport(HEADER, 0.108, "2026-10-27T11:15:20.000Z"),
+      finished_at: "2026-10-27T11:15:20.000Z",
+    });
+    expect(sealReport("the worker crashed", events, "2026-10-27T11:15:20.000Z")).toBeNull();
+  });
+});
 
 describe("one row per question, not per worker", () => {
   it("collapses the workers that were asked the same thing", () => {

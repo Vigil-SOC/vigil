@@ -10726,6 +10726,8 @@ export interface components {
             cost_usd?: number | null;
             /** Disposition */
             disposition?: string | null;
+            /** Finished At */
+            finished_at?: string | null;
             /** Handoffs */
             handoffs?: components["schemas"]["TerminalHandoff"][];
             /** Outcome */

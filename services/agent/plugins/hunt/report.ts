@@ -1,3 +1,4 @@
+import { costOf, roundCost } from "../../contracts/budget.js";
 import { resolutionOf, type Checkpoint, type Resolution } from "./checkpoints.js";
 import { suppressedEntities } from "./frontier.js";
 import type { Projection } from "./ledger.js";
@@ -310,6 +311,57 @@ function openedOn(recall: RecallPayload | null): string[] {
     ...notes.map((note) => `- ${note}`),
     "",
   ];
+}
+
+const COST_LINE = /^(- \*\*Cost:\*\* )\$[\d.]+/m;
+const ENDED_LINE = /^(- \*\*Ended:\*\* ).+$/m;
+
+function isHuntReport(markdown: string): boolean {
+  return COST_LINE.test(markdown) && ENDED_LINE.test(markdown);
+}
+
+// The header is written when the hunt stops reasoning. The account and the review
+// are charged after that, and the run record is their cost and the time the
+// terminal was sealed. Bring the two lines forward; leave every other line alone.
+export function alignReport(markdown: string, costUsd: number, endedAt: string): string {
+  // A function, not a replacement string: `$1` in the dollars would be read as a backreference.
+  const cost = `$${costUsd.toFixed(4)}`;
+  return markdown
+    .replace(COST_LINE, (_match, prefix: string) => `${prefix}${cost}`)
+    .replace(ENDED_LINE, (_match, prefix: string) => `${prefix}${endedAt}`);
+}
+
+// Null when this is not a hunt report: other workflows deliver prose, and their
+// summary is stored as they wrote it.
+export function sealReport(
+  markdown: string,
+  events: readonly { kind: string; payload: unknown }[],
+  endedAt: string,
+): { summary: string; finished_at: string } | null {
+  if (!isHuntReport(markdown)) return null;
+  return { summary: alignReport(markdown, roundCost(costOf(events)), endedAt), finished_at: endedAt };
+}
+
+// What the rendered header should say once the run has a terminal. Spend after
+// that terminal is a later rewrite, not the run. A ledger with no spend events
+// keeps the cost the report was finalized with.
+export function headerFromRun(
+  events: readonly { seq: number; ts: string; kind: string; payload: unknown }[],
+  report: { cost_usd: number; terminated_at: string | null },
+): { cost_usd: number; ended: string | null } {
+  let terminal: { seq: number; ts: string; payload: unknown } | undefined;
+  for (const event of events) if (event.kind === "terminal") terminal = event;
+  const spent = events.some((event) => event.kind === "spend" && (terminal === undefined || event.seq <= terminal.seq));
+  return {
+    cost_usd: spent ? roundCost(costOf(events, terminal?.seq)) : report.cost_usd,
+    ended: (terminal === undefined ? null : finishedAt(terminal)) ?? report.terminated_at,
+  };
+}
+
+function finishedAt(event: { ts: string; payload: unknown }): string | null {
+  const named = (event.payload as { finished_at?: unknown }).finished_at;
+  if (typeof named === "string" && named !== "") return named;
+  return event.ts === "" ? null : event.ts;
 }
 
 export function renderReport(
