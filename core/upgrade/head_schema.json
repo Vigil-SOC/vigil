@@ -409,6 +409,16 @@
   "nullable": true,
   "type": "text"
  },
+ "column audit_feed_state.pause_until": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp with time zone"
+ },
+ "column audit_feed_state.unconfirmed_seq": {
+  "default": null,
+  "nullable": true,
+  "type": "bigint"
+ },
  "column audit_trail.actor_text": {
   "acl": [
    "app:UPDATE"

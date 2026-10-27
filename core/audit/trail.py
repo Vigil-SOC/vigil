@@ -69,6 +69,24 @@ _VERIFY_BATCH = 5000
 _LOCK = 0x7669_6769_6C41_5544  # "vigilAUD"
 _PRUNE_LOCK = 0x7669_6769_6C50_524E  # "vigilPRN"
 
+# Decision 11 (#3191): after a feed-on restore, ordinary writes wait this long
+# for the restore entry to leave the box. Revision 0012 holds the state.
+PAUSE = timedelta(seconds=30)
+_PAUSE_READY = text("""
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('public.audit_feed_state')
+      AND attname = 'unconfirmed_seq' AND NOT attisdropped
+""")
+
+
+class Paused(RuntimeError):
+    """A feed-on restore's entry has not yet left the box. The API answers 503."""
+
+    def __init__(self, seq: int, until: datetime):
+        super().__init__(f"restore entry {seq} is not yet confirmed off the box")
+        self.seq, self.until = seq, until
+
+
 _INSERT = text("""
     INSERT INTO public.audit_trail
         (occurred_at, late, payload,
@@ -129,15 +147,74 @@ def _insert(session, payload, occurred_at, late, beside) -> Entry:
     return Entry(row[0], row[1])
 
 
+def pause_ready(session) -> bool:
+    """Whether ``audit_feed_state`` carries the pause (absent on create_all DBs)."""
+    return session.execute(_PAUSE_READY).first() is not None
+
+
+def _gate(session) -> None:
+    if not pause_ready(session):
+        return
+    row = session.execute(text("""
+        SELECT unconfirmed_seq, pause_until FROM public.audit_feed_state
+        WHERE id = 1 AND unconfirmed_seq IS NOT NULL AND pause_until > now()
+    """)).first()
+    if row is not None:
+        raise Paused(row[0], row[1])
+
+
+def pause_state(session) -> tuple[Optional[int], bool]:
+    """The restore entry not yet pushed, polled or exported, and whether writes wait."""
+    if not pause_ready(session):
+        return None, False
+    row = session.execute(text("""
+        SELECT unconfirmed_seq, coalesce(pause_until > now(), false)
+        FROM public.audit_feed_state WHERE id = 1
+    """)).first()
+    return (row[0], bool(row[0] is not None and row[1])) if row else (None, False)
+
+
+def unconfirmed(session) -> Optional[int]:
+    return pause_state(session)[0]
+
+
+def confirm(session, seqs=(), *, through: Optional[int] = None) -> None:
+    """Clear the pause once the restore entry has left the box.
+
+    ``seqs`` are entries a poll or export handed out; ``through`` is the last
+    sequence of a successful push, which sends every entry up to it.
+    """
+    seq = unconfirmed(session)
+    if seq is None:
+        return
+    if not (seq in set(seqs) or (through is not None and through >= seq)):
+        return
+    session.execute(
+        text("""
+            UPDATE public.audit_feed_state
+            SET unconfirmed_seq = NULL, pause_until = NULL
+            WHERE id = 1 AND unconfirmed_seq = :seq
+        """),
+        {"seq": seq},
+    )
+
+
 def append(
     session,
     payload: dict[str, Any],
     *,
     occurred_at: Optional[datetime] = None,
     late: bool = False,
+    gated: bool = True,
     **beside: Any,
 ) -> Entry:
-    """Append one entry in the caller's transaction; it commits with the action."""
+    """Append one entry in the caller's transaction; it commits with the action.
+
+    Raises ``Paused`` during a feed-on restore's pause. Safety writes and the
+    feed leader's own system writes pass ``gated=False``.
+    """
+    if gated:
+        _gate(session)
     entry = _insert(session, payload, occurred_at, late, beside)
     if entry.seq % CHECKPOINT_EVERY == 0:
         # Still inside the insert lock, so this checkpoint needs no leader.
@@ -186,7 +263,9 @@ def append_or_hold(payload: dict[str, Any], **beside: Any) -> Optional[Entry]:
     occurred_at = datetime.now(timezone.utc)
     try:
         with get_db_session() as session, session.begin():
-            return append(session, payload, occurred_at=occurred_at, **beside)
+            return append(
+                session, payload, occurred_at=occurred_at, gated=False, **beside
+            )
     except Exception:  # noqa: BLE001 - the action must not depend on the trail
         logger.exception("audit trail refused an entry; holding it to record late")
     try:
@@ -218,7 +297,14 @@ def drain_late(session, limit: int = 100) -> int:
     for row_id, occurred_at, payload, beside in rows:
         try:
             with session.begin_nested():
-                append(session, payload, occurred_at=occurred_at, late=True, **beside)
+                append(
+                    session,
+                    payload,
+                    occurred_at=occurred_at,
+                    late=True,
+                    gated=False,
+                    **beside,
+                )
                 session.execute(
                     text("DELETE FROM public.audit_trail_held WHERE id = :id"),
                     {"id": row_id},
@@ -264,6 +350,7 @@ def _close(session, window) -> None:
                     "last_at": window.last_at.isoformat(),
                 },
             },
+            gated=False,
             **window.beside,
         )
 
@@ -326,7 +413,7 @@ def collapse(
         return None
     if window.count:
         _close(session, window)
-    entry = append(session, payload, occurred_at=now, **beside)
+    entry = append(session, payload, occurred_at=now, gated=False, **beside)
     session.execute(
         text("""
             UPDATE public.audit_trail_held
@@ -725,15 +812,22 @@ def poll(session, query: TrailQuery, limit: int = POLL_LIMIT) -> PollPage:
         raise ValueError("poll needs after")
     tip = current_tip(session)
     if query.after > tip.seq:
-        return PollPage(tip, reset=True, restore=latest_restore(session))
-    return PollPage(tip, entries=tuple(read(session, query, min(limit, POLL_LIMIT))))
+        restore = latest_restore(session)
+        if restore is not None:  # the reset hands the restore entry out
+            confirm(session, [restore["seq"]])
+        return PollPage(tip, reset=True, restore=restore)
+    entries = tuple(read(session, query, min(limit, POLL_LIMIT)))
+    confirm(session, (e["seq"] for e in entries))
+    return PollPage(tip, entries=entries)
 
 
 def export(session, query: TrailQuery, actor: str) -> tuple[list[dict], Tip]:
     """The filtered entries, then one export entry whose actor is ``actor``.
 
     The tip is read after that append, so the closing checkpoint covers it.
+    Rows that carry a restore entry clear its pause before that append.
     """
     rows = read_all(session, query)
+    confirm(session, (r["seq"] for r in rows))
     append(session, {ACTION: ACTION_EXPORT, ACTOR: actor, "filter": query.recorded()})
     return rows, current_tip(session)

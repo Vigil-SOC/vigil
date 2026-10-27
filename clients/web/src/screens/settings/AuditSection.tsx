@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AUDIT_PAGE, auditApi, type AuditEntry, type AuditFilter, type AuditTip, type AuditVerify } from '../../services/api'
+import { AUDIT_PAGE, auditApi, type AuditEntry, type AuditFeedHealth, type AuditFilter, type AuditTip, type AuditVerify } from '../../services/api'
 import { FilterChip } from '../../shared/FilterChip'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
@@ -84,6 +84,7 @@ export default function AuditSection({ notify }: SectionProps) {
   const [query, setQuery] = useState(filter) // typed fields settle before a read
   const [entries, setEntries] = useState<AuditEntry[]>([])
   const [tip, setTip] = useState<AuditTip | null>(null)
+  const [feed, setFeed] = useState<AuditFeedHealth | null>(null)
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading')
   const [error, setError] = useState('')
   const [more, setMore] = useState(false)
@@ -108,6 +109,7 @@ export default function AuditSection({ notify }: SectionProps) {
       const page = res.data.entries
       setEntries((rows) => (after == null ? page : [...rows, ...page]))
       setTip(res.data.tip)
+      if (res.data.feed) setFeed(res.data.feed)
       setMore(page.length >= AUDIT_PAGE)
       setPhase('ready')
     } catch (e) {
@@ -174,7 +176,7 @@ export default function AuditSection({ notify }: SectionProps) {
 
       <div className="audit-top">
         <VerifyCard tip={tip} />
-        <FeedHealth />
+        <FeedHealth feed={feed} />
       </div>
 
       <div className="audit-chips">
@@ -290,7 +292,8 @@ function EntryDetail({ entry }: { entry: AuditEntry }) {
     ['Seq', String(entry.seq)],
     ['Occurred (UTC)', utcDayClock(entry.occurred_at) ?? entry.occurred_at],
     ['Actor', entry.actor_text ? `${entry.actor_text} · ${str(p.actor)}` : str(p.actor)],
-    ['On behalf of', [entry.operator_text, str(p.on_behalf_of)].filter(Boolean).join(' · ')],
+    ['On behalf of', str(p.on_behalf_of)],
+    ['Operator text', entry.operator_text ?? ''],
     ['Action', str(p.action)],
     ['Object', str(p.object)],
     ...(p.target != null ? [['Target', str(p.target)] as [string, string]] : []),
@@ -386,15 +389,34 @@ export function verifyLine(v: AuditVerify): { level: 'good' | 'poor'; text: stri
     : { level: 'poor', text: `Chain break at seq ${v.first_bad}${v.reason ? `: ${v.reason}` : ''}` }
 }
 
-/** Feed health: the feed (#2767) fills this once it ships. Until then nothing carries the trail out. */
-function FeedHealth() {
+/** Feed health off the entries read: whether the trail is leaving the box (#3191). */
+function FeedHealth({ feed }: { feed: AuditFeedHealth | null }) {
+  const behind = feed?.behind ?? 0
   return (
     <section className="audit-box" aria-label="Feed health">
       <div className="audit-box-head">
         <h3>Feed health</h3>
-        <span className="audit-off">Not on</span>
+        {feed && (feed.enabled ? <LevelBadge level={feed.last_error ? 'poor' : 'good'} variant="pill" /> : <span className="audit-off">Not on</span>)}
       </div>
-      <p className="audit-note">No feed is configured. The trail has no outside proof unless it is exported or polled.</p>
+      {feed && !feed.enabled && (
+        <p className="audit-note">No feed is on. The trail has no outside proof unless it is exported or polled.</p>
+      )}
+      {feed?.enabled && (
+        <>
+          <p className="audit-feed-health">
+            <span>Last delivered <b title={feed.last_delivered_at ?? 'Not delivered yet'}>{utcDayClock(feed.last_delivered_at) ?? '—'}</b></span>
+            {feed.last_delivered_seq != null && <span>through seq <b>{feed.last_delivered_seq}</b></span>}
+            <span><b>{behind === 0 ? 'Caught up' : `${behind} ${behind === 1 ? 'entry' : 'entries'} behind`}</b></span>
+          </p>
+          {feed.last_error && <p className="audit-feed-error" title={feed.last_error}>{feed.last_error}</p>}
+        </>
+      )}
+      {feed?.unconfirmed != null && (
+        <p className="audit-note" role="status">
+          <b>Restore not yet confirmed.</b> The restore entry (seq {feed.unconfirmed}) has not been confirmed off the box.{' '}
+          {feed.paused ? 'New entries wait until the feed sends it, for up to 30 seconds.' : feed.enabled ? 'The feed sends it on its next push.' : 'Export or poll the trail to carry it out.'}
+        </p>
+      )}
     </section>
   )
 }

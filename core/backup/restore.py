@@ -36,7 +36,7 @@ from psycopg2 import sql
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
 
-from core.audit import trail
+from core.audit import feed, trail
 from core.backup.connection import backup_database_config
 from core.backup.create import (
     PRE_RESTORE_PREFIX,
@@ -970,7 +970,8 @@ def _record_restore(
 
     The writer does not set ``prev_hash`` or ``seq``: the trigger chains onto
     the restored tip. The OS user sits in ``operator_text``, not the actor.
-    A failure is part of this entry; it is not a later update.
+    A failure is part of this entry; it is not a later update. The entry is
+    flagged unconfirmed, and a feed-on restore pauses later writes (decision 11).
     """
     values = _restore_values(snapshot_id, created_at, expired, rotated)
     with get_db_manager().session_scope() as session:
@@ -984,8 +985,10 @@ def _record_restore(
             if failure is not None:
                 payload[trail.OUTCOME] = trail.OUTCOME_FAILED
                 payload["reason"] = str(failure)
-            # Poll's reset returns the newest entry with this action.
-            trail.append(session, payload, operator_text=actor)
+            # Poll's reset returns the newest entry with this action. Written
+            # before the pause is set, so the gate never refuses it.
+            entry = trail.append(session, payload, operator_text=actor)
+            feed.pause_after_restore(session, entry.seq)
             return
     if not legacy:
         return
