@@ -1,0 +1,51 @@
+/* Tool picker (tp-*). Colours are the console tokens only. */
+.tp { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.tp-head { display: flex; align-items: baseline; gap: 8px; }
+.tp-label { font-size: 12px; font-weight: 650; color: var(--tx0); }
+.tp-count { font-size: 11.5px; color: var(--tx2); }
+.tp-hint { font-size: 11.5px; color: var(--tx2); line-height: 1.45; }
+.tp-link { background: none; border: 0; padding: 0; color: var(--ac); font-size: 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+.tp-link:hover { text-decoration: underline; }
+.tp-head .tp-link { margin-left: auto; }
+.tp-chosen { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.tp-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 3px 4px 3px 8px; border: 1px solid var(--ac-ln); background: var(--ac-bg); border-radius: 999px; font-size: 12px; color: var(--tx0); }
+.tp-chip.missing { border-color: var(--fair-ln); background: var(--fair-bg); }
+.tp-chip-name { font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-chip button { display: inline-grid; place-items: center; width: 18px; height: 18px; border: 0; border-radius: 50%; background: transparent; color: var(--tx2); cursor: pointer; }
+.tp-chip button:hover { background: var(--bg3); color: var(--tx0); }
+.tp-suggest { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11.5px; color: var(--tx2); }
+.tp-sug { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border: 1px dashed var(--ln2); background: var(--bg1); border-radius: 999px; font-size: 11.5px; color: var(--tx1); cursor: pointer; font-family: var(--mono, ui-monospace, monospace); }
+.tp-sug:hover { border-color: var(--ac); color: var(--ac); }
+.tp-search { display: flex; align-items: center; gap: 8px; padding: 0 10px; height: 34px; border: 1px solid var(--ln1); border-radius: 8px; background: var(--bg2); color: var(--tx2); }
+.tp-search:focus-within { border-color: var(--ac); }
+.tp-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--tx0); font-size: 13px; }
+.tp-servers { display: flex; flex-wrap: wrap; gap: 5px; }
+.tp-servers button { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border: 1px solid var(--ln1); border-radius: 999px; background: var(--bg1); color: var(--tx1); font-size: 11.5px; cursor: pointer; }
+.tp-servers button span { color: var(--tx3); }
+.tp-servers button[aria-pressed='true'] { border-color: var(--ac); background: var(--ac-bg); color: var(--tx0); }
+.tp-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--ln1); border-radius: 8px; background: var(--bg1); }
+.tp-empty { margin: 0; padding: 14px; font-size: 12.5px; color: var(--tx2); }
+.tp-group + .tp-group { border-top: 1px solid var(--ln0); }
+.tp-group-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: var(--bg2); font-size: 11.5px; font-weight: 650; color: var(--tx1); }
+.tp-group-n { color: var(--tx3); font-weight: 500; }
+.tp-group-head .tp-link { margin-left: auto; font-weight: 500; font-size: 11.5px; }
+.tp-row { display: flex; align-items: flex-start; gap: 9px; padding: 7px 10px; cursor: pointer; }
+.tp-row:hover, .tp-row.cur { background: var(--bg3); }
+.tp-row.on { background: var(--ac-bg); }
+.tp-box { flex: none; display: inline-grid; place-items: center; width: 15px; height: 15px; margin-top: 1px; border: 1.5px solid var(--ln2); border-radius: 4px; color: var(--ac-tx); }
+.tp-row.on .tp-box { background: var(--ac); border-color: var(--ac); }
+.tp-row-main { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.tp-row-name { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; color: var(--tx0); overflow-wrap: anywhere; }
+.tp-row-desc { font-size: 11.5px; line-height: 1.4; color: var(--tx2); }
+.tp-mark { flex: none; padding: 1px 7px; border-radius: 999px; font-size: 10.5px; font-weight: 600; white-space: nowrap; border: 1px solid var(--ln1); color: var(--tx2); }
+.tp-mark.read_only { color: var(--tx2); }
+.tp-mark.asks_first { color: var(--fair); border-color: var(--fair-ln); background: var(--fair-bg); }
+.tp-mark.on_its_own { color: var(--poor); border-color: var(--poor-ln); background: var(--poor-bg); }
+.tp-mark.none { color: var(--fair); border-color: var(--fair-ln); }
+.tp-letter { flex: none; display: inline-grid; place-items: center; border-radius: 4px; background: var(--bg4); color: var(--tx1); font-weight: 700; line-height: 1; }
+.tp-letter.vigil { background: var(--ac); color: var(--ac-tx); }
+
+/* the agent drawer's "Describe it" opener, drawn like the assist box it opens */
+.vg-side-assist.vg-side-assist-btn { width: 100%; border: 1px dashed var(--ln2); text-align: left; cursor: pointer; font-family: inherit; flex-wrap: nowrap; }
+.vg-side-assist.vg-side-assist-btn:hover { border-color: var(--ac); }
+.vg-side-assist.vg-side-assist-btn .vg-side-assist-text { flex: 1 1 auto; }

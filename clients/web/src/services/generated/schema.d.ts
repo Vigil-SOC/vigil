@@ -148,13 +148,14 @@ export interface paths {
         };
         /**
          * List Available Tools
-         * @description Return MCP tool names grouped by server prefix for the UI multiselect.
+         * @description Every tool an agent may be given, for the tool picker.
          *
-         *     Sources, in order of preference:
-         *       1. Live MCP registry (populated when MCP servers connect at startup).
-         *       2. Persistent tools cache file at ``data/mcp_tools_cache.json`` written
-         *          on prior successful boots — covers the common dev case where not
-         *          every MCP server happens to be reachable right now.
+         *     ``catalog`` has one row per tool: name, server ("vigil" for the built-in
+         *     ones), group, a one-sentence description and what it changes. ``tools``
+         *     (the connected MCP tools), ``grouped`` and ``changes`` are the older shapes,
+         *     kept for their callers.
+         *     Integration tools come from the live MCP registry, else from the cache file
+         *     at ``data/mcp_tools_cache.json`` written on prior boots.
          */
         get: operations["get_api_agents_custom__meta_tools"];
         put?: never;

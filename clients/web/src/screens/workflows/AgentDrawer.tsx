@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import { agentsApi, aiConfigApi, type AIModelInfo, type GeneratedAgentDraft } from '../../services/api'
 import type { ToolChange } from '../../data/appData'
 import { errMsg } from './runRead'
+import ToolPicker from './ToolPicker'
+import { useToolCatalog } from './toolCatalog'
 
 interface CustomAgentDetail {
   id: string
@@ -60,24 +62,12 @@ function withSaved<T extends string | number>(listed: T[], saved: T | ''): T[] {
   return saved !== '' && !listed.includes(saved as T) ? [...listed, saved as T] : listed
 }
 
-function ToolMark({ change }: { change: ToolChange | null | undefined }) {
-  if (change === null) return null
-  if (!change) return <span className="vg-side-mark none">Not connected</span>
-  if (change === 'asks_first') return <span className="vg-side-mark asks_first">Asks you</span>
-  return (
-    <span className={`vg-side-mark ${change}`}>
-      On its own{change === 'on_its_own' && <span className="poor"> changes things</span>}
-    </span>
-  )
-}
-
 /** The drawer over the Agents tab. `agentId` null builds a new agent; `describe` opens it with the describe box.
  *  `builtIn` shows a built-in's values: nothing exists until Save, which makes one copy. */
 export function AgentDrawer({
   agentId,
   builtIn = false,
   describe = false,
-  toolChanges = {},
   skillCount = null,
   onClose,
   onSaved,
@@ -85,7 +75,7 @@ export function AgentDrawer({
   agentId: string | null
   builtIn?: boolean
   describe?: boolean
-  /** marks from the agent's list row, shown until the connected-tools list arrives */
+  /** marks from the agent's list row; the tool picker reads the full catalog instead */
   toolChanges?: Record<string, ToolChange>
   /** size of the skill library; null while it is not known */
   skillCount?: number | null
@@ -101,8 +91,9 @@ export function AgentDrawer({
   const [advanced, setAdvanced] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
   const [models, setModels] = useState<AIModelInfo[]>([])
-  // null until /_meta/tools answers, or when it fails
-  const [connected, setConnected] = useState<Record<string, ToolChange> | null>(null)
+  const catalog = useToolCatalog()
+  // a new agent starts on the form; the describe box opens on request
+  const [describeOpen, setDescribeOpen] = useState(describe)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -124,7 +115,6 @@ export function AgentDrawer({
 
   useEffect(() => {
     let cancelled = false
-    agentsApi.getAvailableTools().then((r) => !cancelled && setConnected((r.data?.changes || {}) as Record<string, ToolChange>)).catch(() => {})
     aiConfigApi.listModels().then((r) => !cancelled && setModels(r.data?.models || [])).catch(() => {})
     return () => { cancelled = true }
   }, [])
@@ -162,14 +152,6 @@ export function AgentDrawer({
       .catch((e) => { if (!cancelled) { setLoadErr(errMsg(e)); setPhase('error') } })
     return () => { cancelled = true }
   }, [agentId, builtIn])
-
-  // A tool is connected when the list knows it. Before the list arrives, or if it fails, the row's marks
-  // stand in, and a tool with none is unknown (null) rather than not connected.
-  const markOf = (tool: string): ToolChange | null | undefined => (connected ? connected[tool] : toolChanges[tool] ?? null)
-  const addable = useMemo(
-    () => Object.keys(connected ?? {}).filter((t) => !form.tools.includes(t)).sort(),
-    [connected, form.tools],
-  )
 
   const modelOptions = withSaved(models.map((m) => m.model_id), form.model)
   const fallbackOptions = withSaved(models.map((m) => m.model_id), form.fallback_model)
@@ -281,7 +263,13 @@ export function AgentDrawer({
         {phase === 'error' && <div className="vg-side-err">Couldn’t load agent: {loadErr}</div>}
         {phase === 'ready' && (
           <>
-            {isCreate && describe ? (
+            {isCreate && !describeOpen ? (
+              <button type="button" className="vg-side-assist vg-side-assist-btn" onClick={() => setDescribeOpen(true)}>
+                <Icon name="sparkle" size={16} />
+                <span className="vg-side-assist-text">Fill in the form yourself below, or describe the agent and Vigil drafts it for you to change.</span>
+                <span className="vg-side-link">Describe it</span>
+              </button>
+            ) : isCreate ? (
               <div className="vg-side-field">
                 <label htmlFor="vg-a-desc" className="vg-side-label">Describe the agent</label>
                 <textarea
@@ -360,6 +348,7 @@ export function AgentDrawer({
                 <>
                   <div className="vg-side-field">
                     <label htmlFor="vg-a-role" className="vg-side-label">Specialty</label>
+                    <span className="vg-side-hint">Required. One line on what the agent is, e.g. “investigator for cloud identity”.</span>
                     <input id="vg-a-role" className="vg-side-input" value={form.role} autoComplete="off" placeholder="e.g. investigator" onChange={(e) => set('role', e.target.value)} />
                   </div>
                   <div className="vg-side-field">
@@ -446,31 +435,13 @@ export function AgentDrawer({
               </span>
             </div>
 
-            <div className="flex flex-col gap-2">
-              <span className="vg-side-title">Tools it may use</span>
-              {form.tools.length === 0 && <span className="vg-side-hint">No tools yet.</span>}
-              {form.tools.map((tool) => (
-                <div key={tool} className="vg-side-tool">
-                  <span className="vg-side-tool-name">{tool}</span>
-                  <ToolMark change={markOf(tool)} />
-                  <button type="button" className="vg-side-x" aria-label={`Remove ${tool}`} onClick={() => set('tools', form.tools.filter((t) => t !== tool))}>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />
-                    </svg>
-                  </button>
-                </div>
-              ))}
-              <select
-                className="vg-side-input"
-                aria-label="Add tool"
-                value=""
-                disabled={addable.length === 0}
-                onChange={(e) => e.target.value && set('tools', [...form.tools, e.target.value])}
-              >
-                <option value="">{connected === null ? 'Add tool…' : addable.length ? 'Add tool…' : 'No more connected tools'}</option>
-                {addable.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
+            <ToolPicker
+              label="Tools it may use"
+              hint="Search by name or by what a tool does, filter by integration, or add a whole group. A tool that changes things still waits for approval unless Settings lets it through."
+              value={form.tools}
+              onChange={(t) => set('tools', t)}
+              catalog={catalog}
+            />
 
             {error && <div className="vg-side-err">{error}</div>}
             <div className="vg-side-foot">

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { AgentDrawer } from './AgentDrawer'
 import { agentsApi } from '../../services/api'
+import { forgetToolCatalog } from './toolCatalog'
 
 vi.mock('../../services/api', () => ({
   agentsApi: {
@@ -42,6 +43,15 @@ describe('agent drawer', () => {
     vi.clearAllMocks()
     vi.mocked(agentsApi.getCustom).mockResolvedValue({ data: SAVED } as never)
     vi.mocked(agentsApi.getAvailableTools).mockResolvedValue({ data: { tools: [], changes: CONNECTED } } as never)
+    forgetToolCatalog()
+  })
+
+  it('opens a new agent on the form, with describing it one click away', async () => {
+    open({ agentId: null })
+    expect(screen.getByLabelText('Name')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Describe the agent')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Describe it/ }))
+    expect(screen.getByLabelText('Describe the agent')).toBeInTheDocument()
   })
 
   it('creates a blank agent with the defaults and null models', async () => {
@@ -76,46 +86,43 @@ describe('agent drawer', () => {
     }))
   })
 
-  it('marks each tool, and a tool the list does not know as not connected', async () => {
+  it('marks a chosen tool that changes things, and a tool the catalog does not know as not connected', async () => {
     open()
-    const rowOf = async (tool: string) => (await screen.findByText(tool)).closest('.vg-side-tool') as HTMLElement
-    expect(await rowOf('search_logs')).toHaveTextContent('On its own')
-    expect(await rowOf('search_logs')).not.toHaveTextContent('changes things')
-    expect(await rowOf('create_approval_action')).toHaveTextContent('Asks you')
-    expect(await rowOf('isolate_host')).toHaveTextContent('On its own changes things')
-    expect(await rowOf('okta_revoke_session')).toHaveTextContent('Not connected')
+    const chip = async (tool: string) => (await screen.findByText(tool, { selector: '.tp-chip-name' })).closest('.tp-chip') as HTMLElement
+    await waitFor(async () => expect(await chip('okta_revoke_session')).toHaveTextContent('Not connected'))
+    expect(await chip('isolate_host')).toHaveTextContent('Changes things')
+    expect(await chip('search_logs')).not.toHaveTextContent('Not connected')
   })
 
-  it('adds a connected tool, removes one, and offers no free text', async () => {
+  it('adds a tool by searching what it does, removes one, and adds no free text', async () => {
     open()
-    await screen.findByText('search_logs')
+    await screen.findByText('search_logs', { selector: '.tp-chip-name' })
     fireEvent.click(screen.getByRole('button', { name: 'Remove search_logs' }))
     expect(screen.queryByRole('button', { name: 'Remove search_logs' })).toBeNull()
-    await waitFor(() => expect(within(screen.getByLabelText('Add tool')).getByRole('option', { name: 'get_alert' })).toBeInTheDocument())
-    fireEvent.change(screen.getByLabelText('Add tool'), { target: { value: 'get_alert' } })
-    expect((await screen.findByText('get_alert')).closest('.vg-side-tool')).toHaveTextContent('On its own')
-    expect(screen.queryByRole('textbox', { name: /tools/i })).toBeNull()
+    fireEvent.change(screen.getByLabelText('Search tools it may use'), { target: { value: 'alert' } })
+    const list = screen.getByRole('listbox', { name: 'Available tools it may use' })
+    await waitFor(() => expect(within(list).getAllByRole('option')).toHaveLength(1))
+    fireEvent.click(within(list).getByRole('option', { name: /get_alert/ }))
+    expect(await screen.findByText('get_alert', { selector: '.tp-chip-name' })).toBeInTheDocument()
+    // Enter adds the highlighted match; a name nobody lists is not added
+    fireEvent.change(screen.getByLabelText('Search tools it may use'), { target: { value: 'no such tool' } })
+    fireEvent.keyDown(screen.getByLabelText('Search tools it may use'), { key: 'Enter' })
+    expect(screen.queryByText('no such tool', { selector: '.tp-chip-name' })).toBeNull()
   })
 
   it('says which skills it is offered', async () => {
     open({ skillCount: 12 })
-    await screen.findByText('search_logs')
+    await screen.findByText('search_logs', { selector: '.tp-chip-name' })
     expect(screen.getByText('Not offered skills.')).toBeInTheDocument()
-    await waitFor(() => expect(within(screen.getByLabelText('Add tool')).getByRole('option', { name: 'read_skill' })).toBeInTheDocument())
-    fireEvent.change(screen.getByLabelText('Add tool'), { target: { value: 'read_skill' } })
+    fireEvent.change(screen.getByLabelText('Search tools it may use'), { target: { value: 'read_skill' } })
+    const list = screen.getByRole('listbox', { name: 'Available tools it may use' })
+    fireEvent.click(await within(list).findByRole('option', { name: /read_skill/ }))
     expect(screen.getByText('Offered every skill in the library (12). Choosing single skills comes later.')).toBeInTheDocument()
-  })
-
-  it('shows the row’s marks at once, before the connected list answers', async () => {
-    vi.mocked(agentsApi.getAvailableTools).mockReturnValue(new Promise(() => {}))
-    open({ toolChanges: { search_logs: 'read_only', isolate_host: 'on_its_own' } })
-    expect((await screen.findByText('isolate_host')).closest('.vg-side-tool')).toHaveTextContent('changes things')
-    expect(screen.getByText('okta_revoke_session').closest('.vg-side-tool')).not.toHaveTextContent('Not connected')
   })
 
   it('reveals the override box and the prompt preview under Advanced', async () => {
     open()
-    await screen.findByText('search_logs')
+    await screen.findByText('search_logs', { selector: '.tp-chip-name' })
     expect(screen.queryByLabelText(/Whole prompt/)).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Advanced' }))
     expect(screen.getByLabelText(/Whole prompt/)).toBeInTheDocument()
@@ -133,7 +140,7 @@ describe('agent drawer', () => {
   it('keeps the drawer open and shows the error when a save fails', async () => {
     vi.mocked(agentsApi.updateCustom).mockRejectedValue(new Error('name taken'))
     const { onSaved } = open()
-    await screen.findByText('search_logs')
+    await screen.findByText('search_logs', { selector: '.tp-chip-name' })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect(await screen.findByText('name taken')).toBeInTheDocument()
     expect(onSaved).not.toHaveBeenCalled()
@@ -142,7 +149,7 @@ describe('agent drawer', () => {
 
   it('closes on Escape and on the scrim, not on a click inside', async () => {
     const { onClose } = open()
-    await screen.findByText('search_logs')
+    await screen.findByText('search_logs', { selector: '.tp-chip-name' })
     fireEvent.mouseDown(screen.getByRole('dialog'))
     expect(onClose).not.toHaveBeenCalled()
     fireEvent.keyDown(window, { key: 'Escape' })
@@ -167,7 +174,7 @@ describe('agent drawer', () => {
     const draft = { name: 'Mine', description: 'Hunts things', specialization: 'Hunts', icon: 'Z', color: '#ffffff', role: 'careful investigator', extra_principles: 'Be careful', methodology: '1. look', recommended_tools: ['search_logs'], max_tokens: 5000, enable_thinking: true }
     vi.mocked(agentsApi.generateCustom).mockResolvedValue({ data: { draft } } as never)
     open()
-    await screen.findByText('search_logs')
+    await screen.findByText('search_logs', { selector: '.tp-chip-name' })
     fireEvent.change(screen.getByLabelText(/Describe a change/), { target: { value: 'be more careful with finance hosts' } })
     fireEvent.click(screen.getByRole('button', { name: 'Draft change' }))
     await waitFor(() => expect(screen.getByLabelText('Specialty')).toHaveValue('careful investigator'))
