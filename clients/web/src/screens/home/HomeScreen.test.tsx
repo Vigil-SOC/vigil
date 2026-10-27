@@ -576,14 +576,14 @@ describe('Home', () => {
       data: { steps: doneSteps, alerts_exist: 0, demo_enabled: false },
     } as never)
     vi.mocked(configApi.setDemoMode).mockResolvedValue({
-      data: { message: 'Demo mode enabled. Restart the server for changes to take effect.' },
+      data: { message: 'Demo mode enabled.' },
     } as never)
     renderHome()
 
     fireEvent.click(await screen.findByRole('button', { name: 'Explore with demo data' }))
     expect(configApi.setDemoMode).toHaveBeenCalledWith(true)
     expect(
-      await screen.findByText('Demo mode enabled. Restart the server for changes to take effect.'),
+      await screen.findByText('Demo mode enabled.'),
     ).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Explore with demo data' })).not.toBeInTheDocument()
   })
