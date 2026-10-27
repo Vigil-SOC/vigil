@@ -75,8 +75,8 @@ describe('building a workflow by hand', () => {
       use_case: '',
       trigger_examples: [],
       phases: [
-        { order: 1, agent_id: 'responder', name: 'Response', purpose: 'Contain it', steps: ['Isolate the host'], tools: ['update_case', 'crowdstrike_contain_host'], expected_output: '', timeout_seconds: 300, approval_required: true },
-        { order: 2, agent_id: 'triage', name: 'Triage', purpose: '', steps: [], tools: ['get_finding'], expected_output: '', timeout_seconds: 300, approval_required: false },
+        { order: 1, agent_id: 'responder', name: 'Response', purpose: 'Contain it', steps: ['Isolate the host'], tools: ['update_case', 'crowdstrike_contain_host'], expected_output: '', approval_required: true },
+        { order: 2, agent_id: 'triage', name: 'Triage', purpose: '', steps: [], tools: ['get_finding'], expected_output: '', approval_required: false },
       ],
     })
   })
@@ -104,7 +104,7 @@ describe('building a workflow by hand', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
     await waitFor(() => expect(workflowApi.updateCustom).toHaveBeenCalledWith('wf-old', expect.objectContaining({
       name: 'Newer',
-      phases: [expect.objectContaining({ phase_id: 'p-1', timeout_seconds: 600, steps: ['Read it'] })],
+      phases: [expect.objectContaining({ phase_id: 'p-1', steps: ['Read it'] })],
     })))
     expect(onSaved).toHaveBeenCalledWith('wf-old')
   })
@@ -116,6 +116,18 @@ describe('building a workflow by hand', () => {
     expect(onCancel).not.toHaveBeenCalled()
     fireEvent.click(within(screen.getByRole('alert')).getByRole('button', { name: 'Discard changes' }))
     expect(onCancel).toHaveBeenCalled()
+  })
+
+  it('treats definition edits not yet applied as unsaved work', async () => {
+    mount()
+    fireEvent.change(screen.getByLabelText('Workflow name'), { target: { value: 'Named' } })
+    fireEvent.click(screen.getByRole('tab', { name: /Definition/ }))
+    fireEvent.change(screen.getByLabelText('Workflow definition'), { target: { value: '{"name": "Edited"}' } })
+    fireEvent.keyDown(window, { key: 's', metaKey: true })
+    expect(workflowApi.createCustom).not.toHaveBeenCalled()
+    expect(await screen.findByText(/Apply or undo your edits to the definition first/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(onCancel).not.toHaveBeenCalled()
   })
 
   it('imports a pasted definition from the Definition view', async () => {
@@ -156,7 +168,7 @@ describe('checks', () => {
     const body = toPayload(draftFrom({ name: ' n ', description: ' d ', trigger_examples: [' a ', ''], phases: [{ agent_id: 'triage', name: ' A ', steps: ['one', ' ', 'two'] }] }))
     expect(body).toEqual({
       name: 'n', description: 'd', use_case: '', trigger_examples: ['a'],
-      phases: [{ order: 1, agent_id: 'triage', name: 'A', purpose: '', steps: ['one', 'two'], tools: [], expected_output: '', timeout_seconds: 300, approval_required: false }],
+      phases: [{ order: 1, agent_id: 'triage', name: 'A', purpose: '', steps: ['one', 'two'], tools: [], expected_output: '', approval_required: false }],
     })
   })
 })

@@ -42,7 +42,6 @@ export interface Check {
 }
 
 export const DEFAULT_TIMEOUT = 300
-export const TIMEOUTS = [60, 120, 300, 600, 900, 1800]
 
 let seq = 0
 export const newKey = () => `s${Date.now().toString(36)}${(seq++).toString(36)}`
@@ -114,7 +113,6 @@ export function toPayload(d: BuilderDraft) {
       steps: p.steps.map((s) => s.trim()).filter(Boolean),
       tools: [...p.tools],
       expected_output: p.expected_output.trim(),
-      timeout_seconds: p.timeout_seconds,
       approval_required: p.approval_required,
     })),
   }

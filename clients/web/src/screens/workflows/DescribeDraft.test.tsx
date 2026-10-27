@@ -67,7 +67,7 @@ describe('AI draft in the builder', () => {
       trigger_examples: ['hunt a beacon'],
       phases: [{
         phase_id: 'phase-1', order: 1, agent_id: 'triage', name: 'Look', purpose: 'Find it', steps: ['Read the alert'],
-        tools: ['get_finding'], expected_output: '', timeout_seconds: 300, approval_required: false,
+        tools: ['get_finding'], expected_output: '', approval_required: false,
       }],
     }))
     await waitFor(() => expect(screen.queryByLabelText('Workflow builder')).toBeNull())

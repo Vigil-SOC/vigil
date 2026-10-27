@@ -8,7 +8,7 @@ import { agentsApi, workflowApi } from '../../services/api'
 import ToolPicker from './ToolPicker'
 import { useToolCatalog } from './toolCatalog'
 import {
-  EMPTY_DRAFT, TIMEOUTS, blankStep, checkDraft, draftFrom, newKey, sameDraft, toPayload,
+  EMPTY_DRAFT, blankStep, checkDraft, draftFrom, newKey, sameDraft, toPayload,
   type BuilderAgent, type BuilderDraft, type BuilderStep, type Check,
 } from './workflowDraft'
 import './builder.css'
@@ -20,7 +20,6 @@ function errMsg(e: unknown): string {
   return (typeof text === 'string' && text) || r?.message || 'Something went wrong'
 }
 
-const fmtTimeout = (s: number) => (s < 60 ? `${s} seconds` : `${s / 60} minute${s === 60 ? '' : 's'}`)
 const agentColor = (a?: BuilderAgent) => a?.color || 'var(--ac)'
 
 type Drag = { kind: 'agent'; agentId: string } | { kind: 'blank' } | { kind: 'move'; key: string }
@@ -183,11 +182,6 @@ function StepInspector({ step, index, agents, onChange, onRemove, onDuplicate }:
         </label>
       </div>
 
-      <Field label="Time limit" htmlFor="wb-s-timeout">
-        <select id="wb-s-timeout" className="wb-input" value={step.timeout_seconds} onChange={(e) => set('timeout_seconds', Number(e.target.value))}>
-          {[...new Set([...TIMEOUTS, step.timeout_seconds])].sort((a, b) => a - b).map((s) => <option key={s} value={s}>{fmtTimeout(s)}</option>)}
-        </select>
-      </Field>
     </div>
   )
 }
@@ -230,11 +224,14 @@ function WorkflowSettings({ draft, set, checks, onPick }: {
 }
 
 /** The definition as JSON, editable. Applying a valid edit replaces the flow. */
-function CodeView({ draft, onApply }: { draft: BuilderDraft; onApply: (d: BuilderDraft) => void }) {
+function CodeView({ draft, onApply, onPending }: { draft: BuilderDraft; onApply: (d: BuilderDraft) => void; onPending: (pending: boolean) => void }) {
   const text = useMemo(() => JSON.stringify(toPayload(draft), null, 2), [draft])
   const [edit, setEdit] = useState(text)
   const [err, setErr] = useState<string | null>(null)
   useEffect(() => { setEdit(text); setErr(null) }, [text])
+  // Edits not applied yet are unsaved work too: Save waits for them, leaving asks first.
+  useEffect(() => { onPending(edit !== text) }, [edit, text, onPending])
+  useEffect(() => () => onPending(false), [onPending])
   const apply = () => {
     try {
       const parsed = JSON.parse(edit)
@@ -300,7 +297,8 @@ export default function WorkflowBuilder({ initial, workflowId = null, origin, in
     return () => { cancelled = true }
   }, [workflowId, initial])
 
-  const dirty = !sameDraft(draft, saved)
+  const [defPending, setDefPending] = useState(false)
+  const dirty = !sameDraft(draft, saved) || defPending
   const checks = useMemo(
     () => checkDraft(draft, agents, catalog.phase === 'ready' ? catalog.byName : null),
     [draft, agents, catalog],
@@ -336,6 +334,7 @@ export default function WorkflowBuilder({ initial, workflowId = null, origin, in
   }
 
   const save = useCallback(() => {
+    if (defPending) { setSaveErr('Apply or undo your edits to the definition first.'); return }
     if (busy || errors.length) return
     setBusy(true)
     setSaveErr(null)
@@ -346,7 +345,7 @@ export default function WorkflowBuilder({ initial, workflowId = null, origin, in
       setSaved(draft)
       onSaved(workflowId ?? id?.id ?? id?.workflow_id ?? '')
     }).catch((e) => { setSaveErr(errMsg(e)); setBusy(false) })
-  }, [busy, errors.length, draft, workflowId, onSaved])
+  }, [busy, errors.length, defPending, draft, workflowId, onSaved])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -357,6 +356,14 @@ export default function WorkflowBuilder({ initial, workflowId = null, origin, in
   }, [save])
 
   const leave = () => (dirty ? setConfirmLeave(true) : onCancel())
+
+  // Closing or reloading the tab with unsaved work asks the browser to confirm.
+  useEffect(() => {
+    if (!dirty) return
+    const onUnload = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', onUnload)
+    return () => window.removeEventListener('beforeunload', onUnload)
+  }, [dirty])
 
   // Drag and drop. Every drop lands in a slot between steps; clicks do the same without a mouse.
   const startDrag = (e: DragEvent, d: Drag) => {
@@ -476,7 +483,7 @@ export default function WorkflowBuilder({ initial, workflowId = null, origin, in
             </span>
           </div>
           {view === 'code' ? (
-            <CodeView draft={draft} onApply={(d) => { setDraft((cur) => ({ ...d, phases: d.phases.map((p, i) => ({ ...p, phase_id: p.phase_id ?? cur.phases[i]?.phase_id })) })); setView('flow') }} />
+            <CodeView draft={draft} onPending={setDefPending} onApply={(d) => { setDraft((cur) => ({ ...d, phases: d.phases.map((p, i) => ({ ...p, phase_id: p.phase_id ?? cur.phases[i]?.phase_id })) })); setView('flow') }} />
           ) : (
             <div className="wb-canvas" onClick={(e) => { if (e.target === e.currentTarget) setSel(null) }}>
               <div className="wb-node start">
