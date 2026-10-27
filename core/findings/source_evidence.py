@@ -106,30 +106,44 @@ def _telemetry_kind(value: Any) -> Optional[str]:
     return normalized if normalized in TELEMETRY_KINDS else None
 
 
-def _json_safe(value: Any, *, depth: int = 0) -> Any:
+def _bound_text(text: str, cuts: List[bool]) -> str:
+    """Cut one string to the raw-text limit and record that a cut happened."""
+    if len(text) <= SOURCE_EVIDENCE_RAW_TEXT_LIMIT:
+        return text
+    cuts[0] = True
+    return text[:SOURCE_EVIDENCE_RAW_TEXT_LIMIT]
+
+
+def _json_safe(value: Any, *, depth: int = 0, cuts: Optional[List[bool]] = None) -> Any:
     """Convert common Parquet values into JSON-safe values.
 
     Evidence remains source-ordered.  The depth and collection limits prevent
     a malformed source field from expanding without bound inside JSONB.
+    String values are cut to ``SOURCE_EVIDENCE_RAW_TEXT_LIMIT``. ``cuts``
+    records that a value was cut so the envelope can set ``truncated``.
     """
+    if cuts is None:
+        cuts = [False]
+    if isinstance(value, str):
+        return _bound_text(value, cuts)
     if depth >= 8:
-        return str(value)
-    if value is None or isinstance(value, (str, bool, int)):
+        return _bound_text(str(value), cuts)
+    if value is None or isinstance(value, (bool, int)):
         return value
     if isinstance(value, float):
         return value if math.isfinite(value) else None
     if isinstance(value, (datetime, date)):
         return value.isoformat()
     if isinstance(value, bytes):
-        return value.hex()
+        return _bound_text(value.hex(), cuts)
     if isinstance(value, Mapping):
         return {
-            str(key): _json_safe(item, depth=depth + 1)
+            str(key): _json_safe(item, depth=depth + 1, cuts=cuts)
             for key, item in list(value.items())[:100]
         }
     if isinstance(value, (list, tuple)):
-        return [_json_safe(item, depth=depth + 1) for item in value[:100]]
-    return str(value)
+        return [_json_safe(item, depth=depth + 1, cuts=cuts) for item in value[:100]]
+    return _bound_text(str(value), cuts)
 
 
 def _invalid_evidence(
@@ -192,11 +206,15 @@ def normalize_source_evidence(
         return envelope
 
     raw_records = parsed.get("records")
+    cuts = [False]
     if raw_records is None:
         records = []
     elif isinstance(raw_records, (list, tuple)):
         records = [
-            _json_safe(record if isinstance(record, Mapping) else {"value": record})
+            _json_safe(
+                record if isinstance(record, Mapping) else {"value": record},
+                cuts=cuts,
+            )
             for record in raw_records[:SOURCE_EVIDENCE_PREVIEW_LIMIT]
         ]
     else:
@@ -240,6 +258,7 @@ def normalize_source_evidence(
     envelope["total_records"] = total_records
     envelope["truncated"] = bool(
         supplied_truncated
+        or cuts[0]
         or total_records > len(records)
         or (raw_records is not None and len(raw_records) > len(records))
     )

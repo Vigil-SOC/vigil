@@ -821,8 +821,8 @@ export const attackApi = {
       },
     }),
   
-  getFindingsByTechnique: (technique_id: string) =>
-    api.get(`/attack/techniques/${technique_id}/findings`),
+  getFindingsByTechnique: (technique_id: string, min_confidence: number, time_range: string) =>
+    api.get(`/attack/techniques/${technique_id}/findings`, { params: { min_confidence, time_range } }),
 }
 
 export const timelineApi = {

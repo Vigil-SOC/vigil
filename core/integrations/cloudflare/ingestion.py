@@ -13,12 +13,35 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from typing import Any, Dict, List, Optional
 
 from core.ingestion.ingestion_service import IngestionService, _content_finding_id
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
+
+# Present, but not a number and not a non-finite token. The webhook rejects it.
+_REJECT = object()
+
+
+def _cloudy_score(score: Any) -> Any:
+    """A source score, None when the source sent none, or ``_REJECT``.
+
+    Missing, blank, NaN, and ±infinity are no score. Other text, objects, and
+    arrays stay a malformed payload.
+    """
+    if score is None or (isinstance(score, str) and score.strip() == ""):
+        return None
+    try:
+        parsed = float(score)
+    except OverflowError:
+        return None
+    except (TypeError, ValueError):
+        return _REJECT
+    if not math.isfinite(parsed):
+        return None
+    return parsed
 
 
 def _utcnow_iso() -> str:
@@ -61,10 +84,8 @@ class CloudyIngestionService:
         if not cloudy_summary and not event:
             return None
 
-        score = payload.get("anomaly_score")
-        try:
-            anomaly_score = float(0.5 if score is None else score)
-        except (TypeError, ValueError):
+        anomaly_score = _cloudy_score(payload.get("anomaly_score"))
+        if anomaly_score is _REJECT:
             return None
 
         identity = external_id or json.dumps(payload, sort_keys=True)

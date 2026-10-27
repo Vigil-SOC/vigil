@@ -204,6 +204,7 @@
     "findings": [
       {
         "finding_id": "dl-001",
+        "title": "Email with ISO attachment delivered to finance user",
         "severity": "medium",
         "anomaly_score": null,
         "data_source": "proofpoint",
@@ -225,6 +226,7 @@
       },
       {
         "finding_id": "dl-002",
+        "title": "Shortcut executed from mounted ISO volume",
         "severity": "medium",
         "anomaly_score": null,
         "data_source": "crowdstrike",
@@ -243,6 +245,7 @@
       },
       {
         "finding_id": "dl-003",
+        "title": "Rundll32 loading DLL from user Temp directory",
         "severity": "high",
         "anomaly_score": null,
         "data_source": "crowdstrike",
@@ -270,6 +273,7 @@
       },
       {
         "finding_id": "dl-004",
+        "title": "Periodic HTTPS connections to rare domain",
         "severity": "high",
         "anomaly_score": null,
         "data_source": "zscaler",
@@ -292,6 +296,7 @@
       },
       {
         "finding_id": "dl-005",
+        "title": "LSASS memory access via comsvcs.dll MiniDump",
         "severity": "critical",
         "anomaly_score": null,
         "data_source": "crowdstrike",
@@ -314,6 +319,7 @@
       },
       {
         "finding_id": "dl-006",
+        "title": "New SMB sessions from workstation to payment file server",
         "severity": "high",
         "anomaly_score": null,
         "data_source": "darktrace",

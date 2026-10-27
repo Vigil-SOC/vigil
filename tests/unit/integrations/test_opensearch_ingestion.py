@@ -55,6 +55,7 @@ class TestTransformFinding:
         assert finding["title"] == "Suspicious PowerShell Execution"
         assert finding["severity"] == "high"
         assert finding["timestamp"] == "2026-10-04T15:04:05.123000Z"
+        assert finding["anomaly_score"] is None
 
     def test_metadata_carries_finding_context(self, ingestion, sample_findings):
         finding = ingestion.transform_alert_to_finding(sample_findings[0])
@@ -90,6 +91,7 @@ class TestTransformFinding:
         assert finding["finding_id"] == "opensearch-sparse-1"
         assert finding["title"] == "OpenSearch Security Analytics Finding"
         assert finding["severity"] == "medium"
+        assert finding["anomaly_score"] is None
         assert finding["entity_context"]["src_ips"] == []
 
     def test_long_finding_id_fits_finding_id_column(self, ingestion):

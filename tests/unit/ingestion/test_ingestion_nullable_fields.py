@@ -15,6 +15,7 @@ from core.ingestion.ingestion_service import (  # noqa: E402
     ID_HASH_WIDTH,
     MITRE_TACTIC_MAP,
     IngestionService,
+    _optional_float,
 )
 
 pytestmark = pytest.mark.unit
@@ -219,6 +220,107 @@ def test_ingest_finding_persists_null_score_severity_and_time(service):
     assert db.created["anomaly_score"] is None
     assert db.created["timestamp"] is None
     assert db.created["severity"] is None
+
+
+def test_optional_float_keeps_numbers_and_drops_unusable_values():
+    assert _optional_float("  0.8 ") == 0.8
+    assert _optional_float("1e3") == 1000.0
+    assert _optional_float(True) == 1.0
+    assert _optional_float(False) == 0.0
+    assert _optional_float(0) == 0.0
+    assert _optional_float(5) == 5.0
+    for value in (
+        None,
+        "",
+        "   ",
+        "high",
+        "NaN",
+        "Infinity",
+        "-Infinity",
+        "1e999",
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        10**400,
+        {"n": 1},
+        [1],
+    ):
+        assert _optional_float(value) is None
+
+
+def test_ingest_finding_stores_an_unusable_score_and_succeeds(service):
+    """Kafka and the daemon webhook store through this path, then ack."""
+    db = _CaptureDb()
+    service.use_database = True
+    service.db_service = db
+
+    assert (
+        service.ingest_finding(
+            {
+                "finding_id": "f-high",
+                "anomaly_score": "high",
+                "data_source": "kafka",
+            }
+        )
+        is True
+    )
+    assert db.created["anomaly_score"] is None
+
+    assert (
+        service.ingest_finding(
+            {
+                "finding_id": "f-num",
+                "anomaly_score": "0.8",
+                "data_source": "json",
+            }
+        )
+        is True
+    )
+    assert db.created["anomaly_score"] == 0.8
+
+
+def test_csv_unusable_score_is_stored_unscored_not_a_row_error(service):
+    db = _CaptureDb()
+    service.use_database = True
+    service.db_service = db
+    service._ingest_csv_rows(
+        [
+            "finding_id,anomaly_score",
+            "f-nan,NaN",
+            "f-inf,Infinity",
+            "f-ws,   ",
+            "f-high,high",
+            "f-ok,0.8",
+        ],
+        "finding",
+    )
+
+    assert service.stats["findings_errors"] == 0
+    by_id = {row["finding_id"]: row["anomaly_score"] for row in db.batch}
+    assert by_id["f-ok"] == 0.8
+    assert by_id["f-nan"] is None
+    assert by_id["f-inf"] is None
+    assert by_id["f-ws"] is None
+    assert by_id["f-high"] is None
+
+
+@pytest.mark.parametrize(
+    "confidence,score",
+    [("85", 0.85), ("   ", None), ("Infinity", None), ("1e999", None), ("0", 0.0)],
+)
+def test_tempo_confidence_blank_or_nonfinite_is_no_score(service, confidence, score):
+    finding = service._tempo_csv_row_to_finding(
+        {
+            "sequence_id": "s-1",
+            "mitre_tactic": "Command and Control",
+            "incident_confidence": confidence,
+        }
+    )
+    assert finding["anomaly_score"] == score
+    if score is None:
+        assert "confidence_score" not in finding["entity_context"]
+    else:
+        assert finding["entity_context"]["confidence_score"] == score
 
 
 def test_batch_ingest_does_not_fill_null_score_or_time(service):

@@ -8,6 +8,7 @@ Kibana and stores every alert as a document in ``wazuh-alerts-4.x-*``.
 """
 
 import logging
+import math
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Mapping, Optional
@@ -47,9 +48,16 @@ def min_rule_level_from_config(config: Mapping[str, Any]) -> int:
 
 
 def _rule_level(level: Any) -> Optional[int]:
+    """A whole-number Wazuh level, or None when it cannot be read.
+
+    ``int(inf)`` raises ``OverflowError``. That used to escape the transform
+    and drop the alert; an infinite level is unscored instead.
+    """
+    if isinstance(level, float) and not math.isfinite(level):
+        return None
     try:
         return int(level)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -305,8 +313,8 @@ class ElasticIngestion(SIEMIngestionService):
                 "title": title,
                 "description": description[:500] if description else "",
                 "entity_context": entity_context,
-                "raw_event": alert,
-                "anomaly_score": 0.5,
+                "raw_data": alert,
+                "anomaly_score": None,
                 "mitre_predictions": mitre_predictions,
                 "metadata": {
                     "elastic_alert_id": alert_id,
@@ -381,11 +389,11 @@ class ElasticIngestion(SIEMIngestionService):
             "title": title,
             "description": str(description)[:500],
             "entity_context": entity_context,
-            "raw_event": alert,
+            "raw_data": alert,
             "anomaly_score": (
                 round(min(max(parsed_level, 0), 15) / 15, 2)
                 if parsed_level is not None
-                else 0.5
+                else None
             ),
             "mitre_predictions": {
                 str(tid): 0.9 for tid in _as_list(mitre.get("id")) if tid
