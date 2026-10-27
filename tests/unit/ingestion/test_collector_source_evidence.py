@@ -79,18 +79,6 @@ def _splunk_adapter() -> Tuple[Alert, Finding]:
     return event, _require(_splunk_event_to_finding(event))
 
 
-def _splunk_legacy() -> Tuple[Alert, Finding]:
-    event = {
-        "_cd": "cd-legacy",
-        "search_name": "Legacy notable",
-        "urgency": "medium",
-        "_raw": "user=alice",
-        "user": "alice",
-    }
-    poller = DataPoller.__new__(DataPoller)
-    return event, _require(poller._splunk_event_to_finding(event))
-
-
 def _crowdstrike_adapter() -> Tuple[Alert, Finding]:
     detection = {
         "detection_id": "ldt:adapter",
@@ -169,7 +157,6 @@ def _opensearch() -> Tuple[Alert, Finding]:
 
 BUILDERS: List[Tuple[str, Builder]] = [
     ("splunk-adapter", _splunk_adapter),
-    ("splunk-legacy", _splunk_legacy),
     ("crowdstrike-adapter", _crowdstrike_adapter),
     ("crowdstrike-legacy", _crowdstrike_legacy),
     ("elastic-kibana", _elastic_kibana),
@@ -220,21 +207,9 @@ def _long_splunk_adapter() -> Finding:
     return _require(_splunk_event_to_finding(_long_splunk_event()))
 
 
-def _long_splunk_legacy() -> Finding:
-    return _require(
-        DataPoller.__new__(DataPoller)._splunk_event_to_finding(_long_splunk_event())
-    )
-
-
-@pytest.mark.parametrize(
-    "build",
-    [_long_splunk_adapter, _long_splunk_legacy],
-    ids=["splunk-adapter", "splunk-legacy"],
-)
-def test_oversized_splunk_raw_is_stored_cut_to_the_limit(
-    build: Callable[[], Finding],
-) -> None:
-    finding = build()
+# The legacy poller calls the same converter (test_legacy_splunk_poll.py).
+def test_oversized_splunk_raw_is_stored_cut_to_the_limit() -> None:
+    finding = _long_splunk_adapter()
     raw = finding["raw_data"]["_raw"]
     evidence = _stored(finding)
     stored = evidence["records"][0]
