@@ -31,4 +31,9 @@ describe('buildFindingsCsv', () => {
     expect(csv).toContain(',0.91,Case 0042,')
     expect(csv.endsWith('\n')).toBe(true)
   })
+
+  it('leaves confidence_percent empty when no confidence was given', () => {
+    const [, row] = buildFindingsCsv([{ ...finding, conf: null }]).split('\n')
+    expect(row.split(',')[3]).toBe('')
+  })
 })

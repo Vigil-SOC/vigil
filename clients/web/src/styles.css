@@ -5382,6 +5382,14 @@
       color: var(--tx);
    }
 
+   /* prose, not a number: wraps inside the tile (DESIGN.md §7) */
+   .fp-m-none {
+      max-width: 96px;
+      font-size: 12.5px;
+      line-height: 1.3;
+      text-align: center;
+   }
+
    .fp-m-lab {
       font-size: 10px;
       text-transform: uppercase;

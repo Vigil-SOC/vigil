@@ -51,6 +51,8 @@ interface AttackData {
   techniques: AttackTechnique[]
   coverage: boolean
   runError: string | null
+  /** sightings left out because their technique has no confidence; 0 until the rollup reports it */
+  excludedOccurrences: number
   kpis: { techniques: number; detections: number; critical: number; high: number }
   tacticDist: [string, number][]
   sevDist: [string, number, string][]
@@ -103,6 +105,7 @@ export function useAttack(minConfidence: number, timeRange: string, runId: strin
           techniques,
           coverage,
           runError: typeof res.data?.error === 'string' ? res.data.error : null,
+          excludedOccurrences: typeof res.data?.excluded_occurrences === 'number' ? res.data.excluded_occurrences : 0,
           kpis: { techniques: techniques.length, detections: sum('total'), critical: sum('c'), high: sum('h') },
           tacticDist: Object.entries(tacMap).sort((a, b) => b[1] - a[1]),
           sevDist: [

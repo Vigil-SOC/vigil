@@ -4,7 +4,7 @@ import {
   MISSING_FINDING_SEVERITY,
   MISSING_FINDING_TIME,
 } from './data'
-import { formatFindingScore, mapApiCase, mapApiFinding, mapApiSkill } from './mappers'
+import { formatFindingScore, mapApiCase, mapApiFinding, mapApiSkill, rankTechniques } from './mappers'
 import type { ApiCase } from './mappers'
 
 const caseStub = (priority?: string | null): ApiCase =>
@@ -102,5 +102,21 @@ describe('mapApiFinding missing source fields', () => {
     expect(formatFindingScore(finding.score)).toBe('0.00')
     expect(finding.time).not.toBe(MISSING_FINDING_TIME)
     expect(finding.ts).toBe(Date.parse('2026-07-21T12:00:00Z'))
+  })
+})
+
+describe('technique confidence', () => {
+  it('ranks scored techniques first and never scores an unknown', () => {
+    const preds = { T1071: null, T1003: 0, T1059: 0.4, T1105: 0.4, T1021: true } as unknown as Record<string, number | null>
+    expect(rankTechniques(preds)).toEqual([
+      ['T1059', 0.4], ['T1105', 0.4], ['T1003', 0], ['T1071', null], ['T1021', null],
+    ])
+    expect(mapApiFinding({ finding_id: 'f', mitre_predictions: preds })).toMatchObject({ tech: 'T1059', conf: 40 })
+  })
+
+  it('reads an unscored or absent top technique as null, and 0 as 0', () => {
+    expect(mapApiFinding({ finding_id: 'f', mitre_predictions: { T1071: null } })).toMatchObject({ tech: 'T1071', conf: null })
+    expect(mapApiFinding({ finding_id: 'f' })).toMatchObject({ tech: '—', conf: null })
+    expect(mapApiFinding({ finding_id: 'f', mitre_predictions: { T1003: 0 } })).toMatchObject({ tech: 'T1003', conf: 0 })
   })
 })

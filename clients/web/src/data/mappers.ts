@@ -32,7 +32,7 @@ export interface ApiFinding {
   anomaly_score?: number | null
   title?: string
   description?: string
-  mitre_predictions?: Record<string, number>
+  mitre_predictions?: Record<string, number | null>
   /** core.findings.alert_outcomes: the one state the finding is in, and its case */
   terminal_state?: string | null
   case_id?: string | null
@@ -198,18 +198,24 @@ export function formatFindingScore(score: number | null | undefined): string {
   return typeof score === 'number' ? score.toFixed(2) : MISSING_FINDING_SCORE
 }
 
-/** mitre_predictions is keyed by *technique* id (e.g. "T1567.002") */
-function topTechnique(preds?: Record<string, number>): { tech: string; conf: number } {
-  if (!preds) return { tech: DASH, conf: 0 }
-  let best = ''
-  let bestConf = -1
-  for (const [k, v] of Object.entries(preds)) {
-    if (v > bestConf) {
-      best = k
-      bestConf = v
-    }
-  }
-  return best ? { tech: best, conf: Math.round(bestConf * 100) } : { tech: DASH, conf: 0 }
+/** A technique confidence a source or model supplied; anything else is unknown. */
+function scoredConf(v: unknown): number | null {
+  return typeof v === 'number' && !Number.isNaN(v) ? v : null
+}
+
+/** mitre_predictions (keyed by *technique* id, e.g. "T1567.002") in display
+ *  order: scored highest first (0 is a score), then unknowns. Ties and unknowns
+ *  keep their source order; an unknown is never ranked against a score. */
+export function rankTechniques(preds?: Record<string, unknown> | null): [string, number | null][] {
+  const entries = Object.entries(preds || {}).map(([k, v]): [string, number | null] => [k, scoredConf(v)])
+  const scored = entries.filter((e): e is [string, number] => e[1] !== null).sort((a, b) => b[1] - a[1])
+  return [...scored, ...entries.filter((e) => e[1] === null)]
+}
+
+function topTechnique(preds?: Record<string, unknown> | null): { tech: string; conf: number | null } {
+  const [top] = rankTechniques(preds)
+  if (!top) return { tech: DASH, conf: null }
+  return { tech: top[0], conf: top[1] === null ? null : Math.round(top[1] * 100) }
 }
 
 /** already surfaced as fixed columns; the rest become `extra` */

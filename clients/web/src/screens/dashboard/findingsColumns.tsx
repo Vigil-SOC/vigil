@@ -1,7 +1,7 @@
 import { Icon } from '../../shared/icons'
 import SourceChip from '../../shared/SourceChip'
 import type { ColumnDef } from '../../shared/DataTable'
-import { MISSING_FINDING_SCORE, type Finding } from '../../data/data'
+import { MISSING_FINDING_SCORE, NO_CONFIDENCE, type Finding } from '../../data/data'
 import { formatFindingScore } from '../../data/mappers'
 import { STATE_RANK, stateWord, type TerminalState } from '../../shared/findingState'
 
@@ -49,7 +49,7 @@ export function baseFindingColumns(
     },
     {
       key: 'tech', label: 'MITRE Technique',
-      render: (f) => <><span className="tag">{f.tech}</span> <span className="muted">{f.conf}%</span></>,
+      render: (f) => <><span className="tag">{f.tech}</span> <span className="muted">{f.conf === null ? NO_CONFIDENCE : `${f.conf}%`}</span></>,
       searchVal: (f) => f.tech,
     },
     { key: 'tactic', label: 'Tactic', render: (f) => f.tactic },

@@ -42,7 +42,8 @@ export interface Finding {
   id: string
   sev: 'Critical' | 'High' | 'Medium' | 'Low' | 'Unrated'
   tech: string
-  conf: number
+  /** top technique confidence, 0–100; null when no source or model gave one */
+  conf: number | null
   tactic: string
   src: string
   host: string
@@ -67,6 +68,7 @@ export interface Finding {
 export const MISSING_FINDING_SCORE = 'Not provided' as const
 export const MISSING_FINDING_SEVERITY = 'Unrated' as const
 export const MISSING_FINDING_TIME = 'Source time unavailable' as const
+export const NO_CONFIDENCE = 'confidence not given' as const
 
 export interface CaseRow {
   id: string
