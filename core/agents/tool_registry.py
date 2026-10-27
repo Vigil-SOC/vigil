@@ -235,6 +235,20 @@ def _status_refusal(status: str) -> Optional[Args]:
     }
 
 
+def _resolve_assignee(
+    raw: str, current: Optional[str] = None
+) -> Tuple[Optional[str], Optional[Args]]:
+    """The username ``raw`` names, or the refusal to hand back to the agent."""
+    from core.cases.agent_closure import service_session
+    from core.cases.assignee import AssigneeRefused, resolve_assignee
+
+    try:
+        with service_session() as session:
+            return resolve_assignee(session, raw, current=current), None
+    except AssigneeRefused as exc:
+        return None, {"error": exc.message}
+
+
 def create_case(
     *,
     title: str,
@@ -250,6 +264,11 @@ def create_case(
         return refusal
     if refusal := _status_refusal(status):
         return refusal
+    if assignee is not None:
+        # Before the case is opened, so a refusal leaves no case behind.
+        assignee, refusal = _resolve_assignee(assignee)
+        if refusal:
+            return refusal
     data = _data()
     ids = finding_ids or []
     case = open_case(
@@ -312,8 +331,13 @@ def update_case(
         updates["status"] = status
     if priority:
         updates["priority"] = priority
-    if assignee:
-        updates["assignee"] = assignee
+    if assignee is not None:
+        # Blank unassigns; re-sending the stored value keeps it.
+        updates["assignee"], refusal = _resolve_assignee(
+            assignee, current=case.get("assignee")
+        )
+        if refusal:
+            return refusal
     if add_note:
         notes = list(case.get("notes") or [])
         notes.append({"timestamp": utcnow().isoformat() + "Z", "content": add_note})

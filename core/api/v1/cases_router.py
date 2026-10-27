@@ -26,6 +26,7 @@ from sqlalchemy import select
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
 from core.cases import case_journal_service, case_records_service
+from core.cases.assignee import resolve_assignee
 from core.cases.case_evidence_service import CaseEvidenceService
 from core.cases.case_ioc_service import CaseIOCService
 from core.cases.case_sla_service import open_case
@@ -433,8 +434,11 @@ def update_case(
     if case_data.priority is not None:
         updates["priority"] = case_data.priority
     if case_data.assignee is not None:
-        # Empty or whitespace unassigns.
-        updates["assignee"] = case_data.assignee.strip() or None
+        # Empty or whitespace unassigns; anything else must name one person.
+        stored = (data_service.get_case(case_id) or {}).get("assignee")
+        updates["assignee"] = resolve_assignee(
+            session, case_data.assignee, current=stored
+        )
     if case_data.notes is not None:
         case = data_service.get_case(case_id)
         if not case:
