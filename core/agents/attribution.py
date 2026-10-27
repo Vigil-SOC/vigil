@@ -136,12 +136,7 @@ def attributed(claims: Optional[Claims]) -> bool:
 
 def trail_writable(session: Session) -> bool:
     """The table is there and the revision that created it has been applied."""
-    if (
-        session.execute(text("SELECT to_regclass('public.audit_trail')")).scalar()
-        is None
-    ):
-        return False
-    return trail.trail_ready(session)
+    return trail.in_use(session)
 
 
 def _open():

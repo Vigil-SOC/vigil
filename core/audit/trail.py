@@ -532,6 +532,26 @@ def trail_ready(session) -> bool:
     return False
 
 
+def in_use(session) -> bool:
+    """Postgres, a revision that includes the trail, and the table present.
+
+    Writers append when this is true and keep their legacy path otherwise.
+    ``stamp_schema_head`` records the head revision on a ``create_all``
+    database, which has no ``audit_trail``, so the revision alone is not
+    enough. Takes a ``Session`` or a ``Connection``.
+    """
+    get_bind = getattr(session, "get_bind", None)
+    bind = get_bind() if callable(get_bind) else session
+    if getattr(getattr(bind, "dialect", None), "name", None) != "postgresql":
+        return False
+    if not trail_ready(session):
+        return False
+    return (
+        session.execute(text("SELECT to_regclass('public.audit_trail')")).scalar()
+        is not None
+    )
+
+
 # --- reading -----------------------------------------------------------------
 
 

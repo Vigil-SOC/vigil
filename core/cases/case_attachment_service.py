@@ -13,6 +13,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from core.cases import case_trail
 from core.cases.case_evidence_service import CaseEvidenceService
 from core.storage.models import CaseAuditLog, CaseEvidence
 
@@ -56,15 +57,20 @@ def attach_document(
         )
         if evidence is None:
             raise RuntimeError("the evidence row could not be written")
-        session.add(
-            CaseAuditLog(
+        case_trail.append_or_legacy(
+            session,
+            action=case_trail.EVIDENCE,
+            signed_in=collected_by,
+            case_id=case_id,
+            legacy=CaseAuditLog(
                 entity_type="case",
                 entity_id=case_id,
                 action="attach",
                 change_summary=f"Attached {label} to the hunt ({pages} page"
                 f"{'' if pages == 1 else 's'})",
                 changed_by=collected_by,
-            )
+            ),
+            ids=lambda: {"evidence_id": evidence.evidence_id},
         )
         session.flush()
     except Exception:

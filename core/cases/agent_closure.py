@@ -7,7 +7,6 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Iterator, Optional
 
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from core.audit import trail
@@ -155,24 +154,7 @@ def activity_actor(
     return fields
 
 
-def _trail_ready(session: Session) -> bool:
-    """Postgres, a revision that includes the trail, and the table present.
-
-    The same three checks as ``config_service._trail_ready``. Anything else
-    keeps today's close, which writes no audit row.
-    """
-    get_bind = getattr(session, "get_bind", None)
-    if not callable(get_bind):
-        return False
-    bind = get_bind()
-    if getattr(getattr(bind, "dialect", None), "name", None) != "postgresql":
-        return False
-    if not trail.trail_ready(session):
-        return False
-    return (
-        session.execute(text("SELECT to_regclass('public.audit_trail')")).scalar()
-        is not None
-    )
+_trail_ready = trail.in_use
 
 
 def record_close(
