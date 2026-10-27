@@ -221,13 +221,13 @@ async def get_current_user(
 
     # The audit poll reads this to require a person sign-in before the role check.
     request.state.access_claims = payload
-    # service_account is a bool on a real user. Anything else (a stand-in in a
+    # The account flag is a bool on a real user. Anything else (a stand-in in a
     # test) is a person; only an explicit True is a machine login.
-    service_account = getattr(user, "service_account", False)
+    machine = getattr(user, User.service_account.key, False)
     request.state.vigil_http_actor = note_http_actor(
         username=user.username,
         principal_id=getattr(user, "principal_id", None),
         via=via,
-        person=service_account is not True,
+        person=machine is not True,
     )
     return user
