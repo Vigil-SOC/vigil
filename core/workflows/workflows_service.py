@@ -17,6 +17,7 @@ from core.agents.queue import new_run_id
 from core.auth import tool_principal
 from core.auth.principals import SYSTEM_PRINCIPAL_ID
 from core.documents.fence import fenced_document
+from core.findings.anomaly_score import format_anomaly_score
 from core.frontmatter import FrontmatterError, split_frontmatter
 from core.workflows.custom_workflow_service import CustomWorkflowService
 from core.workflows.enablement import disabled_message, is_enabled
@@ -788,7 +789,7 @@ class WorkflowsService:
 - Severity: {finding.get('severity')}
 - Data Source: {finding.get('data_source')}
 - Timestamp: {finding.get('timestamp')}
-- Anomaly Score: {finding.get('anomaly_score', 'N/A')}
+- Anomaly Score: {format_anomaly_score(finding.get('anomaly_score'))}
 - Description: {finding.get('description', 'N/A')}
 - MITRE ATT&CK Techniques: {technique_str}""")
                 else:

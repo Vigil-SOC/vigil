@@ -123,7 +123,7 @@ def closure(
         case_id=case_id,
         closure_category=category,
         closed_by=closed_by,
-        closed_by_kind=kind,
+        close_channel="cookie" if kind == ClosedByKind.ANALYST.value else "agent",
         closed_at=closed_at,
         **fields,
     )
@@ -701,7 +701,7 @@ class TestMerge:
         session.expire_all()
         recorded = session.get(CaseClosureInfo, "case-733-dup")
         assert recorded.closure_category == ClosureCategory.DUPLICATE.value
-        assert recorded.closed_by_kind == ClosedByKind.AGENT.value
+        assert recorded.close_channel == "agent"
 
         # Without the closure row the merge would read as a close with no reason
         # stated, minting an inconclusive Verdict for a Case that concluded
@@ -764,7 +764,6 @@ def agent_status_close(session):
         "case-733",
         StatusChange.CLOSE,
         closed_by="agent",
-        closed_by_kind=ClosedByKind.AGENT,
     )
 
 
@@ -781,7 +780,7 @@ class TestTheOneWriter:
         recorded = session.get(CaseClosureInfo, "case-733")
         assert recorded.closure_category == ClosureCategory.UNSPECIFIED.value
         # `analyst` is the one record this system will not let an agent claim.
-        assert recorded.closed_by_kind == ClosedByKind.AGENT.value
+        assert recorded.close_channel == "agent"
 
         write_case_distil(session, "case-733")
         (row,) = verdicts(session)
@@ -805,7 +804,7 @@ class TestTheOneWriter:
         assert recorded.closure_category == ClosureCategory.FALSE_POSITIVE.value
         # And the Trust with it: an agent's status edit after an analyst's
         # determination must not downgrade the highest-trust record we produce.
-        assert recorded.closed_by_kind == ClosedByKind.ANALYST.value
+        assert recorded.close_channel == "cookie"
         assert recorded.closed_by == "nestor"
 
     def test_a_re_close_keeps_the_write_up_it_did_not_restate(self, session):
@@ -824,7 +823,6 @@ class TestTheOneWriter:
             "case-733",
             closure_category=ClosureCategory.FALSE_POSITIVE,
             closed_by="nestor",
-            closed_by_kind=ClosedByKind.ANALYST,
         )
 
         recorded = session.get(CaseClosureInfo, "case-733")
@@ -898,7 +896,6 @@ class TestReopeningTheRecord:
             "case-733",
             closure_category=ClosureCategory.UNSPECIFIED,
             closed_by="nestor",
-            closed_by_kind=ClosedByKind.ANALYST,
         )
         write_case_distil(session, "case-733")
 

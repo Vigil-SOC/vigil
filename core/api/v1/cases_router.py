@@ -32,7 +32,7 @@ from core.cases.case_ioc_service import CaseIOCService
 from core.cases.case_sla_service import open_case
 from core.cases.case_state import detail_fields
 from core.cases.case_status import CaseStatus, record_status_change, status_change
-from core.cases.closure import ClosedByKind, ClosureCategory
+from core.cases.closure import ClosureCategory
 from core.cases.combined_state import queue_item
 from core.cases.linked_entities import (
     LINKED_SOURCE,
@@ -178,10 +178,9 @@ class IOCBulkAdd(BaseModel):
 class ClosureInfo(BaseModel):
     """Close case with metadata.
 
-    No ``closed_by``: who closed it is the authenticated principal, not
-    something a client says about itself. Episodic memory reads it as Trust
-    (#733), and a client-supplied name would let any caller claim an analyst
-    concluded.
+    No ``closed_by`` and no channel: who closed it, and whether that was the
+    console cookie, come from the session. A client-supplied name or kind
+    would let any caller claim an analyst concluded.
     """
 
     closure_category: ClosureCategory
@@ -467,7 +466,6 @@ def update_case(
             case_id,
             change,
             closed_by=current_user.username,
-            closed_by_kind=ClosedByKind.ANALYST,
         )
 
     # Fire upstream SIEM status sync when status changes
@@ -669,7 +667,6 @@ def close_case(
         case_id,
         closure_category=data.closure_category,
         closed_by=current_user.username,
-        closed_by_kind=ClosedByKind.ANALYST,
         root_cause=data.root_cause,
         lessons_learned=data.lessons_learned,
         recommendations=data.recommendations,

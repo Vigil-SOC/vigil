@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import func
 
 from core.agents.builtins import ORCHESTRATION_DECISION_ID, ORCHESTRATOR_ACTOR
+from core.auth.principals import agent_principal_id
 from core.config import get_settings
 from core.time import utcnow
 from services.daemon.config import OrchestratorConfig
@@ -88,6 +89,7 @@ from core.response.checkpoints import raise_for_checkpoint
 from core.response.config import decision_rule
 from core.storage.connection import get_db_manager
 from core.storage.models import (
+    FINISHED_INVESTIGATION_STATUSES,
     IN_FLIGHT_INVESTIGATION_STATUSES,
     IntakeTrigger,
     Investigation,
@@ -2027,6 +2029,8 @@ class Orchestrator:
                 reason=f"[Auto-investigation {inv_id}] {action.get('reason', '')}",
                 evidence=[inv_id],
                 created_by=ORCHESTRATOR_ACTOR,
+                # The id string only; no principal row is seeded or minted for it.
+                created_by_principal_id=agent_principal_id(ORCHESTRATOR_ACTOR),
                 # The 0.8 is a constant, and the proposal is the agent's.
                 human_only=True,
             )
@@ -2415,23 +2419,37 @@ class Orchestrator:
             from core.storage.models import Investigation
 
             with get_db_manager().session_scope() as session:
+                # Locked so two writers cannot both see the row unfinished.
                 inv = (
                     session.query(Investigation)
                     .filter_by(investigation_id=inv_id)
+                    .with_for_update()
                     .first()
                 )
-                if inv:
-                    was = inv.status
-                    inv.status = status
-                    inv.current_activity = activity
-                    if notes:
-                        inv.master_review_notes = notes
-                    if status == "completed":
-                        inv.completed_at = utcnow()
-                    return was
+                if inv is None:
+                    return None
+                was = inv.status
+                inv.status = status
+                inv.current_activity = activity
+                if notes:
+                    inv.master_review_notes = notes
+                if status == "completed":
+                    inv.completed_at = utcnow()
+                # Counted on the transition only, so a second kill of the same
+                # row (stale and budget in one tick) adds nothing.
+                newly_failed = (
+                    status == "failed" and was not in FINISHED_INVESTIGATION_STATUSES
+                )
+                cost = inv.cost_usd or 0.0
         except Exception as e:
             logger.error(f"Failed to update investigation status: {e}")
-        return None
+            return None
+        if newly_failed:
+            self.stats["investigations_failed"] += 1
+            self.stats["total_cost_usd"] += cost
+            if _inv_failed is not None:
+                _inv_failed.add(1)
+        return was
 
     def _claim_completion(self, inv_id: str, notes: Optional[str]) -> bool:
         """Move a row to ``completed`` in one locked step; False if already there."""
@@ -2453,10 +2471,12 @@ class Orchestrator:
                 inv.completed_at = utcnow()
                 if notes:
                     inv.master_review_notes = notes
-                return True
+                cost = inv.cost_usd or 0.0
         except Exception as e:
             logger.error(f"Failed to complete investigation {inv_id}: {e}")
             return False
+        self.stats["total_cost_usd"] += cost
+        return True
 
     def get_cost_summary(self) -> Dict[str, Any]:
         """Get cost breakdown across all investigations."""

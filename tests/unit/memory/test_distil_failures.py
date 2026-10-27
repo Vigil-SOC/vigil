@@ -104,7 +104,7 @@ def closed_case(db, case_id="case-734"):
         CaseClosureInfo(
             case_id=case_id,
             closure_category="false_positive",
-            closed_by_kind="analyst",
+            close_channel="cookie",
             closed_by="nestor",
             closed_at=CLOSED,
         )

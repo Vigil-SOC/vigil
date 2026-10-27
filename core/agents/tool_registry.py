@@ -21,6 +21,7 @@ from core.cases.case_status import (
     status_change,
 )
 from core.cases.linked_entities import finding_entity_summary
+from core.findings.anomaly_score import stored_anomaly_score
 from core.llm.tool_schemas import ALL_TOOLS as BACKEND_TOOLS
 from core.llm.tool_schemas import FIND_INTEGRATION_TOOLS, INTEGRATION_TOOLS
 from core.memory.recall_contract import RECALL_TOOL
@@ -47,7 +48,7 @@ def _compact(finding: Args, state: Optional[str] = None) -> Args:
     return {
         "finding_id": finding.get("finding_id"),
         "severity": finding.get("severity"),
-        "anomaly_score": float(finding.get("anomaly_score") or 0),
+        "anomaly_score": stored_anomaly_score(finding),
         "data_source": finding.get("data_source"),
         "cluster_id": finding.get("cluster_id"),
         "timestamp": finding.get("timestamp"),
@@ -314,7 +315,6 @@ def update_case(
     if status is not None and (refusal := _status_refusal(status)):
         return refusal
     from core.cases.agent_closure import actor, service_session
-    from core.cases.closure import ClosedByKind
     from core.time import utcnow
 
     data = _data()
@@ -353,7 +353,6 @@ def update_case(
                 case_id,
                 change,
                 closed_by=actor(),
-                closed_by_kind=ClosedByKind.AGENT,
             )
     return {"success": True, "case_id": case_id}
 

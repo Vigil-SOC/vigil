@@ -53,8 +53,8 @@ PAGE_LIMIT = 100
 # queue filter does not import the cases domain.
 _SLA_AT_RISK = 0.75
 
-# ``case_closure_info.closed_by_kind`` value for an agent close, as stored.
-_CLOSED_BY_AGENT = "agent"
+# ``case_closure_info.close_channel`` for a close that is not a console cookie.
+_AGENT_CHANNEL = "agent"
 
 
 def _as_list(value: Filterable) -> List[str]:
@@ -743,7 +743,7 @@ class CaseRepository:
         At risk is the same SQL predicate as the queue filter, over cases
         that are not closed. Today's closures are ``case_closure_info`` rows
         whose ``closed_at`` falls on the UTC day, and the agent share is the
-        fraction of those with ``closed_by_kind == agent``.
+        fraction of those whose channel is not the console cookie.
         """
         now = now or utcnow()
         live = _live_investigations()
@@ -789,7 +789,7 @@ class CaseRepository:
         closed_today = int(self.session.execute(today).scalar_one())
         agent_today = int(
             self.session.execute(
-                today.where(CaseClosureInfo.closed_by_kind == _CLOSED_BY_AGENT)
+                today.where(CaseClosureInfo.close_channel == _AGENT_CHANNEL)
             ).scalar_one()
         )
         share = (agent_today / closed_today) if closed_today else 0.0

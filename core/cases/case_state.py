@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Mapping, Optional, Sequence
 
 from core.agents.projections import run_id_for
+from core.cases.closure import trust_word
 from core.cases.combined_state import budget_health as _budget_health
 from core.cases.combined_state import combined_state as _combined_state
 from core.storage.models import (
@@ -80,10 +81,12 @@ def _verdict(closure: CaseClosureInfo) -> str:
 def closure_view(closure: Optional[CaseClosureInfo]) -> Optional[dict]:
     if closure is None:
         return None
+    # The line names the person from the kept text. The word is derived.
+    shown = (getattr(closure, "closed_by_text", None) or "").strip()
     return {
         "closure_category": closure.closure_category,
-        "closed_by": closure.closed_by,
-        "closed_by_kind": closure.closed_by_kind or "agent",
+        "closed_by": shown or closure.closed_by or "",
+        "closed_by_kind": trust_word(getattr(closure, "close_channel", None)),
         "closed_at": closure.closed_at.isoformat() if closure.closed_at else None,
         "verdict": _verdict(closure),
     }

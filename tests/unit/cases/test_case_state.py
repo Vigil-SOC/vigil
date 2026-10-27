@@ -68,7 +68,7 @@ def test_detail_fields_carry_the_closure_the_summary_reads():
         case_id="case-1",
         closure_category="false_positive",
         closed_by="ada",
-        closed_by_kind="analyst",
+        close_channel="cookie",
         false_positive_reason="the scanner",
     )
     fields = detail_fields("closed", [_inv("completed")], closure)

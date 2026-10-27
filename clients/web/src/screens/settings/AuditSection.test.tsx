@@ -50,6 +50,16 @@ describe('audit section', () => {
     await waitFor(() => expect(auditApi.download).toHaveBeenCalledWith(want))
   })
 
+  it('says when a restore entry is not yet off the box', async () => {
+    const feed = { enabled: true, behind: 2, last_delivered_at: null, last_delivered_seq: 40, last_error: null, unconfirmed: 42, paused: true }
+    vi.mocked(auditApi.entries).mockResolvedValueOnce({ data: { entries: [], tip: { seq: 42, hash: 'h' }, feed } } as never)
+    render(<AuditSection notify={vi.fn()} />)
+    expect(await screen.findByText(/restore entry \(seq 42\) has not been confirmed off the box/)).toBeTruthy()
+    expect(screen.getByText(/New entries wait/)).toBeTruthy()
+    expect(screen.getByText('2 entries behind')).toBeTruthy()
+    expect(screen.queryByText(/no outside proof/)).toBeNull()
+  })
+
   it('reads a verify result as ok or the first break', () => {
     expect(verifyLine({ first: 1, last: 9, first_bad: null, reason: '', ok: true })).toEqual({ level: 'good', text: 'Chain verified · seq 1–9' })
     expect(verifyLine({ first: 1, last: 9, first_bad: 4, reason: 'hash mismatch', ok: false }).text).toBe('Chain break at seq 4: hash mismatch')

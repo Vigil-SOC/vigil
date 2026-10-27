@@ -84,11 +84,41 @@
     ],
     "why": "One refused rule refuses the whole pack (E2 \u00a76)"
   },
+  "runbook-label-not-grouped": {
+    "codes": [
+      "P-RUNBOOK"
+    ],
+    "why": "port_label must be a group_by label of every rule the descriptor applies to"
+  },
+  "runbook-literal-port": {
+    "codes": [
+      "P-RUNBOOK"
+    ],
+    "why": "A port is a group-label name, never a literal"
+  },
   "runbook-on-lane3-rule": {
     "codes": [
       "P-RUNBOOK"
     ],
     "why": "Runbooks only fix lane-1 rules"
+  },
+  "runbook-two-descriptors": {
+    "codes": [
+      "P-RUNBOOK"
+    ],
+    "why": "Two descriptors apply to the same rule"
+  },
+  "runbook-unknown-action": {
+    "codes": [
+      "P-RUNBOOK"
+    ],
+    "why": "kill_orphan_process is not a Phase 0 action"
+  },
+  "runbook-unlisted-service": {
+    "codes": [
+      "P-RUNBOOK"
+    ],
+    "why": "postgres is a fingerprint service but not a runbook service"
   },
   "suppression-cycle": {
     "codes": [

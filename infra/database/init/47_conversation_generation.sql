@@ -4,9 +4,9 @@
 --
 -- create_all builds conversations, so this file does not. Helm skips it: the
 -- table is not there yet, and create_all on this release already adds the
--- columns. Adoption runs it for a 0.7 or 0.8 database, which has the table
--- and not the columns. 0007_conversation_generation.sql is the same change
--- for a database that upgrades from 0001_baseline.
+-- columns. Adoption does not run it: a 0.7 or 0.8 database, which has the
+-- table and not the columns, gets them from 0007_conversation_generation.sql
+-- after the stamp, as any database that upgrades from 0001_baseline does.
 
 DO $$
 BEGIN

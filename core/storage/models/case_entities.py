@@ -726,13 +726,15 @@ class CaseClosureInfo(Base):
     # Summary
     executive_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    # Closure metadata
+    # Closure metadata. A live username is rewritten to that user's principal
+    # id; a run id, "system", or any other non-username stays as text. An
+    # unset caller stores no principal — the text is "agent".
     closed_by: Mapped[str] = mapped_column(String(100), nullable=False)
-    # Which kind of actor concluded, recorded at the close rather than inferred
-    # from the name afterwards. This is what episodic memory reads as Trust, and
-    # a name cannot answer it: an agent closing as "soc-automation" and a person
-    # closing as "nestor" are indistinguishable to a lookup.
-    closed_by_kind: Mapped[str] = mapped_column(
+    # The actor text kept beside ``closed_by`` once that column holds a
+    # principal id, and the same text when it was not a username.
+    closed_by_text: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    # How the closer authenticated. Trust is derived: cookie is analyst.
+    close_channel: Mapped[str] = mapped_column(
         String(16), nullable=False, default="agent", server_default="agent"
     )
     closure_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

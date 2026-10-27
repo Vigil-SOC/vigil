@@ -221,6 +221,65 @@ emit(
     ),
 )
 emit(
+    "runbook-unknown-action",
+    ["P-RUNBOOK"],
+    "kill_orphan_process is not a Phase 0 action",
+    edit(
+        "runbooks/restart-soc-daemon.yaml",
+        "action: {type: restart_service, service: soc-daemon}",
+        "action: {type: kill_orphan_process, service: soc-daemon}",
+    ),
+)
+emit(
+    "runbook-unlisted-service",
+    ["P-RUNBOOK"],
+    "postgres is a fingerprint service but not a runbook service",
+    edit(
+        "runbooks/restart-soc-daemon.yaml",
+        "service: soc-daemon",
+        "service: postgres",
+    ),
+)
+emit(
+    "runbook-literal-port",
+    ["P-RUNBOOK"],
+    "A port is a group-label name, never a literal",
+    edit(
+        "runbooks/stop-stale-listener.yaml",
+        "port_label: port",
+        "port: 9090",
+    ),
+)
+emit(
+    "runbook-label-not-grouped",
+    ["P-RUNBOOK"],
+    "port_label must be a group_by label of every rule the descriptor applies to",
+    edit(
+        "runbooks/stop-stale-listener.yaml",
+        "port_label: port",
+        "port_label: topic",
+    ),
+)
+
+
+def _second_descriptor(doc: dict) -> None:
+    text = doc["files"]["runbooks/restart-soc-daemon.yaml"]
+    text = text.replace("id: restart-soc-daemon\n", "id: restart-soc-daemon-copy\n", 1)
+    text = text.replace(
+        "title: Restart the soc-daemon container\n",
+        "title: Restart soc-daemon a second time\n",
+        1,
+    )
+    doc["files"]["runbooks/restart-soc-daemon-copy.yaml"] = text
+
+
+emit(
+    "runbook-two-descriptors",
+    ["P-RUNBOOK"],
+    "Two descriptors apply to the same rule",
+    _second_descriptor,
+)
+emit(
     "counts-wrong",
     ["P-COUNTS"],
     "Manifest counts must match the contents",

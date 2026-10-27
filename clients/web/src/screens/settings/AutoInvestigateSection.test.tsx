@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import AutoInvestigateSection from './AutoInvestigateSection'
 import type { OrchestratorBounds, OrchestratorConfig, Phase } from './useSettings'
 
@@ -70,9 +70,23 @@ const state = vi.hoisted(() => ({
   save: vi.fn(() => Promise.resolve()),
   setConfig: vi.fn(),
   reload: vi.fn(),
-  approvalSave: vi.fn(() => Promise.resolve()),
-  approval: { enabled: true, environment_wins: false, phase: 'ready' as Phase },
+  ceilingSave: vi.fn(() => Promise.resolve()),
+  stop: vi.fn(() => Promise.resolve()),
+  resume: vi.fn(() => Promise.resolve()),
+  ceiling: null as Record<string, boolean> | null,
+  ceilingPhase: 'ready' as Phase,
 }))
+
+const CEILING = {
+  act_reversible: false,
+  act_irreversible: false,
+  stopped: false,
+  read: true,
+  write: true,
+  propose: true,
+  environment_locked: false,
+  four_eyes: false,
+}
 
 vi.mock('./useSettings', async () => {
   const actual = await vi.importActual<typeof import('./useSettings')>('./useSettings')
@@ -88,9 +102,12 @@ vi.mock('./useSettings', async () => {
       reload: state.reload,
       save: state.save,
     }),
-    useForceManualApproval: () => ({
-      ...state.approval,
-      save: state.approvalSave,
+    useCeiling: () => ({
+      ceiling: state.ceiling,
+      phase: state.ceilingPhase,
+      save: state.ceilingSave,
+      stop: state.stop,
+      resume: state.resume,
     }),
   }
 })
@@ -105,9 +122,12 @@ describe('Limits and autonomy', () => {
     state.save.mockClear()
     state.setConfig.mockClear()
     state.reload.mockClear()
-    state.approvalSave.mockReset()
-    state.approvalSave.mockResolvedValue(undefined as never)
-    state.approval = { enabled: true, environment_wins: false, phase: 'ready' }
+    state.ceilingSave.mockReset()
+    state.ceilingSave.mockResolvedValue(undefined as never)
+    state.stop.mockClear()
+    state.resume.mockClear()
+    state.ceiling = { ...CEILING }
+    state.ceilingPhase = 'ready'
     notify.mockClear()
   })
 
@@ -218,49 +238,90 @@ describe('Limits and autonomy', () => {
     expect(posted.max_cost_per_investigation).toBe(1)
   })
 
-  it('writes force_manual_approval only from the middle tool class, and confirms On their own', async () => {
-    const view = render(<AutoInvestigateSection notify={notify} />)
-    expect(screen.getByText('Read-only tools')).toBeInTheDocument()
-    expect(screen.getByText(/This cannot be changed/)).toBeInTheDocument()
+  const seg = (group: string, name: string) =>
+    within(screen.getByRole('group', { name: group })).getByRole('button', { name })
 
-    fireEvent.click(screen.getByRole('button', { name: 'On their own' }))
-    expect(state.approvalSave).not.toHaveBeenCalled()
+  it('stores Act behind a confirm, Assist as both act flags off, and irreversible as a third control', async () => {
+    const view = render(<AutoInvestigateSection notify={notify} />)
+    expect(screen.getByText('On. Never need approval.')).toBeInTheDocument()
+    expect(seg('Tools that change something', 'Ask first')).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(seg('Tools that change something', 'On their own'))
+    expect(state.ceilingSave).not.toHaveBeenCalled()
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     })
-    expect(state.approvalSave).toHaveBeenCalledWith(false)
+    expect(state.ceilingSave).toHaveBeenCalledWith({ act_reversible: true })
 
-    state.approval = { enabled: false, environment_wins: false, phase: 'ready' }
-    state.approvalSave.mockClear()
+    state.ceiling = { ...CEILING, act_reversible: true }
+    state.ceilingSave.mockClear()
+    view.rerender(<AutoInvestigateSection notify={notify} />)
+    fireEvent.click(seg('Tools that cannot be undone', 'On their own'))
+    expect(screen.getByRole('dialog', { name: /cannot be undone/ })).toBeInTheDocument()
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    })
+    expect(state.ceilingSave).toHaveBeenCalledWith({ act_reversible: true, act_irreversible: true })
+
+    state.ceiling = { ...CEILING, act_reversible: true, act_irreversible: true }
+    state.ceilingSave.mockClear()
     view.rerender(<AutoInvestigateSection notify={notify} />)
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Ask first' }))
+      fireEvent.click(seg('Tools that change something', 'Ask first'))
     })
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(state.approvalSave).toHaveBeenCalledWith(true)
+    expect(state.ceilingSave).toHaveBeenCalledWith({ act_reversible: false, act_irreversible: false })
   })
 
-  it('says the environment wins and does not keep On their own', async () => {
-    state.approval = { enabled: false, environment_wins: true, phase: 'ready' }
-    state.approvalSave.mockRejectedValue({
-      response: { data: { detail: 'The environment wins; Act was not saved.' } },
+  it('stops behind a confirm, reloads automatic investigation, and resumes', async () => {
+    const view = render(<AutoInvestigateSection notify={notify} />)
+    fireEvent.click(screen.getByRole('button', { name: /Stop/ }))
+    expect(screen.getByRole('dialog', { name: 'Stop autonomy?' })).toHaveTextContent('marked failed')
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop' }))
     })
+    expect(state.stop).toHaveBeenCalledTimes(1)
+    expect(state.reload).toHaveBeenCalled()
+
+    state.ceiling = { ...CEILING, act_reversible: true, stopped: true, read: false, write: false, propose: false }
+    view.rerender(<AutoInvestigateSection notify={notify} />)
+    expect(screen.getByText(/Off while stopped: read, write, propose/)).toBeInTheDocument()
+    // the stored flag stays and stays editable
+    expect(seg('Tools that change something', 'On their own')).toHaveAttribute('aria-pressed', 'true')
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Resume/ }))
+    })
+    expect(state.resume).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows both act controls locked by the environment, even when a stored flag is on', () => {
+    state.ceiling = { ...CEILING, act_reversible: true, environment_locked: true }
     render(<AutoInvestigateSection notify={notify} />)
 
     expect(screen.getByText(/The environment wins/)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'On their own' }))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(state.approvalSave).toHaveBeenCalledWith(false)
-    expect(await screen.findByText(/The environment wins/)).toBeInTheDocument()
-    expect(notify).toHaveBeenCalledWith('err', 'The environment wins; Act was not saved.')
+    expect(screen.getAllByText('Locked by the environment')).toHaveLength(2)
+    for (const group of ['Tools that change something', 'Tools that cannot be undone']) {
+      expect(seg(group, 'On their own')).toBeDisabled()
+      expect(seg(group, 'Ask first')).toHaveAttribute('aria-pressed', 'true')
+    }
   })
 
-  it('shows an error, not a default, when the tool setting fails to load', () => {
-    state.approval = { enabled: false, environment_wins: false, phase: 'error' }
+  it('saves four-eyes and says it is not enforced yet', async () => {
+    render(<AutoInvestigateSection notify={notify} />)
+    expect(screen.getByText(/Not enforced yet/)).toBeInTheDocument()
+    await act(async () => {
+      fireEvent.click(screen.getByRole('switch', { name: 'Four-eyes approval' }))
+    })
+    expect(state.ceilingSave).toHaveBeenCalledWith({ four_eyes: true })
+  })
+
+  it('shows an error, not a default, when the ceiling fails to load', () => {
+    state.ceiling = null
+    state.ceilingPhase = 'error'
     render(<AutoInvestigateSection notify={notify} />)
 
-    expect(screen.getByText(/Could not load the tool setting/)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'On their own' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Ask first' })).not.toBeInTheDocument()
+    expect(screen.getByText(/Could not load the autonomy ceiling/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /On their own/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Stop/ })).not.toBeInTheDocument()
   })
 })

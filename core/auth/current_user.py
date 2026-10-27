@@ -20,6 +20,7 @@ from core.auth.auth_service import AuthService
 from core.auth.mcp_credential_service import looks_like_mcp_token
 from core.auth.session_cutoff import issued_before_cutoff
 from core.auth.token_blacklist import is_token_revoked
+from core.cases.agent_closure import clear_http_actor, note_http_actor
 from core.config import get_settings
 from core.routing import UnitOfWorkSession
 from core.storage.models import User
@@ -113,12 +114,20 @@ async def get_current_user(
         HTTPException: If no token is present, validation fails, or the user
             is not found (production only).
     """
+    # A previous request on this context must not decide this one. Dev mode
+    # is not a cookie, so it stays cleared: the bypass is an agent close.
+    clear_http_actor()
+    request.state.vigil_http_actor = None
+
     # DEV MODE: Bypass authentication and return mock user
     if DEV_MODE:
         logger.debug("DEV_MODE: Bypassing authentication")
         return _get_dev_user(session)
 
-    token: Optional[str] = request.cookies.get(ACCESS_COOKIE_NAME)
+    cookie = request.cookies.get(ACCESS_COOKIE_NAME)
+    # The cookie wins when a bearer is also present.
+    via = "cookie" if cookie else "bearer"
+    token: Optional[str] = cookie
 
     if not token and authorization:
         # Bearer fallback for CLI / scripts / integrations that haven't
@@ -212,4 +221,13 @@ async def get_current_user(
 
     # The audit poll reads this to require a person sign-in before the role check.
     request.state.access_claims = payload
+    # The account flag is a bool on a real user. Anything else (a stand-in in a
+    # test) is a person; only an explicit True is a machine login.
+    machine = getattr(user, User.service_account.key, False)
+    request.state.vigil_http_actor = note_http_actor(
+        username=user.username,
+        principal_id=getattr(user, "principal_id", None),
+        via=via,
+        person=machine is not True,
+    )
     return user

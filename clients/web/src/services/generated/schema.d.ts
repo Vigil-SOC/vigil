@@ -8171,10 +8171,9 @@ export interface components {
          * ClosureInfo
          * @description Close case with metadata.
          *
-         *     No ``closed_by``: who closed it is the authenticated principal, not
-         *     something a client says about itself. Episodic memory reads it as Trust
-         *     (#733), and a client-supplied name would let any caller claim an analyst
-         *     concluded.
+         *     No ``closed_by`` and no channel: who closed it, and whether that was the
+         *     console cookie, come from the session. A client-supplied name or kind
+         *     would let any caller claim an analyst concluded.
          */
         ClosureInfo: {
             closure_category: components["schemas"]["ClosureCategory"];

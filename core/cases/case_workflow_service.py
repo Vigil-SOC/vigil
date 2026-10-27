@@ -10,7 +10,18 @@ from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
-from core.cases.closure import ClosedByKind, ClosureCategory
+from core.cases.agent_closure import (
+    activity_actor,
+    actor_identity,
+    close_channel,
+    current_credential_id,
+    record_close,
+)
+from core.cases.closure import (
+    CHANNEL_AGENT,
+    ClosureCategory,
+    trust_word,
+)
 from core.exceptions import NotFoundError, default_on_error
 from core.storage.models import (
     Case,
@@ -448,7 +459,6 @@ class CaseWorkflowService:
         *,
         closure_category: ClosureCategory,
         closed_by: str,
-        closed_by_kind: ClosedByKind = ClosedByKind.AGENT,
         root_cause: Optional[str] = None,
         lessons_learned: Optional[str] = None,
         recommendations: Optional[str] = None,
@@ -468,9 +478,16 @@ class CaseWorkflowService:
         Verdicts (#733), so a path that skipped either would produce a Case that
         is closed differently from every other closed Case.
 
-        ``closed_by_kind`` defaults to ``agent`` rather than being inferred:
-        ``analyst`` is the highest-trust record the system produces, and only a
-        caller with an authenticated person behind it can honestly claim it.
+        Who closed it is ``closed_by``. A live username is stored as that
+        user's principal id, and the username stays in ``closed_by_text``. A
+        run id, ``system``, or any other non-username stays text. An unset
+        caller stores no principal; the text is ``agent``.
+
+        The channel is not an argument, and the client cannot send it.
+        ``analyst`` is only a person whose access cookie ``get_current_user``
+        accepted -- the cookie wins when a bearer is also present. A bearer
+        token, an MCP credential, a verified tool principal, an unset caller,
+        and the dev-mode bypass are ``agent``.
 
         **An unstated close never overwrites a standing determination.** A
         status edit closes with ``unspecified``, which is not a determination,
@@ -495,7 +512,9 @@ class CaseWorkflowService:
             return None
 
         category = ClosureCategory(closure_category)
-        kind = ClosedByKind(closed_by_kind)
+        principal, actor_text = actor_identity(session, closed_by)
+        stored_by = principal or actor_text
+        channel = close_channel()
 
         case.status = "closed"
 
@@ -507,16 +526,18 @@ class CaseWorkflowService:
             closure = CaseClosureInfo(
                 case_id=case_id,
                 closure_category=category.value,
-                closed_by=closed_by,
-                closed_by_kind=kind.value,
+                closed_by=stored_by,
+                closed_by_text=actor_text,
+                close_channel=channel,
             )
             session.add(closure)
         elif (
             category is not ClosureCategory.UNSPECIFIED
             or closure.closure_category == ClosureCategory.UNSPECIFIED.value
         ):
-            if closure.closed_by_kind == ClosedByKind.ANALYST.value and (
-                kind is ClosedByKind.AGENT
+            if (
+                trust_word(closure.close_channel) == "analyst"
+                and channel == CHANNEL_AGENT
             ):
                 logger.info(
                     "Case %s was closed by an analyst and is being re-closed by "
@@ -525,8 +546,9 @@ class CaseWorkflowService:
                     category.value,
                 )
             closure.closure_category = category.value
-            closure.closed_by = closed_by
-            closure.closed_by_kind = kind.value
+            closure.closed_by = stored_by
+            closure.closed_by_text = actor_text
+            closure.close_channel = channel
 
         closure.closed_at = utcnow()
         # Stated fields only. None means this call had nothing to say about the
@@ -545,6 +567,13 @@ class CaseWorkflowService:
         CaseSLAService().mark_resolution_complete(case_id, session)
         session.flush()
         index_case_iocs_on_close(session, case_id)
+        record_close(
+            session,
+            principal_id=principal,
+            case_id=case_id,
+            actor_text=actor_text,
+            credential_id=current_credential_id(),
+        )
         return closure
 
     def reopen_case(self, session: Session, case_id: str) -> None:
@@ -624,6 +653,7 @@ class CaseWorkflowService:
                         "findings_moved": moved_findings,
                         "merged_by": merged_by,
                     },
+                    **activity_actor(merged_by, session),
                 }
             )
 
@@ -681,7 +711,6 @@ class CaseWorkflowService:
                     source_case_id,
                     closure_category=ClosureCategory.DUPLICATE,
                     closed_by=merged_by,
-                    closed_by_kind=ClosedByKind.AGENT,
                     closure_notes=f"Merged into {target_case_id}",
                 )
 

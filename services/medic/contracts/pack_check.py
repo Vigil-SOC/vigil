@@ -235,7 +235,9 @@ def check_pack(
             err(("P-CATALOG", e.message[:150]))
     _check_catalog_reach(catalog.get("entries", []), res)
 
-    # Runbooks (G4 slot): schema; file named after id; applies only to lane-1 rules.
+    # Runbooks (G4): schema; file named after id; lane-1 rules only; one descriptor
+    # per rule. An incident is one rule, so port_label must be that rule's group_by.
+    claimed: dict[str, str] = {}
     for path in sorted(x for x in files if x.startswith("runbooks/")):
         rb = _yaml(files[path])
         errs = list(RUNBOOK.iter_errors(rb))
@@ -249,14 +251,33 @@ def check_pack(
                     f"{path}: runbook {rb['id']} must live in runbooks/{rb['id']}.yaml",
                 )
             )
+        port_label = rb["action"].get("port_label")
         for rid in rb["applies_to"]:
-            if rid not in res.rules:
-                err(("P-RUNBOOK", f"{rb['id']}: applies to unknown rule {rid}"))
-            elif res.rules[rid]["lane"] != 1:
+            if rid in claimed:
                 err(
                     (
                         "P-RUNBOOK",
-                        f"{rb['id']}: rule {rid} is lane {res.rules[rid]['lane']}, runbooks only fix lane 1",
+                        f"{rb['id']}: rule {rid} already has runbook {claimed[rid]}",
+                    )
+                )
+            else:
+                claimed[rid] = rb["id"]
+            if rid not in res.rules:
+                err(("P-RUNBOOK", f"{rb['id']}: applies to unknown rule {rid}"))
+                continue
+            rule = res.rules[rid]
+            if rule["lane"] != 1:
+                err(
+                    (
+                        "P-RUNBOOK",
+                        f"{rb['id']}: rule {rid} is lane {rule['lane']}, runbooks only fix lane 1",
+                    )
+                )
+            if port_label is not None and port_label not in rule.get("group_by", []):
+                err(
+                    (
+                        "P-RUNBOOK",
+                        f"{rb['id']}: port_label {port_label} is not a group_by label of {rid}",
                     )
                 )
 

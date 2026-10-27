@@ -6,6 +6,7 @@ Pure functions — no provider, no database, no HTTP.
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from core.findings.anomaly_score import format_anomaly_score, stored_anomaly_score
 from core.llm.security import alert_text
 
 
@@ -22,7 +23,8 @@ class FindingSummary:
     data_source: str
     timestamp: str
     description: str
-    anomaly_score: float
+    # None means the source supplied no score. A real 0.0 stays 0.0.
+    anomaly_score: Optional[float]
     entity_str: str
     techniques_str: str
 
@@ -99,7 +101,8 @@ def summarize_finding(
 
     Uses ``or`` rather than ``dict.get`` defaults throughout: these keys are
     frequently *present with a None value*, which a plain default wouldn't
-    catch.
+    catch. ``anomaly_score`` is the exception — ``0.0`` is a real detector
+    verdict, so only an absent key or ``None`` means the source did not score it.
 
     ``finding_id`` overrides the dict's own key. The HTTP handler passes the
     path param — its authoritative id — rather than trusting the row it just
@@ -111,7 +114,7 @@ def summarize_finding(
         data_source=finding.get("data_source") or "unknown",
         timestamp=finding.get("timestamp") or "",
         description=finding.get("description") or "",
-        anomaly_score=float(finding.get("anomaly_score") or 0),
+        anomaly_score=stored_anomaly_score(finding),
         entity_str=build_entity_string(finding.get("entity_context") or {}),
         techniques_str=build_techniques_string(
             finding.get("predicted_techniques") or [],
@@ -125,7 +128,9 @@ def build_prompt(summary: FindingSummary) -> str:
 
     Every finding field is alert-sourced, including ids and technique labels
     on the webhook and Kafka paths. They sit inside ``<alert_data>``; the
-    analysis instructions stay outside it.
+    analysis instructions stay outside it. The anomaly score is our own
+    rendering: a real zero stays ``0.00``, and a missing score says the
+    source did not score it.
     """
     description = (
         alert_text(summary.description)
@@ -151,7 +156,7 @@ Finding ID: {alert_text(summary.finding_id)}
 Severity: {alert_text(summary.severity)}
 Data Source: {alert_text(summary.data_source)}
 Timestamp: {alert_text(summary.timestamp)}
-Anomaly Score: {summary.anomaly_score:.2f}
+Anomaly Score: {format_anomaly_score(summary.anomaly_score)}
 
 Description:
 {description}
