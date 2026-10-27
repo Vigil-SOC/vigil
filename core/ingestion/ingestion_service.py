@@ -27,6 +27,7 @@ from core.findings.source_evidence import (
     normalize_finding_source_evidence,
     source_evidence_from_loglm_row,
 )
+from core.storage.score import optional_float as _optional_float
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -86,24 +87,6 @@ def _first_present(row: Dict[str, Any], aliases: tuple) -> Any:
         if row.get(alias) is not None:
             return row[alias]
     return None
-
-
-def _optional_float(value: Any) -> Optional[float]:
-    """Parse a source score. Missing or unusable values are no score.
-
-    Real numbers and numeric strings parse as before, including surrounding
-    whitespace and booleans (``True`` → 1.0). NaN, ±infinity, overflow, and
-    anything ``float()`` cannot read are None. The value is not clamped.
-    """
-    if value is None or (isinstance(value, str) and value.strip() == ""):
-        return None
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    if not math.isfinite(parsed):
-        return None
-    return parsed
 
 
 def _blank(value: Any) -> bool:

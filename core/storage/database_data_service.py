@@ -6,7 +6,6 @@ from typing import Any, Dict, List, Optional
 
 from core.config import is_demo_mode
 from core.exceptions import DatabaseError
-from core.ingestion.ingestion_service import _optional_float
 from core.storage.connection import (
     SchemaDriftError,
     SchemaRevisionError,
@@ -14,6 +13,7 @@ from core.storage.connection import (
     init_database,
 )
 from core.storage.schemas import CaseSchema, FindingSchema
+from core.storage.score import optional_float
 from core.storage.service import IP_FACET_KEYS, DatabaseService
 
 logger = logging.getLogger(__name__)
@@ -332,7 +332,7 @@ class DatabaseDataService:
                 finding = self._db_service.create_finding(
                     finding_id=finding_data.get("finding_id"),
                     mitre_predictions=finding_data.get("mitre_predictions", {}),
-                    anomaly_score=_optional_float(finding_data.get("anomaly_score")),
+                    anomaly_score=optional_float(finding_data.get("anomaly_score")),
                     timestamp=finding_data.get("timestamp") or None,
                     data_source=finding_data.get("data_source", "imported"),
                     title=finding_data.get("title"),
