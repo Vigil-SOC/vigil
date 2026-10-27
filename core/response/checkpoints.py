@@ -22,6 +22,47 @@ def pending_for(run_id: str, checkpoint_id: str, approvals=None):
     return None
 
 
+def _stored_run_kind(run_id: str) -> Optional[str]:
+    from sqlalchemy import select
+
+    from core.storage.connection import get_db_manager
+    from core.storage.models import WorkflowRun
+
+    try:
+        with get_db_manager().session_scope() as session:
+            context = session.execute(
+                select(WorkflowRun.trigger_context).where(WorkflowRun.run_id == run_id)
+            ).scalar_one_or_none()
+    except Exception:  # noqa: BLE001 - an unread run names no agent
+        return None
+    kind = context.get("run_kind") if isinstance(context, dict) else None
+    return kind if isinstance(kind, str) and kind else None
+
+
+def proposer_principal_id(
+    run_id: str, parameters: Optional[Dict[str, Any]] = None
+) -> Optional[str]:
+    """The agent already named on the parameters or the run, for four-eyes (#2932).
+
+    Not ``current_claims()``: nothing binds claims on the bridge's callers.
+    None when nothing names an agent; no principal is minted.
+    """
+    from core.agents.attribution import phase_actor, plugin_actor
+    from core.auth.principals import agent_principal_id
+
+    params = parameters or {}
+    agent = params.get("agent_id")
+    if isinstance(agent, str) and agent:
+        return agent if agent.startswith("agent:") else agent_principal_id(agent)
+    actor = phase_actor(run_id)
+    if actor:
+        return actor
+    kind = params.get("run_kind")
+    if not (isinstance(kind, str) and kind):
+        kind = _stored_run_kind(run_id)
+    return plugin_actor(kind) if kind else None
+
+
 # Idempotent by checkpoint, because a supervisor reads the same open checkpoint on
 # every tick: raising per read would queue the same question hundreds of times.
 def raise_for_checkpoint(
@@ -41,6 +82,7 @@ def raise_for_checkpoint(
     if pending_for(run_id, checkpoint_id, service) is not None:
         return False
 
+    parameters = {"checkpoint_id": checkpoint_id, **(parameters or {})}
     service.create_action(
         action_type=ActionType.WORKFLOW_PHASE,
         title=title,
@@ -54,7 +96,8 @@ def raise_for_checkpoint(
         annotate_rule=False,
         evidence=[run_id],
         created_by="agent",
-        parameters={"checkpoint_id": checkpoint_id, **(parameters or {})},
+        created_by_principal_id=proposer_principal_id(run_id, parameters),
+        parameters=parameters,
         workflow_run_id=run_id,
         workflow_phase_id=phase_id,
     )

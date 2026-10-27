@@ -15,7 +15,11 @@ from core.agents.internal_auth import authorise
 from core.deps import provide_approvals, provide_mcp_registry, provide_workflow_runs
 from core.integrations.mcp.registry import MCPRegistry
 from core.response.approval_service import ApprovalService
-from core.response.checkpoints import raise_for_checkpoint, withdraw_for_run
+from core.response.checkpoints import (
+    proposer_principal_id,
+    raise_for_checkpoint,
+    withdraw_for_run,
+)
 from core.routing import Auth, RouterMeta
 from core.storage.connection import get_db_session
 from core.storage.schemas.base import _iso_utc
@@ -508,6 +512,7 @@ def _propose_actions(
     from core.response.approval_service import ActionType
 
     service = approvals or ApprovalService()
+    proposer = proposer_principal_id(run_id) if proposals else None
     filed: List[str] = []
     for index, raw in enumerate(proposals):
         proposal = _proposal(raw)
@@ -530,6 +535,7 @@ def _propose_actions(
                 reason=proposal["reason"],
                 evidence=[run_id],
                 created_by="agent",
+                created_by_principal_id=proposer,
                 parameters={"case_id": case_id, "run_id": run_id},
                 idempotency_key=f"run-proposal:{run_id}:{action_type}:{target}",
                 # The confidence is the model's own claim, so it never releases
