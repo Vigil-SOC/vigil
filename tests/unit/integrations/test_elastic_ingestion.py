@@ -49,16 +49,17 @@ class TestTransformAlert:
         assert "jsmith" in finding["entity_context"]["usernames"]
         assert "10.0.1.50" in finding["entity_context"]["src_ips"]
         assert "198.51.100.42" in finding["entity_context"]["dest_ips"]
+        assert finding["anomaly_score"] is None
 
     def test_extracts_mitre_techniques(self, ingestion, sample_alerts):
         finding = ingestion.transform_alert_to_finding(sample_alerts[0])
-        assert "T1059.001" in finding["mitre_predictions"]
+        assert finding["mitre_predictions"] == {"T1059.001": None}
 
     def test_transforms_brute_force_alert(self, ingestion, sample_alerts):
         finding = ingestion.transform_alert_to_finding(sample_alerts[1])
         assert finding["severity"] == "medium"
         assert finding["title"] == "Brute Force Attempt Detected"
-        assert "T1110.001" in finding["mitre_predictions"]
+        assert finding["mitre_predictions"] == {"T1110.001": None}
 
     def test_transforms_legacy_signal_format(self, ingestion, sample_alerts):
         """Alerts using the older signal.rule structure should still work."""
@@ -79,6 +80,7 @@ class TestTransformAlert:
         assert finding["finding_id"] == "elastic-sparse-1"
         assert finding["title"] == "Elastic Security Alert"
         assert finding["severity"] == "medium"
+        assert finding["anomaly_score"] is None
 
     @pytest.mark.parametrize(
         "source",

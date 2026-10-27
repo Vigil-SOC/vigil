@@ -28,7 +28,7 @@ DEFAULT_INTENT_FILE = REPO_ROOT / "INTENT.md"
 
 # Tightening rules, one per field type. The label describes what applying the
 # declared value over the effective one would do to the daemon's autonomy.
-HIGHER_TIGHTER = "higher_tighter"  # confidence thresholds, force_manual_approval
+HIGHER_TIGHTER = "higher_tighter"  # confidence thresholds, four_eyes
 LOWER_TIGHTER = "lower_tighter"  # budgets, auto_* / enabled booleans
 SHORTER_TIGHTER = "shorter_tighter"  # severity lists
 
@@ -92,9 +92,23 @@ INTENT_FIELDS: Tuple[IntentField, ...] = (
         "daemon_high_action_floor",
         HIGHER_TIGHTER,
     ),
+    # Act flags: off is tighter. The named settings are the env floor, which
+    # can only force them off. four_eyes on is tighter.
     IntentField(
-        "respond.force_manual_approval",
-        "response.force_manual_approval",
+        "act.reversible",
+        "ceiling.act_reversible",
+        "daemon_auto_response",
+        LOWER_TIGHTER,
+    ),
+    IntentField(
+        "act.irreversible",
+        "ceiling.act_irreversible",
+        "daemon_force_approval",
+        LOWER_TIGHTER,
+    ),
+    IntentField(
+        "act.four_eyes",
+        "ceiling.four_eyes",
         "daemon_force_approval",
         HIGHER_TIGHTER,
     ),

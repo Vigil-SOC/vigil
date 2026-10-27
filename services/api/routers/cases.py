@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, field_validator
 from core.agents.projections import read_events
 from core.auth.permissions import deny_unless, permission_gate
 from core.cases import case_journal_service, case_records_service
+from core.cases.assignee import resolve_assignee, resolve_escalation_target
 from core.cases.case_attachment_service import attach_document
 from core.cases.case_collaboration_service import CaseCollaborationService
 from core.cases.case_evidence_service import CaseEvidenceService
@@ -545,7 +546,7 @@ async def add_task(case_id: str, data: TaskAdd, session: UnitOfWorkSession):
         case_id,
         title=data.title,
         description=data.description,
-        assignee=data.assignee,
+        assignee=resolve_assignee(session, data.assignee),
         priority=data.priority,
         due_date=data.due_date,
         checklist_items=data.checklist_items,
@@ -578,14 +579,21 @@ class TaskUpdate(BaseModel):
     dependencies=_CASES_WRITE,
     response_model=CaseTaskSchema,
 )
-async def update_task(
+def update_task(
     case_id: str, task_id: int, data: TaskUpdate, session: UnitOfWorkSession
 ):
     """Update task."""
 
-    task = case_records_service.update_task(session, task_id, data.model_dump())
+    task = case_records_service.update_task(
+        session, task_id, data.model_dump(exclude={"assignee"})
+    )
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    if data.assignee is not None:
+        # Set here, not through update_task, which skips None: blank unassigns.
+        # A refusal raises and the request's transaction rolls the rest back.
+        task.assignee = resolve_assignee(session, data.assignee, current=task.assignee)
+        session.flush()
     return CaseTaskSchema.dump(task)
 
 
@@ -656,16 +664,19 @@ class EscalationAdd(BaseModel):
 async def escalate_case(
     case_id: str,
     data: EscalationAdd,
+    session: UnitOfWorkSession,
     current_user: User = Depends(get_current_user),
 ):
     """Escalate case. Who escalated it is the signed-in user."""
     # Escalation hands the case to escalated_to, which is an owner change.
     deny_unless(current_user.user_id, "cases.assign")
+    # Before the call: it swallows errors into "Failed to escalate case".
+    escalated_to = resolve_escalation_target(session, data.escalated_to)
     workflow_service = CaseWorkflowService()
     success = workflow_service.escalate_case(
         case_id,
         escalated_from=current_user.username,
-        escalated_to=data.escalated_to,
+        escalated_to=escalated_to,
         reason=data.reason,
         urgency_level=data.urgency_level,
     )

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Optional, Sequence
 
+from core.cases.closure import trust_word
 from core.findings.arrival_counts import utc_day_bounds
 from core.response.approval_service import needs_you_case_ids
 from core.storage.connection import get_db_manager
@@ -37,7 +38,7 @@ class _LinkedCase:
     case_id: str
     status: str
     updated_at: datetime
-    closed_by_kind: Optional[str]
+    close_channel: Optional[str]
 
 
 def _state(
@@ -55,8 +56,8 @@ def _state(
     if case.case_id in needs_you_ids:
         return "needs_you"
     if case.status == "closed":
-        # No closure row counts as an agent close: close_case defaults the kind.
-        if case.closed_by_kind == "analyst":
+        # No closure row counts as an agent close.
+        if trust_word(case.close_channel) == "analyst":
             return "resolved_person"
         return "resolved_auto"
     return "working"
@@ -71,7 +72,7 @@ def _cases_for(session, finding_ids: Sequence[str]) -> dict[str, _LinkedCase]:
             Case.case_id,
             Case.status,
             Case.updated_at,
-            CaseClosureInfo.closed_by_kind,
+            CaseClosureInfo.close_channel,
         )
         .join(Case, Case.case_id == case_findings.c.case_id)
         .outerjoin(CaseClosureInfo, CaseClosureInfo.case_id == Case.case_id)

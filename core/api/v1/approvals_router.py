@@ -16,7 +16,12 @@ from pydantic import BaseModel, Field
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
 from core.deps import provide_approvals
-from core.response.approval_service import AlreadyDecided, ApprovalService, needs_you
+from core.response.approval_service import (
+    AlreadyDecided,
+    ApprovalService,
+    FourEyesRefused,
+    needs_you,
+)
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
 
@@ -245,6 +250,8 @@ async def approve_action(
         )
     except AlreadyDecided as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except FourEyesRefused as e:
+        raise HTTPException(status_code=403, detail=str(e))
     if updated is None:
         raise HTTPException(status_code=500, detail="Failed to approve action")
 

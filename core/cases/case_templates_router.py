@@ -7,8 +7,9 @@ from pydantic import BaseModel
 
 from core.auth.current_user import get_current_user
 from core.auth.permissions import deny_unless, permission_gate
+from core.cases.assignee import resolve_assignee
 from core.cases.case_workflow_service import CaseWorkflowService
-from core.routing import Auth, RouterMeta
+from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import User
 from core.storage.schemas import CaseSchema, CaseTemplateSchema
 
@@ -173,6 +174,7 @@ async def delete_template(template_id: str):
 async def create_case_from_template(
     template_id: str,
     data: CaseFromTemplate,
+    session: UnitOfWorkSession,
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -187,11 +189,14 @@ async def create_case_from_template(
     """
     if data.assignee:
         deny_unless(current_user.user_id, "cases.assign")
+    # Before the call: it swallows errors, so a refusal inside would read as
+    # "Failed to create case from template".
+    assignee = resolve_assignee(session, data.assignee)
     case = workflow_service.create_case_from_template(
         template_id=template_id,
         title=data.title,
         description=data.description,
-        assignee=data.assignee,
+        assignee=assignee,
         finding_ids=data.finding_ids,
         override_priority=data.override_priority,
     )

@@ -236,7 +236,7 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
             description = (alert.get("description") or "").strip() or title
 
             mitre_predictions = {
-                str(tid): 1.0 for tid in (alert.get("mitreTechniques") or []) if tid
+                str(tid): None for tid in (alert.get("mitreTechniques") or []) if tid
             }
 
             entity_context: Dict[str, Any] = {

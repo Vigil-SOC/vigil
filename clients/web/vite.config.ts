@@ -80,8 +80,8 @@ export default defineConfig(({ mode }) => {
       dedupe: ['react', 'react-dom'],
     },
     optimizeDeps: {
-      // One esbuild optimize pass so React lives in ONE shared chunk instead
-      // of being duplicated per dep.
+      // Pre-bundle these in one Rolldown optimizer pass so React lives in ONE
+      // shared chunk instead of being duplicated per dep.
       include: [
         'react',
         'react-dom',

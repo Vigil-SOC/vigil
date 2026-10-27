@@ -19,7 +19,11 @@ import pytest
 
 from core.federation.adapters._base import parse_cursor_since
 from core.federation.runner import FederationRunner
-from core.integrations.splunk.adapter import _QUERIES, SplunkAdapter
+from core.integrations.splunk.adapter import (
+    _QUERIES,
+    SplunkAdapter,
+    _splunk_event_to_finding,
+)
 from core.integrations.splunk.client import SearchResult, SplunkSearchError
 from core.time import utcnow
 from tests.unit._acking_queue import AckingQueue
@@ -54,6 +58,11 @@ def _fetch(responses: List[Any]):
 
 def _event(n: int) -> Dict[str, Any]:
     return {"_cd": f"e{n}", "search_name": f"rule {n}", "urgency": "high"}
+
+
+def test_splunk_event_stores_no_invented_score():
+    finding = _splunk_event_to_finding({"_cd": "1", "search_name": "rule"})
+    assert finding["anomaly_score"] is None
 
 
 def test_all_queries_failing_raises():

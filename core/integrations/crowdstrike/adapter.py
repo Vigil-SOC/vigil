@@ -19,12 +19,22 @@ from core.federation.contract import (
     FetchResult,
     register_adapter,
 )
+from core.ingestion.ingestion_service import _optional_float
 from core.integrations._base.config import resolve
 from core.integrations._base.ids import FINDING_ID_MAX, fit_id
 from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
+
+
+def _confidence_to_score(max_confidence: Any) -> Optional[float]:
+    """CrowdStrike ``max_confidence`` is 0–100. Scale only a parsed number."""
+    parsed = _optional_float(max_confidence)
+    if parsed is None:
+        return None
+    return parsed / 100.0
+
 
 _SEVERITY_MAP = {
     "Critical": "critical",
@@ -139,11 +149,11 @@ def _detection_to_finding(detection: Dict[str, Any]) -> Optional[Dict[str, Any]]
         detection.get("max_severity_displayname", "Medium"), "medium"
     )
 
-    mitre_predictions: Dict[str, float] = {}
+    mitre_predictions: Dict[str, Optional[float]] = {}
     for behavior in detection.get("behaviors", []) or []:
         technique = behavior.get("technique")
         if technique:
-            mitre_predictions[technique] = 0.9
+            mitre_predictions[technique] = None
 
     device = detection.get("device") or {}
     entity_context = {
@@ -162,8 +172,8 @@ def _detection_to_finding(detection: Dict[str, Any]) -> Optional[Dict[str, Any]]
         "title": detection.get("scenario") or "CrowdStrike Detection",
         "description": detection.get("description", ""),
         "entity_context": entity_context,
-        "raw_event": detection,
-        "anomaly_score": float(detection.get("max_confidence", 50)) / 100.0,
+        "raw_data": detection,
+        "anomaly_score": _confidence_to_score(detection.get("max_confidence")),
         "mitre_predictions": mitre_predictions,
     }
 

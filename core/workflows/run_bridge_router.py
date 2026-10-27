@@ -12,10 +12,15 @@ from pydantic import BaseModel, Field
 
 from core.agents.attribution import note_child, note_terminal
 from core.agents.internal_auth import authorise
+from core.cases.agent_closure import activity_actor
 from core.deps import provide_approvals, provide_mcp_registry, provide_workflow_runs
 from core.integrations.mcp.registry import MCPRegistry
 from core.response.approval_service import ApprovalService
-from core.response.checkpoints import raise_for_checkpoint, withdraw_for_run
+from core.response.checkpoints import (
+    proposer_principal_id,
+    raise_for_checkpoint,
+    withdraw_for_run,
+)
 from core.routing import Auth, RouterMeta
 from core.storage.connection import get_db_session
 from core.storage.schemas.base import _iso_utc
@@ -435,6 +440,7 @@ def _add_activity(
             "activity_type": activity_type,
             "description": description,
             "details": details,
+            **activity_actor(),
         }
     )
     data.update_case(case_id, activities=activities)
@@ -508,6 +514,7 @@ def _propose_actions(
     from core.response.approval_service import ActionType
 
     service = approvals or ApprovalService()
+    proposer = proposer_principal_id(run_id) if proposals else None
     filed: List[str] = []
     for index, raw in enumerate(proposals):
         proposal = _proposal(raw)
@@ -530,6 +537,7 @@ def _propose_actions(
                 reason=proposal["reason"],
                 evidence=[run_id],
                 created_by="agent",
+                created_by_principal_id=proposer,
                 parameters={"case_id": case_id, "run_id": run_id},
                 idempotency_key=f"run-proposal:{run_id}:{action_type}:{target}",
                 # The confidence is the model's own claim, so it never releases
@@ -620,7 +628,7 @@ DISMISSALS = {"benign", "false_positive"}
 def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
     from core.cases.agent_closure import service_session
     from core.cases.case_workflow_service import CaseWorkflowService
-    from core.cases.closure import ClosedByKind, ClosureCategory
+    from core.cases.closure import ClosureCategory
     from core.storage.models import Case
 
     disposition = (update.disposition or "").strip().lower()
@@ -638,7 +646,6 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
                 case_id,
                 closure_category=ClosureCategory.FALSE_POSITIVE,
                 closed_by=run_id,
-                closed_by_kind=ClosedByKind.AGENT,
                 closure_notes=update.summary or None,
             )
         _add_activity(

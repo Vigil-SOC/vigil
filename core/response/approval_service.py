@@ -29,7 +29,6 @@ from core.response.config import (
     decision_rule,
     split_decision_rule,
 )
-from core.storage.config_service import get_config_service
 from core.storage.connection import get_db_manager
 from core.storage.models import ApprovalAction as ApprovalActionRow
 from core.storage.models import Investigation, WorkflowRun
@@ -38,26 +37,6 @@ from core.telemetry import get_meter
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
-
-APPROVAL_CONFIG_KEY = "approval.force_manual_approval"
-
-
-def read_stored_force_manual_approval() -> bool:
-    """The stored flag; Act when no row exists. Raises when the read fails."""
-    value = get_config_service().read_system_config(APPROVAL_CONFIG_KEY)
-    return bool(value.get("enabled", False)) if isinstance(value, dict) else False
-
-
-def stored_force_manual_approval() -> bool:
-    """The stored flag as the gate applies it: Assist when the read fails."""
-    try:
-        return read_stored_force_manual_approval()
-    except Exception as e:  # noqa: BLE001
-        logger.error(
-            "Cannot read the approval setting; requiring manual approval: %s", e
-        )
-        return True
-
 
 _pending_gauge: Any = None
 
@@ -71,6 +50,23 @@ class AlreadyDecided(Exception):
 
     def __init__(self, action_id: str, status: str):
         super().__init__(f"Action {action_id} is already {status}")
+
+
+FOUR_EYES_REFUSAL = (
+    "Four-eyes is on: someone other than who proposed this action, or the "
+    "person its run acted for, must approve it"
+)
+
+
+class FourEyesRefused(Exception):
+    """The approver proposed the action, or its run acted for them (#2932).
+
+    Raised after the refusal's trail entry commits; the row stays pending.
+    """
+
+    def __init__(self, action_id: str):
+        super().__init__(FOUR_EYES_REFUSAL)
+        self.action_id = action_id
 
 
 def register_pending_gauge(service: "ApprovalService") -> None:
@@ -165,6 +161,27 @@ class PendingAction:
     idempotency_key: Optional[str] = None
 
 
+def _proposers(session, row: ApprovalActionRow) -> set[str]:
+    """The creator's principal and the proposing run's person, when known.
+
+    Hunt proposals keep ``workflow_run_id`` null and name the run in
+    ``parameters["run_id"]``.
+    """
+    found = {row.created_by_principal_id}
+    params = row.parameters if isinstance(row.parameters, dict) else {}
+    run_id = row.workflow_run_id or _text_id(params.get("run_id"))
+    if run_id:
+        found.add(
+            session.execute(
+                select(WorkflowRun.triggered_by_principal_id).where(
+                    WorkflowRun.run_id == run_id
+                )
+            ).scalar_one_or_none()
+        )
+    found.discard(None)
+    return found
+
+
 def _row_to_pending(row: ApprovalActionRow) -> PendingAction:
     return PendingAction(
         action_id=row.action_id,
@@ -214,20 +231,13 @@ class ApprovalService:
                 the no-arg form callers use still honours env (#916).
         """
         self.config = config or ResponseConfig.from_settings()
+        # The daemon sets this from DAEMON_FORCE_APPROVAL. It changes the
+        # recorded rule only. A confidence never approves, and the stored
+        # ceiling is what Assist/Act writes (#2918).
         self.force_manual_approval = False
 
-    # ------------------------------------------------------------------
-    # Config (force_manual_approval) — db/config-backed, read per decision
-    # ------------------------------------------------------------------
-    #
-    # ``self.force_manual_approval`` is this process forcing approval on
-    # (the daemon does when DAEMON_FORCE_APPROVAL is set) and is never
-    # written to the row. The row is what Settings writes and the SQL seed
-    # creates (Act); it is read at each decision so a long-lived service sees
-    # a change without a restart. Nothing here writes it.
-
     def set_force_manual_approval(self, force: bool):
-        """Force manual approval for this process; the stored row is left as is."""
+        """Record that this process is forcing the approval rule. Writes nothing."""
         self.force_manual_approval = force
         logger.info("Force manual approval set to: %s", force)
 
@@ -316,9 +326,7 @@ class ApprovalService:
 
         # The branch that set requires_approval is appended to the caller's
         # narrative so the row records the rule it was decided by (#917).
-        forced = (
-            human_only or self.force_manual_approval or stored_force_manual_approval()
-        )
+        forced = human_only or self.force_manual_approval
         requires_approval, rule = approval_requirement(
             forced, reversibility, confidence, self.config
         )
@@ -461,10 +469,19 @@ class ApprovalService:
         approved_by: str = "analyst",
         approved_by_principal_id: Optional[str] = None,
     ) -> Optional[PendingAction]:
-        """Approve a pending action. Raises ``AlreadyDecided`` if it is not pending."""
+        """Approve a pending action. Raises ``AlreadyDecided`` if it is not pending.
+
+        With the ceiling's ``four_eyes`` on, raises ``FourEyesRefused`` when the
+        approver created the action or is the person its run acted for. Checked
+        here, at approve time, so rows already pending are covered.
+        """
+        from core.response.ceiling import read_ceiling
+
+        four_eyes = read_ceiling().four_eyes
         try:
             db = get_db_manager()
             decided: Optional[str] = None
+            refused = False
             pending: Optional[PendingAction] = None
             with db.session_scope() as session:
                 row = session.get(ApprovalActionRow, action_id, with_for_update=True)
@@ -473,6 +490,13 @@ class ApprovalService:
                     return None
                 if row.status != ActionStatus.PENDING.value:
                     decided = row.status
+                elif (
+                    four_eyes
+                    and approved_by_principal_id is not None
+                    and approved_by_principal_id in _proposers(session, row)
+                ):
+                    refused = True
+                    _trail_refusal(session, action_id, approved_by_principal_id)
                 else:
                     row.status = ActionStatus.APPROVED.value
                     row.approved_at = utcnow()
@@ -491,6 +515,11 @@ class ApprovalService:
                     decided,
                 )
                 raise AlreadyDecided(action_id, decided)
+            if refused:
+                logger.warning(
+                    "Action %s: four-eyes refused %s", action_id, approved_by
+                )
+                raise FourEyesRefused(action_id)
             logger.info("Action %s approved by %s", action_id, approved_by)
             return pending
         except SQLAlchemyError as e:
@@ -630,6 +659,23 @@ class ApprovalService:
     def list_pending_approvals(self) -> List[PendingAction]:
         """List all pending actions requiring approval."""
         return self.list_actions(status=ActionStatus.PENDING, requires_approval=True)
+
+
+def _trail_refusal(session, action_id: str, approver: str) -> None:
+    """One entry per refusal, in the decision's transaction."""
+    from core.agents.attribution import append_here
+    from core.audit import trail
+
+    append_here(
+        session,
+        {
+            trail.ACTION: "approval.approve",
+            trail.ACTOR: approver,
+            trail.OBJECT: action_id,
+            trail.OUTCOME: trail.OUTCOME_DENIED,
+            "reason": "four_eyes",
+        },
+    )
 
 
 def _text_id(value: Any) -> Optional[str]:

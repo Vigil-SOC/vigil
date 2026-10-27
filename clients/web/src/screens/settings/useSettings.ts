@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import api, {
   aiConfigApi,
+  autonomyApi,
   budgetsApi,
   configApi,
   detectionRulesApi,
@@ -15,11 +16,13 @@ import api, {
   type AIModelInfo,
   type BudgetQuotaResponse,
   type BudgetSettings,
+  type Ceiling,
   type ComponentAssignment,
   type FederationSourceView,
   type IngestionJob,
   type PlatformDatabaseProxyConfig,
 } from '../../services/api'
+import type { Schema } from '../../services/apiTypes'
 import { loadCustomIntegrations } from '../../config/integrations'
 import type { LastTest } from './integrationHealth'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
@@ -422,11 +425,6 @@ export interface InvestigationProfile {
 
 export type InvestigationProfiles = Record<string, InvestigationProfile>
 
-interface ForceManualApproval {
-  enabled: boolean
-  environment_wins: boolean
-}
-
 /** Inclusive range and scrub step of one numeric setting, served by GET /config/orchestrator. */
 export interface OrchestratorBound {
   min: number
@@ -531,49 +529,60 @@ export const AUTONOMY_CHANGED = 'vigil:autonomy-changed'
 /** Tells the header autonomy badge to re-read, e.g. after Ask first / Act is saved. */
 export const notifyAutonomyChanged = () => window.dispatchEvent(new Event(AUTONOMY_CHANGED))
 
-export function useForceManualApproval() {
-  const [state, setState] = useState<ForceManualApproval>({
-    enabled: false,
-    environment_wins: false,
-  })
+export function useCeiling() {
+  const [ceiling, setCeiling] = useState<Ceiling | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
 
   useEffect(() => {
     let cancelled = false
-    configApi
-      .getForceManualApproval()
+    autonomyApi
+      .get()
       .then(({ data }) => {
         if (cancelled) return
-        const row = data as Partial<ForceManualApproval>
-        setState({
-          enabled: Boolean(row.enabled),
-          environment_wins: Boolean(row.environment_wins),
-        })
+        setCeiling(data)
         setPhase('ready')
       })
-      .catch(() => {
-        // The default state is Act; showing it would claim approvals are off
-        // when the stored flag was never read.
-        if (!cancelled) setPhase('error')
-      })
+      // no default: showing Assist or Act would claim a ceiling never read
+      .catch(() => !cancelled && setPhase('error'))
     return () => {
       cancelled = true
     }
   }, [])
 
-  const save = useCallback(async (enabled: boolean) => {
-    const { data } = await configApi.setForceManualApproval(enabled)
-    const row = data as Partial<ForceManualApproval>
-    const next = {
-      enabled: Boolean(row.enabled),
-      environment_wins: Boolean(row.environment_wins),
-    }
-    setState(next)
+  const apply = useCallback((next: Ceiling) => {
+    setCeiling(next)
     notifyAutonomyChanged()
     return next
   }, [])
 
-  return { ...state, phase, save }
+  // after a failure too: a 409 may mean the lock came on, a failed kill may have stored the stop
+  const refresh = useCallback(
+    () => autonomyApi.get().then(({ data }) => apply(data)).catch(() => null),
+    [apply],
+  )
+
+  const save = useCallback(
+    async (patch: Schema<'CeilingBody'>) => {
+      try {
+        return apply((await autonomyApi.update(patch)).data)
+      } catch (err) {
+        refresh()
+        throw err
+      }
+    },
+    [apply, refresh],
+  )
+  // kill sets stopped, turns automatic investigation off and fails in-flight runs
+  const stop = useCallback(async () => {
+    try {
+      await orchestratorApi.kill()
+    } finally {
+      await refresh()
+    }
+  }, [refresh])
+  const resume = useCallback(async () => apply((await autonomyApi.resume()).data), [apply])
+
+  return { ceiling, phase, save, stop, resume }
 }
 
 interface StorageInfo {

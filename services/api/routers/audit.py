@@ -5,7 +5,7 @@ One filter, from ``core.audit.trail``. List, export, and range verify need
 ``audit.read``, and anyone else needs ``audit.forward``. A missing sign-in is
 refused before that check. ``audit.forward`` and ``audit.manage`` stay a
 person's own act inside ``check_permission``, including in dev mode. A poll
-writes nothing.
+writes no entry; a page that carries an unconfirmed restore entry clears it.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
-from core.audit import trail
+from core.audit import feed, trail
 from core.auth import current_user as current_user_module
 from core.auth import principals
 from core.auth.auth_service import _is_service_account
@@ -111,6 +111,27 @@ def _ndjson(rows: list[dict], tip: trail.Tip):
     yield json.dumps({"checkpoint": tip.public()}, separators=(",", ":")) + "\n"
 
 
+# What the Audit section shows of the feed. Not the host or the certificates,
+# which stay on ``audit.forward``.
+_FEED_FIELDS = (
+    "enabled",
+    "behind",
+    "last_delivered_at",
+    "last_delivered_seq",
+    "last_error",
+    "unconfirmed",
+    "paused",
+)
+
+
+def _feed(session) -> dict:
+    try:
+        health = feed.health(session)
+    except feed.FeedUnavailable:
+        health = {"enabled": False, "behind": 0, "paused": False}
+    return {key: health.get(key) for key in _FEED_FIELDS}
+
+
 @router.get("/entries")
 def list_entries(
     session: UnitOfWorkSession,
@@ -122,6 +143,7 @@ def list_entries(
     return {
         "entries": trail.read(session, query, limit),
         "tip": trail.current_tip(session).public(),
+        "feed": _feed(session),
     }
 
 

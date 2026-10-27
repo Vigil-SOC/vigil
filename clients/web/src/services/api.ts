@@ -164,9 +164,9 @@ export const findingsApi = {
     exclusions?: ExclusionView
     sort_by?: string
     sort_order?: 'asc' | 'desc'
-  }) => api.get('/findings', { params }),
+  }, signal?: AbortSignal) => api.get('/findings', { params, signal }),
   
-  getById: (id: string) => api.get(`/findings/${id}`),
+  getById: (id: string, signal?: AbortSignal) => api.get(`/findings/${id}`, { signal }),
   
   getSummary: (params?: { exclusions?: ExclusionView }) =>
     api.get('/findings/stats/summary', { params }),
@@ -256,7 +256,8 @@ export const casesApi = {
     offset?: number
   }) => api.get<Schema<'CaseListResponse'>>('/cases', { params }),
 
-  getById: (id: string) => api.get<Schema<'CaseDetailResponse'>>(`/cases/${id}`),
+  getById: (id: string, signal?: AbortSignal) =>
+    api.get<Schema<'CaseDetailResponse'>>(`/cases/${id}`, { signal }),
 
   create: (data: Schema<'CaseCreate'>) =>
     api.post<Schema<'CaseSchema'>>('/cases', data),
@@ -820,8 +821,8 @@ export const attackApi = {
       },
     }),
   
-  getFindingsByTechnique: (technique_id: string) =>
-    api.get(`/attack/techniques/${technique_id}/findings`),
+  getFindingsByTechnique: (technique_id: string, min_confidence: number, time_range: string) =>
+    api.get(`/attack/techniques/${technique_id}/findings`, { params: { min_confidence, time_range } }),
 }
 
 export const timelineApi = {
@@ -1035,6 +1036,14 @@ export const workflowApi = {
     api.post('/workflows/generate', { description }, { timeout: LLM_TIMEOUT }),
 }
 
+// The autonomy ceiling (#2918). Stop is orchestratorApi.kill; PUT has no stopped field.
+export type Ceiling = Schema<'CeilingResponse'>
+export const autonomyApi = {
+  get: () => api.get<Ceiling>('/autonomy'),
+  update: (body: Schema<'CeilingBody'>) => api.put<Ceiling>('/autonomy', body),
+  resume: () => api.post<Ceiling>('/autonomy/resume'),
+}
+
 export const orchestratorApi = {
   getStatus: () => api.get('/orchestrator/status'),
   enable: () => api.post('/orchestrator/enable'),
@@ -1084,6 +1093,19 @@ export interface AuditEntry {
 
 export interface AuditTip { seq: number; hash: string }
 
+/** The feed as the Audit section sees it: no host, no certificates (#3191). */
+export interface AuditFeedHealth {
+  enabled: boolean
+  behind: number | null
+  last_delivered_at: string | null
+  last_delivered_seq: number | null
+  last_error: string | null
+  /** A restore entry not yet pushed, polled or exported. */
+  unconfirmed: number | null
+  /** New entries are refused until the push carries it, for up to 30 seconds. */
+  paused: boolean
+}
+
 export interface AuditVerify {
   first: number | null
   last: number | null
@@ -1106,7 +1128,7 @@ export function auditParams(filter: AuditFilter): Record<string, string> {
 
 export const auditApi = {
   entries: (filter: AuditFilter, after?: number, limit = AUDIT_PAGE) =>
-    api.get<{ entries: AuditEntry[]; tip: AuditTip }>('/audit/entries', {
+    api.get<{ entries: AuditEntry[]; tip: AuditTip; feed?: AuditFeedHealth }>('/audit/entries', {
       params: { ...auditParams(filter), ...(after != null ? { after } : {}), limit },
     }),
   exportTrail: (filter: AuditFilter) =>

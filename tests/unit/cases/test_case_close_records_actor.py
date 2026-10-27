@@ -18,7 +18,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import BackgroundTasks
 
-from core.cases.closure import ClosedByKind, ClosureCategory
+from core.cases.closure import ClosureCategory
 
 pytestmark = pytest.mark.unit
 
@@ -76,7 +76,7 @@ def test_a_status_edit_to_closed_records_the_principal(monkeypatch, service):
     # The name comes from the authenticated principal, never from the body:
     # a client-supplied one would let any caller claim an analyst concluded.
     assert kwargs["closed_by"] == "nestor"
-    assert kwargs["closed_by_kind"] is ClosedByKind.ANALYST
+    assert "closed_by_kind" not in kwargs
 
 
 def test_it_does_not_invent_a_determination(monkeypatch, service):
@@ -210,12 +210,19 @@ def test_the_close_endpoint_takes_the_principal_and_not_the_body(monkeypatch, se
     monkeypatch.setattr(cases.CaseClosureInfoSchema, "dump", staticmethod(lambda r: {}))
     tasks = BackgroundTasks()
 
+    # A client field named closed_by_kind is not part of the body. It cannot
+    # choose analyst.
+    body = ClosureInfo.model_validate(
+        {
+            "closure_category": "false_positive",
+            "false_positive_reason": "the scanner is ours",
+            "closed_by_kind": "analyst",
+        }
+    )
+    assert "closed_by_kind" not in ClosureInfo.model_fields
     cases.close_case(
         "c1",
-        ClosureInfo(
-            closure_category="false_positive",
-            false_positive_reason="the scanner is ours",
-        ),
+        body,
         MagicMock(),
         tasks,
         ANALYST,
@@ -224,7 +231,7 @@ def test_the_close_endpoint_takes_the_principal_and_not_the_body(monkeypatch, se
     ((_, case_id, kwargs),) = service.calls
     assert case_id == "c1"
     assert kwargs["closed_by"] == "nestor"
-    assert kwargs["closed_by_kind"] is ClosedByKind.ANALYST
+    assert "closed_by_kind" not in kwargs
     # Named in the rationale fallback and previously not an argument at all, so
     # the dedicated close path could never write the field it fell back to.
     assert kwargs["false_positive_reason"] == "the scanner is ours"

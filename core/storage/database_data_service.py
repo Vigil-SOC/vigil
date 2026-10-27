@@ -13,19 +13,10 @@ from core.storage.connection import (
     init_database,
 )
 from core.storage.schemas import CaseSchema, FindingSchema
+from core.storage.score import optional_float
 from core.storage.service import IP_FACET_KEYS, DatabaseService
 
 logger = logging.getLogger(__name__)
-
-
-def _optional_score(value: Any) -> Optional[float]:
-    """Parse a score; missing, empty, and NaN stay None (do not coerce to 0.0)."""
-    if value is None or value == "":
-        return None
-    parsed = float(value)
-    if parsed != parsed:
-        return None
-    return parsed
 
 
 def _tally(rows: List[Dict], field: str) -> Dict[str, int]:
@@ -300,13 +291,21 @@ class DatabaseDataService:
         technique_id: str,
         limit: Optional[int] = None,
         exclusions: str = "include",
+        min_confidence: float = 0.0,
+        start_time=None,
+        end_time=None,
     ) -> List[Dict]:
         """Findings predicting ``technique_id`` from the child table. DB only."""
         if not self._db_available or not self._db_service:
             return []
         try:
             findings = self._db_service.get_findings_by_technique(
-                technique_id, limit=limit, exclusions=exclusions
+                technique_id,
+                limit=limit,
+                exclusions=exclusions,
+                min_confidence=min_confidence,
+                start_time=start_time,
+                end_time=end_time,
             )
             return FindingSchema.dump_many(findings)
         except Exception as e:
@@ -333,6 +332,19 @@ class DatabaseDataService:
             logger.error(f"Error getting technique severity counts from DB: {e}")
             return []
 
+    def count_unscored_technique_occurrences(
+        self, start_time=None, end_time=None, exclusions: str = "include"
+    ) -> int:
+        if not self._db_available or not self._db_service:
+            return 0
+        try:
+            return self._db_service.count_unscored_technique_occurrences(
+                start_time=start_time, end_time=end_time, exclusions=exclusions
+            )
+        except Exception as e:
+            logger.error("Error counting unscored technique occurrences from DB: %s", e)
+            return 0
+
     def create_finding(self, finding_data: Dict) -> Optional[Dict]:
         if self._demo_mode and self._demo_service:
             return self._demo_service.create_finding(finding_data)
@@ -341,7 +353,7 @@ class DatabaseDataService:
                 finding = self._db_service.create_finding(
                     finding_id=finding_data.get("finding_id"),
                     mitre_predictions=finding_data.get("mitre_predictions", {}),
-                    anomaly_score=_optional_score(finding_data.get("anomaly_score")),
+                    anomaly_score=optional_float(finding_data.get("anomaly_score")),
                     timestamp=finding_data.get("timestamp") or None,
                     data_source=finding_data.get("data_source", "imported"),
                     title=finding_data.get("title"),

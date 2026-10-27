@@ -25,6 +25,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from core.auth.mcp_credential_service import authenticate
+from core.cases.agent_closure import bound_credential
 from core.integrations.mcp.surface import acting_as, is_enabled
 
 logger = logging.getLogger(__name__)
@@ -134,9 +135,13 @@ class McpSurfaceGate:
 
         token = _bearer(scope)
         user = _dev_mode_user(token) if token else None
+        credential_id = None
         if user is None and token:
             # Off the loop: a refusal may wait on the audit trail's lock.
-            user = await asyncio.to_thread(authenticate, token)
+            authenticated = await asyncio.to_thread(authenticate, token)
+            if authenticated is not None:
+                user = authenticated.user
+                credential_id = authenticated.credential_id
         if user is None:
             # One answer for no credential, an unknown one, a revoked one and
             # an expired one. A holder of a working credential learns nothing
@@ -152,7 +157,7 @@ class McpSurfaceGate:
             await self._unserved(scope, receive, send)
             return
 
-        with acting_as(user.username):
+        with acting_as(user.username), bound_credential(credential_id):
             await self.app(_owned_by(scope, user), receive, send)
 
 

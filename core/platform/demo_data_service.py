@@ -130,14 +130,6 @@ class DemoDataService:
             "anomaly_score": round(random.uniform(0.3, 0.99), 3),
             "severity": severity,
             "mitre_predictions": mitre_preds,
-            "predicted_techniques": [
-                {
-                    "technique_id": t,
-                    "confidence": c,
-                    "technique_name": MITRE_TECHNIQUES.get(t, ""),
-                }
-                for t, c in mitre_preds.items()
-            ],
             "entity_context": generate_entity_context(),
             "cluster_id": random.choice(CLUSTERS) if random.random() < 0.7 else None,
             "description": desc,

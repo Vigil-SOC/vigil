@@ -1,5 +1,5 @@
-"""/ingest coerces ``mitre_predictions`` to the canonical dict once at the
-boundary (#966); every downstream consumer keeps assuming ``{technique: score}``.
+"""/ingest coerces ``mitre_predictions`` to ``{technique: score or null}`` once
+at the boundary (#966, #3221). A missing score is null, not 1.0.
 """
 
 import pytest
@@ -14,9 +14,10 @@ from services.daemon.poller import normalize_mitre_predictions
         ({}, {}),
         ([], {}),
         ({"T1486": 0.9, "T1490": 0.8}, {"T1486": 0.9, "T1490": 0.8}),
-        (["T1486", "T1490"], {"T1486": 1.0, "T1490": 1.0}),
-        (("T1486",), {"T1486": 1.0}),
-        ("T1486", {"T1486": 1.0}),
+        ({"T1486": 1.5, "T1490": "2"}, {"T1486": 1.5, "T1490": 2.0}),
+        (["T1486", "T1490"], {"T1486": None, "T1490": None}),
+        (("T1486",), {"T1486": None}),
+        ("T1486", {"T1486": None}),
         (
             [
                 {"technique": "T1486", "confidence": 0.7},
@@ -29,9 +30,9 @@ from services.daemon.poller import normalize_mitre_predictions
             {
                 "T1486": 0.7,
                 "T1490": 0.4,
-                "T1059": 1.0,
-                "T1078": 1.0,
-                "T1105": 1.0,
+                "T1059": None,
+                "T1078": None,
+                "T1105": None,
                 "T1021": 0.3,
             },
         ),
@@ -39,6 +40,20 @@ from services.daemon.poller import normalize_mitre_predictions
 )
 def test_accepted_shapes_become_technique_score_dict(raw, expected):
     assert normalize_mitre_predictions(raw, "f-1") == expected
+
+
+def test_bool_and_bad_string_warn_and_a_list_value_is_skipped(caplog):
+    result = normalize_mitre_predictions(
+        {"T1059": None, "T1071": "0.4", "T1000": True, "nested": [1, 2]},
+        "f-1",
+        data_source="webhook",
+    )
+    assert result == {"T1059": None, "T1071": 0.4, "T1000": None}
+    assert "T1059" not in caplog.text
+    assert "webhook" in caplog.text
+    assert "True" in caplog.text
+    assert "nested" in caplog.text
+    assert "skipped" in caplog.text
 
 
 @pytest.mark.parametrize(

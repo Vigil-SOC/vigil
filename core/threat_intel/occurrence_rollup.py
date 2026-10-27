@@ -10,7 +10,9 @@ from typing import Optional
 from core.storage.database_data_service import DatabaseDataService
 from core.threat_intel.mitre_lookup import (
     get_time_range,
+    is_score,
     iter_techniques,
+    meets_threshold,
     resolve_technique,
 )
 
@@ -34,6 +36,19 @@ def _parse_finding_timestamp(finding: dict) -> Optional[datetime]:
     return None
 
 
+def findings_in_window(findings: list[dict], time_range: str) -> list[dict]:
+    """The findings inside ``time_range``; one with no timestamp is kept."""
+    if time_range == "all":
+        return findings
+    start_time, end_time = get_time_range(time_range)
+    scoped: list[dict] = []
+    for finding in findings:
+        ts = _parse_finding_timestamp(finding)
+        if ts is None or start_time <= ts <= end_time:
+            scoped.append(finding)
+    return scoped
+
+
 def occurrence_rollup(
     min_confidence: float = 0.0,
     time_range: str = "all",
@@ -51,6 +66,14 @@ def occurrence_rollup(
             start_time=start_time,
             end_time=end_time,
             exclusions="hide",
+        )
+        # Only above 0 does the threshold leave out an unknown confidence.
+        excluded = (
+            data_service.count_unscored_technique_occurrences(
+                start_time=start_time, end_time=end_time, exclusions="hide"
+            )
+            if min_confidence > 0
+            else 0
         )
         technique_counts: dict[str, int] = {}
         technique_severities: dict[str, dict[str, int]] = {}
@@ -74,28 +97,23 @@ def occurrence_rollup(
                 technique_severities[resolved_id].get(sev_key, 0) + count
             )
     else:
-        findings = data_service.get_findings(exclusions="hide")
-
-        if time_range != "all":
-            start_time, end_time = get_time_range(time_range)
-            scoped: list[dict] = []
-            for finding in findings:
-                ts = _parse_finding_timestamp(finding)
-                if ts is None or start_time <= ts <= end_time:
-                    scoped.append(finding)
-            findings = scoped
+        findings = findings_in_window(
+            data_service.get_findings(exclusions="hide"), time_range
+        )
 
         technique_counts = {}
         technique_severities = {}
         technique_meta = {}
+        excluded = 0
 
         for finding in findings:
             severity = finding.get("severity", "unknown")
 
             for tech in iter_techniques(finding):
-                confidence = tech.get("confidence", 0) or 0
-
-                if confidence < min_confidence:
+                confidence = tech.get("confidence")
+                if not meets_threshold(confidence, min_confidence):
+                    if not is_score(confidence):
+                        excluded += 1
                     continue
 
                 tid, name, tactic = resolve_technique(tech)
@@ -136,4 +154,6 @@ def occurrence_rollup(
     return {
         "total_techniques": len(techniques),
         "techniques": techniques,
+        # Occurrences with no confidence a threshold above 0 left out.
+        "excluded_occurrences": excluded,
     }

@@ -211,6 +211,12 @@ class CaseComment(Base):
         Index("idx_case_comment_author", "author"),
         Index("idx_case_comment_parent_id", "parent_comment_id"),
         Index("idx_case_comment_created_at", "created_at"),
+        Index(
+            "idx_case_comment_content_trgm",
+            "content",
+            postgresql_ops={"content": "gin_trgm_ops"},
+            postgresql_using="gin",
+        ),
     )
 
 
@@ -312,6 +318,18 @@ class CaseEvidence(Base):
         Index("idx_case_evidence_type", "evidence_type"),
         Index("idx_case_evidence_collected_by", "collected_by"),
         Index("idx_case_evidence_collected_at", "collected_at"),
+        Index(
+            "idx_case_evidence_name_trgm",
+            "name",
+            postgresql_ops={"name": "gin_trgm_ops"},
+            postgresql_using="gin",
+        ),
+        Index(
+            "idx_case_evidence_description_trgm",
+            "description",
+            postgresql_ops={"description": "gin_trgm_ops"},
+            postgresql_using="gin",
+        ),
     )
 
 
@@ -382,6 +400,12 @@ class CaseIOC(Base):
         Index("idx_case_ioc_value", "value"),
         Index("idx_case_ioc_threat_level", "threat_level"),
         Index("idx_case_ioc_is_active", "is_active"),
+        Index(
+            "idx_case_ioc_value_trgm",
+            "value",
+            postgresql_ops={"value": "gin_trgm_ops"},
+            postgresql_using="gin",
+        ),
     )
 
 
@@ -702,13 +726,15 @@ class CaseClosureInfo(Base):
     # Summary
     executive_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    # Closure metadata
+    # Closure metadata. A live username is rewritten to that user's principal
+    # id; a run id, "system", or any other non-username stays as text. An
+    # unset caller stores no principal — the text is "agent".
     closed_by: Mapped[str] = mapped_column(String(100), nullable=False)
-    # Which kind of actor concluded, recorded at the close rather than inferred
-    # from the name afterwards. This is what episodic memory reads as Trust, and
-    # a name cannot answer it: an agent closing as "soc-automation" and a person
-    # closing as "nestor" are indistinguishable to a lookup.
-    closed_by_kind: Mapped[str] = mapped_column(
+    # The actor text kept beside ``closed_by`` once that column holds a
+    # principal id, and the same text when it was not a username.
+    closed_by_text: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    # How the closer authenticated. Trust is derived: cookie is analyst.
+    close_channel: Mapped[str] = mapped_column(
         String(16), nullable=False, default="agent", server_default="agent"
     )
     closure_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

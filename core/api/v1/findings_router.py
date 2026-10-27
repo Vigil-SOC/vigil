@@ -20,6 +20,7 @@ from pydantic import (
     ValidatorFunctionWrapHandler,
     WrapSerializer,
     WrapValidator,
+    model_validator,
 )
 
 from core.auth.permissions import permission_gate
@@ -33,6 +34,7 @@ from core.findings.source_evidence import (
 from core.routing import Auth, RouterMeta
 from core.storage.database_data_service import DatabaseDataService
 from core.storage.schemas.finding import FindingSchema
+from core.storage.technique_confidence import restore_bool_confidences
 
 router = APIRouter()
 router.dependencies.append(permission_gate("findings.read"))
@@ -98,13 +100,26 @@ def _annotate_states(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 class FindingUpdate(BaseModel):
     """Schema for updating a finding."""
 
-    mitre_predictions: Optional[Dict[str, float]] = None
-    predicted_techniques: Optional[List[Dict[str, Any]]] = None
+    mitre_predictions: Optional[Dict[str, Optional[float]]] = None
+    predicted_techniques: Optional[List[Dict[str, Any]]] = Field(
+        None, description="Deprecated and ignored."
+    )
     severity: Optional[str] = None
     anomaly_score: Optional[float] = None
     entity_context: Optional[Dict[str, Any]] = None
     cluster_id: Optional[str] = None
     evidence_links: Optional[List[str]] = None
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _bool_confidence_is_not_a_score(cls, data: Any, handler):
+        # Copy first: float validation would turn true into 1.0 in place.
+        raw = data.get("mitre_predictions") if isinstance(data, dict) else None
+        if isinstance(raw, dict):
+            raw = dict(raw)
+        model = handler(data)
+        model.mitre_predictions = restore_bool_confidences(raw, model.mitre_predictions)
+        return model
 
 
 class EntityContext(BaseModel):

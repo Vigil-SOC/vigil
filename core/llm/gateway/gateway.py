@@ -9,14 +9,13 @@ by the worker, not run late: ``submit`` sets the job's expiry to its timeout.
 import asyncio
 import logging
 from typing import Any, Dict, Optional
-from urllib.parse import unquote
 
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 from arq.jobs import DeserializationError
 
-from core.config import DEFAULT_REDIS_URL, get_settings
 from core.llm.defaults import DEFAULT_MODEL
+from core.redis_client import arq_redis_settings
 
 logger = logging.getLogger(__name__)
 
@@ -24,33 +23,13 @@ QUEUE_NAME = "arq:llm"
 
 
 def redis_settings() -> RedisSettings:
-    """ARQ connection settings derived from ``redis_url``.
+    """ARQ connection settings for the gateway and the llm-worker.
 
     Public: the llm-worker builds its WorkerSettings from the same values, so
-    the queue it drains is the one the gateway enqueues onto.
+    the queue it drains is the one the gateway enqueues onto. Parsing, password
+    decoding and the slow-start retries live in ``core.redis_client``.
     """
-    url = get_settings().redis_url or DEFAULT_REDIS_URL
-    # ARQ parses the DSN itself, and keeps what reading host/port/db/password off
-    # the URL by hand drops: the scheme, so rediss:// sets ssl=True, and the
-    # username. Dropping the scheme dials a managed Redis (Azure Cache,
-    # ElastiCache) in the clear -- it accepts the socket and then answers
-    # nothing, so create_pool retries to exhaustion and every caller times out
-    # with no error saying why.
-    settings = RedisSettings.from_dsn(url)
-    # urlparse leaves the password percent-encoded and ARQ passes it through, so
-    # a key containing @ or / authenticates with the escapes still in it and
-    # Redis answers WRONGPASS. redis-py unquotes in from_url, which is what
-    # core/redis_client.py uses, and the agent decodes it in
-    # services/agent/core/db.ts; this was the one client sending it as written.
-    if settings.password:
-        settings.password = unquote(settings.password)
-    # ARQ's create_pool retries on connect errors/timeouts; its defaults
-    # (1 s timeout, 5 retries) give up ~10 s into a cold Redis container.
-    # These allow ~45 s for a refused connection, ~90 s if every try times out.
-    settings.conn_timeout = 3
-    settings.conn_retries = 15
-    settings.conn_retry_delay = 3
-    return settings
+    return arq_redis_settings()
 
 
 # ---------------------------------------------------------------------------

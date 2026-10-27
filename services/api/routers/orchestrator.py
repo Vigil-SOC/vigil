@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from core.auth import tool_principal
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
+from core.response.ceiling import stop_ceiling
 from core.routing import Auth, RouterMeta
 from core.storage.config_service import get_config_service
 from core.storage.models import (
@@ -184,15 +185,18 @@ def disable_orchestrator(
     }
 
 
-@router.post("/kill", dependencies=_SETTINGS_WRITE)
+@router.post("/kill", dependencies=[permission_gate("ai_autonomy.stop")])
 async def kill_orchestrator(
     current_user: User = Depends(get_current_active_user),
 ):
-    """Emergency stop: disable the daemon's orchestrator and fail in-flight records.
+    """Stop: set the autonomy ceiling stopped, disable the orchestrator, and
+    fail in-flight investigation records.
 
-    The daemon is a separate process that learns of a stop only through the
-    persisted `enabled` flag, so that is written first. A run already executing
-    on the agent worker is not cancelled; it stops at its own ceiling (#633).
+    Effective act flags are off while stopped. The stored act flags stay so
+    resume can restore them. The daemon learns of the orchestrator switch
+    through the persisted ``enabled`` flag, written the same way ``/disable``
+    writes it. A run already executing on the agent worker is not cancelled;
+    it stops at its own ceiling (#633).
     """
     try:
         await asyncio.to_thread(
@@ -201,12 +205,14 @@ async def kill_orchestrator(
             str(current_user.user_id),
             "Orchestrator killed via API",
         )
+        await asyncio.to_thread(stop_ceiling, str(current_user.user_id))
         orch = _get_orchestrator()
         if orch:
             await orch.kill()
         return {
             "success": True,
             "enabled": False,
+            "stopped": True,
             "message": (
                 "Orchestrator disabled and in-flight investigations marked failed; "
                 "runs already executing stop at their own ceiling"

@@ -2,7 +2,8 @@
 
 A second replica does not send. A failed send retries from the same sequence.
 Turning the feed on writes one entry. A credential cannot turn it on. Importing
-upgrade history twice records each line once.
+upgrade history twice records each line once. A feed-on restore pauses later
+writes until a push carries its entry or 30 seconds pass (#3191).
 """
 
 from __future__ import annotations
@@ -26,10 +27,13 @@ from core.auth import current_user as current_user_module
 from core.auth import mcp_credential_service, principals, token_blacklist
 from core.auth.auth_service import AuthService
 from core.auth.permissions import MCP_CREDENTIAL_DENIED
+from core.backup import restore
+from core.backup.create import BackupError
 from core.storage.connection import get_db_manager
 from core.storage.models import User
 from core.storage.unit_of_work import unit_of_work
 from core.upgrade import command
+from services.api.routers import audit as audit_router
 from services.api.routers import audit_feed, auth
 from services.api.routers import config as config_router
 from tests.integration.test_upgrade_command import _run, _scratch
@@ -75,7 +79,8 @@ def db(engine):
                     last_delivered_seq = NULL, last_delivered_at = NULL,
                     last_error = NULL, failing = false,
                     last_checkpoint_at = now(), checkpoint_through = 0,
-                    history_offset = 0
+                    history_offset = 0, pause_until = NULL,
+                    unconfirmed_seq = NULL
             """))
         conn.execute(
             text("DELETE FROM integration_configs WHERE integration_id = :id"),
@@ -92,6 +97,7 @@ def client(db, monkeypatch):
     app = FastAPI()
     app.include_router(auth.router, prefix="/api/auth")
     app.include_router(audit_feed.router, prefix="/api/audit/feed")
+    app.include_router(audit_router.router, prefix="/api/audit")
     app.include_router(config_router.router, prefix="/api/config")
     with TestClient(app) as test_client:
         yield test_client
@@ -506,3 +512,119 @@ def test_a_checkpoint_is_written_once_per_quiet_interval(db):
 def _count(engine) -> int:
     with engine.connect() as conn:
         return conn.execute(text("SELECT count(*) FROM audit_trail")).scalar_one()
+
+
+# --- the pause after a restore (#3191) ------------------------------------------
+
+
+def _restore(engine, failure=None) -> int:
+    restore._record_restore(
+        "snap-1", "2026-10-01T00:00:00+00:00", 0, True, "operator", None, failure, True
+    )
+    return _entries(engine, trail.ACTION_RESTORE)[-1]["seq"]
+
+
+def _pause(engine):
+    with engine.connect() as conn:
+        return conn.execute(
+            text(
+                "SELECT unconfirmed_seq, pause_until - now() AS left "
+                "FROM audit_feed_state"
+            )
+        ).one()
+
+
+def _write() -> trail.Entry:
+    with unit_of_work() as session:
+        return trail.append(session, {trail.ACTION: "case.comment", trail.ACTOR: "a"})
+
+
+def _feed_on(db, monkeypatch, sent: list) -> None:
+    _secrets(monkeypatch, "ca")
+    _enable(db, 6514)
+    monkeypatch.setattr(feed, "deliver", lambda dest, messages: sent.extend(messages))
+
+
+def test_a_feed_on_restore_pauses_writes_until_a_push_carries_it(db, monkeypatch):
+    sent: list[bytes] = []
+    _feed_on(db, monkeypatch, sent)
+    _write()
+    seq = _restore(db)
+    unconfirmed, left = _pause(db)
+    assert unconfirmed == seq and 25 < left.total_seconds() <= 30
+
+    with pytest.raises(trail.Paused):
+        _write()
+    # A safety action still writes, and the leader's tick still runs and sends.
+    assert trail.append_or_hold({trail.ACTION: "auth.lock", trail.ACTOR: "a"})
+    feed.maintenance_and_send(feed.SendClock())
+    assert seq in _external_ids(b"".join(feed.frame(m) for m in sent))
+    assert _cursor(db).last_delivered_seq >= seq
+    assert _pause(db) == (None, None)
+    _write()
+
+
+def test_a_failed_send_keeps_the_pause_and_its_deadline_lifts_it(db, monkeypatch):
+    _secrets(monkeypatch, "ca")
+    _enable(db, 6514)
+
+    def refuse(dest, messages):
+        raise OSError("refused")
+
+    monkeypatch.setattr(feed, "deliver", refuse)
+    seq = _restore(db, BackupError("settle failed"))
+    assert _entries(db, trail.ACTION_RESTORE)[-1]["payload"]["outcome"] == "failed"
+    feed.maintenance_and_send(feed.SendClock())
+    assert _cursor(db).failing and _pause(db)[0] == seq
+    with pytest.raises(trail.Paused):
+        _write()
+
+    with db.begin() as conn:  # 30 seconds on
+        conn.execute(text("UPDATE audit_feed_state SET pause_until = now()"))
+    _write()
+    assert _pause(db)[0] == seq, "still unconfirmed until something carries it"
+
+
+def test_a_feed_off_restore_does_not_pause(db):
+    seq = _restore(db)
+    assert _pause(db) == (seq, None)
+    _write()
+
+
+def test_poll_and_export_clear_the_flag(db, monkeypatch):
+    _feed_on(db, monkeypatch, [])
+    seq = _restore(db)
+    with unit_of_work() as session:  # a page past the entry does not carry it
+        trail.poll(session, trail.make_query(after=seq))
+    assert _pause(db)[0] == seq
+    with unit_of_work() as session:
+        trail.poll(session, trail.make_query(after=seq - 1))
+    assert _pause(db) == (None, None)
+
+    seq = _restore(db)  # a reset hands the restore entry out
+    with unit_of_work() as session:
+        assert trail.poll(session, trail.make_query(after=seq + 50)).reset
+    assert _pause(db) == (None, None)
+
+    seq = _restore(db)
+    with unit_of_work() as session:  # the export's own entry is not refused
+        rows, _ = trail.export(session, trail.make_query(), "admin")
+    assert seq in [r["seq"] for r in rows]
+    assert _pause(db) == (None, None)
+
+
+def test_the_entries_payload_has_feed_health_and_no_destination(
+    db, client, monkeypatch
+):
+    _feed_on(db, monkeypatch, [])
+    _user("mia", "role-manager")
+    manager = _login(client, "mia")  # a sign-in is a write, so before the restore
+    seq = _restore(db)
+    got = client.get("/api/audit/entries", headers=manager)
+    assert got.status_code == 200, got.text
+    health = got.json()["feed"]
+    assert set(health) == set(audit_router._FEED_FIELDS)
+    assert health["enabled"] is True and health["unconfirmed"] == seq
+    assert health["paused"] is True
+    for leaked in ("host", "port", "ca_set", "client_cert_set", "127.0.0.1"):
+        assert leaked not in json.dumps(health)

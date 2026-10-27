@@ -1489,16 +1489,6 @@
   "nullable": false,
   "type": "timestamp without time zone"
  },
- "column conversations.deleted_at": {
-  "default": null,
-  "nullable": true,
-  "type": "timestamp without time zone"
- },
- "column conversations.generation": {
-  "default": "0",
-  "nullable": false,
-  "type": "integer"
- },
  "column conversations.id": {
   "default": null,
   "nullable": false,
@@ -3298,11 +3288,6 @@
   "default": "false",
   "nullable": false,
   "type": "boolean"
- },
- "column users.tokens_valid_after": {
-  "default": null,
-  "nullable": true,
-  "type": "timestamp without time zone"
  },
  "column users.updated_at": {
   "default": "now()",

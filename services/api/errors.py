@@ -4,8 +4,9 @@ Route handlers raise ``core.exceptions.SOCError`` subclasses for expected
 failures and let anything else propagate. ``BudgetExceeded`` is not a
 ``SOCError``; it has its own handler so a spent virtual key is a 402 rather
 than an internal error. ``AccountLockedError`` is a 423 with ``Retry-After``,
-which Medic's gateway reads to time its next login. These handlers render all
-three as JSON, so no route needs its own ``try``/``except`` to produce an HTTP
+which Medic's gateway reads to time its next login. ``trail.Paused`` is a 503
+with ``Retry-After`` while a feed-on restore's entry waits to leave the box.
+These handlers render them as JSON, so no route needs its own ``try``/``except`` to produce an HTTP
 error response.
 
 Unexpected exceptions never put their text in the response body: the detail is
@@ -13,11 +14,13 @@ logged with the OTEL trace id, and the client gets that id to quote instead.
 """
 
 import logging
+import time
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from core.audit.trail import Paused
 from core.auth.auth_service import AccountLockedError
 from core.exceptions import SOCError
 from core.llm.cost.budget import BudgetExceeded
@@ -89,6 +92,19 @@ async def account_locked_handler(
     )
 
 
+async def trail_paused_handler(request: Request, exc: Paused) -> JSONResponse:
+    retry_after = max(1, int(exc.until.timestamp() - time.time()) + 1)
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "The audit trail is waiting for the restore entry to leave "
+            "the box. Try again shortly.",
+            "code": "AUDIT_PAUSED",
+        },
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
 async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
     trace_id, _ = current_trace_ids()
     logger.exception(
@@ -143,6 +159,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     # so the 402 still passes back through CORS. Exception stays on the outer net.
     app.add_exception_handler(BudgetExceeded, budget_exceeded_handler)  # type: ignore[arg-type]
     app.add_exception_handler(AccountLockedError, account_locked_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(Paused, trail_paused_handler)  # type: ignore[arg-type]
     # Terminal net for the case above where the response had already started.
     app.add_exception_handler(Exception, unhandled_error_handler)
     app.add_middleware(CatchUnhandledMiddleware)

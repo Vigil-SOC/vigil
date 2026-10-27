@@ -12,7 +12,7 @@ from weakref import WeakKeyDictionary
 
 from bullmq import Queue
 
-from core.config import get_settings
+from core.redis_client import effective_redis_url
 from core.telemetry import get_meter, inject_traceparent
 
 logger = logging.getLogger(__name__)
@@ -22,8 +22,6 @@ logger = logging.getLogger(__name__)
 RUN_QUEUE = "agent-runs"
 
 JOB_SCHEMA_VERSION = 1
-
-DEFAULT_REDIS_URL = "redis://localhost:6379/0"
 
 RUN_KINDS = ("hunt", "root_cause", "adjudicate", "investigate", "compose", "chat")
 
@@ -44,7 +42,7 @@ RUN_BACKOFF = {"type": "exponential", "delay": 5000}
 
 
 def _redis_url() -> str:
-    return get_settings().redis_url or DEFAULT_REDIS_URL
+    return effective_redis_url()
 
 
 # The reason="start" arm of the RunJob union in the agent layer's job contract.

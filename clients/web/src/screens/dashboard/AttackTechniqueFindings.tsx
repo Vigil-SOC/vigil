@@ -30,9 +30,14 @@ function stepHost(step: MissedStep): string {
 export default function AttackTechniqueFindings({
   techniqueId,
   coverage,
+  minConfidence,
+  timeRange,
 }: {
   techniqueId: string
   coverage?: AttackTechnique
+  minConfidence: number
+  /** the range useAttack sends for the rollup, already lower-cased */
+  timeRange: string
 }) {
   const [rows, setRows] = useState<Finding[]>([])
   const [phase, setPhase] = useState<Phase>(coverage ? 'ready' : 'loading')
@@ -49,7 +54,7 @@ export default function AttackTechniqueFindings({
     setPhase('loading')
     setError(null)
     attackApi
-      .getFindingsByTechnique(techniqueId)
+      .getFindingsByTechnique(techniqueId, minConfidence, timeRange)
       .then((res) => {
         if (cancelled) return
         const list = (res.data?.findings || []) as ApiFinding[]
@@ -64,7 +69,7 @@ export default function AttackTechniqueFindings({
     return () => {
       cancelled = true
     }
-  }, [techniqueId, coverage])
+  }, [techniqueId, coverage, minConfidence, timeRange])
 
   if (coverage) {
     const missed = coverage.missed ?? []

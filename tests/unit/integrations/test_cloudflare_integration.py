@@ -26,6 +26,7 @@ for _p in (str(_REPO_ROOT),):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+from core.integrations.cloudflare.ingestion import CloudyIngestionService  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # core/integrations/cloudflare/tool.py — REST helpers + disabled-integration behavior
@@ -48,7 +49,9 @@ def test_config_returns_none_when_token_missing():
     cf = _import_cloudflare_tool()
     # The token comes from the secrets store via the descriptor-driven resolver,
     # not from get_integration_config — that store never holds a secret.
-    with patch.object(cf, "resolve", return_value={"account_id": "abc", "api_token": None}):
+    with patch.object(
+        cf, "resolve", return_value={"account_id": "abc", "api_token": None}
+    ):
         assert cf._config() is None
 
 
@@ -401,6 +404,8 @@ def test_cloudy_payload_is_persisted_as_source_evidence(cloudy_client):
     "payload",
     [
         {"summary": "s", "anomaly_score": "high"},
+        {"summary": "s", "anomaly_score": {"value": 1}},
+        {"summary": "s", "anomaly_score": [1]},
         {"event": "a string event"},
         {"summary": {"text": "s"}},
         {"summary": "s", "event": {"action": 3}},
@@ -416,11 +421,48 @@ def test_cloudy_malformed_payload_is_422(cloudy_client, payload):
     assert db.rows == {}
 
 
-def test_cloudy_null_anomaly_score_takes_default(cloudy_client):
+@pytest.mark.parametrize(
+    "score",
+    ["missing", None, "", "  ", "NaN", "Infinity", "-Infinity", "1e999"],
+)
+def test_cloudy_absent_or_nonfinite_score_is_unscored(cloudy_client, score):
     post, db = cloudy_client
-    assert post({"summary": "s", "anomaly_score": None}).status_code == 202
+    payload = {"summary": "s", "event_id": "e-score"}
+    if score != "missing":
+        payload["anomaly_score"] = score
+    assert post(payload).status_code == 202
     (row,) = db.rows.values()
-    assert row["anomaly_score"] == 0.5
+    assert row["anomaly_score"] is None
+
+
+def test_attack_technique_list_is_unknown_and_a_map_keeps_a_score():
+    listed = CloudyIngestionService._extract_mitre(
+        {}, {"attack_techniques": ["T1059", "T1071"]}
+    )
+    assert listed == {"T1059": None, "T1071": None}
+    mixed = CloudyIngestionService._extract_mitre(
+        {"mitre_predictions": {"T1059": None, "T1071": 0.8}},
+        {"attack_techniques": ["T1000"]},
+    )
+    assert mixed == {"T1059": None, "T1071": 0.8}
+
+
+def test_cloudy_overflow_integer_is_unscored():
+    finding = CloudyIngestionService().transform_event(
+        {"summary": "s", "anomaly_score": 10**400}
+    )
+    assert finding is not None
+    assert finding["anomaly_score"] is None
+
+
+@pytest.mark.parametrize(
+    "score,stored", [(0, 0.0), (5, 5.0), ("  0.8 ", 0.8), (True, 1.0)]
+)
+def test_cloudy_numeric_score_is_stored_as_sent(cloudy_client, score, stored):
+    post, db = cloudy_client
+    assert post({"summary": "s", "anomaly_score": score}).status_code == 202
+    (row,) = db.rows.values()
+    assert row["anomaly_score"] == stored
 
 
 def test_cloudy_non_ascii_signature_is_counted_401(gated_app, monkeypatch):

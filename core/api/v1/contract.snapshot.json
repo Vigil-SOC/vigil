@@ -1723,7 +1723,7 @@
         "type": "string"
       },
       "ClosureInfo": {
-        "description": "Close case with metadata.\n\nNo ``closed_by``: who closed it is the authenticated principal, not\nsomething a client says about itself. Episodic memory reads it as Trust\n(#733), and a client-supplied name would let any caller claim an analyst\nconcluded.",
+        "description": "Close case with metadata.\n\nNo ``closed_by`` and no channel: who closed it, and whether that was the\nconsole cookie, come from the session. A client-supplied name or kind\nwould let any caller claim an analyst concluded.",
         "properties": {
           "closure_category": {
             "$ref": "#/components/schemas/ClosureCategory"
@@ -2261,7 +2261,14 @@
             "anyOf": [
               {
                 "additionalProperties": {
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "type": "object"
               },
@@ -2284,6 +2291,7 @@
                 "type": "null"
               }
             ],
+            "description": "Deprecated and ignored.",
             "title": "Predicted Techniques"
           },
           "severity": {

@@ -50,7 +50,7 @@ class TestTransformAlert:
         assert "ip_addresses" not in ctx
         assert ctx["category"] == "Execution"
         assert ctx["threat_family"] == "Emotet"
-        assert finding["mitre_predictions"] == {"T1059.001": 1.0, "T1204.002": 1.0}
+        assert finding["mitre_predictions"] == {"T1059.001": None, "T1204.002": None}
 
     def test_keeps_a_nonempty_description(self, ingestion, sample_alerts):
         alert = dict(sample_alerts[0])

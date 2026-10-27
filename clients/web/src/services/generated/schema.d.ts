@@ -663,6 +663,10 @@ export interface paths {
          *             and return per-technique verdicts; occurrence counts are unchanged
          *             when omitted.
          *
+         *     min_confidence applies only to techniques with a confidence: at 0 an
+         *     occurrence with no confidence is counted, above 0 it is excluded and counted
+         *     in excluded_occurrences on the response.
+         *
          *     Returns:
          *         Technique statistics sorted by occurrence count, or coverage rows with
          *         layer verdicts and missed-step evidence when a run is selected.
@@ -685,13 +689,16 @@ export interface paths {
         };
         /**
          * Get Findings By Technique
-         * @description Get all findings associated with a specific technique.
+         * @description Get the findings associated with a specific technique.
          *
          *     Args:
          *         technique_id: MITRE ATT&CK technique ID
+         *         min_confidence: The rollup's threshold, applied to this technique.
+         *         time_range: The rollup's window — '24h', '7d', '30d', or 'all' (default).
          *
          *     Returns:
-         *         List of findings
+         *         Findings with a confidence for the technique, highest first, then those
+         *         the source named it on without one.
          */
         get: operations["get_api_attack_techniques_technique_id_findings"];
         put?: never;
@@ -1188,6 +1195,46 @@ export interface paths {
          *         New access and refresh tokens.
          */
         post: operations["post_api_auth_refresh"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/autonomy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Ceiling */
+        get: operations["get_api_autonomy"];
+        /** Put Ceiling */
+        put: operations["put_api_autonomy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/autonomy/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Resume
+         * @description Restore the act flags minus anything lowered during the stop.
+         *
+         *     Executes nothing.
+         */
+        post: operations["post_api_autonomy_resume"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2547,17 +2594,20 @@ export interface paths {
         };
         /**
          * Get Force Manual Approval
-         * @description Read ``approval.force_manual_approval`` without inserting a default row.
+         * @description Read the stored Assist/Act bit without inserting a default row.
          *
          *     A failed read is an error, not Act: reporting the default would show
-         *     approvals as off while the stored flag may be forcing them on.
+         *     approvals as off while the stored ceiling may be forcing them on.
+         *     Missing row is Assist (both act flags off).
          */
         get: operations["get_api_config_force-manual-approval"];
         put?: never;
         /**
          * Set Force Manual Approval
-         * @description Persist Assist or Act. Act is refused while the environment wins, so it
-         *     is not stored for later. Assist may still be stored.
+         * @description Persist Assist or Act on ``act_reversible``.
+         *
+         *     Act is refused while the environment wins, so it is not stored for later.
+         *     Assist may still be stored. A service account may lower and may not raise.
          */
         post: operations["post_api_config_force-manual-approval"];
         delete?: never;
@@ -4379,11 +4429,14 @@ export interface paths {
         put?: never;
         /**
          * Kill Orchestrator
-         * @description Emergency stop: disable the daemon's orchestrator and fail in-flight records.
+         * @description Stop: set the autonomy ceiling stopped, disable the orchestrator, and
+         *     fail in-flight investigation records.
          *
-         *     The daemon is a separate process that learns of a stop only through the
-         *     persisted `enabled` flag, so that is written first. A run already executing
-         *     on the agent worker is not cancelled; it stops at its own ceiling (#633).
+         *     Effective act flags are off while stopped. The stored act flags stay so
+         *     resume can restore them. The daemon learns of the orchestrator switch
+         *     through the persisted ``enabled`` flag, written the same way ``/disable``
+         *     writes it. A run already executing on the agent worker is not cancelled;
+         *     it stops at its own ceiling (#633).
          */
         post: operations["post_api_orchestrator_kill"];
         delete?: never;
@@ -6989,9 +7042,9 @@ export interface components {
          * AutonomyConfig
          * @description The two flags the console chip folds into Assist or Act.
          *
-         *     Not stored. ``force_manual_approval`` is the env flag OR the
-         *     ``approval.force_manual_approval`` row. ``auto_response_enabled`` is
-         *     ``Settings.daemon_auto_response``.
+         *     Assist is ``force_manual_approval or not auto_response_enabled``, and that
+         *     is true exactly when effective ``act_reversible`` is off. ``auto_response_enabled``
+         *     stays true so the chip's single bit is ``force_manual_approval``.
          */
         AutonomyConfig: {
             /** Auto Response Enabled */
@@ -7975,6 +8028,40 @@ export interface components {
             watchers: components["schemas"]["CaseWatcherSchema"][];
         };
         /**
+         * CeilingBody
+         * @description A partial edit of the stored ceiling. Omitted flags stay as they are.
+         *
+         *     ``stopped`` is not a field here. Stop is ``POST /api/orchestrator/kill``
+         *     and resume is ``POST /api/autonomy/resume``.
+         */
+        CeilingBody: {
+            /** Act Irreversible */
+            act_irreversible?: boolean | null;
+            /** Act Reversible */
+            act_reversible?: boolean | null;
+            /** Four Eyes */
+            four_eyes?: boolean | null;
+        };
+        /** CeilingResponse */
+        CeilingResponse: {
+            /** Act Irreversible */
+            act_irreversible: boolean;
+            /** Act Reversible */
+            act_reversible: boolean;
+            /** Environment Locked */
+            environment_locked: boolean;
+            /** Four Eyes */
+            four_eyes: boolean;
+            /** Propose */
+            propose: boolean;
+            /** Read */
+            read: boolean;
+            /** Stopped */
+            stopped: boolean;
+            /** Write */
+            write: boolean;
+        };
+        /**
          * ChainOfCustodyAdd
          * @description Add chain of custody entry.
          */
@@ -8094,10 +8181,9 @@ export interface components {
          * ClosureInfo
          * @description Close case with metadata.
          *
-         *     No ``closed_by``: who closed it is the authenticated principal, not
-         *     something a client says about itself. Episodic memory reads it as Trust
-         *     (#733), and a client-supplied name would let any caller claim an analyst
-         *     concluded.
+         *     No ``closed_by`` and no channel: who closed it, and whether that was the
+         *     console cookie, come from the session. A client-supplied name or kind
+         *     would let any caller claim an analyst concluded.
          */
         ClosureInfo: {
             closure_category: components["schemas"]["ClosureCategory"];
@@ -8698,9 +8784,12 @@ export interface components {
             evidence_links?: string[] | null;
             /** Mitre Predictions */
             mitre_predictions?: {
-                [key: string]: number;
+                [key: string]: number | null;
             } | null;
-            /** Predicted Techniques */
+            /**
+             * Predicted Techniques
+             * @description Deprecated and ignored.
+             */
             predicted_techniques?: {
                 [key: string]: unknown;
             }[] | null;
@@ -8737,7 +8826,7 @@ export interface components {
         };
         /**
          * ForceManualApprovalConfig
-         * @description ``approval.force_manual_approval``. Assist is true, Act is false.
+         * @description Assist is true (``act_reversible`` off). Act is false (``act_reversible`` on).
          */
         ForceManualApprovalConfig: {
             /** Enabled */
@@ -8745,7 +8834,7 @@ export interface components {
         };
         /**
          * ForceManualApprovalResponse
-         * @description The stored flag, plus whether daemon env overrides Act.
+         * @description The stored Assist bit, plus whether daemon env locks the act flags off.
          */
         ForceManualApprovalResponse: {
             /** Enabled */
@@ -10738,12 +10827,8 @@ export interface components {
             finding_id: string;
             /** Mitre Predictions */
             mitre_predictions?: {
-                [key: string]: number;
+                [key: string]: number | null;
             } | null;
-            /** Predicted Techniques */
-            predicted_techniques?: {
-                [key: string]: unknown;
-            }[] | null;
             /** Severity */
             severity?: ("low" | "medium" | "high" | "critical") | null;
             /** Timestamp */
@@ -12298,7 +12383,10 @@ export interface operations {
     };
     get_api_attack_techniques_technique_id_findings: {
         parameters: {
-            query?: never;
+            query?: {
+                min_confidence?: number;
+                time_range?: string;
+            };
             header?: {
                 authorization?: string | null;
             };
@@ -13028,6 +13116,103 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LoginResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_autonomy: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_autonomy: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CeilingBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_autonomy_resume: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CeilingResponse"];
                 };
             };
             /** @description Validation Error */

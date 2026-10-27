@@ -94,9 +94,9 @@ A database that has Vigil's tables but no `alembic_version` table was installed 
 1. hands tables that `vigil_app` owns (Helm's `create_all` built some as `vigil_app`) to the owner it connects as;
 2. applies the init files Helm never ran (`05`, `28`, `39`, `34_drop_skills`, and `34_mcp_credentials` when that table is missing);
 3. revokes leftover grants to the `deeptempo` role (the role itself stays) and deletes the old `admin`, `analyst` and `viewer` roles that no user holds. A role that a user still holds is kept, and the report names it under `adoption.kept_roles`. Move those users to another role when you can;
-4. applies the schema changes made since the release it found: from 0.7.0, files `40` to `45`, `mfa_last_totp_step` and the two `findings` noise columns; from 0.8.0, `44` and `45` only;
+4. applies the schema changes made since the release it found: from 0.7.0, files `40` to `45`, `mfa_last_totp_step` and the two `findings` noise columns; from 0.8.0, `mfa_last_totp_step`, the two `findings` noise columns, `44` and `45`;
 5. re-applies `30_vigil_app_role.sql`, so `vigil_app` can log in and has grants on every table;
-6. compares the result with the schema a fresh install has. If the two match, it records revision `0001_baseline` in the same transaction.
+6. compares the result with the schema revision `0001_baseline` creates. If the two match, it records revision `0001_baseline` in the same transaction. Revisions `0004` and `0007` run after that stamp, as on a fresh install, and add the session-cutoff and conversation-generation columns.
 
 The command reads `system_config.schema_version` but never writes or deletes it. `--check` runs the same transaction and then rolls it back. For a database it can adopt, `--check` answers `needs_restore_point` and its reason says that adoption would run, so the pre-upgrade backup is taken as for any other upgrade.
 
