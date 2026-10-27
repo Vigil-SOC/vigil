@@ -145,7 +145,7 @@ def list_findings(
 
 @mcp.tool()
 def get_finding(finding_id: str) -> str:
-    """Get a specific finding by ID."""
+    """Get a specific finding by ID. A null confidence in mitre_predictions means the source named the technique and gave no confidence: it is unknown, not 0."""
     return _call(tool_registry.get_finding, finding_id=finding_id)
 
 
@@ -191,7 +191,7 @@ async def replay_hunt(
 
 @mcp.tool()
 def get_technique_rollup(min_confidence: float = 0.0, time_range: str = "all") -> str:
-    """Roll up ATT&CK techniques by finding count and severity."""
+    """Roll up ATT&CK techniques by finding count and severity. min_confidence applies only to techniques with a confidence: at 0 an occurrence with no confidence is counted, above 0 it is excluded and counted in excluded_occurrences on the response."""
     return _call(
         tool_registry.get_technique_rollup,
         min_confidence=min_confidence,
@@ -218,7 +218,7 @@ def list_cases(
 
 @mcp.tool()
 def get_case(case_id: str) -> str:
-    """Get one case."""
+    """Get one case. A null confidence in mitre_predictions means the source named the technique and gave no confidence: it is unknown, not 0."""
     return _call(tool_registry.get_case, case_id=case_id)
 
 

@@ -4,11 +4,16 @@ from datetime import datetime
 from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
 from core.storage.models import Case, Finding, FindingMitrePrediction
 from core.storage.schemas.case import CaseWithFindingsSchema
 from core.storage.schemas.finding import FindingSchema
-from core.storage.service import _numeric_prediction_items
+from core.storage.service import (
+    _numeric_prediction_items,
+    findings_by_technique_stmt,
+    technique_severity_counts_stmt,
+)
 from core.threat_intel import attack_router
 
 pytestmark = pytest.mark.unit
@@ -76,7 +81,11 @@ def test_get_findings_by_technique_queries_child_table(monkeypatch):
     result = attack_router.get_findings_by_technique("T1071.001")
 
     service.get_findings_by_technique.assert_called_once_with(
-        "T1071.001", exclusions="hide"
+        "T1071.001",
+        exclusions="hide",
+        min_confidence=0.0,
+        start_time=None,
+        end_time=None,
     )
     service.get_findings.assert_not_called()
     assert result["total"] == 1
@@ -156,3 +165,85 @@ async def test_rollup_run_id_returns_coverage_not_occurrence(monkeypatch):
     assert result["techniques"][0]["verdict"] == "rule"
     assert "count" not in result["techniques"][0]
     assert result["techniques"][0]["missed"][0]["id"] == "step-2"
+
+
+def _sql(stmt) -> str:
+    return str(
+        stmt.compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+
+
+# The column is NOT NULL until #3221, so the threshold is pinned on the SQL.
+@pytest.mark.parametrize(
+    "stmt", [technique_severity_counts_stmt, findings_by_technique_stmt]
+)
+def test_a_null_confidence_passes_at_zero_and_fails_above(stmt):
+    args = ("T1071",) if stmt is findings_by_technique_stmt else ()
+    at_zero = _sql(stmt(*args, min_confidence=0.0))
+    assert "finding_mitre_predictions.confidence >= 0.0 OR" in at_zero
+    assert "finding_mitre_predictions.confidence IS NULL" in at_zero
+    above = _sql(stmt(*args, min_confidence=0.5))
+    assert "finding_mitre_predictions.confidence >= 0.5" in above
+    assert "IS NULL" not in above
+
+
+def test_drill_down_does_not_let_the_database_order_unknowns_first():
+    assert "ORDER BY" not in _sql(findings_by_technique_stmt("T1071"))
+
+
+def _in_memory(monkeypatch, findings):
+    service = MagicMock()
+    service.is_using_database.return_value = False
+    service.get_findings.return_value = findings
+    monkeypatch.setattr(attack_router, "data_service", service)
+
+
+MIXED = [
+    {
+        "finding_id": "f-unknown",
+        "severity": "high",
+        "mitre_predictions": {"T1071": None, "T1059": 0.9},
+    },
+    {"finding_id": "f-low", "severity": "low", "mitre_predictions": {"T1071": 0.2}},
+    {"finding_id": "f-high", "severity": "low", "mitre_predictions": {"T1071": 0.8}},
+]
+
+
+def test_rollup_counts_unknowns_at_zero_and_excludes_them_above(monkeypatch):
+    _in_memory(monkeypatch, MIXED)
+
+    at_zero = attack_router.occurrence_rollup()
+    counts = {t["technique_id"]: t["count"] for t in at_zero["techniques"]}
+    assert counts == {"T1071": 3, "T1059": 1}
+    assert at_zero["excluded_occurrences"] == 0
+
+    above = attack_router.occurrence_rollup(min_confidence=0.5)
+    counts = {t["technique_id"]: t["count"] for t in above["techniques"]}
+    assert counts == {"T1071": 1, "T1059": 1}
+    # Only the unknown counts as excluded, not the 0.2 below the threshold.
+    assert above["excluded_occurrences"] == 1
+
+
+def test_database_rollup_reports_unknowns_only_above_zero(monkeypatch):
+    service = MagicMock()
+    service.is_using_database.return_value = True
+    service.get_technique_severity_counts.return_value = []
+    service.count_unscored_technique_occurrences.return_value = 7
+    monkeypatch.setattr(attack_router, "data_service", service)
+
+    assert attack_router.occurrence_rollup()["excluded_occurrences"] == 0
+    service.count_unscored_technique_occurrences.assert_not_called()
+    assert attack_router.occurrence_rollup(0.5)["excluded_occurrences"] == 7
+
+
+def test_drill_down_lists_scored_then_unknown_and_follows_the_slider(monkeypatch):
+    _in_memory(monkeypatch, MIXED)
+
+    def ids(**kwargs):
+        body = attack_router.get_findings_by_technique("T1071", **kwargs)
+        return [f["finding_id"] for f in body["findings"]]
+
+    assert ids() == ["f-high", "f-low", "f-unknown"]
+    assert ids(min_confidence=0.5) == ["f-high"]

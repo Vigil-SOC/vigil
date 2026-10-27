@@ -3,6 +3,7 @@
 from typing import Any, Dict, List, Optional
 
 from core.documents.fence import fenced_document
+from core.threat_intel.mitre_lookup import iter_techniques, top_technique
 from core.time import utcnow
 from core.workflows.routing import FALLBACK_WORKFLOW
 
@@ -30,7 +31,6 @@ def select_workflow(finding: Dict[str, Any]) -> str:
 
 
 def _infer_title(finding: Dict[str, Any], workflow_id: str) -> str:
-    mitre = finding.get("mitre_predictions") or {}
     desc = finding.get("description") or ""
     ctx = finding.get("entity_context") or {}
 
@@ -47,9 +47,10 @@ def _infer_title(finding: Dict[str, Any], workflow_id: str) -> str:
 
     subject = subject_parts[0] if subject_parts else "Unknown Entity"
 
-    if mitre:
-        top_technique = max(mitre, key=mitre.get)
-        return f"Suspicious Activity on {subject} ({top_technique})"
+    top = top_technique(iter_techniques(finding))
+    if top:
+        tid = top.get("technique_id") or top.get("id")
+        return f"Suspicious Activity on {subject} ({tid})"
 
     if desc:
         short = desc[:60].rstrip()

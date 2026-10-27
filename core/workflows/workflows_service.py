@@ -19,6 +19,7 @@ from core.auth.principals import SYSTEM_PRINCIPAL_ID
 from core.documents.fence import fenced_document
 from core.findings.anomaly_score import format_anomaly_score
 from core.frontmatter import FrontmatterError, split_frontmatter
+from core.threat_intel.mitre_lookup import iter_techniques, rank_by_confidence
 from core.workflows.custom_workflow_service import CustomWorkflowService
 from core.workflows.enablement import disabled_message, is_enabled
 from core.workflows.hypothesis_subjects import kept_subjects
@@ -778,11 +779,14 @@ class WorkflowsService:
                 data_service = DatabaseDataService()
                 finding = data_service.get_finding(finding_id)
                 if finding:
-                    techniques = finding.get("predicted_techniques", [])
+                    # Scored first, then the ones the source named without one.
+                    techniques = rank_by_confidence(iter_techniques(finding))
                     technique_str = (
-                        ", ".join([t.get("technique_id", "") for t in techniques])
-                        if techniques
-                        else "None"
+                        ", ".join(
+                            str(t.get("technique_id") or t.get("id"))
+                            for t in techniques
+                        )
+                        or "None"
                     )
                     parts.append(f"""**Target Finding:**
 - Finding ID: {finding.get('finding_id')}

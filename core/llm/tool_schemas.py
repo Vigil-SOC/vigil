@@ -279,7 +279,7 @@ DEEPTEMPO_FINDING_TOOLS = [
     },
     {
         "name": "get_finding",
-        "description": "Get detailed information about a specific finding by ID. Returns full finding details including predicted techniques, every entity it names, and the raw source record under entity_context.source_evidence.",
+        "description": "Get detailed information about a specific finding by ID. Returns full finding details including predicted techniques, every entity it names, and the raw source record under entity_context.source_evidence. A null confidence in mitre_predictions means the source named the technique and gave no confidence: it is unknown, not 0.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -336,7 +336,7 @@ DEEPTEMPO_FINDING_TOOLS = [
     },
     {
         "name": "get_case",
-        "description": "Get detailed information about a specific case including all findings, timeline, activities, and MITRE techniques.",
+        "description": "Get detailed information about a specific case including all findings, timeline, activities, and MITRE techniques. A null confidence in mitre_predictions means the source named the technique and gave no confidence: it is unknown, not 0.",
         "input_schema": {
             "type": "object",
             "properties": {"case_id": {"type": "string", "description": "The case ID"}},
@@ -611,7 +611,7 @@ DEEPTEMPO_FINDING_TOOLS = [
 ATTACK_LAYER_TOOLS = [
     {
         "name": "get_technique_rollup",
-        "description": "Get rollup statistics for MITRE techniques showing finding counts and severity distribution.",
+        "description": "Get rollup statistics for MITRE techniques showing finding counts and severity distribution. min_confidence applies only to techniques with a confidence: at 0 an occurrence with no confidence is counted, above 0 it is excluded and counted in excluded_occurrences on the response.",
         "input_schema": {
             "type": "object",
             "properties": {

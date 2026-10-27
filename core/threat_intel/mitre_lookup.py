@@ -4,14 +4,14 @@ Single source of truth used by:
 - services/api/routers/analytics.py — get_mitre_technique_distribution
 - the ATT&CK agent tool (get_technique_rollup)
 
-Findings in this codebase carry MITRE data in two shapes:
-- Demo path: `predicted_techniques: list[{technique_id, confidence, technique_name}]`
-- Production path: `mitre_predictions: dict | list` (multiple formats — see
-  iter_techniques below for the dispatching).
+Findings carry MITRE data in `mitre_predictions: dict | list` (multiple
+formats — see iter_techniques below for the dispatching). A confidence that is
+not a score (null, a bool, a string) means the source named the technique and
+gave no confidence; rank_by_confidence is the one display order for both.
 """
 
 from datetime import datetime, timedelta
-from typing import Iterable, Optional
+from typing import Any, Callable, Iterable, Optional, TypeVar
 
 from core.time import utcnow
 
@@ -127,6 +127,43 @@ def resolve_technique(
     return (tid, name, tactic)
 
 
+T = TypeVar("T")
+
+
+def is_score(value: Any) -> bool:
+    """A real confidence: an int or float, not a bool (an int subclass)."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def meets_threshold(confidence: Any, min_confidence: float) -> bool:
+    """The ATT&CK threshold: a score at or above it; an unknown only at 0."""
+    if is_score(confidence):
+        return confidence >= min_confidence
+    return min_confidence <= 0
+
+
+def rank_by_confidence(
+    items: Iterable[T],
+    confidence: Callable[[T], Any] = lambda t: t.get("confidence"),
+) -> list[T]:
+    """Scored items highest first, then unknowns; ties and unknowns keep source order.
+
+    An unknown is never ranked against a score: below a 0.3 it would read as
+    less likely than 0.3, above it as more certain than anything scored.
+    """
+    items = list(items)
+    scored = [i for i in items if is_score(confidence(i))]
+    unknown = [i for i in items if not is_score(confidence(i))]
+    # sorted() is stable, so equal scores stay in source order.
+    return sorted(scored, key=confidence, reverse=True) + unknown
+
+
+def top_technique(techniques: Iterable[dict]) -> Optional[dict]:
+    """The highest-scored technique, or the first source-named one when none is."""
+    ranked = rank_by_confidence(techniques)
+    return ranked[0] if ranked else None
+
+
 def iter_techniques(finding: dict) -> Iterable[dict]:
     """Yield per-technique dicts from a finding regardless of storage shape.
 
@@ -135,35 +172,25 @@ def iter_techniques(finding: dict) -> Iterable[dict]:
     `resolve_technique` to fill in name/tactic.
 
     Handles:
-      - Demo shape: `predicted_techniques: list[{technique_id, confidence, ...}]`
-      - Production `mitre_predictions: dict[tech_id, confidence]`
-      - Production `mitre_predictions: {"techniques": [...]}` /
-        `{"predicted_techniques": [...]}`
-      - Production `mitre_predictions: list[dict]`
+      - `mitre_predictions: dict[tech_id, confidence]`. A value that is not a
+        score yields the technique with `confidence: None`.
+      - `mitre_predictions: {"techniques": [...]}` or a single technique dict
+        (any map value is a list or dict)
+      - `mitre_predictions: list[dict]`
     """
-    pt = finding.get("predicted_techniques")
-    if isinstance(pt, list) and pt:
-        for tech in pt:
-            if isinstance(tech, dict) and tech.get("technique_id"):
-                yield tech
-        return
-
     predictions = finding.get("mitre_predictions")
     if not predictions:
         return
 
     if isinstance(predictions, dict):
-        if predictions and all(
-            isinstance(v, (int, float)) for v in predictions.values()
-        ):
+        if not any(isinstance(v, (list, dict)) for v in predictions.values()):
             for tech_id, confidence in predictions.items():
-                yield {"technique_id": tech_id, "confidence": confidence}
+                yield {
+                    "technique_id": tech_id,
+                    "confidence": confidence if is_score(confidence) else None,
+                }
             return
-        nested = (
-            predictions.get("techniques")
-            or predictions.get("predicted_techniques")
-            or [predictions]
-        )
+        nested = predictions.get("techniques") or [predictions]
         for tech in nested:
             if isinstance(tech, dict) and (tech.get("technique_id") or tech.get("id")):
                 yield tech

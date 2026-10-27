@@ -543,7 +543,15 @@ class TestShadowAdjudication:
             ),
             # A technique the taxonomy has no tactic for is named on its own.
             ({"T9999": 0.9}, " and is T9999 activity"),
-            ({"T1071": None, "T1059": 0.3}, ""),
+            # An unknown is not ranked against a score, and never hides it.
+            (
+                {"T1071": None, "T1059": 0.3},
+                " and is Execution activity (T1059 Command and Scripting Interpreter)",
+            ),
+            (
+                {"T1071": None, "T1059": None},
+                " and is Command and Control activity (T1071 Application Layer Protocol)",
+            ),
             ("garbage", ""),
             (None, ""),
         ],

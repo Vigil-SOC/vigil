@@ -4,9 +4,10 @@ Pure functions — no provider, no database, no HTTP.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from core.findings.anomaly_score import format_anomaly_score, stored_anomaly_score
+from core.threat_intel.mitre_lookup import is_score, iter_techniques, rank_by_confidence
 
 
 @dataclass(frozen=True)
@@ -64,33 +65,29 @@ def build_entity_string(entity_context: Optional[Dict[str, Any]]) -> str:
     return entity_str
 
 
-def build_techniques_string(
-    predicted_techniques: Optional[List[Dict[str, Any]]],
-    mitre_predictions: Optional[Dict[str, Any]],
-) -> str:
-    """Render up to five MITRE techniques as prompt lines.
+def build_techniques_string(mitre_predictions: Optional[Dict[str, Any]]) -> str:
+    """Render the finding's MITRE techniques as two prompt lines.
 
-    ``predicted_techniques`` (already ranked by the producer) wins when
-    present; otherwise fall back to ``mitre_predictions``, sorted by
-    confidence descending.
+    At most five scored techniques, highest first, then at most five the source
+    named without a confidence. An unknown is said in words, never as a number.
     """
-    if predicted_techniques:
-        return "\n".join(
-            f"{t.get('technique_id', 'Unknown')} "
-            f"(confidence: {float(t.get('confidence') or 0):.2f})"
-            for t in predicted_techniques[:5]
-        )
-    if mitre_predictions:
-        ranked = sorted(
-            mitre_predictions.items(),
-            key=lambda x: float(x[1] or 0),
-            reverse=True,
-        )[:5]
-        return "\n".join(
-            f"{tech_id} (confidence: {float(conf or 0):.2f})"
-            for tech_id, conf in ranked
-        )
-    return ""
+    ranked = rank_by_confidence(
+        iter_techniques({"mitre_predictions": mitre_predictions})
+    )
+    scored = [t for t in ranked if is_score(t.get("confidence"))][:5]
+    unknown = [t for t in ranked if not is_score(t.get("confidence"))][:5]
+
+    def tid(t: Dict[str, Any]) -> str:
+        return str(t.get("technique_id") or t.get("id"))
+
+    lines = []
+    if scored:
+        named = ", ".join(f"{tid(t)} ({float(t['confidence']):.2f})" for t in scored)
+        lines.append(f"Techniques with a confidence: {named}.")
+    if unknown:
+        named = ", ".join(tid(t) for t in unknown)
+        lines.append(f"Techniques the source named without a confidence: {named}.")
+    return "\n".join(lines)
 
 
 def summarize_finding(
@@ -115,10 +112,7 @@ def summarize_finding(
         description=finding.get("description") or "",
         anomaly_score=stored_anomaly_score(finding),
         entity_str=build_entity_string(finding.get("entity_context") or {}),
-        techniques_str=build_techniques_string(
-            finding.get("predicted_techniques") or [],
-            finding.get("mitre_predictions") or {},
-        ),
+        techniques_str=build_techniques_string(finding.get("mitre_predictions") or {}),
     )
 
 

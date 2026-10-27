@@ -11,7 +11,7 @@ def _finding(**overrides):
         "timestamp": "2026-10-10T13:02:11Z",
         "anomaly_score": None,
         "description": "Uploaded without a score column",
-        "predicted_techniques": [],
+        "mitre_predictions": {},
     }
     finding.update(overrides)
     return finding
@@ -49,3 +49,18 @@ def test_unscored_target_says_the_source_supplied_no_score(monkeypatch):
 def test_a_real_zero_score_stays_zero(monkeypatch):
     line = _score_line(_brief(monkeypatch, _finding(anomaly_score=0.0)))
     assert line == "- Anomaly Score: 0.00"
+
+
+def _techniques_line(brief: str) -> str:
+    return next(
+        line
+        for line in brief.splitlines()
+        if line.startswith("- MITRE ATT&CK Techniques:")
+    )
+
+
+def test_target_names_the_findings_techniques_scored_and_unknown(monkeypatch):
+    finding = _finding(mitre_predictions={"T1071": None, "T1059": 0.3})
+    line = _techniques_line(_brief(monkeypatch, finding))
+    assert line == "- MITRE ATT&CK Techniques: T1059, T1071"
+    assert _techniques_line(_brief(monkeypatch, _finding())).endswith(": None")

@@ -300,13 +300,21 @@ class DatabaseDataService:
         technique_id: str,
         limit: Optional[int] = None,
         exclusions: str = "include",
+        min_confidence: float = 0.0,
+        start_time=None,
+        end_time=None,
     ) -> List[Dict]:
         """Findings predicting ``technique_id`` from the child table. DB only."""
         if not self._db_available or not self._db_service:
             return []
         try:
             findings = self._db_service.get_findings_by_technique(
-                technique_id, limit=limit, exclusions=exclusions
+                technique_id,
+                limit=limit,
+                exclusions=exclusions,
+                min_confidence=min_confidence,
+                start_time=start_time,
+                end_time=end_time,
             )
             return FindingSchema.dump_many(findings)
         except Exception as e:
@@ -332,6 +340,19 @@ class DatabaseDataService:
         except Exception as e:
             logger.error(f"Error getting technique severity counts from DB: {e}")
             return []
+
+    def count_unscored_technique_occurrences(
+        self, start_time=None, end_time=None, exclusions: str = "include"
+    ) -> int:
+        if not self._db_available or not self._db_service:
+            return 0
+        try:
+            return self._db_service.count_unscored_technique_occurrences(
+                start_time=start_time, end_time=end_time, exclusions=exclusions
+            )
+        except Exception as e:
+            logger.error(f"Error counting unscored technique occurrences from DB: {e}")
+            return 0
 
     def create_finding(self, finding_data: Dict) -> Optional[Dict]:
         if self._demo_mode and self._demo_service:

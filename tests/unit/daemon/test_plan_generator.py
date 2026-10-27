@@ -1,6 +1,6 @@
 """Opening context must name the case the investigation already has (#867)."""
 
-from services.daemon.plan_generator import generate_initial_context
+from services.daemon.plan_generator import _infer_title, generate_initial_context
 
 
 def test_includes_case_id_when_the_investigation_has_one():
@@ -32,3 +32,11 @@ def test_a_document_cannot_close_its_fence_or_pose_as_the_brief():
     assert body == document
     assert "## Trigger Findings" not in head + opened
     assert tail.lstrip().startswith("## Trigger Findings")
+
+
+def test_title_names_the_top_technique_by_the_shared_rule():
+    host = {"entity_context": {"hostname": "web-01"}}
+    mixed = {**host, "mitre_predictions": {"T1071": None, "T1059": 0.3}}
+    assert _infer_title(mixed, "x") == "Suspicious Activity on web-01 (T1059)"
+    unknown = {**host, "mitre_predictions": {"T1071": None, "T1059": None}}
+    assert _infer_title(unknown, "x") == "Suspicious Activity on web-01 (T1071)"

@@ -90,7 +90,7 @@ def test_create_update_and_bulk_persist_numeric_rows_only():
     ] == {"T1059.001": 0.91}
 
 
-def test_get_findings_by_technique_orders_by_confidence_past_the_old_cap():
+def test_get_findings_by_technique_ranks_scored_rows_past_the_old_cap():
     service = DatabaseService()
     now = utcnow()
     for i in range(12):
@@ -110,8 +110,18 @@ def test_get_findings_by_technique_orders_by_confidence_past_the_old_cap():
     assert confidences == sorted(confidences, reverse=True)
     assert "f-mitre-cap-other" not in {f.finding_id for f in matches}
 
+    # The rollup's threshold and window apply, and limit cuts after the ranking.
+    above = service.get_findings_by_technique("T1573.001", min_confidence=0.2)
+    assert [f.finding_id for f in above] == ["f-mitre-cap-011", "f-mitre-cap-010"]
+    top = service.get_findings_by_technique("T1573.001", limit=1)
+    assert [f.finding_id for f in top] == ["f-mitre-cap-011"]
+    recent = service.get_findings_by_technique(
+        "T1573.001", start_time=now - timedelta(seconds=1.5), end_time=now
+    )
+    assert [f.finding_id for f in recent] == ["f-mitre-cap-001", "f-mitre-cap-000"]
 
-def test_query_plan_uses_technique_confidence_index():
+
+def test_query_plan_uses_technique_confidence_index_for_the_lookup():
     service = DatabaseService()
     now = utcnow()
     for i in range(400):
