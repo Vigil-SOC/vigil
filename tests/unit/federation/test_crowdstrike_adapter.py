@@ -109,6 +109,33 @@ def test_empty_result_is_a_successful_empty_poll():
     assert res.cursor["last_poll_at"] > CURSOR["last_poll_at"]
 
 
+@pytest.mark.parametrize(
+    "confidence,score",
+    [
+        ("missing", None),
+        (None, None),
+        ("", None),
+        ("  ", None),
+        ("high", None),
+        ("Infinity", None),
+        (float("nan"), None),
+        (float("inf"), None),
+        (float("-inf"), None),
+        ({"n": 1}, None),
+        ("80", 0.8),
+        (80, 0.8),
+        (0, 0.0),
+        (150, 1.5),
+    ],
+)
+def test_confidence_is_scaled_only_when_the_source_sent_a_number(confidence, score):
+    detection = _detection(1)
+    if confidence != "missing":
+        detection["max_confidence"] = confidence
+    finding = _detection_to_finding(detection)
+    assert finding["anomaly_score"] == score
+
+
 def test_detections_become_findings():
     res = _fetch(_FakeFalcon([_detection(1), _detection(2)]))
     assert [f["external_id"] for f in res.findings] == ["ldt:1", "ldt:2"]
@@ -367,3 +394,39 @@ async def test_runner_delivers_every_detection_across_ticks(monkeypatch):
     assert enqueued == [f"ldt:{i}" for i in range(1, 8)]
     # The last tick was short, so the cursor moved to now.
     assert parse_cursor_since(cursor) > T0 + timedelta(minutes=7)
+
+
+@pytest.mark.asyncio
+async def test_unusable_confidence_does_not_stall_the_cursor(monkeypatch):
+    dets = []
+    for i, confidence in enumerate(("high", None, "  ", {"n": 1}), start=1):
+        det = _detection(i)
+        det["max_confidence"] = confidence
+        dets.append(det)
+    queue: asyncio.Queue = AckingQueue()
+    runner = FederationRunner(output_queue=queue)
+    adapter = _adapter(_FakeFalcon(dets))
+    runner._dedup[adapter.name] = _FakeDedup()  # type: ignore[assignment]
+
+    successes: List[Any] = []
+    monkeypatch.setattr(
+        "core.federation.runner.store.record_success",
+        lambda source_id, *, cursor, **_: successes.append((source_id, cursor)),
+    )
+    monkeypatch.setattr(
+        "core.federation.runner.store.record_failure",
+        lambda *a, **k: pytest.fail("record_failure should not be called"),
+    )
+
+    await runner._do_one_tick(
+        adapter, {"max_items": 10, "cursor": CURSOR, "min_severity": None}
+    )
+
+    assert len(successes) == 1
+    assert successes[0][0] == "crowdstrike"
+    assert successes[0][1]["last_poll_at"] > CURSOR["last_poll_at"]
+    stored = []
+    while not queue.empty():
+        stored.append(queue.get_nowait()["data"])
+    assert len(stored) == 4
+    assert all(finding["anomaly_score"] is None for finding in stored)

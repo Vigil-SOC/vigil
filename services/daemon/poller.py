@@ -26,6 +26,7 @@ from core.config import get_settings
 from core.federation.runner import FederationRunner
 from core.ingestion.dedup import RedisDedupSet
 from core.integrations._base.ids import FINDING_ID_MAX, fit_id
+from core.integrations.crowdstrike.adapter import _confidence_to_score
 from core.time import utcnow
 from core.webhook_rejections import (
     BAD_TOKEN,
@@ -483,7 +484,7 @@ class DataPoller:
             "description": event.get("description") or event.get("_raw", "")[:500],
             "entity_context": entity_context,
             "raw_event": event,
-            "anomaly_score": 0.5,  # Default score
+            "anomaly_score": None,
             "mitre_predictions": {},
         }
 
@@ -616,7 +617,7 @@ class DataPoller:
             "description": detection.get("description", ""),
             "entity_context": entity_context,
             "raw_event": detection,
-            "anomaly_score": detection.get("max_confidence", 50) / 100.0,
+            "anomaly_score": _confidence_to_score(detection.get("max_confidence")),
             "mitre_predictions": mitre_predictions,
         }
 

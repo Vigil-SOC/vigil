@@ -15,7 +15,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from core.ingestion.ingestion_service import IngestionService
+from core.ingestion.ingestion_service import IngestionService, _optional_float
 from core.ingestion.siem_ingestion_service import normalize_severity
 
 logger = logging.getLogger(__name__)
@@ -55,14 +55,23 @@ def _parse_dt_time(value: Any) -> datetime:
         return datetime.now(timezone.utc)
 
 
-def _score_to_anomaly(score: Any, full_scale: Optional[float] = None) -> float:
-    try:
-        s = float(score)
-    except (TypeError, ValueError):
-        return 0.5
+def _score_to_anomaly(
+    score: Any, full_scale: Optional[float] = None
+) -> Optional[float]:
+    """Scale a source score into 0–1. Unusable values are no score."""
+    s = _optional_float(score)
+    if s is None:
+        return None
     if full_scale is None:
         full_scale = 100.0 if s > 1.0 else 1.0
     return max(0.0, min(1.0, s / full_scale))
+
+
+def _severity_for_score(score: Optional[float]) -> str:
+    """Medium when the source sent no usable score. Never score ``None``."""
+    if score is None:
+        return "medium"
+    return _score_to_severity(score)
 
 
 def _score_to_severity(score: float) -> str:
@@ -149,7 +158,7 @@ class DarktraceIngestionService:
             "description": model.get("name") or "Darktrace Model Breach",
             "entity_context": entity_context or None,
             "evidence_links": evidence_links or None,
-            "severity": _score_to_severity(score),
+            "severity": _severity_for_score(score),
         }
 
     def transform_ai_analyst(self, alert: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -162,10 +171,10 @@ class DarktraceIngestionService:
         ts = _parse_dt_time(
             alert.get("createdAt") or alert.get("start") or alert.get("time")
         )
-        gs = alert.get("groupScore")
-        if gs is not None:
-            score = _score_to_anomaly(gs, full_scale=100.0)
-        else:
+        # An unusable groupScore (missing, blank, non-numeric, non-finite)
+        # falls through to the incident's own score.
+        score = _score_to_anomaly(alert.get("groupScore"), full_scale=100.0)
+        if score is None:
             score = _score_to_anomaly(alert.get("score"))
 
         entity_context: Dict[str, Any] = {}
@@ -199,7 +208,7 @@ class DarktraceIngestionService:
             "description": alert.get("title") or "Darktrace AI Analyst Incident",
             "entity_context": entity_context or None,
             "evidence_links": evidence_links or None,
-            "severity": _score_to_severity(score),
+            "severity": _severity_for_score(score),
         }
 
     def transform_system_status(
@@ -218,15 +227,13 @@ class DarktraceIngestionService:
             alert.get("id") or alert.get("eventId") or alert.get("name") or fallback_key
         )
         ts = _parse_dt_time(alert.get("time") or alert.get("timestamp"))
-        # System status is informational/operational — keep score low
-        score = 0.2
         status_level = str(alert.get("status") or alert.get("level") or "info").lower()
         severity = normalize_severity(status_level)
 
         return {
             "finding_id": _finding_id("dt-sys", str(key), ts),
             "mitre_predictions": {},
-            "anomaly_score": score,
+            "anomaly_score": None,
             "timestamp": ts.isoformat(),
             "data_source": DATA_SOURCE,
             "description": alert.get("message")

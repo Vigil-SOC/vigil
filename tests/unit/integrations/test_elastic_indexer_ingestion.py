@@ -232,4 +232,37 @@ def test_elastic_security_alerts_keep_the_ecs_transform():
     assert finding["title"] == "Suspicious PowerShell"
     assert finding["severity"] == "high"
     assert finding["entity_context"]["hostnames"] == ["WS-01"]
+    assert finding["anomaly_score"] is None
     assert "vendor" not in finding["metadata"]
+
+
+def _wazuh_alert(level):
+    source = {"rule": {"description": "rule"}}
+    if level != "missing":
+        source["rule"]["level"] = level
+    return {"_id": "w1", "_source": source}
+
+
+@pytest.mark.parametrize(
+    "level,score",
+    [
+        (0, 0.0),
+        (7, round(7 / 15, 2)),
+        (7.5, round(7 / 15, 2)),
+        (15, 1.0),
+        ("15", 1.0),
+        ("missing", None),
+        (None, None),
+        ("7.0", None),
+        ("high", None),
+        (float("nan"), None),
+        (float("inf"), None),
+        (float("-inf"), None),
+    ],
+)
+def test_wazuh_level_is_a_source_score_or_absent(level, score):
+    finding = _ingestion().transform_alert_to_finding(_wazuh_alert(level))
+    assert finding is not None
+    assert finding["anomaly_score"] == score
+    if score is None:
+        assert finding["severity"] == "medium"

@@ -193,7 +193,7 @@ def _splunk_event_to_finding(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "description": event.get("description") or event.get("_raw", "")[:500],
         "entity_context": entity_context,
         "raw_event": event,
-        "anomaly_score": 0.5,
+        "anomaly_score": None,
         "mitre_predictions": {},
     }
 

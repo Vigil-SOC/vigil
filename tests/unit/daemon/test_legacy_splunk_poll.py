@@ -96,6 +96,7 @@ async def test_empty_first_query_falls_back_and_enqueues():
     item = poller._output_queue.get_nowait()
     assert item["source"] == "splunk"
     assert item["data"]["finding_id"] == "splunk-e1"
+    assert item["data"]["anomaly_score"] is None
 
 
 @pytest.mark.asyncio
