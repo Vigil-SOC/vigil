@@ -157,5 +157,5 @@ class CloudyIngestionService:
             return mitre
         techniques = event.get("attack_techniques") or payload.get("attack_techniques")
         if isinstance(techniques, list):
-            return {t: 1.0 for t in techniques if isinstance(t, str)}
+            return {t: None for t in techniques if isinstance(t, str)}
         return {}

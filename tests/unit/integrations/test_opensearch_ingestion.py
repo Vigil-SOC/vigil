@@ -72,7 +72,7 @@ class TestTransformFinding:
         self, ingestion, sample_findings
     ):
         finding = ingestion.transform_alert_to_finding(sample_findings[0])
-        assert finding["mitre_predictions"] == {"T1059.001": 0.9}
+        assert finding["mitre_predictions"] == {"T1059.001": None}
 
     def test_bare_rule_reference_falls_back(self, ingestion, sample_findings):
         """A finding whose queries carry only rule ids still transforms."""
@@ -134,8 +134,12 @@ class TestFindingHelpers:
         assert finding_time({}) is None
 
     def test_mitre_from_tags_ignores_non_technique_tags(self):
-        source = {"queries": [{"tags": ["attack.execution", "attack.t1110.001"]}]}
-        assert mitre_from_tags(source) == {"T1110.001": 0.9}
+        source = {
+            "queries": [
+                {"tags": ["attack.execution", "attack.t1110.001", "attack.t1059"]}
+            ]
+        }
+        assert mitre_from_tags(source) == {"T1110.001": None, "T1059": None}
 
     def test_log_type_of(self):
         assert log_type_of(".opensearch-sap-ad_ldap-findings-2026.10.04") == "ad_ldap"

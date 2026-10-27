@@ -136,6 +136,18 @@ def test_confidence_is_scaled_only_when_the_source_sent_a_number(confidence, sco
     assert finding["anomaly_score"] == score
 
 
+def test_technique_is_unknown_and_max_confidence_stays():
+    detection = _detection(1)
+    detection["max_confidence"] = 80
+    detection["behaviors"] = [
+        {"technique": "T1059", "confidence": 40},
+        {"technique": "T1071"},
+    ]
+    finding = _detection_to_finding(detection)
+    assert finding["anomaly_score"] == 0.8
+    assert finding["mitre_predictions"] == {"T1059": None, "T1071": None}
+
+
 def test_detections_become_findings():
     res = _fetch(_FakeFalcon([_detection(1), _detection(2)]))
     assert [f["external_id"] for f in res.findings] == ["ldt:1", "ldt:2"]

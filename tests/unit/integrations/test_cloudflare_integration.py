@@ -49,7 +49,9 @@ def test_config_returns_none_when_token_missing():
     cf = _import_cloudflare_tool()
     # The token comes from the secrets store via the descriptor-driven resolver,
     # not from get_integration_config — that store never holds a secret.
-    with patch.object(cf, "resolve", return_value={"account_id": "abc", "api_token": None}):
+    with patch.object(
+        cf, "resolve", return_value={"account_id": "abc", "api_token": None}
+    ):
         assert cf._config() is None
 
 
@@ -431,6 +433,18 @@ def test_cloudy_absent_or_nonfinite_score_is_unscored(cloudy_client, score):
     assert post(payload).status_code == 202
     (row,) = db.rows.values()
     assert row["anomaly_score"] is None
+
+
+def test_attack_technique_list_is_unknown_and_a_map_keeps_a_score():
+    listed = CloudyIngestionService._extract_mitre(
+        {}, {"attack_techniques": ["T1059", "T1071"]}
+    )
+    assert listed == {"T1059": None, "T1071": None}
+    mixed = CloudyIngestionService._extract_mitre(
+        {"mitre_predictions": {"T1059": None, "T1071": 0.8}},
+        {"attack_techniques": ["T1000"]},
+    )
+    assert mixed == {"T1059": None, "T1071": 0.8}
 
 
 def test_cloudy_overflow_integer_is_unscored():

@@ -167,8 +167,8 @@ def to_internal_finding(finding: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(techniques, str):
             techniques = [t.strip() for t in techniques.split(",")]
         if isinstance(techniques, (list, tuple)):
-            # The file asserts the technique, so it carries full confidence.
-            techniques = {str(t): 1.0 for t in techniques if t}
+            # Named in the file, with no score on the technique.
+            techniques = {str(t): None for t in techniques if t}
         if isinstance(techniques, dict):
             out["mitre_predictions"] = techniques
     return out
@@ -781,21 +781,39 @@ class IngestionService:
 
             finding_id = f"f-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
 
-        # Parse MITRE predictions (JSON string or comma-separated)
-        mitre_predictions = {}
-        if "mitre_predictions" in row and row["mitre_predictions"]:
+        # JSON object passes through. A JSON list of ids, or a comma cell, keeps
+        # every technique: a missing or non-numeric score is null and the loop
+        # continues. ``T1071.001:0.85,T1059`` keeps the score and the bare id.
+        mitre_predictions: Dict[str, Any] = {}
+        raw_mitre = row.get("mitre_predictions")
+        if raw_mitre:
             try:
-                mitre_predictions = json.loads(row["mitre_predictions"])
+                parsed = json.loads(raw_mitre)
             except json.JSONDecodeError:
-                # Try comma-separated format: T1071.001:0.85,T1048.003:0.72
-                try:
-                    for pair in row["mitre_predictions"].split(","):
-                        technique, score = pair.split(":")
-                        mitre_predictions[technique.strip()] = float(score.strip())
-                except Exception as e:
-                    logger.warning(
-                        f"Invalid mitre_predictions format for {finding_id}: {e}"
-                    )
+                for pair in raw_mitre.split(","):
+                    piece = pair.strip()
+                    if not piece:
+                        continue
+                    technique, sep, score = piece.partition(":")
+                    technique = technique.strip()
+                    if not technique:
+                        continue
+                    if not sep:
+                        mitre_predictions[technique] = None
+                        continue
+                    try:
+                        mitre_predictions[technique] = float(score.strip())
+                    except (ValueError, OverflowError):
+                        mitre_predictions[technique] = None
+            else:
+                if isinstance(parsed, dict):
+                    mitre_predictions = parsed
+                elif isinstance(parsed, list):
+                    mitre_predictions = {
+                        item.strip(): None
+                        for item in parsed
+                        if isinstance(item, str) and item.strip()
+                    }
 
         # Parse entity context (JSON string)
         entity_context = None
@@ -845,7 +863,7 @@ class IngestionService:
         mitre_predictions = {}
         mitre_tactic = row.get("mitre_tactic", "").strip()
         if mitre_tactic:
-            mitre_predictions[mitre_tactic] = 1.0
+            mitre_predictions[mitre_tactic] = None
 
         # incident_confidence is 0-100 scale; normalise to 0-1 when present
         raw_confidence = _optional_float(row.get("incident_confidence"))
@@ -1041,9 +1059,9 @@ class IngestionService:
         elif (mitre_pred := row.get("mitre_pred")) is not None:
             tactic = MITRE_TACTIC_MAP.get(int(mitre_pred))
             if tactic:
-                mitre_predictions[tactic] = 1.0
+                mitre_predictions[tactic] = None
             else:
-                mitre_predictions[f"mitre_class_{int(mitre_pred)}"] = 1.0
+                mitre_predictions[f"mitre_class_{int(mitre_pred)}"] = None
 
         anomaly_score = _optional_float(row.get("confidence_score"))
 
