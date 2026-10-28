@@ -49,7 +49,6 @@ def _orchestrator() -> Orchestrator:
     orch = object.__new__(Orchestrator)
     orch.config = OrchestratorConfig()
     orch.shared_intel = MagicMock()
-    orch.shared_intel.matching_cases.return_value = []
     orch.stats = {"dedup_prevented": 0}
     orch._log_ai_decision = MagicMock()
     orch._create_investigation = AsyncMock()

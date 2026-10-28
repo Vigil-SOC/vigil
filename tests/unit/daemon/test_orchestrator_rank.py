@@ -66,7 +66,6 @@ def _orchestrator(**extra) -> Orchestrator:
     orch = object.__new__(Orchestrator)
     orch.config = OrchestratorConfig()
     orch.shared_intel = MagicMock()
-    orch.shared_intel.matching_cases.return_value = []
     orch.stats = {"dedup_prevented": 0, "investigations_created": 0}
     orch._create_investigation = AsyncMock()
     orch._create_manual_investigation = AsyncMock()
@@ -302,19 +301,25 @@ async def test_past_ttl_expires_with_a_reason_even_when_no_slot_is_free():
 
 
 @pytest.mark.asyncio
-async def test_overlap_and_expiry_resolve_when_the_fleet_is_full(monkeypatch):
+async def test_merge_and_expiry_resolve_when_the_fleet_is_full(monkeypatch):
     monkeypatch.setattr(
-        "services.daemon.orchestrator._attach_finding", MagicMock(return_value=True)
+        "services.daemon.orchestrator._matching_cases",
+        lambda finding, *, open: (
+            [CaseMatch("case-1", "ip:203.0.113.9")]
+            if finding["finding_id"] == "f-overlap"
+            else []
+        ),
     )
-    monkeypatch.setattr("services.daemon.orchestrator._note_merge", MagicMock())
+    monkeypatch.setattr("services.daemon.orchestrator._attach_finding", lambda *_: True)
+    monkeypatch.setattr(
+        "services.daemon.orchestrator._record_merge_activity", lambda *_: None
+    )
+    monkeypatch.setattr(
+        "services.daemon.orchestrator._raise_case_priority", lambda *_: None
+    )
     orch = _orchestrator()
     orch._in_flight = MagicMock(return_value=orch.config.max_concurrent_agents)
     orch._running = MagicMock(return_value=orch.config.max_concurrent_agents)
-    orch.shared_intel.matching_cases.side_effect = lambda finding, **_: (
-        [CaseMatch("case-1", "ip:203.0.113.9")]
-        if finding["finding_id"] == "f-overlap"
-        else []
-    )
     expired = _detection("low", age_s=TTL + 60, finding_id="f-old", id=1)
     overlapping = _detection("high", age_s=10, finding_id="f-overlap", id=2)
     waiting = _detection("medium", age_s=5, finding_id="f-med", id=3)

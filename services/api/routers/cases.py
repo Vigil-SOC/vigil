@@ -641,8 +641,17 @@ async def add_relationship(
 async def get_relationships(case_id: str, session: UnitOfWorkSession):
     """Get related cases."""
 
-    rels = case_records_service.list_relationships(session, case_id)
-    return {"relationships": CaseRelationshipSchema.dump_many(rels)}
+    rows = case_records_service.list_relationships(session, case_id)
+    return {
+        "relationships": [
+            {
+                **CaseRelationshipSchema.dump(rel),
+                "related_title": title,
+                "related_status": status,
+            }
+            for rel, title, status in rows
+        ]
+    }
 
 
 # Case Closure

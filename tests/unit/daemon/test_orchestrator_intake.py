@@ -1,8 +1,8 @@
 """Every trigger offered to the orchestrator is a row (#918).
 
 Producers insert; the intake tick reads queued
-rows; rated findings launch or merge; a match on an open Case is merged after
-attach. A failed attach leaves the row queued (#997).
+rows; rated findings launch or merge; overlap is merged after attach.
+A failed attach leaves the row queued (#997).
 Ranking, TTL and slot-wait live in test_orchestrator_rank.py (#922).
 """
 
@@ -25,17 +25,6 @@ from services.daemon.orchestrator import Orchestrator, lift_ai_enrichment
 
 pytestmark = pytest.mark.unit
 
-MATCH = [CaseMatch("case-1", "hostname:fyodor-l", same_alert=True)]
-
-
-@pytest.fixture(autouse=True)
-def attach(monkeypatch):
-    fake = MagicMock(return_value=True)
-    monkeypatch.setattr("services.daemon.orchestrator._attach_finding", fake)
-    monkeypatch.setattr("services.daemon.orchestrator._note_merge", MagicMock())
-    return fake
-
-
 HIGH = {
     "finding_id": "f-high",
     "severity": "high",
@@ -57,7 +46,6 @@ def _orchestrator(**extra) -> Orchestrator:
     orch = object.__new__(Orchestrator)
     orch.config = OrchestratorConfig()
     orch.shared_intel = MagicMock()
-    orch.shared_intel.matching_cases.return_value = []
     orch.stats = {"dedup_prevented": 0, "investigations_created": 0}
     orch._log_ai_decision = MagicMock()
     orch._create_investigation = AsyncMock()
@@ -163,29 +151,53 @@ async def test_schedule_and_human_ask_are_never_shed():
     assert orch._create_manual_investigation.await_count == 2
 
 
+MATCH = CaseMatch("case-1", "ip:203.0.113.9")
+
+
+@pytest.fixture
+def entity_match(monkeypatch):
+    """The open-Case match, and the attach and the writes after it, all stubbed."""
+    stubs = {
+        "match": MagicMock(return_value=[MATCH]),
+        "attach": MagicMock(return_value=True),
+        "activity": MagicMock(),
+        "priority": MagicMock(),
+    }
+    for name, target in (
+        ("match", "_matching_cases"),
+        ("attach", "_attach_finding"),
+        ("activity", "_record_merge_activity"),
+        ("priority", "_raise_case_priority"),
+    ):
+        monkeypatch.setattr(f"services.daemon.orchestrator.{target}", stubs[name])
+    return SimpleNamespace(**stubs)
+
+
 @pytest.mark.asyncio
-async def test_a_match_ends_merged_with_the_case_it_joined(attach):
+async def test_a_match_ends_merged_with_the_case_it_joined(entity_match):
     orch = _orchestrator()
-    orch.shared_intel.matching_cases.return_value = MATCH
 
     await orch._create_investigation_for_finding(HIGH, None, trigger_id=9)
 
-    attach.assert_called_once_with("case-1", "f-high")
+    entity_match.match.assert_called_once_with(HIGH, open=True)
+    entity_match.attach.assert_called_once_with("case-1", "f-high")
+    entity_match.activity.assert_called_once_with("case-1", HIGH, MATCH)
+    entity_match.priority.assert_called_once_with("case-1", "high")
+    orch.shared_intel.record_on_case.assert_called_once_with("case-1", HIGH)
     orch._decide_trigger.assert_called_once_with(
         9, state="merged", reason="entity_on_open_case", merged_into="case-1"
     )
+    assert orch.stats["dedup_prevented"] == 1
     orch._create_investigation.assert_not_awaited()
     orch._log_ai_decision.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_a_medium_finding_that_matches_merges_instead_of_shedding(attach):
+async def test_a_medium_finding_that_matches_merges_instead_of_shedding(entity_match):
     orch = _orchestrator()
-    orch.shared_intel.matching_cases.return_value = MATCH
 
     await orch._create_investigation_for_finding(MEDIUM, None, trigger_id=8)
 
-    attach.assert_called_once_with("case-1", "f-med")
     orch._decide_trigger.assert_called_once_with(
         8, state="merged", reason="entity_on_open_case", merged_into="case-1"
     )
@@ -193,33 +205,50 @@ async def test_a_medium_finding_that_matches_merges_instead_of_shedding(attach):
 
 
 @pytest.mark.asyncio
-async def test_failed_attach_leaves_row_queued(attach):
-    attach.return_value = False
+async def test_failed_attach_leaves_row_queued(entity_match):
     orch = _orchestrator()
-    orch.shared_intel.matching_cases.return_value = MATCH
+    entity_match.attach.return_value = False
 
     await orch._create_investigation_for_finding(HIGH, None, trigger_id=9)
 
-    attach.assert_called_once_with("case-1", "f-high")
     orch._decide_trigger.assert_not_called()
     orch._create_investigation.assert_not_awaited()
+    assert orch.stats["dedup_prevented"] == 0
+    entity_match.activity.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_failed_attach_does_not_count_dedup(attach):
-    attach.return_value = False
+async def test_failed_open_case_read_leaves_row_queued(entity_match):
     orch = _orchestrator()
-    orch.shared_intel.matching_cases.return_value = MATCH
+    entity_match.match.side_effect = RuntimeError("db down")
 
     await orch._create_investigation_for_finding(HIGH, None, trigger_id=9)
 
+    orch._decide_trigger.assert_not_called()
+    orch._create_investigation.assert_not_awaited()
     assert orch.stats["dedup_prevented"] == 0
 
 
-def test_failed_attach_on_resolve_is_not_launchable(attach):
-    attach.return_value = False
+@pytest.mark.asyncio
+async def test_a_failed_write_after_the_attach_does_not_undo_the_merge(entity_match):
     orch = _orchestrator()
-    orch.shared_intel.matching_cases.return_value = MATCH
+    orch.shared_intel.record_on_case.side_effect = RuntimeError("index down")
+    entity_match.activity.side_effect = RuntimeError("activity down")
+    entity_match.priority.side_effect = RuntimeError("priority down")
+
+    await orch._create_investigation_for_finding(HIGH, None, trigger_id=9)
+
+    # Each write ran despite the one before it failing.
+    entity_match.priority.assert_called_once()
+    orch._decide_trigger.assert_called_once_with(
+        9, state="merged", reason="entity_on_open_case", merged_into="case-1"
+    )
+    orch._create_investigation.assert_not_awaited()
+
+
+def test_failed_attach_on_resolve_is_not_launchable(entity_match):
+    orch = _orchestrator()
+    entity_match.attach.return_value = False
     orch._hydrate_detection_finding = MagicMock(return_value=HIGH)
     row = {"id": 9, "kind": "detection", "finding_id": "f-high"}
 
@@ -244,7 +273,6 @@ def test_a_queued_detection_for_an_excluded_ip_expires(monkeypatch):
     orch._decide_trigger.assert_called_once_with(
         9, state="expired", reason="excluded_ip"
     )
-    orch.shared_intel.matching_cases.assert_not_called()
 
     # Only detections: an analyst's ask and an unhydrated finding stay queued.
     orch._decide_trigger.reset_mock()
@@ -519,9 +547,8 @@ def test_second_scan_of_a_queued_finding_is_a_noop(monkeypatch):
     assert all(call["finding_id"] == "f-new" for call in captured)
 
 
-def test_scan_row_merges_into_open_case(attach):
+def test_scan_row_merges_into_live_case(entity_match):
     orch = _orchestrator()
-    orch.shared_intel.matching_cases.return_value = MATCH
     orch._hydrate_detection_finding = MagicMock(return_value=HIGH)
     row = {
         "id": 12,
@@ -533,7 +560,7 @@ def test_scan_row_merges_into_open_case(attach):
     kept = orch._resolve_intake_row(row, utcnow())
 
     assert kept is None
-    attach.assert_called_once_with("case-1", "f-high")
+    entity_match.attach.assert_called_once_with("case-1", "f-high")
     orch._decide_trigger.assert_called_once_with(
         12, state="merged", reason="entity_on_open_case", merged_into="case-1"
     )

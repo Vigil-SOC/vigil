@@ -5,15 +5,19 @@ Operates on a caller-provided ``Session``; it never opens or closes one.
 """
 
 import logging
-from dataclasses import dataclass
-from datetime import datetime
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Set, Tuple
 
 from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.orm import Session
 
-from core.storage.models import Case, CaseIOC, Finding, Investigation, SharedIOC
-from core.storage.models.base import case_findings
+from core.storage.models import (
+    Case,
+    CaseIOC,
+    Finding,
+    Investigation,
+    SharedIOC,
+    case_findings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,54 +89,44 @@ def index_case_iocs_on_close(session: Session, case_id: str) -> int:
         return 0
 
 
-@dataclass(frozen=True)
-class CaseMatch:
-    """A Case that a finding matches, and the key it matched on.
-
-    ``same_alert`` marks a hostname match, which counts only because the Case
-    also holds a finding with the same ``data_source`` and title.
-    """
+class CaseMatch(NamedTuple):
+    """A Case a finding belongs with, and the key that says so."""
 
     case_id: str
-    key: str
-    same_alert: bool = False
+    key: str  # ``ip:…``, ``hash:…`` or ``hostname:…``
+    same_alert: bool = False  # a hostname match, backed by the same data_source + title
 
 
-def _normal_title(title: Any) -> str:
-    return str(title or "").strip().lower()
+# Listed in the order a match is preferred when one Case matches several ways.
+_KEY_RANK = {"ip": 0, "hash": 1, "hostname": 2}
 
 
-def _src_ip_keys(context: Dict[str, Any]) -> Set[str]:
-    listed = context.get("src_ips") or []
-    values = list(listed) if isinstance(listed, (list, tuple)) else []
-    if context.get("src_ip"):
-        values.append(context["src_ip"])
-    return {k for k in (make_key("ip", str(v)) for v in values) if k}
+def finding_match_keys(finding: Dict[str, Any]) -> Tuple[Set[str], Set[str]]:
+    """The keys a finding can join a Case on: ``(ip and hash keys, hostname keys)``.
 
-
-def match_keys(
-    finding: Dict[str, Any], candidates: Iterable[Tuple[str, str]]
-) -> Tuple[Set[str], Set[str]]:
-    """``(strong, host)`` keys a finding can match a Case on.
-
-    ``candidates`` are the finding's ``entity_context_candidates``, passed in
-    because storage may not import memory. Source IPs are read off the context
-    instead: candidates spell destination IPs as ``ip`` too. Strong keys
-    (source IPs, file hashes) match on their own; host keys only alongside the
-    same alert. Destination IPs, users and domains never match.
+    Read straight off ``entity_context``, spelled as ``core.memory.entity_keys``
+    maps it (storage may not import memory). Source IPs are ``src_ip``/``src_ips``
+    alone: an attacker is the source, and memory's map yields destinations as
+    ``ip`` too.
     """
     context = finding.get("entity_context")
-    if not isinstance(context, dict):
-        return set(), set()
-    strong = _src_ip_keys(context)
-    host: Set[str] = set()
-    for kind, value in candidates:
-        if kind not in ("hash", "host"):
-            continue
-        key = make_key(kind, value)
-        if key:
-            (strong if kind == "hash" else host).add(key)
-    return strong, host
+    context = context if isinstance(context, dict) else {}
+
+    def values(*names: str) -> List[str]:
+        out: List[str] = []
+        for name in names:
+            value = context.get(name)
+            out += (
+                [str(v) for v in value]
+                if isinstance(value, (list, tuple))
+                else ([str(value)] if value else [])
+            )
+        return out
+
+    entity = {make_key("ip", v) for v in values("src_ips", "src_ip")}
+    entity |= {make_key("hash", v) for v in values("file_hashes")}
+    hosts = {make_key("hostname", v) for v in values("hostnames", "hostname")}
+    return entity - {None}, hosts - {None}
 
 
 class SharedIOCRepository:
@@ -186,80 +180,70 @@ class SharedIOCRepository:
 
     # ---- reads ---------------------------------------------------------
 
-    def keys_for(self, investigation_id: str) -> Set[str]:
-        return {f"{t}:{v}" for t, v in self._pairs_for(investigation_id)}
-
-    def newest_investigation_of(self, case_id: str) -> Optional[str]:
-        return self.session.execute(
-            select(Investigation.investigation_id)
-            .where(Investigation.case_id == case_id)
-            .order_by(Investigation.created_at.desc())
-            .limit(1)
-        ).scalar_one_or_none()
-
-    def matching_cases(
-        self,
-        finding: Dict[str, Any],
-        candidates: Iterable[Tuple[str, str]],
-        *,
-        open: bool,
-        limit: Optional[int] = None,
-        exclude_case_id: Optional[str] = None,
-    ) -> List[CaseMatch]:
+    def matching_cases(self, finding: Dict[str, Any], *, open: bool) -> List[CaseMatch]:
         """Open (or closed) Cases this finding belongs with, newest ``updated_at`` first.
 
-        A Case matches on a shared source IP or file hash, or on a shared
-        hostname when it also holds a finding with this finding's
-        ``data_source`` and trimmed, case-insensitive ``title``. This is the
-        one place that rule lives.
+        A Case matches on a source IP or file hash shared with one of its
+        investigations, or on a hostname shared with one of them while the Case
+        holds a finding with the same ``data_source`` and trimmed, case-insensitive
+        ``title``. Raises on a failed read: the caller decides what that means.
         """
-        strong, host = match_keys(finding, candidates)
-        title = _normal_title(finding.get("title"))
-        data_source = finding.get("data_source")
-        if not (title and data_source):
-            host = set()
-        if not strong and not host:
+        entity_keys, host_keys = finding_match_keys(finding)
+        title = (finding.get("title") or "").strip().lower()
+        source = finding.get("data_source")
+        clauses = self._key_clauses(entity_keys)
+        host_clauses = (
+            self._key_clauses(host_keys)
+            if title and source
+            else []  # no title, no rule
+        )
+        if not clauses and not host_clauses:
             return []
 
         status = Case.status != "closed" if open else Case.status == "closed"
         base = (
-            select(Case.case_id, Case.updated_at, SharedIOC.ioc_type, SharedIOC.value)
+            select(Case.case_id, SharedIOC.ioc_type, SharedIOC.value, Case.updated_at)
             .join(Investigation, Investigation.case_id == Case.case_id)
             .join(
                 SharedIOC, SharedIOC.investigation_id == Investigation.investigation_id
             )
             .where(status)
         )
-        if exclude_case_id:
-            base = base.where(Case.case_id != exclude_case_id)
-
-        # case_id -> (updated_at, match); a strong match beats a same-alert one.
-        found: Dict[str, Tuple[datetime, CaseMatch]] = {}
-        if strong:
-            rows = self.session.execute(
-                base.where(or_(*self._key_clauses(strong)))
-            ).all()
-            for case_id, updated_at, t, v in sorted(rows, key=lambda r: (r[2], r[3])):
-                found.setdefault(case_id, (updated_at, CaseMatch(case_id, f"{t}:{v}")))
-        if host:
-            same_alert = (
-                select(case_findings.c.case_id)
+        rows: List[Tuple[str, str, str, Any, bool]] = []
+        if clauses:
+            rows += [
+                (*r, False) for r in self.session.execute(base.where(or_(*clauses)))
+            ]
+        if host_clauses:
+            same_title = (
+                base.join(case_findings, case_findings.c.case_id == Case.case_id)
                 .join(Finding, Finding.finding_id == case_findings.c.finding_id)
                 .where(
-                    Finding.data_source == data_source,
-                    func.lower(func.trim(Finding.title)) == title,
+                    or_(*host_clauses),
+                    Finding.data_source == source,
+                    func.lower(func.btrim(Finding.title, " \t\r\n")) == title,
                 )
             )
-            rows = self.session.execute(
-                base.where(or_(*self._key_clauses(host)), Case.case_id.in_(same_alert))
-            ).all()
-            for case_id, updated_at, t, v in sorted(rows, key=lambda r: (r[2], r[3])):
-                found.setdefault(
-                    case_id, (updated_at, CaseMatch(case_id, f"{t}:{v}", True))
-                )
+            rows += [(*r, True) for r in self.session.execute(same_title)]
 
-        ordered = sorted(found.values(), key=lambda m: m[0], reverse=True)
-        return [m for _, m in ordered][:limit]
+        rows.sort(key=lambda r: (-r[3].timestamp(), _KEY_RANK.get(r[1], 9)))
+        seen: Set[str] = set()
+        matches: List[CaseMatch] = []
+        for case_id, ioc_type, value, _, same_alert in rows:
+            if case_id not in seen:
+                seen.add(case_id)
+                matches.append(CaseMatch(case_id, f"{ioc_type}:{value}", same_alert))
+        return matches
+
+    def record_on_case(self, case_id: str, keys: Iterable[str]) -> int:
+        """Index ``keys`` against the Case's newest investigation. 0 if it has none."""
+        investigation_id = self.session.execute(
+            select(Investigation.investigation_id)
+            .where(Investigation.case_id == case_id)
+            .order_by(Investigation.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        return self.record(investigation_id, keys) if investigation_id else 0
 
     # ---- internals -----------------------------------------------------
 

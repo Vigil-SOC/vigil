@@ -8,14 +8,32 @@ a restart and outlives the raw history (§2).
 from __future__ import annotations
 
 import bisect
+import functools
 import json
 
-from services.medic.engine.evaluate import Reads, line_group, line_matches, ts
+from services.medic.engine.evaluate import (
+    Reads,
+    Series,
+    line_group,
+    line_matches,
+    row_key,
+    ts,
+)
 
 
 def gkey(group: dict) -> str:
     """A group's stable key: canonical JSON of its sorted (name, value) pairs."""
-    return json.dumps(sorted(group.items()), separators=(",", ":"))
+    pairs = tuple(sorted(group.items()))
+    try:
+        return _gkey(pairs)
+    except TypeError:  # an unhashable value: not a label, but still a key
+        return json.dumps(pairs, separators=(",", ":"))
+
+
+# Labels are strings (observation schema), so 1 / 1.0 / True never share a slot.
+@functools.lru_cache(maxsize=4096)
+def _gkey(pairs: tuple) -> str:
+    return json.dumps(pairs, separators=(",", ":"))
 
 
 def sample_entries(spec: dict, obs: dict) -> list[dict]:
@@ -28,6 +46,21 @@ def sample_entries(spec: dict, obs: dict) -> list[dict]:
     ]
 
 
+def _insort(rows: list, row: tuple) -> None:
+    # Ordered by (t, id) whatever the arrival order, so live and replay agree.
+    if not rows or row_key(rows[-1]) <= row_key(row):
+        rows.append(row)  # the usual case: in order
+    else:
+        bisect.insort(rows, row, key=row_key)
+
+
+def _upto(rows: list, now: float) -> list:
+    """Rows at or before now; the list itself when that is all of them."""
+    if not rows or rows[-1][0] <= now:
+        return rows
+    return rows[: bisect.bisect_right(rows, now, key=lambda r: r[0])]
+
+
 class History:
     def __init__(self, latches: dict) -> None:
         self.samples: dict[str, list[tuple[float, dict]]] = {}  # by signal
@@ -38,79 +71,142 @@ class History:
         self.latches = (
             latches  # rule -> "set|clear" -> group key or "*" -> [set_t, clear_t]
         )
+        # Indexes over self.samples, kept in its (t, id) order:
+        self.failed: dict[str, list[tuple]] = {}  # signal -> (t, obs, None)
+        self.ok_times: dict[str, list[float]] = {}  # signal -> t of each ok read
+        self.series: dict[tuple[str, str], dict[str, Series]] = {}  # by labels
+        self._memo: dict = {}  # this tick's reads; any add or prune clears it
 
     def add(self, obs: dict) -> None:
+        self._memo.clear()
+        t = ts(obs["t"])
         if obs["kind"] == "sensor_health":
             health = obs["health"]
             for signal in health["covers"]:
                 self.interval[signal] = health["interval_s"]
                 self.sensor_of[signal] = health["sensor"]
-            series = self.beats.setdefault(health["sensor"], [])
-        else:
-            index = self.logs if obs["kind"] == "log" else self.samples
-            series = index.setdefault(obs["signal"], [])
-        # Ordered by (t, id) whatever the arrival order, so live and replay agree.
-        bisect.insort(series, (ts(obs["t"]), obs), key=lambda r: (r[0], r[1]["id"]))
+            _insort(self.beats.setdefault(health["sensor"], []), (t, obs))
+            return
+        signal = obs["signal"]
+        if obs["kind"] == "log":
+            _insort(self.logs.setdefault(signal, []), (t, obs))
+            return
+        _insort(self.samples.setdefault(signal, []), (t, obs))
+        if obs["outcome"] != "ok":
+            _insort(self.failed.setdefault(signal, []), (t, obs, None))
+            return
+        bisect.insort(self.ok_times.setdefault(signal, []), t)
+        seen = set()
+        for v in obs.get("values", []):
+            series = (v["key"], gkey(v.get("labels", {})))
+            if series not in seen:  # a series' first entry in a read is its value
+                seen.add(series)
+                by_labels = self.series.setdefault((signal, series[0]), {})
+                if series[1] not in by_labels:
+                    by_labels[series[1]] = Series()
+                by_labels[series[1]].add(t, obs, v)
 
     def prune(self, before: float) -> None:
         """Drop reads older than every window still needs (keeps each newest one)."""
-        for index in (self.samples, self.logs, self.beats):
-            for series in index.values():
-                i = 0
-                while i < len(series) - 1 and series[i][0] < before:
-                    i += 1
-                del series[:i]
+        self._memo.clear()
+        for index in (self.logs, self.beats):
+            for rows in index.values():
+                del rows[: _cut(rows, before)]
+        cutoff = {}  # signal -> (t, id) of its oldest kept read
+        for signal, rows in self.samples.items():
+            i = _cut(rows, before)
+            if i:
+                failed = sum(obs["outcome"] != "ok" for _, obs in rows[:i])
+                del self.failed.get(signal, [])[:failed]
+                del self.ok_times.get(signal, [])[: i - failed]
+                del rows[:i]
+                cutoff[signal] = row_key(rows[0])
+        for (signal, _), by_labels in self.series.items():
+            if signal in cutoff:
+                for labels, series in list(by_labels.items()):
+                    rows = series.rows
+                    series.drop(bisect.bisect_left(rows, cutoff[signal], key=row_key))
+                    if not series.rows:
+                        del by_labels[labels]
+
+    def _memoized(self, key: tuple, make):
+        if key not in self._memo:
+            self._memo[key] = make()
+        return self._memo[key]
 
     def sample_reads(self, spec: dict, group_by: list, group: dict, now: float):
         """The reads of this group's series: failed reads, plus ok reads that carry
         its value (present or absent). An ok read without it isn't a read of this
         series: a source that disappeared goes stale, it doesn't read absent (§4).
-        None when a shared signal has more than one series at its newest read (§3)."""
+        None when a shared signal has more than one series at its newest read (§3).
+        Every rule and group reading the same series this tick shares one Reads."""
         produces = bool(group_by) and set(group_by) <= set(spec.get("by", []))
-        rows = []
-        for t, obs in self.samples.get(spec["signal"], []):
-            if t > now:
-                break
-            found = sample_entries(spec, obs) if obs["outcome"] == "ok" else []
-            if produces:
-                found = [
-                    v
-                    for v in found
-                    if all(v["labels"].get(n) == group[n] for n in group_by)
-                ]
-            rows.append((t, obs, found))
-        newest = next((f for _, o, f in reversed(rows) if f), [])
-        if len({gkey(v.get("labels", {})) for v in newest}) > 1:
-            return None  # ambiguous_series: unknown
-        series = gkey(newest[0].get("labels", {})) if newest else None
-        items = []
-        for t, obs, found in rows:
-            entry = next(
-                (v for v in found if gkey(v.get("labels", {})) == series), None
-            )
-            if obs["outcome"] != "ok" or entry is not None:
-                items.append((t, obs, entry))
-        oks = [t for t, obs, _ in rows if obs["outcome"] == "ok"]
-        return Reads(items, self.interval.get(spec["signal"]), oks)
+        want = spec.get("labels", {})
+        pin = tuple((n, group[n]) for n in group_by) if produces else ()
+        key = ("sample", spec["signal"], spec["key"], gkey(want), pin, now)
+        return self._memoized(key, lambda: self._sample_reads(spec, want, pin, now))
+
+    def _sample_reads(self, spec: dict, want: dict, pin: tuple, now: float):
+        signal, names = spec["signal"], tuple(n for n, _ in pin)
+        by_group = self._memoized(
+            ("series", signal, spec["key"], gkey(want), names, now),
+            lambda: self._series_by(signal, spec["key"], want, names, now),
+        )
+        found = by_group.get(tuple(v for _, v in pin), [])
+        newest = max(found, key=lambda f: row_key(f[0].rows[f[1] - 1]), default=None)
+        if newest:
+            read = newest[0].rows[newest[1] - 1][1]
+            if sum(s.rows[hi - 1][1] is read for s, hi in found) > 1:
+                return None  # ambiguous_series: unknown
+        signal_ok = self._memoized(
+            ("ok", signal, now),
+            lambda: _upto_times(self.ok_times.get(signal, []), now),
+        )
+        failed = _upto(self.failed.get(signal, []), now)
+        return Reads(newest, failed, self.interval.get(signal), signal_ok)
+
+    def _series_by(self, signal: str, key: str, want: dict, names: tuple, now: float):
+        """(series, how many of its reads are at or before now) for each series that
+        matches `want` and has such a read, by its `names` values."""
+        out: dict[tuple, list] = {}
+        for series in self.series.get((signal, key), {}).values():
+            labels = series.rows[0][2].get("labels", {})
+            hi = series.upto(now)
+            if hi and all(labels.get(k) == x for k, x in want.items()):
+                out.setdefault(tuple(labels.get(n) for n in names), []).append(
+                    (series, hi)
+                )
+        return out
 
     def log_reads(self, spec: dict, group_by: list, group: dict, now: float):
         """(matching lines, ok heartbeat times, interval) for this group."""
         produces = bool(group_by) and set(group_by) <= set(spec.get("keys", {}))
-        lines = []
-        for t, obs in self.logs.get(spec["signal"], []):
-            if t > now or not line_matches(spec, obs):
-                continue
-            if produces:
-                got = line_group(spec, obs) or {}
-                if any(got.get(n) != group[n] for n in group_by):
-                    continue
-            lines.append((t, obs, None))
+        text = json.dumps(spec, sort_keys=True)
+        lines = self._memoized(
+            ("lines", text, now),
+            lambda: [
+                (t, obs, None)
+                for t, obs in self.logs.get(spec["signal"], [])
+                if t <= now and line_matches(spec, obs)
+            ],
+        )
+        if produces:
+            lines = [
+                r
+                for r in lines
+                if all(
+                    (line_group(spec, r[1]) or {}).get(n) == group[n] for n in group_by
+                )
+            ]
         sensor = self.sensor_of.get(spec["signal"])
-        beats = [
-            t
-            for t, obs in self.beats.get(sensor, [])
-            if t <= now and obs["health"]["state"] == "ok"
-        ]
+        beats = self._memoized(
+            ("beats", sensor, now),
+            lambda: [
+                t
+                for t, obs in self.beats.get(sensor, [])
+                if t <= now and obs["health"]["state"] == "ok"
+            ],
+        )
         return lines, beats, self.interval.get(spec["signal"])
 
     def note_latch(
@@ -131,3 +227,17 @@ class History:
 
 def _latch_key(node: dict) -> str:
     return f"{node['set']}|{node['clear']}"
+
+
+def _cut(rows: list, before: float) -> int:
+    """How many of the oldest rows are older than `before`, keeping the newest."""
+    i = bisect.bisect_left(rows, before, key=lambda r: r[0])
+    return min(i, len(rows) - 1) if rows else 0
+
+
+def _upto_times(times: list[float], now: float) -> list[float]:
+    return (
+        times
+        if not times or times[-1] <= now
+        else times[: bisect.bisect_right(times, now)]
+    )

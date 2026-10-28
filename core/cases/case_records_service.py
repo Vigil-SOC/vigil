@@ -7,7 +7,7 @@ router owns the status code.
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, NamedTuple, Optional, Sequence
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -239,10 +239,19 @@ def link_cases(
             )
 
 
-def list_relationships(session: Session, case_id: str) -> List[CaseRelationship]:
+def list_relationships(
+    session: Session, case_id: str
+) -> List[Tuple[CaseRelationship, Optional[str], Optional[str]]]:
+    """Each link with its related Case's title and status, in one query.
+
+    The inner join drops a row whose related Case is gone; both FKs cascade,
+    so in Postgres there is none to drop.
+    """
     return (
-        session.query(CaseRelationship)
+        session.query(CaseRelationship, Case.title, Case.status)
+        .join(Case, Case.case_id == CaseRelationship.related_case_id)
         .filter(CaseRelationship.case_id == case_id)
+        .order_by(CaseRelationship.relationship_id)
         .all()
     )
 

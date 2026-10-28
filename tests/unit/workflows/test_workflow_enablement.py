@@ -324,10 +324,12 @@ async def test_triage_routes_a_disabled_workflow_to_the_fallback(session, monkey
     monkeypatch.setattr(
         "services.daemon.orchestrator._open_case_holding", lambda _fid: None
     )
+    monkeypatch.setattr(
+        "services.daemon.orchestrator._matching_cases", lambda _f, *, open: []
+    )
     _disable(session, "full-investigation")
     orch = object.__new__(Orchestrator)
     orch.shared_intel = MagicMock()
-    orch.shared_intel.matching_cases.return_value = []
     orch._create_investigation = AsyncMock()
     finding = {"finding_id": "f-1", "severity": "high"}
     assert select_workflow(finding) == "full-investigation"

@@ -128,7 +128,7 @@ function Tiles({ data }: { data: TriagePayload }) {
       <Tile label="Cases created today" info={<InfoTip label="How cases created today is worked out" {...info.cases_created_today} />}>
         <div className="tq-tile-val">{data.strip.cases_created_today}</div>
       </Tile>
-      <Tile label="Waiting in line" info={<InfoTip label="How waiting in line is worked out" {...info.waiting} />}>
+      <Tile label="Waiting for triage" info={<InfoTip label="How waiting for triage is worked out" {...info.waiting} />}>
         <div className="tq-tile-val">{data.strip.waiting}</div>
       </Tile>
       <Tile label="Trust floor">

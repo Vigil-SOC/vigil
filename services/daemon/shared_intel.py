@@ -1,20 +1,15 @@
-"""Cross-investigation IOC index over ``shared_iocs``.
+"""The entity index intake joins alerts to Cases by, over ``shared_iocs``.
 
-Nothing is held in process, so a match survives a daemon restart. Intake reads
-it through ``matching_cases`` to join an alert to its open Case and to link a
-new Case to the closed ones before it.
+Nothing is held in process, so it survives a daemon restart. Matching a finding
+to a Case is ``SharedIOCRepository.matching_cases``.
 """
 
 import logging
-from typing import Any, Callable, Dict, Iterable, List, Optional, Set
+from typing import Any, Callable, Dict, Iterable, Optional, Set
 
 from core.memory.entity_keys import entity_context_candidates
 from core.storage.connection import get_db_manager
-from core.storage.shared_ioc_repository import (
-    CaseMatch,
-    SharedIOCRepository,
-    make_key,
-)
+from core.storage.shared_ioc_repository import SharedIOCRepository, make_key
 
 logger = logging.getLogger(__name__)
 
@@ -55,39 +50,14 @@ class SharedIntelligence:
             "register", lambda repo: repo.record(investigation_id, keys), None
         )
 
-    def matching_cases(
-        self,
-        finding: Dict[str, Any],
-        *,
-        open: bool,
-        limit: Optional[int] = None,
-        exclude_case_id: Optional[str] = None,
-    ) -> List[CaseMatch]:
-        """Cases this finding belongs with, newest first. Raises on a failed read.
-
-        Not routed through ``_with_repo``: an empty answer on a failed read would
-        launch a new Case for an alert that has one.
-        """
-        with get_db_manager().session_scope() as session:
-            return SharedIOCRepository(session).matching_cases(
-                finding,
-                entity_context_candidates(finding),
-                open=open,
-                limit=limit,
-                exclude_case_id=exclude_case_id,
-            )
-
-    def record_on_case(self, case_id: str, finding: Dict[str, Any]) -> None:
-        """Index a merged finding's entities against its Case's newest investigation."""
+    def record_on_case(self, case_id: str, finding: Dict[str, Any]):
+        """Index a merged finding's entities against the Case's newest investigation."""
         keys = _keys_from_finding(finding)
         if not keys:
             return
-
-        def _record(repo: SharedIOCRepository) -> int:
-            inv_id = repo.newest_investigation_of(case_id)
-            return repo.record(inv_id, keys) if inv_id else 0
-
-        self._with_repo("merge write", _record, None)
+        self._with_repo(
+            "merge write", lambda repo: repo.record_on_case(case_id, keys), None
+        )
 
     def close_investigation(self, investigation_id: str, case_id: Optional[str]):
         """Pick up what the case accumulated while the investigation ran."""
