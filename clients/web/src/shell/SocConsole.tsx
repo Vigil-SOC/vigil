@@ -43,6 +43,7 @@ import { AUTONOMY_CHANGED, DEMO_MODE_CHANGED } from '../screens/settings/useSett
 import NotFoundScreen from '../screens/notfound/NotFoundScreen'
 import OverviewScreen from '../screens/overview/OverviewScreen'
 import TriageScreen from '../screens/triage/TriageScreen'
+import FleetWallScreen from '../screens/monitor/FleetWallScreen'
 import { VigilLogo } from '../shared/VigilLogo'
 import {
   authBypassed,
@@ -54,9 +55,9 @@ import {
   type StatusFold,
 } from './statusLine'
 
-const PRIMARY_KEYS = ['home', 'overview', 'triage', 'cases', 'workflows', 'settings']
+const PRIMARY_KEYS = ['home', 'overview', 'fleet-wall', 'triage', 'cases', 'workflows', 'settings']
 // a rule is drawn only between two groups that both have a visible item
-const NAV_GROUPS = [['home'], ['overview'], ['triage', 'cases'], ['workflows', 'settings']]
+const NAV_GROUPS = [['home'], ['overview', 'fleet-wall'], ['triage', 'cases'], ['workflows', 'settings']]
 const MORE_KEYS = ['dashboard', 'metrics', 'analytics', 'decisions', 'autoops', 'health']
 
 const AUTONOMY_ACT = 'Act · reversible changes on its own'
@@ -64,6 +65,7 @@ const AUTONOMY_ASSIST = 'Assist · asks before changes'
 
 const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Element> = {
   overview: OverviewScreen,
+  'fleet-wall': FleetWallScreen,
   triage: TriageScreen,
   dashboard: DashboardScreen,
   home: HomeScreen,
@@ -472,7 +474,7 @@ function SocConsoleInner() {
   ].filter(Boolean).join(' ')
 
   // these draw their own heading; Home's headline is its heading
-  const ownsHeading = ['home', 'overview', 'triage', 'cases', 'workflows', 'settings'].includes(current)
+  const ownsHeading = ['home', 'overview', 'fleet-wall', 'triage', 'cases', 'workflows', 'settings'].includes(current)
   const showHeading = valid && allowed && !ownsHeading && !wallMode && !viewFull
   const mainClass = ['main', chatOpen ? 'chat-open' : ''].filter(Boolean).join(' ')
   const effectiveChatWidth = viewportWidth <= 600 ? viewportWidth : CHAT_WIDTH
