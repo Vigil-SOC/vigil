@@ -9,7 +9,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
-from sqlalchemy import func, inspect, text
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from core.storage.models import (
@@ -109,15 +109,11 @@ def run_step_counts(session: Session, run_ids: Sequence[str]) -> Dict[str, int]:
 def list_case_audit(session: Session, case_id: str) -> List[CaseAuditLog]:
     """Rows about this case. There is no ``case_id`` column on the table.
 
-    None once the table is gone: a later revision drops it after the copy.
+    None once the table is gone: python -m core.upgrade drops it (#3310).
     """
-    if session.get_bind().dialect.name == "postgresql":
-        present = session.execute(
-            text("SELECT to_regclass('public.case_audit_logs')")
-        ).scalar()
-    else:
-        present = inspect(session.get_bind()).has_table("case_audit_logs")
-    if not present:
+    from core.storage.connection import table_present
+
+    if not table_present(session, "case_audit_logs"):
         return []
     return (
         session.query(CaseAuditLog)
@@ -358,6 +354,9 @@ def purge_all_cases(session: Session) -> PurgeResult:
     session.query(AIDecisionLog).filter(AIDecisionLog.case_id.isnot(None)).delete(
         synchronize_session=False
     )
-    session.query(CaseAuditLog).delete(synchronize_session=False)
+    from core.storage.connection import table_present
+
+    if table_present(session, "case_audit_logs"):
+        session.query(CaseAuditLog).delete(synchronize_session=False)
     session.query(Case).delete(synchronize_session=False)
     return PurgeResult(cases=count, killed_investigation_ids=killed)

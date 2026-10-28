@@ -127,6 +127,7 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     # Old audit stores copied on upgrade (0018_legacy_audit_copy)
     "case.history": _case_history,
     "investigation.log": _investigation_log,
+    "audit.legacy_dropped": "Dropped the old audit stores on upgrade",
     # Agents (core/agents/attribution.py)
     "agent.run.start": _run_start,
     "agent.tool.intent": _tool("Asked to call"),
