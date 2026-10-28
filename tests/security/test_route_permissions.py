@@ -82,6 +82,12 @@ GATED_ROUTES = [
         {"kind": "note", "text": "x"},
         "ai_chat.use",
     ),
+    (
+        "POST",
+        f"/api/v1/agent-runs/{RUN_ID}/directives",
+        {"kind": "approve", "fields": {"checkpoint_id": "cp-1"}},
+        "ai_decisions.approve",
+    ),
     ("POST", "/api/workflows/w-1/execute", {}, "ai_chat.use"),
     ("POST", "/api/claude/chat/stream", {"messages": []}, "ai_chat.use"),
     (

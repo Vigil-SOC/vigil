@@ -164,3 +164,23 @@ class TestWhoMaySend:
         body = {"kind": "approve", "fields": {"checkpoint_id": "apr-1"}}
         assert _post(client, body).status_code == 403
         assert _queues.seen is None
+
+    # The queue casts the id to uuid, but approvals and workflow_runs compare its
+    # text: checked as typed, an upper-case id matched no row and passed four-eyes.
+    def test_four_eyes_checks_the_canonical_run_id(self, client, monkeypatch):
+        from core.response import approval_service
+
+        monkeypatch.setattr(agent_runs_router, "deny_unless", lambda *a, **k: None)
+        asked = []
+        monkeypatch.setattr(
+            approval_service,
+            "four_eyes_refuses",
+            lambda s, r, c, p: asked.append(r) or True,
+        )
+        _queues(monkeypatch)
+        response = client.post(
+            f"/api/agent-runs/{RUN.upper()}/directives",
+            json={"kind": "approve", "fields": {"checkpoint_id": "apr-1"}},
+        )
+        assert response.status_code == 403
+        assert asked == [RUN]
