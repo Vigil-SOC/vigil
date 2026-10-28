@@ -207,7 +207,7 @@ def list_available_tools(
 
 @router.post(
     "/agents/custom/generate",
-    dependencies=[permission_gate("automation.write", introduced=True)],
+    dependencies=[permission_gate("automation.write")],
 )
 async def generate_custom_agent(
     payload: GenerateAgentRequest,

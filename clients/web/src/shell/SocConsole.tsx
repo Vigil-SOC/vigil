@@ -5,7 +5,7 @@ import '../../../../docs/design/console/tokens/tokens.css'
 import '../styles.css'
 import './shell.css'
 import { useAuth } from '../contexts/AuthContext'
-import { approvalsApi, autonomyApi, configApi, consoleApi, federationApi, mcpApi } from '../services/api'
+import { approvalsApi, autonomyApi, configApi, consoleApi, federationApi, mcpApi, orchestratorApi } from '../services/api'
 import { Icon, type IconName } from '../shared/icons'
 import { InfoTip } from '../shared/InfoTip'
 import { PageHead } from '../shared/PageHead'
@@ -25,16 +25,12 @@ import { markConsoleTourSeen, readConsoleTourSeen } from './consoleTourSeen'
 import ErrorBoundary from './ErrorBoundary'
 import { ToastProvider } from './toast'
 import { useDesktopNotifications } from './useDesktopNotifications'
-import { usePendingApprovals } from '../screens/decisions/useDecisions'
 import type { ConsoleScreenGoOptions, ConsoleScreenProps, SettingsSectionKey } from '../shared/types'
 import type { Schema } from '../services/apiTypes'
 import DashboardScreen from '../screens/dashboard/DashboardScreen'
 import CasesScreen from '../screens/cases/CasesScreen'
 import MetricsScreen from '../screens/metrics/MetricsScreen'
-import AnalyticsScreen from '../screens/analytics/AnalyticsScreen'
-import DecisionsScreen from '../screens/decisions/DecisionsScreen'
 import WorkflowsScreen from '../screens/workflows/WorkflowsScreen'
-import AutoOpsScreen from '../screens/autoops/AutoOpsScreen'
 import HealthScreen from '../screens/health/HealthScreen'
 import HomeScreen from '../screens/home/HomeScreen'
 import { HOME_SETUP_HREF, SETUP_HIDDEN_CHANGED, openSetupSteps, readSetupHidden } from '../screens/home/setupHidden'
@@ -57,7 +53,7 @@ import {
 const PRIMARY_KEYS = ['home', 'overview', 'triage', 'cases', 'workflows', 'settings']
 // a rule is drawn only between two groups that both have a visible item
 const NAV_GROUPS = [['home'], ['overview'], ['triage', 'cases'], ['workflows', 'settings']]
-const MORE_KEYS = ['dashboard', 'metrics', 'analytics', 'decisions', 'autoops', 'health']
+const MORE_KEYS = ['dashboard', 'metrics']
 // When the bar runs out of width, screens fold into More from its right end,
 // so what stays on the bar is always its first few screens in order, whichever
 // screen is open. Home never folds.
@@ -73,10 +69,7 @@ const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Eleme
   home: HomeScreen,
   cases: CasesScreen,
   metrics: MetricsScreen,
-  analytics: AnalyticsScreen,
-  decisions: DecisionsScreen,
   workflows: WorkflowsScreen,
-  autoops: AutoOpsScreen,
   health: HealthScreen,
   settings: SettingsScreen,
 }
@@ -85,7 +78,6 @@ const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Eleme
  *  Screens absent here are ungated, and DEV_MODE grants everything. */
 const SCREEN_PERMS: Partial<Record<ConsoleScreenKey, string>> = {
   cases: 'cases.read',
-  decisions: 'ai_decisions.read',
   home: HOME_PERM,
 }
 
@@ -202,10 +194,6 @@ function SocConsoleInner() {
   const [demoOn, setDemoOn] = useState(false)
 
   useDesktopNotifications()
-  // the nav row is on screen from every other view; without this
-  // badge a parked run sat in a tab nobody opened
-  const parked = usePendingApprovals().actions.length
-  // needs-you is uncapped; the decisions badge stays on the pending list
   const [needsYou, setNeedsYou] = useState(0)
 
   const openChat = useCallback((prompt?: string) => {
@@ -232,9 +220,8 @@ function SocConsoleInner() {
   const go = useCallback(
     (next: string, options?: ConsoleScreenGoOptions) => {
       const search = options?.search || ''
-      // Compare the query too, not just the screen: a repeat badged click is a
-      // no-op that used to push a duplicate history entry, and an unbadged
-      // click from ?tab=approvals is a real move that used to be swallowed.
+      // Compare the query too, not just the screen, so a move that only changes
+      // the query is not swallowed.
       if (valid && next === current && search === location.search) return
       navigate({ pathname: `/${next}`, search }, { replace: options?.replace })
     },
@@ -388,10 +375,11 @@ function SocConsoleInner() {
         settled(mcpApi.getStatuses().then((res) => res.data as McpRead)),
         settled(consoleApi.getRoutability().then((res) => res.data as RoutabilityRead)),
         settled(consoleApi.getProcesses().then((res) => res.data)),
-      ]).then(([health, federation, mcp, routability, processes]) => {
+        settled(orchestratorApi.getStatus().then((res) => res.data as { enabled?: boolean })),
+      ]).then(([health, federation, mcp, routability, processes, autoOps]) => {
         inFlight = false
         if (!live) return
-        setStatus(foldStatus({ health, federation, mcp, routability, processes }))
+        setStatus(foldStatus({ health, federation, mcp, routability, processes, autoOps }))
         if (health) setHealth(health)
       })
     }
@@ -479,7 +467,7 @@ function SocConsoleInner() {
 
   const navButton = (item: NavItem) => {
     const [icon, label, key] = item
-    const count = key === 'decisions' ? parked : key === 'home' || key === 'cases' ? needsYou : 0
+    const count = key === 'home' || key === 'cases' ? needsYou : 0
     const active = valid && key === current
     return (
       <button
@@ -490,7 +478,7 @@ function SocConsoleInner() {
         aria-label={count ? `${label} (${count} waiting)` : label}
         onClick={() => {
           setMoreOpen(false)
-          go(key, key === 'decisions' && parked > 0 ? { search: '?tab=approvals' } : undefined)
+          go(key)
         }}
       >
         <Icon name={icon} size={14} />

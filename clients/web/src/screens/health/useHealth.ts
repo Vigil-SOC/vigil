@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { findingsApi, workflowApi } from '../../services/api'
+import { approvalsApi, findingsApi, workflowApi } from '../../services/api'
 import type { ApiFinding, ApiWorkflow } from '../../data/mappers'
+import { errorText } from '../../shared/errorText'
 
 export type Phase = 'loading' | 'ready' | 'error'
 
@@ -209,4 +210,62 @@ export function useProbeScores() {
   }, [reloadKey])
 
   return { ...data, phase, error, reload }
+}
+
+export interface ApprovalAction {
+  action_id: string
+  title?: string
+  description?: string
+  target?: string
+  workflow_run_id?: string
+  workflow_phase_id?: string
+  reason?: string
+  created_at?: string
+  /**
+   * What the agent layer stamped on the approval when it raised it — the
+   * checkpoint id and its class. A compose phase carries neither.
+   */
+  parameters?: Record<string, unknown>
+}
+
+// Polled, because a parked run is waiting on a person and nothing else tells
+// them: a question raised after the tab was opened used to sit there unseen
+// until someone happened to reload.
+const APPROVALS_POLL_MS = 20_000
+
+export function usePendingApprovals() {
+  const [actions, setActions] = useState<ApprovalAction[]>([])
+  const [phase, setPhase] = useState<Phase>('loading')
+  const [error, setError] = useState<string | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
+  const reload = useCallback(() => setReloadKey((k) => k + 1), [])
+
+  useEffect(() => {
+    let cancelled = false
+    setError(null)
+    const tick = () =>
+      approvalsApi
+        .listPending()
+        .then((res) => {
+          if (cancelled) return
+          setActions((res.data?.actions || []) as ApprovalAction[])
+          setPhase('ready')
+        })
+        .catch((e) => {
+          if (cancelled) return
+          // A poll that failed is not an empty queue: keep what was last shown
+          // rather than reporting that nothing is waiting.
+          setError(errorText(e, 'Failed to load approvals'))
+          setPhase((p) => (p === 'ready' ? p : 'error'))
+        })
+
+    void tick()
+    const timer = setInterval(tick, APPROVALS_POLL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [reloadKey])
+
+  return { actions, phase, error, reload }
 }

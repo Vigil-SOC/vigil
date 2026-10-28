@@ -1,26 +1,23 @@
-"""Saving, uploading and deleting a skill needs ``settings.write``.
+"""Saving, uploading and deleting a skill needs ``automation.write``.
 
 A skill's description reaches every agent's system prompt, so a role that may
-not change settings may not write one. The grants come from the seeded roles,
-so a seed change that hands an analyst role ``settings.write`` fails here.
+not change automation may not write one. The grants are the built-ins as the
+catalog revision leaves them, so a change that hands an analyst role
+``automation.write`` fails here.
 """
 
 from __future__ import annotations
-
-import json
-import re
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from core.auth.auth_service import AuthService
+from core.auth.permissions import CATALOG
 from core.config import Settings
 from tests.unit.skills.conftest import skills_app
 
 pytestmark = pytest.mark.unit
 
-SEED = Path(__file__).resolve().parents[3] / "infra/database/init/06_auth_tables.sql"
 EXPECTED = {
     "role-viewer": 403,
     "role-analyst": 403,
@@ -28,18 +25,7 @@ EXPECTED = {
     "role-manager": 200,
     "role-admin": 200,
 }
-
-
-def _seeded_grants() -> dict[str, dict[str, bool]]:
-    rows = re.findall(
-        r"\('(role-[a-z-]+)', '[^']*', '[^']*', '(\{.*?\})', true\)",
-        SEED.read_text(encoding="utf-8"),
-        re.S,
-    )
-    return {role: json.loads(grants) for role, grants in rows}
-
-
-GRANTS = _seeded_grants()
+GRANTS = CATALOG["builtins"]
 
 
 def test_every_seeded_role_is_expected():
@@ -47,7 +33,7 @@ def test_every_seeded_role_is_expected():
 
 
 @pytest.mark.parametrize("role", sorted(EXPECTED))
-def test_only_a_role_that_may_change_settings_writes_a_skill(
+def test_only_a_role_that_may_change_automation_writes_a_skill(
     role, tmp_path, monkeypatch
 ):
     root = tmp_path / "operator"
@@ -58,11 +44,6 @@ def test_only_a_role_that_may_change_settings_writes_a_skill(
         AuthService,
         "check_permission",
         lambda _user_id, permission, session=None: GRANTS[role].get(permission) is True,
-    )
-    # The seed this test reads has not been through 0008. The fallback keeps
-    # today's settings.write gate, which is what the expectations assert.
-    monkeypatch.setattr(
-        "core.auth.permissions.catalog_revision_applied", lambda session: False
     )
     client = TestClient(skills_app())
 

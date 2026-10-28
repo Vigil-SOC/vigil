@@ -54,9 +54,6 @@ vi.mock('../../services/api', () => ({
     replayRun: vi.fn(),
     verifyRun: vi.fn(),
   },
-  orchestratorApi: {
-    exportInvestigation: vi.fn(),
-  },
   findingsApi: { getById: vi.fn() },
   caseSearchApi: { search: vi.fn() },
   default: { get: vi.fn(() => Promise.resolve({ data: {} })) },

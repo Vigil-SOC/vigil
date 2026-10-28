@@ -734,13 +734,6 @@
       max-height: clamp(360px, calc(100vh - 280px), 1800px);
    }
 
-   /* Auto Ops investigation queue: bounded so the controls bar + KPI strip stay
-     put and only the rows scroll (offset covers the page heading + bar-row + KPI strip +
-     the card header above). */
-   .list-scroll.list-scroll-autoops {
-      max-height: clamp(240px, calc(100vh - 300px), 1600px);
-   }
-
    table.tbl {
       width: 100%;
       border-collapse: collapse;
@@ -2681,72 +2674,6 @@
       gap: 4px;
    }
 
-   /* ---------- AI Decisions ---------- */
-   .confmeter {
-      display: inline-flex;
-      align-items: center;
-      gap: 9px;
-   }
-
-   .confmeter .track {
-      width: 64px;
-      height: 6px;
-      border-radius: 4px;
-      background: var(--bg-3);
-      overflow: hidden;
-   }
-
-   .confmeter .track>i {
-      display: block;
-      height: 100%;
-      border-radius: 4px;
-      background: var(--accent);
-   }
-
-   .confmeter .track>i.hi {
-      background: var(--ok);
-   }
-
-   .confmeter .track>i.lo {
-      background: var(--high);
-   }
-
-   .confmeter .num {
-      font-family: var(--mono);
-      font-size: 12px;
-      color: var(--tx-2);
-   }
-
-   .outcome {
-      font-size: 11.5px;
-      font-weight: 600;
-      padding: 3px 9px;
-      border-radius: 5px;
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-   }
-
-   .outcome.agree {
-      background: var(--ok-dim);
-      color: var(--ok);
-   }
-
-   .outcome.disagree {
-      background: var(--crit-dim);
-      color: var(--crit);
-   }
-
-   .outcome.modify {
-      background: var(--med-dim);
-      color: var(--med);
-   }
-
-   .outcome.pending {
-      background: var(--high-dim);
-      color: var(--high);
-   }
-
    .btn.danger {
       border-color: var(--crit);
       color: var(--crit);
@@ -2786,130 +2713,6 @@
       border-color: var(--accent-line);
    }
 
-   /* ---------- Analytics report + insights rail ---------- */
-   .report {
-      display: flex;
-      align-items: flex-start;
-      min-height: 100%;
-   }
-
-   .insights-rail {
-      flex: 0 0 330px;
-      border-left: 1px solid var(--line);
-      background: var(--bg-1);
-      position: sticky;
-      top: 0;
-      align-self: flex-start;
-      height: calc(100vh - 60px);
-      display: flex;
-      flex-direction: column;
-   }
-
-   .insights-rail .ir-head {
-      display: flex;
-      align-items: center;
-      gap: 9px;
-      padding: 10px 18px;
-      min-height: 60px;
-      box-sizing: border-box;
-      border-bottom: 1px solid var(--line);
-   }
-
-   .insights-rail .ir-head h3 {
-      font-size: 14.5px;
-   }
-
-   .insights-rail .ir-head .ico {
-      width: 26px;
-      height: 26px;
-      border-radius: 7px;
-      background: var(--accent-dim);
-      color: var(--accent-2);
-      display: grid;
-      place-items: center;
-   }
-
-   .insights-rail .ir-head .ico svg {
-      width: 15px;
-      height: 15px;
-   }
-
-   .insights-rail .ir-body {
-      padding: 14px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      overflow-y: auto;
-      flex: 1;
-   }
-
-   .insight {
-      background: var(--bg-2);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 13px 14px;
-   }
-
-   .insight .it-h {
-      display: flex;
-      align-items: flex-start;
-      gap: 9px;
-   }
-
-   .insight .it-dot {
-      width: 9px;
-      height: 9px;
-      border-radius: 50%;
-      margin-top: 5px;
-      flex: 0 0 auto;
-   }
-
-   .insight.crit .it-dot {
-      background: var(--crit);
-   }
-
-   .insight.high .it-dot {
-      background: var(--high);
-   }
-
-   .insight.ok .it-dot {
-      background: var(--ok);
-   }
-
-   .insight.med .it-dot {
-      background: var(--accent);
-   }
-
-   .insight .it-title {
-      font-size: 13px;
-      font-weight: 600;
-      line-height: 1.35;
-      flex: 1;
-   }
-
-   .insight .conf {
-      font-family: var(--mono);
-      font-size: 10.5px;
-      color: var(--tx-3);
-      border: 1px solid var(--line);
-      border-radius: 5px;
-      padding: 2px 6px;
-      white-space: nowrap;
-   }
-
-   .insight .it-body {
-      font-size: 12px;
-      color: var(--tx-3);
-      line-height: 1.5;
-      margin-top: 8px;
-   }
-
-   .insight .it-time {
-      font-size: 11px;
-      color: var(--tx-faint);
-      margin-top: 8px;
-   }
-
    .range-tabs {
       display: inline-flex;
       background: var(--bg-2);
@@ -2930,167 +2733,6 @@
    .range-tabs button.active {
       background: var(--accent);
       color: var(--ac-tx);
-   }
-
-   .mini-list .ml-row {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 9px 0;
-      border-bottom: 1px solid var(--line-soft);
-      font-size: 13px;
-   }
-
-   .mini-list .ml-row:last-child {
-      border: none;
-   }
-
-   .mini-list .ml-name {
-      font-family: var(--mono);
-      font-size: 12.5px;
-      color: var(--tx-2);
-   }
-
-   .mini-list .ml-kind {
-      font-size: 11px;
-      color: var(--tx-faint);
-   }
-
-   .mini-list .ml-val {
-      margin-left: auto;
-      font-weight: 600;
-   }
-
-   .timeheat {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-   }
-
-   .th-hours {
-      display: grid;
-      grid-template-columns: 38px repeat(24, 1fr);
-      gap: 3px;
-   }
-
-   .th-hours span {
-      font-size: 9.5px;
-      color: var(--tx-faint);
-      text-align: center;
-   }
-
-   .th-row {
-      display: grid;
-      grid-template-columns: 38px repeat(24, 1fr);
-      gap: 3px;
-      align-items: center;
-   }
-
-   .th-row .th-day {
-      font-size: 11px;
-      color: var(--tx-3);
-   }
-
-   .th-cell {
-      aspect-ratio: 1;
-      border-radius: 3px;
-      background: var(--bg-3);
-      transition: transform .1s;
-   }
-
-   .th-cell:hover {
-      transform: scale(1.25);
-      outline: 1px solid var(--accent-line);
-   }
-
-   .th-wrap {
-      position: relative;
-   }
-
-   .th-legend {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin-top: 14px;
-      font-size: 11px;
-      color: var(--tx-3);
-   }
-
-   .th-legend .th-leg-cap {
-      color: var(--tx-faint);
-   }
-
-   .th-legend .th-leg-scale {
-      display: inline-flex;
-      gap: 3px;
-   }
-
-   .th-legend .th-leg-scale i {
-      width: 14px;
-      height: 14px;
-      border-radius: 3px;
-   }
-
-   .th-legend .th-leg-sep {
-      width: 1px;
-      height: 16px;
-      background: var(--line);
-      margin: 0 4px;
-   }
-
-   .th-legend .th-leg-key {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-   }
-
-   .th-legend .th-leg-key i {
-      width: 11px;
-      height: 11px;
-      border-radius: 3px;
-   }
-
-   .th-tip {
-      position: absolute;
-      z-index: 20;
-      pointer-events: none;
-      transform: translate(12px, -50%);
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      box-shadow: 0 8px 24px -16px var(--shadow);
-      padding: 8px 10px;
-      min-width: 120px;
-   }
-
-   .th-tip .th-tip-h {
-      font-size: 11.5px;
-      font-weight: 600;
-      color: var(--tx-1);
-      margin-bottom: 5px;
-   }
-
-   .th-tip .th-tip-row {
-      display: flex;
-      justify-content: space-between;
-      gap: 14px;
-      font-size: 11px;
-      color: var(--tx-3);
-      padding: 1px 0;
-   }
-
-   .th-tip .th-tip-row b {
-      font-family: var(--mono);
-      color: var(--tx-2);
-   }
-
-   .th-tip .th-tip-row.crit b {
-      color: var(--crit);
-   }
-
-   .th-tip .th-tip-row.high b {
-      color: var(--high);
    }
 
    /* ---------- ATT&CK tab ---------- */
@@ -7533,3 +7175,20 @@
 .fd-kv dt { color: var(--tx-3); }
 .fd-kv dd { margin: 0; color: var(--tx); font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
 .fd-muted { color: var(--tx-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* AutoOps off: said on every screen that would otherwise read as work moving */
+.autoops-off {
+   display: flex;
+   align-items: center;
+   gap: 10px;
+   margin: 0 0 14px;
+   padding: 10px 14px;
+   border-radius: 10px;
+   background: var(--fair-bg);
+   border: 1px solid var(--fair-ln);
+   color: var(--tx0);
+   font-size: 13px;
+   line-height: 1.45;
+}
+.autoops-off svg { color: var(--fair); flex-shrink: 0; }
+.autoops-off .btn { margin-left: auto; }

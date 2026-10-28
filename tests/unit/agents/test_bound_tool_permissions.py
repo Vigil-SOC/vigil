@@ -54,7 +54,7 @@ WRITE_TOOLS = (
     ("add_case_task", "cases.write"),
     ("update_case_task", "cases.write"),
     ("link_related_cases", "cases.write"),
-    ("escalate_case", "cases.write"),
+    ("escalate_case", "cases.assign"),  # checked before cases.write
     ("close_case", "cases.write"),
 )
 

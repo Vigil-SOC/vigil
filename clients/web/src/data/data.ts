@@ -8,10 +8,7 @@ export type ConsoleScreenKey =
   | 'home'
   | 'cases'
   | 'metrics'
-  | 'analytics'
-  | 'decisions'
   | 'workflows'
-  | 'autoops'
   | 'health'
   | 'settings'
 
@@ -21,20 +18,15 @@ export interface NavGate {
   integration?: string
 }
 
-/** Nothing is gated today. Auto Ops is deliberately always-visible — gating it
- *  made it vanish confusingly. */
+/** Nothing is gated today. */
 export const NAV: [IconName, string, ConsoleScreenKey, NavGate?][] = [
   ['home', 'Home', 'home'],
   ['graph', 'Overview', 'overview'],
   ['clock', 'Triage queue', 'triage'],
-  ['grid', 'Dashboard', 'dashboard'],
+  ['grid', 'Findings', 'dashboard'],
   ['folder', 'Cases', 'cases'],
   ['bars', 'Case Metrics', 'metrics'],
-  ['pie', 'Analytics', 'analytics'],
-  ['brain', 'AI Decisions', 'decisions'],
   ['flow', 'Agents & workflows', 'workflows'],
-  ['bot', 'Auto Ops', 'autoops'],
-  ['chart', 'Health', 'health'],
   ['gear', 'Settings', 'settings'],
 ]
 
@@ -107,14 +99,11 @@ export interface CaseRow {
 export const TITLES: Record<ConsoleScreenKey, [string, string]> = {
   overview: ['Overview', 'What arrived today and where it went'],
   triage: ['Triage queue', 'What intake did with what arrived'],
-  dashboard: ['Dashboard', 'Security operations overview'],
+  dashboard: ['Findings', 'Every finding, with ATT&CK and exclusions'],
   home: ['Home', 'What needs a person'],
   cases: ['Cases', 'Manage investigation cases'],
   metrics: ['Case Metrics', 'Real-time SOC performance analytics'],
-  analytics: ['Analytics Dashboard', 'Security operations analytics'],
-  decisions: ['AI Decisions', 'Review and provide feedback for AI decisions'],
   workflows: ['Agents & workflows', 'How Vigil works a case. Workflows are the plays, agents do the work, skills are what agents know how to do, and tool permissions decide what they may change on their own.'],
-  autoops: ['Auto Ops', 'Autonomous operations — master orchestrator and sub-agent investigations'],
   health: ['Health', 'Operational health — approvals waiting, recent workflow runs, probe scores'],
   settings: ['Settings', 'Configure Vigil — AI, integrations, users and platform'],
 }

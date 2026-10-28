@@ -814,8 +814,7 @@ def _role_entry(role: Role, holders: int) -> dict:
 
 
 def _require_permission(current_user: User, permission: str, session) -> None:
-    # roles.manage is new in 0008; before it, nobody holds it and it stays shut.
-    deny_unless(current_user.user_id, permission, session, before_revision=permission)
+    deny_unless(current_user.user_id, permission, session)
 
 
 def _known(permissions: dict) -> dict:

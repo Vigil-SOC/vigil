@@ -33,6 +33,10 @@ def _patch(monkeypatch, stored=None):
         lambda case_id: {"case_id": case_id, "assignee": stored},
     )
     monkeypatch.setattr(cases.data_service, "update_case", _update)
+    # The caller holds cases.assign; the role gate is not under test.
+    monkeypatch.setattr(
+        "core.auth.auth_service.AuthService.check_permission", lambda *_a, **_k: True
+    )
     return cases, captured
 
 
