@@ -500,6 +500,36 @@ describe('SocConsole', () => {
     expect(screen.getByRole('button', { name: 'More' })).toHaveClass('active')
   })
 
+  it('folds screens into More from the right end of the bar when it is too narrow', async () => {
+    // jsdom has no layout: the bar is 500px wide and every button takes 100px.
+    const scroll = vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('vg-nav') ? this.querySelectorAll(':scope > .vg-nav-btn, :scope > .vg-more > .vg-nav-btn').length * 100 : 0
+    })
+    const client = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('vg-nav') ? 500 : 0
+    })
+    try {
+      renderConsole('/overview')
+      const nav = await screen.findByRole('navigation', { name: 'Primary' })
+      const onBar = () => within(nav).getAllByRole('button').map((b) => (b.getAttribute('aria-label') ?? '').replace(/ \(.*\)$/, ''))
+      const pinned = onBar()
+      expect(pinned).toEqual(['Home', 'Overview', 'Triage queue', 'Cases', 'More'])
+
+      // opening a folded screen leaves the bar as it was and lights up More
+      for (const folded of ['Settings', 'Agents & workflows']) {
+        fireEvent.click(within(nav).getByRole('button', { name: 'More' }))
+        const menu = screen.getByRole('menu', { name: 'More screens' })
+        expect(within(menu).getAllByRole('button').slice(0, 2).map((b) => b.getAttribute('aria-label'))).toEqual(['Agents & workflows', 'Settings'])
+        fireEvent.click(within(menu).getByRole('button', { name: folded }))
+        await waitFor(() => expect(within(nav).getByRole('button', { name: 'More' })).toHaveClass('active'))
+        expect(onBar()).toEqual(pinned)
+      }
+    } finally {
+      scroll.mockRestore()
+      client.mockRestore()
+    }
+  })
+
   it('draws a rule between nav groups, never two together when Cases is hidden', () => {
     const rules = () =>
       Array.from(screen.getByRole('navigation', { name: 'Primary' }).children).map((el) =>
