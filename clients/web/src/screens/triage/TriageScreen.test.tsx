@@ -2,12 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import TriageScreen from './TriageScreen'
-import { orchestratorApi, triageApi, type TriagePayload } from '../../services/api'
+import { configApi, triageApi, type TriagePayload } from '../../services/api'
+import type { ApiMock } from '../../test/apiMock'
 
 vi.mock('../../services/api', () => ({
   triageApi: { get: vi.fn() },
-  orchestratorApi: { getStatus: vi.fn(() => Promise.resolve({ data: { enabled: true } })) },
-}))
+  configApi: { getOrchestrator: vi.fn(() => Promise.resolve({ data: { enabled: true } })) },
+}) satisfies ApiMock)
 
 function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
   return {
@@ -98,11 +99,11 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
 
 const openCase = vi.fn()
 
-function renderScreen(path = '/triage', go = vi.fn()) {
+function renderScreen(path = '/triage', goSettings = vi.fn()) {
   render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/triage" element={<TriageScreen openChat={vi.fn()} go={go} goSettings={vi.fn()} openCase={openCase} setViewFull={vi.fn()} />} />
+        <Route path="/triage" element={<TriageScreen openChat={vi.fn()} go={vi.fn()} goSettings={goSettings} openCase={openCase} setViewFull={vi.fn()} />} />
         <Route path="/cases" element={<p>Cases page</p>} />
       </Routes>
     </MemoryRouter>,
@@ -111,19 +112,19 @@ function renderScreen(path = '/triage', go = vi.fn()) {
 
 describe('TriageScreen', () => {
   it('says AutoOps is off where the queue would read as waiting its turn', async () => {
-    vi.mocked(orchestratorApi.getStatus).mockResolvedValueOnce({ data: { enabled: false } } as never)
+    vi.mocked(configApi.getOrchestrator).mockResolvedValueOnce({ data: { enabled: false } } as never)
     const queued = { ...payload().rows[0], state: 'queued', state_label: 'Waiting for a slot', decided_at: null }
     vi.mocked(triageApi.get).mockResolvedValue({ data: payload({ rows: [queued] }) } as never)
-    const go = vi.fn()
-    renderScreen('/triage', go)
+    const goSettings = vi.fn()
+    renderScreen('/triage', goSettings)
 
     const banner = (await screen.findByText('AutoOps is off.')).closest('[role="status"]') as HTMLElement
     expect(banner).toHaveTextContent('no agent picks them up until it is on')
     expect(screen.getByText(/pick alerts up only while AutoOps is on/)).toBeInTheDocument()
     expect(await screen.findByText('AutoOps is off', { selector: '.tq-pill' })).toBeInTheDocument()
     expect(screen.queryByText('Waiting for a slot', { selector: '.tq-pill' })).not.toBeInTheDocument()
-    fireEvent.click(within(banner).getByRole('button', { name: /Open AutoOps/ }))
-    expect(go).toHaveBeenCalledWith('autoops')
+    fireEvent.click(within(banner).getByRole('button', { name: 'Open Limits & autonomy →' }))
+    expect(goSettings).toHaveBeenCalledWith('autoinvestigate')
     cleanup()
   })
 

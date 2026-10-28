@@ -125,9 +125,6 @@ vi.mock('../services/api', () => ({
       }),
     listCustom: () => Promise.resolve({ data: { agents: [] } }),
   },
-  orchestratorApi: {
-    getStatus: () => Promise.resolve({ data: { enabled: true } }),
-  },
   mcpApi: {
     listServers: () => Promise.resolve({ data: { servers: [] } }),
     getStatuses: () => Promise.resolve({
