@@ -240,8 +240,8 @@ async def purge_investigations(
     orch = _get_orchestrator()
     if not orch:
         raise HTTPException(status_code=503, detail="Orchestrator not available")
-    # The purge cascades to investigation_logs; config_audit_log is not
-    # touched by it, so this row records who did it.
+    # The purge keeps investigation_logs and the investigations they name;
+    # config_audit_log is not touched by it, so this row records who did it.
     await asyncio.to_thread(
         get_config_service(user_id=str(current_user.user_id)).record_audit,
         config_type="orchestrator",

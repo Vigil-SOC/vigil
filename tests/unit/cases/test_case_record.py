@@ -631,3 +631,16 @@ def test_a_legacy_row_copied_to_the_trail_is_shown_once():
     assert ids == {"trail:1", "audit:8"}
     ids = {r["id"] for r in merge_record([], audits)}
     assert ids == {"audit:7", "audit:8"}
+
+
+def test_an_unlinked_copied_row_keeps_the_human_chip():
+    copy = _entry(
+        1,
+        "2026-06-02T00:00:00+00:00",
+        None,
+        None,
+        "Changed escalation on the case",
+        legacy={"table": "case_audit_logs", "id": 7},
+    )
+    (row,) = merge_record([], [], trail=[copy])
+    assert row["kind"] == "human"
