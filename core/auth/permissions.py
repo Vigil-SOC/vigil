@@ -589,12 +589,19 @@ def permission_refusal(permission: str) -> Optional[dict[str, str]]:
 
     A credential has no permissions of its own. The person it names is checked
     against their live role, so a demotion or a role edit applies on the next
-    call. No bound principal is a system run — one the orchestrator or a
-    handoff started — which is not a role to consult. A person who started a
-    run is named on it, and this check is theirs.
+    call. A run no person started is bound by its signed run claims, not a
+    role: the autonomy ceiling governs it at invoke. Nothing bound at all is
+    refused (#3306).
     """
+    from core.agents.attribution import current_claims
+
     caller = current_caller()
-    if caller is None or username_has_permission(caller, permission):
+    if caller is None:
+        if current_claims() is not None:
+            return None
+        logger.warning("unbound caller refused: %s required", permission)
+        return {"error": f"no principal is bound: {permission} required"}
+    if username_has_permission(caller, permission):
         return None
     logger.warning("%s refused: %s required", caller, permission)
     return {"error": f"{caller} may not do this: {permission} required"}

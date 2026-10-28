@@ -15,6 +15,7 @@ from sqlalchemy.schema import CreateTable
 
 from core.agents import internal_auth, tools_router
 from core.agents.tool_registry import execute_backend_tool
+from core.auth import tool_principal
 from core.integrations.mcp.registry import MCPRegistry
 from core.llm.tool_schemas import ALL_TOOLS
 from core.storage.models import (
@@ -124,6 +125,7 @@ async def test_store_failure_is_backend_error(monkeypatch):
             tool="case_records",
             args={"case_id": "c-1"},
             bounds={"max_rows": 5, "timeout_ms": 5000},
+            principal=tool_principal.mint(agent_id="agent:hunt", run_id="run-1"),
         ),
         "Bearer shhh",
         MCPRegistry(),

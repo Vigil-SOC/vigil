@@ -12,9 +12,12 @@ export type ToolPrincipal = string;
 
 // timeout and unavailable are genuine visibility gaps; refused and invalid_args
 // are defects and must never be recorded as one (CONTEXT.md, Visibility gap).
+// denied is neither: the call was sound, and whom it runs as may not make it now
+// -- the autonomy ceiling, or a person's live role. A run parks on its detail (#3306).
 export type ToolFailure =
   | { kind: "invalid_args"; detail: string }
   | { kind: "refused"; detail: string }
+  | { kind: "denied"; detail: string }
   | { kind: "timeout"; timeoutMs: number }
   | { kind: "unavailable"; detail: string }
   | { kind: "backend_error"; detail: string };

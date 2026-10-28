@@ -21,12 +21,19 @@ from core.cases.case_workflow_service import CaseWorkflowService
 from core.integrations.mcp import in_process
 from core.integrations.mcp.registry import MCPRegistry
 from core.integrations.mcp.surface import current_caller
+from core.response import ceiling
+from core.response.ceiling import Ceiling
 from core.storage.models import Role, User
 from core.storage.models.base import Base
 from tools.mcp import vigil
 
 BOUNDS = {"max_rows": 2, "timeout_ms": 500}
 AUTH = {"Authorization": "Bearer shhh"}
+# Every call names whom it acts for (#3306): a run no person started, by default.
+RUN = tool_principal.mint(
+    agent_id="agent:hunt", run_id="run-1", origin="schedule", ttl=timedelta(hours=1)
+)
+PERSON = tool_principal.mint("nestor")
 
 
 # roles.permissions is JSONB, which SQLite cannot render. SQLite only.
@@ -102,8 +109,12 @@ def _raises(monkeypatch, error):
     monkeypatch.setattr(tools_router, "execute_backend_tool", fake)
 
 
-def _invoke(client, tool="list_findings", args=None, bounds=None, headers=AUTH):
+def _invoke(
+    client, tool="list_findings", args=None, bounds=None, headers=AUTH, principal=RUN
+):
     body = {"tool": tool, "args": args or {}, "bounds": bounds or BOUNDS}
+    if principal is not None:
+        body["principal"] = principal
     return client.post("/internal/tools/invoke", json=body, headers=headers)
 
 
@@ -185,7 +196,7 @@ class TestBoundsAtTheSource:
 class TestFailureKinds:
     def test_an_unknown_tool_is_a_defect_not_a_gap(self, client, monkeypatch):
         _answers(monkeypatch, None, handled=False)
-        body = _invoke(client, tool="no_such_tool").json()
+        body = _invoke(client, tool="no_such_tool", principal=PERSON).json()
         assert body["failure"]["kind"] == "refused"
 
     # backend_error, not refused: the tool ran and could not answer, which is a
@@ -400,7 +411,7 @@ class TestMCPFallthrough:
         _no_backend(monkeypatch)
         _mcp(monkeypatch, None, handled=False)
 
-        body = _invoke(client, tool="no_such_tool").json()
+        body = _invoke(client, tool="no_such_tool", principal=PERSON).json()
         assert body["failure"]["kind"] == "refused"
 
     def test_a_server_that_cannot_be_reached_is_a_visibility_gap(
@@ -509,9 +520,10 @@ class TestPrincipal:
         # The tool does not choose Trust. close_case reads the session, and a
         # verified tool principal is not the console cookie.
 
-    def test_a_hunt_sends_no_principal_and_records_an_agent(self, closes):
+    def test_a_hunt_sends_its_run_token_and_records_an_agent(self, closes, ceiling_is):
         client, recorded = closes
-        assert _close_case(client).json()["ok"] is True
+        ceiling_is(Ceiling())
+        assert _close_case(client, principal=RUN).json()["ok"] is True
         assert recorded == ["agent"]
 
     @pytest.mark.parametrize(
@@ -593,6 +605,7 @@ class TestSkillReadRecording:
             "args": args,
             "bounds": BOUNDS,
             "agent_id": agent_id,
+            "principal": RUN,
         }
         return client.post("/internal/tools/invoke", json=body, headers=AUTH)
 
@@ -641,7 +654,13 @@ class TestDirectActionApproval:
     ARGS = {"machine_id": "LAB-HOST-01", "comment": "contain"}
 
     def _post(self, client, **extra):
-        body = {"tool": self.TOOL, "args": dict(self.ARGS), "bounds": BOUNDS, **extra}
+        body = {
+            "tool": self.TOOL,
+            "args": dict(self.ARGS),
+            "bounds": BOUNDS,
+            "principal": PERSON,
+            **extra,
+        }
         return client.post("/internal/tools/invoke", json=body, headers=AUTH)
 
     def _served(self, monkeypatch):
@@ -711,7 +730,9 @@ class TestDirectActionApproval:
         seen = self._served(monkeypatch)
 
         tool = "microsoft-defender_mde_get_machine"
-        body = _invoke(client, tool=tool, args={"machine_id": "h"}).json()
+        body = _invoke(
+            client, tool=tool, args={"machine_id": "h"}, principal=PERSON
+        ).json()
 
         assert body["ok"] is True
         assert seen["name"] == tool
@@ -719,7 +740,213 @@ class TestDirectActionApproval:
     def test_an_unclassified_tool_needs_an_approval(self, client, monkeypatch):
         seen = self._served(monkeypatch)
 
-        body = _invoke(client, tool="okta_get_user", args={"id": "u"}).json()
+        body = _invoke(
+            client, tool="okta_get_user", args={"id": "u"}, principal=PERSON
+        ).json()
 
         assert body["failure"]["kind"] == "refused"
         assert seen == {}
+
+
+# --- The ceiling at the invoke door (#3306) -----------------------------------
+
+
+@pytest.fixture
+def ceiling_is(monkeypatch):
+    """Sets the stored ceiling the invoke door reads; the environment locks nothing."""
+    monkeypatch.setattr(ceiling, "environment_locks_act", lambda settings=None: False)
+
+    def _set(stored):
+        monkeypatch.setattr(ceiling, "read_stored_ceiling", lambda: (stored, True))
+
+    return _set
+
+
+@pytest.fixture
+def trail(monkeypatch):
+    """The trail entries written, in order."""
+    from core.agents import attribution
+
+    written = []
+
+    def _append(payload):
+        written.append(payload)
+        return True
+
+    monkeypatch.setattr(attribution, "append_now", _append)
+    monkeypatch.setattr(tools_router, "append_now", _append)
+    monkeypatch.setattr(attribution, "phase_actor", lambda run_id: None)
+    return written
+
+
+def _denials(written):
+    return [entry for entry in written if entry.get("outcome") == "denied"]
+
+
+class TestCeilingAtTheDoor:
+    ISOLATE = "microsoft-defender_mde_isolate"
+
+    def _outside(self, monkeypatch):
+        seen = []
+
+        async def _run(name, args, seconds, registry):
+            seen.append(name)
+            return [{"done": True}], True
+
+        _no_backend(monkeypatch)
+        monkeypatch.setattr(tools_router, "execute_mcp_tool", _run)
+        # An approval is never consulted for a run no person started.
+        monkeypatch.setattr(
+            tools_router.ApprovalService,
+            "list_actions",
+            lambda self, **kwargs: pytest.fail("an approval was read"),
+        )
+        return seen
+
+    def test_no_principal_is_refused_and_recorded(self, client, monkeypatch, trail):
+        seen = self._outside(monkeypatch)
+
+        body = _invoke(client, tool="list_findings", principal=None).json()
+
+        assert body["failure"]["kind"] == "refused"
+        assert seen == []
+        assert _denials(trail) == [
+            {
+                "action": "agent.tool.outcome",
+                "actor": "system",
+                "tool": "list_findings",
+                "outcome": "denied",
+                "reason": "no principal",
+            }
+        ]
+
+    def test_isolate_with_act_reversible_off_is_denied_against_the_agent(
+        self, client, monkeypatch, stored_tool_classes, ceiling_is, trail
+    ):
+        stored_tool_classes[self.ISOLATE] = "reversible"
+        ceiling_is(Ceiling(act_reversible=False))
+        seen = self._outside(monkeypatch)
+
+        body = _invoke(client, tool=self.ISOLATE, args={"machine_id": "h"}).json()
+
+        assert body["failure"]["kind"] == "denied"
+        assert "reversible" in body["failure"]["detail"]
+        assert seen == []
+        [entry] = _denials(trail)
+        assert entry["actor"] == "agent:hunt"
+        assert entry["tool"] == self.ISOLATE
+
+    def test_isolate_with_act_reversible_on_runs_with_no_approval(
+        self, client, monkeypatch, stored_tool_classes, ceiling_is, trail
+    ):
+        stored_tool_classes[self.ISOLATE] = "reversible"
+        ceiling_is(Ceiling(act_reversible=True))
+        seen = self._outside(monkeypatch)
+
+        body = _invoke(client, tool=self.ISOLATE, args={"machine_id": "h"}).json()
+
+        assert body["ok"] is True
+        assert seen == [self.ISOLATE]
+        assert _denials(trail) == []
+
+    def test_irreversible_needs_its_own_flag(
+        self, client, monkeypatch, stored_tool_classes, ceiling_is
+    ):
+        stored_tool_classes["okta_delete_user"] = "irreversible"
+        ceiling_is(Ceiling(act_reversible=True))
+        self._outside(monkeypatch)
+
+        body = _invoke(client, tool="okta_delete_user", args={"id": "u"}).json()
+
+        assert body["failure"]["kind"] == "denied"
+
+    def test_an_unclassified_tool_is_denied_with_act_reversible_on(
+        self, client, monkeypatch, stored_tool_classes, ceiling_is
+    ):
+        ceiling_is(Ceiling(act_reversible=True, act_irreversible=True))
+        seen = self._outside(monkeypatch)
+
+        body = _invoke(client, tool="okta_get_user", args={"id": "u"}).json()
+
+        assert body["failure"]["kind"] == "denied"
+        assert "unclassified" in body["failure"]["detail"]
+        assert seen == []
+
+    def test_stopped_refuses_a_vigil_write(self, client, monkeypatch, ceiling_is):
+        ceiling_is(Ceiling(stopped=True))
+        ran = []
+
+        async def _backend(name, args, **kwargs):
+            ran.append(name)
+            return {"ok": True}, True
+
+        monkeypatch.setattr(tools_router, "execute_backend_tool", _backend)
+
+        body = _invoke(client, tool="update_case", args={"case_id": "c-1"}).json()
+
+        assert body["failure"] == {"kind": "denied", "detail": "Stopped"}
+        assert ran == []
+
+    def test_stopped_still_runs_a_vigil_read(self, client, monkeypatch, ceiling_is):
+        ceiling_is(Ceiling(stopped=True))
+        _answers(monkeypatch, [{"finding_id": "f-1"}])
+
+        assert _invoke(client, tool="get_finding").json()["ok"] is True
+
+    def test_read_unverified_runs_while_stopped_with_both_flags_off(
+        self, client, monkeypatch, stored_tool_classes, ceiling_is
+    ):
+        stored_tool_classes["okta_get_user"] = "read_unverified"
+        ceiling_is(Ceiling(stopped=True))
+        seen = self._outside(monkeypatch)
+
+        body = _invoke(client, tool="okta_get_user", args={"id": "u"}).json()
+
+        assert body["ok"] is True
+        assert seen == ["okta_get_user"]
+
+    def test_an_unreadable_ceiling_grants_nothing(
+        self, client, monkeypatch, stored_tool_classes
+    ):
+        stored_tool_classes[self.ISOLATE] = "reversible"
+
+        def _down():
+            raise RuntimeError("database is down")
+
+        monkeypatch.setattr(ceiling, "read_stored_ceiling", _down)
+        self._outside(monkeypatch)
+
+        body = _invoke(client, tool=self.ISOLATE, args={"machine_id": "h"}).json()
+
+        assert body["failure"]["kind"] == "denied"
+
+    def test_a_demoted_person_is_denied_naming_the_permission(
+        self, client, monkeypatch, trail
+    ):
+        _grant(monkeypatch, "nestor", {"cases.read": True})
+        ran = []
+
+        async def _backend(name, args, **kwargs):
+            ran.append(name)
+            return {"ok": True}, True
+
+        monkeypatch.setattr(tools_router, "execute_backend_tool", _backend)
+        hunt = tool_principal.mint(
+            "nestor",
+            person_id="u-1",
+            agent_id="agent:hunt",
+            run_id="run-2",
+            origin="person",
+            ttl=timedelta(hours=1),
+        )
+
+        body = _invoke(
+            client, tool="update_case", args={"case_id": "c-1"}, principal=hunt
+        ).json()
+
+        assert body["failure"]["kind"] == "denied"
+        assert "cases.write" in body["failure"]["detail"]
+        assert ran == []
+        [entry] = _denials(trail)
+        assert entry["actor"] == "agent:hunt"
+        assert entry["on_behalf_of"] == "u-1"

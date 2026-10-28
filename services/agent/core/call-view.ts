@@ -120,7 +120,7 @@ interface DispatchCalls {
 
 // A failed call's result is `failed: <kind> -- <detail>` (renderFailure in core/security.ts),
 // after the wrapper's opener. Anchored at the start so rows that merely contain the words do not match.
-const FAILURE_KINDS: Record<ToolFailure["kind"], true> = { invalid_args: true, refused: true, timeout: true, unavailable: true, backend_error: true };
+const FAILURE_KINDS: Record<ToolFailure["kind"], true> = { invalid_args: true, refused: true, denied: true, timeout: true, unavailable: true, backend_error: true };
 const FAILED_CALL = new RegExp(`^(?:<vigil:tool_result[^>]*>\\s*)?failed: (${Object.keys(FAILURE_KINDS).join("|")}) -- `);
 
 export function callViews(dispatches: Iterable<DispatchCalls>, words: (tool: string) => string = nameInWords): CallView[] {
