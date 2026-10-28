@@ -93,7 +93,7 @@ def test_not_cloned_source_stays_open_until_rules_are_ready():
     assert ready["href"] == "/settings?section=data&tab=detection"
 
 
-def test_per_agent_needs_two_distinct_models():
+def test_per_agent_is_done_once_one_model_is_assigned():
     none = _step(_body(model_ids=set()), "per_agent")
     one = _step(_body(model_ids={"gemini/gemini-flash-latest"}), "per_agent")
     two = _step(
@@ -102,7 +102,7 @@ def test_per_agent_needs_two_distinct_models():
     )
     assert none["done"] is False
     assert none["state_line"] == "No model assigned"
-    assert one["done"] is False
+    assert one["done"] is True
     assert one["state_line"] == "All agents use one model"
     assert two["done"] is True
     assert none["href"] == "/settings?section=ai-config&tab=assignment"
