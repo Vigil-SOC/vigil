@@ -274,7 +274,7 @@ def test_a_new_case_links_to_the_five_newest_closed_matches_both_ways(w):
 
     asyncio.run(_orchestrator()._link_closed_cases(new, finding))
 
-    note = f"same attacker ip:{w.ip(1)}"
+    note = f"same attacker {w.ip(1)}"
     assert _links(new) == sorted((c, "related_to", note) for c in closed[:5])
     for c in closed[:5]:
         assert _links(c) == [(new, "related_to", note)]

@@ -25,6 +25,7 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
         pickup_seconds: 4,
         workflow_id: 'incident-response',
         case_door: 'case-9',
+        merge_note: null,
         document: null,
         source_link: 'https://console.example/alert/9',
         source_evidence: {
@@ -55,6 +56,7 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
         pickup_seconds: 2,
         workflow_id: '',
         case_door: null,
+        merge_note: null,
         document: 'please look',
         source_link: null,
         source_evidence: null,

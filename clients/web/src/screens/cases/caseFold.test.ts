@@ -91,6 +91,7 @@ describe('recordChip', () => {
     expect(recordChip('agent_run_report', 'case_activities')).toBe('agent')
     expect(recordChip('finding_added', 'case_activities')).toBe('agent')
     expect(recordChip('case_merged', 'case_activities')).toBe('system')
+    expect(recordChip('alert_added', 'case_activities')).toBe('system')
     expect(recordChip('resolution', 'case_activities')).toBe('human')
     expect(recordChip('recall', 'case_activities')).toBe('human')
     expect(recordChip('recall', 'run')).toBe('memory')
