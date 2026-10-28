@@ -71,7 +71,8 @@ def requires(permission: str):
     """Refuse a bound principal whose live role lacks ``permission``.
 
     Placed under ``@mcp.tool()`` so the wrapper is what the server calls.
-    A hunt binds no principal and is unchanged.
+    A run no person started holds no role and passes; a caller bound to
+    nothing is refused. ``permission`` stays on the wrapper for invoke.
     """
 
     def deco(fn):
@@ -95,6 +96,7 @@ def requires(permission: str):
                     return refusal
                 return fn(*args, **kwargs)
 
+        wrapped.permission = permission
         return wrapped
 
     return deco

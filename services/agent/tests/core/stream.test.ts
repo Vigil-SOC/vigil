@@ -366,6 +366,31 @@ describe("the approval gate", () => {
   });
 });
 
+// #3306: denied is the invoke door saying whom the call runs as may not make it now.
+describe("a denied call", () => {
+  const DENIED = toolReturning("bump", { ok: false, failure: { kind: "denied", detail: "Stopped" } });
+
+  it("parks a run on its reason, with no checkpoint, once the call is on the transcript", async () => {
+    const harness = harnessOf([{ calls: [{ tool: "bump", args: "{}" }] }], { tools: [DENIED] });
+    const outcome = await outcomeOf(config({ park_on_denial: true }), harness);
+
+    expect(outcome.status).toBe("waiting_approval");
+    expect(outcome.reason).toBe("Stopped");
+    expect(outcome.pending).toBeNull();
+    expect(outcome.calls.map((call) => call.result)).toEqual([{ ok: false, failure: { kind: "denied", detail: "Stopped" } }]);
+    expect((await harness.state.read(RUN)).some((event) => event.kind === "checkpoint")).toBe(false);
+    expect(requestsOf(harness)).toBe(1);
+  });
+
+  it("is a result a conversation's turn reads, not a park", async () => {
+    const harness = harnessOf([{ calls: [{ tool: "bump", args: "{}" }] }, { calls: [] }, HALT], { tools: [DENIED] });
+    const outcome = await outcomeOf<{ verb: string }>(config(), harness);
+
+    expect(outcome.status).toBe("completed");
+    expect(outcome.calls[0]?.wrapped.text).toContain("failed: denied -- Stopped");
+  });
+});
+
 describe("the ART execute approval gate", () => {
   const ART_ID = "atomic_red_team_execute";
   const ARGS = '{"technique":"T1059.001","environment_id":"range-1","hostname":"ws01.corp.local"}';

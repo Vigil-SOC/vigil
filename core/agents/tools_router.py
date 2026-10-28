@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from core.agents.attribution import (
     TrailWriteError,
+    append_now,
     attributed,
     bound_claims,
     current_claims,
@@ -23,15 +24,21 @@ from core.agents.attribution import (
 from core.agents.integration_tools import resolve_integration_call
 from core.agents.internal_auth import authorise
 from core.agents.mcp_tools import MCPFailure, execute_mcp_tool, split_tool_name
-from core.agents.tool_registry import MANIFEST, execute_backend_tool
+from core.agents.tool_registry import (
+    MANIFEST,
+    execute_backend_tool,
+    required_permission,
+)
 from core.auth import tool_principal
+from core.auth.permissions import permission_refusal
+from core.auth.principals import SYSTEM_PRINCIPAL_ID
 from core.auth.tool_principal import Claims
 from core.deps import provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry
 from core.integrations.mcp.surface import acting_as
 from core.llm.tool_schemas import CALL_INTEGRATION_TOOL
 from core.response.approval_service import ActionStatus, ApprovalService
-from core.response.ceiling import gated_tools
+from core.response.ceiling import gated_tools, unattended_refusal
 from core.routing import Auth, RouterMeta
 from core.skills.skill_library import READ_SKILL_TOOL
 from core.skills.skill_usage import record_skill_read
@@ -62,7 +69,8 @@ class InvokeRequest(BaseModel):
     args: Dict[str, Any] = Field(default_factory=dict)
     bounds: Bounds
     # An API-signed token for the session's user (core/auth/tool_principal.py) and
-    # ToolPrincipal in contracts/tool.ts. Absent means no person: tools record "agent".
+    # ToolPrincipal in contracts/tool.ts: a person's, or a run's with no username
+    # when no person started it. Absent is refused (#3306).
     principal: Optional[str] = None
     # The Vigil agent this call runs for, when one does (#1560). It rides the
     # turn rather than the harness because a compose run shares one harness
@@ -295,6 +303,40 @@ def _direct_action_refusal(
     return f"{tool} changes the estate and no approval covers this call"
 
 
+class Denied(Exception):
+    """Not allowed for whom the call runs as. A run parks on the reason."""
+
+
+def _denial(claims: Claims, tool: str) -> Optional[str]:
+    """Why the call that runs may not run for whom it runs as, or None (#3306).
+
+    A person is held to their live role, a run no person started to the
+    autonomy ceiling. An integration call is checked as the tool it names.
+    """
+    permission = required_permission(tool)
+    if claims.username:
+        refusal = permission_refusal(permission) if permission else None
+        return None if refusal is None else refusal["error"]
+    writes = not (permission or "").endswith(".read")
+    return unattended_refusal(tool, writes=writes)
+
+
+def _note_unbound(tool: str) -> None:
+    """A call that names nobody has no claims to record it against."""
+    try:
+        append_now(
+            {
+                "action": "agent.tool.outcome",
+                "actor": SYSTEM_PRINCIPAL_ID,
+                "tool": tool,
+                "outcome": "denied",
+                "reason": "no principal",
+            }
+        )
+    except TrailWriteError:
+        logger.exception("refusal of unbound %s was not recorded", tool)
+
+
 def _recording(tool: str) -> Optional[Claims]:
     """The claims an effectful, attributed call records. A read-only call has none."""
     claims = current_claims()
@@ -327,6 +369,13 @@ async def _run(body: InvokeRequest, registry: MCPRegistry) -> Tuple[Any, bool, s
         tool, raw = resolve_integration_call(registry, raw)
     args = _bounded(raw, body.bounds.max_rows, tool, registry)
 
+    claims = current_claims()
+    denial = None if claims is None else _denial(claims, tool)
+    if denial is not None:
+        if attributed(claims):
+            _outcome(claims, tool, raw, "denied")
+        raise Denied(denial)
+
     record = _recording(tool)
     if record is not None:
         _intent(record, tool, raw)
@@ -340,8 +389,10 @@ async def _run(body: InvokeRequest, registry: MCPRegistry) -> Tuple[Any, bool, s
             return result, True, SOURCE_SYSTEM
         # After the backend, so a Vigil tool is not caught by a verb in its name.
         # The arguments compared are the ones the model sent, before the row cap
-        # lowered a limit the approval was not asked about.
-        refusal = _direct_action_refusal(body, tool, raw)
+        # lowered a limit the approval was not asked about. A run no person
+        # started was already held to the ceiling above; nobody approves for it.
+        person = claims is not None and bool(claims.username)
+        refusal = _direct_action_refusal(body, tool, raw) if person else None
         if refusal is not None:
             outcome = "refused"
             raise MCPFailure("refused", refusal)
@@ -367,22 +418,27 @@ async def invoke(
     registry: MCPRegistry = Depends(provide_mcp_registry),
 ) -> Dict[str, Any]:
     authorise(authorization, "tool invocation")
+    # A call that names nobody is refused, not parked: a run parked before
+    # tokens existed comes back with none, and parking it again would loop.
+    if body.principal is None:
+        _note_unbound(body.tool)
+        return _failure("refused", detail="no principal: the call names nobody")
     # A token that does not verify is refused, never read as "no person": that
     # would record a person's work as an agent's. A bad token is not a denial.
-    claims: Optional[Claims] = None
+    try:
+        claims = tool_principal.read(body.principal)
+    except tool_principal.InvalidPrincipal:
+        raise HTTPException(status_code=401, detail="bad or expired principal")
     bound: ContextManager[None] = nullcontext()
-    if body.principal is not None:
-        try:
-            claims = tool_principal.read(body.principal)
-        except tool_principal.InvalidPrincipal:
-            raise HTTPException(status_code=401, detail="bad or expired principal")
-        if claims.username:
-            bound = acting_as(claims.username)
+    if claims.username:
+        bound = acting_as(claims.username)
 
     try:
         # The tool runs in this context (or a copy of it), so it sees the binding.
         with bound_claims(claims), bound:
             result, handled, source = await _run(body, registry)
+    except Denied as exc:
+        return _failure("denied", detail=str(exc))
     except TrailWriteError:
         return _failure("backend_error", detail="the action could not be recorded")
     except asyncio.TimeoutError:

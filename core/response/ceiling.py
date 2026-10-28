@@ -6,7 +6,8 @@ raises them. ``DAEMON_FORCE_APPROVAL`` and ``DAEMON_AUTO_RESPONSE`` can only
 force the effective act flags off. Four-eyes is enforced where an approval
 is recorded, in ``ApprovalService.approve_action`` (#2932).
 An unbound caller is not denied here; the HTTP gates are the permission
-checks on the routes.
+checks on the routes, and ``/internal/tools/invoke`` refuses a tool call that
+names nobody.
 
 Each outside tool also has one stored effect class (#3304), read here by every
 caller that decides whether a tool call needs an approval.
@@ -356,6 +357,40 @@ def asks_first(names: Iterable[str]) -> frozenset[str]:
     """The approval tool, and every gated outside tool, among ``names``."""
     names = list(names)
     return gated_tools(names) | ({APPROVAL_TOOL} & set(names))
+
+
+STOPPED = "Stopped"
+
+
+def unattended_refusal(tool: str, *, writes: bool) -> Optional[str]:
+    """Why a run no person started may not make this call, or None (#3306).
+
+    Reads run, stopped or not. ``writes`` says whether one of Vigil's own tools
+    changes a record; those run unless stopped. An outside call runs only under
+    the effective act flag its class needs. A ceiling that cannot be read
+    grants nothing.
+    """
+    classes = tool_classes([tool])
+    own = tool not in classes
+    if (own and not writes) or (not own and is_read(classes[tool])):
+        return None
+    held = try_read_stored_ceiling()
+    if held is None:
+        return "the autonomy ceiling could not be read"
+    stored, _found = held
+    if stored.stopped:
+        return STOPPED
+    if own:
+        return None
+    effect = classes[tool]
+    if effect == REVERSIBLE and effective_act_reversible(stored):
+        return None
+    if effect == IRREVERSIBLE and effective_act_irreversible(stored):
+        return None
+    return (
+        f"{tool} is {effect or 'unclassified'} and the autonomy ceiling "
+        "does not let a run no person started take it"
+    )
 
 
 def loosens(before: Optional[str], after: str) -> bool:

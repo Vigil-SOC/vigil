@@ -132,6 +132,8 @@ def test_a_read_only_tool_adds_a_ledger_event_and_no_trail_row(db, monkeypatch):
         return {"rows": [{"case_id": "case-1"}]}, True
 
     monkeypatch.setattr(tools_router, "execute_backend_tool", _ran)
+    # nestor's role is not what this is about; invoke checks it before the tool.
+    monkeypatch.setattr(tools_router, "permission_refusal", lambda permission: None)
     response = _invoke(_client(monkeypatch), "get_case", _claims("get_case"))
 
     assert response.status_code == 200, response.text
@@ -164,9 +166,7 @@ def test_a_read_only_tool_adds_a_ledger_event_and_no_trail_row(db, monkeypatch):
         )
     with db.connect() as conn:
         kind = conn.execute(
-            text(
-                "SELECT kind FROM agent_events WHERE run_id = CAST(:run_id AS uuid)"
-            ),
+            text("SELECT kind FROM agent_events WHERE run_id = CAST(:run_id AS uuid)"),
             {"run_id": PARENT},
         ).scalar_one()
     assert kind == "call"

@@ -3,7 +3,7 @@ import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { archFor } from "./plugins/kinds.js";
-import { runAgent, type AgentKinds } from "./core/agent.js";
+import { deniedPark, runAgent, type AgentKinds } from "./core/agent.js";
 import { loadPlugin } from "./plugins/index.js";
 import { toolsFrom } from "./tools/remote.js";
 import { httpAnswers, journalAnswers, noAnswers, type Answers } from "./core/answers.js";
@@ -181,6 +181,14 @@ export async function startedByFor(state: State, job: RunJob): Promise<string> {
   return job.enqueued_by;
 }
 
+// What started the run. A start job says; a resume reads the run event, since
+// whether a person started it decides who is asked before an action (#3306).
+export async function originFor(state: State, job: RunJob): Promise<RunPayload["origin"]> {
+  if (job.reason === "start") return job.origin;
+  const opened = (await state.read(job.run_id)).find((event) => event.kind === "run");
+  return opened === undefined ? undefined : (opened.payload as RunPayload).origin;
+}
+
 // The one place a run kind becomes a loop. A kind with no workflow throws here,
 // before the ledger opens, rather than journalling a run nothing will ever advance.
 async function drive(
@@ -194,7 +202,7 @@ async function drive(
 ): Promise<string | null> {
   const { run_kind: kind, run_id } = job;
   const started_by = await startedByFor(state, job);
-  const origin = job.reason === "start" ? job.origin : undefined;
+  const origin = await originFor(state, job);
   const named = {
     ...(principal === undefined ? {} : { principal }),
     ...(origin === undefined ? {} : { origin }),
@@ -208,8 +216,9 @@ async function drive(
   const seed = seedFrom(await state.read(run_id));
 
   if (kind === "compose") {
-    await runCompose(build(spec, as<ComposeKinds>(state), undefined, seed), { run_id, spec, started_by, ...named, mirror: mirrorFor(), signal });
-    return null;
+    const done = await runCompose(build(spec, as<ComposeKinds>(state), undefined, seed), { run_id, spec, started_by, ...named, mirror: mirrorFor(), signal });
+    // A phase parks itself on its approval. A denial has no phase row to say why.
+    return done.status === "waiting_approval" && done.pending === null ? done.reason : null;
   }
   const entry = archFor(kind);
   // A kind whose plugin the worker drives directly: investigate. The others run their
@@ -536,7 +545,9 @@ function parkedFor(events: readonly AgentEvent<Record<never, never>>[]): number 
   const open = events.filter(
     (one) => one.kind === "checkpoint" && !answered.has((one.payload as CheckpointPayload).checkpoint_id),
   );
-  const raised = open.map((one) => Date.parse(one.ts)).filter((at) => Number.isFinite(at));
+  // A denial parks with no checkpoint, so it counts from the denied call (#3306).
+  const denied = deniedPark(events);
+  const raised = [...open.map((one) => Date.parse(one.ts)), ...(denied === null ? [] : [denied.at])].filter((at) => Number.isFinite(at));
   return raised.length === 0 ? null : Date.now() - Math.min(...raised);
 }
 

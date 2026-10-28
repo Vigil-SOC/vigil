@@ -21,6 +21,7 @@ from core.auth.auth_cookies import ACCESS_COOKIE_NAME
 from core.auth.auth_service import AuthService
 from core.auth.current_user import get_current_user
 from core.auth.mcp_credential_service import looks_like_mcp_token
+from core.auth.tool_principal import current_claims
 from core.integrations.mcp.surface import current_caller
 from core.routing import UnitOfWorkSession
 from core.storage.models import User
@@ -589,12 +590,17 @@ def permission_refusal(permission: str) -> Optional[dict[str, str]]:
 
     A credential has no permissions of its own. The person it names is checked
     against their live role, so a demotion or a role edit applies on the next
-    call. No bound principal is a system run — one the orchestrator or a
-    handoff started — which is not a role to consult. A person who started a
-    run is named on it, and this check is theirs.
+    call. A run no person started is bound by its signed run claims, not a
+    role: the autonomy ceiling governs it at invoke. Nothing bound at all is
+    refused (#3306).
     """
     caller = current_caller()
-    if caller is None or username_has_permission(caller, permission):
+    if caller is None:
+        if current_claims() is not None:
+            return None
+        logger.warning("unbound caller refused: %s required", permission)
+        return {"error": f"no principal is bound: {permission} required"}
+    if username_has_permission(caller, permission):
         return None
     logger.warning("%s refused: %s required", caller, permission)
     return {"error": f"{caller} may not do this: {permission} required"}

@@ -44,8 +44,9 @@ MANIFEST: Dict[str, Dict[str, Any]] = {
 
 Args = Dict[str, Any]
 
-# Every chat tool names the permission execute_backend_tool checks. A hunt that
-# bound nobody is still allowed: permission_refusal does not deny that caller.
+# Every chat tool names the permission execute_backend_tool checks. A run no
+# person started is bound by its run claims and holds no role: the autonomy
+# ceiling governs it at invoke. A caller bound to nothing is refused.
 TOOL_PERMISSIONS: Dict[str, str] = {
     "analyze_coverage": "detections.read",
     "search_detections": "detections.read",
@@ -85,6 +86,19 @@ TOOL_PERMISSIONS: Dict[str, str] = {
     FIND_INTEGRATION_TOOLS: "integrations.read",
     CALL_INTEGRATION_TOOL: "integrations.write",
 }
+
+
+def required_permission(tool: str) -> Optional[str]:
+    """The permission one of Vigil's own tools checks, or None for any other name.
+
+    A built-in names it here; a tool on Vigil's MCP server names it with
+    ``@requires``.
+    """
+    if tool in TOOL_PERMISSIONS:
+        return TOOL_PERMISSIONS[tool]
+    from core.integrations.mcp import in_process
+
+    return in_process.required_permission(tool)
 
 
 # A page of findings is what a hunt groups alerts by, so each carries the hosts,
@@ -906,8 +920,8 @@ def get_approval_action(*, action_id: str) -> Args:
 
 
 # Chat and MCP do not approve. The row stays as it is; a person confirms it
-# on the Approvals screen. permission_refusal allows an unbound caller, and
-# this does not add a second denial for that case.
+# on the Approvals screen. A run no person started passes permission_refusal,
+# and this does not add a second denial for that case.
 def approve_action(*, action_id: str) -> Args:
     if refusal := permission_refusal(APPROVE_PERMISSION):
         return refusal
@@ -978,7 +992,7 @@ async def execute_backend_tool(
 ) -> Tuple[Any, bool]:
     args = dict(tool_input or {})
     # permission_refusal reads the permissions-module binding, which is what
-    # the tool tests stub. An unbound caller stays allowed.
+    # the tool tests stub. A caller bound to nothing is refused.
     permission = TOOL_PERMISSIONS.get(tool_name)
     if permission and (refusal := permission_refusal(permission)):
         return refusal, True

@@ -1,7 +1,8 @@
 """A credential does what its user may do now, not what they could do when it was minted.
 
 Write tools on the MCP surface and the shared backend door both check the
-bound principal's live role. A hunt binds nobody, and is not refused for it.
+bound principal's live role. A run no person started is bound by its run
+claims and has no role to lack; a caller bound to nothing is refused (#3306).
 """
 
 from __future__ import annotations
@@ -219,3 +220,18 @@ async def test_the_backend_door_still_writes_for_a_hunt(directory):
     assert handled is True
     assert result["success"] is True
     assert result["case_id"] == "c-1"
+
+
+@pytest.mark.unbound
+def test_a_caller_bound_to_nothing_is_refused_on_both_doors(directory):
+    assert _invoke("create_case") == {
+        "error": "no principal is bound: cases.write required"
+    }
+
+
+@pytest.mark.unbound
+async def test_the_backend_door_refuses_a_caller_bound_to_nothing(directory):
+    result, handled = await execute_backend_tool("create_case", {"title": "t"})
+
+    assert handled is True
+    assert result == {"error": "no principal is bound: cases.write required"}

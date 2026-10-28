@@ -10,8 +10,9 @@ import yaml
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from core.agents import internal_auth, tools_router
+from core.agents import internal_auth, tool_registry, tools_router
 from core.agents.integration_tools import find_integration_tools
+from core.auth import tool_principal
 from core.integrations.mcp import client as mcp_client
 from core.integrations.mcp import in_process
 from core.integrations.mcp import registry as mcp_registry
@@ -137,6 +138,9 @@ class _Client:
 @pytest.fixture
 def invoke(monkeypatch, registry):
     monkeypatch.setattr(internal_auth, "get_secret", lambda name: "shhh")
+    # Chat's door: a person, whose role is not what these tests are about.
+    monkeypatch.setattr(tools_router, "permission_refusal", lambda permission: None)
+    monkeypatch.setattr(tool_registry, "permission_refusal", lambda permission: None)
     fake = _Client()
     monkeypatch.setattr(mcp_client, "process_mcp_client", lambda: fake)
     app = FastAPI()
@@ -149,6 +153,7 @@ def invoke(monkeypatch, registry):
             "tool": tool,
             "args": args,
             "bounds": {"max_rows": 2, "timeout_ms": 5000},
+            "principal": tool_principal.mint("analyst"),
         }
         return http.post(
             "/internal/tools/invoke",

@@ -10,9 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from contextlib import contextmanager
-from contextvars import ContextVar
-from typing import Any, Iterator, Optional
+from typing import Any, Optional
 
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
@@ -20,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from core.audit import trail
 from core.auth.principals import SYSTEM_PRINCIPAL_ID, agent_principal_id
-from core.auth.tool_principal import Claims
+from core.auth.tool_principal import Claims, bound_claims, current_claims  # noqa: F401
 from core.response.ceiling import effective_act_reversible, read_ceiling
 
 logger = logging.getLogger(__name__)
@@ -48,26 +46,6 @@ _TARGET_KEYS = (
 
 class TrailWriteError(Exception):
     """The trail is up and refused the entry. The action must not proceed."""
-
-
-_current: ContextVar[Optional[Claims]] = ContextVar("vigil_tool_claims", default=None)
-
-
-@contextmanager
-def bound_claims(claims: Optional[Claims]) -> Iterator[None]:
-    """The signed principal for the tool call running on this task."""
-    if claims is None:
-        yield
-        return
-    token = _current.set(claims)
-    try:
-        yield
-    finally:
-        _current.reset(token)
-
-
-def current_claims() -> Optional[Claims]:
-    return _current.get()
 
 
 def plugin_actor(run_kind: str) -> str:
