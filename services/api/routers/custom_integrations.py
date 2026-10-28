@@ -1,7 +1,7 @@
 """Custom Integration Builder API - AI-powered integration generation.
 
-All mutating routes require an authenticated admin
-(``integrations.write`` permission). ``/save`` accepts a JSON body
+All routes require ``integrations.install`` (``integrations.write`` until the
+catalog revision). ``/save`` accepts a JSON body
 only — the previous query-string-based shape allowed traversal payloads
 to be smuggled through ``--url-query`` (see 2026-05 disclosure).
 """
@@ -12,13 +12,11 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from core.auth.permissions import deny_unless
 from core.integrations.custom_integration_service import CustomIntegrationService
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
-from services.api.middleware.auth import (
-    get_current_active_user,
-    require_integrations_admin,
-)
+from services.api.middleware.auth import get_current_active_user
 
 router = APIRouter()
 
@@ -59,7 +57,7 @@ async def generate_custom_integration(
     current_user: User = Depends(get_current_active_user),
 ):
     """Generate a custom integration from API/MCP documentation using Claude AI."""
-    require_integrations_admin(current_user)
+    deny_unless(current_user.user_id, "integrations.install")
     service = CustomIntegrationService()
 
     # If there's a user response, add it to the conversation
@@ -96,7 +94,7 @@ async def save_custom_integration(
     against a strict allowlist regex and resolves the final write path
     inside the custom-integrations directory before any disk I/O.
     """
-    require_integrations_admin(current_user)
+    deny_unless(current_user.user_id, "integrations.install")
     return await CustomIntegrationService().save_integration(
         integration_id=request.integration_id,
         metadata=request.metadata,
@@ -114,7 +112,7 @@ async def list_custom_integrations(
     (descriptions, configuration shape) that's useful for an attacker
     profiling the deployment.
     """
-    require_integrations_admin(current_user)
+    deny_unless(current_user.user_id, "integrations.install")
     service = CustomIntegrationService()
     custom_integrations = service.list_custom_integrations()
 
@@ -127,7 +125,7 @@ async def delete_custom_integration(
     current_user: User = Depends(get_current_active_user),
 ):
     """Delete a custom integration."""
-    require_integrations_admin(current_user)
+    deny_unless(current_user.user_id, "integrations.install")
     return await CustomIntegrationService().delete_integration(integration_id)
 
 
@@ -137,5 +135,5 @@ async def validate_custom_integration(
     current_user: User = Depends(get_current_active_user),
 ):
     """Validate a custom integration's server code."""
-    require_integrations_admin(current_user)
+    deny_unless(current_user.user_id, "integrations.install")
     return await CustomIntegrationService().validate_integration(integration_id)

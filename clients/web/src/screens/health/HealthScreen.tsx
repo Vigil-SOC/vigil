@@ -1,25 +1,13 @@
-import { useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { Icon } from '../../shared/icons'
 import { EmptyState } from '../../shared/ui'
 import { Hbars, Pie } from '../../shared/charts'
-import { Cost, PROVENANCE_LABEL, fmtCost, type PricingSource } from '../../shared/cost'
 import type { ConsoleScreenProps } from '../../shared/types'
-import { useCostAnalytics, type CostData, type CostTimeRange } from '../settings/useSettings'
 import { usePendingApprovals } from '../decisions/useDecisions'
 import {
   PROBE_OUTCOMES, PROBE_TALLY_DAYS, RUNS_PER_WORKFLOW, RUN_STATUSES, useProbeScores, useRunOutcomes,
   type ProbeOutcome, type ProbeScores, type ProbeSummary, type RunKindOutcomes, type RunStatus,
 } from './useHealth'
-
-const RANGE_LABEL: Record<CostTimeRange, string> = { '24h': '24h', '7d': '7d', '30d': '30d', all: 'All' }
-const RANGES = Object.keys(RANGE_LABEL) as CostTimeRange[]
-
-// colour rides on top of the shared label; the word carries the meaning
-const PRICING_COLOR: Record<PricingSource, string> = {
-  exact: 'var(--ok)',
-  zero: 'var(--med)',
-  unknown: 'var(--crit)',
-}
 
 const STATUS_COLOR: Record<RunStatus, string> = {
   completed: 'var(--ok)',
@@ -38,15 +26,11 @@ const PROBE_COLOR: Record<ProbeOutcome, string> = {
 }
 
 const fmtSeconds = (s: number | null) => (s == null ? '—' : s < 60 ? `${Math.round(s)}s` : s < 3600 ? `${(s / 60).toFixed(1)}m` : `${(s / 3600).toFixed(1)}h`)
-const fmtTokens = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k` : String(n))
-const fmtPct = (n: number) => `${(n * 100).toFixed(1)}%`
 
-/** Spend, approvals waiting, recent run outcomes, and known-answer probe scores —
+/** Approvals waiting, recent run outcomes, and known-answer probe scores —
  *  the facts the Grafana sibling shows, read from the JSON routes the console
  *  already uses. Allocation drift is deliberately absent until it is real. */
 export default function HealthScreen({ go }: ConsoleScreenProps) {
-  const [range, setRange] = useState<CostTimeRange>('7d')
-  const cost = useCostAnalytics(range)
   const approvals = usePendingApprovals()
   const runs = useRunOutcomes()
   const probes = useProbeScores()
@@ -54,36 +38,18 @@ export default function HealthScreen({ go }: ConsoleScreenProps) {
   return (
     <>
       <div className="flex items-center gap-3 flex-wrap px-[22px] py-[13px] border-b border-line">
-        <span className="text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3">Spend window</span>
-        <div className="range-tabs">
-          {RANGES.map((k) => (
-            <button key={k} className={k === range ? 'active' : ''} aria-pressed={k === range} onClick={() => setRange(k)}>{RANGE_LABEL[k]}</button>
-          ))}
-        </div>
         <div className="flex-1" />
         <button
           className="btn ghost icon"
           title="Refresh"
           aria-label="Refresh"
-          onClick={() => { cost.reload(); approvals.reload(); runs.reload(); probes.reload() }}
+          onClick={() => { approvals.reload(); runs.reload(); probes.reload() }}
         >
           <Icon name="refresh" />
         </button>
       </div>
 
-      <div className="px-[22px] pt-5 pb-3 grid gap-3 grid-cols-[1.6fr_1fr]">
-        <Card title="LLM spend and tokens" note={`window: ${RANGE_LABEL[range]}`}>
-          {cost.phase === 'loading' && <EmptyState loading compact icon="bars" title="Loading spend…" />}
-          {cost.phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load spend" body={cost.error} primary={{ label: 'Retry', onClick: cost.reload, icon: 'refresh' }} />}
-          {cost.phase === 'ready' && cost.data && (
-            cost.data.totals.calls === 0 ? (
-              <EmptyState compact icon="bars" title="No LLM traffic in this window" body="Spend and tokens appear after chat, enrichment, workflows, or autonomous investigations use a configured provider." />
-            ) : (
-              <SpendBody data={cost.data} />
-            )
-          )}
-        </Card>
-
+      <div className="px-[22px] pt-5 pb-3">
         <Card title="Approvals waiting" note="runs parked on a person">
           {approvals.phase === 'loading' && <EmptyState loading compact icon="clock" title="Loading approvals…" />}
           {approvals.phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load approvals" body={approvals.error} primary={{ label: 'Retry', onClick: approvals.reload, icon: 'refresh' }} />}
@@ -203,53 +169,6 @@ function VerdictPart({ value, allowed }: { value?: string | null; allowed: strin
   return <span style={{ color: allowed.includes(value) ? 'var(--ok)' : 'var(--crit)' }}>{value}</span>
 }
 
-// Extra text beside a dollar figure; the figure itself covers priced calls only.
-const unpricedNote = (n: number | undefined) => (n ? `${n.toLocaleString()} unpriced` : undefined)
-
-function SpendBody({ data }: { data: CostData }) {
-  return (
-    <>
-      <div className="grid grid-cols-4 gap-3 mb-4">
-        <Kpi label="Total cost" value={fmtCost(data.totals.cost_usd)} note={unpricedNote(data.totals.unpriced_calls)} accent />
-        <Kpi label="API calls" value={data.totals.calls.toLocaleString()} />
-        <Kpi label="Tokens (in/out)" value={`${fmtTokens(data.totals.input_tokens)} / ${fmtTokens(data.totals.output_tokens)}`} />
-        <Kpi label="Cache hit rate" value={fmtPct(data.totals.cache_hit_rate)} />
-      </div>
-      <div className="table-wrap">
-        <table className="tbl">
-          <thead>
-            <tr>
-              <th>Model</th><th>Provider</th><th>Pricing</th><th>Calls</th>
-              <th>Input</th><th>Output</th><th>Cache hit</th><th style={{ textAlign: 'right' }}>Cost</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.by_model.map((m) => {
-              const source: PricingSource = m.pricing_source in PRICING_COLOR ? m.pricing_source : 'unknown'
-              const unpriced = unpricedNote(m.unpriced_calls)
-              return (
-                <tr key={`${m.provider_type}-${m.model}`}>
-                  <td className="font-mono text-xs">{m.model}</td>
-                  <td className="muted">{m.provider_type}</td>
-                  <td><span className="chip" style={{ color: PRICING_COLOR[source] }}>{PROVENANCE_LABEL[source]}</span></td>
-                  <td>{m.calls.toLocaleString()}</td>
-                  <td className="muted">{fmtTokens(m.input_tokens)}</td>
-                  <td className="muted">{fmtTokens(m.output_tokens)}</td>
-                  <td className="muted">{fmtPct(m.cache_hit_rate)}</td>
-                  <td style={{ textAlign: 'right' }}>
-                    <Cost usd={m.cost_usd} source={source} />
-                    {unpriced && <span className="text-tx-faint"> · {unpriced}</span>}
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
-    </>
-  )
-}
-
 function RunsBody({ rows }: { rows: RunKindOutcomes[] }) {
   const total = rows.reduce((acc, r) => acc + r.total, 0)
   const byStatus = RUN_STATUSES.map((s) => ({ status: s, count: rows.reduce((acc, r) => acc + r.byStatus[s], 0) })).filter((s) => s.count > 0)
@@ -296,13 +215,11 @@ function Card({ title, note, children }: { title: string; note: string; children
   )
 }
 
-function Kpi({ label, value, note, accent, color }: { label: string; value: string; note?: string; accent?: boolean; color?: string }) {
-  const c = color ?? (accent ? 'var(--accent-2)' : undefined)
+function Kpi({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
     <div className="card card-sq p-3 flex flex-col gap-1">
       <span className="text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3">{label}</span>
-      <span className="text-[22px] font-semibold tracking-[-0.02em]" style={c ? { color: c } : undefined}>{value}</span>
-      {note && <span className="text-xs text-tx-faint">{note}</span>}
+      <span className="text-[22px] font-semibold tracking-[-0.02em]" style={color ? { color } : undefined}>{value}</span>
     </div>
   )
 }

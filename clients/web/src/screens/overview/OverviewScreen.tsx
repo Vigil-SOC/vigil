@@ -265,6 +265,7 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
               {data?.empty
                 ? 'Where your data comes from, what Vigil does with it, and what comes out. Nothing is connected yet, so each part below shows where to connect.'
                 : `Where your data comes from, what Vigil does with it, and what came out. ${data ? `Today, UTC ${data.day}.` : ''}`.trim()}
+              {data?.missing?.length ? ` Not shown: your role lacks ${data.missing.join(' and ')}.` : ''}
             </p>
           </div>
           <div className="ov-head-r">

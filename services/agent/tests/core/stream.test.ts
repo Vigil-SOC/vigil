@@ -366,6 +366,31 @@ describe("the approval gate", () => {
   });
 });
 
+// #3306: denied is the invoke door saying whom the call runs as may not make it now.
+describe("a denied call", () => {
+  const DENIED = toolReturning("bump", { ok: false, failure: { kind: "denied", detail: "Stopped" } });
+
+  it("parks a run on its reason, with no checkpoint, once the call is on the transcript", async () => {
+    const harness = harnessOf([{ calls: [{ tool: "bump", args: "{}" }] }], { tools: [DENIED] });
+    const outcome = await outcomeOf(config({ park_on_denial: true }), harness);
+
+    expect(outcome.status).toBe("waiting_approval");
+    expect(outcome.reason).toBe("Stopped");
+    expect(outcome.pending).toBeNull();
+    expect(outcome.calls.map((call) => call.result)).toEqual([{ ok: false, failure: { kind: "denied", detail: "Stopped" } }]);
+    expect((await harness.state.read(RUN)).some((event) => event.kind === "checkpoint")).toBe(false);
+    expect(requestsOf(harness)).toBe(1);
+  });
+
+  it("is a result a conversation's turn reads, not a park", async () => {
+    const harness = harnessOf([{ calls: [{ tool: "bump", args: "{}" }] }, { calls: [] }, HALT], { tools: [DENIED] });
+    const outcome = await outcomeOf<{ verb: string }>(config(), harness);
+
+    expect(outcome.status).toBe("completed");
+    expect(outcome.calls[0]?.wrapped.text).toContain("failed: denied -- Stopped");
+  });
+});
+
 describe("the ART execute approval gate", () => {
   const ART_ID = "atomic_red_team_execute";
   const ARGS = '{"technique":"T1059.001","environment_id":"range-1","hostname":"ws01.corp.local"}';
@@ -961,13 +986,43 @@ describe("a role that answers in prose", () => {
     expect(outcome.value).toBe("bumped once");
   });
 
-  it("answers over a truncated set when the turn cap stops the loop, and says so", async () => {
+  // The last round is the answer's: every result a turn paid for is read by a call after it.
+  it("answers on a round of its own when the model asks for a tool every round, over everything it gathered", async () => {
     const calling = { calls: [{ tool: "bump", args: "{}" }], content: "still looking" };
+    const harness = harnessOf([calling, calling, calling, { content: "two lookups, host B unchecked" }]);
+    const outcome = await outcomeOf<string>(prose({ max_turns: 4 }), harness);
+    const sent = (harness.provider as ScriptedProvider).requests;
+
+    expect(outcome.capped).toBe(true);
+    expect(outcome.value).toBe("two lookups, host B unchecked");
+    expect(outcome.turns).toBe(4);
+    expect(outcome.calls).toHaveLength(3);
+    expect(sent.map((request) => request.answer)).toEqual([undefined, undefined, undefined, true]);
+    expect(sent.at(-1)!.tools).toEqual(sent[0]!.tools);
+    // Every result journaled is on the transcript the answer round was sent.
+    expect(sent.at(-1)!.messages.filter((message) => message.role === "tool")).toHaveLength(outcome.calls.length);
+    expect(sent.at(-1)!.messages.at(-1)!.content).toContain("used all your lookups");
+    expect(sent[0]!.messages.some((message) => message.content.includes("used all your lookups"))).toBe(false);
+  });
+
+  it("drops a tool call the answer round makes anyway", async () => {
+    const calling = { calls: [{ tool: "bump", args: "{}" }], content: "let me check" };
     const harness = harnessOf([calling, calling]);
     const outcome = await outcomeOf<string>(prose({ max_turns: 2 }), harness);
 
-    expect(outcome.capped).toBe(true);
-    expect(outcome.value).toBe("still looking");
+    expect(outcome.value).toBe("let me check");
+    expect(outcome.calls).toHaveLength(1);
+  });
+
+  it("makes the same calls as before when the model stops asking for tools before the cap", async () => {
+    const harness = harnessOf([{ calls: [{ tool: "bump", args: "{}" }] }, { content: "bumped once" }]);
+    const outcome = await outcomeOf<string>(prose({ max_turns: 8 }), harness);
+    const sent = (harness.provider as ScriptedProvider).requests;
+
+    expect(outcome.value).toBe("bumped once");
+    expect(outcome.capped).toBe(false);
+    expect(sent).toHaveLength(2);
+    expect(sent.every((request) => request.answer === undefined)).toBe(true);
   });
 
   it("leaves a schema-carrying role emitting JSON exactly as before", async () => {

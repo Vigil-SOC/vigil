@@ -2,8 +2,8 @@
 
 A signed-in comment writes one ``audit_trail`` row and no ``case_audit_logs``
 row. A failed append leaves the comment uncommitted, and an approval the same
-way: the row stays pending. The audit reader's filter sees the row; the case
-record, which still reads ``case_audit_logs``, does not.
+way: the row stays pending. The audit reader's filter sees the row, and so
+do the case record and the case's export, by ``case_id`` (#3308).
 """
 
 from __future__ import annotations
@@ -16,11 +16,13 @@ from sqlalchemy.orm import sessionmaker
 from core.audit import trail
 from core.cases import case_records_service, case_trail
 from core.cases.case_attachment_service import attach_document
+from core.cases.case_record import merge_record
 from core.cases.case_collaboration_service import CaseCollaborationService
 from core.cases.case_evidence_service import CaseEvidenceService
 from core.cases.case_workflow_service import CaseWorkflowService
 from core.response.approval_service import ApprovalService
 from core.storage.connection import get_db_manager, get_db_session
+from core.storage.models import CaseAuditLog
 from tests.integration.test_upgrade_command import _run, _scratch
 
 pytestmark = [pytest.mark.integration, pytest.mark.database]
@@ -300,3 +302,122 @@ def test_reject_records_the_reason_beside_the_hash(db):
     }
     assert "not this host" not in payload.values()
     assert (actor_text, operator_text) == ("ada", "not this host")
+
+
+def test_case_actions_are_on_its_record_and_its_export_with_the_label(db, tmp_path):
+    service = CaseCollaborationService()
+    service.add_comment("c-1", "ada", "noted")
+    CaseWorkflowService().escalate_case("c-1", "ada", "soc-lead", "needs a lead")
+    source = tmp_path / "a.pdf"
+    source.write_bytes(b"%PDF original")
+    with sessionmaker(bind=db)() as session:
+        attach_document(
+            session,
+            "c-1",
+            source,
+            "a.pdf",
+            name=None,
+            pages=1,
+            collected_by="ada",
+            store=CaseEvidenceService(storage_path=str(tmp_path / "evidence")),
+        )
+        session.commit()
+
+    with sessionmaker(bind=db)() as session, session.begin():
+        entries = case_records_service.list_case_trail(session, "c-1")
+        texts = [row["text"] for row in merge_record([], [], trail=entries)]
+        assert texts == [
+            "Ada attached a file to the case",
+            "Ada escalated the case",
+            "Ada commented on the case",
+        ]
+        rows, _tip = trail.export(session, trail.make_query(object_ref="c-1"), "system")
+        assert [r["payload"]["action"] for r in rows] == [
+            "case.comment",
+            "case.escalate",
+            "case.evidence",
+        ]
+        assert rows[0]["actor"]["label"] == "Ada"
+
+
+def test_a_legacy_row_shows_once_and_a_dropped_table_reads_none(db):
+    with sessionmaker(bind=db)() as session, session.begin():
+        session.add(
+            CaseAuditLog(
+                entity_type="case",
+                entity_id="c-1",
+                action="update",
+                change_summary="old",
+                changed_by="ada",
+            )
+        )
+    with sessionmaker(bind=db)() as session, session.begin():
+        audits = case_records_service.list_case_audit(session, "c-1")
+        assert [r["id"] for r in merge_record([], audits)] == [
+            f"audit:{audits[0].audit_id}"
+        ]
+        trail.append(
+            session,
+            {
+                "action": "case.comment",
+                "case_id": "c-1",
+                "attribution": "unverified_legacy",
+                "legacy": {"table": "case_audit_logs", "id": audits[0].audit_id},
+            },
+        )
+        entries = case_records_service.list_case_trail(session, "c-1")
+        ids = [r["id"] for r in merge_record([], audits, trail=entries)]
+        assert ids == [f"trail:{entries[0]['seq']}"]
+
+    with db.begin() as conn:
+        conn.execute(text("ALTER TABLE case_audit_logs RENAME TO case_audit_logs_gone"))
+    try:
+        with sessionmaker(bind=db)() as session:
+            assert case_records_service.list_case_audit(session, "c-1") == []
+    finally:
+        with db.begin() as conn:
+            conn.execute(
+                text("ALTER TABLE case_audit_logs_gone RENAME TO case_audit_logs")
+            )
+
+
+def test_entries_name_each_principal_and_mark_deleted_and_erased(db):
+    with db.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO principals (principal_id, kind, label, deleted_at) VALUES "
+                "('prin-gone', 'person', 'Grace', now()), "
+                "('prin-erased', 'person', NULL, NULL) "
+                "ON CONFLICT (principal_id) DO NOTHING"
+            )
+        )
+    with sessionmaker(bind=db)() as session, session.begin():
+        for actor in ("prin-ada", "agent:hunt", "system", "prin-gone", "prin-erased"):
+            trail.append(
+                session,
+                {
+                    "action": "case.comment",
+                    "actor": actor,
+                    "case_id": "c-2",
+                    "on_behalf_of": "prin-ada",
+                },
+            )
+        found = [
+            (
+                e["actor"]["label"],
+                e["actor"]["kind"],
+                e["actor"]["deleted"],
+                e["actor"]["erased"],
+                e["on_behalf_of"]["label"],
+                e["sentence"],
+            )
+            for e in trail.read(session, trail.make_query(object_ref="c-2"))
+        ]
+    said = "Commented on the case"
+    assert found == [
+        ("Ada", "person", False, False, "Ada", said),
+        ("Hunt", "agent", False, False, "Ada", said),
+        ("the system", "system", False, False, "Ada", said),
+        ("Grace", "person", True, False, "Ada", said),
+        (None, "person", False, True, "Ada", said),
+    ]

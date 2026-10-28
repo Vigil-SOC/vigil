@@ -15,10 +15,11 @@ GENERAL_DEFAULTS = {
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch):
+def client(tmp_path, monkeypatch, authenticate_app):
     monkeypatch.setenv("VIGIL_DIR", str(tmp_path))
     app = FastAPI()
     app.include_router(config_router.router, prefix="/api/config")
+    authenticate_app(app)
     return TestClient(app)
 
 

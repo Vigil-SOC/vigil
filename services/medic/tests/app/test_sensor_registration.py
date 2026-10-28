@@ -132,6 +132,19 @@ def test_compose_reads_the_gateway_on_medic_private() -> None:
     assert sensor.uses_vigil_api is True
 
 
+def test_the_gateway_also_carries_the_work_sensors() -> None:
+    work = {
+        s.id: s
+        for s in sensors_for({}, "compose")
+        if s.id in ("gateway.triage", "gateway.probe_findings")
+    }
+    assert {(s.host, s.port, s.uses_vigil_api) for s in work.values()} == {
+        ("medic-gateway-out", 8471, True)
+    }
+    assert len(work) == 2
+    assert not any(s.id.startswith("gateway.") for s in sensors_for({}, "start_sh"))
+
+
 def test_the_variable_sets_the_gateway_address() -> None:
     (sensor,) = _gateway({GATEWAY_VAR: "127.0.0.1:18471"}, "compose")
     assert (sensor.host, sensor.port) == ("127.0.0.1", 18471)

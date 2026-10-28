@@ -20,10 +20,7 @@ from core.response.ceiling import (
     update_ceiling,
 )
 from core.upgrade.command import PACKAGE_DIR
-from services.api.routers.config import (
-    ForceManualApprovalConfig,
-    set_force_manual_approval,
-)
+from services.api.routers import autonomy
 
 pytestmark = pytest.mark.unit
 
@@ -169,19 +166,38 @@ def test_stop_then_lower_then_resume_keeps_the_lower(store):
     assert execution_held() is False
 
 
-def test_compat_act_post_refuses_a_service_account(store, monkeypatch):
+def test_lowering_needs_stop_and_raising_or_four_eyes_needs_write(store, monkeypatch):
     monkeypatch.setattr(
-        "services.api.routers.config.get_settings",
+        "core.response.ceiling.get_settings",
         lambda: type(
             "S", (), {"daemon_force_approval": False, "daemon_auto_response": True}
         )(),
     )
-    user = type("U", (), {"user_id": "sa", "service_account": True})()
-    with pytest.raises(HTTPException) as exc:
-        set_force_manual_approval(ForceManualApprovalConfig(enabled=False), user)
-    assert exc.value.status_code == 403
-    assert CEILING_KEY not in store.rows
+    store.rows[CEILING_KEY] = {**_OFF, "act_reversible": True}
+    asked = []
 
-    person = type("U", (), {"user_id": "p", "service_account": False})()
-    assist = set_force_manual_approval(ForceManualApprovalConfig(enabled=True), person)
-    assert assist.enabled is True
+    def deny_unless(_user_id, permission, *_a, **_k):
+        asked.append(permission)
+        if permission != "ai_autonomy.stop":
+            raise HTTPException(status_code=403, detail=permission)
+
+    monkeypatch.setattr(autonomy, "deny_unless", deny_unless)
+    user = type("U", (), {"user_id": "lead", "service_account": False})()
+
+    def put(**body):
+        return autonomy.put_ceiling(autonomy.CeilingBody(**body), None, user)
+
+    for raise_ in ({"act_irreversible": True}, {"four_eyes": True}):
+        with pytest.raises(HTTPException) as exc:
+            put(**raise_)
+        assert exc.value.status_code == 403
+    assert store.rows[CEILING_KEY]["act_reversible"] is True
+    # Restating a stored value, or the stored four-eyes, is not a raise.
+    assert put(act_reversible=True, four_eyes=False).act_reversible is True
+    assert put(act_reversible=False).act_reversible is False
+    assert asked == [
+        "ai_autonomy.write",
+        "ai_autonomy.write",
+        "ai_autonomy.stop",
+        "ai_autonomy.stop",
+    ]

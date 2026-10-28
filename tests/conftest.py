@@ -134,3 +134,30 @@ def authenticate_app():
     for app in apps:
         app.dependency_overrides.pop(get_current_user, None)
         app.dependency_overrides.pop(get_current_active_user, None)
+
+
+@pytest.fixture(autouse=True)
+def _bound_to_a_run(request):
+    """A tool a test calls directly runs as a run no person started.
+
+    Nothing bound is refused (#3306), and invoke always binds someone. A test
+    of that refusal marks itself ``unbound``.
+    """
+    if request.node.get_closest_marker("unbound"):
+        yield
+        return
+    try:
+        from core.auth.tool_principal import Claims, bound_claims
+    except ImportError:  # a suite that runs without core installed
+        yield
+        return
+
+    run = Claims(
+        username=None,
+        person_id=None,
+        agent_id="agent:hunt",
+        run_id="run-test",
+        origin="schedule",
+    )
+    with bound_claims(run):
+        yield

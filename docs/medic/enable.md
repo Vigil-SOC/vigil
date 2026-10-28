@@ -122,7 +122,9 @@ Host-native Medic is opt-in only. It can reach the backend, Redis and Bifrost on
 
    A `.env` copied from `env.example` is usually `0644`, so expect this once.
 
-Medic then runs as `vigil-medic` from `/opt/vigil-medic`, with install shape `start_sh`, and reads the agent worker's readiness at `127.0.0.1:6990`, where `scripts/agent_up.sh` starts it. Its log is `logs/medic.log`; `./shutdown_all.sh` stops it.
+Medic then runs as `vigil-medic` from `/opt/vigil-medic`, with install shape `start_sh`, and reads the agent worker's readiness at `127.0.0.1:6990`, where `scripts/agent_up.sh` starts it. Its log is `logs/medic.log`, rotated to `medic.log.1` and `medic.log.2` at 10 MiB each, so it never takes more than 30 MiB; `./shutdown_all.sh` stops it.
+
+**Resource budget.** There is no container limit on this shape, so the restart loop applies Medic's 1 vCPU / 1 GiB budget itself. Medic runs under `nice -n 10`, so Vigil wins whenever the CPU is contended (priority only, not a quota). The loop reads Medic's resident memory every 5 seconds; above 1 GiB it stops Medic, logs a line naming the RSS and the limit (`Medic (pid …) uses … MiB RSS, over the 1024 MiB limit; stopping it`), and restarts it with the usual backoff. Repeated stops count toward the same crash-loop cap as any other exit.
 
 **Status in the console.** This shape has no gateway: the backend polls Medic's `GET /v1/status` directly on `127.0.0.1:8470`, where Medic listens (loopback only). Before it starts the backend, `./start.sh -d` sets the two backend settings, unless `.env` already gives them a value:
 

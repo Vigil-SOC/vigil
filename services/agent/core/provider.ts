@@ -29,6 +29,10 @@ export interface TurnRequest {
   // forced choice offers only that tool instead; one that refuses tools at all asks for the
   // tool's arguments as an emission. The run's emission turn covers a miss.
   force?: string;
+  // Answer in text over what the transcript holds: the same tools are declared, so the cached
+  // prefix still matches, with tool_choice "none". A gateway that refuses that is sent the tools
+  // offered, and any call in the reply is dropped.
+  answer?: boolean;
   signal?: AbortSignal;
 }
 

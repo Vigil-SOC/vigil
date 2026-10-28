@@ -26,7 +26,6 @@ import { StatePill, statePill, type PillTone } from '../../shared/StatePill'
 import { SeverityMark } from '../../shared/SeverityMark'
 import { LevelBadge, slaLevel } from '../../shared/LevelBadge'
 import { InfoTip } from '../../shared/InfoTip'
-import { MeterBar } from '../../shared/MeterBar'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../shell/toast'
 import { inputCls } from './CaseSections'
@@ -56,12 +55,6 @@ const STATE_OPTIONS = [
   { value: 'closed', label: 'Closed' },
 ]
 
-/** Share of the cost cap used, 0–100. Null with no cap or no spend figure: never a made-up number. */
-function limitPct(c: CaseRow): number | null {
-  if (c.costUsd == null || c.maxCostUsd == null || c.maxCostUsd <= 0) return null
-  return Math.min(100, Math.max(0, (c.costUsd / c.maxCostUsd) * 100))
-}
-
 /** "4 alerts · step 9 · active 3h ago · age 2d": one line, the description is on hover. */
 function metaLine(c: CaseRow): string {
   return [
@@ -77,12 +70,6 @@ const TIME_LEFT_TIP = {
   calculation: 'Resolution due minus now. Good while under 75% of the response or resolution window has passed, Fair from 75%, Poor from 90% or once past due.',
   limit: 'Paused while the case is on hold. Set per priority in Settings → SLA.',
 }
-const LIMIT_USED_TIP = {
-  source: 'Cost of the case’s latest investigation and its cost cap.',
-  calculation: 'Cost so far divided by the cap. Good under 75%, Fair from 75%, Poor from 90%.',
-  limit: 'Cases whose run has no cost cap show —.',
-}
-
 const STATE_WORDS = STATE_OPTIONS.filter((o) => o.value && o.value !== 'closed')
 const TONE_DOT: Record<PillTone, string> = {
   needs: 'var(--poor)',
@@ -326,7 +313,6 @@ function CasesTable({
             <span role="columnheader">Status</span>
             <span role="columnheader">Owner</span>
             <span role="columnheader" className="cg-th-info">Time left (SLA)<InfoTip label="How time left is calculated" {...TIME_LEFT_TIP} /></span>
-            <span role="columnheader" className="cg-th-info">Limit used<InfoTip label="How limit used is calculated" {...LIMIT_USED_TIP} /></span>
             <span role="columnheader"><span className="sr-only">Comments</span></span>
           </div>
           <div role="rowgroup">
@@ -349,8 +335,6 @@ function CasesTable({
             )}
             {phase === 'ready' &&
               display.map((c) => {
-                const pct = limitPct(c)
-                const level = slaLevel(c.budgetHealth)
                 return (
                   <div
                     key={c.id}
@@ -381,14 +365,6 @@ function CasesTable({
                     <span role="cell" className="cg-time">
                       <span>{c.timeLeft}</span>
                       {!c.slaPaused && c.timeLeft !== '—' && <LevelBadge level={slaLevel(c.slaHealth)} variant="pill" />}
-                    </span>
-                    <span role="cell" className="cg-limit">
-                      {pct == null ? '—' : (
-                        <>
-                          <MeterBar pct={pct} level={level} label={`Limit used by ${c.id}`} />
-                          <span className="cg-pct">{Math.round(pct)}%</span>
-                        </>
-                      )}
                     </span>
                     <span role="cell" className={`cg-comments${c.comments ? '' : ' none'}`}>
                       <Icon name="comment" size={13} />

@@ -20,10 +20,11 @@ from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional
 
 from opentelemetry.metrics import Observation
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from core.cases import case_trail
+from core.response.ceiling import IRREVERSIBLE, REVERSIBLE, environment_locks_act
 from core.response.config import (
     ResponseConfig,
     approval_requirement,
@@ -122,11 +123,12 @@ class ActionStatus(Enum):
     FAILED = "failed"
 
 
-class Reversibility(Enum):
-    """Whether an executed action can be undone."""
+def stored_reversibility(effect_class: Optional[str]) -> str:
+    """``approval_actions.reversibility``, which the console's undo fuse reads.
 
-    REVERSIBLE = "reversible"
-    IRREVERSIBLE = "irreversible"
+    Two-valued: irreversible for an irreversible or unclassified tool.
+    """
+    return IRREVERSIBLE if effect_class in (IRREVERSIBLE, None) else REVERSIBLE
 
 
 @dataclass
@@ -158,7 +160,8 @@ class PendingAction:
     # #128 — workflow phase approvals link back here.
     workflow_run_id: Optional[str] = None
     workflow_phase_id: Optional[str] = None
-    reversibility: str = Reversibility.REVERSIBLE.value
+    # "reversible" or "irreversible": the console's undo fuse reads it.
+    reversibility: str = REVERSIBLE
     idempotency_key: Optional[str] = None
 
 
@@ -205,7 +208,7 @@ def _row_to_pending(row: ApprovalActionRow) -> PendingAction:
         parameters=dict(row.parameters or {}),
         workflow_run_id=row.workflow_run_id,
         workflow_phase_id=row.workflow_phase_id,
-        reversibility=row.reversibility or Reversibility.REVERSIBLE.value,
+        reversibility=row.reversibility or REVERSIBLE,
         idempotency_key=row.idempotency_key,
     )
 
@@ -232,15 +235,6 @@ class ApprovalService:
                 the no-arg form callers use still honours env (#916).
         """
         self.config = config or ResponseConfig.from_settings()
-        # The daemon sets this from DAEMON_FORCE_APPROVAL. It changes the
-        # recorded rule only. A confidence never approves, and the stored
-        # ceiling is what Assist/Act writes (#2918).
-        self.force_manual_approval = False
-
-    def set_force_manual_approval(self, force: bool):
-        """Record that this process is forcing the approval rule. Writes nothing."""
-        self.force_manual_approval = force
-        logger.info("Force manual approval set to: %s", force)
 
     # ------------------------------------------------------------------
     # CRUD — DB-backed
@@ -260,7 +254,7 @@ class ApprovalService:
         parameters: Optional[Dict] = None,
         workflow_run_id: Optional[str] = None,
         workflow_phase_id: Optional[str] = None,
-        reversibility: Reversibility = Reversibility.REVERSIBLE,
+        effect_class: Optional[str] = REVERSIBLE,
         idempotency_key: Optional[str] = None,
         human_only: bool = False,
         annotate_rule: bool = True,
@@ -271,7 +265,9 @@ class ApprovalService:
         ``workflow_phase_id`` so the approvals UI / resume endpoint can
         link back to the paused run.
 
-        Irreversible actions always require approval. ``human_only`` holds the
+        ``effect_class`` is the called tool's stored class, None when it is
+        unclassified; a row that names no outside tool stays ``reversible``.
+        Every row requires approval. ``human_only`` holds the
         row for a person whatever ``confidence`` says: for callers whose
         confidence is their own claim (an agent, a model's reading of alert
         text) and so cannot be what releases the action. A second call with
@@ -292,7 +288,7 @@ class ApprovalService:
             parameters=parameters,
             workflow_run_id=workflow_run_id,
             workflow_phase_id=workflow_phase_id,
-            reversibility=reversibility,
+            effect_class=effect_class,
             idempotency_key=idempotency_key,
             human_only=human_only,
             annotate_rule=annotate_rule,
@@ -313,7 +309,7 @@ class ApprovalService:
         parameters: Optional[Dict] = None,
         workflow_run_id: Optional[str] = None,
         workflow_phase_id: Optional[str] = None,
-        reversibility: Reversibility = Reversibility.REVERSIBLE,
+        effect_class: Optional[str] = REVERSIBLE,
         idempotency_key: Optional[str] = None,
         human_only: bool = False,
         annotate_rule: bool = True,
@@ -327,9 +323,9 @@ class ApprovalService:
 
         # The branch that set requires_approval is appended to the caller's
         # narrative so the row records the rule it was decided by (#917).
-        forced = human_only or self.force_manual_approval
+        forced = human_only or environment_locks_act()
         requires_approval, rule = approval_requirement(
-            forced, reversibility, confidence, self.config
+            forced, effect_class, confidence, self.config
         )
         if human_only:
             rule = decision_rule("approval.human_only", True)
@@ -369,7 +365,7 @@ class ApprovalService:
                     parameters=dict(parameters or {}),
                     workflow_run_id=workflow_run_id,
                     workflow_phase_id=workflow_phase_id,
-                    reversibility=reversibility.value,
+                    reversibility=stored_reversibility(effect_class),
                     idempotency_key=key,
                 )
                 session.add(row)
@@ -676,6 +672,52 @@ class ApprovalService:
         """List all pending actions requiring approval."""
         return self.list_actions(status=ActionStatus.PENDING, requires_approval=True)
 
+    def run_proposal_match(
+        self, key: str, action_type: str, target: str
+    ) -> Optional[PendingAction]:
+        """The row a run's proposal would repeat: its own (by ``key``) first, else
+        the newest run proposal of the same action on the same target, any status."""
+        db = get_db_manager()
+        with db.session_scope() as session:
+            own = _nonfailed_by_key(session, key)
+            if own is not None:
+                return _row_to_pending(own)
+            row = session.execute(
+                select(ApprovalActionRow)
+                .where(ApprovalActionRow.idempotency_key.like("run-proposal:%"))
+                .where(ApprovalActionRow.action_type == action_type)
+                .where(
+                    func.lower(func.trim(ApprovalActionRow.target))
+                    == target.strip().lower()
+                )
+                .order_by(ApprovalActionRow.created_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            return _row_to_pending(row) if row else None
+
+    def add_proposal_case(
+        self, action_id: str, case_id: str
+    ) -> Optional[PendingAction]:
+        """List ``case_id`` on a pending proposal, once. None when it is not pending."""
+        db = get_db_manager()
+        with db.session_scope() as session:
+            row = session.execute(
+                select(ApprovalActionRow)
+                .where(ApprovalActionRow.action_id == action_id)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if row is None or row.status != ActionStatus.PENDING.value:
+                return None
+            params = dict(row.parameters or {})
+            listed = proposal_case_ids(params)
+            if case_id not in listed:
+                params.pop("case_id", None)
+                params["case_ids"] = [*listed, case_id]
+                # A new dict: an in-place change to a JSON column is not flushed.
+                row.parameters = params
+                session.flush()
+            return _row_to_pending(row)
+
 
 def _trail_refusal(session, action_id: str, approver: str) -> None:
     """One entry per refusal, in the decision's transaction."""
@@ -701,34 +743,54 @@ def _text_id(value: Any) -> Optional[str]:
     return text or None
 
 
-def _case_id_for_action(
+def proposal_case_ids(params: Any) -> List[str]:
+    """The cases a row names itself: ``case_ids`` in order, else the one ``case_id``
+    rows filed before a proposal could be shared."""
+    params = params if isinstance(params, dict) else {}
+    listed = params.get("case_ids")
+    if isinstance(listed, list):
+        ids = [one for one in map(_text_id, listed) if one]
+        if ids:
+            return list(dict.fromkeys(ids))
+    direct = _text_id(params.get("case_id"))
+    return [direct] if direct else []
+
+
+def _case_ids_for_action(
     action: PendingAction,
     runs: Dict[str, Any],
     investigations: Dict[str, Optional[str]],
     evidence_cases: Optional[Dict[str, str]] = None,
-) -> Optional[str]:
-    """One case id, in the order #1301 settled. Later sources fill a gap only."""
+) -> List[str]:
+    """The action's cases, first the one that asked, in the order #1301 settled.
+    Later sources fill a gap only, and name one case."""
     params = action.parameters if isinstance(action.parameters, dict) else {}
-    direct = _text_id(params.get("case_id"))
+    direct = proposal_case_ids(params)
     if direct:
         return direct
     if action.workflow_run_id:
         ctx = runs.get(action.workflow_run_id) or {}
         from_run = _text_id(ctx.get("case_id")) if isinstance(ctx, dict) else None
         if from_run:
-            return from_run
+            return [from_run]
     investigation_id = _text_id(params.get("investigation_id"))
     if investigation_id:
         from_investigation = _text_id(investigations.get(investigation_id))
         if from_investigation:
-            return from_investigation
+            return [from_investigation]
     # The responder saves its approval before intake makes the alert's case, so
     # the alert ids in evidence are the only link until then.
     for finding_id in _evidence_ids(action):
         found = (evidence_cases or {}).get(finding_id)
         if found:
-            return found
-    return None
+            return [found]
+    return []
+
+
+def case_ids_for(action: PendingAction) -> List[str]:
+    """One action's cases, resolved as ``needs_you`` resolves them."""
+    runs, investigations, evidence_cases, _stored = _case_lookups([action])
+    return _case_ids_for_action(action, runs, investigations, evidence_cases)
 
 
 def _evidence_ids(action: PendingAction) -> List[str]:
@@ -864,6 +926,7 @@ def _parked_runs(pending_runs: set[str]) -> List[Dict[str, Any]]:
                 continue
             if reason.lower().startswith(_CHECKPOINT_WAITS):
                 continue
+            case_id = _text_id(ctx.get("case_id"))
             found.append(
                 {
                     "kind": "parked",
@@ -872,8 +935,9 @@ def _parked_runs(pending_runs: set[str]) -> List[Dict[str, Any]]:
                     "reason": reason[:1].upper() + reason[1:],
                     # Nothing records when it parked, and its start is not that.
                     "created_at": "",
-                    "reversibility": Reversibility.REVERSIBLE.value,
-                    "case_id": _text_id(ctx.get("case_id")),
+                    "reversibility": REVERSIBLE,
+                    "case_id": case_id,
+                    "case_ids": [case_id] if case_id else [],
                     "finding_id": None,
                     "run_id": row.run_id,
                     "checkpoint_id": None,
@@ -916,8 +980,8 @@ def needs_you(case_id: Optional[str] = None) -> Dict[str, Any]:
     wanted = _text_id(case_id)
     items: List[Dict[str, Any]] = []
     for action in actions:
-        resolved = _case_id_for_action(action, runs, investigations, evidence_cases)
-        if wanted is not None and resolved != wanted:
+        resolved = _case_ids_for_action(action, runs, investigations, evidence_cases)
+        if wanted is not None and wanted not in resolved:
             continue
         items.append(
             {
@@ -927,7 +991,8 @@ def needs_you(case_id: Optional[str] = None) -> Dict[str, Any]:
                 "reason": split_decision_rule(action.reason)[0],
                 "created_at": action.created_at,
                 "reversibility": action.reversibility,
-                "case_id": resolved,
+                "case_id": resolved[0] if resolved else None,
+                "case_ids": resolved,
                 # Agent-written evidence is any text: only a stored alert counts.
                 "finding_id": next(
                     (one for one in _evidence_ids(action) if one in stored), None
@@ -946,4 +1011,4 @@ def needs_you(case_id: Optional[str] = None) -> Dict[str, Any]:
 
 def needs_you_case_ids() -> set[str]:
     """Case ids that need a person, from one ``needs_you()`` read."""
-    return {item["case_id"] for item in needs_you()["items"] if item["case_id"]}
+    return {one for item in needs_you()["items"] for one in item["case_ids"]}

@@ -23,7 +23,11 @@ from core.cases.case_status import (
 from core.cases.linked_entities import finding_entity_summary
 from core.findings.anomaly_score import stored_anomaly_score
 from core.llm.tool_schemas import ALL_TOOLS as BACKEND_TOOLS
-from core.llm.tool_schemas import FIND_INTEGRATION_TOOLS, INTEGRATION_TOOLS
+from core.llm.tool_schemas import (
+    CALL_INTEGRATION_TOOL,
+    FIND_INTEGRATION_TOOLS,
+    INTEGRATION_TOOLS,
+)
 from core.memory.recall_contract import RECALL_TOOL
 from core.skills.skill_library import READ_SKILL_TOOL, read_skill
 
@@ -39,6 +43,62 @@ MANIFEST: Dict[str, Dict[str, Any]] = {
 }
 
 Args = Dict[str, Any]
+
+# Every chat tool names the permission execute_backend_tool checks. A run no
+# person started is bound by its run claims and holds no role: the autonomy
+# ceiling governs it at invoke. A caller bound to nothing is refused.
+TOOL_PERMISSIONS: Dict[str, str] = {
+    "analyze_coverage": "detections.read",
+    "search_detections": "detections.read",
+    "identify_gaps": "detections.read",
+    "get_coverage_stats": "detections.read",
+    "get_detection_count": "detections.read",
+    "lint_detections": "detections.read",
+    "check_detection_candidate": "detections.read",
+    "reconstruct_run": "detections.read",
+    "list_findings": "findings.read",
+    "search_findings": "findings.read",
+    "get_findings_stats": "findings.read",
+    "get_finding": "findings.read",
+    "dismiss_finding": "findings.write",
+    "list_cases": "cases.read",
+    "get_case": "cases.read",
+    "case_records": "cases.read",
+    "create_case": "cases.write",
+    "add_finding_to_case": "cases.write",
+    "update_case": "cases.write",
+    "add_resolution_step": "cases.write",
+    "list_completed_hunts": "automation.read",
+    "replay_hunt": "automation.read",
+    "get_technique_rollup": "findings.read",
+    "list_pending_approvals": "ai_decisions.read",
+    "get_approval_action": "ai_decisions.read",
+    "approve_action": APPROVE_PERMISSION,
+    "reject_action": APPROVE_PERMISSION,
+    "get_approval_stats": "ai_decisions.read",
+    "lookup_indicators": "findings.read",
+    "propose_feed_hunts": "findings.read",
+    RECALL_TOOL: "automation.read",
+    "check_hunt_coverage": "automation.read",
+    "list_learning_episodes": "automation.read",
+    "export_learning_episodes": "automation.read",
+    READ_SKILL_TOOL: "automation.read",
+    FIND_INTEGRATION_TOOLS: "integrations.read",
+    CALL_INTEGRATION_TOOL: "integrations.write",
+}
+
+
+def required_permission(tool: str) -> Optional[str]:
+    """The permission one of Vigil's own tools checks, or None for any other name.
+
+    A built-in names it here; a tool on Vigil's MCP server names it with
+    ``@requires``.
+    """
+    if tool in TOOL_PERMISSIONS:
+        return TOOL_PERMISSIONS[tool]
+    from core.integrations.mcp import in_process
+
+    return in_process.required_permission(tool)
 
 
 # A page of findings is what a hunt groups alerts by, so each carries the hosts,
@@ -70,6 +130,44 @@ def _compact_page(data: Any, findings: list) -> list:
     return [
         _compact(f, states.get(f.get("finding_id"), (None, None))[0]) for f in findings
     ]
+
+
+# A page of summaries fits result_cap once rendered (#3276): the schemas cap limit at
+# PAGE_LIMIT, and a page stops before its compact JSON passes PAGE_CHARS, so the
+# counts and paging beside it are read whole. has_more and next_offset describe
+# the entries returned, not the limit asked for.
+PAGE_LIMIT = 25
+PAGE_CHARS = 12_000
+
+
+def _page(data: Any, findings: list, *, offset: int, limit: int, total: int) -> Args:
+    page, used = [], 0
+    for summary in _compact_page(data, findings):
+        used += len(_compact_json(summary)) + 1
+        if page and used > PAGE_CHARS:
+            break
+        page.append(summary)
+    end = offset + len(page)
+    more = end < total
+    return {
+        "offset": offset,
+        "limit": limit,
+        "returned": len(page),
+        "has_more": more,
+        **({"next_offset": end} if more else {}),
+        "findings": page,
+    }
+
+
+def _compact_json(value: Any) -> str:
+    return json.dumps(value, default=str, ensure_ascii=False, separators=(",", ":"))
+
+
+def _page_limit(limit: Any) -> int:
+    try:
+        return min(max(int(limit), 1), PAGE_LIMIT)
+    except (TypeError, ValueError):
+        return 20
 
 
 # The derived states a findings read filters by (core.storage.service.FINDING_STATES).
@@ -115,6 +213,7 @@ def list_findings(
         "cluster_id": cluster_id,
         "min_anomaly_score": min_anomaly_score,
     }
+    limit = _page_limit(limit)
     data = _data()
     total = data.count_findings(**filters)
     findings = data.get_findings(
@@ -126,10 +225,7 @@ def list_findings(
     )
     return {
         "total": total,
-        "offset": offset,
-        "limit": limit,
-        "has_more": (offset + limit) < total,
-        "findings": _compact_page(data, findings),
+        **_page(data, findings, offset=offset, limit=limit, total=total),
     }
 
 
@@ -140,7 +236,7 @@ def search_findings(**args: Any) -> Args:
     if (bad := _bad_state(filters["state"])) is not None:
         return bad
     filters["search_query"] = args.get("query", "")
-    limit = args.get("limit", 20)
+    limit = _page_limit(args.get("limit", 20))
     offset = args.get("offset", 0)
     data = _data()
     counts = data.get_findings_summary(**filters, top_ips=TOP_IPS)
@@ -156,10 +252,7 @@ def search_findings(**args: Any) -> Args:
         "query": filters["search_query"],
         "total": total,
         **counts,
-        "offset": offset,
-        "limit": limit,
-        "has_more": (offset + limit) < total,
-        "findings": _compact_page(data, findings),
+        **_page(data, findings, offset=offset, limit=limit, total=total),
     }
 
 
@@ -168,8 +261,118 @@ def get_findings_stats(**_args: Any) -> Args:
     return {"total_findings": summary.pop("total"), **summary}
 
 
+# What an agent reads of one finding (#3276): the small fields and the stored
+# triage first, entity_context last, its flow preview cut to a sample, so the
+# rendered result fits result_cap. The REST endpoints still serve it whole.
+SAMPLE_RECORDS = 5
+SAMPLE_RAW_TEXT = 2_000
+SAMPLE_PORT_RANGES = 16
+_HEAD = (
+    "finding_id",
+    "title",
+    "severity",
+    "data_source",
+    "timestamp",
+    "created_at",
+    "updated_at",
+    "anomaly_score",
+    "cluster_id",
+    "external_id",
+    "description",
+    "mitre_predictions",
+)
+_TRIAGE_KEYS = (
+    "ai_triage",
+    "ai_triage_error",
+    "triage_confidence",
+    "category",
+    "recommended_action",
+    "triage_reasoning",
+)
+
+
 def get_finding(*, finding_id: str) -> Any:
-    return _data().get_finding(finding_id)
+    finding = _data().get_finding(finding_id)
+    return _for_agent(finding) if isinstance(finding, dict) else finding
+
+
+def _for_agent(finding: Args) -> Args:
+    enrichment = finding.get("ai_enrichment")
+    enrichment = dict(enrichment) if isinstance(enrichment, dict) else enrichment
+    shaped: Args = {key: finding.get(key) for key in _HEAD if key in finding}
+    if isinstance(enrichment, dict) and (triage := _triage(enrichment)):
+        shaped["triage"] = triage
+        for key in _TRIAGE_KEYS:
+            enrichment.pop(key, None)
+    rest = {k: v for k, v in finding.items() if k not in _HEAD}
+    rest.pop("entity_context", None)
+    rest.pop("ai_enrichment", None)
+    shaped.update(rest)
+    if enrichment:
+        shaped["ai_enrichment"] = enrichment
+    if "entity_context" in finding:
+        shaped["entity_context"] = _sampled_context(finding["entity_context"])
+    return shaped
+
+
+# The daemon's triage as one labelled block, rather than scattered ai_enrichment keys.
+def _triage(enrichment: Args) -> Optional[Args]:
+    stored = enrichment.get("ai_triage")
+    result = stored.get("result") if isinstance(stored, dict) else None
+    triage = dict(result) if isinstance(result, dict) else {}
+    for key, name in (
+        ("triage_confidence", "confidence"),
+        ("category", "category"),
+        ("recommended_action", "recommended_action"),
+        ("triage_reasoning", "reasoning"),
+    ):
+        if enrichment.get(key) is not None:
+            triage.setdefault(name, enrichment[key])
+    if isinstance(stored, dict) and stored.get("timestamp"):
+        triage["triaged_at"] = stored["timestamp"]
+    if enrichment.get("ai_triage_error"):
+        triage["error"] = enrichment["ai_triage_error"]
+    return triage or None
+
+
+def _sampled_context(context: Any) -> Any:
+    if not isinstance(context, dict):
+        return context
+    context = dict(context)
+    evidence = context.get("source_evidence")
+    if isinstance(evidence, dict):
+        evidence = dict(evidence)
+        records = evidence.get("records")
+        if isinstance(records, list) and len(records) > SAMPLE_RECORDS:
+            evidence["records"] = records[:SAMPLE_RECORDS]
+            evidence["records_shown"] = (
+                f"{SAMPLE_RECORDS} of the {len(records)} stored; "
+                "netflow_digest counts every flow"
+                if "netflow_digest" in context
+                else f"{SAMPLE_RECORDS} of the {len(records)} stored"
+            )
+        raw = evidence.get("raw_text")
+        if isinstance(raw, str) and len(raw) > SAMPLE_RAW_TEXT:
+            evidence["raw_text"] = raw[:SAMPLE_RAW_TEXT]
+            evidence["raw_text_shown"] = f"{SAMPLE_RAW_TEXT} of {len(raw)} characters"
+        # Last, so whatever still overflows is cut from the preview.
+        context.pop("source_evidence")
+        context["source_evidence"] = evidence
+    digest = context.get("netflow_digest")
+    if isinstance(digest, dict) and isinstance(digest.get("pairs"), list):
+        # A pair's port ranges run to 256 entries; port_count and top_ports stay.
+        digest = dict(digest)
+        digest["pairs"] = [
+            (
+                {k: v for k, v in pair.items() if k != "port_ranges"}
+                if isinstance(pair, dict)
+                and len(pair.get("port_ranges") or ()) > SAMPLE_PORT_RANGES
+                else pair
+            )
+            for pair in digest["pairs"]
+        ]
+        context["netflow_digest"] = digest
+    return context
 
 
 # A dismissal is the finding's terminal state. The actor is the caller and the
@@ -264,6 +467,8 @@ def create_case(
 ) -> Args:
     if refusal := permission_refusal("cases.write"):
         return refusal
+    if assignee is not None and (refusal := permission_refusal("cases.assign")):
+        return refusal
     if refusal := _status_refusal(status):
         return refusal
     if assignee is not None:
@@ -333,6 +538,8 @@ def update_case(
     if priority:
         updates["priority"] = priority
     if assignee is not None:
+        if refusal := permission_refusal("cases.assign"):
+            return refusal
         # Blank unassigns; re-sending the stored value keeps it.
         updates["assignee"], refusal = _resolve_assignee(
             assignee, current=case.get("assignee")
@@ -395,15 +602,36 @@ def _case_records(args: Args) -> Args:
                 list_escalations(session, case_id)
             ),
         }
+        flows = _case_flows(session, on_case)
         findings = FindingSchema.dump_many(page)
+    if flows is not None:
+        # Ahead of the findings page, so a cut at result_cap takes findings.
+        records["flows"] = flows
     return {
         **records,
         "total": total,
-        "offset": offset,
-        "limit": limit,
-        "has_more": (offset + limit) < total,
-        "findings": _compact_page(_data(), findings),
+        **_page(_data(), findings, offset=offset, limit=limit, total=total),
     }
+
+
+# Every NetFlow finding on the case, not the page: its ingest digest, read by
+# JSON path so the flow previews stay in the database (#3275).
+def _case_flows(session: Any, on_case: Any) -> Optional[Args]:
+    from core.findings.netflow_digest import case_flow_summary
+    from core.storage.models import Finding
+
+    rows = on_case.with_entities(
+        Finding.finding_id,
+        Finding.entity_context["netflow_digest"],
+        Finding.entity_context["source_evidence"]["telemetry_kind"],
+    ).all()
+    digested = [(fid, digest) for fid, digest, _ in rows if digest is not None]
+    missing = [
+        fid for fid, digest, kind in rows if digest is None and kind == "netflow"
+    ]
+    if not digested and not missing:
+        return None
+    return case_flow_summary(digested, without_digest=missing)
 
 
 def add_finding_to_case(*, case_id: str, finding_id: str) -> Args:
@@ -692,8 +920,8 @@ def get_approval_action(*, action_id: str) -> Args:
 
 
 # Chat and MCP do not approve. The row stays as it is; a person confirms it
-# on the Approvals screen. permission_refusal allows an unbound caller, and
-# this does not add a second denial for that case.
+# on the Approvals screen. A run no person started passes permission_refusal,
+# and this does not add a second denial for that case.
 def approve_action(*, action_id: str) -> Args:
     if refusal := permission_refusal(APPROVE_PERMISSION):
         return refusal
@@ -763,6 +991,11 @@ async def execute_backend_tool(
     registry: Optional["MCPRegistry"] = None,
 ) -> Tuple[Any, bool]:
     args = dict(tool_input or {})
+    # permission_refusal reads the permissions-module binding, which is what
+    # the tool tests stub. A caller bound to nothing is refused.
+    permission = TOOL_PERMISSIONS.get(tool_name)
+    if permission and (refusal := permission_refusal(permission)):
+        return refusal, True
 
     if tool_name == FIND_INTEGRATION_TOOLS and registry is not None:
         from core.agents.integration_tools import find_integration_tools

@@ -7,6 +7,7 @@ only when every larger value agrees. Nothing here reads a clock or does I/O.
 
 from __future__ import annotations
 
+import bisect
 import functools
 import itertools
 import operator
@@ -131,32 +132,101 @@ def _key_source(log: dict, source: str):
     return args[i] if i < len(args) else None
 
 
-class Reads:
-    """One signal's reads up to tick T, for one group (or shared by every group)."""
+def row_key(row: tuple) -> tuple:
+    return row[0], row[1]["id"]
 
-    def __init__(self, items: list, interval: float | None, signal_ok: list[float]):
-        self.items = items  # (t, observation, this series' entry or None), by t
+
+class Series:
+    """One series' ok reads, by (t, id), with the columns a window scans kept beside
+    them: reading every entry of a 48 h window each tick costs more than the rest."""
+
+    __slots__ = ("epochs", "present", "rows", "times", "untrusted", "values")
+
+    def __init__(self) -> None:
+        self.rows: list[tuple] = []  # (t, observation, this series' entry)
+        self.times: list[float] = []
+        self.values: list = []
+        self.epochs: list = []
+        self.present: list[bool] = []
+        self.untrusted: list[bool] = []
+
+    def _columns(self) -> tuple[list, ...]:
+        return (
+            self.rows,
+            self.times,
+            self.values,
+            self.epochs,
+            self.present,
+            self.untrusted,
+        )
+
+    def add(self, t: float, obs: dict, entry: dict) -> None:
+        row, rows = (t, obs, entry), self.rows
+        # Ordered by (t, id) whatever the arrival order, so live and replay agree.
+        cells = (
+            row,
+            t,
+            entry.get("value"),
+            obs.get("epoch"),
+            entry.get("state") == "present",
+            entry.get("trust") == "untrusted",
+        )
+        if not rows or row_key(rows[-1]) <= row_key(row):  # the usual case: in order
+            for column, cell in zip(self._columns(), cells):
+                column.append(cell)
+            return
+        i = bisect.bisect_right(rows, row_key(row), key=row_key)
+        for column, cell in zip(self._columns(), cells):
+            column.insert(i, cell)
+
+    def drop(self, n: int) -> None:
+        """Forget the n oldest reads."""
+        for column in self._columns():
+            del column[:n]
+
+    def upto(self, now: float) -> int:
+        """How many reads are at or before now."""
+        times = self.times
+        return (
+            len(times)
+            if not times or times[-1] <= now
+            else bisect.bisect_right(times, now)
+        )
+
+
+class Reads:
+    """One signal's reads up to tick T, for one group (or shared by every group):
+    its series' first `hi` reads, and the signal's failed reads. Shared by every rule
+    that reads the series this tick, so callers don't mutate it; `memo` holds what
+    they derive from it."""
+
+    def __init__(self, found, failed: list, interval, signal_ok: list[float]):
+        self.series, self.hi = found or (None, 0)  # found: (Series, hi) or None
+        self.failed = failed  # (t, observation, None), by (t, id)
         self.interval = interval
         self.signal_ok = signal_ok  # times of every ok read of the signal
+        self.memo: dict = {}
 
-    def ok(self):
-        return [r for r in self.items if r[1]["outcome"] == "ok"]
+    def newest_ok(self):
+        return self.series.rows[self.hi - 1] if self.hi else None
 
-    def present(self):
-        return [r for r in self.ok() if r[2] is not None and r[2]["state"] == "present"]
+    def last(self):
+        """The newest read, ok or failed."""
+        rows = [r for r in (self.newest_ok(), *self.failed[-1:]) if r]
+        return max(rows, key=row_key, default=None)
 
     def fresh(self, now: float) -> bool:
-        ok = self.ok()
         return (
             self.interval is not None
-            and bool(ok)
-            and ok[-1][0] >= now - 2 * self.interval
+            and self.hi > 0
+            and self.newest_ok()[0] >= now - 2 * self.interval
         )
 
 
 def covered(times: list[float], start: float, now: float, gap: float) -> bool:
-    """Reads (or heartbeats) never more than `gap` apart from `start` through now."""
-    points = [t for t in times if t >= start]
+    """Reads (or heartbeats) never more than `gap` apart from `start` through now.
+    `times` is sorted."""
+    points = times[bisect.bisect_left(times, start) :]
     if not points or points[0] > start + gap:
         return False
     points.append(now)
@@ -210,13 +280,9 @@ def evaluate(node: dict, ctx: Context) -> bool | None:
 
 def _latest(node, ctx, age: bool = False):
     reads = ctx.samples(node["signal"])
-    if (
-        reads is None
-        or not reads.fresh(ctx.now)
-        or reads.items[-1][1]["outcome"] != "ok"
-    ):
+    if reads is None or not reads.fresh(ctx.now) or reads.last()[1]["outcome"] != "ok":
         return UNKNOWN  # stale, or the newest read failed
-    read = reads.items[-1]
+    read = reads.newest_ok()
     ctx.note(node["signal"], read)
     if read[2] is None or read[2]["state"] != "present":
         return False  # absent is a known fact (§2)
@@ -235,49 +301,57 @@ def _from_baseline(base: float | None, times: list[float], lo: float, ctx, gap) 
 
 
 def _window(node, ctx):
-    """(W, [baseline] + present reads in (T − W, T], fully covered, value type), or
-    None if stale."""
+    """(W, values of [baseline] + present reads in (T − W, T], their epochs, fully
+    covered, value type, memo for what callers derive from them), or None if stale."""
     reads = ctx.samples(node["signal"])
     if reads is None or not reads.fresh(ctx.now):
         return None
-    w, gap = ctx.window(node), 2 * reads.interval
-    lo, present = ctx.now - w, reads.present()
-    before = [r for r in present if r[0] <= lo and r[0] >= lo - gap][-1:]
-    inside = [r for r in present if r[0] > lo]
-    for r in inside[:-1] + before:
+    w = ctx.window(node)
+    if w not in reads.memo:  # the same for every rule reading this series and window
+        s, hi, gap, lo = reads.series, reads.hi, 2 * reads.interval, ctx.now - w
+        j = bisect.bisect_left(s.times, lo - gap, 0, hi)  # no baseline is older
+        keep = s.present[j:hi]
+        everything = all(keep)
+
+        def present(column: list) -> list:
+            part = column[j:hi]
+            return part if everything else list(itertools.compress(part, keep))
+
+        rows, times = present(s.rows), present(s.times)
+        i = bisect.bisect_right(times, lo)
+        k, n = max(i - 1, 0), len(rows)  # rows[k:i] is the baseline, rows[i:] inside
+        end = n - 1 if i < n else n  # tainted by all but the newest inside (it's noted)
+        taints = list(itertools.compress(rows[k:end], present(s.untrusted)[k:end]))
+        full = i > 0 and _from_baseline(times[k], s.times[j:hi], lo, ctx, gap)
+        values, epochs = present(s.values)[k:], present(s.epochs)[k:]
+        vtype = s.rows[hi - 1][2]["type"]
+        reads.memo[w] = (values, epochs, full, vtype, taints, rows[i:][-1:], {})
+    values, epochs, full, vtype, taints, newest, memo = reads.memo[w]
+    for r in taints:
         ctx.taint(r)
-    if inside:
-        ctx.note(node["signal"], inside[-1])
-    oks = [r[0] for r in reads.ok()]
-    full = _from_baseline(before[0][0] if before else None, oks, lo, ctx, gap)
-    vtype = next((r[2]["type"] for r in reversed(reads.items) if r[2]), None)
-    return w, before + inside, full, vtype
-
-
-def _same_epoch(a, b) -> bool:
-    return a[1].get("epoch") == b[1].get("epoch")
-
-
-def _rise(a, b) -> float:
-    """A counter's rise between reads; one that restarted from 0 adds its new value."""
-    if _same_epoch(a, b):
-        return max(0, b[2]["value"] - a[2]["value"])
-    return b[2]["value"]
+    for r in newest:
+        ctx.note(node["signal"], r)
+    return w, values, epochs, full, vtype, memo
 
 
 def _increase(node, ctx, per_second: bool = False):
     got = _window(node, ctx)
     if got is None:
         return UNKNOWN
-    w, seq, full, vtype = got
-    if not all(_number(r[2]["value"]) for r in seq):
-        return UNKNOWN  # not a number: can't evaluate
-    if vtype != "counter":
-        if not full:
-            return UNKNOWN  # a gauge's rise has no lower bound
-        x = seq[-1][2]["value"] - seq[0][2]["value"]
-    else:
-        x = sum(_rise(a, b) for a, b in itertools.pairwise(seq))
+    w, values, epochs, full, vtype, memo = got
+    if "increase" not in memo:
+        if not all(map(_number, values)):
+            memo["increase"] = UNKNOWN  # not a number: can't evaluate
+        elif vtype != "counter":  # a gauge's rise has no lower bound
+            memo["increase"] = values[-1] - values[0] if full else UNKNOWN
+        else:  # a counter that restarted from 0 adds its new value
+            memo["increase"] = sum(
+                (b - a if b > a else 0) if ea == eb else b
+                for a, b, ea, eb in zip(values, values[1:], epochs, epochs[1:])
+            )
+    x = memo["increase"]
+    if x is UNKNOWN:
+        return UNKNOWN
     x = x / w if per_second else x
     return decide(node["op"], x, ctx.value(node["value"]), full)
 
@@ -286,14 +360,16 @@ def _changes(node, ctx):
     got = _window(node, ctx)
     if got is None:
         return UNKNOWN
-    _, seq, full, vtype = got
-    counter = vtype == "counter"  # changes only grow with more reads: any type (§2)
-    x = sum(
-        a[2]["value"] != b[2]["value"]
-        for a, b in itertools.pairwise(seq)
-        if not counter or _same_epoch(a, b)  # a restart is neither a change nor flat
-    )
-    return decide(node["op"], x, ctx.value(node["value"]), full)
+    _, values, epochs, full, vtype, memo = got
+    if "changes" not in memo:
+        counter = vtype == "counter"  # changes only grow with more reads: any type (§2)
+        epochs = epochs if counter else [None] * len(values)
+        memo["changes"] = sum(  # a counter's restart is neither a change nor flat
+            a != b
+            for a, b, ea, eb in zip(values, values[1:], epochs, epochs[1:])
+            if ea == eb
+        )
+    return decide(node["op"], memo["changes"], ctx.value(node["value"]), full)
 
 
 def _count(node, ctx):
@@ -320,8 +396,10 @@ def _absent_for(node, ctx):
         reads = ctx.samples(node["signal"])
         if reads is None:
             return UNKNOWN
-        seen = [r for r in reads.ok() if r[0] > ctx.now - w]
-        hits = [r for r in seen if r[2] is not None and r[2]["state"] == "present"]
+        s, hi = reads.series, reads.hi
+        j = bisect.bisect_right(s.times, ctx.now - w, 0, hi) if s else 0
+        seen = s.rows[j:hi] if s else []
+        hits = list(itertools.compress(seen, s.present[j:hi])) if s else []
         # Covered by the signal's ok reads (§2): a source that vanished from a
         # sensor that still reads is absent, not unknown.
         times, interval = reads.signal_ok, reads.interval

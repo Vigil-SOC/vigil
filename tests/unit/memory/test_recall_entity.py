@@ -114,6 +114,7 @@ def invoke(monkeypatch):
     from fastapi.testclient import TestClient
 
     from core.agents import internal_auth, tools_router
+    from core.auth import tool_principal
     from core.integrations.mcp.registry import MCPRegistry
 
     monkeypatch.setattr(internal_auth, "get_secret", lambda name: "shhh")
@@ -129,6 +130,7 @@ def invoke(monkeypatch):
                 "tool": tool,
                 "args": args,
                 "bounds": {"max_rows": 5, "timeout_ms": 10_000},
+                "principal": tool_principal.mint(agent_id="agent:hunt", run_id="r-1"),
             },
             headers={"Authorization": "Bearer shhh"},
         )

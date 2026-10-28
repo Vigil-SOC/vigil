@@ -83,11 +83,25 @@ def _clean(throwaway_database):
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    from core.auth.auth_service import AuthService
+    from core.auth.current_user import get_current_user
+    from core.storage.models import User
     from services.api.routers import overview
 
+    monkeypatch.setattr(
+        AuthService, "check_permission", staticmethod(lambda *a, **k: True)
+    )
     app = FastAPI()
     app.include_router(overview.router, prefix=overview.ROUTER_META.prefix)
+    app.dependency_overrides[get_current_user] = lambda: User(
+        user_id="ov-user",
+        username="ov",
+        email="ov@test.local",
+        password_hash="",
+        role_id="role-admin",
+        is_active=True,
+    )
     return TestClient(app)
 
 
@@ -319,7 +333,7 @@ def test_terminal_states_partition_the_day():
         assert node["count"] is None
         assert node["unmeasured_text"] == "Not measured yet"
     nodes = {node["state"]: node for node in payload["outcomes"]}
-    assert nodes["dismissed"]["label"] == "Dropped as noise"
+    assert nodes["dismissed"]["label"] == "Dismissed as noise"
     assert nodes["dismissed"]["count"] >= 1
     assert nodes["scoring"]["count"] >= 1
     assert "dropped" not in nodes

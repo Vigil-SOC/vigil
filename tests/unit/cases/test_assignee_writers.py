@@ -43,8 +43,12 @@ def template(monkeypatch):
 
 
 def _from_template(assignee):
+    # Called directly, so FastAPI does not resolve the user dependency.
     return create_case_from_template(
-        "t-1", CaseFromTemplate(title="x", assignee=assignee), people()
+        "t-1",
+        CaseFromTemplate(title="x", assignee=assignee),
+        people(),
+        SimpleNamespace(user_id="alice"),
     )
 
 

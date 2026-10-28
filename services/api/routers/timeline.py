@@ -7,10 +7,12 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
+from core.auth.permissions import permission_gate
 from core.routing import Auth, RouterMeta
 from core.storage.database_data_service import DatabaseDataService
 
 router = APIRouter()
+router.dependencies.append(permission_gate("findings.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/timeline",

@@ -2,13 +2,13 @@
    unmeasured. Both used to read as $0.00, and `zero` was labelled "free" (#989). */
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
-import HealthScreen from './HealthScreen'
+import AiSpendPanel from './AiSpendPanel'
 
 const row = (over: Record<string, unknown>) => ({
   provider_type: 'bifrost', calls: 10, unpriced_calls: 0, input_tokens: 1000, output_tokens: 500, cache_hit_rate: 0, ...over,
 })
 
-vi.mock('../settings/useSettings', () => ({
+vi.mock('./useSettings', () => ({
   useCostAnalytics: () => ({
     phase: 'ready',
     error: null,
@@ -24,30 +24,18 @@ vi.mock('../settings/useSettings', () => ({
     },
   }),
 }))
-vi.mock('../decisions/useDecisions', () => ({
-  usePendingApprovals: () => ({ phase: 'ready', error: null, actions: [], reload: vi.fn() }),
-}))
-vi.mock('./useHealth', () => ({
-  RUNS_PER_WORKFLOW: 20,
-  RUN_STATUSES: ['completed', 'failed'],
-  useRunOutcomes: () => ({ phase: 'ready', error: null, rows: [], unread: [], reload: vi.fn() }),
-  PROBE_OUTCOMES: ['hit', 'miss', 'silent'],
-  PROBE_TALLY_DAYS: 7,
-  useProbeScores: () => ({ phase: 'ready', error: null, probes: [], tally: { hit: 0, miss: 0, silent: 0 }, reload: vi.fn() }),
-}))
-
 const modelRow = (model: string) => screen.getByText(model).closest('tr') as HTMLElement
 
-describe('health spend table', () => {
+describe('settings spend table', () => {
   it('shows a priced model and a genuine zero as dollar amounts', () => {
-    render(<HealthScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />)
+    render(<AiSpendPanel />)
 
     expect(within(modelRow('claude-priced')).getByText('$1.50')).toBeInTheDocument()
     expect(within(modelRow('claude-free-tier')).getByText('$0.00')).toBeInTheDocument()
   })
 
   it('never renders a not-billed or unpriced model as a dollar amount, and never says "free"', () => {
-    render(<HealthScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />)
+    render(<AiSpendPanel />)
 
     const selfHosted = modelRow('ollama/llama3')
     expect(within(selfHosted).getAllByText('not billed')).toHaveLength(2)
@@ -62,7 +50,7 @@ describe('health spend table', () => {
   })
 
   it('says how many calls the total and each model could not price (#1115)', () => {
-    render(<HealthScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />)
+    render(<AiSpendPanel />)
 
     const total = screen.getByText('Total cost').parentElement as HTMLElement
     expect(within(total).getByText('$1.50')).toBeInTheDocument()
