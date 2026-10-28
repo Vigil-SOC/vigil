@@ -1,0 +1,52 @@
+# L-7.a: upstream 429s survive gateway_retry (core/llm/gateway_retry.py:105-112) and
+# reach the worker's error dict. An outsider can raise LLM call volume by sending
+# findings (webhooks), so the advice says "possible" and the rule needs 10 minutes of
+# persistence (K1 T-07): a 5 m window under a 15 m hold, so it takes over 10 minutes of
+# failures to fire.
+# Untrusted (args).
+apiVersion: medic.rules/v1
+kind: Rule
+id: llm.rate-limited
+title: The LLM provider is rate-limiting Vigil's calls
+revision: 1
+fault: {class: llm, mode: L-7, causes: [L-7.a]}
+lane: 2
+detection: event
+signals:
+  limited:
+    log:
+      signal: llm_worker_errors_as_success
+      logger: {eq: services.worker.jobs}
+      level: [ERROR]
+      template: {eq: 'llm_call failed (returning error dict): %s'}
+      args: {"0": {re2: '^RateLimitError: |Error code: 429'}}
+  worker_exhausted:
+    log:
+      signal: log_llm_worker
+      logger: {eq: core.llm.gateway_retry}
+      level: [WARNING]
+      template: {eq: 'gateway retries exhausted: last status %s after %d attempts'}
+      args: {"0": {eq: "429"}}
+  backend_exhausted:
+    log:
+      signal: log_backend
+      logger: {eq: core.llm.gateway_retry}
+      level: [WARNING]
+      template: {eq: 'gateway retries exhausted: last status %s after %d attempts'}
+      args: {"0": {eq: "429"}}
+params:
+  calls: {type: number, default: 3, min: 1, max: 1000}
+when:
+  any:
+    - {fn: count, signal: limited, window: 5m, op: ">=", value: {param: calls}}
+    - {fn: count, signal: worker_exhausted, window: 5m, op: ">=", value: {param: calls}}
+    - {fn: count, signal: backend_exhausted, window: 5m, op: ">=", value: {param: calls}}
+for: 15m
+keep_firing_for: 10m
+advice:
+  summary: Possible LLM quota problem. The provider has rate-limited Vigil's LLM calls for 10 minutes or more, so some triage and LLM work fails.
+  fix: >-
+    Check the provider's rate limits and usage for the key Vigil uses, and raise
+    the quota if you can. Otherwise lower Vigil's LLM concurrency, or assign a
+    different model or provider for triage. A sudden burst of incoming findings
+    can also cause this; check whether finding volume spiked.

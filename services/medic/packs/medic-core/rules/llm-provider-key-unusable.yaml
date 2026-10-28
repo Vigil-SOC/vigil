@@ -1,0 +1,59 @@
+# L-2.a: the provider rejects the key (worker error text; admin.py:147 "key stored but
+# reports status"). L-2.c: a key write to Bifrost returned 4xx/5xx (admin.py:202).
+# L-2.g: no API key reached the worker (jobs.py:81; may be a DB outage in disguise).
+# L-2.h's line (admin.py:369) is left out: it repeats on every catalogue refresh for
+# any active keyless row, so it would hold an incident open on dormant rows.
+# Untrusted: the rejection is matched in args[0] (provider error text).
+apiVersion: medic.rules/v1
+kind: Rule
+id: llm.provider-key-unusable
+title: An LLM provider key is missing, rejected or never reached the gateway
+revision: 1
+fault: {class: llm, mode: L-2, causes: [L-2.a, L-2.c, L-2.g]}
+lane: 2
+detection: event
+signals:
+  rejected:
+    log:
+      signal: llm_worker_errors_as_success
+      logger: {eq: services.worker.jobs}
+      level: [ERROR]
+      template: {eq: 'llm_call failed (returning error dict): %s'}
+      args: {"0": {re2: '^(AuthenticationError|PermissionDeniedError): |(?i:invalid x-api-key|incorrect api key|invalid api key|api key not valid)'}}
+  no_key:
+    log:
+      signal: llm_worker_errors_as_success
+      logger: {eq: services.worker.jobs}
+      level: [ERROR]
+      template: {eq: 'llm_call failed (returning error dict): Empty response (model=%s; ClaudeService returned None - is an API key configured?)'}
+  bad_status:
+    log:
+      signal: log_backend
+      logger: {eq: core.llm.bifrost.admin}
+      level: [ERROR]
+      template: {eq: 'Bifrost: provider %s key stored but reports status=%s (%s)'}
+  push_failed:
+    log:
+      signal: log_backend
+      logger: {eq: core.llm.bifrost.admin}
+      level: [WARNING]
+      template: {eq: 'Bifrost: %s %s returned %s: %s'}
+params:
+  calls: {type: number, default: 3, min: 1, max: 100}
+when:
+  any:
+    - {fn: count, signal: rejected, window: 15m, op: ">=", value: {param: calls}}
+    - {fn: count, signal: no_key, window: 15m, op: ">=", value: {param: calls}}
+    - {fn: count, signal: bad_status, window: 1h, op: ">=", value: 1}
+    - {fn: count, signal: push_failed, window: 1h, op: ">=", value: 1}
+for: 2m
+keep_firing_for: 5m
+advice:
+  summary: An LLM provider key is missing, was rejected by the provider, or never reached the Bifrost gateway, so LLM calls fail.
+  fix: >-
+    Open Settings, LLM providers. Re-enter the key for the provider in use, test
+    it, and confirm the provider shows as routable. If the provider rejects the
+    key, replace it with a current one from the provider's console. If saving the
+    key fails, check that Bifrost is running and reachable from the backend. If no
+    key is found although one is saved, check that Postgres is up first: key
+    lookup fails the same way when the database is down.

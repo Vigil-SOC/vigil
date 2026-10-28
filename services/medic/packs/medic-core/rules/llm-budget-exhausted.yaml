@@ -1,0 +1,31 @@
+# L-5.a / L-5.c: Bifrost answered 402 and gateway_retry raised BudgetExceeded
+# (core/llm/gateway_retry.py:92-98); the llm-worker returns it as a "successful" error
+# dict and logs it at ERROR (services/worker/jobs.py:102-103). The exception name is
+# only in args[0] (D2, 7 Oct), so the rule is untrusted.
+apiVersion: medic.rules/v1
+kind: Rule
+id: llm.budget-exhausted
+title: The LLM spend budget is used up, so LLM calls are refused
+revision: 1
+fault: {class: llm, mode: L-5, causes: [L-5.a, L-5.c]}
+lane: 2
+detection: event
+signals:
+  refused:
+    log:
+      signal: llm_worker_errors_as_success
+      logger: {eq: services.worker.jobs}
+      level: [ERROR]
+      template: {eq: 'llm_call failed (returning error dict): %s'}
+      args: {"0": {prefix: 'BudgetExceeded: '}}
+params:
+  window: {type: duration, default: 30m, min: 5m, max: 6h}
+when: {fn: count, signal: refused, window: {param: window}, op: ">=", value: 1}
+for: 2m
+keep_firing_for: 5m
+advice:
+  summary: The LLM gateway refused calls because a spend budget is used up, so triage and other LLM work fail until it resets.
+  fix: >-
+    In Bifrost, check the virtual key's budget (and any team or customer budget
+    above it). Raise the budget, or wait for its period to reset. Vigil's work
+    resumes on its own once calls are accepted again.

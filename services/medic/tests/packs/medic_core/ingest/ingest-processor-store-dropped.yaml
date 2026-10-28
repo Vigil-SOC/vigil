@@ -1,0 +1,34 @@
+rule: ingest.processor-store-dropped
+defaults:
+  sensors:
+    - {id: log.soc-daemon, covers: [log_soc_daemon], interval: 15s, service: soc-daemon, states: [[+0s, ok]]}
+cases:
+  - kind: fires
+    id: v01-fires-when-the-database-rejects-a-finding
+    title: Postgres rejects writes; the processor drops findings after its retry
+    end: +15m
+    logs:
+      - {at: +4m, signal: log_soc_daemon, level: ERROR, logger: services.daemon.processor,
+         template: 'Dropped finding %s: database store failed', message: 'Dropped finding f-2026-0042: database store failed',
+         repeat: {every: 1m, until: +8m}}
+    expect:
+      - {at: +5m, rule: ingest.processor-store-dropped, eval: unknown, state: inactive, note: 2 drops seen decides nothing yet}
+      - {at: +6m, rule: ingest.processor-store-dropped, eval: true, state: pending}
+      - {at: +8m, rule: ingest.processor-store-dropped, eval: true, state: firing, incident: A}
+    incidents:
+      A: {rule: ingest.processor-store-dropped, active_since: +6m, opened_at: +8m, resolving_since: null, resolved_at: null}
+  - kind: silent
+    id: v02-silent-on-an-untrusted-copy
+    title: One dropped finding (a single malformed payload) and an untrusted copy of the line stay under the threshold
+    end: +20m
+    logs:
+      - {at: +3m, signal: log_soc_daemon, level: ERROR, logger: services.daemon.processor,
+         template: 'Dropped finding %s: database store failed', message: 'Dropped finding f-7: database store failed'}
+      - {at: +4m, signal: log_soc_daemon, level: ERROR, logger: services.daemon.processor, trusted: false,
+         template: 'Dropped finding f-1: database store failed', message: 'Dropped finding f-1: database store failed'}
+      - {at: +5m, signal: log_soc_daemon, level: ERROR, logger: services.daemon.processor, trusted: false,
+         template: 'Dropped finding f-2: database store failed', message: 'Dropped finding f-2: database store failed'}
+    expect:
+      - {at: +10m, rule: ingest.processor-store-dropped, eval: unknown, state: inactive}
+      - {at: +20m, rule: ingest.processor-store-dropped, eval: false, state: inactive}
+    incidents: {}
