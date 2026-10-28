@@ -1278,7 +1278,7 @@ describe('case page', () => {
       testState.recordRows = rows
       await openRecord()
       fireEvent.click(await screen.findByRole('button', { name: 'About the record' }))
-      expect(screen.getByRole('tooltip')).toHaveTextContent('Only run rows are hash-chained. Case audit and activity rows are not.')
+      expect(screen.getByRole('tooltip')).toHaveTextContent('Only run rows are chained on the run’s ledger. Audit trail rows are tamper-checked on the trail’s own chain')
     })
 
     it('Replay links to the run on Workflows, and leaves the drawer held for Back', async () => {

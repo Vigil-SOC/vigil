@@ -101,6 +101,12 @@ describe('recordChip', () => {
     expect(recordChip('policy')).toBe('system')
     expect(recordChip('resolution')).toBe('human')
   })
+
+  it('types an audit trail row by its actor\'s principal kind', () => {
+    expect(recordChip('human', 'audit_trail')).toBe('human')
+    expect(recordChip('system', 'audit_trail')).toBe('system')
+    expect(recordChip('agent', 'audit_trail')).toBe('agent')
+  })
 })
 
 describe('an investigation\'s record', () => {

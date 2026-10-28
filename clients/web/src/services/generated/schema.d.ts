@@ -2297,9 +2297,9 @@ export interface paths {
         };
         /**
          * Get Case Record
-         * @description The case record: every run's ledger, audit rows and activities.
+         * @description The case record: every run's ledger, trail entries, audit rows and activities.
          *
-         *     Newest first. The agent returns each ledger with snapshots off, read
+         *     Newest first. Trail entries are the case's own (``payload.case_id``). The agent returns each ledger with snapshots off, read
          *     concurrently; a run that cannot be read is one row saying why, not a failed
          *     record. Audit rows are ``entity_type == case`` and ``entity_id`` this case —
          *     the table has no ``case_id`` column. ``run_id`` is the case's run

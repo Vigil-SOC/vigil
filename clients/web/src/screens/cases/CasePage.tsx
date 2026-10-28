@@ -1643,9 +1643,9 @@ export function CasePage({
                   <InfoTip
                     label="About the record"
                     align="start"
-                    source="Each run’s journal, the case audit log and the case’s activity history, newest first."
+                    source="Each run’s journal, the case’s audit trail entries, the case audit log and the case’s activity history, newest first."
                     calculation="Each row is typed Agent, Human, Memory or System from what wrote it."
-                    limit="Only run rows are hash-chained. Case audit and activity rows are not."
+                    limit="Only run rows are chained on the run’s ledger. Audit trail rows are tamper-checked on the trail’s own chain, in Settings › Audit. Case audit and activity rows are not chained."
                   />
                 </div>
                 <div className="rec-actions">
