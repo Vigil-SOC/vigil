@@ -52,6 +52,7 @@ vi.mock('../services/api', () => ({
     getEvidence: () => Promise.resolve({ data: { evidence: [] } }),
     getIOCs: () => Promise.resolve({ data: { iocs: [] } }),
     getEscalations: () => Promise.resolve({ data: { escalations: [] } }),
+    getRelationships: () => Promise.resolve({ data: { relationships: [] } }),
   },
   findingsApi: {
     getById: (id: string, signal?: AbortSignal) => getFinding(id, signal),
@@ -236,6 +237,17 @@ describe('CommandBar', () => {
     rerender(<CommandBar {...props} fill={{ text: '/hold response', seq: 1 }} />)
     expect(screen.getByRole('combobox')).toHaveValue('/hold response')
     expect(screen.queryByRole('button', { name: 'Run' })).not.toBeInTheDocument()
+  })
+
+  it('opts the input out of password-manager autofill', () => {
+    renderBar()
+    const input = screen.getByRole('combobox')
+    expect(input).toHaveAttribute('autocomplete', 'off')
+    expect(input).toHaveAttribute('name', 'vigil-command')
+    for (const attr of ['data-1p-ignore', 'data-lpignore', 'data-bwignore']) {
+      expect(input).toHaveAttribute(attr)
+    }
+    expect(input).toHaveAttribute('data-form-type', 'other')
   })
 
   it('opens with ⌘K, and Esc and Tab write no recent search', () => {

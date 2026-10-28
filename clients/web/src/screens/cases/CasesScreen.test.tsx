@@ -34,6 +34,7 @@ vi.mock('../../services/api', () => ({
     getEvidence: vi.fn(() => Promise.resolve({ data: { evidence: [] } })),
     getIOCs: vi.fn(() => Promise.resolve({ data: { iocs: [] } })),
     getEscalations: vi.fn(() => Promise.resolve({ data: { escalations: [] } })),
+    getRelationships: vi.fn(() => Promise.resolve({ data: { relationships: [] } })),
   },
   workflowApi: {
     listAll: vi.fn(() =>

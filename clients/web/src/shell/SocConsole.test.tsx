@@ -81,6 +81,7 @@ vi.mock('../services/api', () => ({
     getEvidence: () => Promise.resolve({ data: { evidence: [] } }),
     getIOCs: () => Promise.resolve({ data: { iocs: [] } }),
     getEscalations: () => Promise.resolve({ data: { escalations: [] } }),
+    getRelationships: () => Promise.resolve({ data: { relationships: [] } }),
   },
   exclusionsApi: {
     list: () => Promise.resolve({ data: { exclusions: [], total: 0 } }),
@@ -313,7 +314,6 @@ const defaultViewportWidth = window.innerWidth
 afterEach(() => {
   authState.allow = () => true
   localStorage.clear()
-  sessionStorage.clear()
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: defaultViewportWidth })
   vi.mocked(approvalsApi.listPending).mockResolvedValue({ data: { actions: [] } } as never)
   vi.mocked(consoleApi.getHealth).mockResolvedValue({
@@ -583,14 +583,14 @@ describe('SocConsole', () => {
 
     it('leaves out steps hidden with Not now, and shows no chip once every open step is hidden', async () => {
       read(true, false, false)
-      sessionStorage.setItem(SETUP_HIDDEN_KEY, JSON.stringify(['b', 'a']))
+      localStorage.setItem(SETUP_HIDDEN_KEY, JSON.stringify(['b', 'a']))
       const first = renderConsole()
       expect(await screen.findByRole('link', { name: tip(1) })).toHaveTextContent('1 left')
       fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
       expect(screen.getByRole('menuitem', { name: 'Finish setup 1 left' })).toBeInTheDocument()
       first.unmount()
 
-      sessionStorage.setItem(SETUP_HIDDEN_KEY, JSON.stringify(['b', 'c']))
+      localStorage.setItem(SETUP_HIDDEN_KEY, JSON.stringify(['b', 'c']))
       renderConsole()
       await waitFor(() => expect(configApi.getSetupSteps).toHaveBeenCalled())
       await screen.findByText('Security operations overview')
@@ -613,6 +613,24 @@ describe('SocConsole', () => {
       // the chip recounted from the hidden list, not a fresh read
       expect(vi.mocked(configApi.getSetupSteps).mock.calls.length).toBe(calls)
       expect(screen.getByTestId('console-location')).toHaveAttribute('data-path', '/home')
+    })
+
+    it('Hide setup drops the chip and menu item at once, and Show hidden steps brings them back', async () => {
+      read(false, false)
+      renderConsole('/home')
+      expect(await screen.findByRole('link', { name: tip(2) })).toBeInTheDocument()
+      const setup = await screen.findByRole('region', { name: 'Setup' })
+      fireEvent.click(within(setup).getByRole('button', { name: 'Hide setup' }))
+      await waitFor(() => expect(screen.queryByRole('link', { name: /Finish setting up Vigil/ })).not.toBeInTheDocument())
+      fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+      expect(screen.queryByRole('menuitem', { name: /^Finish setup/ })).not.toBeInTheDocument()
+      // one list, per browser: every served step id
+      expect(JSON.parse(localStorage.getItem(SETUP_HIDDEN_KEY) || '[]')).toEqual(['a', 'b'])
+
+      fireEvent.click(within(setup).getByRole('button', { name: 'Show hidden steps' }))
+      expect(await screen.findByRole('link', { name: tip(2) })).toBeInTheDocument()
+      expect(within(setup).getAllByRole('button', { name: 'Not now' })).toHaveLength(2)
+      expect(localStorage.getItem(SETUP_HIDDEN_KEY)).toBeNull()
     })
 
     it('shows no chip for people who cannot open Home', async () => {

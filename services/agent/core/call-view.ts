@@ -92,6 +92,21 @@ export function rowsIn(result: string): number | undefined {
   }
 }
 
+// A served result that found nothing: no rows, or one summary row whose total is 0 (search_findings'
+// {query, total, findings: []}). A count it cannot read (a capped wrapper) is not empty.
+export function isEmptyResult(result: string): boolean {
+  const rows = rowsIn(result);
+  if (rows !== 1) return rows === 0;
+  const body = /^<vigil:tool_result[^>]*>\n?([\s\S]*?)\n?<\/vigil:tool_result>$/.exec(result)?.[1] ?? result;
+  try {
+    const parsed: unknown = JSON.parse(body.slice(body.indexOf("\n") + 1));
+    const only = Array.isArray(parsed) && parsed.length === 1 ? (parsed[0] as Record<string, unknown> | null) : null;
+    return only !== null && typeof only === "object" && only["total"] === 0;
+  } catch {
+    return false;
+  }
+}
+
 interface DispatchCalls {
   iteration?: number;
   query_intent?: string;

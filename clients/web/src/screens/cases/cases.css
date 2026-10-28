@@ -507,6 +507,18 @@
   overflow-wrap: anywhere;
 }
 
+/* Related cases: title and state on one line, the case ID as the link beneath. */
+.case-side .case-related-head { display: flex; align-items: flex-start; gap: 8px; }
+.case-side .case-related-head .side-clamp { flex: 1; min-width: 0; }
+.case-side .case-related-head .state-pill { margin-left: auto; }
+.case-side .case-related-id {
+  align-self: flex-start;
+  color: var(--ac);
+  font-size: 11.5px;
+  text-decoration: none;
+}
+.case-side .case-related-id:hover { text-decoration: underline; }
+
 /* Memory tab: cards on the card.md / row-stack.md tokens. */
 .case-page .case-mem-card {
   box-sizing: border-box;

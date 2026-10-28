@@ -1,6 +1,8 @@
 import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { Link } from 'react-router-dom'
 import { casesApi } from '../../services/api'
 import { slaLevel } from '../../shared/LevelBadge'
+import { StatePill } from '../../shared/StatePill'
 import { useNoSideways } from '../../shared/useNoSideways'
 import { commentCount, CommentsView, SectionCard, TasksView, useComments, useResource, useTasks, type Resource } from './CaseSections'
 import { timeLeft, when } from './caseFormat'
@@ -148,6 +150,40 @@ function Alerts({ items }: { items: CaseLinkedFinding[] }) {
   )
 }
 
+type Related = { id: number; caseId: string; title: string; status: string; notes: string }
+
+/** Other Cases linked to this one, of any link type; hidden while loading, on a failed read, or when there are none. */
+function RelatedCases({ caseId }: { caseId: string }) {
+  const { data, phase } = useResource<Related[]>(caseId, () =>
+    casesApi.getRelationships(caseId).then((res) =>
+      (res.data.relationships || []).map((row) => ({
+        id: row.relationship_id ?? 0,
+        caseId: row.related_case_id ?? '',
+        title: row.related_title || '',
+        status: row.related_status || '',
+        notes: row.notes || '',
+      })),
+    ),
+  )
+  if (phase !== 'ready' || !data?.length) return null
+  return (
+    <Block title="Related cases">
+      <ul className="case-linked case-related">
+        {data.map((row) => (
+          <li key={row.id}>
+            <span className="case-related-head">
+              {row.title && <span className="side-clamp" title={row.title}>{row.title}</span>}
+              {row.status && <StatePill state={row.status} />}
+            </span>
+            <Link className="mono case-related-id" to={`/cases?case=${encodeURIComponent(row.caseId)}`}>{row.caseId}</Link>
+            {row.notes && <span className="side-meta side-clamp" title={row.notes}>{row.notes}</span>}
+          </li>
+        ))}
+      </ul>
+    </Block>
+  )
+}
+
 /** A line of free text: wraps, stops at two lines, the whole of it on hover (DESIGN.md §7). */
 function Prose({ text }: { text: string }) {
   return <p className="muted side-clamp" title={text}>{text}</p>
@@ -257,7 +293,7 @@ function People({ caseId, owner }: { caseId: string; owner: string }) {
   )
 }
 
-/** The Details, Alerts, Known and People blocks of the case side panel. */
+/** The Details, Alerts, Related cases, Known and People blocks of the case side panel. */
 export function CaseSide({ caseId, linked, owner, latest, workflowNames, sla, closed, fold }: {
   caseId: string
   linked: CaseLinkedFinding[]
@@ -274,6 +310,7 @@ export function CaseSide({ caseId, linked, owner, latest, workflowNames, sla, cl
     <>
       <Details anchor={anchor} linked={linked} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} />
       <Alerts items={linked} />
+      <RelatedCases caseId={caseId} />
       <Known fold={fold} hasRun={latest !== null} />
       <People caseId={caseId} owner={owner} />
     </>

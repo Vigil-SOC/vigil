@@ -429,7 +429,7 @@ export function workerAt(fold: HuntFold, iteration: number): string | null {
 export function recordChip(kind: string, source = 'run'): RecordChip {
   if (source === 'case_activities') {
     if (kind.startsWith('agent_run_') || kind === 'finding_added') return 'agent'
-    return kind === 'case_merged' ? 'system' : 'human'
+    return kind === 'case_merged' || kind === 'alert_added' ? 'system' : 'human'
   }
   switch (kind) {
     case 'recall':
