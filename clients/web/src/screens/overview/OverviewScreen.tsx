@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
+import { usePageSnapshot } from '../../shell/pageSnapshot'
 import AgentCards from './AgentCards'
 import AlertRail, { SevMark } from './AlertRail'
 import { clock } from './clock'
@@ -78,6 +79,13 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<OverviewPayload | null>(null)
+  usePageSnapshot('overview', phase === 'ready' && data ? [
+    'Overview, today (UTC). Alerts in by source: ' + (data.arrivals.map((x) => `${x.data_source} ${x.count}`).join(', ') || 'none') + '.',
+    'Outcomes: ' + data.outcomes.map((o) => `${o.label} ${o.count ?? 'not measured'}`).join(', ') + '.',
+    'Agents: ' + data.agents.map((g) => `${g.name} ${g.running} running${g.rate === null ? '' : `, ${Math.round(g.rate * 100)}% finish`}`).join('; ') + '.',
+    'Newest alerts (time | severity | source | title | case):',
+    ...data.feed.slice(0, 30).map((f) => [f.created_at ?? '-', f.severity ?? '-', f.data_source, f.title || f.description || f.finding_id, f.case_id ?? 'no case'].join(' | ')),
+  ].join('\n') : '')
   const [wall, setWall] = useState(false)
   const [paused, setPaused] = useState(false)
   const badgeOf = useSourceBadge()
