@@ -9,7 +9,7 @@ import { SETUP_HIDDEN_KEY } from '../screens/home/setupHidden'
 import { NAV } from '../data/data'
 import { notifyAutonomyChanged } from '../screens/settings/useSettings'
 // these resolve to the mocked implementations (vi.mock below is hoisted)
-import { streamFetch, aiDecisionsApi, approvalsApi, autonomyApi, workflowApi, casesApi, configApi, consoleApi, overviewApi, timelineApi } from '../services/api'
+import { streamFetch, approvalsApi, autonomyApi, workflowApi, casesApi, configApi, consoleApi, overviewApi, timelineApi } from '../services/api'
 
 const CEILING = vi.hoisted(() => ({
   act_reversible: true,
@@ -204,20 +204,6 @@ vi.mock('../services/api', () => ({
       })
     }),
   },
-  aiDecisionsApi: {
-    getPendingFeedback: () =>
-      Promise.resolve({
-        data: [
-          { decision_id: 'd-4471', agent_id: 'correlation', decision_type: 'Cluster merge', confidence_score: 0.96, reasoning: 'Shared host ws-eng-44 and a common C2 beacon interval.', recommended_action: 'Merge into case-2026-0140', workflow_id: 'f-20260614-3b5c585e', timestamp: '2026-06-14T17:42:00Z' },
-        ],
-      }),
-    list: () => Promise.resolve({ data: [] }),
-    getStats: () =>
-      Promise.resolve({
-        data: { total_decisions: 128, feedback_rate: 0.74, total_with_feedback: 95, agreement_rate: 0.91, avg_accuracy_grade: 0.8, total_time_saved_hours: 42, total_time_saved_minutes: 2520, period_days: 30, outcomes: { true_positive: 15, false_positive: 3 } },
-      }),
-    submitFeedback: vi.fn(() => Promise.resolve({})),
-  },
   autonomyApi: {
     get: vi.fn(() => Promise.resolve({ data: CEILING })),
     update: vi.fn(),
@@ -344,7 +330,7 @@ const title = () => screen.getByRole('heading', { level: 1 }).textContent
 // Home draws its own headline, so the nav shows where the console is
 const here = () => screen.getByRole('navigation', { name: 'Primary' }).querySelector('[aria-current="page"]')?.textContent
 
-const MORE_LABELS = ['Dashboard', 'Case Metrics', 'Analytics', 'AI Decisions', 'Auto Ops', 'Health']
+const MORE_LABELS = ['Findings', 'Case Metrics']
 
 function clickScreen(name: string) {
   const inMore = MORE_LABELS.some((label) => name === label || name.startsWith(`${label} (`))
@@ -374,10 +360,10 @@ describe('SocConsole', () => {
     localStorage.setItem(CONSOLE_TOUR_SEEN_KEY, '1')
   })
 
-  it('mounts on the Dashboard', () => {
+  it('mounts on Findings', () => {
     renderConsole()
-    expect(title()).toBe('Dashboard')
-    expect(screen.getByText('Security operations overview')).toBeInTheDocument()
+    expect(title()).toBe('Findings')
+    expect(screen.getByText(/Every finding, with ATT&CK and exclusions/)).toBeInTheDocument()
   })
 
   it('puts Home first on the primary nav and opens it at /', async () => {
@@ -392,7 +378,7 @@ describe('SocConsole', () => {
     expect(screen.getByRole('button', { name: 'Cases' }).querySelector('.vg-nav-count')).toBeNull()
   })
 
-  it('paints the needs-you count on Home and Cases without opening the approvals tab', async () => {
+  it('paints the needs-you count on Home and Cases', async () => {
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 120, items: [] } } as never)
     vi.mocked(approvalsApi.listPending).mockResolvedValue({
       data: {
@@ -410,17 +396,12 @@ describe('SocConsole', () => {
     fireEvent.click(cases)
     expect(title()).toBe('Cases')
     expect(screen.getByTestId('console-location')).toHaveAttribute('data-search', '')
-
-    fireEvent.click(screen.getByRole('button', { name: 'More' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'AI Decisions (1 waiting)' }))
-    expect(await screen.findByRole('tab', { name: 'Pending Approvals (1)' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByTestId('console-location')).toHaveAttribute('data-search', '?tab=approvals')
     vi.mocked(approvalsApi.listPending).mockResolvedValue({ data: { actions: [] } } as never)
   })
 
   it('shows one demo banner only while demo mode is on', async () => {
     renderConsole()
-    await screen.findByText('Security operations overview')
+    await screen.findByText(/Every finding, with ATT&CK and exclusions/)
     expect(screen.queryByText('The data on screen is demo data.')).not.toBeInTheDocument()
 
     vi.mocked(configApi.getDemoMode).mockResolvedValue({ data: { enabled: true } } as never)
@@ -473,12 +454,8 @@ describe('SocConsole', () => {
       ['Settings', 'Settings'],
       ['Overview', 'Overview'],
       ['Triage queue', 'Triage queue'], // the screen draws its own heading
-      ['Dashboard', 'Dashboard'],
+      ['Findings', 'Findings'],
       ['Case Metrics', 'Case Metrics'],
-      ['Analytics', 'Analytics Dashboard'],
-      ['AI Decisions', 'AI Decisions'],
-      ['Auto Ops', 'Auto Ops'],
-      ['Health', 'Health'],
     ]
     for (const [navLabel, pageTitle] of screens) {
       clickScreen(navLabel)
@@ -496,7 +473,7 @@ describe('SocConsole', () => {
     expect(screen.getByRole('button', { name: 'Overview' })).not.toHaveAttribute('aria-current')
     const more = screen.getByRole('button', { name: 'More' })
     expect(more).not.toHaveClass('active')
-    clickScreen('Health')
+    clickScreen('Findings')
     expect(screen.getByRole('button', { name: 'More' })).toHaveClass('active')
   })
 
@@ -558,8 +535,8 @@ describe('SocConsole', () => {
     clickScreen('Triage queue')
     expect(title()).toBe('Triage queue')
     expect(document.querySelector('.vg-page-head')).toBeNull()
-    clickScreen('Health')
-    expect(title()).toBe('Health')
+    clickScreen('Findings')
+    expect(title()).toBe('Findings')
     expect(screen.getByRole('heading', { level: 1 }).closest('.vg-page-head')?.parentElement).toHaveClass('screen')
   })
 
@@ -633,7 +610,7 @@ describe('SocConsole', () => {
       localStorage.setItem(SETUP_HIDDEN_KEY, JSON.stringify(['b', 'c']))
       renderConsole()
       await waitFor(() => expect(configApi.getSetupSteps).toHaveBeenCalled())
-      await screen.findByText('Security operations overview')
+      await screen.findByText(/Every finding, with ATT&CK and exclusions/)
       expect(screen.queryByRole('link', { name: /Finish setting up Vigil/ })).not.toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
       expect(screen.queryByRole('menuitem', { name: /^Finish setup/ })).not.toBeInTheDocument()
@@ -678,7 +655,7 @@ describe('SocConsole', () => {
       read(false, false)
       renderConsole()
       await waitFor(() => expect(configApi.getSetupSteps).toHaveBeenCalled())
-      await screen.findByText('Security operations overview')
+      await screen.findByText(/Every finding, with ATT&CK and exclusions/)
       expect(screen.queryByRole('link', { name: /Finish setting up Vigil/ })).not.toBeInTheDocument()
     })
   })
@@ -746,6 +723,16 @@ describe('SocConsole', () => {
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Overview')
   })
 
+  it('keeps Health out of the menus but opens it at /health with its title', async () => {
+    renderConsole('/health')
+    expect(title()).toBe('Health')
+    expect(screen.getByRole('heading', { level: 1 }).closest('.vg-page-head')?.parentElement).toHaveClass('screen')
+    expect(here()).toBeUndefined()
+    fireEvent.click(screen.getByRole('button', { name: 'More' }))
+    expect(within(screen.getByRole('menu', { name: 'More screens' })).queryByRole('button', { name: 'Health' })).toBeNull()
+    expect(await screen.findByText('Nothing waiting')).toBeInTheDocument()
+  })
+
   it('shows approval depth and recent run outcomes on the Health screen, and no spend', async () => {
     renderConsole('/health')
     expect(await screen.findByText('Nothing waiting')).toBeInTheDocument()
@@ -769,7 +756,7 @@ describe('SocConsole', () => {
     }
   })
 
-  it('counts approvals on the Health screen and sends the button to the approvals tab', async () => {
+  it('counts approvals on the Health screen and sends the button to Home', async () => {
     vi.mocked(approvalsApi.listPending).mockResolvedValue({
       data: { actions: [{ action_id: 'a-1', title: 'Approve containment?' }, { action_id: 'a-2', title: 'Approve isolation?' }] },
     } as never)
@@ -777,9 +764,8 @@ describe('SocConsole', () => {
       renderConsole('/health')
       // the count sits beside "pending"; the nav badge shows the same number
       expect((await screen.findByText('pending')).previousElementSibling?.textContent).toBe('2')
-      fireEvent.click(screen.getByRole('button', { name: /Open approvals/ }))
-      expect(title()).toBe('AI Decisions')
-      expect(await screen.findByRole('tab', { name: /Pending Approvals/, selected: true })).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: /Review on Home/ }))
+      expect(here()).toBe('Home')
     } finally {
       vi.mocked(approvalsApi.listPending).mockResolvedValue({ data: { actions: [] } } as never)
     }
@@ -801,7 +787,7 @@ describe('SocConsole', () => {
     }
   })
 
-  it('switches every Dashboard tab including the interactive Timeline', async () => {
+  it('switches every Findings tab including the interactive Timeline', async () => {
     renderConsole()
     fireEvent.click(screen.getByRole('tab', { name: 'ATT&CK' }))
     expect(screen.getByText(/Techniques by occurrence/)).toBeInTheDocument()
@@ -903,7 +889,7 @@ describe('SocConsole', () => {
       renderWithHistory()
       await openDrawer()
       act(() => navigate(-1))
-      await screen.findByRole('heading', { name: 'Dashboard' })
+      await screen.findByRole('heading', { name: 'Findings' })
       expect(screen.queryByRole('dialog', { name: 'Case' })).not.toBeInTheDocument()
     })
 
@@ -1046,24 +1032,6 @@ describe('SocConsole', () => {
     })
   })
 
-  it('opens the AI Decisions review queue', async () => {
-    renderConsole()
-    clickScreen('AI Decisions')
-    fireEvent.click(await screen.findByText('Cluster merge'))
-    expect(screen.getByText('AI recommendation')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /All decisions/ })).toBeInTheDocument()
-  })
-
-  it('opens AI Decisions on ai_decisions.read, without review controls for a reader', async () => {
-    authState.allow = (permission: string) => permission !== 'ai_decisions.approve'
-    renderConsole()
-    clickScreen('AI Decisions')
-    fireEvent.click(await screen.findByText('Cluster merge'))
-    expect(screen.getByText('AI recommendation')).toBeInTheDocument()
-    expect(screen.queryByText('Your review')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Approve|Reject/ })).not.toBeInTheDocument()
-  })
-
   it('switches Workflows tabs and loads a read-only skills list from the API', async () => {
     renderConsole()
     clickScreen('Agents & workflows')
@@ -1115,93 +1083,9 @@ describe('SocConsole', () => {
     renderConsole()
     fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil' }))
     expect(screen.getByText('Using this page')).toBeInTheDocument()
-    expect(document.querySelector('.cx-pill')).toHaveTextContent('Dashboard')
+    expect(document.querySelector('.cx-pill')).toHaveTextContent('Findings')
     expect(screen.queryByTitle('Chat settings')).toBeNull()
     expect(screen.queryByPlaceholderText(/Override default system prompt/)).toBeNull()
-  })
-
-  // without the count, a parked run's question sat in a tab nobody opened
-  it('counts the runs waiting on someone in the nav row', async () => {
-    vi.mocked(approvalsApi.listPending).mockResolvedValue({
-      data: { actions: [{ action_id: 'a' }, { action_id: 'b' }] },
-    } as never)
-
-    renderConsole()
-
-    fireEvent.click(screen.getByRole('button', { name: 'More' }))
-    expect(await screen.findByRole('button', { name: 'AI Decisions (2 waiting)' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'More' })).not.toHaveTextContent('2')
-  })
-
-  // The badge counts pending approvals, so the click has to land on the tab
-  // holding them: opening the feedback tab instead showed "No decisions
-  // awaiting feedback" while the counted questions sat one tab over (#746).
-  it('opens the approvals tab when the nav badge is what was clicked', async () => {
-    vi.mocked(approvalsApi.listPending).mockResolvedValue({
-      data: {
-        actions: [
-          { action_id: 'a', action_type: 'isolate_host', title: 'isolate_host: host1', target: 'host1' },
-          { action_id: 'b', action_type: 'block_ip', title: 'block_ip: 1.2.3.4', target: '1.2.3.4' },
-        ],
-      },
-    } as never)
-
-    renderConsole()
-    fireEvent.click(screen.getByRole('button', { name: 'More' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'AI Decisions (2 waiting)' }))
-
-    const approvals = await screen.findByRole('tab', { name: 'Pending Approvals (2)' })
-    expect(approvals).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('tab', { name: /^Pending \(/ })).toHaveAttribute('aria-selected', 'false')
-    expect(screen.getByText('isolate_host: host1')).toBeInTheDocument()
-    vi.mocked(approvalsApi.listPending).mockResolvedValue({ data: { actions: [] } } as never)
-  })
-
-  // …and an unbadged click keeps landing on the feedback queue, which is what
-  // the screen is for when nothing is parked.
-  it('opens the feedback tab when nothing is waiting on approval', async () => {
-    renderConsole()
-    clickScreen('AI Decisions')
-
-    expect(await screen.findByRole('tab', { name: /^Pending \(/ })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('tab', { name: 'Pending Approvals (0)' })).toHaveAttribute('aria-selected', 'false')
-  })
-
-  // The detail view returns before the tab list renders, so a badged click
-  // while a decision was open used to change only which list the detail read
-  // from -- losing the open decision and never showing the approvals queue.
-  it('leaves an open decision detail when the badge sends it to approvals', async () => {
-    vi.mocked(approvalsApi.listPending).mockResolvedValue({
-      data: { actions: [{ action_id: 'a', action_type: 'isolate_host', title: 'isolate_host: host1', target: 'host1' }] },
-    } as never)
-
-    renderConsole()
-    fireEvent.click(screen.getByRole('button', { name: 'More' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'AI Decisions (1 waiting)' }))
-    // open a decision from the feedback queue first
-    fireEvent.click(screen.getByRole('tab', { name: /^Pending \(/ }))
-    fireEvent.click(await screen.findByText('Cluster merge'))
-    expect(screen.getByText('AI recommendation')).toBeInTheDocument()
-
-    // now the badge: the approvals queue must actually appear
-    clickScreen('AI Decisions (1 waiting)')
-
-    expect(await screen.findByRole('tab', { name: 'Pending Approvals (1)' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByText('isolate_host: host1')).toBeInTheDocument()
-    expect(screen.queryByText(/no longer in the current list/)).toBeNull()
-    vi.mocked(approvalsApi.listPending).mockResolvedValue({ data: { actions: [] } } as never)
-  })
-
-  // Approving the last action empties the queue, so the nav row loses its badge
-  // while the operator is still sitting on ?tab=approvals. The unbadged click
-  // has to move them, which go()'s dedupe guard used to swallow.
-  it('moves off the approvals tab when the badge is gone', async () => {
-    renderConsole('/decisions?tab=approvals')
-
-    expect(await screen.findByRole('tab', { name: 'Pending Approvals (0)' })).toHaveAttribute('aria-selected', 'true')
-    clickScreen('AI Decisions')
-
-    expect(await screen.findByRole('tab', { name: /^Pending \(/ })).toHaveAttribute('aria-selected', 'true')
   })
 
   it('streams an assistant response through the chat SSE pipe', async () => {
@@ -1244,20 +1128,6 @@ describe('SocConsole', () => {
     expect(body.agent_id).toBeUndefined()
     expect(body.system_prompt).toBeUndefined()
     expect(body.max_tokens).toBeUndefined()
-  })
-
-  it('submits decision feedback through the inline review pane', async () => {
-    renderConsole()
-    clickScreen('AI Decisions')
-    fireEvent.click(await screen.findByText('Cluster merge'))
-    // no name to type: the server records the signed-in user
-    expect(screen.queryByPlaceholderText('Your name / analyst ID')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: /Approve/ }))
-    expect(vi.mocked(aiDecisionsApi.submitFeedback)).toHaveBeenCalledWith(
-      'd-4471',
-      expect.objectContaining({ human_decision: 'agree' }),
-    )
-    expect(vi.mocked(aiDecisionsApi.submitFeedback).mock.lastCall?.[1]).not.toHaveProperty('human_reviewer')
   })
 
   it('exports the visible timeline events as CSV', async () => {

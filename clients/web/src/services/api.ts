@@ -101,32 +101,6 @@ export async function streamFetch(path: string, init: RequestInit = {}): Promise
   return res
 }
 
-export const aiDecisionsApi = {
-  list: (params?: {
-    agent_id?: string
-    finding_id?: string
-    case_id?: string
-    has_feedback?: boolean
-    limit?: number
-    offset?: number
-  }) => api.get('/ai/decisions', { params }),
-  
-  submitFeedback: (decisionId: string, data: {
-    human_decision: string
-    feedback_comment?: string
-    accuracy_grade?: number
-    reasoning_grade?: number
-    action_appropriateness?: number
-    actual_outcome?: string
-    time_saved_minutes?: number
-  }) => api.post(`/ai/decisions/${decisionId}/feedback`, data),
-  
-  getStats: () => api.get('/ai/decisions/stats'),
-  
-  getPendingFeedback: (limit?: number) =>
-    api.get('/ai/decisions/pending-feedback', { params: { limit } }),
-}
-
 export type NeedsYouItem = Schema<'NeedsYouItem'>
 
 export const approvalsApi = {
@@ -1054,31 +1028,8 @@ export const autonomyApi = {
 }
 
 export const orchestratorApi = {
-  getStatus: () => api.get('/orchestrator/status'),
-  enable: () => api.post('/orchestrator/enable'),
-  disable: () => api.post('/orchestrator/disable'),
   kill: () => api.post('/orchestrator/kill'),
   purgeAll: () => api.post('/orchestrator/investigations/purge'),
-  
-  listInvestigations: (status?: string) =>
-    api.get('/orchestrator/investigations', { params: status ? { status } : {} }),
-  getInvestigation: (id: string) => api.get(`/orchestrator/investigations/${id}`),
-  wakeInvestigation: (id: string) => api.post(`/orchestrator/investigations/${id}/wake`),
-  killInvestigation: (id: string) => api.post(`/orchestrator/investigations/${id}/kill`),
-  getInvestigationFile: (id: string, filename: string) =>
-    api.get(`/orchestrator/investigations/${id}/files/${filename}`),
-  scanFindings: (severities?: string[]) =>
-    api.post('/orchestrator/scan-findings', {
-      severities: severities || ['critical', 'high'],
-    }, { timeout: LLM_TIMEOUT }),
-
-  getChainOfCustody: (id: string) =>
-    api.get(`/orchestrator/investigations/${id}/chain-of-custody`),
-
-  exportInvestigation: (id: string) =>
-    api.get(`/orchestrator/investigations/${id}/export`, {
-      responseType: 'blob',
-    }),
 }
 
 /** The trail filter (core.audit.trail.make_query): the list and the export send the same one. */
