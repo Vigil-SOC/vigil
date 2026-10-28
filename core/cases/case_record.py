@@ -16,6 +16,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional, Sequence
 
+from core.auth import principals
 from core.storage.models import CaseAuditLog
 from core.workflows.handoff_cases import filed_case
 
@@ -518,7 +519,11 @@ def audit_text(row: CaseAuditLog) -> str:
 
 
 # The record's kind chip for a trail row, from its actor's principal kind.
-_TRAIL_KIND = {"person": "human", "service_account": "human", "system": "system"}
+_TRAIL_KIND = {
+    principals.PERSON: "human",
+    principals.SERVICE_ACCOUNT: "human",
+    principals.SYSTEM: "system",
+}
 
 
 def trail_who(principal: Optional[Mapping[str, Any]], actor_text: Any = None) -> str:

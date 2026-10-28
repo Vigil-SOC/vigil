@@ -25,6 +25,8 @@ from typing import Any, Optional
 from alembic.util import CommandError
 from sqlalchemy import text
 
+from core.auth import principals
+
 logger = logging.getLogger(__name__)
 
 REVISION = "0002_audit_trail"
@@ -639,7 +641,7 @@ _FROM = f"""
     LEFT JOIN public.principals AS pb ON pb.principal_id = t.payload->>'{ON_BEHALF_OF}'
 """
 # Erasure blanks a person's label (retention._blank_label); nothing else does.
-_ERASABLE = frozenset({"person", "service_account"})
+_ERASABLE = frozenset({principals.PERSON, principals.SERVICE_ACCOUNT})
 # An intent no result entry names. INTENT on the result is that intent's seq.
 _UNKNOWN = (
     f"t.payload->>'{AWAITING}' = 'true' AND NOT EXISTS ("
