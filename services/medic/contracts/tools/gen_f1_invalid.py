@@ -33,9 +33,14 @@ def rehash(doc: dict) -> dict:
         )
     doc["manifest"]["contents"] = contents
     f = doc["files"]
-    entries = lambda name: (
-        len((yaml.safe_load(f[name]) or {}).get("entries", [])) if name in f else 0
-    )
+
+    def entries(name: str) -> int:
+        try:  # some cases deliberately carry a member that won't parse
+            doc = yaml.safe_load(f[name]) if name in f else {}
+        except (yaml.YAMLError, RecursionError):
+            return 0
+        return len(doc.get("entries", [])) if isinstance(doc, dict) else 0
+
     doc["manifest"]["counts"] = {
         "rules": sum(p.startswith("rules/") for p in f),
         "runbooks": sum(p.startswith("runbooks/") for p in f),
@@ -278,6 +283,47 @@ emit(
     ["P-RUNBOOK"],
     "Two descriptors apply to the same rule",
     _second_descriptor,
+)
+DEEP = "[" * 6000 + "]" * 6000  # under MAX_RULE_BYTES, past Python's recursion limit
+emit(
+    "runbook-malformed-yaml",
+    ["P-RUNBOOK"],
+    "A correctly hashed runbook that isn't YAML is refused, not raised",
+    edit(
+        "runbooks/restart-soc-daemon.yaml",
+        "id: restart-soc-daemon\n",
+        "id: [unclosed\n",
+    ),
+)
+emit(
+    "runbook-deep-nesting",
+    ["P-RUNBOOK"],
+    "Nesting deep enough to exhaust the parser's stack is refused, not raised",
+    lambda d: d["files"].__setitem__("runbooks/restart-soc-daemon.yaml", DEEP),
+)
+emit(
+    "suppression-malformed-yaml",
+    ["P-SUPPRESSION"],
+    "A correctly hashed suppression.yaml that isn't YAML is refused, not raised",
+    edit("suppression.yaml", "entries:\n", "entries: [\n"),
+)
+emit(
+    "catalog-is-a-list",
+    ["P-CATALOG"],
+    "catalog.yaml must be a mapping",
+    lambda d: d["files"].__setitem__("catalog.yaml", "- a\n- b\n"),
+)
+emit(
+    "catalog-is-a-scalar",
+    ["P-CATALOG"],
+    "catalog.yaml must be a mapping",
+    lambda d: d["files"].__setitem__("catalog.yaml", "42\n"),
+)
+emit(
+    "rule-deep-nesting",
+    ["P-RULE"],
+    "A 12 KB rule nested past the parser's stack is refused with its rule code",
+    lambda d: d["files"].__setitem__(RULE, DEEP),
 )
 emit(
     "counts-wrong",

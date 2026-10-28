@@ -13,7 +13,7 @@ from jsonschema import Draft202012Validator
 
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
-from rule_check import check, check_text
+from rule_check import MAX_RULE_BYTES, check, check_text
 
 RULES = ROOT / "fixtures" / "rules"
 VALID = sorted((RULES / "valid").glob("*.yaml"))
@@ -70,6 +70,16 @@ def test_coverage_of_v1_fault_classes_and_e1_examples() -> None:
 def test_oversized_rule_is_refused() -> None:
     text = VALID[0].read_text() + "#" + "x" * 17_000
     assert check_text(text).codes == {"E-SIZE"}
+
+
+def test_deep_nesting_under_the_size_cap_is_refused_not_raised() -> None:
+    text = "[" * 6000 + "]" * 6000
+    assert len(text) < MAX_RULE_BYTES
+    assert check_text(text).codes == {"E-YAML"}
+
+
+def test_empty_rule_is_refused() -> None:
+    assert check_text("").codes == {"E-SCHEMA"}
 
 
 def test_rule_needing_newer_engine_is_skipped_not_refused() -> None:
