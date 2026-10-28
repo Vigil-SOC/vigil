@@ -445,7 +445,11 @@ def _case_records(args: Args) -> Args:
                 list_escalations(session, case_id)
             ),
         }
+        flows = _case_flows(session, on_case)
         findings = FindingSchema.dump_many(page)
+    if flows is not None:
+        # Ahead of the findings page, so a cut at result_cap takes findings.
+        records["flows"] = flows
     return {
         **records,
         "total": total,
@@ -454,6 +458,26 @@ def _case_records(args: Args) -> Args:
         "has_more": (offset + limit) < total,
         "findings": _compact_page(_data(), findings),
     }
+
+
+# Every NetFlow finding on the case, not the page: its ingest digest, read by
+# JSON path so the flow previews stay in the database (#3275).
+def _case_flows(session: Any, on_case: Any) -> Optional[Args]:
+    from core.findings.netflow_digest import case_flow_summary
+    from core.storage.models import Finding
+
+    rows = on_case.with_entities(
+        Finding.finding_id,
+        Finding.entity_context["netflow_digest"],
+        Finding.entity_context["source_evidence"]["telemetry_kind"],
+    ).all()
+    digested = [(fid, digest) for fid, digest, _ in rows if digest is not None]
+    missing = [
+        fid for fid, digest, kind in rows if digest is None and kind == "netflow"
+    ]
+    if not digested and not missing:
+        return None
+    return case_flow_summary(digested, without_digest=missing)
 
 
 def add_finding_to_case(*, case_id: str, finding_id: str) -> Args:
