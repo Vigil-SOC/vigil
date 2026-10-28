@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import SummaryStep from './SummaryStep'
-import { aiConfigApi, configApi, llmProviderApi, workflowApi } from '../../services/api'
+import { aiConfigApi, autonomyApi, configApi, llmProviderApi, workflowApi } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
   configApi: {
     getIntegrations: vi.fn(),
-    getAutonomy: vi.fn(),
     getOrchestrator: vi.fn(),
   },
+  autonomyApi: { get: vi.fn() },
   llmProviderApi: { list: vi.fn() },
   aiConfigApi: { getConfig: vi.fn() },
   workflowApi: { listAll: vi.fn() },
@@ -38,8 +38,8 @@ describe('SummaryStep', () => {
     vi.mocked(workflowApi.listAll).mockResolvedValue({
       data: { workflows: [{ enabled: true }, { enabled: true }, { enabled: false }] },
     } as never)
-    vi.mocked(configApi.getAutonomy).mockResolvedValue({
-      data: { auto_response_enabled: true, force_manual_approval: false },
+    vi.mocked(autonomyApi.get).mockResolvedValue({
+      data: { act_reversible: true, stopped: false, environment_locked: false },
     } as never)
     vi.mocked(configApi.getOrchestrator).mockResolvedValue({
       data: { enabled: true, ...values, profiles: { balanced: { label: 'Balanced', values } } },
@@ -59,8 +59,9 @@ describe('SummaryStep', () => {
   it('reads the empty and off cases', async () => {
     vi.mocked(configApi.getIntegrations).mockResolvedValue({ data: { enabled_integrations: [] } } as never)
     vi.mocked(llmProviderApi.list).mockResolvedValue({ data: [] } as never)
-    vi.mocked(configApi.getAutonomy).mockResolvedValue({
-      data: { auto_response_enabled: false, force_manual_approval: true },
+    // Act is stored but the environment locks it, so the effective mode is Assist
+    vi.mocked(autonomyApi.get).mockResolvedValue({
+      data: { act_reversible: true, stopped: false, environment_locked: true },
     } as never)
     vi.mocked(configApi.getOrchestrator).mockResolvedValue({
       data: { enabled: false, ...values, max_concurrent_agents: 9, profiles: { balanced: { label: 'Balanced', values } } },

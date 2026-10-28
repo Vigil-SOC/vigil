@@ -1258,7 +1258,13 @@ export interface paths {
         };
         /** Get Ceiling */
         get: operations["get_api_autonomy"];
-        /** Put Ceiling */
+        /**
+         * Put Ceiling
+         * @description Edit the ceiling. The permission depends on the direction.
+         *
+         *     Only lowering act flags is ``ai_autonomy.stop``. Raising one, or changing
+         *     four-eyes, is ``ai_autonomy.write``.
+         */
         put: operations["put_api_autonomy"];
         post?: never;
         delete?: never;
@@ -2564,26 +2570,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/config/autonomy": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Autonomy Config
-         * @description Effective response autonomy for the console chip.
-         */
-        get: operations["get_api_config_autonomy"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/config/claude": {
         parameters: {
             query?: never;
@@ -2695,37 +2681,6 @@ export interface paths {
          *         Success status
          */
         post: operations["post_api_config_demo-mode_reset"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/config/force-manual-approval": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Force Manual Approval
-         * @description Read the stored Assist/Act bit without inserting a default row.
-         *
-         *     A failed read is an error, not Act: reporting the default would show
-         *     approvals as off while the stored ceiling may be forcing them on.
-         *     Missing row is Assist (both act flags off).
-         */
-        get: operations["get_api_config_force-manual-approval"];
-        put?: never;
-        /**
-         * Set Force Manual Approval
-         * @description Persist Assist or Act on ``act_reversible``.
-         *
-         *     Act is refused while the environment wins, so it is not stored for later.
-         *     Assist may still be stored. A service account may lower and may not raise.
-         */
-        post: operations["post_api_config_force-manual-approval"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7175,20 +7130,6 @@ export interface components {
              */
             approved_by?: string | null;
         };
-        /**
-         * AutonomyConfig
-         * @description The two flags the console chip folds into Assist or Act.
-         *
-         *     Assist is ``force_manual_approval or not auto_response_enabled``, and that
-         *     is true exactly when effective ``act_reversible`` is off. ``auto_response_enabled``
-         *     stays true so the chip's single bit is ``force_manual_approval``.
-         */
-        AutonomyConfig: {
-            /** Auto Response Enabled */
-            auto_response_enabled: boolean;
-            /** Force Manual Approval */
-            force_manual_approval: boolean;
-        };
         /** AutostartRequest */
         AutostartRequest: {
             /** Services */
@@ -8997,24 +8938,6 @@ export interface components {
             };
             /** Total */
             total: number;
-        };
-        /**
-         * ForceManualApprovalConfig
-         * @description Assist is true (``act_reversible`` off). Act is false (``act_reversible`` on).
-         */
-        ForceManualApprovalConfig: {
-            /** Enabled */
-            enabled: boolean;
-        };
-        /**
-         * ForceManualApprovalResponse
-         * @description The stored Assist bit, plus whether daemon env locks the act flags off.
-         */
-        ForceManualApprovalResponse: {
-            /** Enabled */
-            enabled: boolean;
-            /** Environment Wins */
-            environment_wins: boolean;
         };
         /**
          * ForkAgentRequest
@@ -15923,37 +15846,6 @@ export interface operations {
             };
         };
     };
-    get_api_config_autonomy: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AutonomyConfig"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_config_claude: {
         parameters: {
             query?: never;
@@ -16170,72 +16062,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "get_api_config_force-manual-approval": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ForceManualApprovalResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_config_force-manual-approval": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ForceManualApprovalConfig"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ForceManualApprovalResponse"];
                 };
             };
             /** @description Validation Error */

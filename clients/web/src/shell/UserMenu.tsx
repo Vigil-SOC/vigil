@@ -100,7 +100,7 @@ export default function UserMenu({
   const toggleScheme = () => {
     const next = scheme === 'dark' ? 'light' : 'dark'
     setScheme(next)
-    if (!hasPermission('settings.write')) return
+    if (!hasPermission('platform.write')) return
     configApi.setTheme(next).catch(() => notify('err', "Couldn't save the default theme."))
   }
 

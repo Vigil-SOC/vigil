@@ -45,7 +45,8 @@ vi.mock('./DeveloperSection', () => ({ default: () => <div>Developer panel</div>
 vi.mock('./UsersSection', () => ({ default: () => <div>Users panel</div> }))
 vi.mock('./DataUploadsSection', () => ({ default: () => <div>Data panel</div> }))
 vi.mock('./AuditSection', () => ({ AUDIT_DESC: 'Stub audit description.', default: () => <div>Audit panel</div> }))
-const auth = vi.hoisted(() => ({ perms: new Set<string>(['audit.read']) }))
+const ALL_READS = ['platform.read', 'integrations.read', 'ai_autonomy.read', 'audit.read']
+const auth = vi.hoisted(() => ({ perms: new Set<string>(['platform.read', 'integrations.read', 'ai_autonomy.read', 'audit.read']) }))
 vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => ({ hasPermission: (p: string) => auth.perms.has(p) }) }))
 
 const screenProps: ConsoleScreenProps = {
@@ -171,12 +172,25 @@ describe('settings nav', () => {
     expect(nav().getByRole('button', { name: 'Audit' })).toHaveClass('active')
     expect(screen.getByText('Audit panel')).toBeInTheDocument()
     cleanup()
-    auth.perms = new Set()
+    auth.perms = new Set(ALL_READS.filter((p) => p !== 'audit.read'))
     renderAt('/settings?section=audit')
     expect(nav().queryByRole('button', { name: 'Audit' })).not.toBeInTheDocument()
     expect(screen.queryByText('Audit panel')).not.toBeInTheDocument()
     expect(screen.getByText('AI panel')).toBeInTheDocument()
-    auth.perms = new Set(['audit.read'])
+    auth.perms = new Set(ALL_READS)
+  })
+
+  it('shows each section to holders of its read, and says so when there are none', () => {
+    auth.perms = new Set(['integrations.read', 'ai_autonomy.read'])
+    renderAt('/settings')
+    expect(nav().getAllByRole('button').map((b) => b.textContent)).toEqual(['Integrations', 'Limits & autonomy'])
+    expect(screen.getByText('Integrations panel')).toBeInTheDocument()
+    cleanup()
+    auth.perms = new Set()
+    renderAt('/settings')
+    expect(screen.queryByRole('navigation', { name: 'Settings sections' })).not.toBeInTheDocument()
+    expect(screen.getByText("Your role can't read any settings.")).toBeInTheDocument()
+    auth.perms = new Set(ALL_READS)
   })
 
   it('keeps the sections goSettings already opens', () => {

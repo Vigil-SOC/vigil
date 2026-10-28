@@ -45,7 +45,7 @@ interface NavDef {
   /** the section renders its own PageHead (it has head actions) */
   ownsHead?: boolean
   /** shown only to holders of this permission */
-  perm?: string
+  perm: string
 }
 
 interface SystemTabDef {
@@ -93,21 +93,21 @@ function SystemTabs({ notify }: SectionProps) {
 }
 
 const NAV: NavDef[] = [
-  { key: 'ai-config', label: 'AI models', desc: AI_CONFIG_DESC, icon: 'sparkle', Component: AiConfigSection, ownsHead: true },
-  { key: 'integrations', label: 'Integrations', desc: INTEGRATIONS_DESC, icon: 'link', Component: IntegrationsSection, ownsHead: true },
-  { key: 'federation', label: 'Alert collection', desc: 'Pull alerts from your SIEM and EDR tools on a schedule, so agents can start on them without anyone forwarding them.', icon: 'graph', Component: FederationSection },
-  { key: 'sla', label: 'SLA policies', desc: SLA_DESC, icon: 'clock', Component: SlaPoliciesSection, ownsHead: true },
-  { key: 'autoinvestigate', label: 'Limits & autonomy', desc: 'How much Vigil may do without you: whether agents start on their own, how many run at once, what they may spend, and which tools may act alone.', icon: 'bolt', Component: AutoInvestigateSection },
-  { key: 'data', label: 'Data & uploads', desc: 'Bring data in without a live connector, and manage the detection rules applied to it.', icon: 'upload', Component: DataUploadsSection },
+  { key: 'ai-config', label: 'AI models', desc: AI_CONFIG_DESC, icon: 'sparkle', Component: AiConfigSection, ownsHead: true, perm: 'platform.read' },
+  { key: 'integrations', label: 'Integrations', desc: INTEGRATIONS_DESC, icon: 'link', Component: IntegrationsSection, ownsHead: true, perm: 'integrations.read' },
+  { key: 'federation', label: 'Alert collection', desc: 'Pull alerts from your SIEM and EDR tools on a schedule, so agents can start on them without anyone forwarding them.', icon: 'graph', Component: FederationSection, perm: 'platform.read' },
+  { key: 'sla', label: 'SLA policies', desc: SLA_DESC, icon: 'clock', Component: SlaPoliciesSection, ownsHead: true, perm: 'platform.read' },
+  { key: 'autoinvestigate', label: 'Limits & autonomy', desc: 'How much Vigil may do without you: whether agents start on their own, how many run at once, what they may spend, and which tools may act alone.', icon: 'bolt', Component: AutoInvestigateSection, perm: 'ai_autonomy.read' },
+  { key: 'data', label: 'Data & uploads', desc: 'Bring data in without a live connector, and manage the detection rules applied to it.', icon: 'upload', Component: DataUploadsSection, perm: 'platform.read' },
   { key: 'audit', label: 'Audit', desc: AUDIT_DESC, icon: 'shield', Component: AuditSection, ownsHead: true, perm: 'audit.read' },
-  { key: 'system', label: 'System', desc: 'Service health, system information, general options and users.', icon: 'wrench', Component: SystemTabs },
+  { key: 'system', label: 'System', desc: 'Service health, system information, general options and users.', icon: 'wrench', Component: SystemTabs, perm: 'platform.read' },
 ]
 
-function resolveNav(sectionParam: string | null, nav: NavDef[]): NavKey {
+function resolveNav(sectionParam: string | null, nav: NavDef[]): NavKey | null {
   // Old bookmarks for the panels that now live under System stay on that item.
   if (sectionParam && SYSTEM_KEYS.has(sectionParam)) return 'system'
   if (sectionParam && nav.some((item) => item.key === sectionParam)) return sectionParam as NavKey
-  return nav[0].key
+  return nav[0]?.key ?? null
 }
 
 export default function SettingsScreen(props: ConsoleScreenProps) {
@@ -122,7 +122,7 @@ function SettingsLayout({ setViewFull }: ConsoleScreenProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const sectionParam = searchParams.get('section')
   const { hasPermission } = useAuth()
-  const nav = NAV.filter((item) => !item.perm || hasPermission(item.perm))
+  const nav = NAV.filter((item) => hasPermission(item.perm))
   const active = resolveNav(sectionParam, nav)
   const { notify } = useToast()
   const { attention } = useIntegrationsState()
@@ -133,6 +133,15 @@ function SettingsLayout({ setViewFull }: ConsoleScreenProps) {
   }, [setViewFull])
 
   const current = nav.find((item) => item.key === active) ?? nav[0]
+  if (!current) {
+    return (
+      <div className="settings-wrap">
+        <div className="settings-content">
+          <PageHead title="Settings" description="Your role can't read any settings." />
+        </div>
+      </div>
+    )
+  }
   const Section = current.Component
 
   return (

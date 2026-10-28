@@ -1,7 +1,7 @@
 """One autonomy ceiling (#2918).
 
-The stored row is ``autonomy.ceiling``. Read, write of Vigil's own records,
-and propose are on unless ``stopped``. The act flags are off until a person
+The stored row is ``autonomy.ceiling``. Read is always on. Write of Vigil's
+own records and propose are on unless ``stopped``. The act flags are off until a person
 raises them. ``DAEMON_FORCE_APPROVAL`` and ``DAEMON_AUTO_RESPONSE`` can only
 force the effective act flags off. Four-eyes is enforced where an approval
 is recorded, in ``ApprovalService.approve_action`` (#2932).
@@ -44,8 +44,8 @@ class CeilingView:
     """What the console API returns.
 
     The act flags and ``four_eyes`` are the stored ceiling. Effective act is
-    off while ``stopped`` or ``environment_locked``. Read, write, and propose
-    follow ``stopped`` only.
+    off while ``stopped`` or ``environment_locked``. Read stays on while
+    stopped; write and propose follow ``stopped`` only.
     """
 
     act_reversible: bool
@@ -143,7 +143,7 @@ def ceiling_view(stored: Ceiling, settings: Optional[Settings] = None) -> Ceilin
         act_reversible=stored.act_reversible,
         act_irreversible=stored.act_irreversible,
         stopped=stored.stopped,
-        read=not stored.stopped,
+        read=True,
         write=not stored.stopped,
         propose=not stored.stopped,
         environment_locked=environment_locks_act(settings),

@@ -1,5 +1,6 @@
 // Changes save automatically, and take ~60s to apply (runtime-config TTL).
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useAuth } from '../../contexts/AuthContext'
 import { DurationPicker } from '../../shared/DurationPicker'
 import { formatDuration } from '../../shared/duration'
 import { Icon } from '../../shared/icons'
@@ -57,7 +58,7 @@ const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
     case 'stop':
       return {
         title: 'Stop autonomy?',
-        body: 'No tool acts on its own, and nothing is read, written or proposed, until you resume. Automatic investigation turns off and investigations in progress are marked failed.',
+        body: 'No tool acts on its own, and unattended writes, proposals and outside actions are off until you resume; reads continue. Automatic investigation turns off and investigations in progress are marked failed.',
       }
     default: {
       const _exhaustive: never = pending
@@ -96,6 +97,10 @@ const FLEET_ROWS: LimitRow[] = [
 export default function AutoInvestigateSection({ notify }: SectionProps) {
   const { config, setConfig, defaults, bounds, profiles, phase, reload, save } = useOrchestrator()
   const ceiling = useCeiling()
+  const { hasPermission } = useAuth()
+  // write raises, resumes and switches four-eyes; stop stops and lowers
+  const canRaise = hasPermission('ai_autonomy.write')
+  const canLower = canRaise || hasPermission('ai_autonomy.stop')
   const lastSaved = useRef<OrchestratorConfig | null>(null)
   const configRef = useRef<OrchestratorConfig | null>(null)
   const idleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -303,17 +308,29 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
     )
   }
 
-  // the environment lock disables raising; lowering a stored flag still saves
+  // the environment lock disables raising; lowering a stored flag still saves.
+  // Without ai_autonomy.write there is no raise control: stop holders can only lower.
   const seg = (label: string, on: boolean, stored: boolean, raise: () => void, lower: () => void) => (
     <>
-      <div className="lim-seg" role="group" aria-label={label}>
-        <button type="button" aria-pressed={on} disabled={locked} onClick={on ? undefined : raise}>
-          {locked && <Icon name="lock" size={12} />} On their own
-        </button>
-        <button type="button" aria-pressed={!on} onClick={stored ? lower : undefined}>
-          Ask first
-        </button>
-      </div>
+      {canRaise ? (
+        <div className="lim-seg" role="group" aria-label={label}>
+          <button type="button" aria-pressed={on} disabled={locked} onClick={on ? undefined : raise}>
+            {locked && <Icon name="lock" size={12} />} On their own
+          </button>
+          <button type="button" aria-pressed={!on} onClick={stored ? lower : undefined}>
+            Ask first
+          </button>
+        </div>
+      ) : (
+        <span className="lim-class-note">
+          {on ? 'On their own.' : 'Ask first.'}
+          {canLower && stored && (
+            <button type="button" className="btn ghost" onClick={lower}>
+              Switch to Ask first
+            </button>
+          )}
+        </span>
+      )}
       {locked && (
         <span className="lim-class-note">
           <Icon name="lock" size={13} /> Locked by the environment
@@ -423,18 +440,20 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
       <SettingsCard
         wide
         title="What tools may do on their own"
-        desc="Applies to new cases. Each workflow’s own tool permissions are shown in Agents & workflows."
+        desc="Applies at once, to cases already running. Each workflow’s own tool permissions are shown in Agents & workflows."
         actions={
           ceil &&
-          (ceil.stopped ? (
-            <button className="btn" onClick={resume}>
-              <Icon name="play" /> Resume
-            </button>
-          ) : (
-            <button className="btn danger" onClick={() => setPending({ kind: 'stop' })}>
-              <Icon name="stop" /> Stop
-            </button>
-          ))
+          (ceil.stopped
+            ? canRaise && (
+                <button className="btn" onClick={resume}>
+                  <Icon name="play" /> Resume
+                </button>
+              )
+            : canLower && (
+                <button className="btn danger" onClick={() => setPending({ kind: 'stop' })}>
+                  <Icon name="stop" /> Stop
+                </button>
+              ))
         }
       >
         {!ceil ? (
@@ -447,7 +466,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
             {ceil.stopped && (
               <div className="settings-banner err mb-3">
                 <Icon name="alert" size={14} />
-                <span>Stopped. Nothing is read, written, proposed or acted on until you resume. The choices below apply after that.</span>
+                <span>Stopped. Unattended writes, proposals and outside actions are off until someone resumes; reads continue. The choices below apply after that.</span>
               </div>
             )}
             {locked && (
@@ -496,14 +515,18 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
               <div className="toggle-row-text">
                 <span className="toggle-row-label">Four-eyes approval</span>
                 <span className="toggle-row-hint">
-                  A second person approves each change a person approves. Not enforced yet: switching it on only records the choice.
+                  Nobody approves an action they proposed, or one proposed by a run that acted for them.
                 </span>
               </div>
-              <Toggle
-                label="Four-eyes approval"
-                checked={ceil.four_eyes}
-                onChange={(v) => saveCeiling({ four_eyes: v })}
-              />
+              {canRaise ? (
+                <Toggle
+                  label="Four-eyes approval"
+                  checked={ceil.four_eyes}
+                  onChange={(v) => saveCeiling({ four_eyes: v })}
+                />
+              ) : (
+                <span className="text-sm text-tx-2">{ceil.four_eyes ? 'On' : 'Off'}</span>
+              )}
             </div>
           </>
         )}

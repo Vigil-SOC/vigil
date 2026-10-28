@@ -575,11 +575,6 @@ export const configApi = {
   getTheme: () => api.get('/config/theme'),
   setTheme: (theme: string) => api.post('/config/theme', { theme }),
 
-  getAutonomy: () =>
-    api.get<{ auto_response_enabled: boolean; force_manual_approval: boolean }>(
-      '/config/autonomy',
-    ),
-  
   getPostgreSQL: () => api.get('/config/postgresql'),
   setPostgreSQL: (connection_string: string) => api.post('/config/postgresql', { connection_string }),
 
@@ -631,10 +626,6 @@ export const configApi = {
     for (const key of ['profiles', 'defaults', 'bounds']) delete rest[key]
     return api.post('/config/orchestrator', rest)
   },
-
-  getForceManualApproval: () => api.get('/config/force-manual-approval'),
-  setForceManualApproval: (enabled: boolean) =>
-    api.post('/config/force-manual-approval', { enabled }),
 }
 
 export interface PlatformDatabaseProxyConfig {

@@ -222,6 +222,7 @@ PRESETS = {
             "platform.write",
             "settings.write",
             "integrations.install",
+            "ai_autonomy.write",
         ),
     },
     "detection-engineer": {

@@ -30,13 +30,6 @@ GATED_ROUTES = [
     ("POST", "/api/config/postgresql", {"connection_string": "x"}, "platform.write"),
     ("POST", "/api/config/claude", {"api_key": "x"}, "platform.write"),
     ("POST", "/api/config/secrets/migrate-to-encrypted", None, "platform.write"),
-    (
-        "POST",
-        "/api/config/force-manual-approval",
-        {"enabled": True},
-        "ai_autonomy.write",
-    ),
-    ("PUT", "/api/autonomy", {"act_reversible": False}, "ai_autonomy.write"),
     ("POST", "/api/autonomy/resume", None, "ai_autonomy.write"),
     ("POST", "/api/config/integrations", {"integrations": {}}, "integrations.write"),
     ("POST", "/api/config/darktrace", {}, "integrations.write"),
