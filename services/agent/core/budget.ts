@@ -49,8 +49,9 @@ interface Wait {
   to: number;
 }
 
-// How long the run sat on an unanswered checkpoint, so max_wall_ms measures work
-// rather than patience. Crash time still counts: only a checkpoint excuses the clock.
+// How long the run sat waiting on a person, so max_wall_ms measures work rather
+// than patience: on an unanswered checkpoint, or parked until someone extends it.
+// Crash time still counts: only a person being asked excuses the clock.
 function waitedMs(events: readonly SpentEvent[], now: number): number {
   const answeredAt = new Map<string, number>();
   for (const event of events) {
@@ -71,6 +72,7 @@ function waitedMs(events: readonly SpentEvent[], now: number): number {
     const to = answeredAt.get(id) ?? now;
     if (to > from) waits.push({ from, to });
   }
+  waits.push(...parkedWaits(events, now));
 
   // Merged rather than summed: two checkpoints open at once waited the same
   // seconds, and counting them twice would hand the run more wall time than it took.
@@ -86,6 +88,32 @@ function waitedMs(events: readonly SpentEvent[], now: number): number {
     open = { ...wait };
   }
   return open === null ? total : total + (open.to - open.from);
+}
+
+// A run parks by patching its own row with parked_at, and is lifted by clearing it
+// or moving its status on. A park still in place runs to now, as a checkpoint does.
+function parkedWaits(events: readonly SpentEvent[], now: number): Wait[] {
+  const waits: Wait[] = [];
+  const since = new Map<string, number>();
+  for (const event of events) {
+    if (event.kind !== "patch") continue;
+    const { target, id, fields } = (event.payload ?? {}) as { target?: unknown; id?: unknown; fields?: Record<string, unknown> };
+    if (typeof target !== "string" || typeof id !== "string" || fields === undefined || fields === null) continue;
+    const row = `${target}:${id}`;
+    const at = Date.parse(event.ts);
+    if (!Number.isFinite(at)) continue;
+    const parks = typeof fields.parked_at === "string";
+    const lifts = fields.parked_at === null || (typeof fields.status === "string" && fields.status !== "parked");
+    const from = since.get(row);
+    if (parks) {
+      if (from === undefined) since.set(row, at);
+    } else if (lifts && from !== undefined) {
+      if (at > from) waits.push({ from, to: at });
+      since.delete(row);
+    }
+  }
+  for (const from of since.values()) if (now > from) waits.push({ from, to: now });
+  return waits;
 }
 
 // Structural rather than AgentEvent<Kinds>: the fold reads two kinds and a
