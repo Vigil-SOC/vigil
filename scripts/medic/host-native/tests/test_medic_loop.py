@@ -26,12 +26,15 @@ REPO = HERE.parents[3]
 # allowlist, so it is steered by files in the data dir, never by env.
 STUB_PYTHON = r"""#!/bin/bash
 d="$VIGIL_MEDIC_DATA_DIR"
+# Before `starts`: a TERM sent once the test sees it must find the trap set.
+trap 'echo "TERM $$" >> "$d/termed"; exit 0' TERM
 echo "$(date +%s) $$ $*" >> "$d/starts"
-env > "$d/env.$$"
+env > "$d/.env.$$" && mv "$d/.env.$$" "$d/env.$$"  # whole, even when niced and slow
 case "$(cat "$d/mode" 2>/dev/null)" in
   exit3) exit 3 ;;
+  grow)  # exec keeps the PID the loop watches; 64 MiB actually written
+    exec "$(cat "$d/real_python")" -c 'import time; b = b"x" * (64 << 20); time.sleep(600)' ;;
   run)
-    trap 'echo "TERM $$" >> "$d/termed"; exit 0' TERM
     while :; do sleep 0.1; done ;;
 esac
 exit 0
@@ -237,6 +240,58 @@ def test_exit_restarts_with_doubling_backoff(box: Path) -> None:
     log = (box / "loop.log").read_text()
     assert "exited (code 3)" in log and "restarting in 1s" in log
     assert "restarting in 2s" in log
+
+
+def test_medic_runs_at_niceness_10(box: Path) -> None:
+    """C7: on host-native CPU is priority only. nice adds to the runner's own."""
+    (box / "data" / "mode").write_text("run")
+    proc = _start(box)
+    try:
+        _wait_for(lambda: _starts(box))
+        pid = _starts(box)[0][1]
+        ni = subprocess.run(
+            ["ps", "-o", "ni=", "-p", pid], capture_output=True, text=True, check=True
+        ).stdout.strip()
+    finally:
+        _stop(proc)
+    assert int(ni) == min(os.getpriority(os.PRIO_PROCESS, 0) + 10, 19)
+
+
+def test_medic_over_the_rss_limit_is_stopped_and_restarted(box: Path) -> None:
+    """C7 RSS guard: over --rss-max-mb, stopped with the reason, then the backoff."""
+    (box / "data" / "mode").write_text("grow")
+    (box / "data" / "real_python").write_text(sys.executable)
+    proc = _start(box, "--rss-max-mb", "32", "--rss-every", "1", "--backoff-start", "1")
+    try:
+        _wait_for(lambda: len(_starts(box)) >= 2, timeout=30)
+    finally:
+        assert _stop(proc) == 0
+    first, second = _starts(box)[0][1], _starts(box)[1][1]
+    assert first != second
+    log = (box / "loop.log").read_text()
+    assert f"Medic (pid {first}) uses" in log and "over the 32 MiB limit" in log, log
+    assert "restarting in 1s" in log
+
+
+def test_repeated_rss_stops_end_in_crash_looping(box: Path) -> None:
+    """No counter of its own: the existing crash-loop cap applies."""
+    (box / "data" / "mode").write_text("grow")
+    (box / "data" / "real_python").write_text(sys.executable)
+    proc = _start(
+        box,
+        "--rss-max-mb",
+        "32",
+        "--rss-every",
+        "1",
+        "--backoff-start",
+        "0",
+        "--cap-exits",
+        "1",
+    )
+    assert proc.wait(timeout=30) == 1
+    assert len(_starts(box)) == 2
+    record = json.loads((box / "data" / "run" / "heartbeat").read_text())
+    assert record["state"] == "crash-looping"
 
 
 def test_term_during_backoff_stops_promptly(box: Path) -> None:

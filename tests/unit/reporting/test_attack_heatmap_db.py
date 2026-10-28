@@ -49,11 +49,12 @@ def _clean(throwaway_database):
 
 
 @pytest.fixture
-def client():
+def client(authenticate_app):
     from services.api.routers import analytics
 
     app = FastAPI()
     app.include_router(analytics.router, prefix=analytics.ROUTER_META.prefix)
+    authenticate_app(app)
     # A route that raises should read as the 500 the console got.
     return TestClient(app, raise_server_exceptions=False)
 

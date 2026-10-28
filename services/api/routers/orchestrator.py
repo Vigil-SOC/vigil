@@ -37,12 +37,18 @@ ROUTER_META = RouterMeta(
 )
 logger = logging.getLogger(__name__)
 
-# Turning the orchestrator off, or wiping its records, is a settings change.
-_SETTINGS_WRITE = [permission_gate("settings.write")]
+# Reads are automation.read. Enable and disable stay settings.write and still
+# require that read. Kill is only the ceiling gate: it is already ai_autonomy.stop
+# on main, and the catalog split must not rewrite it to settings.write or add
+# the area read. Wiping investigations is platform.
+_AREA_READ = [permission_gate("automation.read")]
+_SETTINGS_WRITE = [permission_gate("settings.write"), *_AREA_READ]
+_PLATFORM_WRITE = [permission_gate("platform.write"), *_AREA_READ]
 # Queueing an investigation is the same act as POST /api/v1/agent-runs.
-_RUN_AGENTS = [permission_gate("ai_chat.use")]
+_RUN_AGENTS = [permission_gate("ai_chat.use"), *_AREA_READ]
 # Stopping one investigation is a decision, like resuming or cancelling a run.
-_KILL = [permission_gate("ai_decisions.approve")]
+_KILL = [permission_gate("ai_decisions.approve"), *_AREA_READ]
+_STOP = [permission_gate("ai_autonomy.stop", before_revision="ai_autonomy.stop")]
 
 
 _cached_orchestrator = None
@@ -82,7 +88,7 @@ class InvestigationCreateRequest(BaseModel):
 # ---- Status & Control ----
 
 
-@router.get("/status")
+@router.get("/status", dependencies=_AREA_READ)
 def get_orchestrator_status():
     """Get orchestrator status: enabled state, active agents, stats, cost."""
     orch = _get_orchestrator()
@@ -183,7 +189,7 @@ def disable_orchestrator(
     }
 
 
-@router.post("/kill", dependencies=[permission_gate("ai_autonomy.stop")])
+@router.post("/kill", dependencies=_STOP)
 async def kill_orchestrator(
     current_user: User = Depends(get_current_active_user),
 ):
@@ -221,7 +227,7 @@ async def kill_orchestrator(
         raise HTTPException(status_code=500, detail="Failed to kill the orchestrator")
 
 
-@router.post("/investigations/purge", dependencies=_SETTINGS_WRITE)
+@router.post("/investigations/purge", dependencies=_PLATFORM_WRITE)
 async def purge_investigations(
     current_user: User = Depends(get_current_active_user),
 ):
@@ -256,7 +262,7 @@ async def purge_investigations(
 # ---- Investigations ----
 
 
-@router.get("/investigations")
+@router.get("/investigations", dependencies=_AREA_READ)
 def list_investigations(status: Optional[str] = Query(None)):
     """List all investigations with optional status filter."""
     orch = _get_orchestrator()
@@ -270,7 +276,7 @@ def list_investigations(status: Optional[str] = Query(None)):
     }
 
 
-@router.get("/investigations/{investigation_id}")
+@router.get("/investigations/{investigation_id}", dependencies=_AREA_READ)
 def get_investigation(investigation_id: str):
     """Get detailed information about a specific investigation."""
     orch = _get_orchestrator()
@@ -293,7 +299,10 @@ def get_investigation(investigation_id: str):
     }
 
 
-@router.get("/investigations/{investigation_id}/files/{filename:path}")
+@router.get(
+    "/investigations/{investigation_id}/files/{filename:path}",
+    dependencies=_AREA_READ,
+)
 def get_investigation_file(investigation_id: str, filename: str):
     """Read a file from an investigation's working directory."""
     orch = _get_orchestrator()
@@ -638,7 +647,9 @@ def _assemble_chain_of_custody(investigation_id: str) -> Dict[str, Any]:
     return result
 
 
-@router.get("/investigations/{investigation_id}/chain-of-custody")
+@router.get(
+    "/investigations/{investigation_id}/chain-of-custody", dependencies=_AREA_READ
+)
 def get_chain_of_custody(investigation_id: str):
     """Return a unified audit document for an investigation.
 
@@ -648,7 +659,7 @@ def get_chain_of_custody(investigation_id: str):
     return _assemble_chain_of_custody(investigation_id)
 
 
-@router.get("/investigations/{investigation_id}/export")
+@router.get("/investigations/{investigation_id}/export", dependencies=_AREA_READ)
 def export_investigation(investigation_id: str):
     """Export the complete chain-of-custody package as a downloadable JSON file."""
     payload = _assemble_chain_of_custody(investigation_id)

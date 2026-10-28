@@ -12,7 +12,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def client(tmp_path):
+def client(tmp_path, authenticate_app):
     (tmp_path / "secret.env").write_text("DB_PASSWORD=hunter2")
     wm = WorkdirManager(str(tmp_path / "investigations"))
     wm.create("inv-1")
@@ -21,6 +21,7 @@ def client(tmp_path):
     wm.write_file("inv-10", "context.md", "INV-10 BRIEF")
     app = FastAPI()
     app.include_router(router.router, prefix="/api/orchestrator")
+    authenticate_app(app)
     with patch.object(
         router, "_get_orchestrator", return_value=SimpleNamespace(workdir=wm)
     ):

@@ -18,7 +18,7 @@ See `PRD-phase1.md` sections 3, 5, 10 and 11. Do not build from the full-package
 | Case | Incident, investigation, ticket | The unit of work. "Combined from N alerts". |
 | Explanation | Hypothesis | What the agents are testing. Statuses: forming, standing, weakened, ruled out, proven. |
 | Evidence row | Finding, IOC | One observation with source, tier, stance (supports / goes against / neither) and what it bears on. |
-| Checked | Queries, tool calls | Every question asked of a tool, with cost and latency. |
+| Checked | Queries, tool calls | Every question asked of a tool, with latency. |
 | Blind spot | Gap, missing telemetry | A question no source could answer. |
 | Trust floor | Confidence threshold | Sources below it are shown but not counted. |
 | Handled without a person | Auto-closed, fully automated | Closed-case review samples these. |

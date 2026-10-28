@@ -77,12 +77,18 @@ def raise_for_checkpoint(
     approvals=None,
 ) -> bool:
     from core.response.approval_service import ActionType, ApprovalService
+    from core.response.ceiling import REVERSIBLE, tool_classes
 
     service = approvals or ApprovalService()
     if pending_for(run_id, checkpoint_id, service) is not None:
         return False
 
     parameters = {"checkpoint_id": checkpoint_id, **(parameters or {})}
+    # A parked call names its tool; the row carries that tool's class. A
+    # checkpoint that names no outside tool stays reversible.
+    tool = parameters.get("tool")
+    classes = tool_classes([tool]) if isinstance(tool, str) else {}
+    effect_class = classes[tool] if tool in classes else REVERSIBLE
     service.create_action(
         action_type=ActionType.WORKFLOW_PHASE,
         title=title,
@@ -100,6 +106,7 @@ def raise_for_checkpoint(
         parameters=parameters,
         workflow_run_id=run_id,
         workflow_phase_id=phase_id,
+        effect_class=effect_class,
     )
     logger.info("raised approval for %s at checkpoint %s", run_id, checkpoint_id)
     return True

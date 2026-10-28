@@ -15,6 +15,7 @@ from sqlalchemy.schema import CreateTable
 
 from core.agents import internal_auth, tools_router
 from core.agents.tool_registry import execute_backend_tool
+from core.auth import tool_principal
 from core.integrations.mcp.registry import MCPRegistry
 from core.llm.tool_schemas import ALL_TOOLS
 from core.storage.models import (
@@ -72,6 +73,7 @@ async def test_unknown_case_returns_empty_sections(store):
         "total": 0,
         "offset": 0,
         "limit": 100,
+        "returned": 0,
         "has_more": False,
         "findings": [],
     }
@@ -123,6 +125,7 @@ async def test_store_failure_is_backend_error(monkeypatch):
             tool="case_records",
             args={"case_id": "c-1"},
             bounds={"max_rows": 5, "timeout_ms": 5000},
+            principal=tool_principal.mint(agent_id="agent:hunt", run_id="run-1"),
         ),
         "Bearer shhh",
         MCPRegistry(),
@@ -182,3 +185,70 @@ async def test_pages_the_cases_findings_newest_first(store):
     assert [f["finding_id"] for f in rest["findings"]] == ["f-01", "f-06"]
     assert rest["findings"][1]["entities"]["ips"] == ["10.9.9.9", "172.16.0.5"]
     assert [task["title"] for task in rest["tasks"]] == ["Pull logs"]
+
+
+# The flows block sums every NetFlow finding on the case, not the page, and
+# names a NetFlow finding stored before the digest existed.
+@pytest.mark.asyncio
+async def test_flows_block_sums_the_whole_case(store):
+    from core.findings.netflow_digest import netflow_digest
+
+    start = datetime(2026, 10, 26, 12, 0)
+    flows = [
+        {
+            "timestamp": f"2026-10-26T12:00:{n % 60:02d}Z",
+            "source_ip": "10.0.0.1",
+            "destination_ip": "10.0.0.2",
+            "destination_port": port,
+            "protocol": 6,
+            "forward_packets": 1,
+            "backward_packets": 0,
+            "forward_bytes": 64,
+            "backward_bytes": 0,
+        }
+        for n, port in enumerate(range(1, 121))
+    ]
+    for n in range(3):
+        store.add(
+            Finding(
+                finding_id=f"f-{n}",
+                title="Scan",
+                data_source="netflow",
+                severity="high",
+                timestamp=start + timedelta(minutes=n),
+                entity_context={
+                    "source_evidence": {"telemetry_kind": "netflow"},
+                    "netflow_digest": netflow_digest(flows),
+                },
+            )
+        )
+    store.add(
+        Finding(
+            finding_id="f-old",
+            title="Scan",
+            data_source="netflow",
+            severity="high",
+            timestamp=start,
+            entity_context={"source_evidence": {"telemetry_kind": "netflow"}},
+        )
+    )
+    for fid in ("f-0", "f-1", "f-2", "f-old"):
+        store.execute(case_findings.insert().values(case_id="c-1", finding_id=fid))
+    store.commit()
+
+    result, _ = await execute_backend_tool(
+        "case_records", {"case_id": "c-1", "limit": 1}
+    )
+
+    flows_block = result["flows"]
+    assert len(result["findings"]) == 1
+    assert flows_block["flows"] == 360
+    assert flows_block["answered"] == 0
+    assert flows_block["bytes_back"] == 0
+    (pair,) = flows_block["pairs"]
+    assert (pair["findings"], pair["distinct_ports"]) == (3, 120)
+    assert flows_block["no_digest"] == {
+        "note": "NetFlow findings whose flows are not counted here",
+        "count": 1,
+        "finding_ids": ["f-old"],
+    }

@@ -24,8 +24,8 @@ from typing import Any, Dict, Iterable, List, Optional, Union
 import ijson
 
 from core.findings.source_evidence import (
+    loglm_row_evidence,
     normalize_finding_source_evidence,
-    source_evidence_from_loglm_row,
 )
 from core.storage.score import optional_float as _optional_float
 from core.time import utcnow
@@ -1083,9 +1083,12 @@ class IngestionService:
         if row.get("incident_pred") is not None:
             entity_context["incident_pred"] = int(row["incident_pred"])
 
-        source_evidence = source_evidence_from_loglm_row(row)
+        source_evidence, netflow_digest = loglm_row_evidence(row)
         if source_evidence is not None:
             entity_context["source_evidence"] = source_evidence
+        # Counts over every flow, kept beside the preview (#3275).
+        if netflow_digest is not None:
+            entity_context["netflow_digest"] = netflow_digest
 
         # cluster_id from attack_id if populated
         attack_id = row.get("attack_id")

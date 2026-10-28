@@ -5,7 +5,7 @@ import { skillsApi } from '../../services/skillsApi'
 
 const auth = vi.hoisted(() => ({ canWriteSkills: true }))
 vi.mock('../../contexts/AuthContext', () => ({
-  useAuth: () => ({ hasPermission: (p: string) => p !== 'settings.write' || auth.canWriteSkills }),
+  useAuth: () => ({ hasPermission: (p: string) => p !== 'automation.write' || auth.canWriteSkills }),
 }))
 
 vi.mock('../../services/skillsApi', () => ({

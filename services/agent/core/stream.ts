@@ -308,6 +308,11 @@ class Run<T, Kinds extends Record<string, unknown>> {
         }
         const measured = await this.invoke(tool, call.args, gate.checkpoint_id);
         yield* this.record(call, measured.result, gate.checkpoint_id, measured.duration_ms);
+        // Journaled first, so a resume shows the model what was denied. No checkpoint:
+        // nobody approves this, and the run waits for the ceiling or the role to change.
+        if (this.cfg.park_on_denial === true && !measured.result.ok && measured.result.failure.kind === "denied") {
+          return this.done("waiting_approval", null, measured.result.failure.detail);
+        }
       }
     }
 

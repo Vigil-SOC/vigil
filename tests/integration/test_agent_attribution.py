@@ -78,14 +78,14 @@ def _invoke(client, tool: str, principal: str):
 
 
 def _trail_actions(engine) -> list[str]:
-    # The upgrade writes roles.revised before the test. These assertions are
-    # about the rows the tool call added.
+    # The upgrade writes roles.revised and tools.classified before the test.
+    # These assertions are about the rows the tool call added.
     with engine.connect() as conn:
         return list(
             conn.execute(
                 text(
                     "SELECT payload->>'action' FROM audit_trail "
-                    "WHERE payload->>'action' IS DISTINCT FROM 'roles.revised' "
+                    "WHERE payload->>'action' NOT IN ('roles.revised', 'tools.classified') "
                     "ORDER BY seq"
                 )
             ).scalars()
@@ -132,6 +132,8 @@ def test_a_read_only_tool_adds_a_ledger_event_and_no_trail_row(db, monkeypatch):
         return {"rows": [{"case_id": "case-1"}]}, True
 
     monkeypatch.setattr(tools_router, "execute_backend_tool", _ran)
+    # nestor's role is not what this is about; invoke checks it before the tool.
+    monkeypatch.setattr(tools_router, "permission_refusal", lambda permission: None)
     response = _invoke(_client(monkeypatch), "get_case", _claims("get_case"))
 
     assert response.status_code == 200, response.text
@@ -164,9 +166,7 @@ def test_a_read_only_tool_adds_a_ledger_event_and_no_trail_row(db, monkeypatch):
         )
     with db.connect() as conn:
         kind = conn.execute(
-            text(
-                "SELECT kind FROM agent_events WHERE run_id = CAST(:run_id AS uuid)"
-            ),
+            text("SELECT kind FROM agent_events WHERE run_id = CAST(:run_id AS uuid)"),
             {"run_id": PARENT},
         ).scalar_one()
     assert kind == "call"
@@ -192,7 +192,7 @@ def test_an_effectful_tool_is_recorded_before_it_runs(db, monkeypatch):
             conn.execute(
                 text(
                     "SELECT payload FROM audit_trail "
-                    "WHERE payload->>'action' IS DISTINCT FROM 'roles.revised' "
+                    "WHERE payload->>'action' NOT IN ('roles.revised', 'tools.classified') "
                     "ORDER BY seq"
                 )
             ).scalars()

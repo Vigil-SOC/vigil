@@ -10,7 +10,6 @@ from fastapi.testclient import TestClient
 from core.deps import provide_mcp_client, provide_mcp_registry
 from core.integrations.mcp.service import MCPService
 from services.api.errors import register_exception_handlers
-from services.api.middleware.auth import get_current_active_user
 from services.api.routers import mcp as mcp_api
 
 pytestmark = [
@@ -76,13 +75,11 @@ def test_unwritable_dir_fails_the_toggle(world):
     assert world.svc.is_server_enabled("geo") is False
 
 
-def test_put_answers_500_when_the_state_cannot_be_saved(world):
+def test_put_answers_500_when_the_state_cannot_be_saved(world, authenticate_app):
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(mcp_api.router, prefix="/api/mcp")
-    app.dependency_overrides[get_current_active_user] = lambda: SimpleNamespace(
-        user_id="admin"
-    )
+    authenticate_app(app)
     client = MagicMock()
     app.dependency_overrides[provide_mcp_client] = lambda: client
     app.dependency_overrides[provide_mcp_registry] = lambda: MagicMock()

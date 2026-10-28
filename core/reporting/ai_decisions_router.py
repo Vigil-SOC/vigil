@@ -25,6 +25,7 @@ router = APIRouter()
 # Grading a decision is deciding on it, so it takes the approvals right: the
 # console gates the AI Decisions screen on the same permission.
 _DECIDE = [permission_gate("ai_decisions.approve")]
+router.dependencies.append(permission_gate("ai_decisions.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/ai",

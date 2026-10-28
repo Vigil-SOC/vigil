@@ -185,8 +185,15 @@ class CaseTasksResponse(BaseModel):
     tasks: list[CaseTaskSchema]
 
 
+class CaseRelatedSchema(CaseRelationshipSchema):
+    """A link with the related Case's title and status, for the side panel."""
+
+    related_title: Optional[str] = None
+    related_status: Optional[str] = None
+
+
 class CaseRelationshipsResponse(BaseModel):
-    relationships: list[CaseRelationshipSchema]
+    relationships: list[CaseRelatedSchema]
 
 
 class CaseCloseResponse(BaseModel):

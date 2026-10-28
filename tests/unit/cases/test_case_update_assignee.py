@@ -15,7 +15,7 @@ from tests.unit.cases.people import people
 
 pytestmark = pytest.mark.unit
 
-ANALYST = SimpleNamespace(username="nestor")
+ANALYST = SimpleNamespace(username="nestor", user_id="nestor")
 
 
 def _patch(monkeypatch, stored=None):

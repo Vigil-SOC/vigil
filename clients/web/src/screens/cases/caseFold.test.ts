@@ -91,6 +91,7 @@ describe('recordChip', () => {
     expect(recordChip('agent_run_report', 'case_activities')).toBe('agent')
     expect(recordChip('finding_added', 'case_activities')).toBe('agent')
     expect(recordChip('case_merged', 'case_activities')).toBe('system')
+    expect(recordChip('alert_added', 'case_activities')).toBe('system')
     expect(recordChip('resolution', 'case_activities')).toBe('human')
     expect(recordChip('recall', 'case_activities')).toBe('human')
     expect(recordChip('recall', 'run')).toBe('memory')
@@ -99,6 +100,12 @@ describe('recordChip', () => {
   it('types a checkpoint answered by policy as the system\'s, and one answered by a person as theirs', () => {
     expect(recordChip('policy')).toBe('system')
     expect(recordChip('resolution')).toBe('human')
+  })
+
+  it('types an audit trail row by its actor\'s principal kind', () => {
+    expect(recordChip('human', 'audit_trail')).toBe('human')
+    expect(recordChip('system', 'audit_trail')).toBe('system')
+    expect(recordChip('agent', 'audit_trail')).toBe('agent')
   })
 })
 

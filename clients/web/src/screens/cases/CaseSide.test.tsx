@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { useRef } from 'react'
+import { MemoryRouter } from 'react-router-dom'
 import { CaseSide } from './CaseSide'
 import { casesApi } from '../../services/api'
 import { useNoSideways } from '../../shared/useNoSideways'
@@ -13,6 +14,7 @@ vi.mock('../../services/api', () => ({
     getComments: vi.fn(),
     getTasks: vi.fn(),
     getEscalations: vi.fn(),
+    getRelationships: vi.fn(),
   },
 }))
 
@@ -46,20 +48,20 @@ function renderSide({ keys = KEYS, entities = ['FIN-WS-114', 'priya.nair'], late
   recall?: boolean
 } = {}) {
   return render(
-    <aside className="case-side">
-      <CaseSide
-        caseId="case-1"
-        linked={[{ finding_id: 'dl-001', title: 'ISO delivered', description: null, source_link: null, entities }]}
-        owner="—"
-        latest={latest}
-        runs={[]}
-        workflowNames={{}}
-        sla={null}
-        closed={false}
-        fold={{ ...fold, recall: recall ? { ...(fold as unknown as { recall: object }).recall, keys } : null } as unknown as RunFold}
-        latestFold={null}
-      />
-    </aside>,
+    <MemoryRouter>
+      <aside className="case-side">
+        <CaseSide
+          caseId="case-1"
+          linked={[{ finding_id: 'dl-001', title: 'ISO delivered', description: null, source_link: null, entities }]}
+          owner="—"
+          latest={latest}
+          workflowNames={{}}
+          sla={null}
+          closed={false}
+          fold={{ ...fold, recall: recall ? { ...(fold as unknown as { recall: object }).recall, keys } : null } as unknown as RunFold}
+        />
+      </aside>
+    </MemoryRouter>,
   )
 }
 
@@ -67,6 +69,43 @@ beforeEach(() => {
   vi.mocked(casesApi.getComments).mockResolvedValue({ data: { comments: [] } } as never)
   vi.mocked(casesApi.getTasks).mockResolvedValue({ data: { tasks: [] } } as never)
   vi.mocked(casesApi.getEscalations).mockResolvedValue({ data: { escalations: [] } } as never)
+  vi.mocked(casesApi.getRelationships).mockResolvedValue({ data: { relationships: [] } } as never)
+})
+
+describe('case side panel Related cases (#3293)', () => {
+  it('shows each linked Case with a link, its title, status and note', async () => {
+    vi.mocked(casesApi.getRelationships).mockResolvedValue({
+      data: {
+        relationships: [
+          { relationship_id: 1, related_case_id: 'case-2', related_title: 'Same host beacon', related_status: 'closed', notes: 'same host', relationship_type: 'related_to' },
+          { relationship_id: 2, related_case_id: 'case-3', related_title: 'Phish wave', related_status: 'open', notes: null, relationship_type: 'duplicate' },
+        ],
+      },
+    } as never)
+    renderSide()
+    const block = (await screen.findByRole('heading', { name: 'Related cases' })).closest('section') as HTMLElement
+    const links = within(block).getAllByRole('link')
+    expect(links.map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
+      ['case-2', '/cases?case=case-2'],
+      ['case-3', '/cases?case=case-3'],
+    ])
+    expect(within(block).getByTitle('Same host beacon')).toBeInTheDocument()
+    expect(within(block).getByText('Closed')).toBeInTheDocument()
+    expect(within(block).getByTitle('same host')).toBeInTheDocument()
+    expect(block.querySelectorAll('li')[1].querySelector('.side-meta')).toBeNull()
+  })
+
+  it('shows no block when the Case has no links or the read fails', async () => {
+    renderSide()
+    await screen.findByRole('heading', { name: 'Details' })
+    await Promise.resolve()
+    expect(screen.queryByRole('heading', { name: 'Related cases' })).toBeNull()
+
+    vi.mocked(casesApi.getRelationships).mockRejectedValue(new Error('boom'))
+    renderSide()
+    await Promise.resolve()
+    expect(screen.queryByRole('heading', { name: 'Related cases' })).toBeNull()
+  })
 })
 
 describe('case side panel Entities (#2284)', () => {
@@ -118,74 +157,6 @@ describe('case side panel Known (#2508)', () => {
   it('says the run journaled no recall when a run exists without one', () => {
     renderSide({ recall: false, latest: run })
     expect(known()).toContain('The run did not journal a recall.')
-  })
-})
-
-describe('case side panel Cost over every run (#2481)', () => {
-  const ref = (workflow_id: string, run_id: string, cost_usd: number, extra: Partial<CaseInvestigationRef> = {}): CaseInvestigationRef => ({
-    investigation_id: null, status: 'completed', workflow_id, run_id, live: false, cost_usd, max_cost_usd: 2, budget_health: 'healthy', iteration_count: 1, created_at: '2026-06-15T09:00:00Z', ...extra,
-  })
-  const renderCost = (runs: { ref: CaseInvestigationRef; fold?: RunFold | null }[]) =>
-    render(
-      <aside className="case-side">
-        <CaseSide caseId="case-1" linked={[]} owner="—" latest={runs[0].ref} runs={runs.map((run) => ({ fold: null, ...run }))} workflowNames={{ 'threat-hunt': 'Threat hunt' }} sla={null} closed={false} fold={null} latestFold={null} />
-      </aside>,
-    )
-  const cost = () => within(screen.getByRole('heading', { name: 'Cost' }).closest('section') as HTMLElement)
-
-  it('totals the refs and lists each run, a run nothing priced as a dash', () => {
-    renderCost([
-      { ref: ref('threat-hunt', 'run-a', 0.25, { primary: true }) },
-      { ref: ref('incident-response', 'run-b', 0.5, { created_at: '2026-06-15T10:00:00Z' }) },
-      { ref: ref('root-cause-analysis', 'run-c', 0, { created_at: '2026-06-15T11:00:00Z' }), fold: { ...fold, costUsd: null, run: { ...(fold as unknown as { run: object }).run, status: 'completed' } } as unknown as RunFold },
-    ])
-    const view = cost()
-    expect(view.getByText('$0.75')).toBeInTheDocument()
-    // the total leaves out the run nothing priced, and says so
-    expect(view.getByText('across 3 runs · 1 unpriced')).toBeInTheDocument()
-    const lines = view.getAllByRole('listitem').map((li) => li.textContent)
-    expect(lines).toEqual(['Threat hunt · started 09:00$0.25', 'incident-response · started 10:00$0.50', 'root-cause-analysis · started 11:00—'])
-    // the bar belongs to the primary run's limit and says so
-    expect(view.getByText('Threat hunt · started 09:00 against its limit')).toBeInTheDocument()
-    expect(view.getByRole('meter', { name: 'Cost of the primary run against its limit' })).toBeInTheDocument()
-  })
-
-  it('reads a run in flight off its fold', () => {
-    const live = { ...fold, costUsd: 1.5 } as unknown as RunFold
-    renderCost([
-      { ref: ref('threat-hunt', 'run-a', 0.1, { primary: true }), fold: live },
-      { ref: ref('incident-response', 'run-b', 0.5) },
-    ])
-    expect(cost().getByText('$2.00')).toBeInTheDocument()
-    expect(cost().getByText('across 2 runs')).toBeInTheDocument()
-  })
-
-  it('still lists the runs and counts them when none is priced, never as $0', () => {
-    renderCost([
-      { ref: ref('threat-hunt', 'run-a', 0, { primary: true }) },
-      { ref: ref('incident-response', 'run-b', 0, { created_at: '2026-06-15T10:00:00Z' }) },
-    ])
-    const view = cost()
-    expect(view.getByText('across 2 runs · 2 unpriced')).toBeInTheDocument()
-    expect(view.queryByText(/\$/)).not.toBeInTheDocument()
-    expect(view.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Threat hunt · started 09:00—', 'incident-response · started 10:00—'])
-  })
-
-  it('counts a run in flight that nothing has priced yet as unpriced, not as $0', () => {
-    const running = { ...fold, costUsd: null } as unknown as RunFold
-    renderCost([
-      { ref: ref('threat-hunt', 'run-a', 0.25, { primary: true }) },
-      { ref: ref('incident-response', 'run-b', 0, { created_at: '2026-06-15T10:00:00Z' }), fold: running },
-    ])
-    expect(cost().getByText('across 2 runs · 1 unpriced')).toBeInTheDocument()
-    expect(cost().getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Threat hunt · started 09:00$0.25', 'incident-response · started 10:00—'])
-  })
-
-  it('keeps one run as it was: the cost and its bar, no lines', () => {
-    renderCost([{ ref: ref('threat-hunt', 'run-a', 0.25, { primary: true }) }])
-    expect(cost().getByText('$0.25 of $2.00')).toBeInTheDocument()
-    expect(cost().queryByRole('listitem')).not.toBeInTheDocument()
-    expect(cost().queryByText(/across/)).not.toBeInTheDocument()
   })
 })
 

@@ -146,3 +146,63 @@ async def test_gateway_is_called_without_an_anthropic_key(monkeypatch):
 
     assert gateway.calls == 1
     assert [item["title"] for item in result] == ["t"]
+
+
+@pytest.mark.asyncio
+async def test_the_call_goes_to_the_provider_assigned_to_reporting(monkeypatch):
+    from core.llm.router.router import ProviderSpec
+
+    ollama = ProviderSpec(
+        provider_id="ollama-local",
+        provider_type="ollama",
+        base_url="http://127.0.0.1:11434",
+        api_key_ref=None,
+        default_model="nemotron",
+        config={},
+    )
+    seen = {}
+
+    class _Recording(_Gateway):
+        async def submit(self, **kwargs):
+            seen.update(kwargs)
+            return {"content": "[]", "type": "text"}
+
+    gateway = _Recording(None)
+
+    async def get_llm_gateway():
+        return gateway
+
+    def resolve_dispatch(component):
+        seen["component"] = component
+        return ollama, "nemotron"
+
+    monkeypatch.setattr("core.llm.gateway.gateway.get_llm_gateway", get_llm_gateway)
+    monkeypatch.setattr("core.llm.target.resolve_dispatch", resolve_dispatch)
+
+    assert await AIInsightsService().generate_insights(METRICS, TIME_SERIES, "7d") == []
+    assert seen["component"] == "reporting"
+    assert seen["provider_id"] == "ollama-local"
+    assert seen["model"] == "nemotron"
+
+
+@pytest.mark.asyncio
+async def test_with_nothing_assigned_the_default_model_is_kept(monkeypatch):
+    seen = {}
+
+    class _Recording(_Gateway):
+        async def submit(self, **kwargs):
+            seen.update(kwargs)
+            return {"content": "[]", "type": "text"}
+
+    gateway = _Recording(None)
+
+    async def get_llm_gateway():
+        return gateway
+
+    monkeypatch.setattr("core.llm.gateway.gateway.get_llm_gateway", get_llm_gateway)
+    monkeypatch.setattr("core.llm.target.resolve_dispatch", lambda component: None)
+
+    service = AIInsightsService()
+    await service.generate_insights(METRICS, TIME_SERIES, "7d")
+    assert seen["provider_id"] is None
+    assert seen["model"] == service.model

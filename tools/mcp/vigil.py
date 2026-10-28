@@ -1,4 +1,5 @@
 import functools
+import inspect
 import json
 import logging
 from datetime import datetime
@@ -70,17 +71,32 @@ def requires(permission: str):
     """Refuse a bound principal whose live role lacks ``permission``.
 
     Placed under ``@mcp.tool()`` so the wrapper is what the server calls.
-    A hunt binds no principal and is unchanged.
+    A run no person started holds no role and passes; a caller bound to
+    nothing is refused. ``permission`` stays on the wrapper for invoke.
     """
 
     def deco(fn):
-        @functools.wraps(fn)
-        def wrapped(*args, **kwargs):
+        def refused():
             refusal = permission_refusal(permission)
-            if refusal is not None:
-                return jdump(refusal)
-            return fn(*args, **kwargs)
+            return None if refusal is None else jdump(refusal)
 
+        if inspect.iscoroutinefunction(fn):
+
+            @functools.wraps(fn)
+            async def wrapped(*args, **kwargs):
+                if (refusal := refused()) is not None:
+                    return refusal
+                return await fn(*args, **kwargs)
+
+        else:
+
+            @functools.wraps(fn)
+            def wrapped(*args, **kwargs):
+                if (refusal := refused()) is not None:
+                    return refusal
+                return fn(*args, **kwargs)
+
+        wrapped.permission = permission
         return wrapped
 
     return deco
@@ -116,6 +132,7 @@ def get_data_service():
 
 
 @mcp.tool()
+@requires("findings.read")
 def list_findings(
     severity: Optional[str] = None,
     data_source: Optional[str] = None,
@@ -128,7 +145,9 @@ def list_findings(
     limit: int = 20,
 ) -> str:
     """List findings, paged and filtered in SQL. ``state`` is the derived state:
-    open (not dismissed, in no closed case), dismissed, or resolved; absent is all."""
+    open (not dismissed, in no closed case), dismissed, or resolved; absent is all.
+    ``limit`` is at most 25, and a page can stop short to stay small: page on
+    ``next_offset`` while ``has_more``."""
     return _call(
         tool_registry.list_findings,
         severity=severity,
@@ -144,8 +163,11 @@ def list_findings(
 
 
 @mcp.tool()
+@requires("findings.read")
 def get_finding(finding_id: str) -> str:
-    """Get a specific finding by ID. A null confidence in mitre_predictions means the source named the technique and gave no confidence: it is unknown, not 0."""
+    """Get a specific finding by ID: its stored triage under ``triage``, then
+    ``entity_context`` with a sample of the source records. A null confidence in mitre_predictions means the source named the technique and gave no confidence: it is unknown, not 0.
+    """
     return _call(tool_registry.get_finding, finding_id=finding_id)
 
 
@@ -157,6 +179,7 @@ def dismiss_finding(finding_id: str, reason: str) -> str:
 
 
 @mcp.tool()
+@requires("automation.read")
 async def list_completed_hunts(
     start: str,
     end: str,
@@ -169,6 +192,7 @@ async def list_completed_hunts(
 
 
 @mcp.tool()
+@requires("automation.read")
 async def replay_hunt(
     run_id: str,
     decision_id: Optional[str] = None,
@@ -190,6 +214,7 @@ async def replay_hunt(
 
 
 @mcp.tool()
+@requires("findings.read")
 def get_technique_rollup(min_confidence: float = 0.0, time_range: str = "all") -> str:
     """Roll up ATT&CK techniques by finding count and severity. min_confidence applies only to techniques with a confidence: at 0 an occurrence with no confidence is counted, above 0 it is excluded and counted in excluded_occurrences on the response."""
     return _call(
@@ -200,6 +225,7 @@ def get_technique_rollup(min_confidence: float = 0.0, time_range: str = "all") -
 
 
 @mcp.tool()
+@requires("cases.read")
 def list_cases(
     status: Optional[str] = None,
     severity: Optional[str] = None,
@@ -217,6 +243,7 @@ def list_cases(
 
 
 @mcp.tool()
+@requires("cases.read")
 def get_case(case_id: str) -> str:
     """Get one case. A null confidence in mitre_predictions means the source named the technique and gave no confidence: it is unknown, not 0."""
     return _call(tool_registry.get_case, case_id=case_id)
@@ -657,6 +684,7 @@ def add_case_comment(
 
 
 @mcp.tool()
+@requires("cases.read")
 def get_case_comments(case_id: str) -> str:
     """Get all comments for a case."""
     try:
@@ -872,6 +900,7 @@ def bulk_add_iocs(case_id: str, iocs: list) -> str:
 
 
 @mcp.tool()
+@requires("cases.read")
 def get_case_iocs(case_id: str, ioc_type: Optional[str] = None) -> str:
     """Get all IOCs for a case, optionally filtered by type."""
     try:
@@ -1027,6 +1056,7 @@ def update_case_task(
 
 
 @mcp.tool()
+@requires("cases.read")
 def get_case_tasks(case_id: str) -> str:
     """Get all tasks for a case."""
     try:
@@ -1107,6 +1137,7 @@ def link_related_cases(
 
 
 @mcp.tool()
+@requires("cases.assign")
 @requires("cases.write")
 def escalate_case(
     case_id: str,
@@ -1271,6 +1302,7 @@ def close_case(
 
 
 @mcp.tool()
+@requires("ai_chat.use")
 def create_approval_action(
     action_type: str,
     title: str,
@@ -1316,6 +1348,7 @@ def create_approval_action(
 
 
 @mcp.tool()
+@requires("ai_decisions.read")
 def list_approval_actions(
     status: Optional[str] = None,
     action_type: Optional[str] = None,
@@ -1353,18 +1386,21 @@ def list_approval_actions(
 
 
 @mcp.tool()
+@requires("ai_decisions.read")
 def get_approval_action(action_id: str) -> str:
     """Get action details."""
     return _call(tool_registry.get_approval_action, action_id=action_id)
 
 
 @mcp.tool()
+@requires("ai_decisions.approve")
 def approve_action(action_id: str) -> str:
     """Leave a pending action pending. Confirm it in Approvals."""
     return _call(tool_registry.approve_action, action_id=action_id)
 
 
 @mcp.tool()
+@requires("ai_decisions.approve")
 def reject_action(
     action_id: str,
     reason: str,

@@ -4,6 +4,7 @@ from typing import Annotated, Optional
 
 from fastapi import APIRouter, Query
 
+from core.auth.permissions import permission_gate
 from core.detections.tools import get_security_detection_tools
 from core.routing import Auth, RouterMeta
 from core.storage.database_data_service import DatabaseDataService
@@ -18,6 +19,7 @@ from core.threat_intel.occurrence_rollup import findings_in_window
 from core.threat_intel.occurrence_rollup import occurrence_rollup as _occurrence_rollup
 
 router = APIRouter()
+router.dependencies.append(permission_gate("findings.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/attack",
