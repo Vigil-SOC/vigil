@@ -795,7 +795,7 @@ def _read_setup_state() -> SetupState:
         return SetupState()
 
 
-@router.get("/setup-state", response_model=SetupState)
+@router.get("/setup-state", response_model=SetupState, dependencies=_SETTINGS_READ)
 def get_setup_state():
     """Where the install is in the setup wizard, and whether someone finished it."""
     return _read_setup_state()

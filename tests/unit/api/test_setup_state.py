@@ -26,7 +26,8 @@ def client(throwaway_database):
 
     app = FastAPI()
     app.include_router(config.router, prefix=config.ROUTER_META.prefix)
-    app.dependency_overrides[config._SETTINGS_WRITE[0].dependency] = lambda: None
+    for gate in (config._SETTINGS_READ, config._SETTINGS_WRITE):
+        app.dependency_overrides[gate[0].dependency] = lambda: None
     app.dependency_overrides[get_current_active_user] = lambda: SimpleNamespace(
         user_id="u-admin", username="admin"
     )
