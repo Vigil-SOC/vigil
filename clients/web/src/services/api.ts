@@ -1028,6 +1028,8 @@ export const autonomyApi = {
 }
 
 export const orchestratorApi = {
+  // AutoOps on or off, for the banners and the status line.
+  getStatus: () => api.get<{ enabled?: boolean }>('/orchestrator/status'),
   kill: () => api.post('/orchestrator/kill'),
   purgeAll: () => api.post('/orchestrator/investigations/purge'),
 }

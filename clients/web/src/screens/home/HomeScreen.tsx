@@ -196,7 +196,7 @@ function DecisionCard({
   )
 }
 
-export default function HomeScreen({ openCase, startTour, fillCommand, onCommandHost, go }: ConsoleScreenProps) {
+export default function HomeScreen({ openCase, startTour, fillCommand, onCommandHost, goSettings }: ConsoleScreenProps) {
   const autoOpsOff = useAutoOpsOff()
   const [items, setItems] = useState<NeedsYouItem[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -386,7 +386,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
   return (
     <div className="home-screen">
       <div className="home-page">
-        {autoOpsOff && <AutoOpsOffBanner go={go} />}
+        {autoOpsOff && <AutoOpsOffBanner goSettings={goSettings} />}
         {(shownCount !== null || share !== null || shownChips.length > 0 || onCommandHost) && (
           <div className="home-top">
             {shownCount !== null && (setup !== null || setupError !== null) && (

@@ -37,7 +37,7 @@ function AgentCard({ agent }: { agent: OverviewAgent }) {
 }
 
 /** "Agents running now": one card per workflow, with its level pill and 30-day rate. */
-export default function AgentCards({ data, go }: { data: OverviewPayload; go: ConsoleScreenProps['go'] }) {
+export default function AgentCards({ data, go, goSettings }: { data: OverviewPayload; go: ConsoleScreenProps['go']; goSettings: ConsoleScreenProps['goSettings'] }) {
   const autoOpsOff = useAutoOpsOff()
   const agents = [...data.agents].sort((a, b) => b.running - a.running || a.name.localeCompare(b.name))
   const idle = agents.every((a) => a.running === 0 && a.sample_size === 0)
@@ -70,7 +70,7 @@ export default function AgentCards({ data, go }: { data: OverviewPayload; go: Co
             <b>AutoOps is off</b>
             <span>No agent picks up an alert until it is on.</span>
           </div>
-          <button type="button" className="btn ghost" onClick={() => go('autoops')}>Open AutoOps →</button>
+          <button type="button" className="btn ghost" onClick={() => goSettings('autoinvestigate')}>Turn it on in Settings →</button>
         </div>
       )}
       {idle ? (
@@ -85,7 +85,7 @@ export default function AgentCards({ data, go }: { data: OverviewPayload; go: Co
             </span>
           </div>
           {autoOpsOff && (
-            <button type="button" className="btn ghost" onClick={() => go('autoops')}>Open AutoOps →</button>
+            <button type="button" className="btn ghost" onClick={() => goSettings('autoinvestigate')}>Turn it on in Settings →</button>
           )}
           {data.empty && <Link className="btn primary no-underline" to={CONNECT_DATA}>Connect data</Link>}
         </div>

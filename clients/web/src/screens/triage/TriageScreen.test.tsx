@@ -98,11 +98,11 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
 
 const openCase = vi.fn()
 
-function renderScreen(path = '/triage', go = vi.fn()) {
+function renderScreen(path = '/triage', go = vi.fn(), goSettings = vi.fn()) {
   render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/triage" element={<TriageScreen openChat={vi.fn()} go={go} goSettings={vi.fn()} openCase={openCase} setViewFull={vi.fn()} />} />
+        <Route path="/triage" element={<TriageScreen openChat={vi.fn()} go={go} goSettings={goSettings} openCase={openCase} setViewFull={vi.fn()} />} />
         <Route path="/cases" element={<p>Cases page</p>} />
       </Routes>
     </MemoryRouter>,
@@ -114,16 +114,16 @@ describe('TriageScreen', () => {
     vi.mocked(orchestratorApi.getStatus).mockResolvedValueOnce({ data: { enabled: false } } as never)
     const queued = { ...payload().rows[0], state: 'queued', state_label: 'Waiting for a slot', decided_at: null }
     vi.mocked(triageApi.get).mockResolvedValue({ data: payload({ rows: [queued] }) } as never)
-    const go = vi.fn()
-    renderScreen('/triage', go)
+    const goSettings = vi.fn()
+    renderScreen('/triage', vi.fn(), goSettings)
 
     const banner = (await screen.findByText('AutoOps is off.')).closest('[role="status"]') as HTMLElement
     expect(banner).toHaveTextContent('no agent picks them up until it is on')
     expect(screen.getByText(/pick alerts up only while AutoOps is on/)).toBeInTheDocument()
     expect(await screen.findByText('AutoOps is off', { selector: '.tq-pill' })).toBeInTheDocument()
     expect(screen.queryByText('Waiting for a slot', { selector: '.tq-pill' })).not.toBeInTheDocument()
-    fireEvent.click(within(banner).getByRole('button', { name: /Open AutoOps/ }))
-    expect(go).toHaveBeenCalledWith('autoops')
+    fireEvent.click(within(banner).getByRole('button', { name: /Turn it on in Settings/ }))
+    expect(goSettings).toHaveBeenCalledWith('autoinvestigate')
     cleanup()
   })
 

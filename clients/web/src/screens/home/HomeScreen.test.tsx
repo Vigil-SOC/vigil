@@ -156,14 +156,14 @@ describe('Home', () => {
     vi.mocked(orchestratorApi.getStatus).mockResolvedValueOnce({ data: { enabled: false } } as never)
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 1, items: [item()] } } as never)
     vi.mocked(triageApi.get).mockRejectedValue(new Error('triage down'))
-    const go = vi.fn()
-    renderHome({ go })
+    const goSettings = vi.fn()
+    renderHome({ goSettings })
     expect(
       await screen.findByText('1 decision waits on you. AutoOps is off, so no alert is being worked.'),
     ).toBeInTheDocument()
     expect(screen.queryByText(/Everything else is running/)).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /Open AutoOps/ }))
-    expect(go).toHaveBeenCalledWith('autoops')
+    fireEvent.click(screen.getByRole('button', { name: /Turn it on in Settings/ }))
+    expect(goSettings).toHaveBeenCalledWith('autoinvestigate')
   })
 
   it('omits the pickup line when the triage read fails', async () => {
