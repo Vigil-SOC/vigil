@@ -93,6 +93,7 @@ class TestPasswordResetLogging:
             email=EMAIL,
             is_active=True,
             service_account=False,
+            password_changed_at=None,
         )
         sent = []
         real_send = email_service.ConsoleBackend.send
@@ -117,6 +118,7 @@ class TestPasswordResetLogging:
             email=EMAIL,
             is_active=True,
             service_account=False,
+            password_changed_at=None,
         )
         assert "/reset-password?token=" in _request_reset(monkeypatch, user, caplog)
 
