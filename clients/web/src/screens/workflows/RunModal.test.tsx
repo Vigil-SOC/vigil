@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { RunModal } from './WorkflowsScreen'
+import { pickId } from './runTarget'
 
 const execute = vi.fn(() => Promise.resolve({ data: { run_id: 'run-abc12345' } }))
 const preflight = vi.fn()
@@ -455,5 +456,21 @@ describe('checking a report against what is already hunted', () => {
     open('compose')
     await waitFor(() => expect(preflight).toHaveBeenCalled())
     expect(screen.queryByLabelText(/^Report/)).toBeNull()
+  })
+})
+
+describe('what the Run fields send', () => {
+  const opts = [{ id: 'f-1', label: 'high · Okta sign-in from new country' }, { id: 'f-2', label: 'high · Okta MFA push spam' }]
+  it('takes an id, the one row a title matches, or a typed id, and refuses a title that names no single row', () => {
+    expect(pickId(' f-2 ', opts)).toBe('f-2')
+    expect(pickId('new country', opts)).toBe('f-1')
+    expect(pickId('f-20261001-old', opts)).toBe('f-20261001-old')
+    expect(pickId('', opts)).toBe('')
+    expect(pickId('okta', opts)).toBeNull()
+    expect(pickId('ransomware', opts)).toBeNull()
+    expect(pickId('dev-830', opts)).toBeNull() // a host is not an alert id
+    expect(pickId('INC-1042', opts)).toBe('INC-1042')
+    expect(pickId('f-2', [...opts, { id: 'f-3', label: 'low · x' }])).toBe('f-2')
+    expect(pickId('ransomware on the file server', opts)).toBeNull()
   })
 })
