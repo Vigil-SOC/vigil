@@ -142,30 +142,6 @@ def _isolate_database(request):
 
 
 @pytest.fixture(autouse=True)
-def _bound_to_a_run(request):
-    """A tool a test calls directly runs as a run no person started.
-
-    Nothing bound is refused (#3306), and invoke always binds someone. A test
-    of that refusal marks itself ``unbound``.
-    """
-    if request.node.get_closest_marker("unbound"):
-        yield
-        return
-    from core.agents.attribution import bound_claims
-    from core.auth.tool_principal import Claims
-
-    run = Claims(
-        username=None,
-        person_id=None,
-        agent_id="agent:hunt",
-        run_id="run-test",
-        origin="schedule",
-    )
-    with bound_claims(run):
-        yield
-
-
-@pytest.fixture(autouse=True)
 def _operator_skills_off(monkeypatch):
     """No unit test loads the developer's own ~/.vigil/skills.
 
