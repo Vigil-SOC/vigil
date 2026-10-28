@@ -5,18 +5,22 @@ Operates on a caller-provided ``Session``; it never opens or closes one.
 """
 
 import logging
-from datetime import datetime
-from typing import Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Set, Tuple
 
-from sqlalchemy import ColumnElement, DateTime, and_, func, literal, or_, select
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy import ColumnElement, and_, func, or_, select
+from sqlalchemy.orm import Session
 
-from core.storage.models import CaseIOC, Investigation, SharedIOC
-from core.time import utcnow
+from core.memory.entity_keys import entity_context_candidates
+from core.storage.models import (
+    Case,
+    CaseIOC,
+    Finding,
+    Investigation,
+    SharedIOC,
+    case_findings,
+)
 
 logger = logging.getLogger(__name__)
-
-CLOSED_STATUSES = ("completed", "failed")
 
 # Findings yield these five types; case_iocs.ioc_type is free text and spells
 # several of them differently. Folding the aliases is what lets a row written
@@ -86,23 +90,37 @@ def index_case_iocs_on_close(session: Session, case_id: str) -> int:
         return 0
 
 
-def _live_clause(now: datetime) -> ColumnElement[bool]:
-    """An investigation still worth deduplicating a new finding against.
+class CaseMatch(NamedTuple):
+    """A Case a finding belongs with, and the key that says so."""
 
-    Status alone is not enough: ``executing`` orphaned by a crash would stay
-    live forever and silence every future finding on its indicators. Anything untouched for longer than
-    its own runtime ceiling is stale, so crashed runs age out on their own.
+    case_id: str
+    key: str  # ``ip:…``, ``hash:…`` or ``hostname:…``
+    same_alert: bool = False  # a hostname match, backed by the same data_source + title
+
+
+# Listed in the order a match is preferred when one Case matches several ways.
+_KEY_RANK = {"ip": 0, "hash": 1, "hostname": 2}
+
+
+def finding_match_keys(finding: Dict[str, Any]) -> Tuple[Set[str], Set[str]]:
+    """The keys a finding can join a Case on: ``(ip and hash keys, hostname keys)``.
+
+    Source IPs come from ``src_ip``/``src_ips`` alone; ``entity_context_candidates``
+    yields destination IPs as ``ip`` too, and an attacker is the source.
     """
-    last_seen = func.coalesce(
-        Investigation.last_activity_at,
-        Investigation.started_at,
-        Investigation.created_at,
-    )
-    age_seconds = func.extract("epoch", literal(now, DateTime) - last_seen)
-    return and_(
-        Investigation.status.notin_(CLOSED_STATUSES),
-        age_seconds < Investigation.max_runtime_seconds,
-    )
+    context = finding.get("entity_context")
+    context = context if isinstance(context, dict) else {}
+    sources = list(context.get("src_ips") or []) + [context.get("src_ip")]
+    entity = {make_key("ip", str(v)) for v in sources if v}
+    hosts = set()
+    for kind, value in entity_context_candidates(finding):
+        if kind == "hash":
+            entity.add(make_key("hash", value))
+        elif kind == "host":
+            hosts.add(make_key("hostname", value))
+    entity.discard(None)
+    hosts.discard(None)
+    return entity, hosts
 
 
 class SharedIOCRepository:
@@ -156,49 +174,72 @@ class SharedIOCRepository:
 
     # ---- reads ---------------------------------------------------------
 
-    def keys_for(self, investigation_id: str) -> Set[str]:
-        return {f"{t}:{v}" for t, v in self._pairs_for(investigation_id)}
+    def matching_cases(self, finding: Dict[str, Any], *, open: bool) -> List[CaseMatch]:
+        """Open (or closed) Cases this finding belongs with, newest ``updated_at`` first.
 
-    def investigations_for(self, keys: Iterable[str]) -> Set[str]:
-        """Investigations that have seen any of ``keys``, open or finished."""
-        return self._investigations(keys, live_only=False)
+        A Case matches on a source IP or file hash shared with one of its
+        investigations, or on a hostname shared with one of them while the Case
+        holds a finding with the same ``data_source`` and trimmed, case-insensitive
+        ``title``. Raises on a failed read: the caller decides what that means.
+        """
+        entity_keys, host_keys = finding_match_keys(finding)
+        title = (finding.get("title") or "").strip().lower()
+        source = finding.get("data_source")
+        clauses = self._key_clauses(entity_keys)
+        host_clauses = (
+            self._key_clauses(host_keys)
+            if title and source
+            else []  # no title, no rule
+        )
+        if not clauses and not host_clauses:
+            return []
 
-    def open_investigations_for(self, keys: Iterable[str]) -> Set[str]:
-        """As ``investigations_for``, restricted to investigations still live."""
-        return self._investigations(keys, live_only=True)
-
-    def shared_between(self, inv_id_a: str, inv_id_b: str) -> Set[str]:
-        other = aliased(SharedIOC)
-        rows = self.session.execute(
-            select(SharedIOC.ioc_type, SharedIOC.value)
+        status = Case.status != "closed" if open else Case.status == "closed"
+        base = (
+            select(Case.case_id, SharedIOC.ioc_type, SharedIOC.value, Case.updated_at)
+            .join(Investigation, Investigation.case_id == Case.case_id)
             .join(
-                other,
-                and_(
-                    other.ioc_type == SharedIOC.ioc_type,
-                    other.value == SharedIOC.value,
-                ),
+                SharedIOC, SharedIOC.investigation_id == Investigation.investigation_id
             )
-            .where(
-                SharedIOC.investigation_id == inv_id_a,
-                other.investigation_id == inv_id_b,
+            .where(status)
+        )
+        rows: List[Tuple[str, str, str, Any, bool]] = []
+        if clauses:
+            rows += [
+                (*r, False) for r in self.session.execute(base.where(or_(*clauses)))
+            ]
+        if host_clauses:
+            same_title = (
+                base.join(case_findings, case_findings.c.case_id == Case.case_id)
+                .join(Finding, Finding.finding_id == case_findings.c.finding_id)
+                .where(
+                    or_(*host_clauses),
+                    Finding.data_source == source,
+                    func.lower(func.btrim(Finding.title, " \t\r\n")) == title,
+                )
             )
-            .distinct()
-        ).all()
-        return {f"{t}:{v}" for t, v in rows}
+            rows += [(*r, True) for r in self.session.execute(same_title)]
+
+        rows.sort(key=lambda r: (-r[3].timestamp(), _KEY_RANK.get(r[1], 9)))
+        seen: Set[str] = set()
+        matches: List[CaseMatch] = []
+        for case_id, ioc_type, value, _, same_alert in rows:
+            if case_id not in seen:
+                seen.add(case_id)
+                matches.append(CaseMatch(case_id, f"{ioc_type}:{value}", same_alert))
+        return matches
+
+    def record_on_case(self, case_id: str, keys: Iterable[str]) -> int:
+        """Index ``keys`` against the Case's newest investigation. 0 if it has none."""
+        investigation_id = self.session.execute(
+            select(Investigation.investigation_id)
+            .where(Investigation.case_id == case_id)
+            .order_by(Investigation.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        return self.record(investigation_id, keys) if investigation_id else 0
 
     # ---- internals -----------------------------------------------------
-
-    def _investigations(self, keys: Iterable[str], *, live_only: bool) -> Set[str]:
-        clauses = self._key_clauses(keys)
-        if not clauses:
-            return set()
-        stmt = select(SharedIOC.investigation_id).where(or_(*clauses))
-        if live_only:
-            stmt = stmt.join(
-                Investigation,
-                Investigation.investigation_id == SharedIOC.investigation_id,
-            ).where(_live_clause(utcnow()))
-        return set(self.session.execute(stmt.distinct()).scalars().all())
 
     def _pairs_for(self, investigation_id: str) -> Set[Tuple[str, str]]:
         rows = self.session.execute(
