@@ -29,7 +29,9 @@ describe("the worker's start line", () => {
     expect(started()).toHaveLength(1);
     expect(started()[0]?.entry).toMatchObject({ level: "info", mirror: "on", queue: "agent-runs", concurrency: expect.any(Number), health_port: expect.any(Number) });
     expect(lines.filter((line) => line.entry["level"] === "error")).toEqual([]);
-    expect(lines.some((line) => line.raw.includes(URL) || line.raw.includes("backend.internal"))).toBe(false);
+    const written = lines.map((line) => line.raw).join("");
+    expect(written).not.toContain(URL);
+    expect(written).not.toContain("backend.internal");
   });
 
   it.each([["unset", undefined], ["empty", ""]])("keeps the ERROR and says mirror off when VIGIL_RUNS_URL is %s", (_, value) => {
