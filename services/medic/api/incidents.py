@@ -129,11 +129,13 @@ class _Fold:
         out = {
             "incident_id": o["incident_id"],
             "subject": o["subject"],
-            "rule": {k: rule[k] for k in ("id", "revision", "pack_id", "pack_version")}
-            if rule
-            # An unknown signature (G1 R4) has no rule; v1 never writes one.
-            else {"id": None, "revision": 0, "pack_id": "unknown"}
-            | {"pack_version": "unknown"},
+            "rule": (
+                {k: rule[k] for k in ("id", "revision", "pack_id", "pack_version")}
+                if rule
+                # An unknown signature (G1 R4) has no rule; v1 never writes one.
+                else {"id": None, "revision": 0, "pack_id": "unknown"}
+                | {"pack_version": "unknown"}
+            ),
             # No pack is held (dev rules only), so the record's own advice.
             "title": advice["summary"] if advice else rule["id"] if rule else "",
             "lane": o["lane"],
