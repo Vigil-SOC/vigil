@@ -86,6 +86,12 @@ class TestQueueing:
         assert _queues.seen is None
 
     def test_carries_the_workflow_fields_through(self, client, monkeypatch):
+        from core.response import approval_service
+
+        monkeypatch.setattr(agent_runs_router, "deny_unless", lambda *a, **k: None)
+        monkeypatch.setattr(
+            approval_service, "four_eyes_refuses", lambda s, r, c, p: False
+        )
         _queues(monkeypatch)
         _post(
             client,
@@ -110,3 +116,51 @@ class TestRefusals:
     ):
         _raises(monkeypatch, error)
         assert _post(client).status_code == expected
+
+
+class TestWhoMaySend:
+    # A checkpoint answer is the Approvals screen's decision by another door, and
+    # stopping someone else's run is the same call as cancelling it.
+    @pytest.fixture()
+    def analyst(self, monkeypatch):
+        def _deny(user_id, permission, session=None, **_):
+            if permission == "ai_decisions.approve":
+                raise agent_runs_router.HTTPException(status_code=403)
+
+        monkeypatch.setattr(agent_runs_router, "deny_unless", _deny)
+        monkeypatch.setattr(agent_runs_router, "_started_by", lambda s, r: "someone")
+        _queues(monkeypatch)
+        _queues.seen = None
+
+    @pytest.mark.parametrize("kind", ["approve", "reject", "benign"])
+    def test_a_decision_needs_the_approve_permission(self, client, analyst, kind):
+        body = {"kind": kind, "fields": {"checkpoint_id": "apr-1"}}
+        assert _post(client, body).status_code == 403
+        assert _queues.seen is None
+
+    @pytest.mark.parametrize("kind", ["abort", "conclude"])
+    def test_another_persons_run_cannot_be_stopped(self, client, analyst, kind):
+        assert _post(client, {"kind": kind}).status_code == 403
+        assert _queues.seen is None
+
+    def test_the_person_who_started_the_run_may_stop_it(
+        self, client, analyst, monkeypatch
+    ):
+        monkeypatch.setattr(agent_runs_router, "_started_by", lambda s, r: "test-admin")
+        assert _post(client, {"kind": "abort"}).status_code == 202
+
+    def test_a_note_still_needs_only_chat(self, client, analyst):
+        assert _post(client).status_code == 202
+
+    def test_four_eyes_refuses_the_person_the_run_acted_for(self, client, monkeypatch):
+        from core.response import approval_service
+
+        monkeypatch.setattr(agent_runs_router, "deny_unless", lambda *a, **k: None)
+        monkeypatch.setattr(
+            approval_service, "four_eyes_refuses", lambda s, r, c, p: True
+        )
+        _queues(monkeypatch)
+        _queues.seen = None
+        body = {"kind": "approve", "fields": {"checkpoint_id": "apr-1"}}
+        assert _post(client, body).status_code == 403
+        assert _queues.seen is None

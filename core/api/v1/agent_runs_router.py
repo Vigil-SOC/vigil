@@ -35,7 +35,7 @@ from core.agents.queue import (
 )
 from core.auth import tool_principal
 from core.auth.current_user import get_current_user
-from core.auth.permissions import permission_gate
+from core.auth.permissions import APPROVE_PERMISSION, deny_unless, permission_gate
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import User
 from core.workflows.enablement import disabled_message, is_enabled
@@ -357,6 +357,41 @@ class DirectiveResponse(BaseModel):
     created_at: str
 
 
+# Answering a checkpoint is the Approvals screen's decision by another door.
+# Stopping or growing a run someone else started is the same call as cancelling
+# it. Notes and leads only steer, so ai_chat.use is enough for them.
+_DECISIONS = frozenset({"approve", "reject", "benign"})
+_RUN_CONTROL = frozenset({"abort", "conclude", "extend"})
+
+
+def _started_by(session, run_id: str) -> Optional[str]:
+    return session.execute(
+        text(
+            "SELECT triggered_by_principal_id FROM workflow_runs WHERE run_id = :run_id"
+        ),
+        {"run_id": run_id},
+    ).scalar_one_or_none()
+
+
+def _refuse_unpermitted(
+    session, run_id: str, body: DirectiveRequest, user: User, principal: Optional[str]
+) -> None:
+    if body.kind in _DECISIONS:
+        deny_unless(user.user_id, APPROVE_PERMISSION, session)
+        if body.kind == "approve":
+            from core.response.approval_service import four_eyes_refuses
+
+            checkpoint = (body.fields or {}).get("checkpoint_id")
+            if four_eyes_refuses(session, run_id, checkpoint, principal):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Four-eyes: someone else must approve this checkpoint",
+                )
+    elif body.kind in _RUN_CONTROL:
+        if principal is None or _started_by(session, run_id) != principal:
+            deny_unless(user.user_id, APPROVE_PERMISSION, session)
+
+
 # Steer a run that is already going. It queues rather than journals: the run
 # holding the ledger is what turns a directive into a ledger event.
 @router.post(
@@ -371,6 +406,10 @@ def queue_directive(
     session: UnitOfWorkSession,
     current_user: User = Depends(get_current_user),
 ) -> DirectiveResponse:
+    principal = getattr(current_user, "principal_id", None) or getattr(
+        current_user, "user_id", None
+    )
+    _refuse_unpermitted(session, run_id, body, current_user, principal)
     try:
         directive = enqueue_directive(
             session,
@@ -379,8 +418,7 @@ def queue_directive(
             body=body.text,
             actor=current_user.username,
             fields=body.fields,
-            actor_principal_id=getattr(current_user, "principal_id", None)
-            or getattr(current_user, "user_id", None),
+            actor_principal_id=principal,
         )
     except UnknownRun as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from None
