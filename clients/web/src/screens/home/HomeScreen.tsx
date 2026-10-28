@@ -116,7 +116,10 @@ function DecisionCard({
   const [rejecting, setRejecting] = useState(false)
   const [reason, setReason] = useState('')
   const caseId = item.case_id
-  const meta = [caseId && `Case ${caseId}`, item.reason].filter(Boolean).join(' · ')
+  const asking = item.case_ids?.length ?? 0
+  const meta = [caseId && `Case ${caseId}`, asking > 1 && `requested by ${asking} cases`, item.reason]
+    .filter(Boolean)
+    .join(' · ')
   const ask = cardAsk(item)
 
   return (

@@ -20,6 +20,8 @@ from core.response.approval_service import (
     AlreadyDecided,
     ApprovalService,
     FourEyesRefused,
+    PendingAction,
+    case_ids_for,
     needs_you,
 )
 from core.routing import Auth, RouterMeta
@@ -126,7 +128,13 @@ class NeedsYouItem(BaseModel):
         description="'' when nothing recorded when it started waiting."
     )
     reversibility: Literal["reversible", "irreversible"]
-    case_id: Optional[str] = None
+    case_id: Optional[str] = Field(
+        default=None, description="The first of case_ids: the case that asked."
+    )
+    case_ids: List[str] = Field(
+        default_factory=list,
+        description="Every case this item is on. A proposal several cases made is one item listing them all.",
+    )
     finding_id: Optional[str] = Field(
         default=None,
         description="The first stored alert the approval's evidence names, so an item with no case can open it.",
@@ -146,6 +154,41 @@ class NeedsYouItem(BaseModel):
 class NeedsYouResponse(BaseModel):
     count: int
     items: List[NeedsYouItem] = Field(default_factory=list)
+
+
+# The decision on each case the approval is on. Best effort: it is decided either way.
+def _record_decision(
+    action: PendingAction, decided_by: str, reason: Optional[str] = None
+) -> None:
+    rejected = action.status == "rejected"
+    verb = "rejected" if rejected else "approved"
+    try:
+        from core.workflows.run_bridge_router import _add_activity
+
+        case_ids = case_ids_for(action)
+    except Exception:  # noqa: BLE001
+        logger.exception("could not resolve the cases of %s", action.action_id)
+        return
+    for case_id in case_ids:
+        try:
+            _add_activity(
+                case_id,
+                f"approval_{verb}",
+                f"{action.title} {verb} by {decided_by}"
+                + (f": {reason}" if rejected and reason else ""),
+                {
+                    "action_id": action.action_id,
+                    "decided_by": decided_by,
+                    "status": action.status,
+                    **({"reason": reason} if rejected and reason else {}),
+                },
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "could not record the decision on %s on case %s",
+                action.action_id,
+                case_id,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +306,7 @@ async def approve_action(
         raise HTTPException(status_code=403, detail=str(e))
     if updated is None:
         raise HTTPException(status_code=500, detail="Failed to approve action")
+    _record_decision(updated, approved_by)
 
     response: Dict[str, Any] = {
         "action": asdict(updated),
@@ -312,6 +356,7 @@ async def reject_action(
         raise HTTPException(status_code=409, detail=str(e))
     if updated is None:
         raise HTTPException(status_code=500, detail="Failed to reject action")
+    _record_decision(updated, rejected_by, request.reason)
 
     response: Dict[str, Any] = {
         "action": asdict(updated),

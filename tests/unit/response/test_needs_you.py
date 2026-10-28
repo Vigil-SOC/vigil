@@ -8,7 +8,11 @@ from fastapi.testclient import TestClient
 
 from core.api.v1.approvals_router import router as approvals_router
 from core.findings.alert_outcomes import finding_states
-from core.response.approval_service import _row_to_pending
+from core.response.approval_service import (
+    ApprovalService,
+    _row_to_pending,
+    needs_you_case_ids,
+)
 from core.storage.models import (
     ApprovalAction,
     Case,
@@ -39,7 +43,7 @@ def _approval(action_id: str, created_at: datetime, **kw) -> ApprovalAction:
         action_type="block_ip",
         title=kw.pop("title", action_id),
         description="hold",
-        target="host",
+        target=kw.pop("target", "host"),
         confidence=0.4,
         reason=kw.pop("reason", "because"),
         evidence=[],
@@ -455,3 +459,59 @@ def test_the_case_filter_and_outcomes_see_the_evidence_case(client, evidence):
         "needs_you",
         "nyev-new",
     )
+
+
+# Two cases' runs proposed the same block: one ask, on both cases, counted once.
+@pytest.fixture
+def shared(throwaway_database):
+    with unit_of_work() as session:
+        session.add_all(
+            [
+                _approval(
+                    "ny-shared",
+                    OLDER,
+                    target="27.102.116.43",
+                    idempotency_key="run-proposal:ny-r1:block_ip:27.102.116.43",
+                    parameters={"case_id": "ny-c1", "run_id": "ny-r1"},
+                ),
+                _approval(
+                    "ny-shared-old",
+                    OLDER - timedelta(days=1),
+                    target="27.102.116.43",
+                    status="rejected",
+                    idempotency_key="run-proposal:ny-r0:block_ip:27.102.116.43",
+                    parameters={"case_ids": ["ny-c0"], "run_id": "ny-r0"},
+                ),
+            ]
+        )
+    yield
+    with unit_of_work() as session:
+        session.query(ApprovalAction).filter(
+            ApprovalAction.action_id.like("ny-shared%")
+        ).delete(synchronize_session=False)
+
+
+def test_a_proposal_two_cases_made_is_one_item_on_both(client, shared):
+    service = ApprovalService()
+    match = service.run_proposal_match(
+        "run-proposal:ny-r2:block_ip:27.102.116.43", "block_ip", " 27.102.116.43 "
+    )
+    # The newest of that action on that target, not the older refusal.
+    assert match.action_id == "ny-shared"
+    # A row filed with one case_id takes a second case, and a repeat is a no-op.
+    service.add_proposal_case("ny-shared", "ny-c2")
+    joined = service.add_proposal_case("ny-shared", "ny-c2")
+    assert joined.parameters["case_ids"] == ["ny-c1", "ny-c2"]
+
+    mine = _mine(client.get("/api/approvals/needs-you").json())
+    assert [(i["source_id"], i["case_id"], i["case_ids"]) for i in mine] == [
+        ("ny-shared", "ny-c1", ["ny-c1", "ny-c2"])
+    ]
+    for case_id in ("ny-c1", "ny-c2"):
+        body = client.get("/api/approvals/needs-you", params={"case_id": case_id})
+        assert [i["source_id"] for i in _mine(body.json())] == ["ny-shared"]
+    assert {"ny-c1", "ny-c2"} <= needs_you_case_ids()
+
+    # A decided ask takes no more cases.
+    service.reject_action("ny-shared", reason="no", rejected_by="pytest")
+    assert service.add_proposal_case("ny-shared", "ny-c3") is None
