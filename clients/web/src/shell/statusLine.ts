@@ -44,6 +44,8 @@ export interface StatusReads {
   mcp: McpRead | null
   routability: RoutabilityRead | null
   processes: ProcessesRead | null
+  /** the orchestrator's switch; null when the read failed */
+  autoOps?: { enabled?: boolean } | null
 }
 
 /** An enabled federation source that is erroring. Disabled and never-seeded sources report none. */
@@ -122,6 +124,10 @@ export function foldStatus(reads: StatusReads): StatusFold {
     if (!Object.values(providers).some(Boolean)) {
       facts.push({ level: 'fair', sentence: 'No routable provider.' })
     }
+  }
+
+  if (reads.autoOps?.enabled === false) {
+    facts.push({ level: 'fair', sentence: 'AutoOps is off; alerts are not picked up.' })
   }
 
   const worst = facts.find((fact) => fact.level === 'poor') ?? facts[0]

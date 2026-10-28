@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { AutoOpsOffBanner } from '../../shared/AutoOpsOffBanner'
+import { useAutoOpsOff } from '../../shared/useAutoOpsOff'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { approvalsApi, configApi, ingestionApi, triageApi, type NeedsYouItem } from '../../services/api'
@@ -58,10 +60,11 @@ const NEEDS_TIP = {
 
 const FIRST_RUN_HEADLINE = 'Nothing is connected yet, so nothing needs you'
 
-function headline(count: number): string {
-  if (count === 0) return 'Board clear.'
-  if (count === 1) return '1 decision waits on you. Everything else is running.'
-  return `${count} decisions wait on you. Everything else is running.`
+function headline(count: number, autoOpsOff: boolean): string {
+  const rest = autoOpsOff ? 'AutoOps is off, so no alert is being worked.' : 'Everything else is running.'
+  if (count === 0) return autoOpsOff ? 'Board clear. AutoOps is off, so no alert is being worked.' : 'Board clear.'
+  if (count === 1) return `1 decision waits on you. ${rest}`
+  return `${count} decisions wait on you. ${rest}`
 }
 
 function waited(createdAt: string): string {
@@ -193,7 +196,8 @@ function DecisionCard({
   )
 }
 
-export default function HomeScreen({ openCase, startTour, fillCommand, onCommandHost }: ConsoleScreenProps) {
+export default function HomeScreen({ openCase, startTour, fillCommand, onCommandHost, go }: ConsoleScreenProps) {
+  const autoOpsOff = useAutoOpsOff()
   const [items, setItems] = useState<NeedsYouItem[]>([])
   const [loaded, setLoaded] = useState(false)
   const [share, setShare] = useState<Pickup | null>(null)
@@ -379,10 +383,11 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
   return (
     <div className="home-screen">
       <div className="home-page">
+        {autoOpsOff && <AutoOpsOffBanner go={go} />}
         {(shownCount !== null || share !== null || shownChips.length > 0 || onCommandHost) && (
           <div className="home-top">
             {shownCount !== null && (setup !== null || setupError !== null) && (
-              <p className="home-headline">{noAlerts ? FIRST_RUN_HEADLINE : headline(shownCount)}</p>
+              <p className="home-headline">{noAlerts ? FIRST_RUN_HEADLINE : headline(shownCount, autoOpsOff === true)}</p>
             )}
             {onCommandHost && <div ref={onCommandHost} className="home-command-host" />}
             {(share !== null || shownChips.length > 0) && (

@@ -7533,3 +7533,20 @@
 .fd-kv dt { color: var(--tx-3); }
 .fd-kv dd { margin: 0; color: var(--tx); font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
 .fd-muted { color: var(--tx-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* AutoOps off: said on every screen that would otherwise read as work moving */
+.autoops-off {
+   display: flex;
+   align-items: center;
+   gap: 10px;
+   margin: 0 0 14px;
+   padding: 10px 14px;
+   border-radius: 10px;
+   background: var(--fair-bg);
+   border: 1px solid var(--fair-ln);
+   color: var(--tx0);
+   font-size: 13px;
+   line-height: 1.45;
+}
+.autoops-off svg { color: var(--fair); flex-shrink: 0; }
+.autoops-off .btn { margin-left: auto; }
