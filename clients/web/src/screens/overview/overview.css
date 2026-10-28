@@ -372,6 +372,16 @@ a.ov-src:hover {
   color: var(--tx0);
 }
 
+a.ov-out-l {
+  color: inherit;
+  text-decoration: none;
+}
+
+a.ov-out-l:hover span,
+a.ov-out-l:focus-visible span {
+  text-decoration: underline;
+}
+
 .ov-out-s {
   display: flex;
   align-items: center;
@@ -513,6 +523,41 @@ a.ov-src:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* the name's link covers the card; the rate sits above it so its tooltip still shows */
+.ov-agent {
+  position: relative;
+  transition: background 0.2s;
+}
+
+.ov-agent:hover {
+  background: var(--bg2);
+}
+
+.ov-agent-open {
+  color: inherit;
+  text-decoration: none;
+}
+
+.ov-agent-open::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+
+.ov-agent-open:focus-visible {
+  outline: none;
+}
+
+.ov-agent-open:focus-visible::after {
+  outline: 2px solid var(--ac);
+  outline-offset: 2px;
+}
+
+.ov-agent-rate > span {
+  position: relative;
 }
 
 .ov-agent-rate {

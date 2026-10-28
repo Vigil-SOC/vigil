@@ -117,7 +117,12 @@ export default function CasesScreen({ setViewFull, viewFull, openCase, caseSeed,
   // the full page is a ?case=<id> param, so it is deep-linkable; rows open the drawer instead
   const [searchParams, setSearchParams] = useSearchParams()
   const selected = searchParams.get('case')
-  const [filters, setFilters] = useState(INITIAL_CASE_FILTERS)
+  // ?state=closed and ?needs_you=1 open the list on that chip, so an Overview count can link to it
+  const [filters, setFilters] = useState<CaseFilters>(() => ({
+    ...INITIAL_CASE_FILTERS,
+    state: searchParams.get('state') === 'closed' ? 'closed' : '',
+    needsYou: searchParams.get('needs_you') === '1',
+  }))
   const backToList = useCallback(() => setSearchParams({}), [setSearchParams])
 
   useEffect(() => {
