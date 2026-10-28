@@ -165,7 +165,8 @@ class InvestigationLog(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     investigation_id: Mapped[str] = mapped_column(
         String(60),
-        ForeignKey("investigations.investigation_id", ondelete="CASCADE"),
+        # No cascade (#3309): deleting an investigation keeps its log rows.
+        ForeignKey("investigations.investigation_id"),
         nullable=False,
     )
     timestamp: Mapped[datetime] = mapped_column(

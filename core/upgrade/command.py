@@ -9,7 +9,9 @@ transaction. A database with tables and no ``alembic_version`` is adopted
 first (``core/upgrade/adopt.py``): ``--check`` runs the adoption in a
 transaction it rolls back. Apply outcomes other than a restart are appended to
 ``$VIGIL_UPGRADE_DIR/history.jsonl``. A revision may stash a report; that
-report is a field of the same record, not a second line.
+report is a field of the same record, not a second line. After the revisions,
+the old audit stores' read-only stamp is set once their copy passed; the
+applied record says when, or why not.
 """
 
 from __future__ import annotations
@@ -341,6 +343,53 @@ def _migrate(engine: Engine, script: ScriptDirectory) -> list[dict]:
     return take_reports()
 
 
+def _stamp_read_only(engine: Engine) -> dict[str, Any]:
+    """Set the old audit stores' read-only stamp once their copy passed (#3309).
+
+    Never set by the revision that copies them. Its time, or why it is not set.
+    Runs on a restart too, so a stamp a crash or an error left unset is retried;
+    an error here never turns a committed upgrade into a failed one.
+    """
+    try:
+        return _set_stamp(engine)
+    except Exception as e:  # noqa: BLE001 - reported; the next run retries
+        return {"set": False, "reason": f"{type(e).__name__}: {e}"}
+
+
+def _set_stamp(engine: Engine) -> dict[str, Any]:
+    from core.audit import trail
+
+    with engine.connect() as conn, conn.begin():
+        if (
+            conn.execute(
+                text("SELECT to_regclass('public.audit_legacy_copy')")
+            ).scalar()
+            is None
+        ):
+            return {"set": False, "reason": "no audit_legacy_copy table"}
+        row = conn.execute(
+            text(
+                "SELECT passed, read_only_since FROM public.audit_legacy_copy "
+                "WHERE id = 1 FOR UPDATE"
+            )
+        ).first()
+        if row is None:
+            return {"set": False, "reason": "no reconciliation is stored"}
+        if row.read_only_since is not None:
+            return {"set": True, "at": row.read_only_since.isoformat()}
+        if not row.passed:
+            return {"set": False, "reason": "the reconciliation did not pass"}
+        if not trail.in_use(conn):
+            return {"set": False, "reason": "the audit trail is not in use"}
+        at = conn.execute(
+            text(
+                "UPDATE public.audit_legacy_copy SET read_only_since = now() "
+                "WHERE id = 1 RETURNING read_only_since"
+            )
+        ).scalar_one()
+        return {"set": True, "at": at.isoformat()}
+
+
 def _record(
     upgrade_dir: Optional[Path],
     current: Plan,
@@ -348,6 +397,7 @@ def _record(
     reason: str,
     adoption: Optional[adopt.Adoption] = None,
     reports: Optional[list[dict]] = None,
+    legacy_stamp: Optional[dict] = None,
 ):
     entry: dict[str, Any] = {
         "time": datetime.now(timezone.utc).isoformat(),
@@ -364,6 +414,8 @@ def _record(
             entry["drift"] = adoption.drift
     if reports:
         entry["reports"] = reports
+    if legacy_stamp is not None:
+        entry["legacy_audit_read_only"] = legacy_stamp
     if upgrade_dir is not None:
         upgrade_dir.mkdir(parents=True, exist_ok=True)
         with (upgrade_dir / "history.jsonl").open("a", encoding="utf-8") as f:
@@ -410,7 +462,14 @@ def run(
                     )
 
             if current.verdict == RESTART:
-                emit({"outcome": RESTART, "reason": current.reason, "to": __version__})
+                emit(
+                    {
+                        "outcome": RESTART,
+                        "reason": current.reason,
+                        "to": __version__,
+                        "legacy_audit_read_only": _stamp_read_only(engine),
+                    }
+                )
                 return EXIT_OK
             if current.verdict != APPLY:
                 emit(
@@ -448,7 +507,18 @@ def run(
                 )
                 return EXIT_FAILED
             reason = ack_reason.strip() if current.restore_point == OVERRIDDEN else ""
-            emit(_record(upgrade_dir, current, "applied", reason, adoption, reports))
+            legacy_stamp = _stamp_read_only(engine)
+            emit(
+                _record(
+                    upgrade_dir,
+                    current,
+                    "applied",
+                    reason,
+                    adoption,
+                    reports,
+                    legacy_stamp,
+                )
+            )
             return EXIT_OK
     except UpgradeBusy as e:
         emit({"outcome": "refused", "reason": str(e)})
