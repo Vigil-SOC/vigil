@@ -30,6 +30,7 @@ def gkey(group: dict) -> str:
         return json.dumps(pairs, separators=(",", ":"))
 
 
+# Labels are strings (observation schema), so 1 / 1.0 / True never share a slot.
 @functools.lru_cache(maxsize=4096)
 def _gkey(pairs: tuple) -> str:
     return json.dumps(pairs, separators=(",", ":"))
