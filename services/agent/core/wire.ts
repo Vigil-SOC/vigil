@@ -240,6 +240,7 @@ class OpenAiSurface implements Provider {
 
   private async ask(request: TurnRequest): Promise<Turn> {
     const body = (tools: readonly ToolSchema[]) => ({ model: this.wire_model, messages: wire(request.messages), ...(tools.length === 0 ? {} : { tools: wireTools(tools) }) });
+    if (request.answer === true) return await this.answer(request, body);
     const forced = request.tools.find((tool) => tool.id === request.force);
     if (forced === undefined) return turnOf(await this.call(body(request.tools), request.signal));
     // Remembered per model like emitModes: "tool" means the gateway refuses a forced choice,
@@ -271,6 +272,22 @@ class OpenAiSurface implements Provider {
     const emitted = await this.emit(request, forced.parameters);
     rememberMode(mode, "prompt");
     return { ...emitted, content: "", tool_calls: [{ id: "emitted", tool: forced.id, args: emitted.content }] };
+  }
+
+  // Text only, over the same tools the earlier rounds declared (Anthropic refuses tool blocks in a
+  // transcript that declares none). Remembered per model, like a forced choice, once the fallback has gone through.
+  private async answer(request: TurnRequest, body: (tools: readonly ToolSchema[]) => Body): Promise<Turn> {
+    const mode = `answer\n${this.model}`;
+    if (emitModes.get(mode) === undefined) {
+      try {
+        return textOnly(turnOf(await this.call({ ...body(request.tools), tool_choice: "none" }, request.signal)), this.wire_model);
+      } catch (error) {
+        if (request.signal?.aborted === true || !REFUSED.has(statusOf(error) ?? 0)) throw error;
+      }
+    }
+    const turn = textOnly(turnOf(await this.call(body(request.tools), request.signal)), this.wire_model);
+    rememberMode(mode, "tool");
+    return turn;
   }
 
   private async emit(request: TurnRequest, schema: Record<string, unknown>): Promise<Turn> {
@@ -572,6 +589,13 @@ function turnOf(response: OpenAI.Chat.ChatCompletion): Turn {
   const message = response.choices[0]?.message;
   if (message === undefined) throw new ProviderError("the model returned no message", tokens);
   return { content: textOf(message.content), tool_calls: callsOf(message.tool_calls), tokens };
+}
+
+// A reply to an answer round: what it says, whatever it asked for. Calls with nothing said is the
+// model failing to answer, as an empty reply is.
+function textOnly(turn: Turn, model: string): Turn {
+  if (turn.content.trim() === "") throw new ModelSilent(`the model stopped answering: no text in its answer round from ${model}`, turn.tokens);
+  return { ...turn, tool_calls: [] };
 }
 
 function callsOf(calls: OpenAI.Chat.ChatCompletionMessageToolCall[] | undefined): ToolCall[] {

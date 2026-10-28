@@ -184,3 +184,32 @@ def episodic_session():
     finally:
         db.rollback()
         db.close()
+
+
+@pytest.fixture
+def stored_tool_classes(monkeypatch):
+    """The effect-class store (#3304) as a dict a test fills. A missing name is
+    unclassified."""
+    from core.response import ceiling
+
+    stored: dict = {}
+    monkeypatch.setattr(
+        ceiling,
+        "_read_classes",
+        lambda names: {n: stored[n] for n in names if n in stored},
+    )
+    return stored
+
+
+@pytest.fixture
+def seeded_tool_classes(stored_tool_classes):
+    """The store as revision 0017 seeds it."""
+    import re
+    from pathlib import Path
+
+    sql = (
+        Path(__file__).resolve().parents[2]
+        / "core/upgrade/versions/0017_tool_effect_classes.sql"
+    ).read_text()
+    stored_tool_classes.update(re.findall(r"\('([^']+)', '([a-z_]+)'\)", sql))
+    return stored_tool_classes

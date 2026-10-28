@@ -456,7 +456,7 @@ export interface paths {
         };
         /**
          * Get Budget Quota
-         * @description Live spend/quota for the configured VK, proxied from Bifrost.
+         * @description Live spend/quota for the configured VK, from the shared Bifrost snapshot.
          */
         get: operations["get_api_analytics_budget_quota"];
         put?: never;
@@ -729,6 +729,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audit/erasure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Erase Principal
+         * @description Blank one principal's label and trail details, and end their sign-in and credentials.
+         *
+         *     An audit manager waits seven days and needs a reason.
+         */
+        post: operations["post_api_audit_erasure"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/audit/export": {
         parameters: {
             query?: never;
@@ -806,6 +828,30 @@ export interface paths {
          */
         get: operations["get_api_audit_poll"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/audit/retention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Retention
+         * @description The period in force, the one waiting, and which announcements have not left the box.
+         */
+        get: operations["get_api_audit_retention"];
+        /**
+         * Put Retention
+         * @description Set the retention period. At least 365 and at most 36500 days, in force seven days later.
+         */
+        put: operations["put_api_audit_retention"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1129,10 +1175,12 @@ export interface paths {
         put?: never;
         /**
          * Password Reset Confirm
-         * @description Complete a password reset. Validates the signed token, enforces the
-         *     password strength policy + reuse check, consumes the token, rotates
-         *     the hash, and revokes every outstanding token so any existing
-         *     sessions die. A rejected password leaves the token usable.
+         * @description Complete a password reset. Validates the signed token and that the
+         *     password hasn't changed since it was issued, enforces the password
+         *     strength policy + reuse check, rotates the hash (which voids this and
+         *     every other outstanding reset link), and revokes every outstanding
+         *     token so any existing sessions die. A rejected password leaves the
+         *     token usable.
          */
         post: operations["post_api_auth_password-reset_confirm"];
         delete?: never;
@@ -1210,7 +1258,13 @@ export interface paths {
         };
         /** Get Ceiling */
         get: operations["get_api_autonomy"];
-        /** Put Ceiling */
+        /**
+         * Put Ceiling
+         * @description Edit the ceiling. The permission depends on the direction.
+         *
+         *     Only lowering act flags is ``ai_autonomy.stop``. Raising one, or changing
+         *     four-eyes, is ``ai_autonomy.write``.
+         */
         put: operations["put_api_autonomy"];
         post?: never;
         delete?: never;
@@ -1241,6 +1295,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/autonomy/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Tool Classes
+         * @description Every stored class, and each unclassified name a connected server exposes.
+         */
+        get: operations["get_api_autonomy_tools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/autonomy/tools/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put Tool Class
+         * @description Set one tool's class. The permission depends on the direction.
+         *
+         *     Loosening, or classifying an unclassified name, is a person's
+         *     ``ai_autonomy.write`` and is refused while stopped. Tightening is
+         *     ``ai_autonomy.stop``, which a service account may hold.
+         */
+        put: operations["put_api_autonomy_tools_name"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/bifrost/routability": {
         parameters: {
             query?: never;
@@ -1258,6 +1356,29 @@ export interface paths {
         get: operations["get_api_bifrost_routability"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bifrost/routability/recheck/{key_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Recheck Key
+         * @description Run the express probe again for one key, ignoring the cached verdict.
+         *
+         *     The following routability read hits that fresh cache entry, so the page
+         *     does not call the model a second time.
+         */
+        post: operations["post_api_bifrost_routability_recheck_key_id"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2182,9 +2303,9 @@ export interface paths {
         };
         /**
          * Get Case Record
-         * @description The case record: every run's ledger, audit rows and activities.
+         * @description The case record: every run's ledger, trail entries, audit rows and activities.
          *
-         *     Newest first. The agent returns each ledger with snapshots off, read
+         *     Newest first. Trail entries are the case's own (``payload.case_id``). The agent returns each ledger with snapshots off, read
          *     concurrently; a run that cannot be read is one row saying why, not a failed
          *     record. Audit rows are ``entity_type == case`` and ``entity_id`` this case —
          *     the table has no ``case_id`` column. ``run_id`` is the case's run
@@ -2449,26 +2570,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/config/autonomy": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Autonomy Config
-         * @description Effective response autonomy for the console chip.
-         */
-        get: operations["get_api_config_autonomy"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/config/claude": {
         parameters: {
             query?: never;
@@ -2547,7 +2648,8 @@ export interface paths {
          * Set Demo Mode
          * @description Set demo mode configuration.
          *
-         *     Note: Setting via API updates the config file. Environment variable takes precedence.
+         *     Updates the config file and takes effect at once. DEMO_MODE in the environment
+         *     takes precedence; the response reports the effective mode.
          *
          *     Args:
          *         config: Demo mode configuration
@@ -2579,37 +2681,6 @@ export interface paths {
          *         Success status
          */
         post: operations["post_api_config_demo-mode_reset"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/config/force-manual-approval": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Force Manual Approval
-         * @description Read the stored Assist/Act bit without inserting a default row.
-         *
-         *     A failed read is an error, not Act: reporting the default would show
-         *     approvals as off while the stored ceiling may be forcing them on.
-         *     Missing row is Assist (both act flags off).
-         */
-        get: operations["get_api_config_force-manual-approval"];
-        put?: never;
-        /**
-         * Set Force Manual Approval
-         * @description Persist Assist or Act on ``act_reversible``.
-         *
-         *     Act is refused while the environment wins, so it is not stored for later.
-         *     Assist may still be stored. A service account may lower and may not raise.
-         */
-        post: operations["post_api_config_force-manual-approval"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3962,6 +4033,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/llm/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Llm Path Health
+         * @description Per-provider routability for the status line.
+         */
+        get: operations["get_api_llm_health"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/llm/providers": {
         parameters: {
             query?: never;
@@ -4500,6 +4591,9 @@ export interface paths {
         /**
          * Get Overview
          * @description Arrivals, outcome nodes, agent rows, and the latest findings. Polled.
+         *
+         *     A missing read leaves that part empty and names the permission. The keys
+         *     stay arrays: the console calls ``feed.find``.
          */
         get: operations["get_api_overview"];
         put?: never;
@@ -7036,20 +7130,6 @@ export interface components {
              */
             approved_by?: string | null;
         };
-        /**
-         * AutonomyConfig
-         * @description The two flags the console chip folds into Assist or Act.
-         *
-         *     Assist is ``force_manual_approval or not auto_response_enabled``, and that
-         *     is true exactly when effective ``act_reversible`` is off. ``auto_response_enabled``
-         *     stays true so the chip's single bit is ``force_manual_approval``.
-         */
-        AutonomyConfig: {
-            /** Auto Response Enabled */
-            auto_response_enabled: boolean;
-            /** Force Manual Approval */
-            force_manual_approval: boolean;
-        };
         /** AutostartRequest */
         AutostartRequest: {
             /** Services */
@@ -7743,6 +7823,30 @@ export interface components {
             text: string;
         };
         /**
+         * CaseRelatedSchema
+         * @description A link with the related Case's title and status, for the side panel.
+         */
+        CaseRelatedSchema: {
+            /** Case Id */
+            case_id?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Created By */
+            created_by?: string | null;
+            /** Notes */
+            notes?: string | null;
+            /** Related Case Id */
+            related_case_id?: string | null;
+            /** Related Status */
+            related_status?: string | null;
+            /** Related Title */
+            related_title?: string | null;
+            /** Relationship Id */
+            relationship_id?: number | null;
+            /** Relationship Type */
+            relationship_type?: string | null;
+        };
+        /**
          * CaseRelationshipSchema
          * @description CaseRelationship.
          */
@@ -7765,7 +7869,7 @@ export interface components {
         /** CaseRelationshipsResponse */
         CaseRelationshipsResponse: {
             /** Relationships */
-            relationships: components["schemas"]["CaseRelationshipSchema"][];
+            relationships: components["schemas"]["CaseRelatedSchema"][];
         };
         /**
          * CaseSLASchema
@@ -8548,6 +8652,19 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** EraseIn */
+        EraseIn: {
+            /**
+             * Principal Id
+             * @default
+             */
+            principal_id: string;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+        };
         /**
          * EscalationAdd
          * @description Escalate case.
@@ -8821,24 +8938,6 @@ export interface components {
             };
             /** Total */
             total: number;
-        };
-        /**
-         * ForceManualApprovalConfig
-         * @description Assist is true (``act_reversible`` off). Act is false (``act_reversible`` on).
-         */
-        ForceManualApprovalConfig: {
-            /** Enabled */
-            enabled: boolean;
-        };
-        /**
-         * ForceManualApprovalResponse
-         * @description The stored Assist bit, plus whether daemon env locks the act flags off.
-         */
-        ForceManualApprovalResponse: {
-            /** Enabled */
-            enabled: boolean;
-            /** Environment Wins */
-            environment_wins: boolean;
         };
         /**
          * ForkAgentRequest
@@ -9259,7 +9358,7 @@ export interface components {
              * Health
              * @enum {string}
              */
-            health: "healthy" | "unverified" | "unverifiable" | "rejected" | "disabled" | "placeholder";
+            health: "healthy" | "unverified" | "unverifiable" | "rejected" | "disabled" | "placeholder" | "not_checked";
             /** Provider */
             provider: string;
             /** Routable */
@@ -9348,6 +9447,16 @@ export interface components {
             is_default?: boolean | null;
             /** Name */
             name?: string | null;
+        };
+        /**
+         * LlmPathHealth
+         * @description Whether each provider can route. No key id, name, or budget.
+         */
+        LlmPathHealth: {
+            /** Providers */
+            providers: {
+                [key: string]: boolean;
+            };
         };
         /**
          * LoginRequest
@@ -9486,8 +9595,16 @@ export interface components {
         };
         /** NeedsYouItem */
         NeedsYouItem: {
-            /** Case Id */
+            /**
+             * Case Id
+             * @description The first of case_ids: the case that asked.
+             */
             case_id?: string | null;
+            /**
+             * Case Ids
+             * @description Every case this item is on. A proposal several cases made is one item listing them all.
+             */
+            case_ids?: string[];
             /** Checkpoint Class */
             checkpoint_class?: string | null;
             /**
@@ -9501,16 +9618,21 @@ export interface components {
              */
             created_at: string;
             /**
+             * Finding Id
+             * @description The first stored alert the approval's evidence names, so an item with no case can open it.
+             */
+            finding_id?: string | null;
+            /**
              * Hypotheses
              * @description A hypothesis approval's explanations, each with where it came from; base_rate is the benign one to beat.
              */
             hypotheses?: components["schemas"]["NeedsYouHypothesis"][];
             /**
              * Kind
-             * @description parked: a hunt stopped at a limit, answered with Keep going on its case; its source_id is the run id.
+             * @description parked: a hunt stopped at a limit, answered with Keep going on its case; its source_id is the run id. open_case: a demo-mode case that is not closed, answered by opening the case; its source_id is the case id.
              * @enum {string}
              */
-            kind: "approval" | "checkpoint" | "parked";
+            kind: "approval" | "checkpoint" | "parked" | "open_case";
             /** Reason */
             reason: string;
             /**
@@ -9762,6 +9884,14 @@ export interface components {
             workflow_phase_id?: string | null;
             /** Workflow Run Id */
             workflow_run_id?: string | null;
+        };
+        /** PeriodIn */
+        PeriodIn: {
+            /**
+             * Days
+             * @default 0
+             */
+            days: number;
         };
         /** PhaseUpdate */
         PhaseUpdate: {
@@ -10390,13 +10520,13 @@ export interface components {
         StartRunRequest: {
             /**
              * Arch
-             * @description Arch file path; empty routes through the run-kind registry.
+             * @description Must be empty: the arch comes from the run-kind registry.
              * @default
              */
             arch: string;
             /**
              * Config
-             * @description Path to the deployment config.
+             * @description Must be empty: the workflow reference carries its config.
              */
             config: string;
             /** Overrides */
@@ -10405,7 +10535,7 @@ export interface components {
             } | null;
             /**
              * Playbook
-             * @description Path to the playbook: the scenario as data.
+             * @description A workflow reference, workflow:<id>, naming an enabled workflow.
              */
             playbook: string;
             /**
@@ -10629,6 +10759,8 @@ export interface components {
             cost_usd?: number | null;
             /** Disposition */
             disposition?: string | null;
+            /** Finished At */
+            finished_at?: string | null;
             /** Handoffs */
             handoffs?: components["schemas"]["TerminalHandoff"][];
             /** Outcome */
@@ -10697,6 +10829,28 @@ export interface components {
             start_time?: string | null;
             /** Total */
             total: number;
+        };
+        /** ToolClassBody */
+        ToolClassBody: {
+            /**
+             * Effect Class
+             * @enum {string}
+             */
+            effect_class: "read" | "read_unverified" | "reversible" | "irreversible";
+        };
+        /**
+         * ToolClassEntry
+         * @description One outside tool. ``effect_class`` is None while it is unclassified.
+         */
+        ToolClassEntry: {
+            /** Classified At */
+            classified_at?: string | null;
+            /** Classified By */
+            classified_by?: string | null;
+            /** Effect Class */
+            effect_class?: ("read" | "read_unverified" | "reversible" | "irreversible") | null;
+            /** Name */
+            name: string;
         };
         /**
          * UpdateConversationRequest
@@ -12458,6 +12612,41 @@ export interface operations {
             };
         };
     };
+    post_api_audit_erasure: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EraseIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_audit_export: {
         parameters: {
             query?: {
@@ -12619,6 +12808,72 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_audit_retention: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_audit_retention: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PeriodIn"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -13224,6 +13479,74 @@ export interface operations {
             };
         };
     };
+    get_api_autonomy_tools: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolClassEntry"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_autonomy_tools_name: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolClassBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolClassEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_bifrost_routability: {
         parameters: {
             query?: never;
@@ -13242,6 +13565,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Routability"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_bifrost_routability_recheck_key_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KeyVerdict"];
                 };
             };
             /** @description Validation Error */
@@ -15490,37 +15846,6 @@ export interface operations {
             };
         };
     };
-    get_api_config_autonomy: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AutonomyConfig"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_config_claude: {
         parameters: {
             query?: never;
@@ -15737,72 +16062,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "get_api_config_force-manual-approval": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ForceManualApprovalResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_config_force-manual-approval": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ForceManualApprovalConfig"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ForceManualApprovalResponse"];
                 };
             };
             /** @description Validation Error */
@@ -18146,6 +18405,37 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_llm_health: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmPathHealth"];
                 };
             };
             /** @description Validation Error */

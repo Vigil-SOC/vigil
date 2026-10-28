@@ -8,6 +8,7 @@ import type {
   PatchPayload,
   QuestionPayload,
 } from "../contracts/events.js";
+import { isEmptyResult } from "./call-view.js";
 import { isVisibilityGap } from "./security.js";
 
 // The hypothesis record: beliefs, what bears on each, and what the run could not answer.
@@ -17,6 +18,8 @@ export const PROPOSE_TOOL = "propose_hypothesis";
 export const LINK_TOOL = "link_evidence";
 export const QUESTION_TOOL = "open_question";
 export const RECORD_TOOLS = [PROPOSE_TOOL, LINK_TOOL, QUESTION_TOOL] as const;
+// The playbook loader: what it returns is the plugin's own text, never the estate's.
+export const SKILL_TOOL = "load_skill";
 
 export type Stance = LinkPayload["relation"];
 
@@ -59,6 +62,18 @@ export function classOf(call: CallPayload): CallClass {
   if (call.class !== undefined) return call.class;
   if (call.ok) return "served";
   return call.failure === "timeout" || call.failure === "unavailable" || call.failure === "backend_error" ? "visibility_gap" : "defect";
+}
+
+// The run could not look, and its answer rests on nothing it saw (#3248): the ledger holds a
+// blind spot -- a call the estate failed, or a need no tool here answers -- and no ref in
+// `rests` is a served estate call. One gap beside a result the answer stands on is not this.
+export function starved(events: readonly { kind: string; payload: unknown }[], rests: readonly string[]): boolean {
+  const calls = events.filter((event) => event.kind === "call").map((event) => event.payload as CallPayload);
+  const blind = events.some((event) => event.kind === "unbound") || calls.some((call) => classOf(call) === "visibility_gap");
+  if (!blind) return false;
+  const wanted = new Set(rests);
+  const bookkeeping = new Set<string>([SKILL_TOOL, ...RECORD_TOOLS]);
+  return !calls.some((call) => wanted.has(call.ref) && !bookkeeping.has(call.tool) && classOf(call) === "served");
 }
 
 // --- the fold ----------------------------------------------------------------
@@ -218,7 +233,7 @@ export function recordTools(backend: RecordBackend): RegisteredTool[] {
     ),
     local(
       LINK_TOOL,
-      `Record how evidence bears on hypotheses. evidence_id is ${backend.evidence}. Name each hypothesis by hypothesis_id, or by statement to propose it here. Failed results are not evidence.`,
+      `Record how evidence bears on hypotheses. evidence_id is ${backend.evidence}. Name each hypothesis by hypothesis_id, or by statement to propose it here. Failed or empty results are not evidence.`,
       {
         type: "object",
         additionalProperties: false,
@@ -295,8 +310,8 @@ export interface KernelRecordPorts {
   write(kind: "hypothesis" | "link" | "question", payload: HypothesisPayload | LinkPayload | QuestionPayload): Promise<void>;
 }
 
-// Evidence is a call ref, and only one whose call was served: linking a refused
-// call or a timeout as evidence would count a blind spot as an observation.
+// Evidence is a call ref, and only one whose call was served and found something: linking a
+// refused call, a timeout, or an empty search would count a blind spot as an observation.
 export function kernelRecord(ports: KernelRecordPorts): RecordBackend {
   return {
     stances: ["supports", "weakens"],
@@ -318,6 +333,8 @@ export function kernelRecord(ports: KernelRecordPorts): RecordBackend {
         if (call === undefined) return refusedWith(`${one.evidence_id} is not a result this run holds`);
         const kind = classOf(call);
         if (kind !== "served") return refusedWith(`${one.evidence_id} was a ${kind === "defect" ? "defective call" : "visibility gap"}, not evidence`);
+        // A search that found nothing is a gap, not an answer: it bears on no explanation.
+        if (isEmptyResult(call.result)) return refusedWith(`${one.evidence_id} found nothing, which bears on no explanation; open_question for what it could not see`);
       }
       for (const one of links) await ports.write("link", one);
       return okWith([{ linked: links.length }]);

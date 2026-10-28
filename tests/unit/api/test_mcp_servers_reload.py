@@ -33,7 +33,7 @@ def _entry(*args, env=None):
 
 
 @pytest.fixture
-def world(tmp_path):
+def world(tmp_path, authenticate_app):
     _write(tmp_path, {"geo": _entry("geo.js"), "kept": _entry("kept.js")})
     svc = MCPService(
         project_root=tmp_path,
@@ -59,6 +59,7 @@ def world(tmp_path):
     app.dependency_overrides[get_current_active_user] = lambda: SimpleNamespace(
         user_id="admin"
     )
+    authenticate_app(app)
     app.dependency_overrides[provide_mcp_client] = lambda: client
     app.dependency_overrides[provide_mcp_registry] = lambda: registry
     with patch.object(mcp_api, "_service", return_value=svc), patch.object(

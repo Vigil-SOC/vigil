@@ -101,9 +101,10 @@ async def test_the_server_is_not_spawned_until_set_up(home):
 
 
 @pytest.fixture
-def api():
+def api(authenticate_app):
     app = FastAPI()
     app.include_router(mcp_api.router, prefix="/api/mcp")
+    authenticate_app(app)
     return TestClient(app)
 
 

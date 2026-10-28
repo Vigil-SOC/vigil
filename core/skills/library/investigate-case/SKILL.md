@@ -9,7 +9,9 @@ description: Method for working one open case from its findings to a supported d
 
 Start with the case's own records and the findings attached to it. Note every
 entity they name: hosts, identities, IPs, domains, hashes, processes. Those are
-your pivots. Note the time window the findings cover.
+your pivots. Note the time window the findings cover. For network-flow
+findings, read the case's flow totals (answered flows, bytes back) before you
+decide whether the activity went beyond discovery.
 
 ## 2. Say what could explain it
 

@@ -52,25 +52,34 @@ import {
 } from './modelPrompt'
 import './aiModels.css'
 
-// Only the two outcomes the gateway actually decided are a level: routable is
-// Good, rejected is Poor. Everything else stays a plain chip — never Fair — and
-// no verdicts at all (the check failed) draws nothing.
+// Only the two outcomes a check actually decided are a level: routable is
+// Good, rejected is Poor. A probe that could not run is a chip, never Fair,
+// and no verdicts at all (the check failed) draws nothing.
 function KeyHealth({ status, description, verdict }: {
   status?: string
   description?: string
   verdict?: KeyVerdict
 }) {
+  const why = verdict?.description || description || status
   if (verdict?.health === 'healthy') return <LevelBadge variant="pill" level="good" />
   if (verdict?.health === 'rejected') {
     return (
-      <span title={description || status}>
+      <span title={why}>
         <LevelBadge variant="pill" level="poor" />
       </span>
     )
   }
   if (verdict?.health === 'disabled') return <span className="chip">Disabled</span>
-  if (verdict?.health === 'unverifiable') return <span className="chip" title={description}>Unverifiable</span>
-  return <span className="chip" title={verdict ? description : status}>Unverified</span>
+  if (verdict?.health === 'not_checked') {
+    return <span className="chip" title={why || "Couldn't reach Vertex to check this key."}>Not checked</span>
+  }
+  if (verdict?.health === 'unverifiable') return <span className="chip" title={why}>Unverifiable</span>
+  return <span className="chip" title={verdict ? why : status}>Unverified</span>
+}
+
+/** An express key carries an API key in `value`. A service account does not. */
+function isExpressKey(key: BifrostKey): boolean {
+  return Boolean(secretText(key.value)) && !secretText(key.vertex_key_config?.auth_credentials)
 }
 
 /** Healthy, not-yet-checked, or unlistable. A refused, disabled, or seed key is not. */
@@ -122,6 +131,18 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
     { kind: 'key'; provider: string; key: BifrostKey } | { kind: 'provider'; provider: string } | null
   >(null)
   const [busy, setBusy] = useState(false)
+  const [rechecking, setRechecking] = useState<string | null>(null)
+  const recheck = async (keyId: string) => {
+    setRechecking(keyId)
+    try {
+      await bifrostApi.recheckKey(keyId)
+      reload()
+    } catch (e) {
+      notify('err', bifrostError(e, 'Could not check this key.'))
+    } finally {
+      setRechecking(null)
+    }
+  }
   // null until the assignment read lands, so the prompt does not flash on load
   const [unset, setUnset] = useState<boolean | null>(null)
   const [askModel, setAskModel] = useState(false)
@@ -403,6 +424,15 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <div className="inline-flex gap-1.5">
+                        {p.name === 'vertex' && isExpressKey(k) && (
+                          <button
+                            className="btn ghost"
+                            disabled={rechecking === k.id}
+                            onClick={() => recheck(k.id)}
+                          >
+                            Test again
+                          </button>
+                        )}
                         <EditProviderButton provider={p} onEdit={setEditingProvider} />
                         <button
                           className="btn ghost"
@@ -893,7 +923,7 @@ export function KeyDialog({
           <>
             <Field
               label="Authentication"
-              hint="An API key only works against Vertex express mode — an AI Studio key belongs under the gemini provider instead. A service account is what a standard Vertex project takes."
+              hint="An API key only works against Vertex express mode, which reaches Gemini models only — Claude and other partner models on Vertex need a service account. An AI Studio key belongs under the gemini provider instead. A service account is what a standard Vertex project takes."
             >
               <div className="inline-flex gap-1.5">
                 {(

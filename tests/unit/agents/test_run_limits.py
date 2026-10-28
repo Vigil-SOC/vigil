@@ -12,25 +12,28 @@ from core.routing import request_unit_of_work
 
 pytestmark = pytest.mark.unit
 
-BODY = {"run_kind": "hunt", "playbook": "p.md", "config": "c.yaml"}
+BODY = {"run_kind": "hunt", "playbook": "workflow:threat-hunt", "config": ""}
 
 
 @pytest.fixture()
 def client(monkeypatch, authenticate_app):
-    queued = []
+    queued, begun = [], []
 
     async def _enqueue(job):
         queued.append(job)
         return "job-1"
 
     monkeypatch.setattr(agent_runs_router, "enqueue_run", _enqueue)
-    monkeypatch.setattr(agent_runs_router, "_begin_run_row", lambda *a, **k: None)
+    monkeypatch.setattr(
+        agent_runs_router, "_begin_run_row", lambda *a, **k: begun.append(a)
+    )
+    monkeypatch.setattr(agent_runs_router, "is_enabled", lambda _id: True)
     app = FastAPI()
     authenticate_app(app)
     app.include_router(agent_runs_router.router, prefix="/api/agent-runs")
     app.dependency_overrides[request_unit_of_work] = lambda: None
     http = TestClient(app, raise_server_exceptions=False)
-    http.queued = queued
+    http.queued, http.begun = queued, begun
     return http
 
 
@@ -65,3 +68,26 @@ class TestStartRun:
     ):
         assert _start(client, overrides).status_code == 422
         assert client.queued == []
+
+
+# The worker reads any path it is handed, so the API hands it none: a caller names a
+# workflow, and the install's own definitions supply every layer (#3259).
+class TestSpecSources:
+    def test_a_workflow_reference_is_queued(self, client):
+        assert client.post("/api/agent-runs", json=BODY).status_code == 202
+        assert client.queued[0]["request"]["playbook"] == "workflow:threat-hunt"
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {**BODY, "arch": "/etc/passwd"},
+            {**BODY, "config": "../../etc/vigil.yaml"},
+            {**BODY, "playbook": "/tmp/p.md"},
+            {**BODY, "playbook": "workflow:"},
+            {**BODY, "playbook": "workflow:  "},
+        ],
+    )
+    def test_a_path_is_refused_before_anything_is_written(self, client, body):
+        assert client.post("/api/agent-runs", json=body).status_code == 422
+        assert client.queued == []
+        assert client.begun == []

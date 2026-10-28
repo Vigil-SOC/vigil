@@ -40,11 +40,12 @@ def _clean(throwaway_database):
 
 
 @pytest.fixture
-def client():
+def client(authenticate_app):
     from services.api.routers import timeline
 
     app = FastAPI()
     app.include_router(timeline.router, prefix=timeline.ROUTER_META.prefix)
+    authenticate_app(app)
     return TestClient(app, raise_server_exceptions=False)
 
 

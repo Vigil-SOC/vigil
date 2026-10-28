@@ -18,8 +18,7 @@ from fastapi import (
 from pydantic import BaseModel, Field, field_validator
 
 from core.agents.projections import read_events
-from core.auth.auth_service import AuthService
-from core.auth.permissions import permission_gate
+from core.auth.permissions import deny_unless, permission_gate
 from core.cases import case_journal_service, case_records_service
 from core.cases.assignee import resolve_assignee, resolve_escalation_target
 from core.cases.case_attachment_service import attach_document
@@ -31,7 +30,7 @@ from core.cases.case_sla_service import CaseSLAService, SlaOutcome
 from core.cases.case_state import case_run_refs, primary_ref
 from core.cases.case_workflow_service import CaseWorkflowService
 from core.documents.extract import ACCEPTED_TYPES, DocumentRefused, spool_upload
-from core.routing import Auth, RouterMeta, UnitOfWorkSession
+from core.routing import Auth, OptionalUnitOfWorkSession, RouterMeta, UnitOfWorkSession
 from core.storage.config_service import get_config_service
 from core.storage.database_data_service import DatabaseDataService
 from core.storage.models import Case, User
@@ -61,6 +60,7 @@ from services.api.middleware.auth import get_current_user
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+router.dependencies.append(permission_gate("cases.read"))
 
 _CASES_WRITE = [permission_gate("cases.write")]
 
@@ -119,10 +119,7 @@ async def clear_all_cases(
     current_user: User = Depends(get_current_user),
 ):
     """Delete all cases and case-derived generated data (requires cases.delete)."""
-    if not AuthService.check_permission(current_user.user_id, "cases.delete"):
-        raise HTTPException(
-            status_code=403, detail="Permission denied: cases.delete required"
-        )
+    deny_unless(current_user.user_id, "cases.delete", session)
 
     result = case_records_service.purge_all_cases(session)
     killed = len(result.killed_investigation_ids)
@@ -641,8 +638,17 @@ async def add_relationship(
 async def get_relationships(case_id: str, session: UnitOfWorkSession):
     """Get related cases."""
 
-    rels = case_records_service.list_relationships(session, case_id)
-    return {"relationships": CaseRelationshipSchema.dump_many(rels)}
+    rows = case_records_service.list_relationships(session, case_id)
+    return {
+        "relationships": [
+            {
+                **CaseRelationshipSchema.dump(rel),
+                "related_title": title,
+                "related_status": status,
+            }
+            for rel, title, status in rows
+        ]
+    }
 
 
 # Case Closure
@@ -671,6 +677,8 @@ async def escalate_case(
     current_user: User = Depends(get_current_user),
 ):
     """Escalate case. Who escalated it is the signed-in user."""
+    # Escalation hands the case to escalated_to, which is an owner change.
+    deny_unless(current_user.user_id, "cases.assign", session)
     # Before the call: it swallows errors into "Failed to escalate case".
     escalated_to = resolve_escalation_target(session, data.escalated_to)
     workflow_service = CaseWorkflowService()
@@ -712,15 +720,32 @@ async def _run_events(ref: dict) -> tuple[Optional[list], str]:
 
 
 @router.get("/{case_id}/record", response_model=CaseRecordResponse)
-async def get_case_record(case_id: str, session: UnitOfWorkSession):
-    """The case record: every run's ledger, audit rows and activities.
+async def get_case_record(case_id: str, session: OptionalUnitOfWorkSession):
+    """The case record: every run's ledger, trail entries, audit rows and activities.
 
-    Newest first. The agent returns each ledger with snapshots off, read
+    Newest first. Trail entries are the case's own (``payload.case_id``). The agent returns each ledger with snapshots off, read
     concurrently; a run that cannot be read is one row saying why, not a failed
     record. Audit rows are ``entity_type == case`` and ``entity_id`` this case —
     the table has no ``case_id`` column. ``run_id`` is the case's run
     (``primary_ref``), which Replay, Verify chain and Export audit read.
     """
+    if data_service.is_demo_mode():
+        from core.platform.demo_data_service import DemoDataService
+
+        case = DemoDataService().get_case(case_id)
+        if not case:
+            raise HTTPException(status_code=404, detail="Case not found")
+        # Demo cases have no runs and no audit rows. A missing session is how
+        # this handler is called when the database was never opened, and also
+        # how the record tests call it, so the shortcut is demo mode only.
+        return {
+            "run_id": None,
+            "investigation_id": None,
+            "rows": merge_record(
+                [], [], case.get("activities") or [], [], case_id=case_id
+            ),
+        }
+
     case = data_service.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
@@ -742,11 +767,17 @@ async def get_case_record(case_id: str, session: UnitOfWorkSession):
             runs.append((ref["run_id"], events))
 
     audits = case_records_service.list_case_audit(session, case_id)
+    entries = case_records_service.list_case_trail(session, case_id)
     return {
         "run_id": primary["run_id"] if primary else None,
         "investigation_id": primary["investigation_id"] if primary else None,
         "rows": merge_record(
-            runs, audits, case.get("activities") or [], unread, case_id=case_id
+            runs,
+            audits,
+            case.get("activities") or [],
+            unread,
+            case_id=case_id,
+            trail=entries,
         ),
     }
 

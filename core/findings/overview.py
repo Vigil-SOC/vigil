@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from datetime import date, datetime, timedelta
 from typing import Optional
@@ -20,17 +21,20 @@ from core.time import utcnow
 from core.workflows.workflow_run_service import IN_FLIGHT_STATUSES
 from core.workflows.workflows_service import WorkflowsService
 
+logger = logging.getLogger(__name__)
+
 FEED_LIMIT = 50
 RATE_WINDOW = timedelta(days=30)
 GOOD_AT = 0.95
 FAIR_AT = 0.85
-# budget_exhausted is stored as completed (core/workflows/run_bridge_router.py).
+# budget_exhausted and data_starved are stored as completed (core/workflows/run_bridge_router.py).
 RATE_INFO = (
     "Completed divided by completed, failed, and cancelled runs started in "
     "the last 30 days. Good at or above 95%, fair from 85% up to 95%, poor "
     "below that. A sample of zero has no level. Rows hidden from history "
-    "still count. A run that stopped at its budget counts as completed, "
-    "because that is how the row is stored."
+    "still count. A run that stopped at its budget, or answered without "
+    "being able to look at its data, counts as completed, because that is "
+    "how the row is stored."
 )
 ARRIVAL_SOURCE = "Findings created today (UTC) with this data source."
 RUNNING_SOURCE = "Runs still in history whose status is running or paused."
@@ -62,8 +66,9 @@ _LIVE_ORDER = (
     "scoring",
     "waiting",
 )
-# The board names the dismissed node apart from its pill ("Dropped").
-_NODE_LABELS = {**TERMINAL_LABELS, "dismissed": "Dropped as noise"}
+# The dismissed node reads "Dismissed as noise", apart from its pill ("Dropped");
+# the board says "Dropped as noise", a wording changed on #3268.
+_NODE_LABELS = {**TERMINAL_LABELS, "dismissed": "Dismissed as noise"}
 _TERMINAL_STATUSES = ("completed", "failed", "cancelled")
 _OPEN_PHASE = ("running", "pending_approval")
 
@@ -248,8 +253,45 @@ def _feed() -> list[dict]:
     )
 
 
+def _demo_on() -> bool:
+    from core.config import is_demo_mode
+
+    return is_demo_mode()
+
+
+def _demo_agents() -> list[dict]:
+    """Workflow names with no run history. Demo mode does not read stored runs."""
+    try:
+        workflows = WorkflowsService().list_workflows()
+    except Exception:
+        logger.warning("Demo overview could not list workflows", exc_info=True)
+        return []
+    rows = []
+    for workflow in workflows:
+        workflow_id = workflow["id"]
+        rows.append(
+            {
+                "workflow_id": workflow_id,
+                "name": workflow.get("name") or workflow_id,
+                "running": 0,
+                "sample_size": 0,
+                "rate": None,
+                "level": None,
+                "current_step": None,
+            }
+        )
+    rows.sort(key=lambda row: (row["name"] or "", row["workflow_id"]))
+    return rows
+
+
 def overview_alert(finding_id: str) -> Optional[dict]:
     """One alert in the feed item's shape, noise-marked or older than the feed; None when unknown."""
+    if _demo_on():
+        from core.findings.demo_reads import load_demo
+        from core.findings.demo_reads import overview_alert as demo_alert
+
+        findings, cases = load_demo()
+        return demo_alert(findings, cases, finding_id)
     items = _feed_items(
         lambda session: session.query(Finding)
         .filter(Finding.finding_id == finding_id)
@@ -266,6 +308,27 @@ def overview_payload(
         day = utcnow().date()
     if now is None:
         now = utcnow()
+    if _demo_on():
+        from core.findings.demo_reads import load_demo, overview_parts
+
+        findings, cases = load_demo()
+        parts = overview_parts(findings, cases, day=day, feed_limit=FEED_LIMIT)
+        return {
+            "day": day.isoformat(),
+            "empty": parts["empty"],
+            "arrivals": [
+                {**row, "source_text": ARRIVAL_SOURCE} for row in parts["arrivals"]
+            ],
+            "outcomes": _outcome_nodes(parts["states"]),
+            "running_source": RUNNING_SOURCE,
+            "step_source": STEP_SOURCE,
+            "rate_info": RATE_INFO,
+            "good_at": GOOD_AT,
+            "fair_at": FAIR_AT,
+            "agents": _demo_agents(),
+            "feed": parts["feed"],
+            "feed_limit": FEED_LIMIT,
+        }
     arrivals = [
         {**row, "source_text": ARRIVAL_SOURCE} for row in arrivals_today_by_source(day)
     ]

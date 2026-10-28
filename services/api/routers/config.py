@@ -10,7 +10,6 @@ from pydantic import BaseModel, Field, create_model
 
 from core.api.v1.findings_router import data_service as findings_data_service
 from core.audit.feed import INTEGRATION_ID as AUDIT_FEED_INTEGRATION_ID
-from core.auth.auth_service import _is_service_account
 from core.auth.permissions import permission_gate
 from core.config import (
     _load_json_config,
@@ -39,14 +38,6 @@ from core.integrations.integration_secrets import (
 )
 from core.intent import intent_file
 from core.llm.defaults import DEFAULT_MODEL
-from core.response.ceiling import (
-    CeilingRefusal,
-    CeilingWriteError,
-    effective_act_reversible,
-    environment_locks_act,
-    read_ceiling,
-    update_ceiling,
-)
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import (
     SECRET_WRITE_REFUSED_DETAIL,
@@ -66,18 +57,19 @@ from core.storage.config_service import get_config_service
 from core.storage.models import AIModelConfig, CustomAgent, User
 from core.time import utcnow
 from services.api.errors import INTERNAL_ERROR_DETAIL
-from services.api.middleware.auth import (
-    get_current_active_user,
-    require_integrations_admin,
-)
+from services.api.middleware.auth import get_current_active_user
 from services.daemon.intent import intent_report
 
 router = APIRouter()
 
 # Writes change what the platform connects to and trusts, so Auth.REQUIRED alone
-# (any active account) is not enough. Reads stay open to every role.
+# (any active account) is not enough.
 _SETTINGS_WRITE = [permission_gate("settings.write")]
+_SETTINGS_READ = [permission_gate("settings.read")]
+_PLATFORM_WRITE = [permission_gate("platform.write")]
+_PLATFORM_READ = [permission_gate("platform.read")]
 _INTEGRATIONS_WRITE = [permission_gate("integrations.write")]
+_INTEGRATIONS_READ = [permission_gate("integrations.read")]
 
 ROUTER_META = RouterMeta(
     prefix="/api/config",
@@ -176,7 +168,7 @@ class PlatformDatabaseProxyConfig(BaseModel):
     verify_proxy_tls: bool = True
 
 
-@router.get("/demo-mode")
+@router.get("/demo-mode", dependencies=_SETTINGS_READ)
 def get_demo_mode():
     """
     Get demo mode configuration.
@@ -203,7 +195,8 @@ def set_demo_mode(config: DemoModeConfig):
     """
     Set demo mode configuration.
 
-    Note: Setting via API updates the config file. Environment variable takes precedence.
+    Updates the config file and takes effect at once. DEMO_MODE in the environment
+    takes precedence; the response reports the effective mode.
 
     Args:
         config: Demo mode configuration
@@ -226,11 +219,13 @@ def set_demo_mode(config: DemoModeConfig):
     with open(config_file, "w") as f:
         json.dump(existing, f, indent=2)
 
+    # Takes effect at once; DEMO_MODE in the environment still wins, so report the
+    # effective mode rather than the one asked for.
+    enabled = is_demo_mode()
     return {
         "success": True,
-        "enabled": config.enabled,
-        "message": f"Demo mode {'enabled' if config.enabled else 'disabled'}. Restart the server for changes to take effect.",
-        "note": "Set DEMO_MODE=true environment variable for immediate effect without restart",
+        "enabled": enabled,
+        "message": f"Demo mode {'enabled' if enabled else 'disabled'}.",
     }
 
 
@@ -255,7 +250,7 @@ def reset_demo_data(demo_service=Depends(provide_demo_data)):
     }
 
 
-@router.get("/claude")
+@router.get("/claude", dependencies=_PLATFORM_READ)
 def get_claude_config():
     """
     Get Claude API configuration status.
@@ -283,7 +278,7 @@ def get_claude_config():
         return {"configured": False, "error": INTERNAL_ERROR_DETAIL}
 
 
-@router.post("/claude", dependencies=_SETTINGS_WRITE)
+@router.post("/claude", dependencies=_PLATFORM_WRITE)
 def set_claude_config(config: ClaudeConfig):
     """
     Set Claude API configuration.
@@ -337,7 +332,7 @@ def set_claude_config(config: ClaudeConfig):
     return {"success": True, "message": "API key saved securely"}
 
 
-@router.get("/s3")
+@router.get("/s3", dependencies=_PLATFORM_READ)
 def get_s3_config():
     """
     Get S3 configuration status.
@@ -381,7 +376,7 @@ def get_s3_config():
         return {"configured": False, "error": INTERNAL_ERROR_DETAIL}
 
 
-@router.post("/s3", dependencies=_SETTINGS_WRITE)
+@router.post("/s3", dependencies=_PLATFORM_WRITE)
 def set_s3_config(
     config: S3Config,
     current_user: User = Depends(get_current_active_user),
@@ -482,7 +477,7 @@ _PLATFORM_DB_PROXY_KEYS = {
 _PLATFORM_DB_SECRET_FIELDS = {"proxy_password", "ssh_key_passphrase"}
 
 
-@router.get("/platform-database")
+@router.get("/platform-database", dependencies=_PLATFORM_READ)
 def get_platform_database_config():
     """Return the current proxy config in front of the platform DB.
 
@@ -519,7 +514,7 @@ def get_platform_database_config():
     return result
 
 
-@router.post("/platform-database", dependencies=_SETTINGS_WRITE)
+@router.post("/platform-database", dependencies=_PLATFORM_WRITE)
 def set_platform_database_config(config: PlatformDatabaseProxyConfig):
     """Persist the platform-DB proxy config to the encrypted secrets
     store. Takes effect on the next backend restart — the live engine
@@ -568,7 +563,7 @@ def set_platform_database_config(config: PlatformDatabaseProxyConfig):
     }
 
 
-@router.get("/theme")
+@router.get("/theme", dependencies=_SETTINGS_READ)
 def get_theme_config():
     """Get theme configuration; 503 when the database read fails."""
     try:
@@ -741,7 +736,11 @@ def build_setup_steps(
     }
 
 
-@router.get("/setup-steps", response_model=SetupStepsResponse)
+@router.get(
+    "/setup-steps",
+    response_model=SetupStepsResponse,
+    dependencies=_SETTINGS_READ,
+)
 def get_setup_steps(
     session: UnitOfWorkSession,
     detection_rules: DetectionRulesService = Depends(provide_detection_rules),
@@ -780,7 +779,7 @@ def _secrets_set_map(integrations: dict) -> dict:
     return result
 
 
-@router.get("/integrations")
+@router.get("/integrations", dependencies=_INTEGRATIONS_READ)
 def get_integrations_config():
     """
     Get integrations configuration.
@@ -1041,7 +1040,7 @@ async def _probe_connector_integration(integration_id: str, current_user: User) 
     return {"success": success, "message": message}
 
 
-@router.post("/integrations/{integration_id}/test")
+@router.post("/integrations/{integration_id}/test", dependencies=_INTEGRATIONS_WRITE)
 async def test_integration(
     integration_id: str,
     current_user: User = Depends(get_current_active_user),
@@ -1062,8 +1061,6 @@ async def test_integration(
     servers started (``credentials`` in the answer): a server starts whatever
     it is pointed at, and the adapter that pulls alerts does not go through it.
     """
-    require_integrations_admin(current_user)
-
     server_names = list(bridge.server_names_for(integration_id))
     integrations = bridge.load_integration_config().get("integrations", {})
     # A UI-extension connector has no MCP server of its own: probe its URL.
@@ -1156,7 +1153,7 @@ async def test_integration(
     return result
 
 
-@router.get("/general")
+@router.get("/general", dependencies=_SETTINGS_READ)
 def get_general_config():
     """Get general application settings; 503 when the database read fails."""
     try:
@@ -1221,7 +1218,7 @@ def set_general_config(
     return {"success": True, "message": "General settings saved"}
 
 
-@router.get("/postgresql")
+@router.get("/postgresql", dependencies=_PLATFORM_READ)
 def get_postgresql_config():
     """
     Get PostgreSQL database backend configuration status.
@@ -1252,7 +1249,7 @@ def get_postgresql_config():
         return {"configured": False, "error": INTERNAL_ERROR_DETAIL}
 
 
-@router.post("/postgresql", dependencies=_SETTINGS_WRITE)
+@router.post("/postgresql", dependencies=_PLATFORM_WRITE)
 def set_postgresql_config(config: PostgreSQLConfig):
     """
     Set PostgreSQL database backend configuration.
@@ -1297,7 +1294,7 @@ class AIOperationsSettingsConfig(BaseModel):
 AI_OPERATIONS_DEFAULTS = AIOperationsSettingsConfig().model_dump()
 
 
-@router.get("/ai-operations")
+@router.get("/ai-operations", dependencies=_SETTINGS_READ)
 def get_ai_operations_config():
     """Return the local-Ollama recovery toggles (defaults merged with DB overrides).
 
@@ -1523,7 +1520,7 @@ class IntentReportResponse(BaseModel):
     rows: list[IntentDiffRow] = Field(default_factory=list)
 
 
-@router.get("/intent", response_model=IntentReportResponse)
+@router.get("/intent", response_model=IntentReportResponse, dependencies=_SETTINGS_READ)
 def get_intent_report() -> IntentReportResponse:
     """Declared intent beside effective config.
 
@@ -1550,34 +1547,11 @@ def get_intent_report() -> IntentReportResponse:
     )
 
 
-class AutonomyConfig(BaseModel):
-    """The two flags the console chip folds into Assist or Act.
-
-    Assist is ``force_manual_approval or not auto_response_enabled``, and that
-    is true exactly when effective ``act_reversible`` is off. ``auto_response_enabled``
-    stays true so the chip's single bit is ``force_manual_approval``.
-    """
-
-    auto_response_enabled: bool
-    force_manual_approval: bool
-
-
-@router.get("/autonomy", response_model=AutonomyConfig)
-def get_autonomy_config() -> AutonomyConfig:
-    """Effective response autonomy for the console chip."""
-    try:
-        stored = read_ceiling()
-    except Exception:  # noqa: BLE001
-        # Unreadable is Assist, the same fail-closed the chip had before.
-        return AutonomyConfig(auto_response_enabled=True, force_manual_approval=True)
-    act = effective_act_reversible(stored, get_settings())
-    return AutonomyConfig(
-        auto_response_enabled=True,
-        force_manual_approval=not act,
-    )
-
-
-@router.get("/orchestrator", response_model=OrchestratorConfigResponse)
+@router.get(
+    "/orchestrator",
+    response_model=OrchestratorConfigResponse,
+    dependencies=_SETTINGS_READ,
+)
 def get_orchestrator_config():
     """Get orchestrator configuration.
 
@@ -1622,78 +1596,6 @@ def set_orchestrator_config(
     return {"success": True, "message": "Orchestrator settings saved"}
 
 
-class ForceManualApprovalConfig(BaseModel):
-    """Assist is true (``act_reversible`` off). Act is false (``act_reversible`` on)."""
-
-    enabled: bool
-
-
-class ForceManualApprovalResponse(ForceManualApprovalConfig):
-    """The stored Assist bit, plus whether daemon env locks the act flags off."""
-
-    environment_wins: bool
-
-
-def _environment_wins() -> bool:
-    """Force-approval, or auto-response turned off, beats a stored Act."""
-    return environment_locks_act(get_settings())
-
-
-def _assist_response(stored_act_reversible: bool) -> ForceManualApprovalResponse:
-    return ForceManualApprovalResponse(
-        enabled=not stored_act_reversible,
-        environment_wins=_environment_wins(),
-    )
-
-
-@router.get("/force-manual-approval", response_model=ForceManualApprovalResponse)
-def get_force_manual_approval():
-    """Read the stored Assist/Act bit without inserting a default row.
-
-    A failed read is an error, not Act: reporting the default would show
-    approvals as off while the stored ceiling may be forcing them on.
-    Missing row is Assist (both act flags off).
-    """
-    try:
-        stored = read_ceiling()
-    except Exception as e:
-        logger.error(f"Error getting force-manual approval: {e}")
-        raise HTTPException(
-            status_code=503, detail="Could not read the approval setting"
-        ) from e
-    return _assist_response(stored.act_reversible)
-
-
-@router.post(
-    "/force-manual-approval",
-    dependencies=[permission_gate("ai_autonomy.write")],
-    response_model=ForceManualApprovalResponse,
-)
-def set_force_manual_approval(
-    config: ForceManualApprovalConfig,
-    current_user: User = Depends(get_current_active_user),
-):
-    """Persist Assist or Act on ``act_reversible``.
-
-    Act is refused while the environment wins, so it is not stored for later.
-    Assist may still be stored. A service account may lower and may not raise.
-    """
-    try:
-        stored = update_ceiling(
-            user_id=str(current_user.user_id),
-            caller_is_service=_is_service_account(current_user),
-            act_reversible=not config.enabled,
-            locked=_environment_wins(),
-        )
-    except CeilingRefusal as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-    except CeilingWriteError as exc:
-        raise HTTPException(
-            status_code=500, detail="Failed to save approval config"
-        ) from exc
-    return _assist_response(stored.act_reversible)
-
-
 # ---- Darktrace webhook receiver config ----
 class DarktraceConfig(BaseModel):
     """Darktrace webhook receiver configuration.
@@ -1718,7 +1620,7 @@ DARKTRACE_DEFAULTS: Dict[str, Any] = {
 }
 
 
-@router.get("/darktrace")
+@router.get("/darktrace", dependencies=_INTEGRATIONS_READ)
 def get_darktrace_config():
     """Return the current Darktrace webhook receiver config (without the secret)."""
     try:
@@ -1775,7 +1677,7 @@ class _SecretsMigrateRequest(BaseModel):
     remove_from_dotenv: bool = True
 
 
-@router.get("/secrets/status")
+@router.get("/secrets/status", dependencies=_PLATFORM_READ)
 def secrets_status() -> Dict[str, Any]:
     """Report which backend the secrets manager is using and why.
 
@@ -1808,7 +1710,7 @@ def _audit_secrets_migration(report: Dict[str, Any], remove: bool, user: User) -
         logger.warning("Could not write secrets migration audit log: %s", e)
 
 
-@router.post("/secrets/migrate-to-encrypted", dependencies=_SETTINGS_WRITE)
+@router.post("/secrets/migrate-to-encrypted", dependencies=_PLATFORM_WRITE)
 def secrets_migrate_to_encrypted(
     request: Optional[_SecretsMigrateRequest] = None,
     current_user: User = Depends(get_current_active_user),

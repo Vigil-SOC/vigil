@@ -16,115 +16,9 @@ from core.llm.tool_schemas import (
     FIND_INTEGRATION_TOOLS,
     INTEGRATION_TOOLS,
 )
+from core.response.ceiling import gated_tools
 
 REMOTE = "remote"
-
-# Direct-action verbs that make an MCP tool destructive: calling it changes the
-# world (isolates a host, blocks an IP, kills a process) and a later read cannot
-# undo it. Chat reaches every other connected MCP tool on demand (see
-# ``integration_tools``), but the chat surface has no approval-resume path — a
-# parked call would hang forever, never gate — so these are out of its reach. Real containment
-# goes through the approval queue (``create_approval_action``) and workflows, not
-# ad-hoc chat calls.
-_DESTRUCTIVE_VERBS = frozenset(
-    {
-        "isolate",
-        "unisolate",
-        "contain",
-        "quarantine",
-        "block",
-        "unblock",
-        "kill",
-        "terminate",
-        "shutdown",
-        "disable",
-        "deactivate",
-        "suspend",
-        "delete",
-        "remove",
-        "purge",
-        "wipe",
-        "revoke",
-        "ban",
-        "remediate",
-        "detonate",
-        "reset",
-        "release",
-    }
-)
-# A read-only lead verb (get_isolation_status, list_blocked_ips) is safe even
-# when a destructive noun follows, so it overrides the verb check.
-_READONLY_LEADS = frozenset(
-    {
-        "get",
-        "list",
-        "search",
-        "describe",
-        "fetch",
-        "query",
-        "show",
-        "read",
-        "lookup",
-        "count",
-        "stats",
-        "status",
-        "check",
-    }
-)
-
-
-def _is_destructive_mcp(name: str) -> bool:
-    """True for a server-prefixed MCP tool that performs an irreversible action.
-
-    Every token of the id is read, the server prefix included. Vendor tools
-    arrive as ``{server}_{tool}`` and Vigil's own arrive bare, so there is no
-    one prefix to strip — and stripping the first token off a bare name takes
-    the verb, which is the whole of what this decides on: ``isolate_host``
-    would be read as ``host``.
-
-    A read-only lead verb wins outright; otherwise any destructive verb token
-    marks it. Reading the prefix too can only over-drop, and that is the side to
-    err on — a spurious drop means chat recommends the action instead of calling
-    it, whereas a missed one is an ungated detonation.
-
-    ART execute is named, not verb-matched: adding ``execute`` to the verb set
-    would also drop ``splunk_execute``.
-    """
-    if name in EXECUTE_IDS:
-        return True
-    tokens = name.split("_")
-    if not tokens:
-        return False
-    if tokens[0] in _READONLY_LEADS:
-        return False
-    return any(tok in _DESTRUCTIVE_VERBS for tok in tokens)
-
-
-# Weakest to strongest, so an agent is as hands-on as its most hands-on tool.
-_CHANGES_RANK = ("read_only", "asks_first", "on_its_own")
-
-
-def changes_for_tool(name: str) -> str:
-    """What one tool does to the outside world.
-
-    ``asks_first`` for the approval tool and for a direct-action MCP tool. Chat
-    never calls the latter (it has no approval-resume path); a workflow parks
-    the call until a person approves that call. Otherwise ``read_only``.
-    Vigil's own case writes are not outside changes.
-    """
-    if name == "create_approval_action" or _is_destructive_mcp(name):
-        return "asks_first"
-    return "read_only"
-
-
-def changes_for_tools(tools: List[str]) -> str:
-    """What an agent with these tools does: the strongest of its tools' answers."""
-    return max(
-        (changes_for_tool(t) for t in tools),
-        key=_CHANGES_RANK.index,
-        default="read_only",
-    )
-
 
 # A conversation is one answer at a time with a person waiting, so the ceiling is
 # per turn rather than per run: they will say so long before a budget would.
@@ -140,21 +34,19 @@ def run_id_for(session_id: str) -> str:
     return str(uuid.uuid5(CONVERSATIONS, session_id))
 
 
-# The MCP tools chat may reach through find/call_integration_tool: every
-# connected one except direct-action tools (see ``_is_destructive_mcp``), which
-# chat cannot safely gate, and those sharing a built-in's name — the backend
-# answers those, and an agent's ``wanted`` list decides whether it may.
+# The MCP tools chat may reach through find/call_integration_tool: Vigil's own,
+# and outside tools whose stored class is read or read_unverified. Chat has no
+# approval-resume path, so a parked call would hang rather than gate:
+# reversible, irreversible and unclassified tools go through the approval queue
+# and workflows instead. Those sharing a built-in's name are left out too — the
+# backend answers those, and an agent's ``wanted`` list decides whether it may.
 def integration_tools(
     mcp_tools: Optional[List[Dict[str, Any]]],
 ) -> List[Dict[str, Any]]:
     static = {t["name"] for t in ALL_TOOLS if t.get("name")}
-    return [
-        t
-        for t in mcp_tools or []
-        if t.get("name")
-        and t["name"] not in static
-        and not _is_destructive_mcp(t["name"])
-    ]
+    named = [t for t in mcp_tools or [] if t.get("name") and t["name"] not in static]
+    gated = gated_tools(t["name"] for t in named)
+    return [t for t in named if t["name"] not in gated]
 
 
 def integrations_how(mcp_tools: Optional[List[Dict[str, Any]]]) -> str:

@@ -62,14 +62,22 @@ class DatabaseDataService:
         # module that builds a module-level service opens no connection (#1456).
         # -inf, not 0.0: monotonic() can be under the interval on a fresh boot.
         self._last_reconnect_attempt = float("-inf")
-        self._demo_mode = is_demo_mode()
-        self._demo_service = None
+        # Injected by tests; otherwise the process-wide demo set, built on first use.
+        self._injected_demo = demo_data
 
-        if self._demo_mode:
-            logger.info("Demo mode enabled - using generated sample data")
-            from core.platform.demo_data_service import DemoDataService
+    # Demo mode is resolved per call so POST /api/config/demo-mode takes effect
+    # without a restart (#3249).
+    @property
+    def _demo_mode(self) -> bool:
+        return is_demo_mode()
 
-            self._demo_service = demo_data or DemoDataService()
+    @property
+    def _demo_service(self):
+        if self._injected_demo is not None:
+            return self._injected_demo
+        from core.platform.demo_data_service import get_demo_data_service
+
+        return get_demo_data_service()
 
     def _init_database(self):
         try:

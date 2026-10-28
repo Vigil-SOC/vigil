@@ -52,7 +52,7 @@ describe("wrap", () => {
     const wrapped = wrap("bump", rows({ n: 1 }), scan, 1_000);
     expect(wrapped.text.startsWith('<vigil:tool_result tool="bump">')).toBe(true);
     expect(wrapped.text.endsWith("</vigil:tool_result>")).toBe(true);
-    expect(wrapped.text).toContain('"n": 1');
+    expect(wrapped.text).toContain('"n":1');
     expect(wrapped.instruction_like).toBe(false);
     expect(wrapped.failure).toBeNull();
   });
@@ -73,6 +73,19 @@ describe("wrap", () => {
   // it were the whole answer.
   it("says so when the rows were capped", () => {
     expect(wrap("bump", rows({}, true), scan, 1_000).text).toContain("capped at the row limit");
+  });
+
+  // #3276: the cut is stated where a reader looks first, never inside a value.
+  it("states a cut in the header, with the full size, and stays within the cap", () => {
+    const big = { ok: true as const, rows: [{ records: Array.from({ length: 400 }, (_, i) => ({ i, flow: "x".repeat(60) })) }], rowCount: 1, capped: false, sourceSystem: "vigil" };
+    const wrapped = wrap("get_finding", big, scan, 2_000);
+    const body = wrapped.text.split("\n").slice(1, -1).join("\n");
+    const [head] = body.split("\n");
+    const total = JSON.stringify(big.rows).length.toLocaleString("en-US");
+    expect(head).toMatch(new RegExp(`^1 row\\(s\\) from vigil, cut at [\\d,]+ of ${total} characters: ask for less`));
+    expect(body.length).toBeLessThanOrEqual(2_000);
+    expect(body).not.toContain("[truncated");
+    expect(wrap("get_finding", big, scan, 1_000_000).text).not.toContain("cut at");
   });
 
   it("renders a failure as something the model can reason about", () => {

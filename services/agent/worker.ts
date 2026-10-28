@@ -3,7 +3,7 @@ import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { archFor } from "./plugins/kinds.js";
-import { runAgent, type AgentKinds } from "./core/agent.js";
+import { deniedPark, runAgent, type AgentKinds } from "./core/agent.js";
 import { loadPlugin } from "./plugins/index.js";
 import { toolsFrom } from "./tools/remote.js";
 import { httpAnswers, journalAnswers, noAnswers, type Answers } from "./core/answers.js";
@@ -16,7 +16,7 @@ import { errorFields, logger } from "./core/log.js";
 import { initTracing, shutdownTracing, traced } from "./core/tracing.js";
 import { jobIdFor, RUN_QUEUE, JOB_SCHEMA_VERSION, type RunJob } from "./contracts/job.js";
 import type { AgentEvent, CheckpointPayload, ResolutionPayload, RunPayload } from "./contracts/events.js";
-import type { SpendPayload } from "./contracts/budget.js";
+import { costOf, roundCost } from "./contracts/budget.js";
 import {
   LEASE_TTL_MS,
   PARK_EVERY_MS,
@@ -181,6 +181,14 @@ export async function startedByFor(state: State, job: RunJob): Promise<string> {
   return job.enqueued_by;
 }
 
+// What started the run. A start job says; a resume reads the run event, since
+// whether a person started it decides who is asked before an action (#3306).
+export async function originFor(state: State, job: RunJob): Promise<RunPayload["origin"]> {
+  if (job.reason === "start") return job.origin;
+  const opened = (await state.read(job.run_id)).find((event) => event.kind === "run");
+  return opened === undefined ? undefined : (opened.payload as RunPayload).origin;
+}
+
 // The one place a run kind becomes a loop. A kind with no workflow throws here,
 // before the ledger opens, rather than journalling a run nothing will ever advance.
 async function drive(
@@ -194,7 +202,7 @@ async function drive(
 ): Promise<string | null> {
   const { run_kind: kind, run_id } = job;
   const started_by = await startedByFor(state, job);
-  const origin = job.reason === "start" ? job.origin : undefined;
+  const origin = await originFor(state, job);
   const named = {
     ...(principal === undefined ? {} : { principal }),
     ...(origin === undefined ? {} : { origin }),
@@ -208,8 +216,9 @@ async function drive(
   const seed = seedFrom(await state.read(run_id));
 
   if (kind === "compose") {
-    await runCompose(build(spec, as<ComposeKinds>(state), undefined, seed), { run_id, spec, started_by, ...named, mirror: mirrorFor(), signal });
-    return null;
+    const done = await runCompose(build(spec, as<ComposeKinds>(state), undefined, seed), { run_id, spec, started_by, ...named, mirror: mirrorFor(), signal });
+    // A phase parks itself on its approval. A denial has no phase row to say why.
+    return done.status === "waiting_approval" && done.pending === null ? done.reason : null;
   }
   const entry = archFor(kind);
   // A kind whose plugin the worker drives directly: investigate. The others run their
@@ -428,11 +437,15 @@ async function settle(state: State, leases: Leases, job: RunJob, spec: RunSpec, 
     // hunt as running forever, with no duration and no cost. Off the terminal
     // this already read, so one place reports for every kind there is.
     if (job.run_kind !== "compose") {
+      const spent = await spentOn(state, job.run_id);
       await mirrorFor().terminal(job.run_id, {
         outcome: terminal.outcome,
         reason: terminal.reason,
         summary: terminal.summary ?? "",
-        cost_usd: await spentOn(state, job.run_id),
+        // A sealed hunt report already rounded to the row's four places. Other
+        // kinds keep the raw sum, which the column rounds on its own.
+        cost_usd: terminal.finished_at === undefined ? spent : roundCost(spent),
+        ...(terminal.finished_at === undefined ? {} : { finished_at: terminal.finished_at }),
         handoffs: terminal.handoffs ?? [],
         proposed_actions: terminal.proposed_actions ?? [],
         ...(terminal.severity === undefined ? {} : { severity: terminal.severity }),
@@ -450,14 +463,9 @@ async function settle(state: State, leases: Leases, job: RunJob, spec: RunSpec, 
   await leases.release(job.run_id, owner, Math.min(PARK_EVERY_MS, spec.budgets.max_park_ms));
 }
 
-// What the run cost, summed from the spend events every kind writes. Nothing was
-// summing them, so a finished run showed a dash where its dollars should be.
-// A call nobody could price contributes nothing rather than a fabricated zero.
+// What the run cost, off the spend events every kind writes (costOf).
 export async function spentOn(state: State, runId: string): Promise<number> {
-  const events = (await state.read(runId)) as readonly AgentEvent<Record<never, never>>[];
-  return events
-    .filter((event) => event.kind === "spend")
-    .reduce((total, event) => total + ((event.payload as SpendPayload).cost_usd ?? 0), 0);
+  return costOf((await state.read(runId)) as readonly AgentEvent<Record<never, never>>[]);
 }
 
 // A compose run that dies after its ledger opened, before it journals a terminal,
@@ -537,7 +545,9 @@ function parkedFor(events: readonly AgentEvent<Record<never, never>>[]): number 
   const open = events.filter(
     (one) => one.kind === "checkpoint" && !answered.has((one.payload as CheckpointPayload).checkpoint_id),
   );
-  const raised = open.map((one) => Date.parse(one.ts)).filter((at) => Number.isFinite(at));
+  // A denial parks with no checkpoint, so it counts from the denied call (#3306).
+  const denied = deniedPark(events);
+  const raised = [...open.map((one) => Date.parse(one.ts)), ...(denied === null ? [] : [denied.at])].filter((at) => Number.isFinite(at));
   return raised.length === 0 ? null : Date.now() - Math.min(...raised);
 }
 
@@ -772,16 +782,19 @@ export function workerReady(worker: Worker<RunJob>): () => Promise<boolean> {
 // quietly inert when it is unset: runs still succeed, no phase progress ever reaches
 // the console, and a run that stops for a human parks until it is abandoned because
 // nothing can carry the decision back. Said once at startup, because nothing later
-// in the run says it -- a silently-off mirror looks exactly like a quiet one.
-function warnIfUnmirrored(): void {
+// in the run says it -- a silently-off mirror looks exactly like a quiet one. The
+// start line follows either way, so an alert on the ERROR can clear when a later
+// start says `mirror: "on"`. No URL or hostname in it.
+export function announceStart(): void {
   const url = process.env["VIGIL_RUNS_URL"];
-  if (url !== undefined && url !== "") return;
-  log.error("VIGIL_RUNS_URL is unset: run progress will not be mirrored to the backend and checkpoints cannot be answered");
+  const off = url === undefined || url === "";
+  if (off) log.error("VIGIL_RUNS_URL is unset: run progress will not be mirrored to the backend and checkpoints cannot be answered");
+  log.info("agent worker started", { queue: RUN_QUEUE, concurrency: runConcurrency(), mirror: off ? "off" : "on", health_port: healthPort() });
 }
 
 if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].split("/").pop() ?? "")) {
   initTracing("vigil-agent-worker");
-  warnIfUnmirrored();
+  announceStart();
   const running = startWorker();
   // Probes only. Chat moved to serve.ts when #635 split the two into Deployments
   // that scale on different things -- a queue's depth and an open connection count

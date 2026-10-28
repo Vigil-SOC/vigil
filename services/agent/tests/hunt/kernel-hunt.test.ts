@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { costOf, roundCost } from "../../contracts/budget.js";
 import { archFor } from "../../plugins/kinds.js";
 import type { TerminalHandoff } from "../../contracts/events.js";
 import { InProcessState } from "../../core/state.js";
@@ -56,6 +57,14 @@ describe("a hunt run by one agent", () => {
     const terminal = await state.terminal(RUN);
     expect(terminal?.handoffs).toHaveLength(1);
     expect(terminal?.summary).toContain("#");
+    // Cost and Ended are the run's, including the account written after the hunt stopped.
+    const terminalEvent = events.findLast((event) => event.kind === "terminal");
+    const cost = roundCost(costOf(events, terminalEvent?.seq));
+    expect(terminal?.finished_at).toBeTruthy();
+    expect(terminal?.summary).toContain(`**Ended:** ${terminal?.finished_at}`);
+    expect(terminal?.summary).toContain(`**Cost:** $${cost.toFixed(4)} of`);
+    expect(huntProjection(RUN, events).report_markdown).toContain(`**Ended:** ${terminal?.finished_at}`);
+    expect(huntProjection(RUN, events).report_markdown).toContain(`**Cost:** $${cost.toFixed(4)} of`);
 
     // What episodic memory reads, folded off a kernel ledger exactly as off a controller one.
     const distil = huntDistil(RUN, events);
@@ -128,6 +137,23 @@ describe("a hunt run by one agent", () => {
     const gaps = [...projection.evidence.values()].filter((record) => record.provenance === "tool_failure");
     expect(gaps).toHaveLength(1);
     expect(gaps[0]?.payload).toMatchObject({ tool: "splunk_search", kind: "unavailable" });
+  });
+
+  // #3248: one unreachable source is the whole estate here, so the hunt could not look.
+  it("ends data_starved when its one source could not be reached", async () => {
+    const state = new InProcessState<HuntKinds>();
+    const provider = modelOf([() => ({ tool: "splunk_search", args: { sql: "select 1" } }), () => ({ say: "the SIEM is down" })]);
+    const report = await runHunt(harnessOf(specOf(), provider, state, estate(new Set(["splunk_search"]))), {
+      run_id: RUN,
+      run_kind: "hunt",
+      spec: specOf(),
+      actions: [],
+      queue: new InProcessDirectiveQueue(),
+    });
+
+    expect(report.status).toBe("data_starved");
+    expect((await state.terminal(RUN))?.outcome).toBe("data_starved");
+    expect(fold((await state.read(RUN)) as readonly HuntEvent[]).hunt.outcome).toBe("data_starved");
   });
 
   it("will not prove a hypothesis on one source system, however sure the agent is", async () => {

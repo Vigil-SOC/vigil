@@ -317,6 +317,10 @@ export const casesApi = {
   getEscalations: (id: string) =>
     api.get<Schema<'CaseEscalationsResponse'>>(`/cases/${id}/escalations`),
 
+  /** Links to other Cases, each with that Case's title and status. */
+  getRelationships: (id: string) =>
+    api.get<Schema<'CaseRelationshipsResponse'>>(`/cases/${id}/relationships`),
+
   // The merged record. There is no audit-log route; this read replaced it.
   getRecord: (id: string) =>
     api.get<CaseRecordResponse>(`/cases/${id}/record`),
@@ -516,12 +520,11 @@ export interface AgentSummary {
   decision_id?: string
 }
 
-/** Reads the shell folds itself. Health is public; processes needs a sign-in; routability is admin-only. */
+/** Reads the shell folds itself. Health is public; processes and the provider map need a sign-in. */
 export const consoleApi = {
   getHealth: () => api.get('/health'),
   getProcesses: () => api.get<Schema<'ProcessStates'>>('/processes'),
-  getRoutability: () =>
-    api.get<{ providers: Record<string, boolean> }>('/bifrost/routability'),
+  getRoutability: () => api.get<Schema<'LlmPathHealth'>>('/llm/health'),
 }
 
 export interface IntegrationTestResult {
@@ -572,11 +575,6 @@ export const configApi = {
   getTheme: () => api.get('/config/theme'),
   setTheme: (theme: string) => api.post('/config/theme', { theme }),
 
-  getAutonomy: () =>
-    api.get<{ auto_response_enabled: boolean; force_manual_approval: boolean }>(
-      '/config/autonomy',
-    ),
-  
   getPostgreSQL: () => api.get('/config/postgresql'),
   setPostgreSQL: (connection_string: string) => api.post('/config/postgresql', { connection_string }),
 
@@ -628,10 +626,6 @@ export const configApi = {
     for (const key of ['profiles', 'defaults', 'bounds']) delete rest[key]
     return api.post('/config/orchestrator', rest)
   },
-
-  getForceManualApproval: () => api.get('/config/force-manual-approval'),
-  setForceManualApproval: (enabled: boolean) =>
-    api.post('/config/force-manual-approval', { enabled }),
 }
 
 export interface PlatformDatabaseProxyConfig {
@@ -1078,6 +1072,15 @@ export type AuditFilter = Omit<
   'after'
 >
 
+/** A principal an entry names, read from principals when the entry is read (#3308). */
+export interface AuditPrincipal {
+  id: string
+  label: string | null
+  kind: string | null
+  deleted: boolean
+  erased: boolean
+}
+
 export interface AuditEntry {
   seq: number
   occurred_at: string
@@ -1089,6 +1092,10 @@ export interface AuditEntry {
   operator_text: string | null
   attempted_name: string | null
   personal: unknown
+  actor?: AuditPrincipal | null
+  on_behalf_of?: AuditPrincipal | null
+  /** What the entry was, in words, from the server. */
+  sentence?: string
 }
 
 export interface AuditTip { seq: number; hash: string }
@@ -1112,6 +1119,21 @@ export interface AuditVerify {
   first_bad: number | null
   reason: string
   ok: boolean
+}
+
+export interface AuditErasure {
+  principal_id: string
+  on: string
+  unconfirmed: boolean
+}
+
+export interface AuditRetention {
+  effective_days: number | null
+  pending_days: number | null
+  pending_on: string | null
+  unconfirmed: boolean
+  erasure_unconfirmed: boolean
+  erasures: AuditErasure[]
 }
 
 export const AUDIT_PAGE = 100
@@ -1152,6 +1174,10 @@ export const auditApi = {
   },
   verify: (first?: number, last?: number) =>
     api.get<AuditVerify>('/audit/verify', { params: { first, last } }),
+  retention: () => api.get<AuditRetention>('/audit/retention'),
+  saveRetention: (days: number) => api.put<AuditRetention>('/audit/retention', { days }),
+  erasePrincipal: (principal_id: string, reason: string) =>
+    api.post<AuditRetention>('/audit/erasure', { principal_id, reason }),
 }
 
 export interface FederationSourceView {
@@ -1368,6 +1394,8 @@ export interface OverviewPayload {
   agents: OverviewAgent[]
   feed: OverviewFeedItem[]
   feed_limit: number
+  // Set when the role lacks a read: that part is empty and this names it.
+  missing?: string[]
 }
 
 export const overviewApi = {
@@ -1390,6 +1418,7 @@ export interface TriageRow {
   pickup_seconds: number | null
   workflow_id: string
   case_door: string | null
+  merge_note: string | null
   document: string | null
   source_link: string | null
   source_evidence: Record<string, unknown> | null

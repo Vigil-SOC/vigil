@@ -27,6 +27,7 @@ This choice matters most, because the engine treats the two differently (semanti
 - **Medic couldn't make the read: that's an error.** Return `Reading(signal, service, error=ReadError(cls, ...))` with no values. Classes: `timeout`, `refused`, `dns`, `tls`, `http_status`, `auth`, `parse`, `too_large`, `not_installed`, `other`. Three error cycles in a row read `blind`, and then the scheduler backs off (×2 up to 4 × interval, ≤ 5 min).
 - **401/403 from Vigil = `ReadError("auth", http_status=…)`.** K1 T-09: while Redis is down, *every* authenticated read is 401. Record it; a rule decides it's a Redis fault (D3). Don't guess in the sensor.
 - `ReadError.detail` is untrusted text: keep it short (≤ 500 chars after redaction). Never put a response body, a traceback or a Docker `inspect` body in it.
+- **A service that is optional and absent: `ReadError("not_installed")`.** A cycle in which every read is `not_installed` is not a failure: it never counts toward `blind` and the sensor stays `ok`, with `last_error.class: not_installed` saying why. Mixed with other errors it counts as any error does.
 
 ## 3. Self-health: what the framework does for you
 

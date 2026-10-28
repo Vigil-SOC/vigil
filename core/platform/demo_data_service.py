@@ -298,3 +298,8 @@ class DemoDataService:
         DemoDataService._initialized = False
         self._generate_demo_data()
         DemoDataService._initialized = True
+
+
+def get_demo_data_service() -> DemoDataService:
+    """The process-wide demo set; generated on first call."""
+    return DemoDataService()

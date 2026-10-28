@@ -1008,6 +1008,7 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
  *  completed and failed already say what they are. */
 const OUTCOME_BADGE: Record<string, string> = {
   budget_exhausted: 'stopped at budget',
+  data_starved: 'could not look',
   abandoned: 'abandoned',
   aborted: 'aborted',
 }
@@ -3944,7 +3945,7 @@ function SkillUsage({ skill, align }: { skill: Skill; align: 'start' | 'end' }) 
 function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: Feed<Workflow>; agents: ReturnType<typeof useAgents> }) {
   const { rows, phase, error, reload } = feed
   // Saving, importing and deleting answer 403 without it.
-  const canWrite = useAuth().hasPermission('settings.write')
+  const canWrite = useAuth().hasPermission('automation.write')
   const [editName, setEditName] = useState<string | null>(null)
   const [building, setBuilding] = useState(false)
   const [deleteSkill, setDeleteSkill] = useState<Skill | null>(null)

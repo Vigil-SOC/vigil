@@ -23,12 +23,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from core.auth.permissions import permission_gate
-from core.llm.cost.budget import get_settings, read_vk, set_settings
+from core.llm.bifrost import path_health
+from core.llm.cost.budget import get_settings, set_settings
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
 from services.api.middleware.auth import get_current_active_user
 
 router = APIRouter()
+router.dependencies.append(permission_gate("platform.read"))
 
 ROUTER_META = RouterMeta(
     # Bare /api, deliberately the same prefix as analytics, so
@@ -63,7 +65,7 @@ async def get_budget_settings() -> Dict[str, Any]:
 @router.put(
     "/analytics/budget",
     response_model=BudgetSettingsResponse,
-    dependencies=[permission_gate("settings.write")],
+    dependencies=[permission_gate("platform.write")],
 )
 async def put_budget_settings(
     payload: BudgetSettingsUpdate,
@@ -89,10 +91,11 @@ async def put_budget_settings(
 
 @router.get("/analytics/budget/quota")
 async def get_budget_quota() -> Dict[str, Any]:
-    """Live spend/quota for the configured VK, proxied from Bifrost."""
-    from core.llm.bifrost.costs import get_vk_quota
-
-    vk = read_vk()
+    """Live spend/quota for the configured VK, from the shared Bifrost snapshot."""
+    snap = await path_health.read()
+    if snap["quota_error"] is not None:
+        raise snap["quota_error"]
+    vk = snap["vk"]
     if not vk:
         return {
             "configured": False,
@@ -102,7 +105,7 @@ async def get_budget_quota() -> Dict[str, Any]:
             ),
         }
 
-    quota = get_vk_quota(vk)
+    quota = snap["quota"]
     if quota is None:
         # Soft failure — Bifrost unreachable or VK invalid. The settings
         # endpoint is still useful (lets the operator fix the config),

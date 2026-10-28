@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -15,7 +16,7 @@ from core.agents.internal_auth import authorise
 from core.cases.agent_closure import activity_actor
 from core.deps import provide_approvals, provide_mcp_registry, provide_workflow_runs
 from core.integrations.mcp.registry import MCPRegistry
-from core.response.approval_service import ApprovalService
+from core.response.approval_service import ApprovalService, proposal_case_ids
 from core.response.checkpoints import (
     proposer_principal_id,
     raise_for_checkpoint,
@@ -50,10 +51,13 @@ RUN_STATUS = {WAITING: "paused", "running": "running", "completed": "running"}
 # A run nobody stopped and nothing broke. Aborted and abandoned both read as
 # crashes under "failed", and only one of the three is worth paging over.
 # budget_exhausted is the same mistake one step along: a hunt that stopped at the
-# ceiling its operator set did what it was told.
+# ceiling its operator set did what it was told. data_starved (#3248) answered but
+# could not look: completed, with outcome saying so, and the outcome == "completed"
+# gates below keep it from proposing, raising priority or closing the case.
 TERMINAL_STATUS = {
     "completed": "completed",
     "budget_exhausted": "completed",
+    "data_starved": "completed",
     "aborted": "cancelled",
     "abandoned": "cancelled",
 }
@@ -97,6 +101,9 @@ class TerminalUpdate(BaseModel):
     # The run's verdict as its guard left it. Loose like severity: only benign and
     # false_positive act, and anything else leaves the case as it is.
     disposition: Optional[str] = None
+    # When the agent sealed the report. The row's finished_at, so Ended and the
+    # history agree. Absent, or unreadable, and the row is stamped on arrival.
+    finished_at: Optional[str] = None
 
 
 class CitedFindings(BaseModel):
@@ -205,6 +212,20 @@ def record_progress(
     )
 
 
+def _parse_finished_at(value: Optional[str]) -> Optional[datetime]:
+    """The instant the agent sealed, as a naive UTC datetime. None when absent or unreadable."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        logger.warning("ignoring an unreadable finished_at %r", value)
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
 @router.post("/{run_id}/terminal", status_code=204)
 def record_terminal(
     run_id: str,
@@ -234,6 +255,7 @@ def record_terminal(
         cost_usd=update.cost_usd,
         outcome=update.outcome,
         reason=update.reason or None,
+        finished_at=_parse_finished_at(update.finished_at),
     )
 
     # The case the run was started from, so its report reaches the case rather than
@@ -503,8 +525,10 @@ def _proposal(raw: Any) -> Optional[Dict[str, Any]]:
 # Each proposal becomes a pending approval on the case. Not linked to the run by
 # workflow_run_id: the run is over, so approving one has no run to resume, and a
 # re-sent terminal would withdraw it as a question the run left unanswered. The
-# case id in parameters is what puts it on the case's decisions. Keyed per run,
-# action and target, so a terminal that arrives twice files each one once.
+# case ids in parameters are what put it on each case's decisions. Keyed per run,
+# action and target, so a terminal that arrives twice files each one once; and
+# asked once across cases, so a second case's run joins a pending ask, or is told
+# it was already decided, instead of asking again.
 def _propose_actions(
     case_id: str,
     run_id: str,
@@ -527,10 +551,20 @@ def _propose_actions(
             )
             continue
         action_type, target = proposal["action_type"], proposal["target"]
+        title = f"{PROPOSAL_TITLES[action_type]} {target}"
+        key = f"run-proposal:{run_id}:{action_type}:{target}"
         try:
+            match = service.run_proposal_match(key, action_type, target)
+            if match and match.idempotency_key == key and match.status != "failed":
+                filed.append(match.action_id)  # a re-sent terminal
+                continue
+            if match is not None and _already_asked(
+                service, match, case_id, run_id, title
+            ):
+                continue
             action = service.create_action(
                 action_type=ActionType(action_type),
-                title=f"{PROPOSAL_TITLES[action_type]} {target}",
+                title=title,
                 description=proposal["reason"],
                 target=target,
                 confidence=proposal["confidence"],
@@ -538,8 +572,8 @@ def _propose_actions(
                 evidence=[run_id],
                 created_by="agent",
                 created_by_principal_id=proposer,
-                parameters={"case_id": case_id, "run_id": run_id},
-                idempotency_key=f"run-proposal:{run_id}:{action_type}:{target}",
+                parameters={"case_ids": [case_id], "run_id": run_id},
+                idempotency_key=key,
                 # The confidence is the model's own claim, so it never releases
                 # the action: a person decides each one.
                 human_only=True,
@@ -553,6 +587,53 @@ def _propose_actions(
 
     if filed:
         _record_proposals(case_id, run_id, filed)
+
+
+# True when another run's proposal already covers this one: a pending ask now
+# lists this case too, and an approved or executed one is noted here. A rejected
+# or failed one is not an answer to this run's evidence, so it is asked again.
+def _already_asked(
+    service: ApprovalService, match: Any, case_id: str, run_id: str, title: str
+) -> bool:
+    if match.status == "pending":
+        joined = service.add_proposal_case(match.action_id, case_id)
+        if joined is None:  # decided in between: look again
+            match = service.get_action(match.action_id) or match
+        else:
+            first = proposal_case_ids(joined.parameters)[0]
+            _note_shared(
+                case_id,
+                f"{title} already requested on {first}",
+                {"action_id": match.action_id, "run_id": run_id, "case_id": first},
+            )
+            return True
+    if match.status in ("approved", "executed"):
+        when = (match.executed_at or match.approved_at or "")[:10]
+        _note_shared(
+            case_id,
+            f"{title} already {match.status}" + (f" on {when}" if when else ""),
+            {"action_id": match.action_id, "run_id": run_id, "status": match.status},
+        )
+        return True
+    return False
+
+
+# Once per run and action: a re-sent terminal finds the same ask and says nothing new.
+def _note_shared(case_id: str, description: str, details: Dict[str, Any]) -> None:
+    from core.storage.database_data_service import DatabaseDataService
+
+    try:
+        case = DatabaseDataService().get_case(case_id) or {}
+        if any(
+            a.get("activity_type") == "action_already_requested"
+            and (a.get("details") or {}).get("run_id") == details["run_id"]
+            and (a.get("details") or {}).get("action_id") == details["action_id"]
+            for a in case.get("activities") or []
+        ):
+            return
+        _add_activity(case_id, "action_already_requested", description, details)
+    except Exception:  # noqa: BLE001 — the ask stands either way
+        logger.exception("could not note %r on case %s", description, case_id)
 
 
 # Once per run: a re-sent terminal finds the same approvals, and the case already

@@ -27,7 +27,7 @@ from typing import Iterator, Optional
 
 from sqlalchemy import text
 
-from core.audit import trail
+from core.audit import retention, trail
 from core.config import get_settings
 from core.secrets_manager import delete_secret, get_secret, set_secret
 from core.storage.config_service import get_config_service
@@ -442,16 +442,26 @@ def _fail(session, state: State, error: str) -> None:
     session.execute(_MARK_FAIL, {"error": error})
 
 
-def maintenance_and_send(clock: SendClock) -> None:
-    """One leader tick. Sending is its own transaction, after the socket write."""
+def maintenance_and_send(clock: SendClock, *, now: Optional[datetime] = None) -> None:
+    """One leader tick. Sending is its own transaction, after the socket write.
+
+    ``now`` is the wall clock for retention and erasure. The send clock stays
+    monotonic. Once a period is in force this tick prefix-deletes; an
+    ``audit.manage`` erasure whose seven days have elapsed is blanked here too.
+    """
+    wall = now or datetime.now(timezone.utc)
     with _tx() as session:
         if not trail.trail_ready(session) or not _table(session):
             return
         state = _load(session)
         if state is None:
             return
+        # Retention row, then any accounts a due erasure will touch, before
+        # the trail lock. The other order deadlocks with a save or a deletion.
+        retention.lock_due_accounts(session, wall)
         trail.drain_late(session)
         trail.close_windows(session)
+        retention.apply_due(session, wall)
         _checkpoint(session, state)
         state.history_offset = _import_history(session, state.history_offset)
         session.execute(
@@ -503,8 +513,10 @@ def _send(clock: SendClock) -> None:
                 {trail.ACTION: ACTION_RECOVERED, trail.ACTOR: trail.SYSTEM},
                 gated=False,
             )
-        session.execute(_MARK_OK, {"seq": rows[-1]["seq"]})
-        trail.confirm(session, through=rows[-1]["seq"])
+        delivered = rows[-1]["seq"]
+        session.execute(_MARK_OK, {"seq": delivered})
+        retention.cover_through(session, delivered)
+        trail.confirm(session, through=delivered)
     clock.ok()
 
 

@@ -14,9 +14,10 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def client():
+def client(authenticate_app):
     app = FastAPI()
     app.include_router(mcp_api.router, prefix="/api/mcp")
+    authenticate_app(app)
     return TestClient(app)
 
 

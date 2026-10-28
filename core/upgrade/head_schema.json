@@ -414,6 +414,11 @@
   "nullable": true,
   "type": "timestamp with time zone"
  },
+ "column audit_feed_state.pending_announcements": {
+  "default": "'{}'::bigint[]",
+  "nullable": false,
+  "type": "bigint[]"
+ },
  "column audit_feed_state.unconfirmed_seq": {
   "default": null,
   "nullable": true,
@@ -3424,6 +3429,26 @@
   "nullable": true,
   "type": "timestamp without time zone"
  },
+ "column tool_effect_classes.classified_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
+ "column tool_effect_classes.classified_by": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column tool_effect_classes.effect_class": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(20)"
+ },
+ "column tool_effect_classes.tool_name": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
  "column user_preferences.created_at": {
   "default": "now()",
   "nullable": false,
@@ -3877,6 +3902,8 @@
  "constraint system_config.system_config_pkey": "PRIMARY KEY (key)",
  "constraint threat_indicators.threat_indicators_pkey": "PRIMARY KEY (id)",
  "constraint threat_indicators.threat_indicators_unique": "UNIQUE (source, indicator_type, indicator_value)",
+ "constraint tool_effect_classes.tool_effect_classes_effect_class_check": "CHECK (((effect_class)::text = ANY ((ARRAY['read'::character varying, 'read_unverified'::character varying, 'reversible'::character varying, 'irreversible'::character varying])::text[])))",
+ "constraint tool_effect_classes.tool_effect_classes_pkey": "PRIMARY KEY (tool_name)",
  "constraint user_preferences.user_preferences_pkey": "PRIMARY KEY (user_id)",
  "constraint users.users_email_key": "UNIQUE (email)",
  "constraint users.users_pkey": "PRIMARY KEY (user_id)",
@@ -4225,6 +4252,7 @@
  "index system_config_pkey": "CREATE UNIQUE INDEX system_config_pkey ON public.system_config USING btree (key)",
  "index threat_indicators_pkey": "CREATE UNIQUE INDEX threat_indicators_pkey ON public.threat_indicators USING btree (id)",
  "index threat_indicators_unique": "CREATE UNIQUE INDEX threat_indicators_unique ON public.threat_indicators USING btree (source, indicator_type, indicator_value)",
+ "index tool_effect_classes_pkey": "CREATE UNIQUE INDEX tool_effect_classes_pkey ON public.tool_effect_classes USING btree (tool_name)",
  "index uniq_findings_source_extid": "CREATE UNIQUE INDEX uniq_findings_source_extid ON public.findings USING btree (data_source, external_id) WHERE ((data_source IS NOT NULL) AND (external_id IS NOT NULL))",
  "index uniq_ip_exclusions_active_ip": "CREATE UNIQUE INDEX uniq_ip_exclusions_active_ip ON public.ip_exclusions USING btree (ip) WHERE (removed_at IS NULL)",
  "index uq_approval_actions_idempotency_key": "CREATE UNIQUE INDEX uq_approval_actions_idempotency_key ON public.approval_actions USING btree (idempotency_key) WHERE ((idempotency_key IS NOT NULL) AND ((status)::text <> 'failed'::text))",
@@ -6001,6 +6029,28 @@
    false
   ],
   "sequence": "[\"bigint\", 1, 1, 1, 9223372036854775807, 1, false]"
+ },
+ "relation tool_effect_classes": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
  },
  "relation user_preferences": {
   "acl": [

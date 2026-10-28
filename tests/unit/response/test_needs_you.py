@@ -8,7 +8,11 @@ from fastapi.testclient import TestClient
 
 from core.api.v1.approvals_router import router as approvals_router
 from core.findings.alert_outcomes import finding_states
-from core.response.approval_service import _row_to_pending
+from core.response.approval_service import (
+    ApprovalService,
+    _row_to_pending,
+    needs_you_case_ids,
+)
 from core.storage.models import (
     ApprovalAction,
     Case,
@@ -26,9 +30,10 @@ OLDER = datetime(2099, 1, 1, 8, 0, 0)
 
 
 @pytest.fixture
-def client():
+def client(authenticate_app):
     app = FastAPI()
     app.include_router(approvals_router, prefix="/api")
+    authenticate_app(app)
     return TestClient(app)
 
 
@@ -38,7 +43,7 @@ def _approval(action_id: str, created_at: datetime, **kw) -> ApprovalAction:
         action_type="block_ip",
         title=kw.pop("title", action_id),
         description="hold",
-        target="host",
+        target=kw.pop("target", "host"),
         confidence=0.4,
         reason=kw.pop("reason", "because"),
         evidence=[],
@@ -360,3 +365,153 @@ def test_a_hypothesis_approval_carries_what_is_being_approved(client, hunts):
         ("FIN-WS-114 beacons", "operator"),
         ("it is backup traffic", "base_rate"),
     ]
+
+
+@pytest.fixture
+def evidence(throwaway_database):
+    """An isolation whose only link to a case is the alert ids in its evidence."""
+    older, newer = OLDER, OLDER + timedelta(days=1)
+    with unit_of_work() as session:
+        session.add_all(
+            [
+                Case(case_id="nyev-old", title="old", status="open", updated_at=older),
+                Case(case_id="nyev-new", title="new", status="open", updated_at=newer),
+                Case(case_id="nyev-inv", title="inv", status="open", updated_at=older),
+                Finding(finding_id="nyev-a", data_source="ny-src"),
+                Finding(finding_id="nyev-lone", data_source="ny-src"),
+            ]
+        )
+        session.flush()
+        session.execute(
+            case_findings.insert(),
+            [
+                {"case_id": "nyev-old", "finding_id": "nyev-a"},
+                {"case_id": "nyev-new", "finding_id": "nyev-a"},
+            ],
+        )
+        session.add(
+            Investigation(
+                investigation_id="nyev-empty-inv",
+                case_id=None,
+                workflow_id="ny-wf",
+                trigger_type="manual",
+                trigger_ids=[],
+                workdir="/tmp/nyev",
+            )
+        )
+        session.flush()
+        for action_id, ids, params in [
+            ("nyev-case", ["not an alert", "nyev-a"], {}),
+            ("nyev-lone", ["nyev-lone"], {}),
+            ("nyev-text", ["free text from an agent"], {}),
+            ("nyev-inv", ["nyev-a"], {"investigation_id": "nyev-empty-inv"}),
+            ("nyev-direct", ["nyev-a"], {"case_id": "nyev-inv"}),
+        ]:
+            row = _approval(action_id, OLDER, parameters=params)
+            row.evidence = ids
+            session.add(row)
+    yield
+    with unit_of_work() as session:
+        session.query(ApprovalAction).filter(
+            ApprovalAction.action_id.like("nyev-%")
+        ).delete(synchronize_session=False)
+        session.query(Investigation).filter(
+            Investigation.investigation_id == "nyev-empty-inv"
+        ).delete(synchronize_session=False)
+        session.execute(
+            case_findings.delete().where(case_findings.c.finding_id.like("nyev-%"))
+        )
+        session.query(Finding).filter(Finding.finding_id.like("nyev-%")).delete(
+            synchronize_session=False
+        )
+        session.query(Case).filter(Case.case_id.like("nyev-%")).delete(
+            synchronize_session=False
+        )
+
+
+def test_an_isolation_finds_its_case_and_alert_through_its_evidence(client, evidence):
+    got = {
+        item["source_id"]: item
+        for item in client.get("/api/approvals/needs-you").json()["items"]
+        if item["source_id"].startswith("nyev-")
+    }
+    # The newest case wins; free text before the alert id is skipped.
+    assert (got["nyev-case"]["case_id"], got["nyev-case"]["finding_id"]) == (
+        "nyev-new",
+        "nyev-a",
+    )
+    # An alert in no case still opens as an alert.
+    assert (got["nyev-lone"]["case_id"], got["nyev-lone"]["finding_id"]) == (
+        None,
+        "nyev-lone",
+    )
+    assert (got["nyev-text"]["case_id"], got["nyev-text"]["finding_id"]) == (None, None)
+    # An investigation with no case falls through to the evidence.
+    assert got["nyev-inv"]["case_id"] == "nyev-new"
+    # Evidence never overrides an earlier source.
+    assert got["nyev-direct"]["case_id"] == "nyev-inv"
+
+
+def test_the_case_filter_and_outcomes_see_the_evidence_case(client, evidence):
+    body = client.get("/api/approvals/needs-you", params={"case_id": "nyev-new"}).json()
+    assert {item["source_id"] for item in body["items"]} == {"nyev-case", "nyev-inv"}
+    assert finding_states(["nyev-a", "nyev-lone"])["nyev-a"] == (
+        "needs_you",
+        "nyev-new",
+    )
+
+
+# Two cases' runs proposed the same block: one ask, on both cases, counted once.
+@pytest.fixture
+def shared(throwaway_database):
+    with unit_of_work() as session:
+        session.add_all(
+            [
+                _approval(
+                    "ny-shared",
+                    OLDER,
+                    target="27.102.116.43",
+                    idempotency_key="run-proposal:ny-r1:block_ip:27.102.116.43",
+                    parameters={"case_id": "ny-c1", "run_id": "ny-r1"},
+                ),
+                _approval(
+                    "ny-shared-old",
+                    OLDER - timedelta(days=1),
+                    target="27.102.116.43",
+                    status="rejected",
+                    idempotency_key="run-proposal:ny-r0:block_ip:27.102.116.43",
+                    parameters={"case_ids": ["ny-c0"], "run_id": "ny-r0"},
+                ),
+            ]
+        )
+    yield
+    with unit_of_work() as session:
+        session.query(ApprovalAction).filter(
+            ApprovalAction.action_id.like("ny-shared%")
+        ).delete(synchronize_session=False)
+
+
+def test_a_proposal_two_cases_made_is_one_item_on_both(client, shared):
+    service = ApprovalService()
+    match = service.run_proposal_match(
+        "run-proposal:ny-r2:block_ip:27.102.116.43", "block_ip", " 27.102.116.43 "
+    )
+    # The newest of that action on that target, not the older refusal.
+    assert match.action_id == "ny-shared"
+    # A row filed with one case_id takes a second case, and a repeat is a no-op.
+    service.add_proposal_case("ny-shared", "ny-c2")
+    joined = service.add_proposal_case("ny-shared", "ny-c2")
+    assert joined.parameters["case_ids"] == ["ny-c1", "ny-c2"]
+
+    mine = _mine(client.get("/api/approvals/needs-you").json())
+    assert [(i["source_id"], i["case_id"], i["case_ids"]) for i in mine] == [
+        ("ny-shared", "ny-c1", ["ny-c1", "ny-c2"])
+    ]
+    for case_id in ("ny-c1", "ny-c2"):
+        body = client.get("/api/approvals/needs-you", params={"case_id": case_id})
+        assert [i["source_id"] for i in _mine(body.json())] == ["ny-shared"]
+    assert {"ny-c1", "ny-c2"} <= needs_you_case_ids()
+
+    # A decided ask takes no more cases.
+    service.reject_action("ny-shared", reason="no", rejected_by="pytest")
+    assert service.add_proposal_case("ny-shared", "ny-c3") is None

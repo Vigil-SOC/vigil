@@ -9,8 +9,8 @@ re-exported here for existing importers.
 
 from fastapi import Depends, HTTPException, status
 
-from core.auth.auth_service import AuthService
 from core.auth.current_user import get_current_user  # noqa: F401  (re-export)
+from core.auth.permissions import deny_unless
 from core.storage.models import User
 
 
@@ -39,11 +39,7 @@ def _require_permission(current_user: User, permission: str) -> None:
     A plain call, not a decorator: the callers are sync route handlers, so a
     decorator that awaits the endpoint would not work for them.
     """
-    if not AuthService.check_permission(current_user.user_id, permission):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Permission denied: {permission} required",
-        )
+    deny_unless(current_user.user_id, permission)
 
 
 def require_settings_admin(current_user: User) -> None:

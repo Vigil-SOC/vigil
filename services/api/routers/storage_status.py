@@ -9,16 +9,18 @@ import threading
 
 from fastapi import APIRouter, Depends
 
+from core.auth.permissions import deny_unless, permission_gate
 from core.backup.status import read_last_success_at
 from core.routing import Auth, RouterMeta
 from core.storage.connection import get_db_manager
 from core.storage.models import User
 from services.api.errors import INTERNAL_ERROR_DETAIL
-from services.api.middleware.auth import get_current_active_user, require_settings_admin
+from services.api.middleware.auth import get_current_active_user
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+router.dependencies.append(permission_gate("platform.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/storage",
@@ -189,7 +191,7 @@ def reconnect_database(current_user: User = Depends(get_current_active_user)):
     blocks on I/O, so FastAPI runs it in a threadpool instead of stalling the
     event loop.
     """
-    require_settings_admin(current_user)
+    deny_unless(current_user.user_id, "platform.write")
 
     with _RETARGET_LOCK:
         db_manager = get_db_manager()

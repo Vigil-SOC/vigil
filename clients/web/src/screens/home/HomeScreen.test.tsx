@@ -69,7 +69,7 @@ const doneSteps = [
 ]
 
 beforeEach(() => {
-  sessionStorage.clear()
+  localStorage.clear()
   vi.mocked(configApi.getSetupSteps).mockResolvedValue({
     data: { steps: doneSteps, alerts_exist: 3, demo_enabled: false },
   } as never)
@@ -81,7 +81,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   vi.clearAllMocks()
-  sessionStorage.clear()
+  localStorage.clear()
 })
 
 describe('Home command chips', () => {
@@ -154,6 +154,26 @@ describe('Home', () => {
     expect(screen.queryByText(/picked up automatically today/)).not.toBeInTheDocument()
   })
 
+  it('lists a demo case as something to open, not an approval', async () => {
+    mockQueue([
+      item({
+        kind: 'open_case',
+        source_id: 'case-demo',
+        title: 'Investigation: Beaconing',
+        reason: 'Demo case with 3 correlated findings',
+        case_id: 'case-demo',
+        run_id: null,
+      }),
+    ])
+    renderHome()
+    const card = (await screen.findByRole('heading', { name: 'Investigation: Beaconing' })).closest('article') as HTMLElement
+    expect(within(card).getByText('Case')).toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument()
+    expect(within(card).getByRole('link', { name: 'Open case' })).toHaveAttribute('href', '/cases?case=case-demo')
+    expect(screen.getByText('1 open · oldest first')).toBeInTheDocument()
+  })
+
   it('lists a hunt stopped at a limit as waiting, answered on its case rather than approved here', async () => {
     mockQueue([item({ kind: 'parked', source_id: 'run-9', run_id: 'run-9', title: 'Keep the hunt going?', reason: 'Ran out of turns: iteration 48 of 48', created_at: '' })])
     renderHome()
@@ -209,7 +229,7 @@ describe('Home', () => {
     expect(screen.queryByText(/Nothing waits on you\./)).not.toBeInTheDocument()
   })
 
-  it('hides a step for this tab when alerts exist, and keeps Get more from Vigil', async () => {
+  it('hides a step for this browser when alerts exist, and keeps Get more from Vigil', async () => {
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
     vi.mocked(configApi.getSetupSteps).mockResolvedValue({
       data: {
@@ -238,8 +258,23 @@ describe('Home', () => {
     }
     expect(changed).toHaveBeenCalledOnce()
     expect(screen.queryByRole('heading', { name: 'Connect more tools' })).not.toBeInTheDocument()
-    expect(JSON.parse(sessionStorage.getItem('vigil.home.setup.hidden') || '[]')).toEqual(['connect_tools'])
+    expect(JSON.parse(localStorage.getItem('vigil.home.setup.hidden') || '[]')).toEqual(['connect_tools'])
     expect(screen.getByRole('link', { name: 'Browse integrations →' })).toBeInTheDocument()
+  })
+
+  it('Hide setup on the first-run checklist hides every step but keeps the checklist, and Show hidden steps undoes it', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+      data: { steps: [{ ...doneSteps[0], done: false }, doneSteps[1]], alerts_exist: 0, demo_enabled: false },
+    } as never)
+    renderHome()
+    const ready = (await screen.findByRole('heading', { name: 'Get Vigil ready' })).closest('.home-ready') as HTMLElement
+    fireEvent.click(within(ready).getByRole('button', { name: 'Hide setup' }))
+    expect(JSON.parse(localStorage.getItem('vigil.home.setup.hidden') || '[]')).toEqual(['connect_tools', 'notify'])
+    expect(within(ready).getByRole('heading', { name: 'Connect more tools' })).toBeInTheDocument()
+    fireEvent.click(within(ready).getByRole('button', { name: 'Show hidden steps' }))
+    expect(localStorage.getItem('vigil.home.setup.hidden')).toBeNull()
+    expect(within(ready).getByRole('button', { name: 'Hide setup' })).toBeInTheDocument()
   })
 
   it('?section=setup scrolls to Get more from Vigil once the steps load, or to Get Vigil ready on first run', async () => {
@@ -364,6 +399,24 @@ describe('Home', () => {
     expect(within(second).getByText('Checkpoint')).toBeInTheDocument()
     expect(second.querySelector('.home-card-meta')).toBeNull()
     expect(within(second).queryByRole('link', { name: 'Open case' })).not.toBeInTheDocument()
+  })
+
+  it('offers Open alert when the approval has no case yet, and Open case once it does', async () => {
+    mockQueue([
+      item({ source_id: 'a', title: 'Isolate host a', case_id: null, finding_id: 'f-1 x' }),
+      item({ source_id: 'b', title: 'Isolate host b', case_id: 'case-2', finding_id: 'f-2' }),
+      item({ source_id: 'c', title: 'Isolate host c', case_id: null, finding_id: null }),
+    ])
+    renderHome()
+    const card = async (name: string) => (await screen.findByRole('heading', { name })).closest('article') as HTMLElement
+    const a = await card('Isolate host a')
+    expect(within(a).getByRole('link', { name: 'Open alert' })).toHaveAttribute('href', '/overview?alert=f-1%20x')
+    expect(within(a).queryByRole('link', { name: 'Open case' })).not.toBeInTheDocument()
+    const b = await card('Isolate host b')
+    expect(within(b).getByRole('link', { name: 'Open case' })).toBeInTheDocument()
+    expect(within(b).queryByRole('link', { name: 'Open alert' })).not.toBeInTheDocument()
+    const c = await card('Isolate host c')
+    expect(within(c).queryByRole('link')).not.toBeInTheDocument()
   })
 
   it('names the explanation a hypothesis approval starts testing, shortened, with the full text on hover (#2456)', async () => {
@@ -576,14 +629,14 @@ describe('Home', () => {
       data: { steps: doneSteps, alerts_exist: 0, demo_enabled: false },
     } as never)
     vi.mocked(configApi.setDemoMode).mockResolvedValue({
-      data: { message: 'Demo mode enabled. Restart the server for changes to take effect.' },
+      data: { message: 'Demo mode enabled.' },
     } as never)
     renderHome()
 
     fireEvent.click(await screen.findByRole('button', { name: 'Explore with demo data' }))
     expect(configApi.setDemoMode).toHaveBeenCalledWith(true)
     expect(
-      await screen.findByText('Demo mode enabled. Restart the server for changes to take effect.'),
+      await screen.findByText('Demo mode enabled.'),
     ).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Explore with demo data' })).not.toBeInTheDocument()
   })

@@ -19,7 +19,7 @@ from core.agents.agent_ai_generator import AgentAIGenerator
 from core.detections.detection_rules_service import DetectionRulesService
 from core.integrations.integration_bridge_service import IntegrationBridgeService
 from core.integrations.mcp.registry import MCPRegistry
-from core.platform.demo_data_service import DemoDataService
+from core.platform.demo_data_service import DemoDataService, get_demo_data_service
 from core.platform.process_health import ProcessHealth
 from core.response.approval_service import ApprovalService
 from core.workflows.custom_workflow_service import CustomWorkflowService
@@ -78,11 +78,11 @@ def provide_mcp_client(request: Request):
 
 
 # None unless demo mode is enabled. Demo mode is toggleable at runtime via
-# POST /api/config/demo-mode, so this resolves per request rather than trusting the
-# startup snapshot; DemoDataService shares one instance either way.
-def provide_demo_data(request: Request) -> Optional[DemoDataService]:
+# POST /api/config/demo-mode, so this resolves per request; the demo set itself is
+# one instance per process, shared with DatabaseDataService.
+def provide_demo_data() -> Optional[DemoDataService]:
     from core.config import is_demo_mode
 
     if not is_demo_mode():
         return None
-    return request.app.state.demo_data or DemoDataService()
+    return get_demo_data_service()

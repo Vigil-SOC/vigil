@@ -300,17 +300,20 @@ def test_finding_record_tolerates_stored_entity_context(context, expected):
     assert dumped["entity_context"] == expected
 
 
-def _client(monkeypatch, finding):
+def _client(monkeypatch, finding, authenticate_app):
     monkeypatch.setattr(findings_api, "data_service", _FakeDataService(finding))
     monkeypatch.setattr(
         findings_api, "current_active_ips", lambda: frozenset({"203.0.113.9"})
     )
     app = FastAPI()
     app.include_router(findings_api.router, prefix="/api/v1/findings")
+    authenticate_app(app)
     return TestClient(app)
 
 
-def test_responses_keep_unnormalized_stored_envelope_contract(monkeypatch):
+def test_responses_keep_unnormalized_stored_envelope_contract(
+    monkeypatch, authenticate_app
+):
     # Stored before the contract bounded it: 130 records, no truncation flags.
     finding = _finding_with_evidence()
     finding["entity_context"]["src_ip"] = "203.0.113.9"
@@ -318,7 +321,7 @@ def test_responses_keep_unnormalized_stored_envelope_contract(monkeypatch):
     del stored["truncated"]
     stored["total_records"] = 130
     stored["records"] = [{"message": f"event-{index}"} for index in range(130)]
-    client = _client(monkeypatch, finding)
+    client = _client(monkeypatch, finding, authenticate_app)
 
     listed = client.get("/api/v1/findings").json()["findings"][0]
     detailed = client.get("/api/v1/findings/f-source-1").json()
@@ -338,10 +341,12 @@ def test_responses_keep_unnormalized_stored_envelope_contract(monkeypatch):
     assert detailed["excluded_ips"] == ["203.0.113.9"]
 
 
-def test_responses_report_malformed_stored_evidence_as_invalid(monkeypatch):
+def test_responses_report_malformed_stored_evidence_as_invalid(
+    monkeypatch, authenticate_app
+):
     finding = _finding_with_evidence()
     finding["entity_context"]["source_evidence"] = {"status": "whatever"}
-    client = _client(monkeypatch, finding)
+    client = _client(monkeypatch, finding, authenticate_app)
 
     listed = client.get("/api/v1/findings").json()["findings"]
     detailed = client.get("/api/v1/findings/f-source-1").json()

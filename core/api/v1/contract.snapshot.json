@@ -2635,7 +2635,16 @@
                 "type": "null"
               }
             ],
+            "description": "The first of case_ids: the case that asked.",
             "title": "Case Id"
+          },
+          "case_ids": {
+            "description": "Every case this item is on. A proposal several cases made is one item listing them all.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Case Ids",
+            "type": "array"
           },
           "checkpoint_class": {
             "anyOf": [
@@ -2665,6 +2674,18 @@
             "title": "Created At",
             "type": "string"
           },
+          "finding_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The first stored alert the approval's evidence names, so an item with no case can open it.",
+            "title": "Finding Id"
+          },
           "hypotheses": {
             "description": "A hypothesis approval's explanations, each with where it came from; base_rate is the benign one to beat.",
             "items": {
@@ -2674,11 +2695,12 @@
             "type": "array"
           },
           "kind": {
-            "description": "parked: a hunt stopped at a limit, answered with Keep going on its case; its source_id is the run id.",
+            "description": "parked: a hunt stopped at a limit, answered with Keep going on its case; its source_id is the run id. open_case: a demo-mode case that is not closed, answered by opening the case; its source_id is the case id.",
             "enum": [
               "approval",
               "checkpoint",
-              "parked"
+              "parked",
+              "open_case"
             ],
             "title": "Kind",
             "type": "string"
@@ -3425,12 +3447,12 @@
         "properties": {
           "arch": {
             "default": "",
-            "description": "Arch file path; empty routes through the run-kind registry.",
+            "description": "Must be empty: the arch comes from the run-kind registry.",
             "title": "Arch",
             "type": "string"
           },
           "config": {
-            "description": "Path to the deployment config.",
+            "description": "Must be empty: the workflow reference carries its config.",
             "title": "Config",
             "type": "string"
           },
@@ -3447,7 +3469,7 @@
             "title": "Overrides"
           },
           "playbook": {
-            "description": "Path to the playbook: the scenario as data.",
+            "description": "A workflow reference, workflow:<id>, naming an enabled workflow.",
             "title": "Playbook",
             "type": "string"
           },

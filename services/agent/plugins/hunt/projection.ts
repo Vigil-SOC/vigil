@@ -5,7 +5,7 @@ import { recordRows, type BearsOn, type RecordQuestion, type RecordRows, type Re
 import { fold, type HuntEvent, type Projection } from "./ledger.js";
 import { findingsCitedBy } from "./findings.js";
 import { citedTechniques, DEPLOYMENT_GAP_PROVENANCE, isGap, NULL_CHECK_PROVENANCE, sensorAttested, unboundInWords } from "./strength.js";
-import { renderReport, type HuntReport } from "./report.js";
+import { alignReport, headerFromRun, renderReport, type HuntReport } from "./report.js";
 import { stepsOf, type Narrative } from "./narrative.js";
 import { toolWords } from "./words.js";
 import type {
@@ -189,6 +189,7 @@ export function huntProjection(runId: string, events: readonly HuntEvent[], opti
   const answered = new Set(view.resolutions.map((resolution) => resolution.checkpoint_id));
   const open = [...view.checkpoints.values()].find((checkpoint) => !answered.has(checkpoint.checkpoint_id));
   const report = reportIn(events);
+  const header = report === null ? null : headerFromRun(events, report);
   // neither counts every row that is not a critic verdict, over the full ledger:
   // supports + weakens + neither is the evidence the run gathered.
   const record = recordRows(
@@ -220,7 +221,17 @@ export function huntProjection(runId: string, events: readonly HuntEvent[], opti
     reviews: [...view.evidence.values()].filter((record) => record.provenance === NULL_CHECK_PROVENANCE).map(reviewView),
     open_checkpoint: open === undefined ? null : openCheckpoint(open),
     report,
-    report_markdown: report === null ? null : renderReport(report, view, narrativeIn(events), recalledPayloadOf(events)),
+    // The finalized report froze its cost and end time when the hunt stopped
+    // reasoning. The header follows the run record: spend through the terminal,
+    // and the instant that terminal was sealed.
+    report_markdown:
+      report === null || header === null
+        ? null
+        : alignReport(
+            renderReport(report, view, narrativeIn(events), recalledPayloadOf(events)),
+            header.cost_usd,
+            header.ended ?? "still running",
+          ),
     narrative: narrativeView(narrativeIn(events)),
     handoffs: events.filter((event) => event.kind === "handoff").map((event) => event.payload as Handoff),
     open_questions: record.open_questions.map(({ question_id, question, hypothesis_id }) => {

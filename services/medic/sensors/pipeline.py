@@ -57,10 +57,14 @@ class Pipeline:
         sink: Sink,
         choke: Choke | None = None,
         *,
+        log_bus: Bus | None = None,
         validate_kinds: frozenset[str] = RUNTIME_VALIDATED,
         run_id: Callable[[], str] = new_run_id,
     ) -> None:
         self.bus = bus
+        # Log lines wait in their own buffer but leave through the same choke
+        # point and sink, with one seq per emitter.
+        self.log_bus = log_bus
         self.sink = sink
         self.choke = choke or redaction_choke()
         self.validate_kinds = validate_kinds
@@ -77,8 +81,9 @@ class Pipeline:
     def drain(self) -> int:
         """Write everything queued; return how many observations reached the sink."""
         written = 0
-        for draft in self.bus.take():
-            written += self._emit(draft)
+        for bus in (self.bus, self.log_bus):
+            for draft in bus.take() if bus is not None else ():
+                written += self._emit(draft)
         return written
 
     def _emit(self, draft: dict[str, Any]) -> int:

@@ -22,7 +22,7 @@ import type { HuntEvent, Projection } from "./ledger.js";
 import { narrativeInput, type Narrative } from "./narrative.js";
 import { BASE_RATE_PROVENANCE, startHunt } from "./opening.js";
 import type { DirectiveQueue } from "./ports.js";
-import { buildReport, renderReport } from "./report.js";
+import { buildReport, renderReport, sealReport } from "./report.js";
 import { operatorLine } from "./render.js";
 import { sensorAttested } from "./strength.js";
 import type { Handoff, HuntOutcome } from "./types.js";
@@ -145,6 +145,14 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
     tools: (ctx) => [...huntTools(ctx, ports), ...expandTool(ctx)],
 
     record: (ctx) => huntRecord(ctx, ports),
+
+    // The report's Cost and Ended were taken when the hunt stopped reasoning.
+    // The narrator and the review are charged after that, and they are part of
+    // what the run cost and when it finished.
+    seal: async (ctx, summary) => {
+      const sealed = sealReport(summary, await state(ctx).read(ctx.options.run_id), new Date().toISOString());
+      return sealed ?? { summary };
+    },
 
     turns: async (ctx) => withBook(ctx, ports, (book) => book.hunt.budgets.max_iterations),
 
@@ -368,11 +376,12 @@ async function reportOut(ctx: PluginContext, ports: HuntPorts, projection: Proje
 }
 
 // The hunt's own outcomes, as the ledger's. inconclusive is a completed run that
-// reported honestly, not a failure.
+// reported honestly, not a failure; data_starved is one that could not look.
 function outcomeOf(outcome: HuntOutcome | null): Ending["outcome"] {
   if (outcome === "aborted") return "aborted";
   if (outcome === "budget_terminated") return "budget_exhausted";
   if (outcome === "failed") return "failed";
+  if (outcome === "data_starved") return "data_starved";
   return "completed";
 }
 

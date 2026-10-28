@@ -181,7 +181,7 @@ SECURITY_DETECTION_TOOLS = [
 DEEPTEMPO_FINDING_TOOLS = [
     {
         "name": "list_findings",
-        "description": "List security findings with server-side pagination and compact summaries. Each summary names the hosts, users and indicators the finding carries; use get_finding for the raw source record. Supports filtering by severity, data_source, state, and pagination via offset/limit. Each summary carries the finding's terminal state (e.g. waiting, working, resolved_auto, dismissed).",
+        "description": "List security findings with server-side pagination and compact summaries. Each summary names the hosts, users and indicators the finding carries; use get_finding for the finding's triage and a sample of its source records. Supports filtering by severity, data_source, state, and pagination via offset/limit. Each summary carries the finding's terminal state (e.g. waiting, working, resolved_auto, dismissed).",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -226,15 +226,17 @@ DEEPTEMPO_FINDING_TOOLS = [
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of findings to return",
+                    "description": "Maximum number of findings to return (at most 25; a page can stop short so it fits, so read returned and next_offset)",
                     "default": 20,
+                    "minimum": 1,
+                    "maximum": 25,
                 },
             },
         },
     },
     {
         "name": "search_findings",
-        "description": 'Search findings by text query across finding IDs, descriptions, and entity context. Returns counts over every match (total, by_severity, by_data_source, by_state as open/dismissed/resolved, and the top 10 by_source_ip / by_destination_ip, with *_omitted giving how many more addresses were left out), then one page of compact summaries, each naming the hosts, users and indicators the finding carries. Answer count questions ("how many findings involve X, by severity?") from those counts in one call with a low limit; do not page through results to count them. Use get_finding for the raw source record behind a specific result.',
+        "description": 'Search findings by text query across finding IDs, descriptions, and entity context. Returns counts over every match (total, by_severity, by_data_source, by_state as open/dismissed/resolved, and the top 10 by_source_ip / by_destination_ip, with *_omitted giving how many more addresses were left out), then one page of compact summaries, each naming the hosts, users and indicators the finding carries. Answer count questions ("how many findings involve X, by severity?") from those counts in one call with a low limit; do not page through results to count them. Use get_finding for the triage and a sample of the source records behind a specific result.',
         "input_schema": {
             "type": "object",
             "properties": {
@@ -267,7 +269,13 @@ DEEPTEMPO_FINDING_TOOLS = [
                     "default": "desc",
                 },
                 "offset": {"type": "integer", "default": 0},
-                "limit": {"type": "integer", "default": 20},
+                "limit": {
+                    "type": "integer",
+                    "default": 20,
+                    "minimum": 1,
+                    "maximum": 25,
+                    "description": "Page size, at most 25. A page can stop short so it fits; returned, has_more and next_offset describe what came back.",
+                },
             },
             "required": ["query"],
         },
@@ -279,7 +287,7 @@ DEEPTEMPO_FINDING_TOOLS = [
     },
     {
         "name": "get_finding",
-        "description": "Get detailed information about a specific finding by ID. Returns full finding details including predicted techniques, every entity it names, and the raw source record under entity_context.source_evidence. A null confidence in mitre_predictions means the source named the technique and gave no confidence: it is unknown, not 0.",
+        "description": "Get detailed information about a specific finding by ID. Returns the finding's title, severity, data source, scores and predicted techniques first, then the daemon's stored triage under triage (severity, confidence, category, recommended_action, reasoning) when there is one, then entity_context with every entity it names. The raw source record under entity_context.source_evidence is a sample of its records (records_shown says how many of how many); for a NetFlow finding entity_context.netflow_digest counts every flow by host pair. A null confidence in mitre_predictions means the source named the technique and gave no confidence: it is unknown, not 0.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -349,8 +357,14 @@ DEEPTEMPO_FINDING_TOOLS = [
             "Read the case records held for an investigation: its tasks and "
             "escalations, and a page of the findings attached to the case, newest "
             "first, each a summary (id, title, severity, source, time, the hosts "
-            "and users it names), with the total the case holds. Page with offset "
-            "while has_more is true. get_finding returns a finding's full record."
+            "and users it names), with the total the case holds. Page with next_offset "
+            "while has_more is true. get_finding returns one finding with its triage and a sample of its source records. "
+            "When the case holds network-flow findings, flows sums every flow "
+            "of all of them per host pair (not just this page): flows, first "
+            "and last seen, distinct destination ports, answered flows (any "
+            "bytes or packets back), bytes and packets each way, top servers. "
+            "no_digest names flow findings whose flows it does not count; "
+            "unknown counts flows that lacked a byte or packet field."
         ),
         "input_schema": {
             "type": "object",

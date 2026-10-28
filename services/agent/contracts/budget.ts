@@ -51,6 +51,23 @@ export interface SpendPayload {
   fetched_at: string | null;
 }
 
+// The run record stores dollars to four places (workflow_runs.total_cost_usd).
+// The report's Cost line uses the same rounding, so the two cannot disagree by a fraction.
+export function roundCost(usd: number): number {
+  return Number(usd.toFixed(4));
+}
+
+// Sum of journaled spend. `throughSeq` drops anything written after that event,
+// which is how a rewrite of the account stays off the cost the run finished at.
+// A call nobody could price contributes nothing rather than a fabricated zero.
+export function costOf(events: readonly { kind: string; seq?: number; payload: unknown }[], throughSeq?: number): number {
+  return events.reduce((total, event) => {
+    if (event.kind !== "spend") return total;
+    if (throughSeq !== undefined && (event.seq ?? 0) > throughSeq) return total;
+    return total + ((event.payload as SpendPayload).cost_usd ?? 0);
+  }, 0);
+}
+
 // A value, never a throw: the exhaustiveness argument applies here or nowhere.
 // unpriced is a ceiling that cannot be measured rather than one that was reached.
 export type Refusal =

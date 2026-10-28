@@ -9,7 +9,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from core.auth.auth_service import AuthService
+from core.auth.permissions import deny_unless
 from core.integrations.extension import session_service as ext_session
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
@@ -40,11 +40,7 @@ async def get_extension_session_token(
     # Mirror the connector's manifest `mountPoint.permission` server-side by
     # convention (`<id>.view`), so the API enforces the same RBAC gate the UI
     # and the loglm.view grant do — otherwise any authenticated user could mint.
-    required = f"{integration_id}.view"
-    if not AuthService.check_permission(current_user.user_id, required):
-        raise HTTPException(
-            status_code=403, detail=f"Missing required permission: {required}"
-        )
+    deny_unless(current_user.user_id, f"{integration_id}.view")
     username = (
         getattr(current_user, "username", None)
         or getattr(current_user, "email", None)

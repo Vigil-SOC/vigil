@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Annotated, Callable, Generator, Sequence
+from typing import Annotated, Callable, Generator, Optional, Sequence
 
 from fastapi import Depends
 from sqlalchemy.orm import Session
@@ -141,6 +141,21 @@ class RouterMeta:
         return True if self.enabled is None else bool(self.enabled())
 
 
+def request_unit_of_work_or_none() -> Generator[Optional[Session], None, None]:
+    """A request session, or None when this process never opened the database.
+
+    Demo mode does not call ``init_database``. A read answered from memory
+    still has to run; the caller decides what None means.
+    """
+    from core.storage.connection import get_db_manager
+
+    if get_db_manager()._session_factory is None:
+        yield None
+        return
+    with unit_of_work() as session:
+        yield session
+
+
 def request_unit_of_work() -> Generator[Session, None, None]:
     """Yield a session whose transaction spans the whole request.
 
@@ -158,3 +173,6 @@ def request_unit_of_work() -> Generator[Session, None, None]:
 # the success body with a 200 while the write is rolled back. Function scope
 # closes the boundary before the response is emitted, turning that into a 500.
 UnitOfWorkSession = Annotated[Session, Depends(request_unit_of_work, scope="function")]
+OptionalUnitOfWorkSession = Annotated[
+    Optional[Session], Depends(request_unit_of_work_or_none, scope="function")
+]

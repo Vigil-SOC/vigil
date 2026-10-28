@@ -55,7 +55,8 @@ export type RunEventKind = (typeof RUN_EVENT_KINDS)[number];
 
 // abandoned is not aborted: aborted means a human stopped the run, and a run
 // nobody answered before its park TTL is the opposite -- nobody decided anything.
-export const RUN_OUTCOMES = ["completed", "failed", "aborted", "budget_exhausted", "abandoned"] as const;
+// data_starved is a run that answered without being able to look (core/record.ts starved).
+export const RUN_OUTCOMES = ["completed", "failed", "aborted", "budget_exhausted", "abandoned", "data_starved"] as const;
 export type RunOutcome = (typeof RUN_OUTCOMES)[number];
 
 // seq 0. Carries the resolved spec so resume needs no configuration file and
@@ -192,6 +193,9 @@ export interface TerminalPayload {
   // The run's verdict, after the guard, for the case it was started from. Only a
   // completed run whose plugin names a disposition_field sets it.
   disposition?: string;
+  // When the run finished, chosen as the terminal was sealed. The workflow row
+  // stores this as finished_at, and the hunt report's Ended line is the same instant.
+  finished_at?: string;
 }
 
 // The ratings a run may conclude with: the case priorities, less unknown.

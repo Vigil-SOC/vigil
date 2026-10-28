@@ -25,13 +25,14 @@ import { announceOpen, noAnnounce, type Announce } from "./checkpoints.js";
 import type { Harness, Outcome, TurnConfig } from "./loop.js";
 import type { Message } from "./provider.js";
 import { registryOf, type Registry } from "./registry.js";
+import { DENIAL_RECHECK_MS } from "./leases.js";
 import { logger } from "./log.js";
 import { scrub } from "./security.js";
 import type { ToolDispatch } from "./seams.js";
 import { unboundCapabilities, type RunSpec, type ToolSpec } from "./spec.js";
 import { hardStop, persistAsk, schemaErrors, streamTurn, type StreamEvent } from "./stream.js";
 import { childRunId, Framer } from "./frames.js";
-import { classify, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, type RecordBackend } from "./record.js";
+import { classify, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, SKILL_TOOL, starved, type RecordBackend } from "./record.js";
 import { SEVERITIES, type RunEventKind } from "../contracts/events.js";
 
 // The kernel: streamTurn's loop driven by a plugin, adding what every plugin needs: calls
@@ -39,7 +40,7 @@ import { SEVERITIES, type RunEventKind } from "../contracts/events.js";
 
 export const AGENT_ROLE = "agent";
 export const REVIEW_ROLE = "reviewer";
-export const SKILL_TOOL = "load_skill";
+export { SKILL_TOOL };
 // How an agent gives a structured answer in the turn it decides, for a plugin that
 // finishes with a tool rather than being asked.
 export const CONCLUDE_TOOL = "conclude";
@@ -126,6 +127,10 @@ export interface PluginHooks {
   finish?(ctx: PluginContext, outcome: Outcome<unknown>): Promise<Ending | Parked | null>;
   // What a run an operator stopped leaves behind.
   stopped?(ctx: PluginContext, directive: DirectivePayload): Promise<string | undefined>;
+  // The summary is about to be journaled, after the review. A plugin may bring a
+  // header written earlier up to what the run has since spent. finished_at is the
+  // instant the row should record.
+  seal?(ctx: PluginContext, summary: string): Promise<{ summary: string; finished_at?: string }>;
   // Once the terminal is on the ledger, for a plugin that reports it elsewhere too.
   ended?(ctx: PluginContext, terminal: TerminalPayload): Promise<void>;
 }
@@ -277,6 +282,10 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
   const queued = await stopOf(options);
   if (queued !== null) return stopped(ctx, queued);
 
+  // Parked on a denial: no model call until the recheck interval has passed.
+  const denied = options.conversation === undefined ? deniedPark(await harness.state.read(run_id)) : null;
+  if (denied !== null && Date.now() - denied.at < DENIAL_RECHECK_MS) return report(ctx, "waiting_approval", denied.reason, null);
+
   const early = (await options.hooks?.before?.(ctx)) ?? null;
   if (early?.kind === "end") return end(ctx, early.outcome, early.reason, early.summary, early.handoffs);
   if (early?.kind === "park") {
@@ -339,9 +348,14 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
     review = await reviewOf(ctx, conclusion, callsIn(held));
     await harness.state.append(run_id, [event(options, "review", review)]);
   }
+  // A required record's answer that rests on nothing served, over a ledger that could not
+  // look, is data_starved: the report still goes out, but nothing acts on it (#3248).
+  const structured = isStructured(options.plugin.conclusion) ? options.plugin.conclusion : null;
+  const cited = structured?.citations_field === undefined ? [] : citedRefs(conclusion.value[structured.citations_field]);
+  const blind = recordModeOf(options.plugin) === "required" && starved(held, cited);
   return end(
     ctx,
-    "completed",
+    blind ? "data_starved" : "completed",
     summaryOf(options.plugin, conclusion, review),
     undefined,
     undefined,
@@ -625,7 +639,8 @@ function turnFor(
     history: options.conversation === undefined ? historyOf(agentCalls(calls)) : conversationHistory(options.conversation.history, agentCalls(calls)),
     // Across the whole run: a resume continues the allowance rather than refilling it.
     max_turns: Math.max(0, limit - used),
-    approvals: new Set(spec.approvals),
+    approvals: approvalsFor(options),
+    ...(options.conversation === undefined ? { park_on_denial: true } : {}),
     verbs: [],
     result_cap: spec.runtime.result_cap,
     recall_limit: spec.runtime.recall_limit,
@@ -639,6 +654,27 @@ function turnFor(
     ...(structured?.citations_field === undefined ? {} : { refs: { prefix: CALL_REF, offset: calls.length } }),
     ...(signal === undefined ? {} : { signal }),
   };
+}
+
+// The denial a run parked on (#3306): its last call, when that call was denied.
+// Any later call means the run has moved on.
+export function deniedPark(events: readonly { kind: string; ts: string; payload: unknown }[]): { at: number; reason: string } | null {
+  const last = events.findLast((one) => one.kind === "call");
+  const call = last?.payload as CallPayload | undefined;
+  if (last === undefined || call?.failure !== "denied") return null;
+  const at = Date.parse(last.ts);
+  if (!Number.isFinite(at)) return null;
+  const detail = /failed: denied -- ([^\n]*)/.exec(call.result)?.[1];
+  return { at, reason: detail ?? `${call.tool} was denied` };
+}
+
+// Which calls park on a person's approval before they go out. A run no person
+// started has nobody to ask: the invoke door holds it to the autonomy ceiling
+// instead, and a denial parks it (#3306). A run whose origin is not known keeps
+// the approval, which is the stricter of the two.
+export function approvalsFor(options: Pick<AgentOptions, "spec" | "origin">): ReadonlySet<string> {
+  const unattended = options.origin !== undefined && options.origin !== "person";
+  return unattended ? new Set() : new Set(options.spec.approvals);
 }
 
 // What the agent is, the skills it can load, and how it finishes. Fixed for the
@@ -804,6 +840,8 @@ export interface Subturn {
   max_turns?: number;
   // Numbers each result as the ledger will (r12), so the answer can cite them.
   cite?: boolean;
+  // Whether a denied call parks the run (#3306). Off, the step reads the denial.
+  park_on_denial?: boolean;
 }
 
 export async function runSubturn<T>(ctx: PluginContext, sub: Subturn): Promise<Outcome<T>> {
@@ -825,7 +863,8 @@ export async function runSubturn<T>(ctx: PluginContext, sub: Subturn): Promise<O
     schema: sub.schema,
     max_turns: sub.max_turns ?? options.spec.runtime.max_turns,
     answer_within_cap: true,
-    approvals: new Set(options.spec.approvals),
+    approvals: approvalsFor(options),
+    ...(sub.park_on_denial === true ? { park_on_denial: true } : {}),
     verbs: [],
     result_cap: options.spec.runtime.result_cap,
     recall_limit: options.spec.runtime.recall_limit,
@@ -1366,7 +1405,14 @@ async function end(
   if (ended !== null) return report(ctx, ended.outcome, ended.reason, null);
   // As every workflow does: a failure with nothing to deliver leaves the summary
   // unset, since its reason is already the error column.
-  const deliver = summary === null ? undefined : (summary ?? (outcome === "failed" ? undefined : reason));
+  let deliver = summary === null ? undefined : (summary ?? (outcome === "failed" ? undefined : reason));
+  // After every charge this ending still takes, so the sealed header and the row agree.
+  let finished_at: string | undefined;
+  if (typeof deliver === "string" && ctx.options.hooks?.seal !== undefined) {
+    const sealed = await ctx.options.hooks.seal(ctx, deliver);
+    deliver = sealed.summary;
+    finished_at = sealed.finished_at;
+  }
   const payload: TerminalPayload = {
     outcome,
     reason,
@@ -1374,6 +1420,7 @@ async function end(
     ...(handoffs === undefined ? {} : { handoffs: [...handoffs] }),
     ...(severity === undefined ? {} : { severity }),
     ...(proposed.length === 0 ? {} : { proposed_actions: [...proposed] }),
+    ...(finished_at === undefined ? {} : { finished_at }),
     ...(disposition === undefined ? {} : { disposition }),
   };
   await ctx.harness.state.append(ctx.options.run_id, [event(ctx.options, "terminal", payload)]);

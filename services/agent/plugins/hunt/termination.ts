@@ -3,6 +3,7 @@ import { scoredFrontier } from "./frontier.js";
 import type { Projection } from "./ledger.js";
 import { DEFAULT_VERDICTS, type Termination, type Verdicts } from "./config.js";
 import { openGaps } from "./strength.js";
+import { starved } from "../../core/record.js";
 import type { Hypothesis, OpenQuestion } from "./types.js";
 
 // Sub-floor leads ride along on a passing verdict so the caller can close them as
@@ -57,6 +58,23 @@ function dominates(projection: Projection, hypotheses: readonly Hypothesis[], ve
   return { outcome: null, blocked_by: `${first.hypothesis_id} is still active: ${first.statement}` };
 }
 
+// The estate results the record links as evidence, by call ref: what the hunt's answer rests on.
+function linkedRefs(projection: Projection): string[] {
+  const linked = new Set(projection.links.map((link) => link.evidence_id));
+  return [...projection.evidence.values()]
+    .filter((record) => linked.has(record.evidence_id))
+    .flatMap((record) => [...(record.call_refs ?? []), ...(record.read_ref === undefined ? [] : [record.read_ref])]);
+}
+
+// Nothing proven, and either a blind claim or the kernel's own test (#3248): the ledger
+// could not look, and no served estate result is linked as evidence. `events` is the
+// whole run ledger, kernel calls included; without it only the gap lock can tell.
+export function huntStarved(projection: Projection, events: readonly { kind: string; payload: unknown }[], verdicts: Verdicts = DEFAULT_VERDICTS): boolean {
+  const hypotheses = [...projection.hypotheses.values()];
+  if (hypotheses.some((hypothesis) => hypothesis.status === "proven")) return false;
+  return hypotheses.some((hypothesis) => gapLocked(projection, hypothesis, verdicts)) || starved(events, linkedRefs(projection));
+}
+
 // The controller's own answer to "may this hunt stop?", computed from the
 // projection exactly like evidence_strength — never from anything the Hunt Lead
 export function terminationVerdict(
@@ -64,6 +82,7 @@ export function terminationVerdict(
   iteration: number,
   config: Termination,
   verdicts: Verdicts = DEFAULT_VERDICTS,
+  events: readonly { kind: string; payload: unknown }[] = [],
 ): TerminationVerdict {
   const hypotheses = [...projection.hypotheses.values()];
 
@@ -91,9 +110,5 @@ export function terminationVerdict(
 
   // Outranks completed when both match: a hunt that could not see is not a hunt
   // that finished, and reporting it as finished is how a blind spot becomes a
-  const starved =
-    hypotheses.some((hypothesis) => gapLocked(projection, hypothesis, verdicts)) &&
-    !hypotheses.some((hypothesis) => hypothesis.status === "proven");
-
-  return starved ? { outcome: "data_starved", park } : { outcome: "completed", park };
+  return huntStarved(projection, events, verdicts) ? { outcome: "data_starved", park } : { outcome: "completed", park };
 }

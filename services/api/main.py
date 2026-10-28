@@ -397,6 +397,7 @@ async def _connect_external_services(mcp_client, registry):
                                 "name": tool.get("name"),
                                 "description": tool.get("description", ""),
                                 "inputSchema": tool.get("inputSchema", {}),
+                                "annotations": tool.get("annotations"),
                             }
                         )
 
@@ -429,12 +430,10 @@ def _build_services(app: FastAPI):
     import httpx
 
     from core.agents.agent_ai_generator import AgentAIGenerator
-    from core.config import is_demo_mode
     from core.detections.detection_rules_service import DetectionRulesService
     from core.integrations.integration_bridge_service import IntegrationBridgeService
     from core.integrations.mcp.client import build_mcp_client, set_process_mcp_client
     from core.integrations.mcp.registry import MCPRegistry
-    from core.platform.demo_data_service import DemoDataService
     from core.platform.process_health import ProcessHealth
     from core.response.approval_service import ApprovalService, register_pending_gauge
     from core.storage.database_data_service import DatabaseDataService
@@ -477,10 +476,6 @@ def _build_services(app: FastAPI):
         workflows=app.state.workflows, mcp_registry=app.state.mcp_registry
     )
     app.state.agent_ai = AgentAIGenerator(mcp_registry=app.state.mcp_registry)
-
-    # Demo data is only generated when demo mode is on; generating it otherwise
-    # burns startup time building findings nothing will read.
-    app.state.demo_data = DemoDataService() if is_demo_mode() else None
 
 
 def _announce_mcp_surface() -> None:

@@ -32,6 +32,8 @@ from services.api.middleware.auth import get_current_user
 from services.daemon.orchestrator import insert_intake_trigger, intake_severity_band
 
 router = APIRouter()
+_FINDINGS_WRITE = [permission_gate("findings.write")]
+router.dependencies.append(permission_gate("findings.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/findings",
@@ -68,7 +70,7 @@ def _finding_or_404(session: UnitOfWorkSession, finding_id: str) -> Finding:
     return finding
 
 
-@router.post("/{finding_id}/enrich")
+@router.post("/{finding_id}/enrich", dependencies=_FINDINGS_WRITE)
 async def get_or_generate_enrichment(
     finding_id: str, force_regenerate: bool = Query(False)
 ):
@@ -147,7 +149,11 @@ def clear_all_findings(
     return {"success": True, "deleted": count, "message": f"Deleted {count} findings"}
 
 
-@router.post("/{finding_id}/noise", response_model=NoiseMarkResponse)
+@router.post(
+    "/{finding_id}/noise",
+    response_model=NoiseMarkResponse,
+    dependencies=_FINDINGS_WRITE,
+)
 def mark_finding_noise(
     finding_id: str,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -170,7 +176,11 @@ def mark_finding_noise(
     )
 
 
-@router.delete("/{finding_id}/noise", response_model=NoiseMarkResponse)
+@router.delete(
+    "/{finding_id}/noise",
+    response_model=NoiseMarkResponse,
+    dependencies=_FINDINGS_WRITE,
+)
 def clear_finding_noise(
     finding_id: str,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -186,7 +196,11 @@ def clear_finding_noise(
     return NoiseMarkResponse(finding_id=finding.finding_id)
 
 
-@router.post("/{finding_id}/intake", response_model=IntakeLaunchResponse)
+@router.post(
+    "/{finding_id}/intake",
+    response_model=IntakeLaunchResponse,
+    dependencies=_FINDINGS_WRITE,
+)
 def launch_finding_into_intake(
     finding_id: str,
     session: UnitOfWorkSession,

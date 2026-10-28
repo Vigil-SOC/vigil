@@ -82,7 +82,7 @@ function lagNote(source: TriageSource): string {
 // "Grouped into, and why": the door (when there is one) is drawn as a link, this follows it
 function groupedRest(row: TriageRow): string {
   if (!row.case_door) return row.workflow_id || BLANK
-  const why = row.state === 'launched' ? ' (new)' : row.state === 'merged' ? ' · overlaps open work' : ''
+  const why = row.state === 'launched' ? ' (new)' : row.state === 'merged' && row.merge_note ? ` · ${row.merge_note}` : ''
   return `${why}${row.workflow_id ? ` · ${row.workflow_id}` : ''}`
 }
 
@@ -128,7 +128,7 @@ function Tiles({ data }: { data: TriagePayload }) {
       <Tile label="Cases created today" info={<InfoTip label="How cases created today is worked out" {...info.cases_created_today} />}>
         <div className="tq-tile-val">{data.strip.cases_created_today}</div>
       </Tile>
-      <Tile label="Waiting in line" info={<InfoTip label="How waiting in line is worked out" {...info.waiting} />}>
+      <Tile label="Waiting for triage" info={<InfoTip label="How waiting for triage is worked out" {...info.waiting} />}>
         <div className="tq-tile-val">{data.strip.waiting}</div>
       </Tile>
       <Tile label="Trust floor">

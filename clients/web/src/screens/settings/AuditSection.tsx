@@ -1,5 +1,7 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AUDIT_PAGE, auditApi, type AuditEntry, type AuditFeedHealth, type AuditFilter, type AuditTip, type AuditVerify } from '../../services/api'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useAuth } from '../../contexts/AuthContext'
+import { initials } from '../../data/mappers'
+import { AUDIT_PAGE, auditApi, type AuditEntry, type AuditPrincipal, type AuditFeedHealth, type AuditFilter, type AuditRetention, type AuditTip, type AuditVerify } from '../../services/api'
 import { FilterChip } from '../../shared/FilterChip'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
@@ -71,11 +73,21 @@ function str(value: unknown): string {
 
 const attributionWord = (value: unknown) => str(value).replace(/_/g, ' ')
 
-// What the entry acted on: its object, or the target an agent tool call names.
-const subjectOf = (e: AuditEntry) => str(e.payload.object) || str(e.payload.target)
+// What the entry acted on: its object, the target an agent tool call names, or its case.
+const subjectOf = (e: AuditEntry) => str(e.payload.object) || str(e.payload.target) || str(e.payload.case_id)
 
-function actorOf(e: AuditEntry): string {
-  return e.actor_text || str(e.payload.actor) || '—'
+const KIND_WORD: Record<string, string> = { person: 'Person', service_account: 'Service account', agent: 'Agent', system: 'System' }
+
+/** A principal as a reader names them: the label, else the id (blank once erased). */
+function nameOf(p: AuditPrincipal | null | undefined, fallback = ''): string {
+  return p?.label || p?.id || fallback
+}
+
+/** The second line under a name: its kind, and whether it is deleted or erased. */
+function kindLine(p: AuditPrincipal | null | undefined): string {
+  if (!p) return ''
+  const kind = (p.kind && KIND_WORD[p.kind]) || 'Unknown principal'
+  return [kind, p.erased ? 'erased' : '', p.deleted ? 'deleted' : ''].filter(Boolean).join(' · ')
 }
 
 export default function AuditSection({ notify }: SectionProps) {
@@ -176,6 +188,7 @@ export default function AuditSection({ notify }: SectionProps) {
 
       <div className="audit-top">
         <VerifyCard tip={tip} />
+        <RetentionCard notify={notify} />
         <FeedHealth feed={feed} />
       </div>
 
@@ -239,10 +252,10 @@ export default function AuditSection({ notify }: SectionProps) {
                 >
                   <span role="cell" className="ag-seq">{e.seq}</span>
                   <span role="cell" className="ag-when">{utcDayClock(e.occurred_at) ?? '—'}</span>
-                  <span role="cell" className="ag-clip" title={str(e.payload.actor)}>{actorOf(e)}</span>
-                  <span role="cell" className="ag-what">
-                    <span className="ag-action" title={str(e.payload.action)}>{str(e.payload.action) || '—'}</span>
-                    {subjectOf(e) && <span className="ag-sub" title={subjectOf(e)}>{subjectOf(e)}</span>}
+                  <ActorCell entry={e} />
+                  <span role="cell" className="ag-what" title={e.sentence}>
+                    <span className="ag-action">{e.sentence || str(e.payload.action) || '—'}</span>
+                    <span className="ag-sub">{[str(e.payload.action), subjectOf(e)].filter(Boolean).join(' · ')}</span>
                   </span>
                   <span role="cell" className="ag-clip">{str(e.payload.outcome) || '—'}</span>
                   <span role="cell" className="ag-marks"><Marks entry={e} /></span>
@@ -261,6 +274,21 @@ export default function AuditSection({ notify }: SectionProps) {
         </div>
       )}
     </>
+  )
+}
+
+/** The Cases board's owner cell: initials, the name, and the kind beneath it. */
+function ActorCell({ entry }: { entry: AuditEntry }) {
+  const name = nameOf(entry.actor, entry.actor_text || '—')
+  const sub = kindLine(entry.actor)
+  return (
+    <span role="cell" className="ag-who" title={entry.actor?.id ?? undefined}>
+      <span className="ag-avatar" aria-hidden="true">{initials(entry.actor?.label || name)}</span>
+      <span className="ag-who-text">
+        <span className="ag-who-name">{name}</span>
+        {sub && <span className="ag-who-sub">{sub}</span>}
+      </span>
+    </span>
   )
 }
 
@@ -291,9 +319,10 @@ function EntryDetail({ entry }: { entry: AuditEntry }) {
   const fields: [string, string][] = [
     ['Seq', String(entry.seq)],
     ['Occurred (UTC)', utcDayClock(entry.occurred_at) ?? entry.occurred_at],
-    ['Actor', entry.actor_text ? `${entry.actor_text} · ${str(p.actor)}` : str(p.actor)],
-    ['On behalf of', str(p.on_behalf_of)],
+    ['Actor', [nameOf(entry.actor, entry.actor_text ?? ''), kindLine(entry.actor), entry.actor?.label ? entry.actor.id : ''].filter(Boolean).join(' · ')],
+    ['On behalf of', [nameOf(entry.on_behalf_of, str(p.on_behalf_of)), entry.on_behalf_of?.erased ? 'erased' : '', entry.on_behalf_of?.deleted ? 'deleted' : ''].filter(Boolean).join(' · ')],
     ['Operator text', entry.operator_text ?? ''],
+    ['What it was', entry.sentence ?? ''],
     ['Action', str(p.action)],
     ['Object', str(p.object)],
     ...(p.target != null ? [['Target', str(p.target)] as [string, string]] : []),
@@ -330,6 +359,141 @@ function EntryDetail({ entry }: { entry: AuditEntry }) {
         </details>
       </div>
     </div>
+  )
+}
+
+const EMPTY_POLICY: AuditRetention = {
+  effective_days: null, pending_days: null, pending_on: null, unconfirmed: false, erasure_unconfirmed: false, erasures: [],
+}
+
+/** Period and erasure, in the same card as verify. Mutations need audit.manage; the unconfirmed line does not. */
+function RetentionCard({ notify }: SectionProps) {
+  const canManage = useAuth().hasPermission('audit.manage')
+  const [policy, setPolicy] = useState<AuditRetention>(EMPTY_POLICY)
+  const [loadFailed, setLoadFailed] = useState(false)
+  const [days, setDays] = useState('365')
+  const [principal, setPrincipal] = useState('')
+  const [reason, setReason] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState('')
+  // A save that returns before the mount load must not be overwritten by it.
+  const loadGen = useRef(0)
+
+  useEffect(() => {
+    const mine = ++loadGen.current
+    auditApi.retention()
+      .then((res) => {
+        if (loadGen.current !== mine) return
+        setPolicy(res.data)
+        const shown = res.data.pending_days ?? res.data.effective_days
+        if (shown != null) setDays(String(shown))
+      })
+      .catch(() => {
+        if (loadGen.current === mine) setLoadFailed(true)
+      })
+    return () => {
+      loadGen.current += 1
+    }
+  }, [])
+
+  const apply = (next: AuditRetention) => {
+    loadGen.current += 1
+    setPolicy(next)
+    setLoadFailed(false)
+    setStatus('')
+  }
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault()
+    const parsed = Number(days)
+    if (!Number.isInteger(parsed)) {
+      setStatus('Retention is a whole number of days')
+      return
+    }
+    setBusy(true)
+    try {
+      apply((await auditApi.saveRetention(parsed)).data)
+    } catch (e) {
+      setStatus(detailOf(e, 'Could not save the period'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const erase = async (event: FormEvent) => {
+    event.preventDefault()
+    setBusy(true)
+    try {
+      apply((await auditApi.erasePrincipal(principal.trim(), reason.trim())).data)
+      setPrincipal('')
+      setReason('')
+      notify('ok', 'Erasure recorded')
+    } catch (e) {
+      const text = detailOf(e, 'Could not erase those details')
+      setStatus(text)
+      notify('err', text)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const inForce = loadFailed
+    ? 'Could not load the retention period.'
+    : policy.effective_days != null
+      ? `The trail is kept for ${policy.effective_days} days.`
+      : 'No retention period is in force yet.'
+  const waiting = policy.pending_days == null ? '' : (
+    `${policy.pending_days} days takes effect ${utcDayClock(policy.pending_on) ?? policy.pending_on} UTC.`
+    + (policy.effective_days != null ? ' Until then the period already in force stays.' : '')
+  )
+
+  return (
+    <section className="audit-box" aria-label="Retention">
+      <div className="audit-box-head">
+        <h3>Retention</h3>
+        <InfoTip
+          label="About retention"
+          text="At least 365 days, in force 7 days after it is set. Erasing someone who can manage the trail waits the same 7 days and needs a reason. The principal’s label and trail details are blanked, and their sign-in and credentials end; the trail itself still verifies."
+        />
+      </div>
+      <div className="audit-retain">
+        <p className="audit-note">{inForce}</p>
+        {canManage && (
+          <form className="audit-verify" onSubmit={save}>
+            <label>
+              Keep the trail for
+              <input type="number" step={1} aria-label="Retention days" className={inputCls} value={days} onChange={(e) => setDays(e.target.value)} />
+            </label>
+            <span>days</span>
+            <button type="submit" className="audit-btn" disabled={busy}>Save</button>
+          </form>
+        )}
+        {waiting && <p className="audit-note">{waiting}</p>}
+        {policy.unconfirmed && <p className="audit-unconfirmed" role="status">This announcement has not left the box.</p>}
+        {canManage && (
+          <form className="audit-verify" onSubmit={erase}>
+            <label>
+              Principal
+              <input type="text" aria-label="Principal to erase" className={inputCls} value={principal} placeholder="id" onChange={(e) => setPrincipal(e.target.value)} />
+            </label>
+            <label>
+              Reason
+              <input type="text" aria-label="Erasure reason" className={inputCls} value={reason} placeholder="why" onChange={(e) => setReason(e.target.value)} />
+            </label>
+            <button type="submit" className="audit-btn" disabled={busy || !principal.trim()}>Erase details</button>
+          </form>
+        )}
+        {policy.erasures.map((item) => (
+          <p className="audit-note" key={item.principal_id}>
+            Erasure of {item.principal_id} takes effect {utcDayClock(item.on) ?? item.on} UTC.
+          </p>
+        ))}
+        {policy.erasure_unconfirmed && (
+          <p className="audit-unconfirmed" role="status">This erasure announcement has not left the box.</p>
+        )}
+        {status && <p className="audit-status" role="status">{status}</p>}
+      </div>
+    </section>
   )
 }
 

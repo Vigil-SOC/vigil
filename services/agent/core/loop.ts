@@ -72,6 +72,9 @@ export interface TurnConfig {
   // Which tools ask a human first is deployment's answer, not a property of the
   // tool: the same tool needs approval in one deployment and not in another.
   approvals: ReadonlySet<string>;
+  // Whether a denied call parks the run on its reason. A conversation's turn gets
+  // the denial as a result instead: the person is there to read it.
+  park_on_denial?: boolean;
   // The workflow's vocabulary, for the injection scanner and nothing else. The
   // harness passes it to the scanner and never reads it.
   verbs: readonly string[];

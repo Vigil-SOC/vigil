@@ -77,6 +77,20 @@ def _no_ambient_postgres(request, monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _reset_llm_path_cache():
+    """One snapshot serves every route. Drop it so a case cannot answer the next."""
+    import sys
+
+    mod = sys.modules.get("core.llm.bifrost.path_health")
+    if mod is not None:
+        mod.reset()
+    yield
+    mod = sys.modules.get("core.llm.bifrost.path_health")
+    if mod is not None:
+        mod.reset()
+
+
 @pytest.fixture
 def authenticate_app():
     """Make a FastAPI app treat every request as a permitted admin.
@@ -120,3 +134,30 @@ def authenticate_app():
     for app in apps:
         app.dependency_overrides.pop(get_current_user, None)
         app.dependency_overrides.pop(get_current_active_user, None)
+
+
+@pytest.fixture(autouse=True)
+def _bound_to_a_run(request):
+    """A tool a test calls directly runs as a run no person started.
+
+    Nothing bound is refused (#3306), and invoke always binds someone. A test
+    of that refusal marks itself ``unbound``.
+    """
+    if request.node.get_closest_marker("unbound"):
+        yield
+        return
+    try:
+        from core.auth.tool_principal import Claims, bound_claims
+    except ImportError:  # a suite that runs without core installed
+        yield
+        return
+
+    run = Claims(
+        username=None,
+        person_id=None,
+        agent_id="agent:hunt",
+        run_id="run-test",
+        origin="schedule",
+    )
+    with bound_claims(run):
+        yield
