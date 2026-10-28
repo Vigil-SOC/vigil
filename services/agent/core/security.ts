@@ -60,7 +60,7 @@ export function isVisibilityGap(failure: ToolFailure): boolean {
 // The one place a ToolResult becomes text a model reads. Rows serialise here and
 // nowhere else, so no caller can hand a model output that skipped the scan.
 export function wrap(toolId: string, result: ToolResult, scan: Scanner, cap: number, ref?: string): Wrapped {
-  const body = scrub(result.ok ? renderRows(result) : renderFailure(result.failure), cap);
+  const body = result.ok ? renderRows(result, cap) : scrub(renderFailure(result.failure), cap);
   const id = toolId.replace(/[^\w.-]/g, "");
   // ref, the id a reader cites this result by, rides the opener: the scrub above keeps
   // a body from opening a block of its own, so the result's text cannot forge it.
@@ -73,10 +73,23 @@ export function wrap(toolId: string, result: ToolResult, scan: Scanner, cap: num
 }
 
 // capped is stated, because a model that cannot tell it saw a prefix will reason
-// about the prefix as though it were the whole answer.
-function renderRows(result: Extract<ToolResult, { ok: true }>): string {
+// about the prefix as though it were the whole answer. A cut is stated the same way,
+// in the header rather than at the cut, where it would read as part of a value
+// (#3276); the header's room is reserved so header and body stay within cap.
+function renderRows(result: Extract<ToolResult, { ok: true }>, cap: number): string {
   const capped = result.capped ? ", capped at the row limit" : "";
-  return `${result.rowCount} row(s) from ${result.sourceSystem}${capped}\n${JSON.stringify(result.rows, null, 2)}`;
+  const head = scrub(`${result.rowCount} row(s) from ${result.sourceSystem}${capped}`, Infinity);
+  const rows = scrub(JSON.stringify(result.rows) ?? "null", Infinity);
+  if (head.length + 1 + rows.length <= cap) return `${head}\n${rows}`;
+  const cut = (kept: number) => `${head}, ${cutNotice(kept, rows.length)}`;
+  const kept = Math.max(0, cap - cut(cap).length - 1);
+  return `${cut(kept)}\n${rows.slice(0, kept)}`;
+}
+
+// Read back by call-view.ts (CUT), so a run view knows the rows that follow are a prefix.
+function cutNotice(kept: number, total: number): string {
+  const count = (n: number) => n.toLocaleString("en-US");
+  return `cut at ${count(kept)} of ${count(total)} characters: ask for less (a smaller limit, a filter, or one field)`;
 }
 
 function renderFailure(failure: ToolFailure): string {
