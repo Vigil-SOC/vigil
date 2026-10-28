@@ -86,45 +86,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.lock
 
-      - name: Enable Postgres extensions
-        run: |
-          PGPASSWORD=test psql -h localhost -p 5432 -U test -d deeptempo_test \
-            -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
-
       - name: Initialize schema
-        # Strict here, and only here: CI provisions from empty, so a schema that
-        # cannot serve the models at this point is a provisioning bug rather
-        # than a stale deployment (#562). Scoped to the step rather than the job
-        # so it does not change how every test in the job behaves.
+        # As every install builds it: python -m core.upgrade as the owner, with
+        # the acknowledgement a fresh database needs in place of a restore
+        # point. The baseline brings the extensions, agent-layer tables and
+        # default rows. Then init_database() strict, as in ci-cd.yml (#562).
         env:
-          DB_STRICT_SCHEMA: "true"
+          VIGIL_UPGRADE_ACK_REASON: CI-fresh-database
         run: |
-          python - <<'PY'
-          from core.storage.connection import (
-              get_db_manager,
-              init_database,
-              seed_reference_tables,
-              stamp_schema_head,
-          )
-          manager = get_db_manager()
-          manager.initialize()
-          manager.create_tables()
-          seed_reference_tables(manager)
-          stamp_schema_head(manager.engine)
-          init_database()
-          PY
+          VIGIL_UPGRADE_ACK_VERSION="$(tr -d '[:space:]' < VERSION)" python -m core.upgrade
+          DB_STRICT_SCHEMA=true python -c "from core.storage.connection import init_database; init_database()"
 
-      # The agent layer's tables are raw SQL with no ORM model, deliberately:
-      # Python makes two reads against the ledger and a model invites writes.
-      # create_tables() builds from the models, so it creates none of them.
-      - name: Apply agent-layer schema
-        run: |
-          PGPASSWORD=test psql -h localhost -p 5432 -U test -d deeptempo_test \
-            -f infra/database/init/19_agent_ledger.sql \
-            -f infra/database/init/31_agent_ledger_hash_chain.sql \
-            -f infra/database/init/20_agent_directives.sql \
-            -f infra/database/init/21_agent_run_leases.sql
-      
       - name: Run all tests
         run: |
           pytest tests/ -v --cov --cov-report=xml --cov-report=term

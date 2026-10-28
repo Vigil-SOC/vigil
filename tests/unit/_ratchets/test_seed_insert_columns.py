@@ -1,13 +1,12 @@
 """A seed INSERT must name every NOT NULL column that Postgres cannot fill.
 
-compose's db-seed and ``scripts/seed_reference_data.py`` apply
-``infra/database/init/*.sql`` with raw SQL after ``create_all``, and the backend
-applies the INSERTs of ``05_case_management_extended.sql`` the same way
-(``core/storage/reference_seed.py``). A column the models give only a
-Python-side ``default=`` has no DEFAULT in the DDL ``create_all`` emits, so an
-INSERT that leaves it out writes NULL and fails. Every template in 05 did that
-with ``case_templates.usage_count``. The appliers tolerated the failures, so the
-default templates were never seeded and nothing said so.
+Adoption (``core/upgrade/adopt.py``) applies ``infra/database/init/*.sql`` with
+raw SQL to tables an older release built with ``create_all``. A column the
+models give only a Python-side ``default=`` has no DEFAULT in the DDL
+``create_all`` emits, so an INSERT that leaves it out writes NULL and fails.
+Every template in 05 once did that with ``case_templates.usage_count``. The old
+seed appliers tolerated the failures, so the default templates were never
+seeded and nothing said so.
 """
 
 from pathlib import Path
