@@ -330,7 +330,7 @@ const title = () => screen.getByRole('heading', { level: 1 }).textContent
 // Home draws its own headline, so the nav shows where the console is
 const here = () => screen.getByRole('navigation', { name: 'Primary' }).querySelector('[aria-current="page"]')?.textContent
 
-const MORE_LABELS = ['Findings', 'Case Metrics', 'Health']
+const MORE_LABELS = ['Findings', 'Case Metrics']
 
 function clickScreen(name: string) {
   const inMore = MORE_LABELS.some((label) => name === label || name.startsWith(`${label} (`))
@@ -456,7 +456,6 @@ describe('SocConsole', () => {
       ['Triage queue', 'Triage queue'], // the screen draws its own heading
       ['Findings', 'Findings'],
       ['Case Metrics', 'Case Metrics'],
-      ['Health', 'Health'],
     ]
     for (const [navLabel, pageTitle] of screens) {
       clickScreen(navLabel)
@@ -474,7 +473,7 @@ describe('SocConsole', () => {
     expect(screen.getByRole('button', { name: 'Overview' })).not.toHaveAttribute('aria-current')
     const more = screen.getByRole('button', { name: 'More' })
     expect(more).not.toHaveClass('active')
-    clickScreen('Health')
+    clickScreen('Findings')
     expect(screen.getByRole('button', { name: 'More' })).toHaveClass('active')
   })
 
@@ -536,8 +535,8 @@ describe('SocConsole', () => {
     clickScreen('Triage queue')
     expect(title()).toBe('Triage queue')
     expect(document.querySelector('.vg-page-head')).toBeNull()
-    clickScreen('Health')
-    expect(title()).toBe('Health')
+    clickScreen('Findings')
+    expect(title()).toBe('Findings')
     expect(screen.getByRole('heading', { level: 1 }).closest('.vg-page-head')?.parentElement).toHaveClass('screen')
   })
 
@@ -722,6 +721,16 @@ describe('SocConsole', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Exit full screen' }))
     expect(screen.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Overview')
+  })
+
+  it('keeps Health out of the menus but opens it at /health with its title', async () => {
+    renderConsole('/health')
+    expect(title()).toBe('Health')
+    expect(screen.getByRole('heading', { level: 1 }).closest('.vg-page-head')?.parentElement).toHaveClass('screen')
+    expect(here()).toBeUndefined()
+    fireEvent.click(screen.getByRole('button', { name: 'More' }))
+    expect(within(screen.getByRole('menu', { name: 'More screens' })).queryByRole('button', { name: 'Health' })).toBeNull()
+    expect(await screen.findByText('Nothing waiting')).toBeInTheDocument()
   })
 
   it('shows approval depth and recent run outcomes on the Health screen, and no spend', async () => {

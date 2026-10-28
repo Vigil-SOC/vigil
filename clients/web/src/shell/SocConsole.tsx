@@ -53,7 +53,7 @@ import {
 const PRIMARY_KEYS = ['home', 'overview', 'triage', 'cases', 'workflows', 'settings']
 // a rule is drawn only between two groups that both have a visible item
 const NAV_GROUPS = [['home'], ['overview'], ['triage', 'cases'], ['workflows', 'settings']]
-const MORE_KEYS = ['dashboard', 'metrics', 'health']
+const MORE_KEYS = ['dashboard', 'metrics']
 // When the bar runs out of width, screens fold into More from its right end,
 // so what stays on the bar is always its first few screens in order, whichever
 // screen is open. Home never folds.

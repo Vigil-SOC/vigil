@@ -27,7 +27,6 @@ export const NAV: [IconName, string, ConsoleScreenKey, NavGate?][] = [
   ['folder', 'Cases', 'cases'],
   ['bars', 'Case Metrics', 'metrics'],
   ['flow', 'Agents & workflows', 'workflows'],
-  ['chart', 'Health', 'health'],
   ['gear', 'Settings', 'settings'],
 ]
 
