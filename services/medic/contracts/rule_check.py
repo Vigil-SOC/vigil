@@ -77,8 +77,9 @@ def load(text: str) -> tuple[dict | None, Result]:
         return None, res
     try:
         doc = yaml.load(text, Loader=_StrictLoader)  # nosec B506 - _StrictLoader subclasses SafeLoader
-    except yaml.YAMLError as exc:
-        msg = str(exc)
+    except (yaml.YAMLError, RecursionError) as exc:
+        # RecursionError: deep nesting ('[' * 6000) fits under MAX_RULE_BYTES
+        msg = str(exc) or type(exc).__name__
         code = (
             "E-YAML-ALIAS"
             if "ALIAS" in msg
@@ -93,7 +94,8 @@ def load(text: str) -> tuple[dict | None, Result]:
 
 def check_text(text: str) -> Result:
     doc, res = load(text)
-    return res if doc is None else check(doc)
+    # An empty file parses to None: refuse it by schema rather than pass it.
+    return res if not res.ok else check(doc)
 
 
 def check(rule: dict) -> Result:

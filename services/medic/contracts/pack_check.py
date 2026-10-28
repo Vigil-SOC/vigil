@@ -5,6 +5,9 @@ what this does, with the same codes. It runs AFTER the signature (F2) has been
 verified on the raw bytes, and before anything else touches the pack.
 Order: size → strict JSON → schema → files and hashes → identity (dates, Vigil
 range, lineage) → rules → suppression → catalog → runbooks → counts.
+A member YAML file that is malformed, nested too deeply to parse or not a mapping
+is refused with that member's code (P-SUPPRESSION, P-CATALOG, P-RUNBOOK; a rule's
+own E-* code under P-RULE), never an exception.
 """
 
 from __future__ import annotations
@@ -91,6 +94,22 @@ def _reject_constant(name: str) -> None:
 
 def _yaml(text: str):
     return yaml.load(text, Loader=_StrictLoader)  # nosec B506 - _StrictLoader subclasses SafeLoader
+
+
+def _member(files: dict, path: str, code: str, res: PackResult) -> dict | None:
+    """Parse one pack member; malformed, too deeply nested or not a mapping → `code`."""
+    try:
+        doc = _yaml(files[path])
+    except (yaml.YAMLError, RecursionError) as exc:
+        msg = (str(exc) or type(exc).__name__).splitlines()[0]
+        res.errors.append((code, f"{path}: not safe YAML: {msg[:120]}"))
+        return None
+    if not isinstance(doc, dict):
+        res.errors.append(
+            (code, f"{path}: must be a mapping, not {type(doc).__name__}")
+        )
+        return None
+    return doc
 
 
 def check_pack(
@@ -223,23 +242,32 @@ def check_pack(
         err(("P-ENGINE", "engine API major mismatch"))
 
     # Suppression (E3 §6): schema, rule selectors exist, no cycles.
+    # Each member is parsed once; one that won't parse is refused and goes no further.
+    suppression = None
     if "suppression.yaml" in files:
-        _check_suppression(_yaml(files["suppression.yaml"]), res)
+        suppression = _member(files, "suppression.yaml", "P-SUPPRESSION", res)
+        if suppression is not None and not _check_suppression(suppression, res):
+            suppression = None
 
     # Catalog (D3 §2): schema; every trusted-only log signal can match some entry.
-    catalog = (
-        _yaml(files["catalog.yaml"]) if "catalog.yaml" in files else {"entries": []}
-    )
+    catalog: dict | None = {"entries": []}
     if "catalog.yaml" in files:
-        for e in CATALOG.iter_errors(catalog):
+        catalog = _member(files, "catalog.yaml", "P-CATALOG", res)
+        cat_errs = list(CATALOG.iter_errors(catalog)) if catalog is not None else []
+        for e in cat_errs:
             err(("P-CATALOG", e.message[:150]))
-    _check_catalog_reach(catalog.get("entries", []), res)
+        if cat_errs:
+            catalog = None
+    if catalog is not None:
+        _check_catalog_reach(catalog.get("entries", []), res)
 
     # Runbooks (G4): schema; file named after id; lane-1 rules only; one descriptor
     # per rule. An incident is one rule, so port_label must be that rule's group_by.
     claimed: dict[str, str] = {}
     for path in sorted(x for x in files if x.startswith("runbooks/")):
-        rb = _yaml(files[path])
+        rb = _member(files, path, "P-RUNBOOK", res)
+        if rb is None:
+            continue
         errs = list(RUNBOOK.iter_errors(rb))
         if errs:
             err(("P-RUNBOOK", f"{path}: {errs[0].message[:120]}"))
@@ -281,13 +309,14 @@ def check_pack(
                     )
                 )
 
-    # Counts are a cross-check a human can read in the manifest.
+    # Counts are a cross-check a human can read in the manifest. A member already
+    # refused above can't be counted, and its own code says why.
+    if (suppression is None and "suppression.yaml" in files) or catalog is None:
+        return res
     expected = {
         "rules": sum(1 for x in files if x.startswith("rules/")),
         "runbooks": sum(1 for x in files if x.startswith("runbooks/")),
-        "suppressions": len(_yaml(files["suppression.yaml"]).get("entries", []))
-        if "suppression.yaml" in files
-        else 0,
+        "suppressions": len(suppression["entries"]) if suppression else 0,
         "catalog_entries": len(catalog.get("entries", [])),
     }
     if expected != m["counts"]:
@@ -306,11 +335,12 @@ def _selects(sel: dict, rid: str, rule: dict) -> bool:
     }[key]
 
 
-def _check_suppression(doc: dict, res: PackResult) -> None:
+def _check_suppression(doc: dict, res: PackResult) -> bool:
+    """False when the document fails its schema (so it can't be counted)."""
     errs = list(SUPPRESSION.iter_errors(doc))
     if errs:
         res.errors.append(("P-SUPPRESSION", errs[0].message[:150]))
-        return
+        return False
     edges: dict[str, set[str]] = {rid: set() for rid in res.rules}
     for entry in doc["entries"]:
         for side in ("parent", "children"):
@@ -340,6 +370,7 @@ def _check_suppression(doc: dict, res: PackResult) -> None:
 
     if any(state.get(n) is None and visit(n) for n in sorted(edges)):
         res.errors.append(("P-SUPPRESSION", "suppression graph has a cycle"))
+    return True
 
 
 def _matches(match: dict | None, value: str) -> bool:
