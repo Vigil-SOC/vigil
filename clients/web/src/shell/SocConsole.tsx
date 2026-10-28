@@ -515,7 +515,7 @@ function SocConsoleInner() {
   const mainClass = ['main', chatOpen ? 'chat-open' : ''].filter(Boolean).join(' ')
   const effectiveChatWidth = viewportWidth <= 600 ? viewportWidth : CHAT_WIDTH
   const consoleStyle = { '--chat-w': `${effectiveChatWidth}px` } as CSSProperties
-  const commandBoards = [...primary, ...more].map((item) => {
+  const commandBoards = [...primary.filter((item) => !foldedKeys.has(item[2])), ...more].map((item) => {
     const key = item[2]
     return { key, label: item[1], icon: item[0], desc: titles[key]?.[1] ?? '' }
   })
