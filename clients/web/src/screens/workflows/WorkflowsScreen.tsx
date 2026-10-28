@@ -3945,7 +3945,7 @@ function SkillUsage({ skill, align }: { skill: Skill; align: 'start' | 'end' }) 
 function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: Feed<Workflow>; agents: ReturnType<typeof useAgents> }) {
   const { rows, phase, error, reload } = feed
   // Saving, importing and deleting answer 403 without it.
-  const canWrite = useAuth().hasPermission('settings.write')
+  const canWrite = useAuth().hasPermission('automation.write')
   const [editName, setEditName] = useState<string | null>(null)
   const [building, setBuilding] = useState(false)
   const [deleteSkill, setDeleteSkill] = useState<Skill | null>(null)

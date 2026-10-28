@@ -18,15 +18,9 @@ os.environ.setdefault("DEV_MODE", "true")
 pytestmark = pytest.mark.unit
 
 
-def test_list_runs_filters_to_agent_source_and_maps_rows(monkeypatch):
-    from services.api.main import app
-    from services.api.middleware.auth import get_current_active_user
+def test_list_runs_filters_to_agent_source_and_maps_rows(monkeypatch, authenticate_app):
     import core.workflows.workflow_run_service as wrs
-
-    class _User:
-        is_active = True
-        username = "t"
-        user_id = "t"
+    from services.api.main import app
 
     captured = {}
 
@@ -52,37 +46,25 @@ def test_list_runs_filters_to_agent_source_and_maps_rows(monkeypatch):
         ]
 
     monkeypatch.setattr(wrs.WorkflowRunService, "list_runs", fake_list_runs)
-    app.dependency_overrides[get_current_active_user] = lambda: _User()
-    try:
-        resp = TestClient(app).get("/api/v1/agent-runs")
-        assert resp.status_code == 200, resp.text
-        body = resp.json()
-        # asked for agent-sourced runs only
-        assert captured.get("workflow_source") == "agent"
-        # mapped shape
-        assert body["count"] == 2
-        assert body["runs"][0]["run_id"] == "r1"
-        assert body["runs"][0]["run_kind"] == "hunt"  # lifted from trigger_context
-        assert body["runs"][1]["run_kind"] is None  # missing → None, not a crash
-    finally:
-        app.dependency_overrides.pop(get_current_active_user, None)
+    authenticate_app(app)
+    resp = TestClient(app).get("/api/v1/agent-runs")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # asked for agent-sourced runs only
+    assert captured.get("workflow_source") == "agent"
+    # mapped shape
+    assert body["count"] == 2
+    assert body["runs"][0]["run_id"] == "r1"
+    assert body["runs"][0]["run_kind"] == "hunt"  # lifted from trigger_context
+    assert body["runs"][1]["run_kind"] is None  # missing → None, not a crash
 
 
-def test_list_runs_also_served_at_legacy_prefix(monkeypatch):
-    from services.api.main import app
-    from services.api.middleware.auth import get_current_active_user
+def test_list_runs_also_served_at_legacy_prefix(monkeypatch, authenticate_app):
     import core.workflows.workflow_run_service as wrs
-
-    class _User:
-        is_active = True
-        username = "t"
-        user_id = "t"
+    from services.api.main import app
 
     monkeypatch.setattr(wrs.WorkflowRunService, "list_runs", lambda self, **k: [])
-    app.dependency_overrides[get_current_active_user] = lambda: _User()
-    try:
-        client = TestClient(app)
-        assert client.get("/api/v1/agent-runs").status_code == 200
-        assert client.get("/api/agent-runs").status_code == 200
-    finally:
-        app.dependency_overrides.pop(get_current_active_user, None)
+    authenticate_app(app)
+    client = TestClient(app)
+    assert client.get("/api/v1/agent-runs").status_code == 200
+    assert client.get("/api/agent-runs").status_code == 200

@@ -75,6 +75,12 @@ const state = vi.hoisted(() => ({
   resume: vi.fn(() => Promise.resolve()),
   ceiling: null as Record<string, boolean> | null,
   ceilingPhase: 'ready' as Phase,
+  perms: new Set<string>(),
+}))
+
+const WRITE = ['ai_autonomy.write', 'ai_autonomy.stop']
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: () => ({ hasPermission: (p: string) => state.perms.has(p) }),
 }))
 
 const CEILING = {
@@ -128,6 +134,7 @@ describe('Limits and autonomy', () => {
     state.resume.mockClear()
     state.ceiling = { ...CEILING }
     state.ceilingPhase = 'ready'
+    state.perms = new Set(WRITE)
     notify.mockClear()
   })
 
@@ -283,9 +290,10 @@ describe('Limits and autonomy', () => {
     expect(state.stop).toHaveBeenCalledTimes(1)
     expect(state.reload).toHaveBeenCalled()
 
-    state.ceiling = { ...CEILING, act_reversible: true, stopped: true, read: false, write: false, propose: false }
+    state.ceiling = { ...CEILING, act_reversible: true, stopped: true, write: false, propose: false }
     view.rerender(<AutoInvestigateSection notify={notify} />)
-    expect(screen.getByText(/Off while stopped: read, write, propose/)).toBeInTheDocument()
+    expect(screen.getByText(/Off while stopped: write, propose/)).toBeInTheDocument()
+    expect(screen.getByText(/reads continue/)).toBeInTheDocument()
     // the stored flag stays and stays editable
     expect(seg('Tools that change something', 'On their own')).toHaveAttribute('aria-pressed', 'true')
     await act(async () => {
@@ -306,13 +314,44 @@ describe('Limits and autonomy', () => {
     }
   })
 
-  it('saves four-eyes and says it is not enforced yet', async () => {
+  it('saves four-eyes and says what it enforces', async () => {
     render(<AutoInvestigateSection notify={notify} />)
-    expect(screen.getByText(/Not enforced yet/)).toBeInTheDocument()
+    expect(screen.getByText(/Nobody approves an action they proposed/)).toBeInTheDocument()
     await act(async () => {
       fireEvent.click(screen.getByRole('switch', { name: 'Four-eyes approval' }))
     })
     expect(state.ceilingSave).toHaveBeenCalledWith({ four_eyes: true })
+  })
+
+  it('gives a stop holder Stop and lowering, and no raise, four-eyes or Resume', async () => {
+    state.perms = new Set(['ai_autonomy.stop'])
+    state.ceiling = { ...CEILING, act_reversible: true }
+    const view = render(<AutoInvestigateSection notify={notify} />)
+    expect(screen.queryByRole('group', { name: 'Tools that change something' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /On their own/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('switch', { name: 'Four-eyes approval' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Stop/ })).toBeInTheDocument()
+    // only the flag that is on offers to switch off
+    expect(screen.getAllByRole('button', { name: 'Switch to Ask first' })).toHaveLength(1)
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Switch to Ask first' }))
+    })
+    expect(state.ceilingSave).toHaveBeenCalledWith({ act_reversible: false, act_irreversible: false })
+
+    state.ceiling = { ...CEILING, act_reversible: true, stopped: true }
+    view.rerender(<AutoInvestigateSection notify={notify} />)
+    expect(screen.queryByRole('button', { name: /Resume/ })).not.toBeInTheDocument()
+  })
+
+  it('shows status only to a role with neither write nor stop', () => {
+    state.perms = new Set()
+    state.ceiling = { ...CEILING, act_reversible: true, four_eyes: true }
+    render(<AutoInvestigateSection notify={notify} />)
+    expect(screen.getByText('On their own.')).toBeInTheDocument()
+    expect(screen.getByText('Ask first.')).toBeInTheDocument()
+    expect(screen.getByText('On')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Stop|Resume|Ask first|On their own/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('switch', { name: 'Four-eyes approval' })).not.toBeInTheDocument()
   })
 
   it('shows an error, not a default, when the ceiling fails to load', () => {

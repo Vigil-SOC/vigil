@@ -20,12 +20,14 @@ from sqlalchemy import case as sql_case
 from sqlalchemy import cast, func, literal_column, select, true
 from sqlalchemy.sql.elements import ColumnElement
 
+from core.auth.permissions import permission_gate
 from core.cases.case_sla_service import CaseSLAService
 from core.cases.case_status import CLOSED
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import Case, CaseClosureInfo
 
 router = APIRouter()
+router.dependencies.append(permission_gate("cases.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/v1/cases/metrics",

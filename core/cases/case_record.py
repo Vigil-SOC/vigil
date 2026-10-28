@@ -1,7 +1,9 @@
 """One newest-first read of a case's record.
 
 Each run's ledger comes from the agent. ``case_audit_logs`` is read here, by
-``entity_type`` and ``entity_id``: the table has no ``case_id`` column. The
+``entity_type`` and ``entity_id``: the table has no ``case_id`` column. Since
+#3281 a case action lands on the audit trail instead; its entries come from
+``core.audit.trail.read`` with the case as the object filter. The
 case's own history is ``cases.activities``, appended to by runs, analysts and
 merges; it is read off the case, not written here. This view does not query
 ``agent_events``.
@@ -14,6 +16,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional, Sequence
 
+from core.auth import principals
 from core.storage.models import CaseAuditLog
 from core.workflows.handoff_cases import filed_case
 
@@ -515,6 +518,41 @@ def audit_text(row: CaseAuditLog) -> str:
     return change or row.action
 
 
+# The record's kind chip for a trail row, from its actor's principal kind.
+_TRAIL_KIND = {
+    principals.PERSON: "human",
+    principals.SERVICE_ACCOUNT: "human",
+    principals.SYSTEM: "system",
+}
+
+
+def trail_who(principal: Optional[Mapping[str, Any]], actor_text: Any = None) -> str:
+    """The actor as a reader names them: the label, else the id, marked erased."""
+    if not principal:
+        return str(actor_text or "").strip()
+    if principal.get("label"):
+        return str(principal["label"])
+    return f"{principal['id']} (erased)" if principal.get("erased") else principal["id"]
+
+
+def _trail_text(entry: Mapping[str, Any]) -> str:
+    """The actor as the subject of the sentence, as the board's rows read."""
+    who = trail_who(entry.get("actor"), entry.get("actor_text"))
+    said = str(entry.get("sentence") or "")
+    action = (entry.get("payload") or {}).get("action")
+    # An unknown action reads as its key, which is no sentence to join into.
+    if not who or said == action or len(said) < 2 or not said[1].islower():
+        return _join(who, said)
+    return f"{who} {said[0].lower()}{said[1:]}"
+
+
+def _legacy_id(entry: Mapping[str, Any]) -> Optional[str]:
+    legacy = (entry.get("payload") or {}).get("legacy")
+    if isinstance(legacy, Mapping) and legacy.get("table") == "case_audit_logs":
+        return str(legacy.get("id"))
+    return None
+
+
 def unread_row(run_id: str, at: Any, reason: str) -> dict:
     """One row standing in for a run whose ledger could not be read."""
     return {
@@ -534,8 +572,9 @@ def merge_record(
     activities: Sequence[Any] = (),
     unread: Sequence[Mapping[str, Any]] = (),
     case_id: Optional[str] = None,
+    trail: Sequence[Mapping[str, Any]] = (),
 ) -> list[dict]:
-    """Every run's rows, case-audit rows and case-activity rows, newest first.
+    """Every run's rows, trail, case-audit and case-activity rows, newest first.
 
     ``runs`` is each run's id with its events. Run rows are the chained ledger,
     each read against its own run's ids. Audit and activity rows are not chained:
@@ -543,6 +582,9 @@ def merge_record(
     ledger could not be read. The kernel's bookkeeping (frames, prices, counters,
     "neither" rulings) is left out, and the chain itself is still verified whole.
     ``case_id`` is the case read, which a hunt hand-off key in any row resolves to.
+    ``trail`` is this case's audit trail entries (``trail.read``). They are on the
+    trail's own chain, not a run's ledger, so they are not ``chained`` here. A
+    case-audit row an entry carries as ``legacy`` is shown once, as that entry.
     """
     rows: list[dict] = [{**row, "_seq": 0} for row in unread]
     # An activity (a run's report) names no run's ids of its own: it reads against all.
@@ -583,7 +625,28 @@ def merge_record(
                     ),
                 }
             )
+    copied: set[str] = set()
+    for entry in trail:
+        legacy = _legacy_id(entry)
+        if legacy is not None:
+            copied.add(legacy)
+        principal = entry.get("actor")
+        # An unset caller is recorded as ``agent`` with no principal.
+        kind = (principal or {}).get("kind") or "agent"
+        rows.append(
+            {
+                "id": f"trail:{entry['seq']}",
+                "at": str(entry.get("occurred_at") or ""),
+                "kind": _TRAIL_KIND.get(kind, "agent"),
+                "source": "audit_trail",
+                "chained": False,
+                "text": _trail_text(entry),
+                "_seq": 0,
+            }
+        )
     for audit in audits:
+        if str(audit.audit_id) in copied:
+            continue
         rows.append(
             {
                 "id": f"audit:{audit.audit_id}",

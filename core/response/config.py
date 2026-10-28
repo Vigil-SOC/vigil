@@ -23,7 +23,7 @@ def decision_rule(field: str, value: Any, observed: Optional[float] = None) -> s
     Numeric thresholds render as ``response.confidence_threshold=0.90 met (0.92)``
     — the field, the value it held when the decision was made, whether the
     observed confidence reached it, and that confidence. Branches with no
-    comparison (``reversibility=irreversible``, ``approval.force_manual_approval=True``)
+    comparison (``effect_class=irreversible``, ``approval.force_manual_approval=True``)
     render as ``field=value``. Every decision site calls this; none assembles
     the string itself, so a later slice can parse one shape.
     """
@@ -125,31 +125,30 @@ def response_action_decision(
 
 
 def approval_requirement(
-    force_manual_approval: bool,
-    reversibility: Any,
+    forced: bool,
+    effect_class: Optional[str],
     confidence: float,
     config: ResponseConfig,
 ) -> tuple[bool, str]:
     """Whether an approval row waits for a human, and the rule that decided it.
 
-    A confidence never marks a row approved. Reversible and irreversible rows
-    both wait. ``config`` stays in the signature so callers and the intent
-    replay keep one function; the threshold it carries is a routing knob, not
-    a release. An act flag does not release a row either (#2931).
+    A confidence never marks a row approved: every class waits. ``config``
+    stays in the signature so callers and the intent replay keep one
+    function; the threshold it carries is a routing knob, not a release. An
+    act flag does not release a row either (#2931).
 
-    ``reversibility`` is the enum the live path passes. Compared by ``.value``
-    so this module does not import the service that calls it. An unknown
-    value raises, unless force-manual already decided.
+    ``forced`` is ``environment_locks_act()`` on the live path.
+    ``effect_class`` is the tool's stored class (#3304), None when it is
+    unclassified. An unknown class raises, unless forced already decided.
     """
-    if force_manual_approval:
+    if forced:
         return True, decision_rule("approval.force_manual_approval", True)
-    value = getattr(reversibility, "value", None)
-    if value == "irreversible":
-        return True, decision_rule("reversibility", value)
-    if value == "reversible":
+    if effect_class is None or effect_class == "irreversible":
+        return True, decision_rule("effect_class", effect_class or "unclassified")
+    if effect_class in ("read", "read_unverified", "reversible"):
         # A confidence is a probability. Anything else (5.0, NaN) is recorded
         # as out of range, and still waits.
         if not isinstance(confidence, (int, float)) or not 0.0 <= confidence <= 1.0:
             return True, decision_rule("response.confidence_range", confidence)
-        return True, decision_rule("reversibility", value)
-    raise ValueError(f"Unknown reversibility: {reversibility}")
+        return True, decision_rule("effect_class", effect_class)
+    raise ValueError(f"Unknown effect class: {effect_class}")

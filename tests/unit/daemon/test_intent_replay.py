@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 
 from core.intent import IntentDiff, format_rows
-from core.response.approval_service import Reversibility
 from core.response.config import (
     ResponseConfig,
     approval_requirement,
@@ -36,7 +35,7 @@ def _finding(finding_id, severity, confidence, recommended=""):
     return ReplayFinding(finding_id, severity, confidence, recommended)
 
 
-def _approval(action_id, confidence, reversibility=Reversibility.REVERSIBLE):
+def _approval(action_id, confidence, reversibility="reversible"):
     return ReplayApproval(action_id, confidence, reversibility)
 
 
@@ -72,28 +71,32 @@ def test_auto_response_off_is_no_action():
 
 def test_approval_requirement_matches_the_live_branch():
     config = ResponseConfig()
-    assert approval_requirement(False, Reversibility.REVERSIBLE, 0.87, config) == (
+    assert approval_requirement(False, "reversible", 0.87, config) == (
         True,
-        "reversibility=reversible",
+        "effect_class=reversible",
     )
-    assert approval_requirement(False, Reversibility.REVERSIBLE, 0.99, config) == (
+    assert approval_requirement(False, "reversible", 0.99, config) == (
         True,
-        "reversibility=reversible",
+        "effect_class=reversible",
     )
     held, rule = approval_requirement(
-        False, Reversibility.REVERSIBLE, 0.92, ResponseConfig(confidence_threshold=0.95)
+        False, "reversible", 0.92, ResponseConfig(confidence_threshold=0.95)
     )
     assert held is True
-    assert rule == "reversibility=reversible"
-    assert approval_requirement(False, Reversibility.IRREVERSIBLE, 0.99, config) == (
+    assert rule == "effect_class=reversible"
+    assert approval_requirement(False, "irreversible", 0.99, config) == (
         True,
-        "reversibility=irreversible",
+        "effect_class=irreversible",
+    )
+    assert approval_requirement(False, None, 0.99, config) == (
+        True,
+        "effect_class=unclassified",
     )
     assert approval_requirement(True, "sideways", 0.99, config)[0] is True
 
 
-def test_unknown_reversibility_raises():
-    with pytest.raises(ValueError, match="Unknown reversibility"):
+def test_unknown_effect_class_raises():
+    with pytest.raises(ValueError, match="Unknown effect class"):
         approval_requirement(False, "sideways", 0.9, ResponseConfig())
 
 

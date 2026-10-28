@@ -98,7 +98,9 @@ def test_creator_is_refused_over_http_and_row_stays_pending(four_eyes, monkeypat
         user_id = "agent:hunt"
         username = "hunt"
 
-    monkeypatch.setattr(AuthService, "check_permission", staticmethod(lambda *a: True))
+    monkeypatch.setattr(
+        AuthService, "check_permission", staticmethod(lambda *a, **k: True)
+    )
     app = FastAPI()
     app.include_router(approvals_router, prefix="/api")
     app.dependency_overrides[get_current_user] = lambda: _User()

@@ -134,7 +134,7 @@ def test_workflow_brief_fences_the_document_as_material():
 
 @pytest.fixture
 def client(monkeypatch):
-    monkeypatch.setattr(AuthService, "check_permission", lambda *_: True)
+    monkeypatch.setattr(AuthService, "check_permission", lambda *a, **k: True)
     app = FastAPI()
     app.include_router(router.router, prefix=router.ROUTER_META.prefix)
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(user_id="u")

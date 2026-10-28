@@ -26,12 +26,11 @@ class _Storage:
 
 
 @pytest.fixture
-def app(monkeypatch):
+def app(monkeypatch, authenticate_app):
     from fastapi import FastAPI
 
     from core.cases import case_search_router
     from services.api.main import health_check
-    from services.api.middleware.auth import get_current_active_user
 
     started = {"at": None}
 
@@ -48,7 +47,7 @@ def app(monkeypatch):
         case_search_router.router, prefix=case_search_router.ROUTER_META.prefix
     )
     app.add_api_route("/api/health", health_check, methods=["GET"])
-    app.dependency_overrides[get_current_active_user] = lambda: object()
+    authenticate_app(app)
     app.state.health_storage = _Storage()
     app.state.started = started
     return app

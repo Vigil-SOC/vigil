@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
-import { AUDIT_PAGE, auditApi, type AuditEntry, type AuditFeedHealth, type AuditFilter, type AuditRetention, type AuditTip, type AuditVerify } from '../../services/api'
+import { initials } from '../../data/mappers'
+import { AUDIT_PAGE, auditApi, type AuditEntry, type AuditPrincipal, type AuditFeedHealth, type AuditFilter, type AuditRetention, type AuditTip, type AuditVerify } from '../../services/api'
 import { FilterChip } from '../../shared/FilterChip'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
@@ -72,11 +73,21 @@ function str(value: unknown): string {
 
 const attributionWord = (value: unknown) => str(value).replace(/_/g, ' ')
 
-// What the entry acted on: its object, or the target an agent tool call names.
-const subjectOf = (e: AuditEntry) => str(e.payload.object) || str(e.payload.target)
+// What the entry acted on: its object, the target an agent tool call names, or its case.
+const subjectOf = (e: AuditEntry) => str(e.payload.object) || str(e.payload.target) || str(e.payload.case_id)
 
-function actorOf(e: AuditEntry): string {
-  return e.actor_text || str(e.payload.actor) || '—'
+const KIND_WORD: Record<string, string> = { person: 'Person', service_account: 'Service account', agent: 'Agent', system: 'System' }
+
+/** A principal as a reader names them: the label, else the id (blank once erased). */
+function nameOf(p: AuditPrincipal | null | undefined, fallback = ''): string {
+  return p?.label || p?.id || fallback
+}
+
+/** The second line under a name: its kind, and whether it is deleted or erased. */
+function kindLine(p: AuditPrincipal | null | undefined): string {
+  if (!p) return ''
+  const kind = (p.kind && KIND_WORD[p.kind]) || 'Unknown principal'
+  return [kind, p.erased ? 'erased' : '', p.deleted ? 'deleted' : ''].filter(Boolean).join(' · ')
 }
 
 export default function AuditSection({ notify }: SectionProps) {
@@ -241,10 +252,10 @@ export default function AuditSection({ notify }: SectionProps) {
                 >
                   <span role="cell" className="ag-seq">{e.seq}</span>
                   <span role="cell" className="ag-when">{utcDayClock(e.occurred_at) ?? '—'}</span>
-                  <span role="cell" className="ag-clip" title={str(e.payload.actor)}>{actorOf(e)}</span>
-                  <span role="cell" className="ag-what">
-                    <span className="ag-action" title={str(e.payload.action)}>{str(e.payload.action) || '—'}</span>
-                    {subjectOf(e) && <span className="ag-sub" title={subjectOf(e)}>{subjectOf(e)}</span>}
+                  <ActorCell entry={e} />
+                  <span role="cell" className="ag-what" title={e.sentence}>
+                    <span className="ag-action">{e.sentence || str(e.payload.action) || '—'}</span>
+                    <span className="ag-sub">{[str(e.payload.action), subjectOf(e)].filter(Boolean).join(' · ')}</span>
                   </span>
                   <span role="cell" className="ag-clip">{str(e.payload.outcome) || '—'}</span>
                   <span role="cell" className="ag-marks"><Marks entry={e} /></span>
@@ -263,6 +274,21 @@ export default function AuditSection({ notify }: SectionProps) {
         </div>
       )}
     </>
+  )
+}
+
+/** The Cases board's owner cell: initials, the name, and the kind beneath it. */
+function ActorCell({ entry }: { entry: AuditEntry }) {
+  const name = nameOf(entry.actor, entry.actor_text || '—')
+  const sub = kindLine(entry.actor)
+  return (
+    <span role="cell" className="ag-who" title={entry.actor?.id ?? undefined}>
+      <span className="ag-avatar" aria-hidden="true">{initials(entry.actor?.label || name)}</span>
+      <span className="ag-who-text">
+        <span className="ag-who-name">{name}</span>
+        {sub && <span className="ag-who-sub">{sub}</span>}
+      </span>
+    </span>
   )
 }
 
@@ -293,9 +319,10 @@ function EntryDetail({ entry }: { entry: AuditEntry }) {
   const fields: [string, string][] = [
     ['Seq', String(entry.seq)],
     ['Occurred (UTC)', utcDayClock(entry.occurred_at) ?? entry.occurred_at],
-    ['Actor', entry.actor_text ? `${entry.actor_text} · ${str(p.actor)}` : str(p.actor)],
-    ['On behalf of', str(p.on_behalf_of)],
+    ['Actor', [nameOf(entry.actor, entry.actor_text ?? ''), kindLine(entry.actor), entry.actor?.label ? entry.actor.id : ''].filter(Boolean).join(' · ')],
+    ['On behalf of', [nameOf(entry.on_behalf_of, str(p.on_behalf_of)), entry.on_behalf_of?.erased ? 'erased' : '', entry.on_behalf_of?.deleted ? 'deleted' : ''].filter(Boolean).join(' · ')],
     ['Operator text', entry.operator_text ?? ''],
+    ['What it was', entry.sentence ?? ''],
     ['Action', str(p.action)],
     ['Object', str(p.object)],
     ...(p.target != null ? [['Target', str(p.target)] as [string, string]] : []),

@@ -21,9 +21,8 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from core.auth.auth_service import AuthService
 from core.auth.current_user import get_current_user
-from core.auth.permissions import permission_gate
+from core.auth.permissions import deny_unless, permission_gate
 from core.config import get_settings, is_demo_mode
 from core.ingestion.ingestion_jobs import (
     IngestionJob,
@@ -45,6 +44,7 @@ from core.storage.s3_service import S3_LIST_ERRORS, describe_s3_error
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+router.dependencies.append(permission_gate("findings.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/ingest",
@@ -75,11 +75,7 @@ def _can_create_cases(data_type: str, fmt: Optional[str]) -> bool:
 
 
 def _require_cases_write(user: User) -> None:
-    if AuthService.check_permission(str(user.user_id), "cases.write"):
-        return
-    raise HTTPException(
-        status_code=403, detail="Permission denied: cases.write required"
-    )
+    deny_unless(str(user.user_id), "cases.write")
 
 
 class IngestionStats(BaseModel):

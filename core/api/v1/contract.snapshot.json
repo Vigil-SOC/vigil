@@ -2635,7 +2635,16 @@
                 "type": "null"
               }
             ],
+            "description": "The first of case_ids: the case that asked.",
             "title": "Case Id"
+          },
+          "case_ids": {
+            "description": "Every case this item is on. A proposal several cases made is one item listing them all.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Case Ids",
+            "type": "array"
           },
           "checkpoint_class": {
             "anyOf": [
@@ -3438,12 +3447,12 @@
         "properties": {
           "arch": {
             "default": "",
-            "description": "Arch file path; empty routes through the run-kind registry.",
+            "description": "Must be empty: the arch comes from the run-kind registry.",
             "title": "Arch",
             "type": "string"
           },
           "config": {
-            "description": "Path to the deployment config.",
+            "description": "Must be empty: the workflow reference carries its config.",
             "title": "Config",
             "type": "string"
           },
@@ -3460,7 +3469,7 @@
             "title": "Overrides"
           },
           "playbook": {
-            "description": "Path to the playbook: the scenario as data.",
+            "description": "A workflow reference, workflow:<id>, naming an enabled workflow.",
             "title": "Playbook",
             "type": "string"
           },

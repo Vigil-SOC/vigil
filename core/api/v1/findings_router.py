@@ -37,6 +37,7 @@ from core.storage.schemas.finding import FindingSchema
 from core.storage.technique_confidence import restore_bool_confidences
 
 router = APIRouter()
+router.dependencies.append(permission_gate("findings.read"))
 
 _FINDINGS_WRITE = [permission_gate("findings.write")]
 

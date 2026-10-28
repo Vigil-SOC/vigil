@@ -458,6 +458,7 @@ def needs_you_items(cases: list[dict], case_id: Optional[str] = None) -> dict:
                     "created_at": created_at,
                     "reversibility": "reversible",
                     "case_id": current,
+                    "case_ids": [current],
                     "run_id": None,
                     "checkpoint_id": None,
                     "checkpoint_class": None,

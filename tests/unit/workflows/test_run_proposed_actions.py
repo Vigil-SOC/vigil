@@ -15,7 +15,8 @@ import yaml
 from core.response.approval_service import (
     ActionType,
     PendingAction,
-    _case_id_for_action,
+    _case_ids_for_action,
+    proposal_case_ids,
 )
 from core.workflows import run_bridge_router as rbr
 from core.workflows.run_bridge_router import TerminalUpdate, record_terminal
@@ -86,9 +87,39 @@ class _Approvals:
             "status": "pending" if kwargs.get("human_only") else "approved",
             "workflow_run_id": kwargs.get("workflow_run_id"),
             "idempotency_key": key,
+            "approved_at": None,
+            "executed_at": None,
         }
         self.rows.append(row)
         return SimpleNamespace(**row)
+
+    def run_proposal_match(self, key, action_type, target):
+        for row in self.rows:
+            if row["idempotency_key"] == key and row["status"] != "failed":
+                return SimpleNamespace(**row)
+        same = [
+            row
+            for row in self.rows
+            if (row["idempotency_key"] or "").startswith("run-proposal:")
+            and row["action_type"] == action_type
+            and row["target"].strip().lower() == target.strip().lower()
+        ]
+        return SimpleNamespace(**same[-1]) if same else None
+
+    def add_proposal_case(self, action_id, case_id):
+        row = self._row(action_id)
+        if row["status"] != "pending":
+            return None
+        listed = proposal_case_ids(row["parameters"])
+        if case_id not in listed:
+            row["parameters"] = {**row["parameters"], "case_ids": [*listed, case_id]}
+        return SimpleNamespace(**row)
+
+    def get_action(self, action_id):
+        return SimpleNamespace(**self._row(action_id))
+
+    def _row(self, action_id):
+        return next(row for row in self.rows if row["action_id"] == action_id)
 
     def list_actions(self, status=None, workflow_run_id=None, **_):
         return [
@@ -112,13 +143,14 @@ def _terminate(
     approvals: _Approvals,
     cases: _Cases,
     trigger_context: Optional[Dict[str, Any]] = None,
+    run_id: str = "run-1",
 ) -> None:
     runs = _Runs({"case_id": "case-1"} if trigger_context is None else trigger_context)
     with patch(
         "core.storage.database_data_service.DatabaseDataService", return_value=cases
     ), patch("core.workflows.run_bridge_router.authorise"):
         record_terminal(
-            run_id="run-1",
+            run_id=run_id,
             update=update,
             authorization="Bearer x",
             run_service=runs,
@@ -152,7 +184,7 @@ class TestAConclusionFilesItsProposals:
         assert isolate["confidence"] == 0.9
         assert isolate["human_only"] is True
         assert isolate["status"] == "pending"
-        assert isolate["parameters"] == {"case_id": "case-1", "run_id": "run-1"}
+        assert isolate["parameters"] == {"case_ids": ["case-1"], "run_id": "run-1"}
         # A confidence the model left out is no claim at all, not a high one.
         assert block["confidence"] == 0.0
         assert block["status"] == "pending"
@@ -178,7 +210,10 @@ class TestAConclusionFilesItsProposals:
             parameters=row["parameters"],
             workflow_run_id=row["workflow_run_id"],
         )
-        assert _case_id_for_action(action, {}, {}) == "case-1"
+        assert _case_ids_for_action(action, {}, {}) == ["case-1"]
+
+    def test_a_row_filed_before_sharing_reads_as_a_list_of_one(self):
+        assert proposal_case_ids({"case_id": "case-1", "run_id": "run-0"}) == ["case-1"]
 
     def test_the_case_says_how_many_were_proposed(self):
         cases = _case()
@@ -225,6 +260,112 @@ class TestTheRunEndingDoesNotTakeThemBack:
             if a["activity_type"] == "actions_proposed"
         ]
         assert len(proposed) == 1
+
+
+def _two_cases() -> _Cases:
+    return _Cases(
+        {
+            "case-1": {"case_id": "case-1", "activities": []},
+            "case-2": {"case_id": "case-2", "activities": []},
+        }
+    )
+
+
+def _from_case_2(proposal: Dict[str, Any], approvals: _Approvals, cases: _Cases):
+    _terminate(
+        _concluded(proposal),
+        approvals,
+        cases,
+        trigger_context={"case_id": "case-2"},
+        run_id="run-2",
+    )
+
+
+def _types(cases: _Cases, case_id: str) -> List[str]:
+    return [a["activity_type"] for a in cases.cases[case_id]["activities"]]
+
+
+class TestEachActionIsAskedOnceAcrossCases:
+    def test_a_second_case_joins_the_pending_ask(self):
+        approvals, cases = _Approvals(), _two_cases()
+        _terminate(_concluded(BLOCK), approvals, cases)
+        # Same action, the target written differently.
+        _from_case_2({**BLOCK, "target": " 45.77.53.176 "}, approvals, cases)
+
+        [row] = approvals.proposals()
+        assert row["parameters"]["case_ids"] == ["case-1", "case-2"]
+        [note] = [
+            a
+            for a in cases.cases["case-2"]["activities"]
+            if a["activity_type"] == "action_already_requested"
+        ]
+        assert (
+            note["description"] == "Block IP 45.77.53.176 already requested on case-1"
+        )
+        # Nothing was filed for run-2, so it claims no proposals.
+        assert "actions_proposed" not in _types(cases, "case-2")
+
+    @pytest.mark.parametrize("status", ["approved", "executed"])
+    def test_a_decided_ask_files_nothing_and_says_so(self, status):
+        approvals, cases = _Approvals(), _two_cases()
+        _terminate(_concluded(BLOCK), approvals, cases)
+        approvals.rows[0].update(
+            status=status, approved_at="2026-10-20T09:00:00Z", executed_at=None
+        )
+        _from_case_2(BLOCK, approvals, cases)
+
+        assert len(approvals.proposals()) == 1
+        assert approvals.rows[0]["parameters"]["case_ids"] == ["case-1"]
+        [note] = [
+            a
+            for a in cases.cases["case-2"]["activities"]
+            if a["activity_type"] == "action_already_requested"
+        ]
+        assert (
+            note["description"]
+            == f"Block IP 45.77.53.176 already {status} on 2026-10-20"
+        )
+
+    @pytest.mark.parametrize("status", ["rejected", "failed"])
+    def test_a_refused_ask_is_asked_again(self, status):
+        approvals, cases = _Approvals(), _two_cases()
+        _terminate(_concluded(BLOCK), approvals, cases)
+        approvals.rows[0]["status"] = status
+        _from_case_2(BLOCK, approvals, cases)
+
+        first, second = approvals.proposals()
+        assert second["status"] == "pending"
+        assert second["parameters"] == {"case_ids": ["case-2"], "run_id": "run-2"}
+        assert "action_already_requested" not in _types(cases, "case-2")
+
+    @pytest.mark.parametrize("status", ["pending", "approved"])
+    def test_a_resent_terminal_notes_a_shared_ask_once(self, status):
+        approvals, cases = _Approvals(), _two_cases()
+        _terminate(_concluded(BLOCK), approvals, cases)
+        approvals.rows[0]["status"] = status
+        _from_case_2(BLOCK, approvals, cases)
+        _from_case_2(BLOCK, approvals, cases)
+
+        assert len(approvals.proposals()) == 1
+        assert _types(cases, "case-2").count("action_already_requested") == 1
+
+    def test_a_run_whose_own_ask_failed_asks_again(self):
+        approvals, cases = _Approvals(), _case()
+        _terminate(_concluded(BLOCK), approvals, cases)
+        approvals.rows[0]["status"] = "failed"
+        _terminate(_concluded(BLOCK), approvals, cases)
+
+        assert [r["status"] for r in approvals.proposals()] == ["failed", "pending"]
+
+    def test_a_resent_terminal_does_not_note_its_own_ask(self):
+        approvals, cases = _Approvals(), _two_cases()
+        _from_case_2(BLOCK, approvals, cases)
+        _from_case_2(BLOCK, approvals, cases)
+
+        [row] = approvals.proposals()
+        assert row["parameters"]["case_ids"] == ["case-2"]
+        assert "action_already_requested" not in _types(cases, "case-2")
+        assert _types(cases, "case-2").count("actions_proposed") == 1
 
 
 class TestAMalformedProposalIsDropped:

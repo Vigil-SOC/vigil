@@ -44,6 +44,7 @@ from core.workflows.workflow_run_service import WorkflowRunService
 router = APIRouter()
 
 _RUN_AGENTS = [permission_gate("ai_chat.use")]
+router.dependencies.append(permission_gate("ai_chat.use"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/v1/agent-runs",
@@ -62,12 +63,15 @@ class StartRunRequest(BaseModel):
     run_kind: str = Field(default="hunt", description=f"One of {', '.join(RUN_KINDS)}.")
     arch: str = Field(
         default="",
-        description="Arch file path; empty routes through the run-kind registry.",
+        description="Must be empty: the arch comes from the run-kind registry.",
     )
     playbook: str = Field(
-        ..., description="Path to the playbook: the scenario as data."
+        ...,
+        description="A workflow reference, workflow:<id>, naming an enabled workflow.",
     )
-    config: str = Field(..., description="Path to the deployment config.")
+    config: str = Field(
+        ..., description="Must be empty: the workflow reference carries its config."
+    )
     prompt: str = Field(default="", description="What the run is being asked to do.")
     overrides: Optional[Dict[str, Any]] = None
     tenant_id: Optional[str] = None
@@ -148,9 +152,19 @@ async def start_run(
             status_code=400, detail=f"unknown run_kind: {request.run_kind}"
         )
 
-    # A run that names a workflow is a start of that workflow.
+    # Spec sources are the install's own definitions: a caller names a workflow,
+    # never a file for the worker to read.
     named = request.playbook.removeprefix(WORKFLOW_SCHEME).strip()
-    if request.playbook.startswith(WORKFLOW_SCHEME) and not is_enabled(named):
+    if not request.playbook.startswith(WORKFLOW_SCHEME) or not named:
+        raise HTTPException(
+            status_code=422, detail="playbook must be a workflow:<id> reference"
+        )
+    if request.arch or request.config:
+        raise HTTPException(
+            status_code=422,
+            detail="arch and config must be empty; files are not accepted",
+        )
+    if not is_enabled(named):
         raise HTTPException(status_code=409, detail=disabled_message(named))
 
     try:
@@ -222,8 +236,8 @@ async def start_run(
     return StartRunResponse(run_id=run_id, job_id=job_id)
 
 
-# The playbook reference names the workflow when there is one; a run started from
-# file paths is named for the loop it runs, which is all the console needs to list it.
+# start_run has already checked the playbook is a workflow reference; the row is
+# named for that workflow and carries its phases.
 def _begin_run_row(
     run_id: str,
     request: StartRunRequest,
@@ -233,21 +247,17 @@ def _begin_run_row(
     from core.workflows.workflow_run_service import WorkflowRunService
     from core.workflows.workflows_service import WorkflowsService
 
-    named = request.playbook.removeprefix(WORKFLOW_SCHEME).strip()
-    workflow_id = (
-        named if request.playbook.startswith(WORKFLOW_SCHEME) else request.run_kind
-    )
+    workflow_id = request.playbook.removeprefix(WORKFLOW_SCHEME).strip()
     phases: Dict[str, str] = {}
     version: Optional[int] = None
-    if request.playbook.startswith(WORKFLOW_SCHEME):
-        try:
-            workflow = WorkflowsService().get_workflow(workflow_id)
-        except Exception as exc:  # noqa: BLE001 — the row is best-effort
-            logger.warning("no playbook phases for %s: %s", workflow_id, exc)
-            workflow = None
-        if workflow is not None:
-            phases = phase_actors(workflow.phases)
-            version = workflow.version
+    try:
+        workflow = WorkflowsService().get_workflow(workflow_id)
+    except Exception as exc:  # noqa: BLE001 — the row is best-effort
+        logger.warning("no playbook phases for %s: %s", workflow_id, exc)
+        workflow = None
+    if workflow is not None:
+        phases = phase_actors(workflow.phases)
+        version = workflow.version
     WorkflowRunService().begin_run(
         workflow_id=workflow_id,
         workflow_name=workflow_id,
@@ -264,12 +274,8 @@ def _begin_run_row(
     )
 
 
-def _has_run_row(session: Any, run_id: str) -> bool:
-    row = session.execute(
-        text("SELECT 1 FROM workflow_runs WHERE run_id = :run_id"),
-        {"run_id": run_id},
-    ).one_or_none()
-    return row is not None
+# workflow_runs statuses that mean the run ended (its check constraint's terminal set).
+_ENDED = ("completed", "failed", "cancelled")
 
 
 # Reports from state the worker persisted, using only the two permitted reads
@@ -290,11 +296,25 @@ def get_run(run_id: str, session: UnitOfWorkSession) -> RunStatusResponse:
     ).one_or_none()
     events = int(counted.events) if counted is not None else 0
     if events == 0:
-        # Only the worker writes agent_events; POST wrote workflow_runs. A run with
-        # that row and no events is accepted but not picked up yet, not unknown.
-        if _has_run_row(session, run_id):
-            return RunStatusResponse(run_id=run_id, status="queued", events=0)
-        raise HTTPException(status_code=404, detail=f"no such run: {run_id}")
+        # Only the worker writes agent_events; POST wrote workflow_runs. A row with no
+        # events is not picked up yet, or ended before its ledger opened (the mirror's).
+        row = session.execute(
+            text(
+                "SELECT status, outcome, error, reason FROM workflow_runs WHERE run_id = :run_id"
+            ),
+            {"run_id": run_id},
+        ).one_or_none()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"no such run: {run_id}")
+        if row.status in _ENDED:
+            return RunStatusResponse(
+                run_id=run_id,
+                status="terminal",
+                events=0,
+                outcome=row.outcome or row.status,
+                reason=row.reason or row.error,
+            )
+        return RunStatusResponse(run_id=run_id, status="queued", events=0)
 
     terminal = session.execute(
         text(

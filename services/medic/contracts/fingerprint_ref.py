@@ -1,7 +1,8 @@
 """Reference log fingerprinter for contracts/fingerprint.md (algorithm fp1).
 
-This is the executable spec, not production code: D5/E4 port it into the watcher
-and must produce identical fingerprints for contracts/fixtures/fingerprint/*.json.
+The executable spec, and also production code: `sensors/logtail.py` imports it as
+Medic's fingerprinter, so any change here changes what Medic emits. It must keep
+producing identical fingerprints for contracts/fixtures/fingerprint/*.json.
 Every regex runs on RE2 (linear time, K1 T-10).
 """
 

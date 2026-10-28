@@ -14,6 +14,7 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Query
 
+from core.auth.permissions import permission_gate
 from core.reporting.ai_insights_service import AIInsightsService
 from core.reporting.analytics_service import (
     calculate_metrics,
@@ -32,6 +33,7 @@ from core.threat_intel.mitre_lookup import get_time_range
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+router.dependencies.append(permission_gate("platform.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api",

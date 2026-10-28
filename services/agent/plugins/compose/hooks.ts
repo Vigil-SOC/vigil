@@ -51,8 +51,14 @@ export function composeHooks(mirror: Mirror): PluginHooks {
           task: [brief(spec, ledger.answers), `## Your step: ${phase.name}`, phase.instructions].filter((part) => part).join("\n\n"),
           schema: PHASE_SCHEMA,
           tools: phase.tools,
+          park_on_denial: true,
         });
 
+        // Denied (#3306): nobody approves it, so no checkpoint. The run waits for
+        // the ceiling or the role to change, and the next pass asks again.
+        if (outcome.status === "waiting_approval" && outcome.pending === null) {
+          return { kind: "park", reason: `${phase.name}: ${outcome.reason}` };
+        }
         if (outcome.status === "waiting_approval") {
           // A resume reports the open checkpoint with no call attached. The
           // parking turn wrote the call onto the ledger; the approval has to

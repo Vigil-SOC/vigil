@@ -1,8 +1,8 @@
 """Generate with AI keeps the API answering while the model writes (#3180).
 
-``ClaudeService`` construction (key lookup) and ``chat`` (SDK call + log write)
-both block. Each is made to sleep here; a concurrent ``GET /api/health`` must
-still come back at once, which only holds if both run off the event loop.
+The model assignment lookup reads the database and blocks. It is made to sleep
+here; a concurrent ``GET /api/health`` must still come back at once, which only
+holds if the lookup runs off the event loop.
 """
 
 from __future__ import annotations
@@ -31,34 +31,40 @@ class _Storage:
 
 
 @pytest.fixture
-def app(monkeypatch):
+def app(monkeypatch, authenticate_app):
     from fastapi import FastAPI
 
     from core.agents.agent_ai_generator import AgentAIGenerator
-    from core.llm.harness.claude import ClaudeService
+    from core.llm import target
+    from core.llm.router.router import LLMRouter, ProviderSpec
     from core.workflows import workflows_router
     from core.workflows.workflow_ai_generator import WorkflowAIGenerator
     from services.api.main import health_check
-    from services.api.middleware.auth import get_current_active_user
     from services.api.routers import custom_agents, custom_integrations
 
     reply = {"value": "", "blocked_at": None}
 
-    def slow_load(self):
+    provider = ProviderSpec(
+        provider_id="ollama-local",
+        provider_type="ollama",
+        base_url="http://127.0.0.1:11434",
+        api_key_ref=None,
+        default_model="m",
+        config={},
+    )
+
+    def slow_resolve(component):
         reply["blocked_at"] = time.monotonic()
         time.sleep(BLOCK_S)
-        self.api_key, self.client = "k", object()
-        return True
+        return provider, "m"
 
-    def slow_chat(self, *args, **kwargs):
-        time.sleep(BLOCK_S)
-        return reply["value"]
+    async def dispatch(self, **kwargs):
+        return {"content": reply["value"]}
 
-    monkeypatch.setattr(ClaudeService, "_load_api_key", slow_load)
-    monkeypatch.setattr(ClaudeService, "chat", slow_chat)
-    monkeypatch.setattr(
-        custom_integrations, "require_integrations_admin", lambda u: None
-    )
+    monkeypatch.setattr(target, "resolve_dispatch", slow_resolve)
+    monkeypatch.setattr(target, "resolve_effort", lambda component: None)
+    monkeypatch.setattr(LLMRouter, "dispatch", dispatch)
+    monkeypatch.setattr(custom_integrations, "deny_unless", lambda *a, **k: None)
 
     # A fresh app with the real routers and health handler, so the shared
     # services.api.main app is left untouched for other tests.
@@ -66,7 +72,7 @@ def app(monkeypatch):
     for module in (workflows_router, custom_agents, custom_integrations):
         app.include_router(module.router, prefix=module.ROUTER_META.prefix)
     app.add_api_route("/api/health", health_check, methods=["GET"])
-    app.dependency_overrides[get_current_active_user] = lambda: object()
+    authenticate_app(app)
     app.state.health_storage = _Storage()
     app.state.workflow_ai = WorkflowAIGenerator()
     app.state.agent_ai = AgentAIGenerator()
@@ -92,7 +98,7 @@ async def test_health_answers_while_a_draft_generates(app, path, body, reply):
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
         generate = asyncio.create_task(client.post(path, json=body))
-        # Until the key lookup starts blocking (or the request fails first).
+        # Until the assignment lookup starts blocking (or the request fails first).
         while state["blocked_at"] is None and not generate.done():
             await asyncio.sleep(0.01)
         assert state["blocked_at"] is not None, (await generate).text
