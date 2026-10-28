@@ -2527,20 +2527,20 @@ class Orchestrator:
         try:
             from sqlalchemy import exists
 
-            from core.storage.connection import get_db_manager
+            from core.storage.connection import get_db_manager, table_present
             from core.storage.models import Investigation, InvestigationLog
 
             # investigation_logs no longer cascades (#3309): an investigation
-            # that still has old log rows stays, and so do they.
+            # that still has old log rows stays, and so do they. Once the
+            # upgrade drops the table (#3310), every investigation goes.
             logged = exists().where(
                 InvestigationLog.investigation_id == Investigation.investigation_id
             )
             with get_db_manager().session_scope() as session:
-                deleted = (
-                    session.query(Investigation)
-                    .filter(~logged)
-                    .delete(synchronize_session=False)
-                )
+                query = session.query(Investigation)
+                if table_present(session, "investigation_logs"):
+                    query = query.filter(~logged)
+                deleted = query.delete(synchronize_session=False)
         except Exception as e:
             logger.error(f"Failed to delete investigations from DB: {e}")
             raise

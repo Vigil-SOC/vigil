@@ -614,11 +614,16 @@ def _assemble_chain_of_custody(investigation_id: str) -> Dict[str, Any]:
         except Exception:
             pass
 
+        from core.storage.connection import table_present
+
+        # Gone once python -m core.upgrade drops the old audit stores (#3310).
         logs = (
             session.query(InvestigationLog)
             .filter_by(investigation_id=investigation_id)
             .order_by(InvestigationLog.timestamp.asc())
             .all()
+            if table_present(session, "investigation_logs")
+            else []
         )
         result["logs"] = InvestigationLogSchema.dump_many(logs)
 
