@@ -795,13 +795,13 @@ def _read_setup_state() -> SetupState:
         return SetupState()
 
 
-@router.get("/setup-state", response_model=SetupState, dependencies=_SETTINGS_READ)
+@router.get("/setup-state", response_model=SetupState, dependencies=_PLATFORM_READ)
 def get_setup_state():
     """Where the install is in the setup wizard, and whether someone finished it."""
     return _read_setup_state()
 
 
-@router.put("/setup-state", response_model=SetupState, dependencies=_SETTINGS_WRITE)
+@router.put("/setup-state", response_model=SetupState, dependencies=_PLATFORM_WRITE)
 def put_setup_state(
     update: SetupStateUpdate,
     current_user: User = Depends(get_current_active_user),
