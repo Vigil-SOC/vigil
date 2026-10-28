@@ -74,6 +74,16 @@ spec:
         - protocol: TCP
           port: 6990
     {{- end }}
+    {{- if .Values.daemon.enabled }}
+    # The daemon's /health and /status (D6-6): the health port, not webhook or metrics.
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "daemon") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.daemon.ports.health }}
+    {{- end }}
     # The Kubernetes API, by endpoint address (see vigil.medic.kubeApiCidrs).
     - to:
         {{- range (include "vigil.medic.kubeApiCidrs" . | fromJsonArray) }}

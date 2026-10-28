@@ -49,6 +49,28 @@ def _cause(exc: BaseException, kind: type[BaseException]) -> bool:
     return False
 
 
+def failure(exc: httpx.HTTPError) -> str | ReadError:
+    """A failed GET: the result it says (the target is down) or the read error.
+
+    Shared with the daemon sensors, so one failed connect means one thing."""
+    if isinstance(exc, httpx.ConnectTimeout):
+        return ReadError("timeout", detail="connect timed out")
+    if isinstance(exc, httpx.ReadTimeout | httpx.WriteTimeout | httpx.PoolTimeout):
+        return "timeout"
+    if isinstance(exc, httpx.ConnectError):
+        if _cause(exc, ConnectionRefusedError):
+            return "refused"
+        if _cause(exc, socket.gaierror):
+            return ReadError("dns")
+        if _cause(exc, ssl.SSLError):
+            return ReadError("tls")
+        return ReadError("other", detail=type(exc).__name__)
+    if isinstance(exc, httpx.RemoteProtocolError | httpx.ReadError):
+        return "no_response"
+    # Type only: the message can quote a response body.
+    return ReadError("other", detail=type(exc).__name__)
+
+
 @dataclass
 class HttpReady:
     id: str
@@ -84,24 +106,11 @@ class HttpReady:
                 client.stream("GET", self.url) as response,  # the body is never read
             ):
                 status = response.status_code
-        except httpx.ConnectTimeout:
-            return [
-                self._error(instance, ReadError("timeout", detail="connect timed out"))
-            ]
-        except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout):
-            return [self._result(instance, "timeout")]
-        except httpx.ConnectError as exc:
-            if _cause(exc, ConnectionRefusedError):
-                return [self._result(instance, "refused")]
-            if _cause(exc, socket.gaierror):
-                return [self._error(instance, ReadError("dns"))]
-            if _cause(exc, ssl.SSLError):
-                return [self._error(instance, ReadError("tls"))]
-            return [
-                self._error(instance, ReadError("other", detail=type(exc).__name__))
-            ]
-        except (httpx.RemoteProtocolError, httpx.ReadError):
-            return [self._result(instance, "no_response")]
+        except httpx.HTTPError as exc:
+            failed = failure(exc)
+            if isinstance(failed, ReadError):
+                return [self._error(instance, failed)]
+            return [self._result(instance, failed)]
         latency_ms = round((time.perf_counter() - started) * 1000, 1)
         if status in (401, 403):
             return [self._error(instance, ReadError("auth", http_status=status))]

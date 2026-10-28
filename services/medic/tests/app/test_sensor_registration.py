@@ -230,3 +230,33 @@ def test_dev_mode_off_values(value: str | None) -> None:
 @pytest.mark.parametrize("value", ["true", "TRUE", " yes ", "1", "on", "maybe"])
 def test_dev_mode_on_values(value: str) -> None:
     assert dev_mode({DEV_MODE_VAR: value}) is True
+
+
+def _daemon(env: dict[str, str], shape: str) -> list:
+    return [s for s in sensors_for(env, shape) if s.id.startswith("daemon.")]
+
+
+@pytest.mark.parametrize(
+    ("shape", "addr"),
+    [("compose", ("soc-daemon", 9091)), ("start_sh", ("127.0.0.1", 9091))],
+)
+def test_the_daemon_is_read_by_default_off_helm(shape: str, addr) -> None:
+    assert {(s.id, s.host, s.port) for s in _daemon({}, shape)} == {
+        ("daemon.health", *addr),
+        ("daemon.status", *addr),
+    }
+
+
+def test_helm_reads_the_daemon_only_when_the_chart_names_it() -> None:
+    # daemon.enabled=false: the chart sets no address, so "not installed" isn't "down".
+    assert _daemon(_env("helm"), "helm") == []
+    named = _daemon(
+        _env("helm", VIGIL_MEDIC_DAEMON_ADDR="rel-vigil-daemon:9091"), "helm"
+    )
+    assert {(s.host, s.port) for s in named} == {("rel-vigil-daemon", 9091)}
+
+
+def test_kafka_and_orchestrator_status_ride_the_gateway() -> None:
+    ids = {s.id for s in sensors_for({}, "compose")}
+    assert {"gateway.kafka_status", "gateway.orchestrator_status"} <= ids
+    assert not any(s.id.startswith("gateway.") for s in sensors_for({}, "start_sh"))

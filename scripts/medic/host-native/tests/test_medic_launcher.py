@@ -369,6 +369,8 @@ def test_starts_medic_as_vigil_medic_from_its_own_venv(sb: Path) -> None:
     assert "--probe" in sudo[0] and f"--data-dir {sb / 'data'}" in sudo[1]
     # L49: the worker's readiness port on loopback (AGENT_HEALTH_PORT's default).
     assert "--agent-worker 127.0.0.1:6990" in sudo[1]
+    # D6-6: the daemon's health port, beside it under start.sh -d.
+    assert "--daemon 127.0.0.1:9091" in sudo[1]
     assert set(_calls(sb, "sudo.cwd").split()) == {"/"}
 
     # A second start while it runs doesn't start a second Medic.

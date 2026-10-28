@@ -42,6 +42,12 @@ AGENT_WORKER_DEFAULT = {
 # is on medic-net there (S6). Helm's egress policy has no rule for it yet (S7 → D6)
 # and host-native is S11's, so there it is read only if the variable names it.
 AGENT_SERVE_DEFAULT = {"compose": "agent-serve:6989"}
+# The SOC daemon's health port (/health, /status; D6-6). Optional everywhere:
+# on Compose without the `daemon` profile the name doesn't resolve (dns), which
+# says "not installed". Helm has no default: the chart names it only when
+# daemon.enabled, and unset registers no daemon sensor.
+DAEMON_VAR = "VIGIL_MEDIC_DAEMON_ADDR"
+DAEMON_DEFAULT = {"start_sh": "127.0.0.1:9091", "compose": "soc-daemon:9091"}
 # host:port only: no scheme, path, userinfo or IPv6 brackets to smuggle anything in.
 _ADDR = re.compile(r"^([A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?):([0-9]{1,5})$")
 
@@ -102,6 +108,11 @@ def agent_worker_addr(env: Mapping[str, str], shape: str) -> tuple[str, int]:
 def agent_serve_addr(env: Mapping[str, str], shape: str) -> tuple[str, int] | None:
     value = (env.get(AGENT_SERVE_VAR) or AGENT_SERVE_DEFAULT.get(shape, "")).strip()
     return _host_port(AGENT_SERVE_VAR, value) if value else None
+
+
+def daemon_addr(env: Mapping[str, str], shape: str) -> tuple[str, int] | None:
+    value = (env.get(DAEMON_VAR) or DAEMON_DEFAULT.get(shape, "")).strip()
+    return _host_port(DAEMON_VAR, value) if value else None
 
 
 def dev_mode(env: Mapping[str, str]) -> bool:

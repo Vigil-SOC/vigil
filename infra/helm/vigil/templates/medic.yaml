@@ -140,6 +140,12 @@ spec:
               value: /var/lib/vigil-medic/data
             - name: VIGIL_MEDIC_AGENT_WORKER_ADDR
               value: {{ .Values.medic.agentWorkerAddr | default (printf "%s-agent-worker:6990" $fn) | quote }}
+            {{- if .Values.daemon.enabled }}
+            # The daemon's /health and /status (D6-6), on its health port only.
+            # Unset (daemon off) registers no daemon sensor: not installed, not down.
+            - name: VIGIL_MEDIC_DAEMON_ADDR
+              value: {{ printf "%s:%v" (include "vigil.daemon.fullname" .) .Values.daemon.ports.health | quote }}
+            {{- end }}
             # A3-3: the gateway's two listeners, on the same pods, through the
             # same Service. Medic's policy allows the outbound one (control) and
             # blocks the inbound one (target, the backend's side). Enforced = the
