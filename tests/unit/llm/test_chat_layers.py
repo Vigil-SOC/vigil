@@ -1,53 +1,14 @@
 """Chat config assembly — the tool surface a chat turn is allowed to reach.
 
-The load-bearing invariant here is the destructive-MCP filter: chat has no
-approval-resume path, so a direct-action tool (host isolation, IP block) must
-never be reachable by the assistant. It gets recommended, not detonated.
+The load-bearing invariant here is the effect-class filter (#3304): chat has no
+approval-resume path, so only a tool stored as read or read_unverified is
+reachable. A reversible, irreversible or unclassified one is recommended, not
+detonated.
 """
 
 import pytest
 
-from core.llm.chat_layers import _declare, _is_destructive_mcp, integration_tools
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize(
-    "name",
-    [
-        "mde_isolate",
-        "crowdstrike_contain_host",
-        "firewall_block_ip",
-        "edr_kill_process",
-        "defender_quarantine_file",
-        "host_unisolate",
-        "okta_revoke_session",
-        "aws_terminate_instance",
-        "atomic_red_team_execute",
-        "atomic-red-team_atomic_red_team_execute",
-    ],
-)
-def test_direct_action_tools_are_destructive(name):
-    assert _is_destructive_mcp(name) is True
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize(
-    "name",
-    [
-        # A read-only lead verb wins even when a destructive noun follows.
-        "crowdstrike_get_blocklist",
-        "mde_get_isolation_status",
-        "jira_list_contained_hosts",
-        # Plainly read-only tools.
-        "virustotal_get_ip_report",
-        "shodan_search_host",
-        "splunk_query",
-        # ``execute`` is not a destructive verb: ART is dropped by id so this stays.
-        "splunk-selfhosted_splunk_execute",
-    ],
-)
-def test_read_only_tools_are_not_destructive(name):
-    assert _is_destructive_mcp(name) is False
+from core.llm.chat_layers import _declare, integration_tools
 
 
 def _mcp(name, description="something useful"):
@@ -63,32 +24,52 @@ def _reachable(tools):
 
 
 @pytest.mark.unit
-def test_chat_cannot_reach_destructive_mcp_but_reaches_the_rest():
-    reachable = _reachable([_mcp("mde_isolate"), _mcp("virustotal_get_ip_report")])
-    assert reachable == {"virustotal_get_ip_report"}
-
-
-@pytest.mark.unit
-def test_chat_cannot_reach_art_execute_but_reaches_splunk_execute():
-    reachable = _reachable(
-        [
-            _mcp("atomic_red_team_execute"),
-            _mcp("atomic-red-team_atomic_red_team_execute"),
-            _mcp("splunk-selfhosted_splunk_execute"),
-        ]
+def test_chat_reaches_only_read_classes(stored_tool_classes):
+    stored_tool_classes.update(
+        {
+            "otx_check_ip": "read",
+            "misp_misp_search_ioc": "read_unverified",
+            "okta_reset_password": "reversible",
+            "palo-alto_pan_block_ip": "irreversible",
+        }
     )
-    assert reachable == {"splunk-selfhosted_splunk_execute"}
+    reachable = _reachable(
+        [_mcp(name) for name in [*stored_tool_classes, "okta_get_user"]]
+    )
+    # okta_get_user has no row: unclassified, so out of reach like a write.
+    assert reachable == {"otx_check_ip", "misp_misp_search_ioc"}
 
 
 @pytest.mark.unit
-def test_integration_tools_are_never_declared_one_by_one():
+def test_chat_reaches_vigils_own_tools_without_a_class(stored_tool_classes):
+    # Vigil's own MCP tools arrive unprefixed; they are role checks, not classes.
+    assert _reachable([_mcp("add_case_comment")]) == {"add_case_comment"}
+
+
+@pytest.mark.unit
+def test_an_unreadable_store_leaves_chat_no_outside_tool(monkeypatch):
+    from core.response import ceiling
+
+    def fail(_names):
+        raise RuntimeError("database down")
+
+    monkeypatch.setattr(ceiling, "_read_classes", fail)
+    assert _reachable([_mcp("misp_misp_search_ioc")]) == set()
+
+
+@pytest.mark.unit
+def test_integration_tools_are_never_declared_one_by_one(stored_tool_classes):
+    stored_tool_classes["virustotal_get_ip_report"] = "read_unverified"
     declared = {t["id"] for t in _declare(None, [_mcp("virustotal_get_ip_report")])}
     assert "virustotal_get_ip_report" not in declared
     assert {"find_integration_tools", "call_integration_tool"} <= declared
 
 
 @pytest.mark.unit
-def test_chat_config_keeps_approvals_empty_when_art_is_connected():
+def test_chat_config_keeps_approvals_empty_when_art_is_connected(
+    stored_tool_classes,
+):
+    stored_tool_classes["atomic-red-team_atomic_red_team_execute"] = "irreversible"
     import yaml
 
     from core.llm.chat_layers import chat_config

@@ -21,7 +21,6 @@ from sqlalchemy.orm import Session
 from core.audit import trail
 from core.auth.principals import SYSTEM_PRINCIPAL_ID, agent_principal_id
 from core.auth.tool_principal import Claims
-from core.llm.chat_layers import _READONLY_LEADS
 from core.response.ceiling import effective_act_reversible, read_ceiling
 
 logger = logging.getLogger(__name__)
@@ -108,12 +107,32 @@ def fingerprint(spec: Any) -> str:
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
+# Lead verbs of a read. Decided by name, not by the stored effect class: built-in
+# tools have no class, and their case writes are effects to record.
+_READONLY_LEADS = frozenset(
+    {
+        "get",
+        "list",
+        "search",
+        "describe",
+        "fetch",
+        "query",
+        "show",
+        "read",
+        "lookup",
+        "count",
+        "stats",
+        "status",
+        "check",
+    }
+)
+
+
 def effectful(tool: str) -> bool:
     """A tool is read-only only when its lead token is a known read.
 
     Every other name, including one this process has never heard of, is an
-    effect. ``changes_for_tool`` is the wrong check: it calls Vigil's own
-    case writes read-only.
+    effect, Vigil's own case writes included.
     """
     lead = tool.split("_", 1)[0] if tool else ""
     return lead not in _READONLY_LEADS

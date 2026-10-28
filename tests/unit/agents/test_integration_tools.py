@@ -16,12 +16,7 @@ from core.integrations.mcp import client as mcp_client
 from core.integrations.mcp import in_process
 from core.integrations.mcp import registry as mcp_registry
 from core.integrations.mcp.registry import MCPRegistry
-from core.llm.chat_layers import (
-    _is_destructive_mcp,
-    chat_config,
-    integrations_how,
-    integrations_line,
-)
+from core.llm.chat_layers import chat_config, integrations_how, integrations_line
 
 pytestmark = pytest.mark.unit
 
@@ -34,11 +29,19 @@ def _fixture(name):
     return json.loads((FIXTURES / name).read_text())
 
 
+# Security-detections has no seeded names; a person classified these. Its writes
+# stay unclassified, so they ask first.
+_WRITES = ("delete_", "drop_", "create_", "insert_", "save_", "rebuild_", "add_")
+
+
 @pytest.fixture
-def registry(monkeypatch):
+def registry(monkeypatch, seeded_tool_classes):
     """A default install: Vigil's own server, security-detections and Splunk."""
     # The registry is the test's; nothing is read from a running client.
     monkeypatch.setattr(mcp_registry, "refresh_from_client", lambda _r: 0)
+    for tool in _fixture("security_detections_tools.json"):
+        if not tool["name"].startswith(_WRITES):
+            seeded_tool_classes[f"{SD}_{tool['name']}"] = "read"
     reg = MCPRegistry()
     reg.register_server("vigil", in_process.list_tools())
     reg.register_server(SD, _fixture("security_detections_tools.json"))
@@ -72,7 +75,9 @@ def test_the_prompt_line_names_the_connected_servers(registry):
     assert "find_integration_tools" in integrations_how(registry.get_all_tools())
 
 
-def test_find_returns_matching_tools_with_schemas_and_nothing_destructive(registry):
+def test_find_returns_matching_tools_with_schemas_and_nothing_gated(registry):
+    from core.response.ceiling import gated_tools
+
     matches = find_integration_tools(registry, "sigma rules for T1059")
     names = [m["name"] for m in matches]
     assert 0 < len(matches) <= 8
@@ -80,7 +85,7 @@ def test_find_returns_matching_tools_with_schemas_and_nothing_destructive(regist
     assert all(m["input_schema"].get("type") == "object" for m in matches)
     for query in ("sigma rules for T1059", "delete entity", "delete template"):
         found = find_integration_tools(registry, query)
-        assert not [m["name"] for m in found if _is_destructive_mcp(m["name"])]
+        assert not gated_tools(m["name"] for m in found)
 
 
 def test_find_can_be_narrowed_to_one_server(registry):
@@ -88,9 +93,14 @@ def test_find_can_be_narrowed_to_one_server(registry):
     assert matches and {m["server"] for m in matches} == {SPLUNK}
 
 
-def test_connecting_a_server_changes_what_is_found_not_what_is_declared(registry):
+def test_connecting_a_server_changes_what_is_found_not_what_is_declared(
+    registry, stored_tool_classes
+):
     before = _declared(registry)
     assert not find_integration_tools(registry, "falcon")
+    stored_tool_classes.update(
+        {f"crowdstrike_get_detections_{i}": "read" for i in range(40)}
+    )
     registry.register_server(
         "crowdstrike",
         [
@@ -103,6 +113,13 @@ def test_connecting_a_server_changes_what_is_found_not_what_is_declared(registry
     )
     assert find_integration_tools(registry, "falcon")
     assert _declared(registry) == before
+
+
+def test_an_unclassified_server_is_out_of_chats_reach(registry):
+    registry.register_server(
+        "crowdstrike", [{"name": "get_detections", "description": "Falcon detections"}]
+    )
+    assert not find_integration_tools(registry, "falcon")
 
 
 # --- call_integration_tool through /internal/tools/invoke ---------------------

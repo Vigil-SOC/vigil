@@ -397,6 +397,7 @@ async def _connect_external_services(mcp_client, registry):
                                 "name": tool.get("name"),
                                 "description": tool.get("description", ""),
                                 "inputSchema": tool.get("inputSchema", {}),
+                                "annotations": tool.get("annotations"),
                             }
                         )
 

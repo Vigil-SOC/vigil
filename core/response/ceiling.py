@@ -7,16 +7,24 @@ force the effective act flags off. Four-eyes is enforced where an approval
 is recorded, in ``ApprovalService.approve_action`` (#2932).
 An unbound caller is not denied here; the HTTP gates are the permission
 checks on the routes.
+
+Each outside tool also has one stored effect class (#3304), read here by every
+caller that decides whether a tool call needs an approval.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
+
+from sqlalchemy import select
 
 from core.config import Settings, get_settings
 from core.storage import config_service as config_store
+from core.storage.models import ToolEffectClass
+from core.storage.unit_of_work import unit_of_work
+from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -258,3 +266,168 @@ def resume_ceiling(*, user_id: str, caller_is_service: bool) -> Ceiling:
     )
     _store(updated, user_id, "Autonomy resumed")
     return updated
+
+
+# Effect classes, loosest first (#3304). A name with no row is unclassified.
+READ = "read"
+READ_UNVERIFIED = "read_unverified"
+REVERSIBLE = "reversible"
+IRREVERSIBLE = "irreversible"
+EFFECT_CLASSES = (READ, READ_UNVERIFIED, REVERSIBLE, IRREVERSIBLE)
+# What chat may reach, and what a direct-action call runs without an approval for.
+_READS = frozenset({READ, READ_UNVERIFIED})
+APPROVAL_TOOL = "create_approval_action"
+TOOL_CLASSIFIED = "autonomy.tool_classified"
+_SYSTEM = "system"
+
+_own: Optional[frozenset[str]] = None
+
+
+def own_tool_names() -> frozenset[str]:
+    """Names Vigil answers itself: its built-ins and its own MCP server's.
+
+    Neither is an outside tool, so neither has a class. The set is fixed at
+    import, so it is remembered once both halves are read.
+    """
+    global _own
+    if _own is not None:
+        return _own
+    from core.llm.tool_schemas import ALL_TOOLS
+
+    names = {t["name"] for t in ALL_TOOLS if t.get("name")}
+    try:
+        from core.integrations.mcp import in_process
+
+        names |= {t["name"] for t in in_process.list_tools()}
+    except Exception:  # noqa: BLE001 - not remembered; the next call retries
+        logger.exception("Vigil's own MCP tool names were not read")
+        return frozenset(names)
+    _own = frozenset(names)
+    return _own
+
+
+def stored_classes(session, names: Iterable[str]) -> dict[str, str]:
+    """The rows for ``names``. A name with no row is absent."""
+    rows = session.execute(
+        select(ToolEffectClass.tool_name, ToolEffectClass.effect_class).where(
+            ToolEffectClass.tool_name.in_(list(names))
+        )
+    )
+    return {name: effect_class for name, effect_class in rows}
+
+
+def _read_classes(names: list[str]) -> dict[str, str]:
+    with unit_of_work() as session:
+        return stored_classes(session, names)
+
+
+def tool_classes(names: Iterable[str]) -> dict[str, Optional[str]]:
+    """Each outside name's class, or None when it is unclassified. One query.
+
+    Names Vigil answers itself are left out. A store that cannot be read
+    leaves every name unclassified, which asks first.
+    """
+    own = own_tool_names()
+    outside = sorted({n for n in names if n and n not in own})
+    if not outside:
+        return {}
+    try:
+        stored = _read_classes(outside)
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "tool classes not read; %d treated as unclassified: %s", len(outside), exc
+        )
+        stored = {}
+    return {name: stored.get(name) for name in outside}
+
+
+def is_read(effect_class: Optional[str]) -> bool:
+    return effect_class in _READS
+
+
+def gated_tools(names: Iterable[str]) -> frozenset[str]:
+    """Outside tools that wait for an approval: reversible, irreversible, unclassified."""
+    return frozenset(
+        name for name, effect in tool_classes(names).items() if not is_read(effect)
+    )
+
+
+def asks_first(names: Iterable[str]) -> frozenset[str]:
+    """The approval tool, and every gated outside tool, among ``names``."""
+    names = list(names)
+    return gated_tools(names) | ({APPROVAL_TOOL} & set(names))
+
+
+def loosens(before: Optional[str], after: str) -> bool:
+    """Classifying an unclassified name counts as loosening."""
+    return before is None or EFFECT_CLASSES.index(after) < EFFECT_CLASSES.index(before)
+
+
+def store_tool_class(
+    session, name: str, before: Optional[str], after: str, actor: str
+) -> None:
+    """Write one class and its trail entry in the caller's transaction."""
+    from core.auth import trail_events
+
+    row = session.get(ToolEffectClass, name)
+    if row is None:
+        session.add(
+            ToolEffectClass(tool_name=name, effect_class=after, classified_by=actor)
+        )
+    else:
+        row.effect_class = after
+        row.classified_by = actor
+        row.classified_at = utcnow()
+    session.flush()
+    trail_events.record(
+        session,
+        TOOL_CLASSIFIED,
+        actor=actor,
+        tool=name,
+        class_before=before or "unclassified",
+        class_after=after,
+    )
+
+
+# Hint sets already applied, so a per-turn registry refresh does not re-query.
+_tightened: set[tuple[str, ...]] = set()
+
+
+def tighten_from_hints(server: str, tools: Iterable[dict]) -> None:
+    """``destructiveHint: true`` raises an existing row to irreversible.
+
+    It never inserts a row and never lowers one; ``readOnlyHint`` is not read.
+    Best effort: a server's connect does not fail on it.
+    """
+    hinted = tuple(
+        sorted(
+            f"{server}_{tool['name']}"
+            for tool in tools
+            if tool.get("name")
+            and isinstance(tool.get("annotations"), dict)
+            and tool["annotations"].get("destructiveHint") is True
+        )
+    )
+    if not hinted or hinted in _tightened:
+        return
+    try:
+        with unit_of_work() as session:
+            rows = (
+                session.execute(
+                    select(ToolEffectClass)
+                    .where(
+                        ToolEffectClass.tool_name.in_(hinted),
+                        ToolEffectClass.effect_class != IRREVERSIBLE,
+                    )
+                    .with_for_update()
+                )
+                .scalars()
+                .all()
+            )
+            for row in rows:
+                store_tool_class(
+                    session, row.tool_name, row.effect_class, IRREVERSIBLE, _SYSTEM
+                )
+        _tightened.add(hinted)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("destructiveHint from %s not applied: %s", server, exc)
