@@ -227,7 +227,7 @@ def test_a_merge_attaches_notes_indexes_and_chains(w):
     assert after["priority"] == "high"  # raised from medium
     [activity] = after["activities"]
     assert activity["description"] == (
-        f"Alert `{TITLE}` added, same alert on `hostname:{w.host}`"
+        f"Alert `{TITLE}` added: same alert on {w.host}"
     )
     with get_db_manager().session_scope() as session:
         indexed = session.query(SharedIOC.ioc_type, SharedIOC.value).filter_by(
@@ -244,7 +244,7 @@ def test_a_merge_attaches_notes_indexes_and_chains(w):
     after = _case(case)
     assert after["priority"] == "high"  # a lower alert never lowers it
     assert after["activities"][-1]["description"] == (
-        f"Alert `other rule` added, matched on `ip:{w.ip(2)}`"
+        f"Alert `other rule` added: same attacker {w.ip(2)}"
     )
     assert len(after["activities"]) == 2
 

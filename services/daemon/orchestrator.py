@@ -608,14 +608,6 @@ def _matching_cases(finding: Dict, *, open: bool) -> List[CaseMatch]:
         return SharedIOCRepository(session).matching_cases(finding, open=open)
 
 
-def _match_phrase(match: CaseMatch) -> str:
-    return (
-        f"same alert on `{match.key}`"
-        if match.same_alert
-        else f"matched on `{match.key}`"
-    )
-
-
 def _link_note(match: CaseMatch) -> str:
     """What matched, without the key's kind prefix: the phrasing of link notes and Triage."""
     kind, _, value = match.key.partition(":")
@@ -639,7 +631,7 @@ def _record_merge_activity(case_id: str, finding: Dict, match: CaseMatch) -> Non
             {
                 "timestamp": utcnow().isoformat() + "Z",
                 "activity_type": "alert_added",
-                "description": f"Alert `{title}` added, {_match_phrase(match)}",
+                "description": f"Alert `{title}` added: {_link_note(match)}",
                 "details": {
                     "finding_id": finding.get("finding_id"),
                     "matched_key": match.key,
@@ -1013,7 +1005,7 @@ class Orchestrator:
             "Finding %s attached to case %s, %s",
             finding_id,
             match.case_id,
-            _match_phrase(match),
+            _link_note(match),
         )
         # The merge stands whatever happens below: the finding is on the Case.
         for what, write in (
