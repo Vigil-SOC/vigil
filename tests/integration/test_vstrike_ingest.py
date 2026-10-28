@@ -199,7 +199,6 @@ def test_create_path_when_finding_is_new(fake_service):
 
 def test_create_with_infinite_score_stores_null():
     svc = DatabaseDataService()
-    svc._demo_mode = False
     svc._db_connected = True
     captured: Dict[str, Any] = {}
 
@@ -220,7 +219,7 @@ def test_create_with_infinite_score_stores_null():
     with patch.object(vstrike_module, "data_service", svc), patch(
         "core.storage.database_data_service.FindingSchema.dump",
         lambda finding: {"finding_id": "f-new-inf"},
-    ):
+    ), patch("core.storage.database_data_service.is_demo_mode", return_value=False):
         response = vstrike_module.ingest_findings(VStrikePushRequest(**payload))
 
     assert response.created == 1

@@ -116,7 +116,9 @@ describe("investigate runs on the kernel", () => {
     const events = await ledger.read(runId);
     expect(events.some((one) => (one.kind as string) === "decision")).toBe(false);
     expect(events.filter((one) => one.kind === "call")).toHaveLength(1);
-    expect(await ledger.terminal(runId)).toMatchObject({ outcome: "completed" });
+    // The wiring grants no tools, so the approved call is not served and the answer cites
+    // nothing that was: the run ends, honestly, as one that could not look (#3248).
+    expect(await ledger.terminal(runId)).toMatchObject({ outcome: "data_starved" });
     expect(await verifyLedger(pool, runId)).toMatchObject({ ok: true });
   });
 

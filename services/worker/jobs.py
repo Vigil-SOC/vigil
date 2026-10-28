@@ -8,12 +8,17 @@ from typing import Any, Dict, Optional
 
 from core.config import get_settings
 from core.llm.bifrost.admin import refresh_gateway_rates, run_gateway_rates_refresher
+from core.llm.cost.budget import BudgetExceeded
 from core.llm.gateway.gateway import QUEUE_NAME
 from core.llm.gateway.gateway import redis_settings as gateway_redis_settings
+from core.llm.outage import report_outage, report_recovered
 from core.storage.connection import MissingPostgresPasswordError
 from core.telemetry import configure_logging, init_telemetry
 
 logger = logging.getLogger(__name__)
+
+# One outage key per tier. A later successful router call clears each of them.
+_BUDGET_TIERS = ("virtual_key", "team", "customer")
 
 MAX_CONCURRENT_LLM_CALLS = get_settings().llm_max_concurrent
 
@@ -93,6 +98,23 @@ async def llm_call(
 
         return result
 
+    except BudgetExceeded as exc:
+        if worker_span is not None:
+            try:
+                worker_span.end()
+            except Exception:
+                pass
+        report_outage(
+            logger,
+            f"llm-budget-{exc.tier}",
+            "LLM budget spent (%s tier); AI calls are refused until it resets",
+            exc.tier,
+        )
+        return {
+            "content": "",
+            "type": "error",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
     except Exception as exc:
         if worker_span is not None:
             try:
@@ -100,7 +122,11 @@ async def llm_call(
             except Exception:
                 pass
         error_msg = f"{type(exc).__name__}: {exc}"
-        logger.error("llm_call failed (returning error dict): %s", error_msg)
+        logger.error(
+            "llm_call failed (returning error dict): %s",
+            error_msg,
+            exc_info=True,
+        )
         return {"content": "", "type": "error", "error": error_msg}
 
 
@@ -143,7 +169,7 @@ async def _maybe_dispatch_via_router(
     in_flight: asyncio.Semaphore = ctx["in_flight"]
     await in_flight.acquire()
     try:
-        return await router.dispatch(
+        result = await router.dispatch(
             provider=spec,
             messages=[{"role": "user", "content": prompt}],
             model=model,
@@ -152,6 +178,15 @@ async def _maybe_dispatch_via_router(
         )
     finally:
         in_flight.release()
+    # A ClaudeService fallback returns earlier and must not clear these.
+    for tier in _BUDGET_TIERS:
+        report_recovered(
+            logger,
+            f"llm-budget-{tier}",
+            "LLM budget spent (%s tier); AI calls are refused until it resets",
+            tier,
+        )
+    return result
 
 
 async def on_startup(ctx: Dict[str, Any]):

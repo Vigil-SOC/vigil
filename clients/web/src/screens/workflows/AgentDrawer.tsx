@@ -396,7 +396,7 @@ export function AgentDrawer({
                   {showPreview && (
                     <>
                       <pre className="vg-side-pre">{agent.effective_prompt}</pre>
-                      <span className="vg-side-hint">This is the exact system prompt Claude receives. Re-save to refresh.</span>
+                      <span className="vg-side-hint">This is the exact system prompt the model receives. Re-save to refresh.</span>
                     </>
                   )}
                 </div>

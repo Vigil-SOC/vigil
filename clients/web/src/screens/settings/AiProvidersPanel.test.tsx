@@ -4,7 +4,7 @@
    never widen one, and would silently drop models it was not shown. */
 import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import AiProvidersPanel from './AiProvidersPanel'
+import AiProvidersPanel, { KeyDialog } from './AiProvidersPanel'
 
 const listProviders = vi.fn()
 const listKeys = vi.fn()
@@ -13,6 +13,7 @@ const modelParameters = vi.fn()
 const createKey = vi.fn(() => Promise.resolve({ data: { id: 'k1', status: 'success' } }))
 const updateKey = vi.fn(() => Promise.resolve({ data: { id: 'k1', status: 'success' } }))
 const routability = vi.fn()
+const recheckKey = vi.fn(() => Promise.resolve({ data: {} }))
 const createProvider = vi.fn(() => Promise.resolve({ data: { name: 'openai' } }))
 const setProviderBaseUrl = vi.fn(() => Promise.resolve({ data: {} }))
 const keyRefusal = vi.fn<(id?: string) => Promise<string | null>>(() => Promise.resolve(null))
@@ -37,6 +38,7 @@ vi.mock('../../services/bifrostApi', async (importOriginal) => ({
     setProviderBaseUrl: (...a: unknown[]) => setProviderBaseUrl(...(a as [])),
     removeProvider: (...a: unknown[]) => removeProvider(...(a as [])),
     removeKey: vi.fn(),
+    recheckKey: (...a: unknown[]) => recheckKey(...(a as [])),
   },
   secretText: (v: unknown) => (typeof v === 'string' ? v : ((v as { value?: string })?.value ?? '')),
   isMasked: (v: unknown) =>
@@ -86,6 +88,16 @@ const openEditor = async () => {
   fireEvent.click(await screen.findByTitle('Edit'))
   await screen.findByText('Key name')
 }
+
+describe('a Vertex key', () => {
+  it('says API-key mode reaches Gemini models only', () => {
+    render(
+      <KeyDialog provider="vertex" existing={null} onClose={() => {}} onSave={async () => {}} />,
+    )
+    expect(screen.getByText(/reaches Gemini models only/)).toBeInTheDocument()
+    expect(screen.getByText(/Claude and other partner models on Vertex need a service account/)).toBeInTheDocument()
+  })
+})
 
 describe('the models a key is fenced to', () => {
   it('offers the catalogue as checkboxes rather than a field to type ids into', async () => {
@@ -191,6 +203,102 @@ describe('the keys table', () => {
     expect(screen.getByText('2 allowed')).toBeInTheDocument()
     expect(screen.getByText('All models')).toBeInTheDocument()
     expect(screen.getAllByText('Good')).toHaveLength(2)
+  })
+
+  it('badges an express key from the probe, and never claims a key is fine unasked', async () => {
+    const express = {
+      id: 'vk',
+      name: 'vertex-express',
+      value: { value: 'AQ.***key' },
+      models: ['*'],
+      weight: 1,
+      enabled: true,
+      status: 'list_models_failed',
+      description: 'api key auth not supported for list models',
+      vertex_key_config: { auth_credentials: { value: '' } },
+    }
+    const mountExpress = async (health: string, description?: string) => {
+      listProviders.mockResolvedValue({ data: { providers: [{ name: 'vertex' }] } })
+      listKeys.mockResolvedValue({ data: { keys: [express], total: 1 } })
+      providerModels.mockResolvedValue({ data: { models: [], total: 0 } })
+      routability.mockResolvedValue({
+        data: {
+          providers: { vertex: health !== 'rejected' },
+          keys: { vk: { provider: 'vertex', routable: health !== 'rejected', health, description } },
+        },
+      })
+      render(<AiProvidersPanel notify={() => {}} />)
+      expect(await screen.findByText('vertex-express')).toBeInTheDocument()
+    }
+
+    await mountExpress('healthy')
+    expect(screen.getByText('Good')).toBeInTheDocument()
+    expect(screen.queryByText('Nothing to fix')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Calls still route/)).not.toBeInTheDocument()
+  })
+
+  it('shows a rejected express key as Poor with the probe reason', async () => {
+    listProviders.mockResolvedValue({ data: { providers: [{ name: 'vertex' }] } })
+    listKeys.mockResolvedValue({
+      data: {
+        keys: [{
+          id: 'vk',
+          name: 'vertex-express',
+          value: { value: 'AQ.***key' },
+          models: ['*'],
+          weight: 1,
+          enabled: true,
+          vertex_key_config: { auth_credentials: { value: '' } },
+        }],
+        total: 1,
+      },
+    })
+    providerModels.mockResolvedValue({ data: { models: [], total: 0 } })
+    routability.mockResolvedValue({
+      data: {
+        providers: { vertex: false },
+        keys: { vk: { provider: 'vertex', routable: false, health: 'rejected', description: 'API key not valid. Please pass a valid API key.' } },
+      },
+    })
+    render(<AiProvidersPanel notify={() => {}} />)
+    expect(await screen.findByText('Poor')).toBeInTheDocument()
+    expect(screen.getByText('Poor').closest('span')?.parentElement).toHaveAttribute(
+      'title',
+      'API key not valid. Please pass a valid API key.',
+    )
+    expect(screen.queryByText('Nothing to fix')).not.toBeInTheDocument()
+  })
+
+  it('shows Not checked when the express probe could not run, and Test again runs it', async () => {
+    listProviders.mockResolvedValue({ data: { providers: [{ name: 'vertex' }] } })
+    listKeys.mockResolvedValue({
+      data: {
+        keys: [{
+          id: 'vk',
+          name: 'vertex-express',
+          value: { value: 'AQ.***key' },
+          models: ['*'],
+          weight: 1,
+          enabled: true,
+          vertex_key_config: { auth_credentials: { value: '' } },
+        }],
+        total: 1,
+      },
+    })
+    providerModels.mockResolvedValue({ data: { models: [], total: 0 } })
+    routability.mockResolvedValue({
+      data: {
+        providers: { vertex: true },
+        keys: { vk: { provider: 'vertex', routable: true, health: 'not_checked', description: "Couldn't reach Vertex to check this key." } },
+      },
+    })
+    render(<AiProvidersPanel notify={() => {}} />)
+    const chip = await screen.findByText('Not checked')
+    expect(chip).toHaveAttribute('title', "Couldn't reach Vertex to check this key.")
+    expect(screen.queryByText('Nothing to fix')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Calls still route/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Test again' }))
+    await waitFor(() => expect(recheckKey).toHaveBeenCalledWith('vk'))
   })
 
   it('shows a rejected key as Poor, and never invents Fair', async () => {

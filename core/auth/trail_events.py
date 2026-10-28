@@ -47,17 +47,9 @@ def ready(session=None) -> bool:
         if bind.dialect.name != "postgresql":
             return False
         key = str(bind.engine.url)
-        if key not in _ready and trail.trail_ready(session) and _table_present(session):
+        if key not in _ready and trail.in_use(session):
             _ready.add(key)
         return key in _ready
-
-
-def _table_present(session) -> bool:
-    """``stamp_schema_head`` names the head revision on a database ``create_all`` built."""
-    return (
-        session.execute(text("SELECT to_regclass('public.audit_trail')")).scalar()
-        is not None
-    )
 
 
 def payload(action: str, **fields: Any) -> dict[str, Any]:

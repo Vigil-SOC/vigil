@@ -391,7 +391,6 @@ export default function CommandBar({
               .catch((error: unknown) => notify('err', `The hunt started, but ${document.name} could not be kept on the case: ${errorText(error, 'upload failed')}`))
           }
           onOpenCase(caseId)
-          setQuery('')
           removeAttachment()
           notify('ok', `Hunt started on case "${title}"`)
           break
@@ -417,6 +416,7 @@ export default function CommandBar({
           return exhaustive
         }
       }
+      setQuery('')
       setOpen(false)
       setPreview(null)
     } catch (error) {
@@ -477,6 +477,12 @@ export default function CommandBar({
         <input
           ref={inputRef}
           role="combobox"
+          name="vigil-command"
+          autoComplete="off"
+          data-1p-ignore
+          data-lpignore="true"
+          data-bwignore
+          data-form-type="other"
           aria-label="Find a case, ask Vigil, or run a command"
           aria-expanded={open}
           aria-controls="vg-command-results"

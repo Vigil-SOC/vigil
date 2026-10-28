@@ -39,7 +39,7 @@ import HealthScreen from '../screens/health/HealthScreen'
 import HomeScreen from '../screens/home/HomeScreen'
 import { HOME_SETUP_HREF, SETUP_HIDDEN_CHANGED, openSetupSteps, readSetupHidden } from '../screens/home/setupHidden'
 import SettingsScreen from '../screens/settings/SettingsScreen'
-import { AUTONOMY_CHANGED } from '../screens/settings/useSettings'
+import { AUTONOMY_CHANGED, DEMO_MODE_CHANGED } from '../screens/settings/useSettings'
 import NotFoundScreen from '../screens/notfound/NotFoundScreen'
 import OverviewScreen from '../screens/overview/OverviewScreen'
 import TriageScreen from '../screens/triage/TriageScreen'
@@ -202,7 +202,6 @@ function SocConsoleInner() {
   const parked = usePendingApprovals().actions.length
   // needs-you is uncapped; the decisions badge stays on the pending list
   const [needsYou, setNeedsYou] = useState(0)
-  const canReadRoutability = hasPermission('settings.write')
 
   const openChat = useCallback((prompt?: string) => {
     setChatOpen(true)
@@ -306,18 +305,23 @@ function SocConsoleInner() {
     }
   }, [])
 
+  // Demo mode switches at runtime: re-read on each screen change and when Settings turns it off
   useEffect(() => {
     let live = true
-    configApi
-      .getDemoMode()
-      .then((res) => {
-        if (live) setDemoOn(Boolean(res.data?.enabled))
-      })
-      .catch(() => {})
+    const reread = () =>
+      configApi
+        .getDemoMode()
+        .then((res) => {
+          if (live) setDemoOn(Boolean(res.data?.enabled))
+        })
+        .catch(() => {})
+    reread()
+    window.addEventListener(DEMO_MODE_CHANGED, reread)
     return () => {
       live = false
+      window.removeEventListener(DEMO_MODE_CHANGED, reread)
     }
-  }, [])
+  }, [current])
 
   // re-read on each screen change so finishing a step shows without a reload
   useEffect(() => {
@@ -379,9 +383,7 @@ function SocConsoleInner() {
         settled(consoleApi.getHealth().then((res) => res.data as HealthRead)),
         settled(federationApi.getHealth().then((res) => res.data as FederationRead)),
         settled(mcpApi.getStatuses().then((res) => res.data as McpRead)),
-        canReadRoutability
-          ? settled(consoleApi.getRoutability().then((res) => res.data as RoutabilityRead))
-          : Promise.resolve(null),
+        settled(consoleApi.getRoutability().then((res) => res.data as RoutabilityRead)),
         settled(consoleApi.getProcesses().then((res) => res.data)),
       ]).then(([health, federation, mcp, routability, processes]) => {
         inFlight = false
@@ -396,7 +398,7 @@ function SocConsoleInner() {
       live = false
       clearInterval(id)
     }
-  }, [canReadRoutability])
+  }, [])
 
   useEffect(() => {
     if (!moreOpen) return

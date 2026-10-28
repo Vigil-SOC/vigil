@@ -113,8 +113,8 @@ describe('TriageScreen', () => {
     const strip = await screen.findByLabelText('Intake strip')
     expect(screen.getByRole('heading', { name: 'Triage queue' })).toBeInTheDocument()
     const tiles = Array.from(strip.children).map((tile) => tile.getAttribute('aria-label'))
-    expect(tiles).toEqual(['Picked up automatically', 'Cases created today', 'Waiting in line', 'Trust floor'])
-    expect(within(strip).getByLabelText('Waiting in line')).toHaveTextContent('3')
+    expect(tiles).toEqual(['Picked up automatically', 'Cases created today', 'Waiting for triage', 'Trust floor'])
+    expect(within(strip).getByLabelText('Waiting for triage')).toHaveTextContent('3')
     expect(within(strip).getByLabelText('Cases created today')).toHaveTextContent('1')
     expect(within(strip).getByLabelText('Trust floor')).toHaveTextContent('Not measured yet')
     expect(within(strip).getByLabelText('Picked up automatically')).not.toHaveTextContent('%')
@@ -138,7 +138,7 @@ describe('TriageScreen', () => {
     const strip = await screen.findByLabelText('Intake strip')
     const cases: [string, string, string][] = [
       ['Picked up automatically', 'Picked source', 'Picked calc'],
-      ['Waiting in line', 'Waiting source', 'Waiting calc'],
+      ['Waiting for triage', 'Waiting source', 'Waiting calc'],
       ['Cases created today', 'Cases source', 'Cases calc'],
     ]
     for (const [tile, source, calculation] of cases) {

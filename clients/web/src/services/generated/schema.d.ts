@@ -456,7 +456,7 @@ export interface paths {
         };
         /**
          * Get Budget Quota
-         * @description Live spend/quota for the configured VK, proxied from Bifrost.
+         * @description Live spend/quota for the configured VK, from the shared Bifrost snapshot.
          */
         get: operations["get_api_analytics_budget_quota"];
         put?: never;
@@ -729,6 +729,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audit/erasure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Erase Principal
+         * @description Blank one principal's label and trail details, and end their sign-in and credentials.
+         *
+         *     An audit manager waits seven days and needs a reason.
+         */
+        post: operations["post_api_audit_erasure"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/audit/export": {
         parameters: {
             query?: never;
@@ -806,6 +828,30 @@ export interface paths {
          */
         get: operations["get_api_audit_poll"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/audit/retention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Retention
+         * @description The period in force, the one waiting, and which announcements have not left the box.
+         */
+        get: operations["get_api_audit_retention"];
+        /**
+         * Put Retention
+         * @description Set the retention period. At least 365 and at most 36500 days, in force seven days later.
+         */
+        put: operations["put_api_audit_retention"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1258,6 +1304,29 @@ export interface paths {
         get: operations["get_api_bifrost_routability"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bifrost/routability/recheck/{key_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Recheck Key
+         * @description Run the express probe again for one key, ignoring the cached verdict.
+         *
+         *     The following routability read hits that fresh cache entry, so the page
+         *     does not call the model a second time.
+         */
+        post: operations["post_api_bifrost_routability_recheck_key_id"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2547,7 +2616,8 @@ export interface paths {
          * Set Demo Mode
          * @description Set demo mode configuration.
          *
-         *     Note: Setting via API updates the config file. Environment variable takes precedence.
+         *     Updates the config file and takes effect at once. DEMO_MODE in the environment
+         *     takes precedence; the response reports the effective mode.
          *
          *     Args:
          *         config: Demo mode configuration
@@ -3424,7 +3494,8 @@ export interface paths {
          *     me" entries without the daemon being up). Adapters whose integration is
          *     not configured are still listed but flagged ``is_configured=false``. Each
          *     row carries ``lag_seconds`` (null until a poll has succeeded) and ``quiet``
-         *     from :func:`core.federation.lag.source_collection_lag`.
+         *     from :func:`core.federation.lag.source_collection_lag`. Any failed store
+         *     read answers 503 rather than a list that looks like a fresh install.
          */
         get: operations["get_api_federation_sources"];
         put?: never;
@@ -3953,6 +4024,26 @@ export interface paths {
          * @description Return live consumer stats plus the persisted enabled/config state.
          */
         get: operations["get_api_kafka_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/llm/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Llm Path Health
+         * @description Per-provider routability for every signed-in user.
+         */
+        get: operations["get_api_llm_health"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7745,6 +7836,30 @@ export interface components {
             text: string;
         };
         /**
+         * CaseRelatedSchema
+         * @description A link with the related Case's title and status, for the side panel.
+         */
+        CaseRelatedSchema: {
+            /** Case Id */
+            case_id?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Created By */
+            created_by?: string | null;
+            /** Notes */
+            notes?: string | null;
+            /** Related Case Id */
+            related_case_id?: string | null;
+            /** Related Status */
+            related_status?: string | null;
+            /** Related Title */
+            related_title?: string | null;
+            /** Relationship Id */
+            relationship_id?: number | null;
+            /** Relationship Type */
+            relationship_type?: string | null;
+        };
+        /**
          * CaseRelationshipSchema
          * @description CaseRelationship.
          */
@@ -7767,7 +7882,7 @@ export interface components {
         /** CaseRelationshipsResponse */
         CaseRelationshipsResponse: {
             /** Relationships */
-            relationships: components["schemas"]["CaseRelationshipSchema"][];
+            relationships: components["schemas"]["CaseRelatedSchema"][];
         };
         /**
          * CaseSLASchema
@@ -8550,6 +8665,19 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** EraseIn */
+        EraseIn: {
+            /**
+             * Principal Id
+             * @default
+             */
+            principal_id: string;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+        };
         /**
          * EscalationAdd
          * @description Escalate case.
@@ -9261,7 +9389,7 @@ export interface components {
              * Health
              * @enum {string}
              */
-            health: "healthy" | "unverified" | "unverifiable" | "rejected" | "disabled" | "placeholder";
+            health: "healthy" | "unverified" | "unverifiable" | "rejected" | "disabled" | "placeholder" | "not_checked";
             /** Provider */
             provider: string;
             /** Routable */
@@ -9350,6 +9478,16 @@ export interface components {
             is_default?: boolean | null;
             /** Name */
             name?: string | null;
+        };
+        /**
+         * LlmPathHealth
+         * @description Whether each provider can route. No key id, name, or budget.
+         */
+        LlmPathHealth: {
+            /** Providers */
+            providers: {
+                [key: string]: boolean;
+            };
         };
         /**
          * LoginRequest
@@ -9503,16 +9641,21 @@ export interface components {
              */
             created_at: string;
             /**
+             * Finding Id
+             * @description The first stored alert the approval's evidence names, so an item with no case can open it.
+             */
+            finding_id?: string | null;
+            /**
              * Hypotheses
              * @description A hypothesis approval's explanations, each with where it came from; base_rate is the benign one to beat.
              */
             hypotheses?: components["schemas"]["NeedsYouHypothesis"][];
             /**
              * Kind
-             * @description parked: a hunt stopped at a limit, answered with Keep going on its case; its source_id is the run id.
+             * @description parked: a hunt stopped at a limit, answered with Keep going on its case; its source_id is the run id. open_case: a demo-mode case that is not closed, answered by opening the case; its source_id is the case id.
              * @enum {string}
              */
-            kind: "approval" | "checkpoint" | "parked";
+            kind: "approval" | "checkpoint" | "parked" | "open_case";
             /** Reason */
             reason: string;
             /**
@@ -9764,6 +9907,14 @@ export interface components {
             workflow_phase_id?: string | null;
             /** Workflow Run Id */
             workflow_run_id?: string | null;
+        };
+        /** PeriodIn */
+        PeriodIn: {
+            /**
+             * Days
+             * @default 0
+             */
+            days: number;
         };
         /** PhaseUpdate */
         PhaseUpdate: {
@@ -10631,6 +10782,8 @@ export interface components {
             cost_usd?: number | null;
             /** Disposition */
             disposition?: string | null;
+            /** Finished At */
+            finished_at?: string | null;
             /** Handoffs */
             handoffs?: components["schemas"]["TerminalHandoff"][];
             /** Outcome */
@@ -12460,6 +12613,41 @@ export interface operations {
             };
         };
     };
+    post_api_audit_erasure: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EraseIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_audit_export: {
         parameters: {
             query?: {
@@ -12621,6 +12809,72 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_audit_retention: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_audit_retention: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PeriodIn"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -13244,6 +13498,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Routability"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_bifrost_routability_recheck_key_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KeyVerdict"];
                 };
             };
             /** @description Validation Error */
@@ -18148,6 +18435,37 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_llm_health: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmPathHealth"];
                 };
             };
             /** @description Validation Error */

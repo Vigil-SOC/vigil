@@ -2665,6 +2665,18 @@
             "title": "Created At",
             "type": "string"
           },
+          "finding_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The first stored alert the approval's evidence names, so an item with no case can open it.",
+            "title": "Finding Id"
+          },
           "hypotheses": {
             "description": "A hypothesis approval's explanations, each with where it came from; base_rate is the benign one to beat.",
             "items": {
@@ -2674,11 +2686,12 @@
             "type": "array"
           },
           "kind": {
-            "description": "parked: a hunt stopped at a limit, answered with Keep going on its case; its source_id is the run id.",
+            "description": "parked: a hunt stopped at a limit, answered with Keep going on its case; its source_id is the run id. open_case: a demo-mode case that is not closed, answered by opening the case; its source_id is the case id.",
             "enum": [
               "approval",
               "checkpoint",
-              "parked"
+              "parked",
+              "open_case"
             ],
             "title": "Kind",
             "type": "string"

@@ -16,8 +16,7 @@ import logging
 import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import func
 
@@ -94,6 +93,7 @@ from core.storage.models import (
     IntakeTrigger,
     Investigation,
 )
+from core.storage.shared_ioc_repository import CaseMatch, SharedIOCRepository
 from core.threat_intel.mitre_lookup import (
     iter_techniques,
     resolve_technique,
@@ -174,6 +174,9 @@ def _count_schedule_runs_in_flight() -> int:
         )
 
 
+MAX_CLOSED_LINKS = 5
+
+
 # related_to: the type the case screen labels and an analyst's link defaults to.
 def _link_cases(case_a: str, case_b: str, notes: str) -> None:
     from core.cases.case_records_service import link_cases
@@ -202,19 +205,6 @@ def lift_ai_enrichment(finding: Dict) -> Dict:
         if key in nested and lifted.get(key) is None:
             lifted[key] = nested[key]
     return lifted
-
-
-class _Overlap(str, Enum):
-    """What overlapping live work means for the Trigger that overlaps it.
-
-    Three outcomes, because a single ``None`` cannot say which of them
-    happened and the caller would have to walk the overlap a second time to
-    find out — a second walk that can disagree with the first.
-    """
-
-    MERGED = "merged"  # attached to a Case; the row is decided
-    HOLD = "hold"  # a Case is or may be there, but we could not attach
-    LAUNCH = "launch"  # every overlapping run read clean and none has a Case
 
 
 _SEVERITY_BANDS = ("critical", "high", "medium", "low", "unknown")
@@ -608,6 +598,71 @@ def _open_case_holding(finding_id: str) -> Optional[str]:
         ).scalar_one_or_none()
 
 
+def _matching_cases(finding: Dict, *, open: bool) -> List[CaseMatch]:
+    """Cases the finding belongs with, newest first. Raises on a failed read.
+
+    Not through ``SharedIntelligence._with_repo``: that turns an error into an
+    empty answer, and an empty answer opens a new Case.
+    """
+    with get_db_manager().session_scope() as session:
+        return SharedIOCRepository(session).matching_cases(finding, open=open)
+
+
+def _match_phrase(match: CaseMatch) -> str:
+    return (
+        f"same alert on `{match.key}`"
+        if match.same_alert
+        else f"matched on `{match.key}`"
+    )
+
+
+def _link_note(match: CaseMatch) -> str:
+    if match.same_alert:
+        return f"same alert on {match.key}"
+    kind, _, value = match.key.partition(":")
+    return f"same attacker {match.key}" if kind == "ip" else f"same {kind} {value}"
+
+
+def _record_merge_activity(case_id: str, finding: Dict, match: CaseMatch) -> None:
+    """Note on the Case that an alert joined it. Raises on failure."""
+    from core.cases.agent_closure import activity_actor
+    from core.storage.models import Case
+
+    title = finding.get("title") or finding.get("finding_id") or "alert"
+    with get_db_manager().session_scope() as session:
+        case = session.get(Case, case_id)
+        if case is None:
+            raise LookupError(f"case {case_id} is gone")
+        case.activities = [
+            *(case.activities or []),
+            {
+                "timestamp": utcnow().isoformat() + "Z",
+                "activity_type": "alert_added",
+                "description": f"Alert `{title}` added, {_match_phrase(match)}",
+                "details": {
+                    "finding_id": finding.get("finding_id"),
+                    "matched_key": match.key,
+                    "same_alert": match.same_alert,
+                },
+                **activity_actor(ORCHESTRATOR_ACTOR, session),
+            },
+        ]
+
+
+def _raise_case_priority(case_id: str, severity: Optional[str]) -> None:
+    """Raise the Case to the alert's severity when that is higher; never lowers it."""
+    from core.cases.case_workflow_service import preferred_merge_priority
+    from core.storage.models import Case
+
+    rated = (severity or "").strip().lower()
+    with get_db_manager().session_scope() as session:
+        case = session.get(Case, case_id)
+        if case is None:
+            return
+        current = (case.priority or "").strip().lower() or "unknown"
+        case.priority = preferred_merge_priority(current, rated)
+
+
 def _attach_finding(case_id: str, finding_id: str) -> bool:
     """Link the finding to the case. False on any failure, never raises."""
     from core.storage.service import DatabaseService
@@ -905,16 +960,14 @@ class Orchestrator:
     def _merge_if_overlaps(self, finding: Dict, trigger_id: Optional[int]) -> bool:
         """True when this row is not launching this tick (merged, or held).
 
-        A failed attach is not a merge: no ``dedup_prevented`` bump, no
+        A failed read or attach is not a merge: no ``dedup_prevented`` bump, no
         ``_decide_trigger``. Returning True still skips launch so the row
         stays ``queued`` and the next tick retries.
 
-        Overlap with only caseless live runs (hunts, legacy) is not a merge:
-        False, so the row proceeds to Claim and opens its own Case.
-
-        A finding already on a not-closed Case merges into it even when that
-        Case's investigation has finished and ``check_overlap`` no longer
-        names it (#2245). A closed Case does not count: the finding reopens.
+        A finding already on a not-closed Case merges into it (#2245), and so
+        does one that matches an open Case's entities (``matching_cases``),
+        whether or not that Case's run has finished. A closed Case does not
+        count: the finding reopens.
         """
         finding_id = finding.get("finding_id", "unknown")
         try:
@@ -936,20 +989,61 @@ class Orchestrator:
             )
             return True
 
-        overlapping = self.shared_intel.check_overlap(finding)
-        if not overlapping:
-            return False
-        outcome, merged_into = self._attach_to_overlapping_case(finding_id, overlapping)
-        if outcome is _Overlap.LAUNCH:
-            return False
-        if outcome is _Overlap.HOLD:
+        try:
+            matches = _matching_cases(finding, open=True)
+        except Exception as e:
+            logger.error(
+                "Failed to match finding %s to open cases; leaving queued: %s",
+                finding_id,
+                e,
+            )
             return True
+        if not matches:
+            return False
+        match = matches[0]
+        if not _attach_finding(match.case_id, finding_id):
+            logger.warning(
+                "Finding %s matches case %s but could not be attached; leaving queued",
+                finding_id,
+                match.case_id,
+            )
+            return True
+        logger.info(
+            "Finding %s attached to case %s, %s",
+            finding_id,
+            match.case_id,
+            _match_phrase(match),
+        )
+        # The merge stands whatever happens below: the finding is on the Case.
+        for what, write in (
+            (
+                "index its entities",
+                lambda: self.shared_intel.record_on_case(match.case_id, finding),
+            ),
+            (
+                "note it on the case",
+                lambda: _record_merge_activity(match.case_id, finding, match),
+            ),
+            (
+                "raise the case priority",
+                lambda: _raise_case_priority(match.case_id, finding.get("severity")),
+            ),
+        ):
+            try:
+                write()
+            except Exception:
+                logger.exception(
+                    "Finding %s merged into case %s but could not %s",
+                    finding_id,
+                    match.case_id,
+                    what,
+                )
         self._count_dedup_prevented()
         self._decide_trigger(
             trigger_id,
             state="merged",
-            reason="overlaps_open_work",
-            merged_into=merged_into,
+            reason="entity_on_open_case",
+            merged_into=match.case_id,
         )
         return True
 
@@ -1026,40 +1120,6 @@ class Orchestrator:
             shutdown_event=shutdown_event,
             trigger_id=trigger_id,
         )
-
-    def _attach_to_overlapping_case(
-        self, finding_id: str, overlapping: List[str]
-    ) -> Tuple[_Overlap, Optional[str]]:
-        """Attach a finding to the Case of the first overlapping live run that has one.
-
-        The ``case_id`` comes back with ``MERGED`` and is always a
-        ``cases.case_id``. ``LAUNCH`` means every overlapping run read clean
-        and none of them is on a Case: not a merge, so the caller goes on to
-        Claim. Anything else is ``HOLD`` — the row stays ``queued`` and the
-        next tick retries.
-        """
-        for inv_id in overlapping:
-            investigation = self.get_investigation(inv_id)
-            if investigation is None:
-                logger.warning(
-                    f"Finding {finding_id} overlaps investigation {inv_id} "
-                    f"but it is gone; leaving queued"
-                )
-                return _Overlap.HOLD, None
-            case_id = investigation.get("case_id")
-            if not case_id:
-                continue
-            if _attach_finding(case_id, finding_id):
-                logger.info(
-                    f"Finding {finding_id} overlaps investigation {inv_id}; attached to case {case_id}"
-                )
-                return _Overlap.MERGED, case_id
-            logger.warning(
-                f"Finding {finding_id} overlaps investigation {inv_id} "
-                f"but could not be attached to case {case_id}; leaving queued"
-            )
-            return _Overlap.HOLD, None
-        return _Overlap.LAUNCH, None
 
     async def _create_manual_investigation(
         self,
@@ -1245,7 +1305,9 @@ class Orchestrator:
             f"Created investigation {inv_id} (workflow={workflow_id}, priority={priority})"
         )
 
-        await self._check_cross_correlations(inv_id)
+        if trigger_type == "finding" and inv_record.get("case_id"):
+            for finding in findings:
+                await self._link_closed_cases(inv_record["case_id"], finding)
 
         if not self.config.dry_run and not shutting_down:
             await self._enqueue_investigation(inv_record)
@@ -1370,15 +1432,6 @@ class Orchestrator:
                         self._update_investigation_status(
                             inv_id, "failed", "Cost budget exceeded"
                         )
-
-                if not hasattr(self, "_supervision_tick"):
-                    self._supervision_tick = 0
-                self._supervision_tick += 1
-                if self._supervision_tick % 5 == 0:
-                    for inv in executing:
-                        x_inv_id = inv.get("investigation_id")
-                        if x_inv_id:
-                            await self._check_cross_correlations(x_inv_id)
 
             except asyncio.CancelledError:
                 break
@@ -2094,60 +2147,32 @@ class Orchestrator:
             logger.error(f"Failed to log AI decision: {e}")
 
     # -------------------------------------------------------------------------
-    # Cross-Investigation Correlation
+    # Closed-Case links
     # -------------------------------------------------------------------------
 
-    async def _check_cross_correlations(self, inv_id: str):
-        """Detect and link investigations that share IOCs."""
-        if not hasattr(self, "_linked_pairs"):
-            self._linked_pairs: set = set()
+    async def _link_closed_cases(self, case_id: str, finding: Dict):
+        """Link a new Case to the most recent closed Cases its finding matches.
 
-        related = self.shared_intel.get_related_investigations(inv_id)
-        if not related:
+        Never raises: a failed lookup or link costs the link, not the Case.
+        """
+        try:
+            matches = await asyncio.to_thread(_matching_cases, finding, open=False)
+        except Exception:
+            logger.warning(
+                "Failed to look up closed cases for %s", case_id, exc_info=True
+            )
             return
-
-        for other_id in related:
-            pair_key = tuple(sorted([inv_id, other_id]))
-            if pair_key in self._linked_pairs:
-                continue
-            self._linked_pairs.add(pair_key)
-
-            shared_keys = self.shared_intel.get_shared_iocs(inv_id, other_id)
-            logger.info(
-                f"Cross-correlation: {inv_id} <-> {other_id} share {len(shared_keys)} IOCs: {shared_keys[:5]}"
-            )
-
-            inv_a = self.get_investigation(inv_id)
-            inv_b = self.get_investigation(other_id)
-            case_a = inv_a.get("case_id") if inv_a else None
-            case_b = inv_b.get("case_id") if inv_b else None
-
-            if case_a and case_b and case_a != case_b:
-                notes = f"Shared IOCs: {', '.join(shared_keys[:10])}"
-                try:
-                    await asyncio.to_thread(_link_cases, case_a, case_b, notes)
-                    logger.info(f"Linked cases {case_a} <-> {case_b}")
-                except Exception:
-                    logger.warning(
-                        f"Failed to link cases {case_a} <-> {case_b}", exc_info=True
-                    )
-
-            self.workdir.append_log(
-                inv_id,
-                {
-                    "event": "cross_correlation",
-                    "related_investigation": other_id,
-                    "shared_iocs": shared_keys[:20],
-                },
-            )
-            self.workdir.append_log(
-                other_id,
-                {
-                    "event": "cross_correlation",
-                    "related_investigation": inv_id,
-                    "shared_iocs": shared_keys[:20],
-                },
-            )
+        for match in [m for m in matches if m.case_id != case_id][:MAX_CLOSED_LINKS]:
+            note = _link_note(match)
+            try:
+                await asyncio.to_thread(_link_cases, case_id, match.case_id, note)
+            except Exception:
+                logger.warning(
+                    "Failed to link case %s to %s",
+                    case_id,
+                    match.case_id,
+                    exc_info=True,
+                )
 
     # -------------------------------------------------------------------------
     # Notifications

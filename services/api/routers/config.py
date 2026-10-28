@@ -204,7 +204,8 @@ def set_demo_mode(config: DemoModeConfig):
     """
     Set demo mode configuration.
 
-    Note: Setting via API updates the config file. Environment variable takes precedence.
+    Updates the config file and takes effect at once. DEMO_MODE in the environment
+    takes precedence; the response reports the effective mode.
 
     Args:
         config: Demo mode configuration
@@ -227,11 +228,13 @@ def set_demo_mode(config: DemoModeConfig):
     with open(config_file, "w") as f:
         json.dump(existing, f, indent=2)
 
+    # Takes effect at once; DEMO_MODE in the environment still wins, so report the
+    # effective mode rather than the one asked for.
+    enabled = is_demo_mode()
     return {
         "success": True,
-        "enabled": config.enabled,
-        "message": f"Demo mode {'enabled' if config.enabled else 'disabled'}. Restart the server for changes to take effect.",
-        "note": "Set DEMO_MODE=true environment variable for immediate effect without restart",
+        "enabled": enabled,
+        "message": f"Demo mode {'enabled' if enabled else 'disabled'}.",
     }
 
 

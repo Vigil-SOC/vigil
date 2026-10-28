@@ -12,7 +12,15 @@ pytestmark = pytest.mark.unit
 @pytest.mark.parametrize(
     "path", ["/api/analytics/budget", "/api/analytics/budget/quota"]
 )
-def test_budget_reads_answer_5xx_when_settings_read_fails(path, authenticate_app):
+def test_budget_reads_answer_5xx_when_settings_read_fails(
+    path, monkeypatch, authenticate_app
+):
+    async def no_providers():
+        return {"providers": {}, "keys": {}}
+
+    # The quota route now shares the routability refresh. Keep this case on
+    # the settings read, not on a live gateway.
+    monkeypatch.setattr("core.llm.bifrost.mirror.routability", no_providers)
     app = FastAPI()
     app.include_router(budgets.router, prefix="/api")
     authenticate_app(app)

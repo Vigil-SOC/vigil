@@ -6,6 +6,7 @@ The list tells them apart from the outcome and reason written on the same row.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Dict
 from unittest.mock import patch
 
@@ -24,6 +25,7 @@ pytestmark = pytest.mark.unit
 CASES = [
     ("completed", "completed", "the hunt wrote its report"),
     ("budget_exhausted", "completed", "hit the cost ceiling"),
+    ("data_starved", "completed", "Splunk could not be reached"),
     ("aborted", "cancelled", "the operator stopped it"),
     ("abandoned", "cancelled", "parked with no answer"),
     ("failed", "failed", "the worker crashed"),
@@ -101,3 +103,41 @@ def test_a_parked_hunt_is_paused_with_its_reason_and_spend_then_finalized() -> N
 
     assert runs.row["status"] == "completed"
     assert runs.finalized["cost_usd"] == 1.5
+    assert runs.finalized["finished_at"] is None
+
+
+def test_finished_at_is_the_instant_the_report_was_sealed() -> None:
+    runs = _Runs()
+    with patch("core.workflows.run_bridge_router.withdraw_for_run"), patch(
+        "core.workflows.run_bridge_router.authorise"
+    ):
+        record_terminal(
+            "run-1",
+            TerminalUpdate(
+                outcome="completed",
+                reason="done",
+                finished_at="2026-10-27T11:15:20.000Z",
+            ),
+            "Bearer x",
+            runs,
+            None,
+        )
+
+    assert runs.finalized["finished_at"] == datetime(2026, 10, 27, 11, 15, 20)
+
+
+def test_an_unreadable_finished_at_does_not_refuse_the_terminal() -> None:
+    runs = _Runs()
+    with patch("core.workflows.run_bridge_router.withdraw_for_run"), patch(
+        "core.workflows.run_bridge_router.authorise"
+    ):
+        record_terminal(
+            "run-1",
+            TerminalUpdate(outcome="completed", reason="done", finished_at="not-a-time"),
+            "Bearer x",
+            runs,
+            None,
+        )
+
+    assert runs.finalized["finished_at"] is None
+    assert runs.finalized["status"] == "completed"

@@ -1,12 +1,11 @@
-"""Cross-investigation IOC correlation over ``shared_iocs``.
+"""The entity index intake joins alerts to Cases by, over ``shared_iocs``.
 
-Nothing is held in process, so overlap survives a daemon restart. Dedup
-(``check_overlap``) is bounded to live investigations; correlation reads the
-whole table.
+Nothing is held in process, so it survives a daemon restart. Matching a finding
+to a Case is ``SharedIOCRepository.matching_cases``.
 """
 
 import logging
-from typing import Any, Callable, Dict, Iterable, List, Optional, Set
+from typing import Any, Callable, Dict, Iterable, Optional, Set
 
 from core.memory.entity_keys import entity_context_candidates
 from core.storage.connection import get_db_manager
@@ -51,39 +50,13 @@ class SharedIntelligence:
             "register", lambda repo: repo.record(investigation_id, keys), None
         )
 
-    def check_overlap(
-        self, finding: Dict[str, Any], exclude_id: Optional[str] = None
-    ) -> List[str]:
-        """Live investigations already covering one of this finding's entities."""
+    def record_on_case(self, case_id: str, finding: Dict[str, Any]):
+        """Index a merged finding's entities against the Case's newest investigation."""
         keys = _keys_from_finding(finding)
         if not keys:
-            return []
-
-        overlapping = self._with_repo(
-            "overlap lookup", lambda repo: repo.open_investigations_for(keys), set()
-        )
-        if exclude_id:
-            overlapping.discard(exclude_id)
-        return sorted(overlapping)
-
-    def get_related_investigations(self, investigation_id: str) -> List[str]:
-        """Investigations that share an indicator with the given one, ever."""
-
-        def _related(repo: SharedIOCRepository) -> Set[str]:
-            keys = repo.keys_for(investigation_id)
-            return repo.investigations_for(keys) if keys else set()
-
-        related = self._with_repo("related lookup", _related, set())
-        related.discard(investigation_id)
-        return sorted(related)
-
-    def get_shared_iocs(self, inv_id_a: str, inv_id_b: str) -> List[str]:
-        return sorted(
-            self._with_repo(
-                "shared lookup",
-                lambda repo: repo.shared_between(inv_id_a, inv_id_b),
-                set(),
-            )
+            return
+        self._with_repo(
+            "merge write", lambda repo: repo.record_on_case(case_id, keys), None
         )
 
     def close_investigation(self, investigation_id: str, case_id: Optional[str]):

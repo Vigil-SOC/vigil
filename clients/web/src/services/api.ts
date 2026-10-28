@@ -317,6 +317,10 @@ export const casesApi = {
   getEscalations: (id: string) =>
     api.get<Schema<'CaseEscalationsResponse'>>(`/cases/${id}/escalations`),
 
+  /** Links to other Cases, each with that Case's title and status. */
+  getRelationships: (id: string) =>
+    api.get<Schema<'CaseRelationshipsResponse'>>(`/cases/${id}/relationships`),
+
   // The merged record. There is no audit-log route; this read replaced it.
   getRecord: (id: string) =>
     api.get<CaseRecordResponse>(`/cases/${id}/record`),
@@ -516,12 +520,11 @@ export interface AgentSummary {
   decision_id?: string
 }
 
-/** Reads the shell folds itself. Health is public; processes needs a sign-in; routability is admin-only. */
+/** Reads the shell folds itself. Health is public; processes and the provider map need a sign-in. */
 export const consoleApi = {
   getHealth: () => api.get('/health'),
   getProcesses: () => api.get<Schema<'ProcessStates'>>('/processes'),
-  getRoutability: () =>
-    api.get<{ providers: Record<string, boolean> }>('/bifrost/routability'),
+  getRoutability: () => api.get<Schema<'LlmPathHealth'>>('/llm/health'),
 }
 
 export interface IntegrationTestResult {
@@ -1114,6 +1117,21 @@ export interface AuditVerify {
   ok: boolean
 }
 
+export interface AuditErasure {
+  principal_id: string
+  on: string
+  unconfirmed: boolean
+}
+
+export interface AuditRetention {
+  effective_days: number | null
+  pending_days: number | null
+  pending_on: string | null
+  unconfirmed: boolean
+  erasure_unconfirmed: boolean
+  erasures: AuditErasure[]
+}
+
 export const AUDIT_PAGE = 100
 
 /** The filter as query params, empty ones left out. */
@@ -1152,6 +1170,10 @@ export const auditApi = {
   },
   verify: (first?: number, last?: number) =>
     api.get<AuditVerify>('/audit/verify', { params: { first, last } }),
+  retention: () => api.get<AuditRetention>('/audit/retention'),
+  saveRetention: (days: number) => api.put<AuditRetention>('/audit/retention', { days }),
+  erasePrincipal: (principal_id: string, reason: string) =>
+    api.post<AuditRetention>('/audit/erasure', { principal_id, reason }),
 }
 
 export interface FederationSourceView {

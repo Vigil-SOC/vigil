@@ -46,6 +46,8 @@ def idle_stats(topics: list[str], consumer_group: str) -> Dict[str, Any]:
         "last_error_at": None,
         "topics": topics,
         "consumer_group": consumer_group,
+        # Per assigned partition: {topic, partition, committed, high_watermark, lag}.
+        "partitions": [],
     }
 
 
@@ -63,6 +65,9 @@ class KafkaConsumerService:
         self._dedup = dedup or RedisDedupSet("kafka")
         self._consumer = None
         self._running = False
+        # Offsets this consumer committed (or seeded from the broker once per
+        # assignment); None means the group has no commit for that partition.
+        self._committed: Dict[Any, Optional[int]] = {}
 
         self.stats = idle_stats(list(config.topics), config.consumer_group)
 
@@ -115,6 +120,7 @@ class KafkaConsumerService:
             logger.info("Kafka consumer connected")
         except Exception as e:
             self.stats["connected"] = False
+            self.stats["partitions"] = []
             self._record_error(f"startup failed: {e}")
             logger.error("Kafka consumer failed to start: %s", e)
             return
@@ -128,6 +134,7 @@ class KafkaConsumerService:
                         await self._process_partition(tp, msgs)
                         for tp, msgs in batches.items()
                     ]
+                    await self._refresh_partitions()
                     if not all(results):
                         await asyncio.sleep(_RETRY_BACKOFF_SECONDS)
                 except asyncio.CancelledError:
@@ -140,6 +147,8 @@ class KafkaConsumerService:
         finally:
             self._running = False
             self.stats["connected"] = False
+            self.stats["partitions"] = []
+            self._committed.clear()
             try:
                 if self._consumer is not None:
                     await self._consumer.stop()
@@ -158,7 +167,9 @@ class KafkaConsumerService:
         try:
             if await self._handle_batch(tp.topic, msgs):
                 if msgs:
-                    await self._consumer.commit({tp: msgs[-1].offset + 1})
+                    offset = msgs[-1].offset + 1
+                    await self._consumer.commit({tp: offset})
+                    self._committed[tp] = offset
                 return True
             reason = "findings not stored"
         except asyncio.CancelledError:
@@ -169,6 +180,44 @@ class KafkaConsumerService:
         logger.error("Kafka: rewinding %s to offset %s: %s", tp, msgs[0].offset, reason)
         self._consumer.seek(tp, msgs[0].offset)
         return False
+
+    async def _refresh_partitions(self) -> None:
+        """Rebuild ``stats["partitions"]`` from the current assignment.
+
+        ``highwater()`` reads the last fetch response locally; the committed
+        offset is our own record, seeded with one broker lookup when a
+        partition is first seen. Unknown values (and their lag) are None.
+        """
+        assigned = self._consumer.assignment()
+        # Drop revoked partitions so a reassignment is seeded afresh.
+        for tp in set(self._committed) - set(assigned):
+            del self._committed[tp]
+        rows = []
+        for tp in sorted(assigned, key=lambda t: (t.topic, t.partition)):
+            if tp not in self._committed:
+                try:
+                    self._committed[tp] = await self._consumer.committed(tp)
+                except Exception as e:
+                    logger.warning(
+                        "Kafka: committed offset lookup for %s failed: %s", tp, e
+                    )
+            committed = self._committed.get(tp)
+            high = self._consumer.highwater(tp)
+            lag = (
+                max(high - committed, 0)
+                if committed is not None and high is not None
+                else None
+            )
+            rows.append(
+                {
+                    "topic": tp.topic,
+                    "partition": tp.partition,
+                    "committed": committed,
+                    "high_watermark": high,
+                    "lag": lag,
+                }
+            )
+        self.stats["partitions"] = rows
 
     async def _handle_message(self, topic: str, msg) -> bool:
         """Decode, dedupe, and enqueue a single Kafka message."""

@@ -82,7 +82,6 @@ def _opening(tmp_path: Path) -> Orchestrator:
     orch.stats = {"investigations_created": 0}
     orch._save_investigation = MagicMock()
     orch._update_investigation_status = MagicMock()
-    orch._check_cross_correlations = AsyncMock()
     return orch
 
 

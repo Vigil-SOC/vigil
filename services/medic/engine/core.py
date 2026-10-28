@@ -93,6 +93,18 @@ class Engine:
         for r in self.active:
             if not r.rule.get("group_by"):
                 self._machine(r.id, {})
+        # signal -> (rule, signal name, kind, spec, what its groups depend on)
+        self._readers: dict[str, list[tuple]] = {}
+        for r in self.active:
+            for name, sig in r.rule["signals"].items():
+                kind, spec = next(iter(sig.items()))
+                same = json.dumps(
+                    [kind, spec, r.rule.get("group_by", [])], sort_keys=True
+                )
+                self._readers.setdefault(spec["signal"], []).append(
+                    (r, name, kind, spec, same)
+                )
+        self._overflow = {r.id: _overflow_key(r) for r in self.rules}
 
     def state(self) -> dict:
         return copy.deepcopy(
@@ -196,16 +208,15 @@ class Engine:
         if obs["kind"] == "sensor_health":
             self._machine(BLIND, {"sensor": obs["health"]["sensor"]})
             return
-        for r in self.active:
-            group_by = r.rule.get("group_by", [])
-            for name, sig in r.rule["signals"].items():
-                kind, spec = next(iter(sig.items()))
-                if spec["signal"] != obs["signal"]:
-                    continue
-                for group in _groups(kind, spec, group_by, obs):
-                    self._saw(r, gkey(group), t, found)
-                if kind == "log" and ev.line_matches(spec, obs):
-                    self._latch(r, name, spec, obs, t)
+        groups: dict[str, list[str]] = {}  # shared by rules reading the same way
+        for r, name, kind, spec, same in self._readers.get(obs["signal"], []):
+            if same not in groups:
+                group_by = r.rule.get("group_by", [])
+                groups[same] = [gkey(g) for g in _groups(kind, spec, group_by, obs)]
+            for key in groups[same]:
+                self._saw(r, key, t, found)
+            if kind == "log" and ev.line_matches(spec, obs):
+                self._latch(r, name, spec, obs, t)
 
     def _cover(self, obs: dict, t: float) -> None:
         """Each sensor's current covered run (§2): ok reads or ok heartbeats never
@@ -229,15 +240,18 @@ class Engine:
 
     def _saw(self, r: LoadedRule, key: str, t: float, found: dict) -> None:
         """An observation of a group (§3): note when, or queue a new group."""
-        slots = self.machines.setdefault(r.id, {})
-        over = slots.get(_overflow_key(r), {}).get("members", {})
+        rid = r.id
+        slots = self.machines.setdefault(rid, {})
         if key in slots:
             slots[key]["seen"] = max(slots[key].get("seen", t), t)
-        elif key in over:
+            return
+        over = slots.get(self._overflow[rid], {}).get("members", {})
+        if key in over:
             over[key] = max(over[key], t)
+        elif (span := found.setdefault(rid, {}).get(key)) is None:
+            found[rid][key] = [t, t]
         else:
-            first, last = found.setdefault(r.id, {}).setdefault(key, [t, t])
-            found[r.id][key] = [min(first, t), max(last, t)]
+            span[:] = [min(span[0], t), max(span[1], t)]
 
     def _place(self, found: dict[str, dict[str, list[float]]], now: float) -> None:
         """New groups get their own machine in order of first appearance (ties by

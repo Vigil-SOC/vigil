@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -50,10 +51,13 @@ RUN_STATUS = {WAITING: "paused", "running": "running", "completed": "running"}
 # A run nobody stopped and nothing broke. Aborted and abandoned both read as
 # crashes under "failed", and only one of the three is worth paging over.
 # budget_exhausted is the same mistake one step along: a hunt that stopped at the
-# ceiling its operator set did what it was told.
+# ceiling its operator set did what it was told. data_starved (#3248) answered but
+# could not look: completed, with outcome saying so, and the outcome == "completed"
+# gates below keep it from proposing, raising priority or closing the case.
 TERMINAL_STATUS = {
     "completed": "completed",
     "budget_exhausted": "completed",
+    "data_starved": "completed",
     "aborted": "cancelled",
     "abandoned": "cancelled",
 }
@@ -97,6 +101,9 @@ class TerminalUpdate(BaseModel):
     # The run's verdict as its guard left it. Loose like severity: only benign and
     # false_positive act, and anything else leaves the case as it is.
     disposition: Optional[str] = None
+    # When the agent sealed the report. The row's finished_at, so Ended and the
+    # history agree. Absent, or unreadable, and the row is stamped on arrival.
+    finished_at: Optional[str] = None
 
 
 class CitedFindings(BaseModel):
@@ -205,6 +212,20 @@ def record_progress(
     )
 
 
+def _parse_finished_at(value: Optional[str]) -> Optional[datetime]:
+    """The instant the agent sealed, as a naive UTC datetime. None when absent or unreadable."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        logger.warning("ignoring an unreadable finished_at %r", value)
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
 @router.post("/{run_id}/terminal", status_code=204)
 def record_terminal(
     run_id: str,
@@ -234,6 +255,7 @@ def record_terminal(
         cost_usd=update.cost_usd,
         outcome=update.outcome,
         reason=update.reason or None,
+        finished_at=_parse_finished_at(update.finished_at),
     )
 
     # The case the run was started from, so its report reaches the case rather than

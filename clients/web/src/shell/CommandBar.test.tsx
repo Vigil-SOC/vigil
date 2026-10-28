@@ -52,6 +52,7 @@ vi.mock('../services/api', () => ({
     getEvidence: () => Promise.resolve({ data: { evidence: [] } }),
     getIOCs: () => Promise.resolve({ data: { iocs: [] } }),
     getEscalations: () => Promise.resolve({ data: { escalations: [] } }),
+    getRelationships: () => Promise.resolve({ data: { relationships: [] } }),
   },
   findingsApi: {
     getById: (id: string, signal?: AbortSignal) => getFinding(id, signal),
@@ -236,6 +237,17 @@ describe('CommandBar', () => {
     rerender(<CommandBar {...props} fill={{ text: '/hold response', seq: 1 }} />)
     expect(screen.getByRole('combobox')).toHaveValue('/hold response')
     expect(screen.queryByRole('button', { name: 'Run' })).not.toBeInTheDocument()
+  })
+
+  it('opts the input out of password-manager autofill', () => {
+    renderBar()
+    const input = screen.getByRole('combobox')
+    expect(input).toHaveAttribute('autocomplete', 'off')
+    expect(input).toHaveAttribute('name', 'vigil-command')
+    for (const attr of ['data-1p-ignore', 'data-lpignore', 'data-bwignore']) {
+      expect(input).toHaveAttribute(attr)
+    }
+    expect(input).toHaveAttribute('data-form-type', 'other')
   })
 
   it('opens with ⌘K, and Esc and Tab write no recent search', () => {
@@ -530,6 +542,7 @@ describe('CommandBar', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
     fireEvent.click(await screen.findByRole('button', { name: 'Run' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('missing case')
+    expect(input).toHaveValue('/replay nope')
     expect(screen.getByRole('button', { name: 'Run' })).toBeInTheDocument()
     expect(onOpenCase).not.toHaveBeenCalled()
     expect(onGo).not.toHaveBeenCalled()
@@ -558,6 +571,59 @@ describe('CommandBar', () => {
     exportJira.mockResolvedValueOnce('Created SOC-12')
     await runCommand('/ticket case-9', 'Created SOC-12')
     expect(exportJira).toHaveBeenCalledWith('case-9', 'SOC')
+  })
+
+  it('empties the bar after /investigate, /replay, /ask, or /ticket, and keeps the text when one fails', async () => {
+    getIntegrations.mockResolvedValue({
+      data: {
+        enabled_integrations: ['jira'],
+        integrations: { jira: { url: 'https://jira.example', username: 'ada', project_key: 'SOC' } },
+        secrets_set: { jira: { api_token: true } },
+      },
+    })
+    const { onOpenChat, onGo, onOpenCase } = renderBar()
+    const input = screen.getByRole('combobox')
+    const runCommand = async (text: string) => {
+      fireEvent.change(input, { target: { value: text } })
+      fireEvent.keyDown(input, { key: 'Enter' })
+      const run = await screen.findByRole('button', { name: 'Run' })
+      await waitFor(() => expect(run).toBeEnabled())
+      fireEvent.click(run)
+    }
+
+    await runCommand('/investigate f-1')
+    expect(await screen.findByText('Started Incident response workflow')).toBeInTheDocument()
+    expect(input).toHaveValue('')
+
+    await runCommand('/replay case-7')
+    await waitFor(() => expect(onGo).toHaveBeenCalledWith('workflows', { search: '?run=run-new' }))
+    expect(input).toHaveValue('')
+
+    await runCommand('/replay case-9')
+    await waitFor(() => expect(onOpenCase).toHaveBeenCalledWith('case-9'))
+    expect(await screen.findByText('Case case-9 has no run to replay')).toBeInTheDocument()
+    expect(input).toHaveValue('')
+
+    await runCommand('/ask where did the beacon go')
+    expect(onOpenChat).toHaveBeenCalledWith('where did the beacon go')
+    expect(input).toHaveValue('')
+
+    exportJira.mockResolvedValueOnce('Created SOC-12')
+    await runCommand('/ticket case-9')
+    expect(await screen.findByText('Created SOC-12')).toBeInTheDocument()
+    expect(input).toHaveValue('')
+
+    execute.mockRejectedValueOnce(new Error('workflow down'))
+    await runCommand('/investigate f-1')
+    expect(await screen.findByText('workflow down')).toBeInTheDocument()
+    expect(input).toHaveValue('/investigate f-1')
+    expect(screen.getByRole('button', { name: 'Run' })).toBeEnabled()
+
+    exportJira.mockRejectedValueOnce(new Error('jira refused'))
+    await runCommand('/ticket case-9')
+    expect(await screen.findByText('jira refused')).toBeInTheDocument()
+    expect(input).toHaveValue('/ticket case-9')
+    expect(screen.getByRole('button', { name: 'Run' })).toBeEnabled()
   })
 
   it('opens the case drawer from /replay, expands to the cases route, and closes in place', async () => {

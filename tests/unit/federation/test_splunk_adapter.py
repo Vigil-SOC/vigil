@@ -10,6 +10,8 @@ earlier query ran empty.
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import math
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
@@ -19,6 +21,7 @@ import pytest
 
 from core.federation.adapters._base import parse_cursor_since
 from core.federation.runner import FederationRunner
+from core.integrations.splunk import adapter as splunk_adapter
 from core.integrations.splunk.adapter import (
     _QUERIES,
     SplunkAdapter,
@@ -282,3 +285,150 @@ def test_full_batch_with_unreadable_times_warns_and_moves_to_now(caplog):
 
     assert parse_cursor_since(res.cursor) >= before
     assert "no alert carried a readable time" in caplog.text
+
+
+# --- ATT&CK annotations (#3218) ---------------------------------------------
+# Hand-built notables in the documented shapes; nothing is copied from Splunk.
+
+
+@pytest.fixture(autouse=True)
+def _fresh_warnings():
+    splunk_adapter._warned_annotation_keys.clear()
+    yield
+    splunk_adapter._warned_annotation_keys.clear()
+
+
+def _notable(**fields: Any) -> Dict[str, Any]:
+    return {"_cd": "n1", "search_name": "Encoded PowerShell", **fields}
+
+
+def _mitre(event: Dict[str, Any]) -> Dict[str, Any]:
+    return _splunk_event_to_finding(event)["mitre_predictions"]
+
+
+def _warnings(caplog) -> List[str]:
+    return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+
+
+# Splunk ES 7.3 docs, "Share data in Splunk Enterprise Security": the
+# `annotations` field is a JSON string whose mitre_attack is a string or list.
+@pytest.mark.parametrize(
+    "annotations",
+    [
+        json.dumps({"mitre_attack": ["T1059.001", "T1071"]}),
+        json.dumps({"mitre_attack": "T1059.001,T1071"}),
+        json.dumps({"mitre_attack": "T1059.001, T1071", "nist": ["DE.CM"]}),
+    ],
+    ids=["object-with-list", "object-with-string", "string"],
+)
+def test_encoded_annotations_give_techniques_with_unknown_confidence(annotations):
+    assert _mitre(_notable(annotations=annotations)) == {
+        "T1059.001": None,
+        "T1071": None,
+    }
+
+
+# Splunk ES 8.0 / 8.5 docs, "Add annotations to detections": a dotted
+# `annotations.mitre_attack` field holding a string, comma list or list.
+@pytest.mark.parametrize(
+    "value", ["T1059.001,T1071", ["T1059.001", "T1071"], ["T1059.001,T1071"]]
+)
+def test_dotted_annotation_field(value):
+    assert _mitre(_notable(**{"annotations.mitre_attack": value})) == {
+        "T1059.001": None,
+        "T1071": None,
+    }
+
+
+# Weaker evidence than the above: rests on Splunk's general JSON-extraction
+# naming for arrays (SPL2 "spath command"; Splunk Community "Why need curly
+# braces at the end of field", "JSON Field Extraction names with curly
+# brackets"), not on an ES page showing a notable.
+def test_curly_brace_array_field():
+    event = _notable(**{"annotations.mitre_attack{}": ["T1059.001", "T1071"]})
+    assert _mitre(event) == {"T1059.001": None, "T1071": None}
+
+
+def test_forms_are_unioned_deduplicated_and_normalised(caplog):
+    event = _notable(
+        annotations=json.dumps({"mitre_attack": ["t1059", "T1071"]}),
+        **{
+            "annotations.mitre_attack": " t1059.001 , Execution,,T1071",
+            "annotations.mitre_attack{}": ["T1059", "", "T10", "T1059.0011"],
+        },
+    )
+    # Parent and sub-technique both kept as sent; tactic and junk dropped.
+    assert _mitre(event) == {"T1059": None, "T1071": None, "T1059.001": None}
+    assert _warnings(caplog) == []
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {},
+        {"annotations.mitre_attack": ""},
+        {"annotations.mitre_attack{}": []},
+        {"annotations": json.dumps({"mitre_attack": []})},
+        {"annotations": json.dumps({"cis20": ["CIS 8"], "nist": ["DE.AE"]})},
+        {"annotations": ""},
+    ],
+    ids=["none", "empty-string", "empty-list", "empty-encoded", "other-only", "blank"],
+)
+def test_nothing_to_read_is_silent(fields, caplog):
+    assert _mitre(_notable(**fields)) == {}
+    assert _warnings(caplog) == []
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"annotations": "{not json"},
+        {"annotations": json.dumps(["T1059"])},
+        {"annotations": json.dumps({"mitre_attack": 1059})},
+        {"annotations.mitre_attack": 1059},
+        {"annotations.mitre_attack{}": {"id": "T1059"}},
+        {"annotations.mitre_attack": "Execution"},
+        {"annotations.mitre_attack.mitre_technique_id": "T1059"},
+    ],
+    ids=[
+        "bad-json",
+        "encoded-list",
+        "encoded-number",
+        "number",
+        "object",
+        "tactic-only",
+        "subfield-only",
+    ],
+)
+def test_unreadable_annotation_warns_once_per_key_and_still_ingests(fields, caplog):
+    first = _splunk_event_to_finding(_notable(**fields))
+    second = _splunk_event_to_finding(_notable(_cd="n2", **fields))
+
+    assert first["finding_id"] == "splunk-n1" and first["mitre_predictions"] == {}
+    assert second["finding_id"] == "splunk-n2"
+    (warning,) = _warnings(caplog)
+    assert "Encoded PowerShell" in warning and "annotations" in warning
+
+
+def test_warning_falls_back_to_rule_name_then_sourcetype(caplog):
+    bad = {"annotations": "{not json"}
+    _splunk_event_to_finding({"_cd": "a", "rule_name": "Rule A", **bad})
+    _splunk_event_to_finding({"_cd": "b", "sourcetype": "edr:alert", **bad})
+    _splunk_event_to_finding({"_cd": "c", "sourcetype": "ids:alert", **bad})
+    _splunk_event_to_finding({"_cd": "d", "sourcetype": "ids:alert", **bad})
+
+    warnings = _warnings(caplog)
+    assert len(warnings) == 3
+    assert ["Rule A" in warnings[0], "edr:alert" in warnings[1]] == [True, True]
+
+
+def test_malformed_notable_does_not_stop_its_batch():
+    bad = _notable(_cd="bad", annotations="{not json")
+    good = _notable(_cd="good", **{"annotations.mitre_attack": "T1071"})
+
+    res, _ = _fetch([[bad, good]])
+
+    assert [(f["external_id"], f["mitre_predictions"]) for f in res.findings] == [
+        ("bad", {}),
+        ("good", {"T1071": None}),
+    ]

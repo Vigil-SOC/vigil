@@ -111,8 +111,13 @@ class NeedsYouHypothesis(BaseModel):
 
 
 class NeedsYouItem(BaseModel):
-    kind: Literal["approval", "checkpoint", "parked"] = Field(
-        description="parked: a hunt stopped at a limit, answered with Keep going on its case; its source_id is the run id."
+    kind: Literal["approval", "checkpoint", "parked", "open_case"] = Field(
+        description=(
+            "parked: a hunt stopped at a limit, answered with Keep going on its case; "
+            "its source_id is the run id. "
+            "open_case: a demo-mode case that is not closed, answered by opening the case; "
+            "its source_id is the case id."
+        )
     )
     source_id: str
     title: str
@@ -122,6 +127,10 @@ class NeedsYouItem(BaseModel):
     )
     reversibility: Literal["reversible", "irreversible"]
     case_id: Optional[str] = None
+    finding_id: Optional[str] = Field(
+        default=None,
+        description="The first stored alert the approval's evidence names, so an item with no case can open it.",
+    )
     run_id: Optional[str] = None
     checkpoint_id: Optional[str] = Field(
         default=None,

@@ -605,13 +605,14 @@ def test_store_read_errors_log_a_warning_and_read_as_missing(monkeypatch, caplog
     with caplog.at_level("WARNING"):
         assert store.get_global_settings() == {"enabled": False}
         assert store.get_source("splunk") is None
-        assert store.list_sources() == []
-    assert len([r for r in caplog.records if r.levelname == "WARNING"]) == 3
+    assert len([r for r in caplog.records if r.levelname == "WARNING"]) == 2
     # The raising readers let callers tell an outage from "disabled".
     with pytest.raises(RuntimeError):
         store.read_global_settings()
     with pytest.raises(RuntimeError):
         store.read_source("splunk")
+    with pytest.raises(RuntimeError):
+        store.read_sources()
 
 
 @pytest.mark.asyncio
@@ -736,11 +737,11 @@ async def test_list_sources_merges_lag_and_quiet(monkeypatch):
     monkeypatch.setattr(fed_router.fed_registry, "get_adapter", adapters.get)
     monkeypatch.setattr(
         fed_router.fed_store,
-        "list_sources",
+        "read_sources",
         lambda: [_row("healthy"), _row("stale"), _row("never")],
     )
     monkeypatch.setattr(
-        fed_router.fed_store, "get_global_settings", lambda: {"enabled": True}
+        fed_router.fed_store, "read_global_settings", lambda: {"enabled": True}
     )
     monkeypatch.setattr(
         fed_router,

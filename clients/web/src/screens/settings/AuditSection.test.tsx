@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { auditApi, auditParams } from '../../services/api'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { auditApi, auditParams, type AuditRetention } from '../../services/api'
+import { useAuth } from '../../contexts/AuthContext'
 import AuditSection, { EMPTY_DRAFT, auditFilter, verifyLine } from './AuditSection'
+
+const manager = { hasPermission: (p: string) => p === 'audit.manage' || p === 'audit.read' }
+
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: vi.fn(() => manager),
+}))
 
 vi.mock('../../services/api', async (orig) => {
   const real = await orig<typeof import('../../services/api')>()
@@ -11,11 +18,21 @@ vi.mock('../../services/api', async (orig) => {
       entries: vi.fn(() => Promise.resolve({ data: { entries: [], tip: { seq: 0, hash: 'h' } } })),
       download: vi.fn(() => Promise.resolve()),
       verify: vi.fn(),
+      retention: vi.fn(() => Promise.resolve({
+        data: { effective_days: null, pending_days: null, pending_on: null, unconfirmed: false, erasure_unconfirmed: false, erasures: [] },
+      })),
+      saveRetention: vi.fn(),
+      erasePrincipal: vi.fn(),
     },
   }
 })
 
 const qs = (draft: Partial<typeof EMPTY_DRAFT>) => new URLSearchParams(auditParams(auditFilter({ ...EMPTY_DRAFT, ...draft }))).toString()
+
+/** The card only reads `.data`. The cast satisfies tsc, which includes this file in `npm run build`. */
+function retentionResponse(data: AuditRetention) {
+  return { data } as unknown as Awaited<ReturnType<typeof auditApi.retention>>
+}
 
 describe('audit filter query string', () => {
   it('leaves out empty params and trims the rest', () => {
@@ -63,5 +80,76 @@ describe('audit section', () => {
   it('reads a verify result as ok or the first break', () => {
     expect(verifyLine({ first: 1, last: 9, first_bad: null, reason: '', ok: true })).toEqual({ level: 'good', text: 'Chain verified · seq 1–9' })
     expect(verifyLine({ first: 1, last: 9, first_bad: 4, reason: 'hash mismatch', ok: false }).text).toBe('Chain break at seq 4: hash mismatch')
+  })
+})
+
+describe('retention card', () => {
+  it('says the period could not load for a viewer rather than that none is in force', async () => {
+    vi.mocked(useAuth).mockReturnValue({ hasPermission: (p: string) => p === 'audit.read' } as unknown as ReturnType<typeof useAuth>)
+    vi.mocked(auditApi.retention).mockRejectedValueOnce(new Error('network down'))
+    try {
+      render(<AuditSection notify={vi.fn()} />)
+      expect(await screen.findByText('Could not load the retention period.')).toBeTruthy()
+      expect(screen.queryByText('No retention period is in force yet.')).toBeNull()
+    } finally {
+      vi.mocked(useAuth).mockReturnValue(manager as unknown as ReturnType<typeof useAuth>)
+    }
+  })
+
+  it('keeps a saved announcement when the earlier load arrives late', async () => {
+    vi.mocked(useAuth).mockReturnValue(manager as unknown as ReturnType<typeof useAuth>)
+    let resolveLoad: (value: Awaited<ReturnType<typeof auditApi.retention>>) => void = () => {}
+    vi.mocked(auditApi.retention).mockReturnValueOnce(new Promise((resolve) => {
+      resolveLoad = resolve
+    }))
+    vi.mocked(auditApi.saveRetention).mockResolvedValueOnce(retentionResponse({
+      effective_days: null,
+      pending_days: 365,
+      pending_on: '2026-11-02T21:07:14Z',
+      unconfirmed: true,
+      erasure_unconfirmed: false,
+      erasures: [],
+    }))
+    render(<AuditSection notify={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText('This announcement has not left the box.')).toBeTruthy()
+    expect(screen.getByText(/365 days takes effect/)).toBeTruthy()
+    await act(async () => {
+      resolveLoad(retentionResponse({
+        effective_days: null,
+        pending_days: null,
+        pending_on: null,
+        unconfirmed: false,
+        erasure_unconfirmed: false,
+        erasures: [],
+      }))
+    })
+    expect(screen.getByText('This announcement has not left the box.')).toBeTruthy()
+    expect(screen.getByText(/365 days takes effect/)).toBeTruthy()
+    expect(screen.queryByText('Could not load the retention period.')).toBeNull()
+  })
+
+  it('does not turn a saved period into a load failure when the earlier load rejects', async () => {
+    vi.mocked(useAuth).mockReturnValue(manager as unknown as ReturnType<typeof useAuth>)
+    let rejectLoad: (reason: Error) => void = () => {}
+    vi.mocked(auditApi.retention).mockReturnValueOnce(new Promise((_, reject) => {
+      rejectLoad = reject
+    }) as ReturnType<typeof auditApi.retention>)
+    vi.mocked(auditApi.saveRetention).mockResolvedValueOnce(retentionResponse({
+      effective_days: 365,
+      pending_days: null,
+      pending_on: null,
+      unconfirmed: false,
+      erasure_unconfirmed: false,
+      erasures: [],
+    }))
+    render(<AuditSection notify={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText('The trail is kept for 365 days.')).toBeTruthy()
+    await act(async () => {
+      rejectLoad(new Error('late'))
+    })
+    expect(screen.getByText('The trail is kept for 365 days.')).toBeTruthy()
+    expect(screen.queryByText('Could not load the retention period.')).toBeNull()
   })
 })

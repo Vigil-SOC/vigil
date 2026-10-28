@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from core.integrations.splunk.adapter import _splunk_event_to_finding
 from core.integrations.splunk.client import SearchResult, SplunkSearchError
 from services.daemon.config import PollingConfig
 from services.daemon.poller import DataPoller
@@ -178,3 +179,22 @@ async def test_first_run_keeps_fixed_lookback():
 
     # Default interval 300s -> max(300 // 60 + 1, 5) == 6.
     assert svc.queries[0]["earliest_time"] == "-6m"
+
+
+@pytest.mark.asyncio
+async def test_legacy_poll_produces_the_adapter_finding():
+    # One converter: same finding_id, external_id added, techniques read (#3218).
+    event = {**_event(1), "annotations.mitre_attack": "T1059.001,T1071"}
+    bad = {**_event(2), "annotations": "{not json"}
+    poller = _poller(_FakeSplunk([[event, bad]]))
+
+    await poller._poll_splunk()
+
+    got = poller._output_queue.get_nowait()["data"]
+    want = _splunk_event_to_finding(event)
+    got.pop("timestamp"), want.pop("timestamp")
+    assert got == want
+    assert got["external_id"] == "e1"
+    assert got["mitre_predictions"] == {"T1059.001": None, "T1071": None}
+    # The malformed notable is still enqueued behind it.
+    assert poller._output_queue.get_nowait()["data"]["finding_id"] == "splunk-e2"

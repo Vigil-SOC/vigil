@@ -45,9 +45,9 @@ const OUTCOMES = [
   measured('resolved_person', 'Closed by a person', 0),
   measured('working', 'Still working', 0),
   measured('needs_you', 'Needs you', 0, 'This count is alerts, not decisions.'),
-  measured('dismissed', 'Dropped as noise', 0),
-  measured('scoring', 'Scoring', 0),
-  measured('waiting', 'Not in a case', 2),
+  measured('dismissed', 'Dismissed as noise', 0),
+  measured('scoring', 'Waiting for triage', 0),
+  measured('waiting', 'Not picked up', 2),
   unmeasured('ticketed', 'Ticket created'),
   unmeasured('paused', 'Paused'),
   unmeasured('stuck', 'Stuck'),
@@ -139,7 +139,7 @@ describe('OverviewScreen', () => {
     for (const name of ['Connect a SIEM', 'Connect an EDR', 'Connect identity', 'Connect the LogLM pipeline']) {
       expect(within(flow).getByRole('link', { name: new RegExp(name) })).toHaveAttribute('href', '/settings?section=data')
     }
-    for (const label of ['Resolved automatically', 'Closed by a person', 'Still working', 'Needs you', 'Not in a case']) {
+    for (const label of ['Resolved automatically', 'Closed by a person', 'Still working', 'Needs you', 'Not picked up']) {
       expect(within(flow).getByText(label)).toBeInTheDocument()
     }
     expect(flow.textContent).not.toMatch(/\d/)
@@ -225,7 +225,7 @@ describe('OverviewScreen', () => {
     vi.mocked(overviewApi.get).mockResolvedValue({ data: payload() } as never)
     const { setWallMode } = renderScreen()
     const flow = await screen.findByRole('region', { name: 'How alerts flow through Vigil' })
-    const counts = { 'Resolved automatically': '0', 'Closed by a person': '0', 'Still working': '0', 'Needs you': '0', 'Dropped as noise': '0', Scoring: '0', 'Not in a case': '2' }
+    const counts = { 'Resolved automatically': '0', 'Closed by a person': '0', 'Still working': '0', 'Needs you': '0', 'Dismissed as noise': '0', 'Waiting for triage': '0', 'Not picked up': '2' }
     for (const [label, count] of Object.entries(counts)) {
       const node = within(flow).getByLabelText(label)
       expect(node).toHaveTextContent(count)

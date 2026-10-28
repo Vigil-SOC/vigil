@@ -44,6 +44,10 @@ router.dependencies.append(permission_gate("integrations.read"))
 
 _VALID_SEVERITIES = {"low", "medium", "high", "critical"}
 
+# One fixed body for a failed store read on /sources and /health; never the
+# exception text.
+_READ_FAILED = "Could not read federation sources"
+
 
 # ---------------------------------------------------------------------------
 # Schemas
@@ -85,6 +89,11 @@ def _enrich_with_adapter(
     return row
 
 
+def _read_failed(exc: Exception) -> HTTPException:
+    logger.error("Federation store read failed: %s", type(exc).__name__)
+    return HTTPException(status_code=503, detail=_READ_FAILED)
+
+
 # ---------------------------------------------------------------------------
 # Routes — global settings
 # ---------------------------------------------------------------------------
@@ -120,10 +129,17 @@ async def list_sources() -> Dict[str, Any]:
     me" entries without the daemon being up). Adapters whose integration is
     not configured are still listed but flagged ``is_configured=false``. Each
     row carries ``lag_seconds`` (null until a poll has succeeded) and ``quiet``
-    from :func:`core.federation.lag.source_collection_lag`.
+    from :func:`core.federation.lag.source_collection_lag`. Any failed store
+    read answers 503 rather than a list that looks like a fresh install.
     """
-    rows_by_id = {row["source_id"]: row for row in fed_store.list_sources()}
-    lag_by_id = {r["source_id"]: r for r in source_collection_lag()}
+    try:
+        rows = fed_store.read_sources()
+        lag_rows = source_collection_lag()
+        global_settings = fed_store.read_global_settings()
+    except Exception as exc:
+        raise _read_failed(exc) from exc
+    rows_by_id = {row["source_id"]: row for row in rows}
+    lag_by_id = {r["source_id"]: r for r in lag_rows}
 
     out: List[Dict[str, Any]] = []
     for adapter in fed_registry.list_adapters():
@@ -152,7 +168,7 @@ async def list_sources() -> Dict[str, Any]:
         )
         out.append(_enrich_with_adapter(row, adapter))
 
-    return {"sources": out, "global": fed_store.get_global_settings()}
+    return {"sources": out, "global": global_settings}
 
 
 @router.patch("/sources/{source_id}", dependencies=_INTEGRATIONS_WRITE)
@@ -207,9 +223,13 @@ async def poll_now(source_id: str) -> Dict[str, Any]:
 @router.get("/health")
 async def health() -> Dict[str, Any]:
     """Compact summary for dashboards: per-source last_success + error count."""
-    rows = fed_store.list_sources()
+    try:
+        rows = fed_store.read_sources()
+        global_settings = fed_store.read_global_settings()
+    except Exception as exc:
+        raise _read_failed(exc) from exc
     return {
-        "global": fed_store.get_global_settings(),
+        "global": global_settings,
         "sources": [
             {
                 "source_id": r["source_id"],

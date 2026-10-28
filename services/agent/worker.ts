@@ -16,7 +16,7 @@ import { errorFields, logger } from "./core/log.js";
 import { initTracing, shutdownTracing, traced } from "./core/tracing.js";
 import { jobIdFor, RUN_QUEUE, JOB_SCHEMA_VERSION, type RunJob } from "./contracts/job.js";
 import type { AgentEvent, CheckpointPayload, ResolutionPayload, RunPayload } from "./contracts/events.js";
-import type { SpendPayload } from "./contracts/budget.js";
+import { costOf, roundCost } from "./contracts/budget.js";
 import {
   LEASE_TTL_MS,
   PARK_EVERY_MS,
@@ -428,11 +428,15 @@ async function settle(state: State, leases: Leases, job: RunJob, spec: RunSpec, 
     // hunt as running forever, with no duration and no cost. Off the terminal
     // this already read, so one place reports for every kind there is.
     if (job.run_kind !== "compose") {
+      const spent = await spentOn(state, job.run_id);
       await mirrorFor().terminal(job.run_id, {
         outcome: terminal.outcome,
         reason: terminal.reason,
         summary: terminal.summary ?? "",
-        cost_usd: await spentOn(state, job.run_id),
+        // A sealed hunt report already rounded to the row's four places. Other
+        // kinds keep the raw sum, which the column rounds on its own.
+        cost_usd: terminal.finished_at === undefined ? spent : roundCost(spent),
+        ...(terminal.finished_at === undefined ? {} : { finished_at: terminal.finished_at }),
         handoffs: terminal.handoffs ?? [],
         proposed_actions: terminal.proposed_actions ?? [],
         ...(terminal.severity === undefined ? {} : { severity: terminal.severity }),
@@ -450,14 +454,9 @@ async function settle(state: State, leases: Leases, job: RunJob, spec: RunSpec, 
   await leases.release(job.run_id, owner, Math.min(PARK_EVERY_MS, spec.budgets.max_park_ms));
 }
 
-// What the run cost, summed from the spend events every kind writes. Nothing was
-// summing them, so a finished run showed a dash where its dollars should be.
-// A call nobody could price contributes nothing rather than a fabricated zero.
+// What the run cost, off the spend events every kind writes (costOf).
 export async function spentOn(state: State, runId: string): Promise<number> {
-  const events = (await state.read(runId)) as readonly AgentEvent<Record<never, never>>[];
-  return events
-    .filter((event) => event.kind === "spend")
-    .reduce((total, event) => total + ((event.payload as SpendPayload).cost_usd ?? 0), 0);
+  return costOf((await state.read(runId)) as readonly AgentEvent<Record<never, never>>[]);
 }
 
 // A compose run that dies after its ledger opened, before it journals a terminal,
@@ -772,16 +771,19 @@ export function workerReady(worker: Worker<RunJob>): () => Promise<boolean> {
 // quietly inert when it is unset: runs still succeed, no phase progress ever reaches
 // the console, and a run that stops for a human parks until it is abandoned because
 // nothing can carry the decision back. Said once at startup, because nothing later
-// in the run says it -- a silently-off mirror looks exactly like a quiet one.
-function warnIfUnmirrored(): void {
+// in the run says it -- a silently-off mirror looks exactly like a quiet one. The
+// start line follows either way, so an alert on the ERROR can clear when a later
+// start says `mirror: "on"`. No URL or hostname in it.
+export function announceStart(): void {
   const url = process.env["VIGIL_RUNS_URL"];
-  if (url !== undefined && url !== "") return;
-  log.error("VIGIL_RUNS_URL is unset: run progress will not be mirrored to the backend and checkpoints cannot be answered");
+  const off = url === undefined || url === "";
+  if (off) log.error("VIGIL_RUNS_URL is unset: run progress will not be mirrored to the backend and checkpoints cannot be answered");
+  log.info("agent worker started", { queue: RUN_QUEUE, concurrency: runConcurrency(), mirror: off ? "off" : "on", health_port: healthPort() });
 }
 
 if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].split("/").pop() ?? "")) {
   initTracing("vigil-agent-worker");
-  warnIfUnmirrored();
+  announceStart();
   const running = startWorker();
   // Probes only. Chat moved to serve.ts when #635 split the two into Deployments
   // that scale on different things -- a queue's depth and an open connection count

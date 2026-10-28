@@ -52,6 +52,9 @@ ACTION_CHECKPOINT = "audit.checkpoint"
 ACTION_EXPORT = "audit.export"
 # #2768 writes the restore entry under this action. Poll's reset returns the latest.
 ACTION_RESTORE = "audit.restore"
+# A retention period, or an erasure, announced in the same transaction that stores it.
+ACTION_RETENTION = "audit.retention"
+ACTION_ERASURE = "audit.erasure"
 OUTCOME_DONE = "done"
 OUTCOME_DENIED = "denied"
 OUTCOME_RECORDED_LATE = "recorded late"
@@ -527,6 +530,26 @@ def trail_ready(session) -> bool:
         except CommandError:  # newer than this image: the upgrade refuses it too
             continue
     return False
+
+
+def in_use(session) -> bool:
+    """Postgres, a revision that includes the trail, and the table present.
+
+    Writers append when this is true and keep their legacy path otherwise.
+    ``stamp_schema_head`` records the head revision on a ``create_all``
+    database, which has no ``audit_trail``, so the revision alone is not
+    enough. Takes a ``Session`` or a ``Connection``.
+    """
+    get_bind = getattr(session, "get_bind", None)
+    bind = get_bind() if callable(get_bind) else session
+    if getattr(getattr(bind, "dialect", None), "name", None) != "postgresql":
+        return False
+    if not trail_ready(session):
+        return False
+    return (
+        session.execute(text("SELECT to_regclass('public.audit_trail')")).scalar()
+        is not None
+    )
 
 
 # --- reading -----------------------------------------------------------------

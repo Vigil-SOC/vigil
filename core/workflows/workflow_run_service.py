@@ -183,6 +183,7 @@ class WorkflowRunService:
         cost_usd: Optional[float] = None,
         outcome: Optional[str] = None,
         reason: Optional[str] = None,
+        finished_at: Optional[datetime] = None,
     ) -> bool:
         """Mark a run terminal. ``status`` must be one of the check-
         constrained values: completed | failed | cancelled.
@@ -190,6 +191,9 @@ class WorkflowRunService:
         ``outcome`` and ``reason`` are the agent layer's own terminal, written
         by the bridge. Callers that finalize a run themselves (a cancel, a
         queue that refused the job) omit them and they stay null.
+
+        ``finished_at`` is the instant the agent sealed the report. Absent, the
+        row is stamped when this write lands.
         """
         if status not in ("completed", "failed", "cancelled"):
             logger.error("finalize_run: invalid status %r", status)
@@ -204,7 +208,11 @@ class WorkflowRunService:
                 # Only runs begun via the agent-runs or workflows start routes
                 # carry it; anything else is labelled rather than dropped.
                 run_kind = (row.trigger_context or {}).get("run_kind") or "unknown"
-                now = utcnow()
+                # The agent seals this with the report's Ended line. Arrival time
+                # is the fallback, and it is a request later than that line.
+                now = (
+                    _as_naive_utc(finished_at) if finished_at is not None else utcnow()
+                )
                 row.status = status
                 row.finished_at = now
                 # Truncate result_summary to avoid committing megabyte
