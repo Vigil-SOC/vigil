@@ -27,6 +27,15 @@ CANARY = "canaryS4readyz7Q2x9LmT"
 RULE = "pipeline.agent-worker-not-ready"
 
 
+JSON_REPLIES = {
+    "/_gw/status": b'{"state":"ok","since":0}',
+    "/containers/json": b"[]",
+    "/api/federation/sources": b'{"sources":[],"global":{"enabled":false}}',
+    "/api/triage": b'{"sources":[]}',
+    "/api/v1/findings": b'{"findings":[]}',
+}
+
+
 class Stub:
     """An agent worker whose readiness the test flips."""
 
@@ -41,23 +50,10 @@ class Stub:
                 stub.hits += 1
                 path = self.path.split("?", 1)[0]
                 stub.paths.append(path)
-                # Compose also polls the Docker proxy and the gateway. An empty
-                # list is a successful read, so no sensor goes blind beside /readyz.
-                if path == "/_gw/status":
-                    body = b'{"state":"ok","since":0}'
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
-                    return
-                empty = {
-                    "/containers/json": b"[]",
-                    "/api/triage": b'{"sources":[]}',
-                    "/api/v1/findings": b'{"findings":[]}',
-                }
-                if path in empty:
-                    body = empty[path]
+                # Compose also polls the Docker proxy and the gateway. Each gets
+                # a successful read, so no sensor goes blind beside /readyz.
+                if path in JSON_REPLIES:
+                    body = JSON_REPLIES[path]
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Content-Length", str(len(body)))
