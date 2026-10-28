@@ -24,6 +24,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from core.cases import case_trail
+from core.response.ceiling import IRREVERSIBLE, REVERSIBLE, environment_locks_act
 from core.response.config import (
     ResponseConfig,
     approval_requirement,
@@ -122,11 +123,12 @@ class ActionStatus(Enum):
     FAILED = "failed"
 
 
-class Reversibility(Enum):
-    """Whether an executed action can be undone."""
+def stored_reversibility(effect_class: Optional[str]) -> str:
+    """``approval_actions.reversibility``, which the console's undo fuse reads.
 
-    REVERSIBLE = "reversible"
-    IRREVERSIBLE = "irreversible"
+    Two-valued: irreversible for an irreversible or unclassified tool.
+    """
+    return IRREVERSIBLE if effect_class in (IRREVERSIBLE, None) else REVERSIBLE
 
 
 @dataclass
@@ -158,7 +160,8 @@ class PendingAction:
     # #128 — workflow phase approvals link back here.
     workflow_run_id: Optional[str] = None
     workflow_phase_id: Optional[str] = None
-    reversibility: str = Reversibility.REVERSIBLE.value
+    # "reversible" or "irreversible": the console's undo fuse reads it.
+    reversibility: str = REVERSIBLE
     idempotency_key: Optional[str] = None
 
 
@@ -205,7 +208,7 @@ def _row_to_pending(row: ApprovalActionRow) -> PendingAction:
         parameters=dict(row.parameters or {}),
         workflow_run_id=row.workflow_run_id,
         workflow_phase_id=row.workflow_phase_id,
-        reversibility=row.reversibility or Reversibility.REVERSIBLE.value,
+        reversibility=row.reversibility or REVERSIBLE,
         idempotency_key=row.idempotency_key,
     )
 
@@ -232,15 +235,6 @@ class ApprovalService:
                 the no-arg form callers use still honours env (#916).
         """
         self.config = config or ResponseConfig.from_settings()
-        # The daemon sets this from DAEMON_FORCE_APPROVAL. It changes the
-        # recorded rule only. A confidence never approves, and the stored
-        # ceiling is what Assist/Act writes (#2918).
-        self.force_manual_approval = False
-
-    def set_force_manual_approval(self, force: bool):
-        """Record that this process is forcing the approval rule. Writes nothing."""
-        self.force_manual_approval = force
-        logger.info("Force manual approval set to: %s", force)
 
     # ------------------------------------------------------------------
     # CRUD — DB-backed
@@ -260,7 +254,7 @@ class ApprovalService:
         parameters: Optional[Dict] = None,
         workflow_run_id: Optional[str] = None,
         workflow_phase_id: Optional[str] = None,
-        reversibility: Reversibility = Reversibility.REVERSIBLE,
+        effect_class: Optional[str] = REVERSIBLE,
         idempotency_key: Optional[str] = None,
         human_only: bool = False,
         annotate_rule: bool = True,
@@ -271,7 +265,9 @@ class ApprovalService:
         ``workflow_phase_id`` so the approvals UI / resume endpoint can
         link back to the paused run.
 
-        Irreversible actions always require approval. ``human_only`` holds the
+        ``effect_class`` is the called tool's stored class, None when it is
+        unclassified; a row that names no outside tool stays ``reversible``.
+        Every row requires approval. ``human_only`` holds the
         row for a person whatever ``confidence`` says: for callers whose
         confidence is their own claim (an agent, a model's reading of alert
         text) and so cannot be what releases the action. A second call with
@@ -292,7 +288,7 @@ class ApprovalService:
             parameters=parameters,
             workflow_run_id=workflow_run_id,
             workflow_phase_id=workflow_phase_id,
-            reversibility=reversibility,
+            effect_class=effect_class,
             idempotency_key=idempotency_key,
             human_only=human_only,
             annotate_rule=annotate_rule,
@@ -313,7 +309,7 @@ class ApprovalService:
         parameters: Optional[Dict] = None,
         workflow_run_id: Optional[str] = None,
         workflow_phase_id: Optional[str] = None,
-        reversibility: Reversibility = Reversibility.REVERSIBLE,
+        effect_class: Optional[str] = REVERSIBLE,
         idempotency_key: Optional[str] = None,
         human_only: bool = False,
         annotate_rule: bool = True,
@@ -327,9 +323,9 @@ class ApprovalService:
 
         # The branch that set requires_approval is appended to the caller's
         # narrative so the row records the rule it was decided by (#917).
-        forced = human_only or self.force_manual_approval
+        forced = human_only or environment_locks_act()
         requires_approval, rule = approval_requirement(
-            forced, reversibility, confidence, self.config
+            forced, effect_class, confidence, self.config
         )
         if human_only:
             rule = decision_rule("approval.human_only", True)
@@ -369,7 +365,7 @@ class ApprovalService:
                     parameters=dict(parameters or {}),
                     workflow_run_id=workflow_run_id,
                     workflow_phase_id=workflow_phase_id,
-                    reversibility=reversibility.value,
+                    reversibility=stored_reversibility(effect_class),
                     idempotency_key=key,
                 )
                 session.add(row)
@@ -939,7 +935,7 @@ def _parked_runs(pending_runs: set[str]) -> List[Dict[str, Any]]:
                     "reason": reason[:1].upper() + reason[1:],
                     # Nothing records when it parked, and its start is not that.
                     "created_at": "",
-                    "reversibility": Reversibility.REVERSIBLE.value,
+                    "reversibility": REVERSIBLE,
                     "case_id": case_id,
                     "case_ids": [case_id] if case_id else [],
                     "finding_id": None,

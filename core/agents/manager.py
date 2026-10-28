@@ -7,8 +7,8 @@ from core.agents.builtins import BUILTIN_AGENTS, AgentProfile, blank_model
 from core.agents.enablement import disabled_agent_ids
 from core.agents.prompts import prompt_for_row, render_confidence_bands
 from core.agents.run_stats import agent_run_stats
-from core.llm.chat_layers import changes_for_tool, changes_for_tools
 from core.llm.providers.registry import get_registry, model_display_name
+from core.response.ceiling import asks_first
 from core.response.config import ResponseConfig
 from core.skills.skill_library import READ_SKILL_TOOL, load_skills, skill_roots
 
@@ -150,6 +150,10 @@ class AgentManager:
         except Exception as e:
             logger.warning(f"Agent run stats unavailable: {e}")
             stats = None
+        # One lookup for every agent's tools.
+        asking = asks_first(
+            t for a in self.agents.values() for t in a.recommended_tools
+        )
         rows = []
         for a in self.agents.values():
             if a.model:
@@ -178,9 +182,9 @@ class AgentManager:
                     "model_source": source,
                     "component_category": a.component_category,
                     "skills": library if READ_SKILL_TOOL in a.recommended_tools else 0,
-                    "changes": changes_for_tools(a.recommended_tools),
+                    "changes": _changes(asking, a.recommended_tools),
                     "tool_changes": {
-                        t: changes_for_tool(t) for t in a.recommended_tools
+                        t: _changes(asking, [t]) for t in a.recommended_tools
                     },
                     **run,
                     "enabled": a.id not in disabled,
@@ -191,6 +195,11 @@ class AgentManager:
 
 _UNSET = object()
 _STAT_FIELDS = ("runs_7d", "success_rate", "success_level")
+
+
+def _changes(asking: frozenset, tools: List[str]) -> str:
+    """``asks_first`` when any of ``tools`` waits for an approval, else ``read_only``."""
+    return "asks_first" if asking.intersection(tools) else "read_only"
 
 
 def _read_assignments() -> Dict[str, str]:

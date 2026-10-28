@@ -23,8 +23,9 @@ SECOND = timedelta(seconds=1)
 
 
 @pytest.fixture
-def agents(monkeypatch):
-    """Rows by id, with no DB: no assignments, no default provider, no stats."""
+def agents(monkeypatch, seeded_tool_classes):
+    """Rows by id, with no DB: no assignments, no default provider, no stats,
+    and the seeded tool classes."""
     monkeypatch.setattr(manager_module, "_read_assignments", lambda: {})
     monkeypatch.setattr(
         "core.llm.router.router.get_default_provider_spec", lambda: None
@@ -125,12 +126,15 @@ def test_changes_per_agent(agents):
     assert rows["auto_responder"]["changes"] == "asks_first"
 
 
-def test_changes_for_custom_tools():
-    from core.llm.chat_layers import changes_for_tools
+def test_changes_for_custom_tools(agents):
+    def changes(tools):
+        return agents(custom("custom-x", tools))["custom-x"]["changes"]
 
-    assert changes_for_tools(["create_case", "update_case"]) == "read_only"
-    assert changes_for_tools(["create_approval_action"]) == "asks_first"
-    assert changes_for_tools(["create_approval_action", "block_ip"]) == "asks_first"
+    assert changes(["create_case", "update_case"]) == "read_only"
+    assert changes(["create_approval_action"]) == "asks_first"
+    # An unclassified outside tool asks first; a seeded read does not.
+    assert changes(["block_ip"]) == "asks_first"
+    assert changes(["misp_misp_search_ioc"]) == "read_only"
 
 
 def test_stats_failure_nulls_the_fields_and_keeps_the_list(agents, monkeypatch):

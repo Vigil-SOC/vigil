@@ -73,7 +73,11 @@ def _grant(monkeypatch, username: str, permissions: dict) -> None:
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(monkeypatch, seeded_tool_classes):
+    # Outside tools these tests call as reads, classified so (#3304).
+    seeded_tool_classes.update(
+        dict.fromkeys(("virustotal_lookup_ip", "splunk_search"), "read_unverified")
+    )
     monkeypatch.setattr(internal_auth, "get_secret", lambda name: "shhh")
     app = FastAPI()
     # The provider reads the instance the owner put on app.state (#659); a bare
@@ -706,9 +710,16 @@ class TestDirectActionApproval:
     def test_a_read_does_not_need_an_approval(self, client, monkeypatch):
         seen = self._served(monkeypatch)
 
-        body = _invoke(
-            client, tool="get_isolation_status", args={"machine_id": "h"}
-        ).json()
+        tool = "microsoft-defender_mde_get_machine"
+        body = _invoke(client, tool=tool, args={"machine_id": "h"}).json()
 
         assert body["ok"] is True
-        assert seen["name"] == "get_isolation_status"
+        assert seen["name"] == tool
+
+    def test_an_unclassified_tool_needs_an_approval(self, client, monkeypatch):
+        seen = self._served(monkeypatch)
+
+        body = _invoke(client, tool="okta_get_user", args={"id": "u"}).json()
+
+        assert body["failure"]["kind"] == "refused"
+        assert seen == {}

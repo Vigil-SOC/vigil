@@ -1289,6 +1289,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/autonomy/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Tool Classes
+         * @description Every stored class, and each unclassified name a connected server exposes.
+         */
+        get: operations["get_api_autonomy_tools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/autonomy/tools/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put Tool Class
+         * @description Set one tool's class. The permission depends on the direction.
+         *
+         *     Loosening, or classifying an unclassified name, is a person's
+         *     ``ai_autonomy.write`` and is refused while stopped. Tightening is
+         *     ``ai_autonomy.stop``, which a service account may hold.
+         */
+        put: operations["put_api_autonomy_tools_name"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/bifrost/routability": {
         parameters: {
             query?: never;
@@ -10863,6 +10907,28 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** ToolClassBody */
+        ToolClassBody: {
+            /**
+             * Effect Class
+             * @enum {string}
+             */
+            effect_class: "read" | "read_unverified" | "reversible" | "irreversible";
+        };
+        /**
+         * ToolClassEntry
+         * @description One outside tool. ``effect_class`` is None while it is unclassified.
+         */
+        ToolClassEntry: {
+            /** Classified At */
+            classified_at?: string | null;
+            /** Classified By */
+            classified_by?: string | null;
+            /** Effect Class */
+            effect_class?: ("read" | "read_unverified" | "reversible" | "irreversible") | null;
+            /** Name */
+            name: string;
+        };
         /**
          * UpdateConversationRequest
          * @description PATCH body — rename, archive, and/or attach a case.
@@ -13477,6 +13543,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_autonomy_tools: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolClassEntry"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_autonomy_tools_name: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolClassBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolClassEntry"];
                 };
             };
             /** @description Validation Error */

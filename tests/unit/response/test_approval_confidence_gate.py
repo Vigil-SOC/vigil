@@ -2,7 +2,6 @@
 
 import pytest
 
-from core.response.approval_service import Reversibility
 from core.response.autonomous_response_service import AutonomousResponseService
 from core.response.config import (
     ResponseConfig,
@@ -12,7 +11,7 @@ from core.response.config import (
 
 pytestmark = pytest.mark.unit
 
-REVERSIBLE = Reversibility.REVERSIBLE
+REVERSIBLE = "reversible"
 
 
 @pytest.mark.parametrize("confidence", [1.01, 5.0, 42.0, -0.5, float("nan")])
@@ -37,7 +36,7 @@ def test_an_ordinary_confidence_does_not_approve():
     for confidence in (0.99, 0.95, 0.50):
         required, rule = approval_requirement(False, REVERSIBLE, confidence, config)
         assert required is True
-        assert rule == "reversibility=reversible"
+        assert rule == "effect_class=reversible"
 
 
 class _Service:

@@ -29,9 +29,9 @@ from core.auth.tool_principal import Claims
 from core.deps import provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry
 from core.integrations.mcp.surface import acting_as
-from core.llm.chat_layers import _is_destructive_mcp
 from core.llm.tool_schemas import CALL_INTEGRATION_TOOL
 from core.response.approval_service import ActionStatus, ApprovalService
+from core.response.ceiling import gated_tools
 from core.routing import Auth, RouterMeta
 from core.skills.skill_library import READ_SKILL_TOOL
 from core.skills.skill_usage import record_skill_read
@@ -269,10 +269,11 @@ def _direct_action_refusal(
 
     The agent layer parks the call and a person approves that checkpoint. This
     repeats the check: a caller that holds the internal token and names the
-    tool itself does not get to skip it. Anything that is not a direct-action
-    tool is not this function's concern.
+    tool itself does not get to skip it. A reversible, irreversible or
+    unclassified outside tool needs the approval; a read, and Vigil's own
+    tools, are not this function's concern.
     """
-    if not _is_destructive_mcp(tool):
+    if tool not in gated_tools([tool]):
         return None
     if not body.run_id or not body.checkpoint_id:
         return f"{tool} changes the estate and no approval covers this call"
