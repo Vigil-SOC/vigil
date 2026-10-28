@@ -7489,7 +7489,4 @@
 .fd-kv > div { display: contents; }
 .fd-kv dt { color: var(--tx-3); }
 .fd-kv dd { margin: 0; color: var(--tx); font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
-.fd-sim { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 12.5px; }
-.fd-sim li { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.fd-sim-t { color: var(--tx); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55%; }
 .fd-muted { color: var(--tx-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

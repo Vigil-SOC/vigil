@@ -1,22 +1,17 @@
 // What a finding is about, under its source evidence: the AI read of it, the
-// ATT&CK techniques, the entities and indicators it names, and the recent
-// alerts that look like it. Everything here is read from the finding itself.
-import { useEffect, useRef, useState } from 'react'
-import { findingsApi, type SimilarFinding } from '../services/api'
-
-interface Enrichment {
-  threat_summary?: string
-  threat_type?: string
-  risk_level?: string
-  recommended_actions?: string[]
-  indicators?: Record<string, string[] | undefined>
-  related_techniques?: { technique_id: string; technique_name?: string }[]
-}
+// ATT&CK techniques, and the entities and indicators it names. Everything here
+// is read from the finding itself.
+import { useEffect, useState } from 'react'
+import { findingsApi } from '../services/api'
+import { NO_CONFIDENCE } from '../data/data'
+import { rankTechniques } from '../data/mappers'
+import { techniqueName } from '../data/mitre'
+import { useFindingEnrichment, type EnrichError, type Enrichment } from './useFindingEnrichment'
 
 interface FullFinding {
   finding_id: string
   entity_context?: Record<string, unknown> | null
-  mitre_predictions?: Record<string, number> | null
+  mitre_predictions?: Record<string, unknown> | null
   ai_enrichment?: Enrichment | null
 }
 
@@ -27,7 +22,14 @@ const INDICATOR_LABEL: Record<string, string> = {
   suspicious_processes: 'Processes',
 }
 
-function words(key: string): string {
+const ENRICH_ERROR: Record<EnrichError, string> = {
+  not_configured: 'No AI model is set up for finding analysis.',
+  budget: 'The AI spending limit is used up.',
+  forbidden: 'Your role can’t generate AI analysis.',
+  failed: 'The AI summary could not be generated right now.',
+}
+
+const words = (key: string): string => {
   const s = key.replace(/[_.]+/g, ' ').trim()
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
@@ -35,7 +37,7 @@ function words(key: string): string {
 /** Flat label/value rows from an entity context, nested objects as "Parent · child". */
 const PLURAL: Record<string, string> = { hostnames: 'hostname', src_ips: 'src_ip', usernames: 'username', dest_ips: 'dest_ip' }
 
-function entityRows(ctx: Record<string, unknown> | null | undefined, prefix = ''): [string, string][] {
+const entityRows = (ctx: Record<string, unknown> | null | undefined, prefix = ''): [string, string][] => {
   if (!ctx) return []
   const rows: [string, string][] = []
   for (const [k, v] of Object.entries(ctx)) {
@@ -55,45 +57,29 @@ function entityRows(ctx: Record<string, unknown> | null | undefined, prefix = ''
   return rows.slice(0, 16)
 }
 
-export default function FindingDetails({ findingId }: { findingId: string }) {
+const FindingDetails = ({ findingId }: { findingId: string }) => {
   const [finding, setFinding] = useState<FullFinding | null>(null)
-  const [similar, setSimilar] = useState<SimilarFinding[] | null>(null)
-  const [generating, setGenerating] = useState(false)
-  const [genError, setGenError] = useState<string | null>(null)
-  // The alert on screen now: a summary started for another one must not touch this one's state.
-  const current = useRef(findingId)
+  const { enrichment, phase, error, seed, load } = useFindingEnrichment(findingId)
 
   useEffect(() => {
     let cancelled = false
-    current.current = findingId
     setFinding(null)
-    setSimilar(null)
-    setGenerating(false)
-    setGenError(null)
-    // Through a resolved promise, so an API without these calls (an older server, a test double) only skips the section.
-    Promise.resolve().then(() => findingsApi.getById(findingId)).then((r) => { if (!cancelled && r?.data) setFinding(r.data as FullFinding) }).catch(() => {})
-    Promise.resolve().then(() => findingsApi.similar(findingId, 5)).then((r) => { if (!cancelled) setSimilar(r?.data?.similar ?? []) }).catch(() => { if (!cancelled) setSimilar([]) })
+    // Through a resolved promise, so an API without this call (an older server, a test double) only skips the panel.
+    Promise.resolve()
+      .then(() => findingsApi.getById(findingId))
+      .then((r) => {
+        if (cancelled || !r?.data) return
+        const data = r.data as FullFinding
+        setFinding(data)
+        seed(data.ai_enrichment)
+      })
+      .catch(() => {})
     return () => { cancelled = true }
-  }, [findingId])
-
-  const generate = async () => {
-    setGenerating(true)
-    setGenError(null)
-    try {
-      const r = await findingsApi.getEnrichment(findingId)
-      const enrichment = (r.data as { enrichment?: Enrichment }).enrichment
-      // The popup may have moved to another alert while this one was summarised.
-      setFinding((f) => (f && f.finding_id === findingId ? { ...f, ai_enrichment: enrichment ?? f.ai_enrichment } : f))
-    } catch {
-      if (current.current === findingId) setGenError('The AI summary could not be generated right now.')
-    } finally {
-      if (current.current === findingId) setGenerating(false)
-    }
-  }
+  }, [findingId, seed])
 
   if (!finding) return null
-  const ai = finding.ai_enrichment?.threat_summary ? finding.ai_enrichment : null
-  const techniques = Object.entries(finding.mitre_predictions ?? {}).sort((a, b) => b[1] - a[1]).slice(0, 4)
+  const ai = phase === 'ready' ? enrichment : null
+  const techniques = rankTechniques(finding.mitre_predictions).slice(0, 4)
   const names = new Map((ai?.related_techniques ?? []).map((t) => [t.technique_id, t.technique_name]))
   const entities = entityRows(finding.entity_context)
   const indicators = Object.entries(ai?.indicators ?? {}).filter(([, v]) => Array.isArray(v) && v.length > 0) as [string, string[]][]
@@ -104,19 +90,19 @@ export default function FindingDetails({ findingId }: { findingId: string }) {
         <h4>AI summary</h4>
         {ai ? (
           <>
-            <p>{ai.threat_summary}</p>
+            <p>{ai.threat_summary || 'The analysis came back without a summary.'}</p>
             <div className="fd-chips">
               {ai.threat_type && <span className="chip">{ai.threat_type}</span>}
               {ai.risk_level && <span className="chip">Risk: {ai.risk_level}</span>}
             </div>
             {ai.recommended_actions && ai.recommended_actions.length > 0 && (
-              <ul className="fd-list">{ai.recommended_actions.slice(0, 3).map((a) => <li key={a}>{a}</li>)}</ul>
+              <ul className="fd-list">{ai.recommended_actions.slice(0, 3).map((a, i) => <li key={i}>{a}</li>)}</ul>
             )}
           </>
         ) : (
           <p className="fd-muted">
-            <button type="button" className="btn ghost" onClick={generate} disabled={generating}>{generating ? 'Reading the finding…' : 'Summarise with AI'}</button>
-            {genError && <span> {genError}</span>}
+            <button type="button" className="btn ghost" onClick={() => load()} disabled={phase === 'loading'}>{phase === 'loading' ? 'Reading the finding…' : 'Summarise with AI'}</button>
+            {phase === 'error' && error && <span> {ENRICH_ERROR[error]}</span>}
           </p>
         )}
       </section>
@@ -125,11 +111,14 @@ export default function FindingDetails({ findingId }: { findingId: string }) {
         <section className="fd-sec">
           <h4>ATT&amp;CK</h4>
           <div className="fd-chips">
-            {techniques.map(([id, conf]) => (
-              <a key={id} className="chip" href={`https://attack.mitre.org/techniques/${id.replace('.', '/')}/`} target="_blank" rel="noreferrer">
-                {id}{names.get(id) ? ` · ${names.get(id)}` : ''} · {Math.round(conf * 100)}%
-              </a>
-            ))}
+            {techniques.map(([id, conf]) => {
+              const name = names.get(id) || techniqueName(id)
+              return (
+                <a key={id} className="chip" href={`https://attack.mitre.org/techniques/${id.replace('.', '/')}/`} target="_blank" rel="noreferrer">
+                  {id}{name && name !== id ? ` · ${name}` : ''} · {conf === null ? NO_CONFIDENCE : `${Math.round(conf * 100)}%`}
+                </a>
+              )
+            })}
           </div>
         </section>
       )}
@@ -155,20 +144,8 @@ export default function FindingDetails({ findingId }: { findingId: string }) {
           </dl>
         </section>
       )}
-
-      {similar && similar.length > 0 && (
-        <section className="fd-sec">
-          <h4>Similar alerts</h4>
-          <ul className="fd-sim">
-            {similar.map((s) => (
-              <li key={s.finding_id}>
-                <span className="fd-sim-t" title={s.finding_id}>{s.title || s.finding_id}</span>
-                <span className="fd-muted">{s.reasons.join(' · ')}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
     </div>
   )
 }
+
+export default FindingDetails
