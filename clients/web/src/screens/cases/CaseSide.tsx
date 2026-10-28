@@ -1,8 +1,10 @@
 import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { Link } from 'react-router-dom'
 import { casesApi } from '../../services/api'
 import { LevelBadge, slaLevel, type Level } from '../../shared/LevelBadge'
 import { MeterBar } from '../../shared/MeterBar'
 import { NotMeasured } from '../../shared/NotMeasured'
+import { StatePill } from '../../shared/StatePill'
 import { useNoSideways } from '../../shared/useNoSideways'
 import { commentCount, CommentsView, SectionCard, TasksView, useComments, useResource, useTasks, type Resource } from './CaseSections'
 import { fmtCost } from '../../shared/cost'
@@ -191,6 +193,40 @@ function Alerts({ items }: { items: CaseLinkedFinding[] }) {
   )
 }
 
+type Related = { id: number; caseId: string; title: string; status: string; notes: string }
+
+/** Other Cases linked to this one, of any link type; hidden while loading, on a failed read, or when there are none. */
+function RelatedCases({ caseId }: { caseId: string }) {
+  const { data, phase } = useResource<Related[]>(caseId, () =>
+    casesApi.getRelationships(caseId).then((res) =>
+      (res.data.relationships || []).map((row) => ({
+        id: row.relationship_id ?? 0,
+        caseId: row.related_case_id ?? '',
+        title: row.related_title || '',
+        status: row.related_status || '',
+        notes: row.notes || '',
+      })),
+    ),
+  )
+  if (phase !== 'ready' || !data?.length) return null
+  return (
+    <Block title="Related cases">
+      <ul className="case-linked case-related">
+        {data.map((row) => (
+          <li key={row.id}>
+            <span className="case-related-head">
+              {row.title && <span className="side-clamp" title={row.title}>{row.title}</span>}
+              {row.status && <StatePill state={row.status} />}
+            </span>
+            <Link className="mono case-related-id" to={`/cases?case=${encodeURIComponent(row.caseId)}`}>{row.caseId}</Link>
+            {row.notes && <span className="side-meta side-clamp" title={row.notes}>{row.notes}</span>}
+          </li>
+        ))}
+      </ul>
+    </Block>
+  )
+}
+
 /** What the case has spent over every run, then each run's own line ("—" for a run nothing priced, never $0); the total says how many runs it could not add. The bar and word read the primary run alone, and the caption says so. */
 function CaseCost({ runs, spend, latest, names }: { runs: SideRun[]; spend: Spend; latest: CaseInvestigationRef | null; names: Record<string, string> }) {
   const costs = runs.map((run) => costOf(run.ref, run.fold))
@@ -354,7 +390,7 @@ function People({ caseId, owner }: { caseId: string; owner: string }) {
   )
 }
 
-/** The Details, Alerts, Cost, Known and People blocks of the case side panel. */
+/** The Details, Alerts, Related cases, Cost, Known and People blocks of the case side panel. */
 export function CaseSide({ caseId, linked, owner, latest, runs, workflowNames, sla, closed, fold, latestFold }: {
   caseId: string
   linked: CaseLinkedFinding[]
@@ -376,6 +412,7 @@ export function CaseSide({ caseId, linked, owner, latest, runs, workflowNames, s
     <>
       <Details anchor={anchor} linked={linked} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} spend={spend} />
       <Alerts items={linked} />
+      <RelatedCases caseId={caseId} />
       {runs.length > 1 ? <CaseCost runs={runs} spend={spend} latest={latest} names={workflowNames} /> : <Cost spend={spend} />}
       <Known fold={fold} hasRun={latest !== null} />
       <People caseId={caseId} owner={owner} />

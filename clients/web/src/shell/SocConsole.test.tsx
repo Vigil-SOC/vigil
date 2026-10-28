@@ -81,6 +81,7 @@ vi.mock('../services/api', () => ({
     getEvidence: () => Promise.resolve({ data: { evidence: [] } }),
     getIOCs: () => Promise.resolve({ data: { iocs: [] } }),
     getEscalations: () => Promise.resolve({ data: { escalations: [] } }),
+    getRelationships: () => Promise.resolve({ data: { relationships: [] } }),
   },
   exclusionsApi: {
     list: () => Promise.resolve({ data: { exclusions: [], total: 0 } }),
