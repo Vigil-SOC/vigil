@@ -9,7 +9,7 @@ import { SETUP_HIDDEN_KEY } from '../screens/home/setupHidden'
 import { NAV } from '../data/data'
 import { notifyAutonomyChanged } from '../screens/settings/useSettings'
 // these resolve to the mocked implementations (vi.mock below is hoisted)
-import api, { streamFetch, aiDecisionsApi, approvalsApi, workflowApi, casesApi, configApi, consoleApi, overviewApi, timelineApi } from '../services/api'
+import { streamFetch, aiDecisionsApi, approvalsApi, workflowApi, casesApi, configApi, consoleApi, overviewApi, timelineApi } from '../services/api'
 
 const authState = vi.hoisted(() => ({
   allow: (_permission: string): boolean => true,
@@ -706,26 +706,20 @@ describe('SocConsole', () => {
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Overview')
   })
 
-  it('shows spend, approval depth and recent run outcomes on the Health screen', async () => {
+  it('shows approval depth and recent run outcomes on the Health screen, and no spend', async () => {
     renderConsole('/health')
-    // once in the total KPI, once in the by-model row
-    expect(await screen.findAllByText('$1.25')).toHaveLength(2)
-    expect(screen.getByText('12.0k / 3.4k')).toBeInTheDocument()
-    expect(screen.getByText('gemini-2.5-flash')).toBeInTheDocument()
     expect(await screen.findByText('Nothing waiting')).toBeInTheDocument()
     // runs are joined onto the workflow's declared kind; the hunt has none and is left out
     expect(await screen.findByText('compose · 1 workflow')).toBeInTheDocument()
     expect(screen.getByText('1 ok · 1 failed · 2 total')).toBeInTheDocument()
     expect(screen.queryByText(/^hunt ·/)).not.toBeInTheDocument()
+    expect(screen.queryByText('LLM spend and tokens')).not.toBeInTheDocument()
   })
 
-  it('renders the Health screen as clean empties when nothing has run or spent', async () => {
-    const empty = { calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, cost_usd: 0, cache_hit_rate: 0 }
-    vi.mocked(api.get).mockResolvedValueOnce({ data: { totals: empty, by_model: [] } } as never)
+  it('renders the Health screen as clean empties when nothing has run', async () => {
     vi.mocked(workflowApi.listRuns).mockResolvedValue({ data: { runs: [] } } as never)
     try {
       renderConsole('/health')
-      expect(await screen.findByText('No LLM traffic in this window')).toBeInTheDocument()
       expect(await screen.findByText('No runs yet')).toBeInTheDocument()
       expect(await screen.findByText('Nothing waiting')).toBeInTheDocument()
       // an empty deploy shows copy, never a zero dressed up as a metric

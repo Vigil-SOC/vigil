@@ -406,15 +406,6 @@
 .side-ent-head { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: top; }
 .side-ent.long .side-ent-head { max-width: calc(100% - var(--ent-tail, 4.2em)); } /* room for the six-character tail, as measured */
 
-.side-cost { display: flex; justify-content: space-between; gap: 8px; }
-.side-level { font-weight: 650; flex-shrink: 0; }
-.side-run-costs { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 12.5px; }
-.side-run-costs li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: baseline; }
-.side-run-costs .mono { color: var(--tx1); }
-.side-level.good { color: var(--good); }
-.side-level.fair { color: var(--fair); }
-.side-level.poor { color: var(--poor); }
-
 .side-cards { display: grid; gap: 6px; font-size: 12.5px; line-height: 1.45; }
 
 .side-card {
@@ -1538,7 +1529,7 @@
 
 .cg-row {
   display: grid;
-  grid-template-columns: 26px 176px minmax(0, 3fr) 96px 86px 104px 150px 128px 92px 44px; /* the id keeps 176px (#2054); Kind, Status, SLA and Limit give the title their slack */
+  grid-template-columns: 26px 176px minmax(0, 3fr) 96px 86px 104px 150px 128px 44px; /* the id keeps 176px (#2054); Kind, Status and SLA give the title their slack */
   gap: 12px;
   align-items: center;
   padding: 11px 16px;
@@ -1612,10 +1603,6 @@
 }
 
 .cg-time { display: flex; flex-direction: column; align-items: stretch; gap: 4px; color: var(--tx0); white-space: nowrap; }
-
-.cg-limit { display: flex; align-items: center; gap: 8px; }
-.cg-limit .meter-bar { flex: 1 1 0; min-width: 0; } /* the shared bar has no width of its own */
-.cg-pct { width: 32px; text-align: right; font-size: 11px; color: var(--tx1); }
 
 .cg-comments { display: inline-flex; align-items: center; gap: 4px; color: var(--tx1); }
 .cg-comments.none { color: var(--tx3); }
@@ -1916,7 +1903,7 @@
 }
 .case-page .case-other-runs li {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: center;
   padding: 9px 12px;
@@ -1927,7 +1914,6 @@
 .case-page .case-other-name:hover { text-decoration: underline; }
 .case-page .case-other-state { color: var(--tx2); font-size: 12px; }
 .case-page .case-other-state b { color: var(--tx1); font-weight: 650; }
-.case-page .case-other-runs .num { font-family: var(--mono); font-size: 12px; color: var(--tx1); }
 
 /* Summary: the account's verdict. The closed mood places it where the board's "Support" line sits (grid, 13px); the open moods have no board, so the card keeps the Summary cards' padding and type. */
 .case-page .case-verdict {

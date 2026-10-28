@@ -1,25 +1,15 @@
 import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { Link } from 'react-router-dom'
 import { casesApi } from '../../services/api'
-import { LevelBadge, slaLevel, type Level } from '../../shared/LevelBadge'
-import { MeterBar } from '../../shared/MeterBar'
-import { NotMeasured } from '../../shared/NotMeasured'
+import { slaLevel } from '../../shared/LevelBadge'
 import { StatePill } from '../../shared/StatePill'
 import { useNoSideways } from '../../shared/useNoSideways'
 import { commentCount, CommentsView, SectionCard, TasksView, useComments, useResource, useTasks, type Resource } from './CaseSections'
-import { fmtCost } from '../../shared/cost'
-import { costAcross, runLabel, timeLeft, when } from './caseFormat'
-import { IN_FLIGHT } from '../workflows/runRead'
+import { timeLeft, when } from './caseFormat'
 import { entityShown, type RunFold } from './caseFold'
 import type { CaseInvestigationRef, CaseLinkedFinding } from './useCases'
 
 type Sla = { due: string; health: string } | null
-
-/** A run on the case with its fold once read. */
-export interface SideRun {
-  ref: CaseInvestigationRef
-  fold: RunFold | null
-}
 
 function Block({ title, children, anchor }: { title: string; children: ReactNode; anchor?: RefObject<HTMLElement | null> }) {
   return (
@@ -30,37 +20,7 @@ function Block({ title, children, anchor }: { title: string; children: ReactNode
   )
 }
 
-interface Spend {
-  cost: number | null
-  cap: number | null
-  /** The server's word, when it was read off the same two numbers shown; else derived from them. */
-  level: Level
-}
-
-/** What one run has spent. The refs are re-read only when a run ends, so a run in flight is read off its own fold. */
-function costOf(ref: CaseInvestigationRef | null, fold: RunFold | null): number | null {
-  const inFlight = !!fold && IN_FLIGHT.includes(fold.run.status)
-  return (inFlight ? fold.costUsd ?? (ref?.cost_usd || null) : ref?.cost_usd || fold?.costUsd) ?? null
-}
-
-/** What the newest run has spent against what it was granted. `fold` is that run's fold, or null when it is another run. */
-function spendOf(latest: CaseInvestigationRef | null, fold: RunFold | null): Spend {
-  const inFlight = !!fold && IN_FLIGHT.includes(fold.run.status)
-  const foldCap = fold?.maxCostUsd ? fold.maxCostUsd : null
-  const cost = costOf(latest, fold)
-  const cap = foldCap ?? (latest && latest.max_cost_usd > 0 ? latest.max_cost_usd : null)
-  if (cost === null || cap === null) return { cost, cap, level: null }
-  // A live number or a fold's cap outruns the server's word, which a run-only ref never had a cap for.
-  const level = inFlight || foldCap !== null ? levelOf(cost / cap) : slaLevel(latest?.budget_health)
-  return { cost, cap, level }
-}
-
-/** The server's 75 / 90 cuts. */
-function levelOf(ratio: number): Level {
-  return ratio >= 0.9 ? 'poor' : ratio >= 0.75 ? 'fair' : 'good'
-}
-
-function Details({ linked, latest, workflowNames, sla, closed, fold, spend, anchor }: {
+function Details({ linked, latest, workflowNames, sla, closed, fold, anchor }: {
   anchor: RefObject<HTMLElement | null>
   linked: CaseLinkedFinding[]
   latest: CaseInvestigationRef | null
@@ -68,7 +28,6 @@ function Details({ linked, latest, workflowNames, sla, closed, fold, spend, anch
   sla: Sla
   closed: boolean
   fold: RunFold | null
-  spend: Spend
 }) {
   const left = sla && !closed ? timeLeft(sla.due) : '' // a closed case's clock has stopped
   // What the run asked about, then what the linked alerts name: a hunt's case has alerts before it has recall.
@@ -79,8 +38,6 @@ function Details({ linked, latest, workflowNames, sla, closed, fold, spend, anch
       <dl className="side-kv">
         <dt>Workflow</dt>
         <dd>{latest ? workflowNames[latest.workflow_id] || latest.workflow_id : '—'}</dd>
-        <dt>Limit</dt>
-        <dd>{spend.cap ? fmtCost(spend.cap) : '—'}</dd>
         <dt>Resolve by</dt>
         <dd>
           {sla ? when(sla.due) : '—'}
@@ -227,60 +184,6 @@ function RelatedCases({ caseId }: { caseId: string }) {
   )
 }
 
-/** What the case has spent over every run, then each run's own line ("—" for a run nothing priced, never $0); the total says how many runs it could not add. The bar and word read the primary run alone, and the caption says so. */
-function CaseCost({ runs, spend, latest, names }: { runs: SideRun[]; spend: Spend; latest: CaseInvestigationRef | null; names: Record<string, string> }) {
-  const costs = runs.map((run) => costOf(run.ref, run.fold))
-  const all = costAcross(costs)
-  return (
-    <Block title="Cost">
-      <div className="side-cost">
-        <span>{all.total ?? '—'}</span>
-        <span className="side-meta">{`across ${runs.length} runs${all.unpriced ? ` · ${all.unpriced} unpriced` : ''}`}</span>
-      </div>
-      <ul className="side-run-costs">
-        {runs.map((run, i) => {
-          const cost = costs[i]
-          const label = runLabel(run.ref, names)
-          return (
-            <li key={run.ref.run_id}>
-              <span className="side-clamp" title={label}>{label}</span>
-              <span className="mono">{cost === null ? '—' : fmtCost(cost)}</span>
-            </li>
-          )
-        })}
-      </ul>
-      {latest && spend.cap && spend.cost !== null && (
-        <>
-          <div className="side-cost">
-            <span className="side-meta side-clamp">{`${runLabel(latest, names)} against its limit`}</span>
-            <LevelBadge level={spend.level} className={`side-level ${spend.level ?? ''}`} />
-          </div>
-          <MeterBar pct={(spend.cost / spend.cap) * 100} level={spend.level} label="Cost of the primary run against its limit" />
-        </>
-      )}
-    </Block>
-  )
-}
-
-/** X, the bar and the word all read the newest run; the bar and word appear only once a cap is known. */
-function Cost({ spend: { cost, cap, level } }: { spend: Spend }) {
-  return (
-    <Block title="Cost">
-      {cost !== null && cost > 0 ? (
-        <>
-          <div className="side-cost">
-            <span>{cap ? `${fmtCost(cost)} of ${fmtCost(cap)}` : fmtCost(cost)}</span>
-            {cap && <LevelBadge level={level} className={`side-level ${level ?? ''}`} />}
-          </div>
-          {cap && <MeterBar pct={(cost / cap) * 100} level={level} label="Cost against the limit" />}
-        </>
-      ) : (
-        <NotMeasured />
-      )}
-    </Block>
-  )
-}
-
 /** A line of free text: wraps, stops at two lines, the whole of it on hover (DESIGN.md §7). */
 function Prose({ text }: { text: string }) {
   return <p className="muted side-clamp" title={text}>{text}</p>
@@ -390,30 +293,24 @@ function People({ caseId, owner }: { caseId: string; owner: string }) {
   )
 }
 
-/** The Details, Alerts, Related cases, Cost, Known and People blocks of the case side panel. */
-export function CaseSide({ caseId, linked, owner, latest, runs, workflowNames, sla, closed, fold, latestFold }: {
+/** The Details, Alerts, Related cases, Known and People blocks of the case side panel. */
+export function CaseSide({ caseId, linked, owner, latest, workflowNames, sla, closed, fold }: {
   caseId: string
   linked: CaseLinkedFinding[]
   owner: string
   latest: CaseInvestigationRef | null
-  /** Every run on the case; Cost totals them when there is more than one. */
-  runs: SideRun[]
   workflowNames: Record<string, string>
   sla: Sla
   closed: boolean
   fold: RunFold | null
-  /** `fold` when it is the newest run's, else null. */
-  latestFold: RunFold | null
 }) {
-  const spend = spendOf(latest, latestFold)
   const anchor = useRef<HTMLElement>(null)
   useNoSideways(anchor, 'The case side panel', '.case-side')
   return (
     <>
-      <Details anchor={anchor} linked={linked} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} spend={spend} />
+      <Details anchor={anchor} linked={linked} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} />
       <Alerts items={linked} />
       <RelatedCases caseId={caseId} />
-      {runs.length > 1 ? <CaseCost runs={runs} spend={spend} latest={latest} names={workflowNames} /> : <Cost spend={spend} />}
       <Known fold={fold} hasRun={latest !== null} />
       <People caseId={caseId} owner={owner} />
     </>
