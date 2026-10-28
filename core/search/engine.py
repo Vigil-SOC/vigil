@@ -40,7 +40,7 @@ STOP = frozenset(
 # alone would pull in everything.
 CONCEPTS: Dict[str, Tuple[str, str]] = {
     "exfiltration": (
-        "exfil, exfiltrate, exfiltrated, data theft, stolen data, data leak, leaked, egress, large upload, t1041, t1048, t1567",
+        "exfil, exfiltrate, exfiltrated, data theft, stolen data, data leak, data upload, leaked, egress, large upload, t1041, t1048, t1567",
         "exfil,t1041,t1048,t1567",
     ),
     "phishing": (
@@ -88,7 +88,14 @@ CONCEPTS: Dict[str, Tuple[str, str]] = {
         "t1562,t1070,t1027,tamper",
     ),
     "suspicious sign-in": (
-        "sign-in, signin, login, logins, logging, location, travel, impossible travel, unfamiliar location, mfa fatigue, risky sign-in, entra, okta",
+        "sign-in, signin, login, logins, logging, impossible travel, mfa fatigue, risky sign-in, entra, okta",
+        "action:signin_failed,signin",
+    ),
+    # Where a sign-in came from is its own question: "from a weird place" is not
+    # answered by every blocked legacy sign-in.
+    "unusual location": (
+        "weird place, strange place, odd place, unusual place, new location, abroad, unfamiliar location, location, new country, "
+        "foreign country, country, impossible travel, travel, geolocation, geo",
         "action:signin_failed,signin",
     ),
     "malware": (
@@ -113,16 +120,16 @@ STANDIN_BODY = 0.6
 MEANING = 0.75
 MEANING_FLOOR = 0.45
 MEANING_BAND = 0.2
-# When the query names a security concept, these must say it in words: an alert,
-# case or skill that only resembles "credential access" is not about it. Workflows
-# and agents describe what they do loosely, so meaning still finds them.
-WORDS_ONLY_FOR_CONCEPTS = ("alert", "case", "skill")
-# Within one kind, a hit under this share of the kind's best is noise beside it,
-# and left out before anything is counted.
-KIND_SHARE = 0.5
 # Routine alerts repeat by the hundred, so a band alone still floods: past this many
 # per kind, meaning alone is left out.
 MEANING_ONLY_MAX = 10
+# A query that names a security concept ("ransomware") says what counts: an alert,
+# case or skill that only resembles it is noise. Workflows and agents that handle
+# it may still be offered by meaning.
+MEANING_ONLY_FOR_CONCEPTS = frozenset({"workflow", "agent"})
+# Within a kind, a hit under this share of the kind's best score is not counted:
+# 600 routine sign-ins that touch a concept should not read as 600 answers.
+RELATIVE = 0.5
 # Ids, hosts, addresses and accounts ("INC-1042", "cr-14", "10.0.10.20", "f.ortiz") are looked up, not
 # interpreted: an embedding of an id resembles every other id.
 _IDLIKE = re.compile(r"^(?=[^ ]*[\d.@])[a-z0-9]+(?:[-_.:/@][a-z0-9]+)+$")
@@ -169,6 +176,28 @@ def expand(query: str) -> Tuple[List[str], Dict[str, List[str]]]:
         if hit:
             related[concept] = [n for n in names if n not in own]
     return own, related
+
+
+def _named_by(concept: str, own: List[str]) -> Tuple[set, set]:
+    """The query words that name a concept, and those that name it only as part of a phrase."""
+    joined = " ".join(own)
+    stems = {w: _stem(w) for w in own}
+    by_word: set = set()
+    by_phrase: set = set()
+    for n in [concept] + _aliases(concept):
+        if " " in n:
+            if n in joined:
+                by_phrase |= set(words(n)) & set(own)
+            continue
+        for w in own:
+            if (
+                n == w
+                or n in w
+                or _stem(n) == stems[w]
+                or (len(w) >= 4 and n.startswith(w))
+            ):
+                by_word.add(w)
+    return by_word | by_phrase, by_phrase - by_word
 
 
 def logs_query(concept: str) -> str:
@@ -244,46 +273,65 @@ def word_score(
     body_text = f"{doc.body} {doc.subtitle}".lower()
     title = words(title_text)
     body = words(body_text)
+    names = {c: _named_by(c, own) for c in related}
+    # A word that is only part of a concept's phrase ("access" in "credential access",
+    # "theft" in "data theft") is not the concept: alone it does not count.
+    phrase_only = {
+        w
+        for c, (_, part) in names.items()
+        if part
+        and not any(
+            _says(n, title, body, title_text, body_text)
+            for n in [c] + _aliases(c)
+            if " " in n and n in " ".join(own)
+        )
+        for w in part
+    }
     total = 0.0
     found: List[str] = []
-    missing = 0.0
+    lacking: List[str] = []
     for w in own:
-        s = _says(w, title, body, title_text, body_text)
+        s = 0.0 if w in phrase_only else _says(w, title, body, title_text, body_text)
         if s:
             found.append(w)
             total += s * weight.get(w, 1.0)
         else:
-            missing += weight.get(w, 1.0)
+            lacking.append(w)
     via = ""
-    if missing and related:
-        # words the doc lacks may be said another way: the best concept stands in for them
-        said, via = max(
-            (
-                (
-                    max(
-                        (_says(a, title, body, title_text, body_text) for a in alias),
-                        default=0.0,
-                    ),
-                    c,
-                )
-                for c, alias in related.items()
-            ),
-            key=lambda x: x[0],
-        )
-        if said:
-            standin = (
+    if lacking and related:
+        # words the doc lacks may be said another way: each concept stands in for the
+        # words that name it, and the other words are covered only as well as the
+        # doc covers every concept the query names
+        cover: Dict[str, float] = {}
+        for c, alias in related.items():
+            said = max(
+                (_says(a, title, body, title_text, body_text) for a in alias),
+                default=0.0,
+            )
+            cover[c] = (
                 STANDIN_TITLE * said / TITLE
                 if said > BODY
                 else STANDIN_BODY * said / BODY
             )
-            total += standin * TITLE * missing
-        else:
-            via = ""
+        weakest = min(cover.values())
+        used: Dict[str, float] = {}
+        for w in lacking:
+            mine = [c for c in related if w in names[c][0]]
+            if mine:
+                c = max(mine, key=lambda k: cover[k])
+                standin = cover[c]
+                # the reason names the concept that answered the most query words
+                used[c] = used.get(c, 0.0) + standin * weight.get(w, 1.0)
+            else:
+                standin = weakest
+            total += standin * TITLE * weight.get(w, 1.0)
+        if any(used.values()):
+            via = max(used, key=lambda k: used[k])
     score = total / (TITLE * sum(weight.get(w, 1.0) for w in own))
     if len(own) > 1 and phrase and phrase in doc.text.lower():
         score += 0.25
     shown = [w for w in found if weight.get(w, 1.0) >= 0.5] or found
-    if found and not missing:
+    if found and not lacking:
         why = "mentions " + ", ".join(f"“{w}”" for w in shown[:3])
     elif via:
         why = f"about {via}" + (
@@ -422,6 +470,8 @@ def search(
         ms = meaning.get(d.key, 0.0)
         if ws < min_score and ms < floor:
             continue  # resemblance alone, and not among the closest
+        if ws < min_score and related and d.kind not in MEANING_ONLY_FOR_CONCEPTS:
+            continue  # the concept's own words decide what an alert or case is about
         score = max(ws, ms * MEANING) + 0.25 * min(ws, ms)
         if score < min_score:
             continue
@@ -430,18 +480,16 @@ def search(
         else:
             by = "both" if ws > 0.15 else "meaning"
             why = why if by == "both" else "similar meaning"
-        if by == "meaning" and related and d.kind in WORDS_ONLY_FOR_CONCEPTS:
-            continue
         hits.append(Hit(d, round(score, 3), why or "similar meaning", by))
-    hits.sort(key=lambda h: (h.score, h.doc.when or ""), reverse=True)
     best: Dict[str, float] = {}
     for h in hits:
-        best.setdefault(h.doc.kind, h.score)
+        if h.by != "id":
+            best[h.doc.kind] = max(best.get(h.doc.kind, 0.0), h.score)
+    hits = [h for h in hits if h.by == "id" or h.score >= RELATIVE * best[h.doc.kind]]
+    hits.sort(key=lambda h: (h.score, h.doc.when or ""), reverse=True)
     alone: Dict[str, int] = {}
     kept: List[Hit] = []
     for h in hits:
-        if h.score < KIND_SHARE * best[h.doc.kind]:
-            continue
         if h.by == "meaning":
             alone[h.doc.kind] = alone.get(h.doc.kind, 0) + 1
             if alone[h.doc.kind] > MEANING_ONLY_MAX:

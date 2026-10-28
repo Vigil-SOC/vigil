@@ -243,28 +243,92 @@ def test_meaning_alone_keeps_only_the_closest_few_per_kind():
     ]
     cache = VectorCache(fake_model({"Multiple authentication": 0.7}))
     cache.fill(many, wait=True)
-    # names no security concept, so meaning alone may find alerts
-    hits, method = search("people keep getting locked out", many, cache)
+    # a query that names no concept, so meaning alone may still offer alerts
+    hits, method = search("unusual activity on the finance laptops", many, cache)
     assert method == "embeddings"
     assert 0 < len(hits) <= MEANING_ONLY_MAX
     assert all(h.by == "meaning" for h in hits)
 
 
-def test_a_named_concept_needs_words_on_alerts_but_not_on_workflows():
-    said = Doc("alert", "f-said", "Credential dumping from LSASS", "")
-    like = Doc("alert", "f-like", "Unusual process on a server", "")
-    play = Doc("workflow", "wf-c", "Contain a compromised host", "")
-    cache = VectorCache(fake_model({"Unusual process": 0.8, "Contain": 0.8}))
-    docs = [said, like, play]
+def test_a_named_concept_keeps_look_alike_alerts_out():
+    # nothing here is about ransomware; the model finds faint resemblances anyway
+    docs = [
+        Doc("alert", "f-macro", "Macro-enabled attachment opened", ""),
+        Doc(
+            "skill", "phish-skill", "Phishing triage", "Work a reported phishing email"
+        ),
+        Doc("workflow", "ir", "Incident response", "Contain, eradicate, recover"),
+    ]
+    cache = VectorCache(
+        fake_model(
+            {"Macro-enabled": 0.7, "Phishing triage": 0.68, "Incident response": 0.72}
+        )
+    )
     cache.fill(docs, wait=True)
-    hits, _ = search("credential access", docs, cache)
-    got = {h.doc.id: h.by for h in hits}
-    assert "f-said" in got and "f-like" not in got
-    assert got.get("wf-c") == "meaning"
+    got = [h.doc.id for h in search("ransomware", docs, cache)[0]]
+    assert got == ["ir"]
 
 
-def test_a_hit_far_below_its_kinds_best_is_left_out():
-    strong = Doc("alert", "f-strong", "Exfiltration over C2 channel", "T1041")
-    weak = Doc("alert", "f-weak", "Routine backup job", "copied data to the archive")
-    hits, _ = search("exfiltration", [strong, weak])
-    assert [h.doc.id for h in hits] == ["f-strong"]
+def test_weak_matches_are_not_counted_beside_strong_ones():
+    strong = Doc("alert", "f-dump", "Credential dumping tool blocked", "lsass read")
+    weak = [
+        Doc(
+            "alert",
+            f"f-s{i}",
+            "Routine sign-in",
+            f"user {i} signed in; mentions credentials once in a long body of text about nothing in particular",
+        )
+        for i in range(40)
+    ]
+    hits, _ = search("credential dumping", [strong] + weak)
+    assert hits[0].doc.id == "f-dump"
+    assert all(h.score >= 0.5 * hits[0].score for h in hits)
+
+
+def test_part_of_a_concept_name_is_not_the_concept():
+    docs = [
+        Doc("alert", "f-dump", "Credential dumping tool blocked", "lsass read"),
+        Doc("alert", "f-smb", "SMB admin share access", "\\\\cr-10\\ADMIN$ opened"),
+    ]
+    assert [h.doc.id for h in search("credential access", docs)[0]] == ["f-dump"]
+
+
+def test_where_a_sign_in_came_from_needs_a_place():
+    docs = [
+        Doc(
+            "alert",
+            "f-travel",
+            "Impossible travel",
+            "Sign-in from Lagos 40 min after Boston",
+        ),
+        Doc(
+            "alert",
+            "f-country",
+            "Sign-in from a new country",
+            "First sign-in from Romania",
+        ),
+        Doc(
+            "alert",
+            "f-legacy",
+            "Legacy authentication attempt blocked",
+            "IMAP sign-in for b.cho blocked",
+        ),
+    ]
+    got = [h.doc.id for h in search("someone logging in from a weird place", docs)[0]]
+    assert "f-legacy" not in got
+    assert set(got) == {"f-travel", "f-country"}
+    hits = search("someone logging in from a weird place", docs)[0]
+    assert all(h.why.startswith("about unusual location") for h in hits)
+
+
+def test_a_workflow_for_data_uploads_answers_data_theft():
+    docs = [
+        Doc(
+            "workflow",
+            "wf-up",
+            "Finance Data Upload Threat Response",
+            "Review uploads from finance hosts",
+        ),
+        Doc("workflow", "wf-bk", "Backup data verification", "Check nightly backups"),
+    ]
+    assert [h.doc.id for h in search("data theft", docs)[0]] == ["wf-up"]
