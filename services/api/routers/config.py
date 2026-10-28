@@ -770,6 +770,71 @@ def get_setup_steps(
     )
 
 
+# The setup wizard's place, kept for the install rather than one browser, so a
+# second admin or a new browser picks up where the first left off.
+SETUP_STATE_KEY = "setup.wizard"
+SETUP_STEP_COUNT = 5
+
+
+class SetupState(BaseModel):
+    furthest: int = Field(1, ge=1, le=SETUP_STEP_COUNT)
+    passed: List[int] = Field(default_factory=list)
+    finished: bool = False
+    finished_by: Optional[str] = None
+    finished_at: Optional[str] = None
+
+
+class SetupStateUpdate(BaseModel):
+    furthest: Optional[int] = Field(None, ge=1, le=SETUP_STEP_COUNT)
+    passed: Optional[List[int]] = None
+    finished: Optional[bool] = None
+
+
+def _read_setup_state() -> SetupState:
+    raw = get_config_service().get_system_config(SETUP_STATE_KEY) or {}
+    try:
+        return SetupState.model_validate(raw)
+    except Exception:  # a hand-edited row must not keep everyone in the wizard
+        logger.warning("Unreadable %s; reading as not started", SETUP_STATE_KEY)
+        return SetupState()
+
+
+@router.get("/setup-state", response_model=SetupState)
+def get_setup_state():
+    """Where the install is in the setup wizard, and whether someone finished it."""
+    return _read_setup_state()
+
+
+@router.put("/setup-state", response_model=SetupState, dependencies=_SETTINGS_WRITE)
+def put_setup_state(
+    update: SetupStateUpdate,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Move the wizard on. Progress only grows: a step once passed stays passed,
+    and the furthest step never moves back, so two admins cannot undo each other."""
+    if update.passed and any(not 1 <= n <= SETUP_STEP_COUNT for n in update.passed):
+        raise HTTPException(status_code=422, detail="passed holds steps 1 to 5")
+    state = _read_setup_state()
+    if update.furthest is not None:
+        state.furthest = max(state.furthest, update.furthest)
+    if update.passed:
+        state.passed = sorted(set(state.passed) | set(update.passed))
+    if update.finished and not state.finished:
+        state.finished = True
+        state.finished_by = current_user.username
+        state.finished_at = utcnow().isoformat()
+    saved = _for_user(current_user).set_system_config(
+        SETUP_STATE_KEY,
+        state.model_dump(),
+        description="Setup wizard progress for this install",
+        config_type="setup",
+        change_reason="setup wizard",
+    )
+    if not saved:
+        raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL)
+    return state
+
+
 def _secrets_set_map(integrations: dict) -> dict:
     """Per-integration ``{secret_field: bool}`` — booleans only, never the
     values, so the wizard can show "saved" without the browser seeing a secret."""

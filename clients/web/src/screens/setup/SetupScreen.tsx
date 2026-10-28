@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import '../../../../../docs/design/console/tokens/tokens.css'
 import '../../styles.css'
@@ -11,6 +11,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { ToastProvider, useToast } from '../../shell/toast'
 import SetupProviderStep from './SetupProviderStep'
 import DataSourceDialog from './DataSourceDialog'
+import { configApi } from '../../services/api'
 import { DEMO_ENV_NOTICE, turnOnDemoMode } from './demoMode'
 import SystemChecksStep from './SystemChecksStep'
 import WorkflowsStep from './WorkflowsStep'
@@ -21,6 +22,7 @@ import { useSystemChecks, type SystemChecks } from './useSystemChecks'
 import {
   SETUP_STEP_COUNT,
   markSetupDismissed,
+  mergeSetupProgress,
   readSetupProgress,
   writeSetupProgress,
   type SetupProgress,
@@ -147,14 +149,43 @@ const SetupWizard = () => {
   const done = step === 'done'
   const last = index === DONE - 1
 
+  const canWrite = hasPermission('settings.write')
+
+  // pick up where another admin or browser left off; a lost read keeps this browser's copy
+  useEffect(() => {
+    let live = true
+    configApi
+      .getSetupState()
+      .then(({ data }) => {
+        if (!live) return
+        setProgress((local) => {
+          const merged = mergeSetupProgress(local, { furthest: data.furthest ?? 1, passed: data.passed ?? [] })
+          writeSetupProgress(merged)
+          if (merged.furthest > local.furthest) setIndex(merged.furthest - 1)
+          return merged
+        })
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [])
+
+  // the install's copy; best effort, this browser's copy is already saved
+  const share = (update: { furthest?: number; passed?: number[]; finished?: boolean }) => {
+    if (canWrite) configApi.putSetupState(update).catch(() => undefined)
+  }
+
   const dismiss = () => {
     markSetupDismissed()
+    share({ finished: true })
     navigate('/', { replace: true })
   }
 
   const save = (next: SetupProgress) => {
     writeSetupProgress(next)
     setProgress(next)
+    share(next)
   }
 
   const advance = () => {
@@ -181,7 +212,9 @@ const SetupWizard = () => {
   }
 
   const finishLater = () => {
-    writeSetupProgress({ ...progress, furthest: Math.max(progress.furthest, index + 1) })
+    const next = { ...progress, furthest: Math.max(progress.furthest, index + 1) }
+    writeSetupProgress(next)
+    share(next)
     dismiss()
   }
 

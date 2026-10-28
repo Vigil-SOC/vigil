@@ -33,6 +33,8 @@ vi.mock('../../services/api', () => ({
   aiConfigApi: { getConfig: vi.fn(() => Promise.resolve({ data: { components: [], assignments: {} } })) },
   workflowApi: { listAll: vi.fn(() => Promise.resolve({ data: { workflows: [] } })) },
   configApi: {
+    getSetupState: vi.fn(() => Promise.resolve({ data: { furthest: 1, passed: [], finished: false } })),
+    putSetupState: vi.fn(() => Promise.resolve({ data: {} })),
     getOrchestrator: vi.fn(() => Promise.resolve({ data: { profiles: {} } })),
     setOrchestrator: vi.fn(),
     getForceManualApproval: vi.fn(() =>
@@ -112,6 +114,9 @@ describe('SetupScreen', () => {
   beforeEach(() => {
     localStorage.clear()
     vi.clearAllMocks()
+    vi.mocked(configApi.getSetupState).mockResolvedValue({
+      data: { furthest: 1, passed: [], finished: false },
+    } as never)
     vi.mocked(consoleApi.getHealth).mockResolvedValue({
       data: { status: 'healthy', storage: { database_available: true } },
     } as never)
@@ -251,6 +256,34 @@ describe('SetupScreen', () => {
     cleanup()
     renderSetup()
     expect(screen.getByText('Step 2 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
+  })
+
+  it('shares progress and the finish with the install, so another browser picks it up', async () => {
+    renderSetup()
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    expect(configApi.putSetupState).toHaveBeenLastCalledWith({ furthest: 2, passed: [1] })
+    fireEvent.click(screen.getByRole('button', { name: 'Save and finish later' }))
+    expect(configApi.putSetupState).toHaveBeenLastCalledWith({ finished: true })
+  })
+
+  it('opens where another admin left off', async () => {
+    vi.mocked(configApi.getSetupState).mockResolvedValue({
+      data: { furthest: 3, passed: [1, 2], finished: false },
+    } as never)
+    renderSetup()
+    expect(await screen.findByText('Step 3 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
+    expect(saved()).toEqual({ furthest: 3, passed: [1, 2] })
+  })
+
+  it('keeps progress to this browser for someone who cannot change settings', () => {
+    renderSetup()
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    expect(configApi.putSetupState).toHaveBeenCalled()
+    vi.mocked(configApi.putSetupState).mockClear()
+    auth.allowed = false
+    cleanup()
+    renderSetup()
+    expect(configApi.putSetupState).not.toHaveBeenCalled()
   })
 
   describe('stored progress that cannot be used', () => {
