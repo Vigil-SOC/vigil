@@ -15,6 +15,7 @@ from pathlib import Path
 
 from services.medic.api.history import record_exit, record_start
 from services.medic.api.ready import check_ready
+from services.medic.api.sensors import build_sensors
 from services.medic.api.server import Api, StatusBoard
 from services.medic.api.status import build_status, read_chain
 from services.medic.app import config
@@ -522,13 +523,20 @@ class _Status:
                 decisions_lost=self.medic.unstored,
                 chain=read_chain(self.data_dir),
             )
+            sensors = build_sensors(
+                self.medic.scheduler.sensor_states(),
+                self.medic.engine.status(),
+                now=now,
+            )
         except Exception as exc:  # noqa: BLE001 (never the loop's problem)
             if not self._failing:
                 log.error("Status snapshot not built: %s", type(exc).__name__)
             self._failing = True
         else:
             self._failing = False
-            self.board.publish(snapshot, started_at=self.started_at, taken_at=now)
+            self.board.publish(
+                snapshot, started_at=self.started_at, taken_at=now, sensors=sensors
+            )
         if self.api is not None:
             try:
                 self.api.ensure()
