@@ -9,12 +9,16 @@ def registry(*names):
     return SimpleNamespace(get_tool_names=lambda: list(names))
 
 
-def test_changes_marks_connected_and_built_in_tools():
+def test_changes_marks_connected_and_built_in_tools(stored_tool_classes):
+    stored_tool_classes.update(
+        {"splunk_search": "read", "crowdstrike_isolate_host": "irreversible"}
+    )
     body = list_available_tools(
         registry(
             "splunk_search",
             "crowdstrike_isolate_host",
             "splunk_get_events",
+            "okta_get_user",
             "create_approval_action",
         )
     )
@@ -23,6 +27,8 @@ def test_changes_marks_connected_and_built_in_tools():
     assert changes["splunk_search"] == "read_only"
     assert changes["crowdstrike_isolate_host"] == "asks_first"
     assert changes["create_approval_action"] == "asks_first"
+    # A connected name nobody classified asks first.
+    assert changes["okta_get_user"] == "asks_first"
     # Built-in tools are always there, connected or not.
     assert changes["read_skill"] == "read_only"
     # A name no one lists has no mark: the drawer shows it as not connected.

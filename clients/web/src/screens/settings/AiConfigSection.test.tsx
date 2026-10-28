@@ -22,6 +22,7 @@ vi.mock('./AiModelsOverview', () => ({
 const { keysProps } = vi.hoisted(() => ({ keysProps: vi.fn() }))
 vi.mock('./AiProvidersPanel', () => ({ default: (p: object) => { keysProps(p); return <div>keys card</div> } }))
 vi.mock('./AiBudgetsPanel', () => ({ default: () => <div>spending card</div> }))
+vi.mock('./AiSpendPanel', () => ({ default: () => <div>spend card</div> }))
 vi.mock('./AiModelsPanel', () => ({
   default: ({ open, onToggle }: { open: boolean; onToggle: () => void }) => (
     <section>
@@ -50,6 +51,7 @@ describe('AiConfigSection', () => {
     expect(await screen.findByText('Advanced')).toBeInTheDocument()
     expect(screen.getByText('keys card')).toBeInTheDocument()
     expect(screen.getByText('spending card')).toBeInTheDocument()
+    expect(screen.getByText('spend card')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Virtual Keys' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Operations' })).not.toBeInTheDocument()
   })

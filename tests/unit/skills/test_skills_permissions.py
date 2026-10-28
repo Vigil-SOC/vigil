@@ -59,6 +59,11 @@ def test_only_a_role_that_may_change_settings_writes_a_skill(
         "check_permission",
         lambda _user_id, permission, session=None: GRANTS[role].get(permission) is True,
     )
+    # The seed this test reads has not been through 0008. The fallback keeps
+    # today's settings.write gate, which is what the expectations assert.
+    monkeypatch.setattr(
+        "core.auth.permissions.catalog_revision_applied", lambda session: False
+    )
     client = TestClient(skills_app())
 
     saved = client.post(

@@ -2,7 +2,8 @@
 AI-assisted workflow generator.
 
 Takes a natural-language description of a security scenario and produces a
-draft workflow definition (phases, agents, tools) by prompting Claude with
+draft workflow definition (phases, agents, tools) by prompting the assigned
+model with
 context about the available agents, MCP tools, and existing workflow patterns.
 """
 
@@ -41,7 +42,7 @@ class WorkflowAIGenerator:
                 "success": bool,
                 "draft": {...workflow dict...} | None,
                 "error": str | None,
-                "raw": str  # raw Claude response, for debugging
+                "raw": str  # raw model response, for debugging
             }
         """
         if not description or not description.strip():
@@ -52,26 +53,19 @@ class WorkflowAIGenerator:
                 "raw": "",
             }
 
-        from core.llm.harness.claude import ClaudeService
-
-        claude = await ClaudeService.acreate()
-        if not claude.has_api_key():
-            return {
-                "success": False,
-                "draft": None,
-                "error": "Claude API is not configured.",
-                "raw": "",
-            }
+        from core.llm.oneshot import NoProviderConfigured, complete
 
         system_prompt = self._build_system_prompt()
         user_prompt = self._build_user_prompt(description)
 
         try:
-            raw = await claude.achat(
+            raw = await complete(
                 message=user_prompt,
                 system_prompt=system_prompt,
                 max_tokens=4096,
             )
+        except NoProviderConfigured as e:
+            return {"success": False, "draft": None, "error": str(e), "raw": ""}
         except Exception as e:
             logger.exception("Workflow generation call failed")
             return {"success": False, "draft": None, "error": str(e), "raw": ""}
@@ -80,7 +74,7 @@ class WorkflowAIGenerator:
             return {
                 "success": False,
                 "draft": None,
-                "error": "Empty response from Claude.",
+                "error": "Empty response from the model.",
                 "raw": "",
             }
 

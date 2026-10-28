@@ -1,8 +1,8 @@
 """DEV_MODE's permission dict lists what the console may show (``/api/auth/me``).
 
-``check_permission`` grants everything in DEV_MODE, but the console reads the
-dict from ``get_user_permissions``; a permission missing there hides its screen
-in a dev install even though every route would allow it.
+Both the dict and ``check_permission`` are built-in Admin from the catalog. A
+name that role does not list is denied. The console reads the dict, so a
+permission missing there hides its screen.
 """
 
 import pytest
@@ -20,3 +20,5 @@ def test_dev_mode_lists_the_medic_permissions(monkeypatch):
 
     assert permissions[MEDIC_READ_PERMISSION] is True
     assert permissions[MEDIC_ADMIN_PERMISSION] is True
+    assert AuthService.check_permission("anyone", MEDIC_READ_PERMISSION) is True
+    assert AuthService.check_permission("anyone", "not.a.permission") is False

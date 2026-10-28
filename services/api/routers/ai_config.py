@@ -35,7 +35,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Which model a component calls is a platform setting, same as the Claude key.
-_SETTINGS_WRITE = [permission_gate("settings.write")]
+_SETTINGS_WRITE = [permission_gate("platform.write")]
+router.dependencies.append(permission_gate("platform.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/ai",

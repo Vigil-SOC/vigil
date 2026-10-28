@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from opentelemetry import trace
 
@@ -59,6 +59,16 @@ def list_tools() -> List[Dict[str, Any]]:
         }
         for tool in _server()._tool_manager.list_tools()
     ]
+
+
+def required_permission(name: str) -> Optional[str]:
+    """The permission ``@requires`` put on one of Vigil's tools, or None."""
+    try:
+        tool = _server()._tool_manager.get_tool(name)
+    except Exception:  # noqa: BLE001 - a server that cannot be read names none
+        logger.exception("Vigil's tool %s was not read", name)
+        return None
+    return None if tool is None else getattr(tool.fn, "permission", None)
 
 
 async def call_tool(

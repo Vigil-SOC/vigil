@@ -66,8 +66,6 @@ class AutonomousResponder:
 
         self._response_service = response_service
         self._approval_service = approvals
-        if response_config.force_manual_approval:
-            self._approval_service.set_force_manual_approval(True)
 
         # Stats
         self.stats = {

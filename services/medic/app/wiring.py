@@ -33,6 +33,7 @@ from services.medic.sensors import (
     Stats,
 )
 from services.medic.sensors.base import Clock
+from services.medic.sensors.logtail import LOG_CAPACITY, bind_log_tails
 from services.medic.store import DecisionWriter, StoreError
 
 log = logging.getLogger("services.medic")
@@ -101,8 +102,10 @@ class Medic:
         )
         self.router = Router(rules)
         self.bus = Bus(Stats())
+        self.log_bus = Bus(self.bus.stats, LOG_CAPACITY)
+        bind_log_tails(sensors, self.log_bus, clock)
         self.sink = EngineSink(self.engine)
-        self.pipeline = Pipeline(self.bus, self.sink)
+        self.pipeline = Pipeline(self.bus, self.sink, log_bus=self.log_bus)
         self.scheduler = Scheduler(
             sensors,
             SensorContext(shape=shape, vigil_dev_mode=vigil_dev_mode),

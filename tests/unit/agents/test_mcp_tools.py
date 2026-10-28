@@ -183,31 +183,35 @@ class TestVigilsOwnToolsAreUnprefixed:
         assert split_tool_name("list_findings", ["crowdstrike"]) is None
 
 
-class TestTheDestructiveGateReadsBareNames:
-    """It decides on the verb, and a bare name's verb is its first token."""
+class TestTheApprovalGateReadsStoredClasses:
+    """Bare and prefixed names alike: the stored class decides, not a verb (#3304)."""
 
-    def test_a_bare_destructive_tool_is_dropped(self):
-        from core.llm.chat_layers import _is_destructive_mcp
+    def test_an_unclassified_outside_name_is_gated(self, stored_tool_classes):
+        from core.response.ceiling import gated_tools
 
-        assert _is_destructive_mcp("isolate_host") is True
-        assert _is_destructive_mcp("block_ip") is True
+        assert gated_tools(["isolate_host", "crowdstrike_isolate_host"]) == {
+            "isolate_host",
+            "crowdstrike_isolate_host",
+        }
 
-    def test_a_prefixed_destructive_tool_is_still_dropped(self):
-        from core.llm.chat_layers import _is_destructive_mcp
+    def test_vigils_own_tools_are_never_gated(self, stored_tool_classes):
+        from core.response.ceiling import gated_tools
 
-        assert _is_destructive_mcp("crowdstrike_isolate_host") is True
+        names = ("list_findings", "get_finding", "close_case", "add_case_comment")
+        assert gated_tools(names) == frozenset()
 
-    def test_vigils_own_read_tools_are_not_dropped(self):
-        from core.llm.chat_layers import _is_destructive_mcp
+    def test_only_a_read_class_runs_without_an_approval(self, stored_tool_classes):
+        from core.response.ceiling import gated_tools
 
-        for name in ("list_findings", "get_finding", "list_cases", "close_case"):
-            assert _is_destructive_mcp(name) is False, name
-
-    def test_the_named_execute_id_is_still_dropped(self):
-        from core.llm.chat_layers import EXECUTE_IDS, _is_destructive_mcp
-
-        for name in EXECUTE_IDS:
-            assert _is_destructive_mcp(name) is True, name
+        stored_tool_classes.update(
+            {
+                "a_read": "read",
+                "b_unverified": "read_unverified",
+                "c_reversible": "reversible",
+                "d_irreversible": "irreversible",
+            }
+        )
+        assert gated_tools(stored_tool_classes) == {"c_reversible", "d_irreversible"}
 
 
 # --- A tool both sides carry is described by the side that answers it --------

@@ -5,12 +5,7 @@ from contextlib import contextmanager
 from unittest.mock import MagicMock, Mock, patch
 
 from core.config import get_settings
-from core.response.approval_service import (
-    ActionStatus,
-    ActionType,
-    ApprovalService,
-    Reversibility,
-)
+from core.response.approval_service import ActionStatus, ActionType, ApprovalService
 from core.response.autonomous_response_service import AutonomousResponseService
 from core.response.config import ResponseConfig
 
@@ -18,8 +13,7 @@ from core.response.config import ResponseConfig
 @pytest.fixture
 def no_db():
     """Stand-in session and config store so ApprovalService never reaches
-    PostgreSQL: not for the row _put_action inserts, and not for the
-    force_manual_approval flag read at each decision.
+    PostgreSQL for the row _put_action inserts.
     The status the test reads is decided before the session is touched.
     """
     manager = MagicMock()
@@ -55,7 +49,7 @@ class TestConfidenceThresholds:
         action = _create(ApprovalService(config=ResponseConfig()), confidence=0.99)
         assert action.status == ActionStatus.PENDING.value
         assert action.requires_approval is True
-        assert action.reason.endswith("reversibility=reversible")
+        assert action.reason.endswith("effect_class=reversible")
 
     def test_default_threshold_holds_below_ninety(self):
         action = _create(ApprovalService(config=ResponseConfig()), confidence=0.87)
@@ -64,7 +58,7 @@ class TestConfidenceThresholds:
 
     def test_raised_threshold_does_not_release_the_row(self):
         svc = ApprovalService(config=ResponseConfig(confidence_threshold=0.95))
-        action = _create(svc, confidence=0.90, reversibility=Reversibility.REVERSIBLE)
+        action = _create(svc, confidence=0.90, effect_class="reversible")
         assert action.status == ActionStatus.PENDING.value
         assert action.requires_approval is True
 
@@ -79,9 +73,9 @@ class TestConfidenceThresholds:
         finally:
             get_settings.cache_clear()
 
-    def test_force_manual_wins_over_confidence(self):
+    def test_force_manual_wins_over_confidence(self, monkeypatch):
+        monkeypatch.setenv("DAEMON_FORCE_APPROVAL", "true")
         svc = ApprovalService(config=ResponseConfig())
-        svc.force_manual_approval = True
         action = svc.create_action(
             action_type=ActionType.ISOLATE_HOST,
             title="isolate",
@@ -119,16 +113,15 @@ class TestConfidenceThresholds:
         store.assert_not_called()
         store.set_system_config.assert_not_called()
 
-    def test_forcing_approval_in_process_leaves_the_stored_row(self):
+    def test_a_locked_environment_forces_the_rule_and_writes_nothing(self, monkeypatch):
+        monkeypatch.setenv("DAEMON_AUTO_RESPONSE", "false")
         store = Mock()
-        store.read_system_config.return_value = {"enabled": False}
         with patch(
             "core.storage.config_service.get_config_service", return_value=store
         ):
-            svc = ApprovalService(config=ResponseConfig())
-            svc.set_force_manual_approval(True)
-            assert _create(svc, confidence=0.99).status == ActionStatus.PENDING.value
-            assert svc.force_manual_approval is True
+            action = _create(ApprovalService(config=ResponseConfig()), confidence=0.99)
+        assert action.status == ActionStatus.PENDING.value
+        assert action.reason.endswith("approval.force_manual_approval=True")
         store.set_system_config.assert_not_called()
 
 

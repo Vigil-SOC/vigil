@@ -29,9 +29,11 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Iterator, Optional
 
 import jwt
 
@@ -69,6 +71,30 @@ class Claims:
     agent_id: Optional[str]
     run_id: Optional[str]
     origin: Optional[str]
+
+
+_current: ContextVar[Optional[Claims]] = ContextVar("vigil_tool_claims", default=None)
+
+
+@contextmanager
+def bound_claims(claims: Optional[Claims]) -> Iterator[None]:
+    """The signed principal for the tool call running on this task.
+
+    Kept here rather than beside the trail writes, so a permission check can
+    read it without importing what those writes import.
+    """
+    if claims is None:
+        yield
+        return
+    token = _current.set(claims)
+    try:
+        yield
+    finally:
+        _current.reset(token)
+
+
+def current_claims() -> Optional[Claims]:
+    return _current.get()
 
 
 def _key() -> bytes:

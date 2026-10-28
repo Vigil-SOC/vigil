@@ -69,7 +69,7 @@ const doneSteps = [
 ]
 
 beforeEach(() => {
-  sessionStorage.clear()
+  localStorage.clear()
   vi.mocked(configApi.getSetupSteps).mockResolvedValue({
     data: { steps: doneSteps, alerts_exist: 3, demo_enabled: false },
   } as never)
@@ -81,7 +81,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   vi.clearAllMocks()
-  sessionStorage.clear()
+  localStorage.clear()
 })
 
 describe('Home command chips', () => {
@@ -229,7 +229,7 @@ describe('Home', () => {
     expect(screen.queryByText(/Nothing waits on you\./)).not.toBeInTheDocument()
   })
 
-  it('hides a step for this tab when alerts exist, and keeps Get more from Vigil', async () => {
+  it('hides a step for this browser when alerts exist, and keeps Get more from Vigil', async () => {
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
     vi.mocked(configApi.getSetupSteps).mockResolvedValue({
       data: {
@@ -258,8 +258,23 @@ describe('Home', () => {
     }
     expect(changed).toHaveBeenCalledOnce()
     expect(screen.queryByRole('heading', { name: 'Connect more tools' })).not.toBeInTheDocument()
-    expect(JSON.parse(sessionStorage.getItem('vigil.home.setup.hidden') || '[]')).toEqual(['connect_tools'])
+    expect(JSON.parse(localStorage.getItem('vigil.home.setup.hidden') || '[]')).toEqual(['connect_tools'])
     expect(screen.getByRole('link', { name: 'Browse integrations →' })).toBeInTheDocument()
+  })
+
+  it('Hide setup on the first-run checklist hides every step but keeps the checklist, and Show hidden steps undoes it', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+      data: { steps: [{ ...doneSteps[0], done: false }, doneSteps[1]], alerts_exist: 0, demo_enabled: false },
+    } as never)
+    renderHome()
+    const ready = (await screen.findByRole('heading', { name: 'Get Vigil ready' })).closest('.home-ready') as HTMLElement
+    fireEvent.click(within(ready).getByRole('button', { name: 'Hide setup' }))
+    expect(JSON.parse(localStorage.getItem('vigil.home.setup.hidden') || '[]')).toEqual(['connect_tools', 'notify'])
+    expect(within(ready).getByRole('heading', { name: 'Connect more tools' })).toBeInTheDocument()
+    fireEvent.click(within(ready).getByRole('button', { name: 'Show hidden steps' }))
+    expect(localStorage.getItem('vigil.home.setup.hidden')).toBeNull()
+    expect(within(ready).getByRole('button', { name: 'Hide setup' })).toBeInTheDocument()
   })
 
   it('?section=setup scrolls to Get more from Vigil once the steps load, or to Get Vigil ready on first run', async () => {

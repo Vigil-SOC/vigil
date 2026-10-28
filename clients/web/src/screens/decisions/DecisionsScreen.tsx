@@ -18,6 +18,7 @@ import {
   type ApprovalAction,
 } from './useDecisions'
 import { aiDecisionsApi, approvalsApi } from '../../services/api'
+import { useAuth } from '../../contexts/AuthContext'
 import { EmptyState, Popup, Field, Select, Rating, Slider, Dropdown, activateOnKey } from '../../shared/ui'
 
 // One list, so a new tab cannot be added to the union and forgotten here --
@@ -286,6 +287,8 @@ function ApprovalsTab({
   acting: string | null
   banner: string | null
 }) {
+  // Decisions opens on ai_decisions.read; approving and rejecting need ai_decisions.approve
+  const canApprove = useAuth().hasPermission('ai_decisions.approve')
   return (
     <>
       {banner && <div style={{ padding: '10px 22px', color: 'var(--crit)', fontSize: 13 }}>{banner}</div>}
@@ -327,8 +330,14 @@ function ApprovalsTab({
                   <td className="muted">{fmtTime(a.created_at)}</td>
                   <td>
                     <span style={{ display: 'inline-flex', gap: 8, justifyContent: 'flex-end', width: '100%' }}>
-                      <button className="btn primary" disabled={acting === a.action_id} onClick={() => onApprove(a)}><Icon name="check2" /> Approve</button>
-                      <button className="btn danger" disabled={acting === a.action_id} onClick={() => onReject(a)}><Icon name="x2" /> Reject</button>
+                      {canApprove ? (
+                        <>
+                          <button className="btn primary" disabled={acting === a.action_id} onClick={() => onApprove(a)}><Icon name="check2" /> Approve</button>
+                          <button className="btn danger" disabled={acting === a.action_id} onClick={() => onReject(a)}><Icon name="x2" /> Reject</button>
+                        </>
+                      ) : (
+                        <span className="muted">Pending</span>
+                      )}
                     </span>
                   </td>
                 </tr>
@@ -461,6 +470,7 @@ function DecisionsDetail({
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [detailOpen, setDetailOpen] = useState(false)
+  const canReview = useAuth().hasPermission('ai_decisions.approve')
 
   if (!d) {
     return (
@@ -549,22 +559,24 @@ function DecisionsDetail({
               </div>
             </div>
           </div>
-          <div className="bg-panel border border-line rounded-lg shadow-panel overflow-hidden span-2">
-            <div className="flex items-center gap-2.5 px-[18px] py-[15px] border-b border-line-soft"><h3 className="text-[14.5px]">Your review</h3></div>
-            <div className="p-[18px]">
-              <div className="flex gap-2.5 mt-1 mb-3.5">
-                <button className="btn primary flex-1 justify-center" disabled={busy} onClick={() => submit('agree')}><Icon name="check2" /> Approve</button>
-                <button className="btn flex-1 justify-center" disabled={busy} onClick={() => submit('partial')}><Icon name="edit" /> Modify</button>
-                <button className="btn danger flex-1 justify-center" disabled={busy} onClick={() => submit('disagree')}><Icon name="x2" /> Reject</button>
-              </div>
-              <textarea className="feedback-box" placeholder="Add feedback to train the model (optional)…" value={comment} onChange={(e) => setComment(e.target.value)} />
-              <div className="flex items-center gap-3" style={{ marginTop: 10 }}>
-                <button className="btn ghost" onClick={() => setDetailOpen(true)}><Icon name="plus" /> Add detailed feedback</button>
-                {busy && <span className="muted">Submitting…</span>}
-                {err && <span style={{ color: 'var(--crit)', fontSize: 13 }}>{err}</span>}
+          {canReview && (
+            <div className="bg-panel border border-line rounded-lg shadow-panel overflow-hidden span-2">
+              <div className="flex items-center gap-2.5 px-[18px] py-[15px] border-b border-line-soft"><h3 className="text-[14.5px]">Your review</h3></div>
+              <div className="p-[18px]">
+                <div className="flex gap-2.5 mt-1 mb-3.5">
+                  <button className="btn primary flex-1 justify-center" disabled={busy} onClick={() => submit('agree')}><Icon name="check2" /> Approve</button>
+                  <button className="btn flex-1 justify-center" disabled={busy} onClick={() => submit('partial')}><Icon name="edit" /> Modify</button>
+                  <button className="btn danger flex-1 justify-center" disabled={busy} onClick={() => submit('disagree')}><Icon name="x2" /> Reject</button>
+                </div>
+                <textarea className="feedback-box" placeholder="Add feedback to train the model (optional)…" value={comment} onChange={(e) => setComment(e.target.value)} />
+                <div className="flex items-center gap-3" style={{ marginTop: 10 }}>
+                  <button className="btn ghost" onClick={() => setDetailOpen(true)}><Icon name="plus" /> Add detailed feedback</button>
+                  {busy && <span className="muted">Submitting…</span>}
+                  {err && <span style={{ color: 'var(--crit)', fontSize: 13 }}>{err}</span>}
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 

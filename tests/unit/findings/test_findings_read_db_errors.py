@@ -69,20 +69,11 @@ def test_no_database_is_still_an_empty_read():
     "path",
     ["/api/v1/findings/", "/api/findings/", "/api/v1/findings/f-1"],
 )
-def test_route_answers_500_when_the_query_fails(path):
-    from services.api.main import app
-    from services.api.middleware.auth import get_current_active_user
+def test_route_answers_500_when_the_query_fails(path, authenticate_app):
     import core.api.v1.findings_router as findings_router
+    from services.api.main import app
 
-    class _User:
-        is_active = True
-        username = "test"
-        user_id = "test"
-
-    app.dependency_overrides[get_current_active_user] = lambda: _User()
-    try:
-        with patch.object(findings_router, "data_service", _failing_data_service()):
-            response = TestClient(app, raise_server_exceptions=False).get(path)
-    finally:
-        app.dependency_overrides.pop(get_current_active_user, None)
+    authenticate_app(app)
+    with patch.object(findings_router, "data_service", _failing_data_service()):
+        response = TestClient(app, raise_server_exceptions=False).get(path)
     assert response.status_code == 500, response.text

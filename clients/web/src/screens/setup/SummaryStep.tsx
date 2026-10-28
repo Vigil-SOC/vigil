@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { aiConfigApi, configApi, llmProviderApi, workflowApi } from '../../services/api'
+import { aiConfigApi, autonomyApi, configApi, llmProviderApi, workflowApi } from '../../services/api'
 import { matchesProfile, type InvestigationProfiles } from '../settings/useSettings'
 
 export type SummaryTarget = 'data' | 'ai' | 'workflows' | 'limits'
@@ -60,10 +60,10 @@ export default function SummaryStep({ onChange }: { onChange: (target: SummaryTa
       return `${on} of ${workflows.length} on · ${auto}`
     })
     read('autonomy', async () => {
-      const { data } = await configApi.getAutonomy()
-      return data.force_manual_approval
-        ? 'Assist · asks before changes'
-        : 'Act · reversible changes on its own'
+      const { data } = await autonomyApi.get()
+      return data.act_reversible && !data.stopped && !data.environment_locked
+        ? 'Act · reversible changes on its own'
+        : 'Assist · asks before changes'
     })
     read('limits', async () => {
       const { data } = await orchestrator

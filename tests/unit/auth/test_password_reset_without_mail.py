@@ -4,7 +4,7 @@ about the backend, and an operator can issue a link from the host."""
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -34,6 +34,7 @@ ADMIN = SimpleNamespace(
     role_id="role-admin",
     is_active=True,
     service_account=False,
+    password_changed_at=None,
 )
 
 
@@ -45,13 +46,6 @@ def _session(*users):
         found[0] if len(found) == 1 else None
     )
     return session
-
-
-@pytest.fixture(autouse=True)
-def _mock_redis(monkeypatch):
-    client = AsyncMock()
-    client.set = AsyncMock(return_value=True)
-    monkeypatch.setattr(password_reset, "_redis_client", lambda: client)
 
 
 def _request(user, settings):
@@ -109,7 +103,7 @@ def test_mail_links_to_the_reset_screen(frontend_url, origin):
     assert (url.scheme, url.hostname) == origin
     assert url.path == "/vigil/reset-password"
     token = parse_qs(url.query)["token"][0]
-    assert password_reset.decode_reset_token(token) == "u-admin"
+    assert password_reset.decode_reset_token(token).user_id == "u-admin"
 
 
 def test_list_shows_every_account(capsys):
@@ -135,7 +129,7 @@ def test_link_carries_a_token_for_that_user(capsys):
     parsed = urlparse(url)
     assert parsed.path == "/vigil/reset-password"
     token = parse_qs(parsed.query)["token"][0]
-    assert password_reset.decode_reset_token(token) == "u-admin"
+    assert password_reset.decode_reset_token(token).user_id == "u-admin"
 
 
 @pytest.mark.parametrize(

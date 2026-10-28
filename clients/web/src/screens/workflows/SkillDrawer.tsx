@@ -7,7 +7,7 @@ import { skillUsageText, type Skill } from '../../data/appData'
 
 const PATH_OFF = 'Skills are off (VIGIL_SKILLS_PATH is empty). Unset it, or set it to a directory, to save skills.'
 // The API answers 403 without it: a skill's description reaches every agent's prompt.
-const READ_ONLY = 'Your role can read skills but not save them. Saving needs the settings.write permission.'
+const READ_ONLY = 'Your role can read skills but not save them. Saving needs the automation.write permission.'
 
 function errMsg(e: unknown): string {
   const r = e as { response?: { data?: { detail?: string } }; message?: string }
@@ -27,7 +27,7 @@ export function SkillDrawer({
   onSaved: () => void
 }) {
   const creating = name === null
-  const canWrite = useAuth().hasPermission('settings.write')
+  const canWrite = useAuth().hasPermission('automation.write')
   const [detail, setDetail] = useState<ApiSkillDetail | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [skillName, setSkillName] = useState(name ?? '')
