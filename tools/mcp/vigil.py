@@ -143,7 +143,9 @@ def list_findings(
     limit: int = 20,
 ) -> str:
     """List findings, paged and filtered in SQL. ``state`` is the derived state:
-    open (not dismissed, in no closed case), dismissed, or resolved; absent is all."""
+    open (not dismissed, in no closed case), dismissed, or resolved; absent is all.
+    ``limit`` is at most 25, and a page can stop short to stay small: page on
+    ``next_offset`` while ``has_more``."""
     return _call(
         tool_registry.list_findings,
         severity=severity,
@@ -161,7 +163,9 @@ def list_findings(
 @mcp.tool()
 @requires("findings.read")
 def get_finding(finding_id: str) -> str:
-    """Get a specific finding by ID. A null confidence in mitre_predictions means the source named the technique and gave no confidence: it is unknown, not 0."""
+    """Get a specific finding by ID: its stored triage under ``triage``, then
+    ``entity_context`` with a sample of the source records. A null confidence in mitre_predictions means the source named the technique and gave no confidence: it is unknown, not 0.
+    """
     return _call(tool_registry.get_finding, finding_id=finding_id)
 
 

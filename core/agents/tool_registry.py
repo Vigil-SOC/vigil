@@ -118,6 +118,44 @@ def _compact_page(data: Any, findings: list) -> list:
     ]
 
 
+# A page of summaries fits result_cap once rendered (#3276): the schemas cap limit at
+# PAGE_LIMIT, and a page stops before its compact JSON passes PAGE_CHARS, so the
+# counts and paging beside it are read whole. has_more and next_offset describe
+# the entries returned, not the limit asked for.
+PAGE_LIMIT = 25
+PAGE_CHARS = 12_000
+
+
+def _page(data: Any, findings: list, *, offset: int, limit: int, total: int) -> Args:
+    page, used = [], 0
+    for summary in _compact_page(data, findings):
+        used += len(_compact_json(summary)) + 1
+        if page and used > PAGE_CHARS:
+            break
+        page.append(summary)
+    end = offset + len(page)
+    more = end < total
+    return {
+        "offset": offset,
+        "limit": limit,
+        "returned": len(page),
+        "has_more": more,
+        **({"next_offset": end} if more else {}),
+        "findings": page,
+    }
+
+
+def _compact_json(value: Any) -> str:
+    return json.dumps(value, default=str, ensure_ascii=False, separators=(",", ":"))
+
+
+def _page_limit(limit: Any) -> int:
+    try:
+        return min(max(int(limit), 1), PAGE_LIMIT)
+    except (TypeError, ValueError):
+        return 20
+
+
 # The derived states a findings read filters by (core.storage.service.FINDING_STATES).
 FINDING_STATES = ("open", "dismissed", "resolved")
 
@@ -161,6 +199,7 @@ def list_findings(
         "cluster_id": cluster_id,
         "min_anomaly_score": min_anomaly_score,
     }
+    limit = _page_limit(limit)
     data = _data()
     total = data.count_findings(**filters)
     findings = data.get_findings(
@@ -172,10 +211,7 @@ def list_findings(
     )
     return {
         "total": total,
-        "offset": offset,
-        "limit": limit,
-        "has_more": (offset + limit) < total,
-        "findings": _compact_page(data, findings),
+        **_page(data, findings, offset=offset, limit=limit, total=total),
     }
 
 
@@ -186,7 +222,7 @@ def search_findings(**args: Any) -> Args:
     if (bad := _bad_state(filters["state"])) is not None:
         return bad
     filters["search_query"] = args.get("query", "")
-    limit = args.get("limit", 20)
+    limit = _page_limit(args.get("limit", 20))
     offset = args.get("offset", 0)
     data = _data()
     counts = data.get_findings_summary(**filters, top_ips=TOP_IPS)
@@ -202,10 +238,7 @@ def search_findings(**args: Any) -> Args:
         "query": filters["search_query"],
         "total": total,
         **counts,
-        "offset": offset,
-        "limit": limit,
-        "has_more": (offset + limit) < total,
-        "findings": _compact_page(data, findings),
+        **_page(data, findings, offset=offset, limit=limit, total=total),
     }
 
 
@@ -214,8 +247,118 @@ def get_findings_stats(**_args: Any) -> Args:
     return {"total_findings": summary.pop("total"), **summary}
 
 
+# What an agent reads of one finding (#3276): the small fields and the stored
+# triage first, entity_context last, its flow preview cut to a sample, so the
+# rendered result fits result_cap. The REST endpoints still serve it whole.
+SAMPLE_RECORDS = 5
+SAMPLE_RAW_TEXT = 2_000
+SAMPLE_PORT_RANGES = 16
+_HEAD = (
+    "finding_id",
+    "title",
+    "severity",
+    "data_source",
+    "timestamp",
+    "created_at",
+    "updated_at",
+    "anomaly_score",
+    "cluster_id",
+    "external_id",
+    "description",
+    "mitre_predictions",
+)
+_TRIAGE_KEYS = (
+    "ai_triage",
+    "ai_triage_error",
+    "triage_confidence",
+    "category",
+    "recommended_action",
+    "triage_reasoning",
+)
+
+
 def get_finding(*, finding_id: str) -> Any:
-    return _data().get_finding(finding_id)
+    finding = _data().get_finding(finding_id)
+    return _for_agent(finding) if isinstance(finding, dict) else finding
+
+
+def _for_agent(finding: Args) -> Args:
+    enrichment = finding.get("ai_enrichment")
+    enrichment = dict(enrichment) if isinstance(enrichment, dict) else enrichment
+    shaped: Args = {key: finding.get(key) for key in _HEAD if key in finding}
+    if isinstance(enrichment, dict) and (triage := _triage(enrichment)):
+        shaped["triage"] = triage
+        for key in _TRIAGE_KEYS:
+            enrichment.pop(key, None)
+    rest = {k: v for k, v in finding.items() if k not in _HEAD}
+    rest.pop("entity_context", None)
+    rest.pop("ai_enrichment", None)
+    shaped.update(rest)
+    if enrichment:
+        shaped["ai_enrichment"] = enrichment
+    if "entity_context" in finding:
+        shaped["entity_context"] = _sampled_context(finding["entity_context"])
+    return shaped
+
+
+# The daemon's triage as one labelled block, rather than scattered ai_enrichment keys.
+def _triage(enrichment: Args) -> Optional[Args]:
+    stored = enrichment.get("ai_triage")
+    result = stored.get("result") if isinstance(stored, dict) else None
+    triage = dict(result) if isinstance(result, dict) else {}
+    for key, name in (
+        ("triage_confidence", "confidence"),
+        ("category", "category"),
+        ("recommended_action", "recommended_action"),
+        ("triage_reasoning", "reasoning"),
+    ):
+        if enrichment.get(key) is not None:
+            triage.setdefault(name, enrichment[key])
+    if isinstance(stored, dict) and stored.get("timestamp"):
+        triage["triaged_at"] = stored["timestamp"]
+    if enrichment.get("ai_triage_error"):
+        triage["error"] = enrichment["ai_triage_error"]
+    return triage or None
+
+
+def _sampled_context(context: Any) -> Any:
+    if not isinstance(context, dict):
+        return context
+    context = dict(context)
+    evidence = context.get("source_evidence")
+    if isinstance(evidence, dict):
+        evidence = dict(evidence)
+        records = evidence.get("records")
+        if isinstance(records, list) and len(records) > SAMPLE_RECORDS:
+            evidence["records"] = records[:SAMPLE_RECORDS]
+            evidence["records_shown"] = (
+                f"{SAMPLE_RECORDS} of the {len(records)} stored; "
+                "netflow_digest counts every flow"
+                if "netflow_digest" in context
+                else f"{SAMPLE_RECORDS} of the {len(records)} stored"
+            )
+        raw = evidence.get("raw_text")
+        if isinstance(raw, str) and len(raw) > SAMPLE_RAW_TEXT:
+            evidence["raw_text"] = raw[:SAMPLE_RAW_TEXT]
+            evidence["raw_text_shown"] = f"{SAMPLE_RAW_TEXT} of {len(raw)} characters"
+        # Last, so whatever still overflows is cut from the preview.
+        context.pop("source_evidence")
+        context["source_evidence"] = evidence
+    digest = context.get("netflow_digest")
+    if isinstance(digest, dict) and isinstance(digest.get("pairs"), list):
+        # A pair's port ranges run to 256 entries; port_count and top_ports stay.
+        digest = dict(digest)
+        digest["pairs"] = [
+            (
+                {k: v for k, v in pair.items() if k != "port_ranges"}
+                if isinstance(pair, dict)
+                and len(pair.get("port_ranges") or ()) > SAMPLE_PORT_RANGES
+                else pair
+            )
+            for pair in digest["pairs"]
+        ]
+        context["netflow_digest"] = digest
+    return context
 
 
 # A dismissal is the finding's terminal state. The actor is the caller and the
@@ -453,10 +596,7 @@ def _case_records(args: Args) -> Args:
     return {
         **records,
         "total": total,
-        "offset": offset,
-        "limit": limit,
-        "has_more": (offset + limit) < total,
-        "findings": _compact_page(_data(), findings),
+        **_page(_data(), findings, offset=offset, limit=limit, total=total),
     }
 
 

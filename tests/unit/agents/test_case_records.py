@@ -72,6 +72,7 @@ async def test_unknown_case_returns_empty_sections(store):
         "total": 0,
         "offset": 0,
         "limit": 100,
+        "returned": 0,
         "has_more": False,
         "findings": [],
     }
