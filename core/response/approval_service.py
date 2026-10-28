@@ -17,10 +17,10 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from opentelemetry.metrics import Observation
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from core.cases import case_trail
@@ -223,6 +223,47 @@ def _nonfailed_by_key(session, key: str) -> Optional[ApprovalActionRow]:
     ).scalar_one_or_none()
 
 
+def _host_names(*names: Optional[str]) -> List[str]:
+    """A host's IP and hostname, folded for comparison, without the "unknown" an
+    IP-less finding carries in place of its IP."""
+    folded = {n.strip().lower() for n in names if isinstance(n, str) and n.strip()}
+    folded.discard("unknown")
+    return sorted(folded)
+
+
+def _isolations_of(names: Sequence[str]):
+    """Isolations of a host named by any of ``names``: the auto-responder's, which
+    key on the IP when the alert had one and on the hostname when not, and runs'
+    proposals, which name the host as the model did."""
+    target = func.lower(func.trim(ApprovalActionRow.target))
+    hostname = func.lower(func.trim(ApprovalActionRow.parameters["hostname"].astext))
+    return (
+        select(ApprovalActionRow)
+        .where(ApprovalActionRow.action_type == ActionType.ISOLATE_HOST.value)
+        .where(
+            or_(
+                ApprovalActionRow.idempotency_key.like("isolate_host:%"),
+                ApprovalActionRow.idempotency_key.like("run-proposal:%"),
+            )
+        )
+        .where(or_(target.in_(names), hostname.in_(names)))
+    )
+
+
+def _hold_hosts(session, names: Sequence[str]) -> None:
+    """Hold these host names until the transaction ends, so two alerts about one
+    host, one carrying its IP and one not, cannot each find no isolation and file
+    their own. PostgreSQL only; other dialects skip the lock."""
+    bind = session.get_bind()
+    if bind is None or bind.dialect.name != "postgresql":
+        return
+    for name in sorted(names):
+        session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+            {"key": f"vigil-isolate:{name}"},
+        )
+
+
 class ApprovalService:
     """Service for managing approval workflow for autonomous actions."""
 
@@ -313,11 +354,14 @@ class ApprovalService:
         idempotency_key: Optional[str] = None,
         human_only: bool = False,
         annotate_rule: bool = True,
+        same_host: Sequence[Optional[str]] = (),
     ) -> tuple[PendingAction, bool]:
         """Insert an approval row, or return the existing non-failed one.
 
         The bool is True when this call inserted. Isolation uses it so a
-        reused approved/pending row is not executed again.
+        reused approved/pending row is not executed again. ``same_host`` is an
+        isolation's IP and hostname: a non-failed isolation of that host under
+        either name, or proposed by a run, is the existing row whatever its key.
         """
         key = idempotency_key or None
 
@@ -342,6 +386,17 @@ class ApprovalService:
         try:
             db = get_db_manager()
             with db.session_scope() as session:
+                names = _host_names(*same_host)
+                if names:
+                    _hold_hosts(session, names)
+                    existing = session.execute(
+                        _isolations_of(names)
+                        .where(ApprovalActionRow.status != ActionStatus.FAILED.value)
+                        .order_by(ApprovalActionRow.created_at.desc())
+                        .limit(1)
+                    ).scalar_one_or_none()
+                    if existing is not None:
+                        return _row_to_pending(existing), False
                 if key:
                     existing = _nonfailed_by_key(session, key)
                     if existing is not None:
@@ -676,29 +731,38 @@ class ApprovalService:
         self, key: str, action_type: str, target: str
     ) -> Optional[PendingAction]:
         """The row a run's proposal would repeat: its own (by ``key``) first, else
-        the newest run proposal of the same action on the same target, any status."""
+        the newest run proposal of the same action on the same target, any status.
+        An isolation also matches the auto-responder's isolation of that host,
+        whether its alert named the host by IP or by hostname."""
         db = get_db_manager()
         with db.session_scope() as session:
             own = _nonfailed_by_key(session, key)
             if own is not None:
                 return _row_to_pending(own)
-            row = session.execute(
-                select(ApprovalActionRow)
-                .where(ApprovalActionRow.idempotency_key.like("run-proposal:%"))
-                .where(ApprovalActionRow.action_type == action_type)
-                .where(
-                    func.lower(func.trim(ApprovalActionRow.target))
-                    == target.strip().lower()
+            if action_type == ActionType.ISOLATE_HOST.value:
+                query = _isolations_of(_host_names(target))
+            else:
+                query = (
+                    select(ApprovalActionRow)
+                    .where(ApprovalActionRow.idempotency_key.like("run-proposal:%"))
+                    .where(ApprovalActionRow.action_type == action_type)
+                    .where(
+                        func.lower(func.trim(ApprovalActionRow.target))
+                        == target.strip().lower()
+                    )
                 )
-                .order_by(ApprovalActionRow.created_at.desc())
-                .limit(1)
+            row = session.execute(
+                query.order_by(ApprovalActionRow.created_at.desc()).limit(1)
             ).scalar_one_or_none()
             return _row_to_pending(row) if row else None
 
     def add_proposal_case(
         self, action_id: str, case_id: str
     ) -> Optional[PendingAction]:
-        """List ``case_id`` on a pending proposal, once. None when it is not pending."""
+        """List ``case_id`` on a pending proposal, once. None when it is not pending.
+
+        A row that names no case of its own, the auto-responder's, first lists the
+        case its alerts resolve to, so joining it does not take it off that case."""
         db = get_db_manager()
         with db.session_scope() as session:
             row = session.execute(
@@ -709,10 +773,11 @@ class ApprovalService:
             if row is None or row.status != ActionStatus.PENDING.value:
                 return None
             params = dict(row.parameters or {})
-            listed = proposal_case_ids(params)
-            if case_id not in listed:
+            named = proposal_case_ids(params)
+            listed = named or case_ids_for(_row_to_pending(row))
+            if case_id not in listed or not named:
                 params.pop("case_id", None)
-                params["case_ids"] = [*listed, case_id]
+                params["case_ids"] = list(dict.fromkeys([*listed, case_id]))
                 # A new dict: an in-place change to a JSON column is not flushed.
                 row.parameters = params
                 session.flush()
