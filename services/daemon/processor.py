@@ -1024,17 +1024,26 @@ REASONING: [Brief explanation]
         # above: containment stays on Gate 1 alone.
         feed_hit = bool((finding.get("enrichment") or {}).get("threat_indicators"))
 
-        if should_respond or feed_hit:
-            from services.daemon.orchestrator import (
-                insert_intake_trigger,
-                intake_severity_band,
-            )
+        from services.daemon.orchestrator import (
+            insert_intake_trigger,
+            intake_severity_band,
+        )
 
+        # Every severity the install investigates is offered too, below the
+        # response gate, unless triage said to dismiss it. Severity then ranks
+        # it in the queue; it does not decide whether it is looked at.
+        band = intake_severity_band("detection", finding_severity=severity)
+        by_severity = (
+            band in self.config.investigate_severities
+            and recommended_action != "dismiss"
+        )
+
+        if should_respond or feed_hit or by_severity:
             # An unrated finding is "unknown" in the queue, never an invented medium.
             trigger_id = insert_intake_trigger(
                 kind="detection",
                 finding_id=finding.get("finding_id"),
-                priority=intake_severity_band("detection", finding_severity=severity),
+                priority=band,
             )
             if trigger_id is not None:
                 self.stats["queued_for_investigation"] += 1

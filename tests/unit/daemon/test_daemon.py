@@ -139,8 +139,10 @@ class TestConfiguredFloors:
         """#1008: a threat_indicators hit reaches intake even when Gate 1 is false."""
         from services.daemon.config import ResponseConfig
 
+        # Gate 1 alone: no severity is investigated by default here.
         processor = FindingProcessor(
-            ProcessingConfig(), response_config=ResponseConfig(review_threshold=0.95)
+            ProcessingConfig(investigate_severities=[]),
+            response_config=ResponseConfig(review_threshold=0.95),
         )
         queue = asyncio.Queue()
         processor.set_response_queue(queue)
@@ -174,6 +176,55 @@ class TestConfiguredFloors:
             )
             insert.assert_called_once()
             assert queue.qsize() == 1
+
+    @pytest.mark.asyncio
+    async def test_processor_offers_every_investigated_severity_below_the_gate(self):
+        """Cold start: a medium or low verdict still reaches intake, ranked by band."""
+        from services.daemon.config import ResponseConfig
+
+        processor = FindingProcessor(
+            ProcessingConfig(), response_config=ResponseConfig(review_threshold=0.95)
+        )
+        queue = asyncio.Queue()
+        processor.set_response_queue(queue)
+        below_gate = {"triage_confidence": 0.5, "recommended_action": "investigate"}
+
+        with patch("services.daemon.orchestrator.insert_intake_trigger") as insert:
+            await processor._evaluate_for_response(
+                {"finding_id": "f-med", "severity": "medium", **below_gate}
+            )
+            await processor._evaluate_for_response(
+                {"finding_id": "f-low", "severity": "Low", **below_gate}
+            )
+            await processor._evaluate_for_response(
+                {"finding_id": "f-none", **below_gate}
+            )
+        priorities = [c.kwargs["priority"] for c in insert.call_args_list]
+        assert priorities == ["medium", "low", "unknown"]
+        # Offered for investigation, never widened into the response queue.
+        assert queue.empty()
+
+    @pytest.mark.asyncio
+    async def test_processor_does_not_investigate_a_dismissal_or_a_left_out_band(self):
+        from services.daemon.config import ResponseConfig
+
+        processor = FindingProcessor(
+            ProcessingConfig(investigate_severities=["critical", "high", "medium"]),
+            response_config=ResponseConfig(review_threshold=0.95),
+        )
+        with patch("services.daemon.orchestrator.insert_intake_trigger") as insert:
+            await processor._evaluate_for_response(
+                {
+                    "finding_id": "f-dismiss",
+                    "severity": "medium",
+                    "recommended_action": "dismiss",
+                    "triage_confidence": 0.9,
+                }
+            )
+            await processor._evaluate_for_response(
+                {"finding_id": "f-low", "severity": "low", "triage_confidence": 0.5}
+            )
+            insert.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_processor_detection_priority_is_severity_band(self):

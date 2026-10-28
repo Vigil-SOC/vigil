@@ -798,6 +798,7 @@ config:
   DAEMON_DRY_RUN: "false"
   DAEMON_ESCALATION_ENABLED: "true"
   DAEMON_ESCALATE_SEVERITIES: "critical,high"
+  DAEMON_INVESTIGATE_SEVERITIES: "critical,high,medium,low,unknown"
   DAEMON_SLACK_ENABLED: "true"
   DAEMON_SLACK_CHANNEL: "#soc-alerts"
   DAEMON_PAGERDUTY_ENABLED: "false"
