@@ -204,6 +204,8 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
   const { notifyUndoable, pending: fusing, settled } = useToast()
   const [rows, setRows] = useState<Record<string, RowState>>({})
   const [editing, setEditing] = useState<string | null>(null)
+  const editingRef = useRef<string | null>(null)
+  editingRef.current = editing
   const [pending, setPending] = useState<{ component: string; next: RowState } | null>(null)
 
   const modelsByProvider = useMemo(() => {
@@ -334,12 +336,11 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
       // the key write mirrored the provider; the catalogue from page load does not know it yet
       reload()
       document.getElementById(AGENT_MODEL_TABLE_ID)?.scrollIntoView?.({ block: 'start' })
-      setEditing((cur) => {
-        if (cur && cur !== CHAT_DEFAULT_KEY) {
-          setRows((prev) => ({ ...prev, [cur]: rowFor(cur, assignments[cur]) }))
-        }
-        return CHAT_DEFAULT_KEY
-      })
+      const cur = editingRef.current
+      if (cur && cur !== CHAT_DEFAULT_KEY) {
+        setRows((prev) => ({ ...prev, [cur]: rowFor(cur, assignments[cur]) }))
+      }
+      setEditing(CHAT_DEFAULT_KEY)
     }
     window.addEventListener(PICK_AGENT_MODEL, onPick)
     return () => window.removeEventListener(PICK_AGENT_MODEL, onPick)

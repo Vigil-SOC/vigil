@@ -556,8 +556,8 @@ async def recheck_key(
 ) -> Dict[str, Any]:
     """Run the express probe again for one key, ignoring the cached verdict.
 
-    The following routability read hits that fresh cache entry, so the page
-    does not call the model a second time.
+    The express probe is cached on the key, so the following routability read
+    rebuilds the shared snapshot without calling the model a second time.
     """
     _require_settings_admin(current_user)
     mirror.invalidate_express_probe(key_id)
@@ -566,6 +566,9 @@ async def recheck_key(
     except (httpx.HTTPError, ValueError) as exc:
         logger.warning("Routability recheck failed: %s", exc)
         raise HTTPException(status_code=502, detail=f"Bifrost unreachable: {exc}")
+    # The status line and GET /routability share path_health's snapshot.
+    # Drop it or they keep the pre-probe copy for the rest of the window.
+    path_health.reset()
     verdict = (verdicts.get("keys") or {}).get(key_id)
     if verdict is None:
         raise HTTPException(status_code=404, detail="No such key")
@@ -635,6 +638,7 @@ async def proxy(
         logger.warning("Bifrost proxy %s %s failed: %s", request.method, url, exc)
         raise HTTPException(status_code=502, detail=f"Bifrost unreachable: {exc}")
 
+    routability_changed = False
     if keys_match and request.method in _WRITE_METHODS and upstream.status_code < 400:
         provider = keys_match.group("provider")
         _persist_key_secret(request.method, key_id, body, upstream, provider)
@@ -642,6 +646,7 @@ async def proxy(
         if written:
             mirror.invalidate_express_probe(written)
         await mirror.sync_provider(provider)
+        routability_changed = True
     elif upstream.status_code < 400 and (creates_provider or deletes_provider):
         # A key-less provider has no key write to trigger its row, and a
         # deleted one would otherwise stay in the picker.
@@ -652,6 +657,12 @@ async def proxy(
         )
         if isinstance(mirrored, str):
             await mirror.sync_provider(mirrored)
+        routability_changed = True
+    elif provider_match and request.method == "PUT" and upstream.status_code < 400:
+        # A base-URL edit can change whether the keys on that host route.
+        routability_changed = True
+    if routability_changed:
+        path_health.reset()
 
     return Response(
         content=upstream.content,

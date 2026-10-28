@@ -594,14 +594,15 @@ describe('a key saved while no agent has a model', () => {
     unset()
     await mount([FENCED], [], 'rejected')
     expect(screen.getByText('Poor')).toBeInTheDocument()
-    expect(screen.queryByText(/Every agent is still Not set/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Chat is still Not set/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'No model' })).not.toBeInTheDocument()
   })
 
   it('says so on the keys table and beside the health chip', async () => {
     unset()
     await mount([FENCED], ['claude-sonnet-5'])
-    expect(await screen.findByText(/Every agent is still Not set/)).toBeInTheDocument()
+    expect(await screen.findByText(/Chat is still Not set/)).toBeInTheDocument()
+    expect(screen.queryByText(/Every agent is still Not set/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'No model' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Pick a model' })).toBeInTheDocument()
   })
@@ -621,7 +622,9 @@ describe('a key saved while no agent has a model', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     const dialog = await screen.findByRole('dialog', { name: 'Pick a model' })
-    expect(notify).toHaveBeenCalledWith('ok', expect.stringMatching(/still Not set/))
+    expect(dialog).toHaveTextContent(/Chat is still Not set/)
+    expect(dialog).not.toHaveTextContent(/cannot run/)
+    expect(notify).toHaveBeenCalledWith('ok', expect.stringMatching(/Chat is still Not set/))
     fireEvent.click(within(dialog).getByRole('button', { name: 'Pick a model' }))
     expect(screen.queryByRole('dialog', { name: 'Pick a model' })).not.toBeInTheDocument()
   })
@@ -679,7 +682,7 @@ describe('a key saved while no agent has a model', () => {
   it('drops the prompt once a model is assigned', async () => {
     unset()
     await mount([FENCED], ['claude-sonnet-5'])
-    expect(await screen.findByText(/Every agent is still Not set/)).toBeInTheDocument()
+    expect(await screen.findByText(/Chat is still Not set/)).toBeInTheDocument()
     getConfig.mockResolvedValue({
       data: {
         components: ['chat_default'],
@@ -687,6 +690,25 @@ describe('a key saved while no agent has a model', () => {
       },
     })
     window.dispatchEvent(new Event(AGENT_MODELS_CHANGED))
-    await waitFor(() => expect(screen.queryByText(/Every agent is still Not set/)).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByText(/Chat is still Not set/)).not.toBeInTheDocument())
+  })
+
+  it('still asks when another agent already has its own model', async () => {
+    getConfig.mockResolvedValue({
+      data: {
+        components: ['chat_default', 'triage'],
+        assignments: { triage: { component: 'triage', provider_id: 'p', model_id: 'sonnet' } },
+      },
+    })
+    await mount([FENCED], ['claude-sonnet-5'])
+    expect(await screen.findByText(/Chat is still Not set/)).toBeInTheDocument()
+    expect(screen.queryByText(/Every agent is still Not set/)).not.toBeInTheDocument()
+  })
+
+  it('asks when a Vertex express key could not be checked', async () => {
+    unset()
+    await mount([FENCED], [], 'not_checked')
+    expect(await screen.findByText(/Chat is still Not set/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'No model' })).toBeInTheDocument()
   })
 })

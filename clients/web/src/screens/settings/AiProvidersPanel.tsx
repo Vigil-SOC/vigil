@@ -9,7 +9,7 @@
    upstream when it accepts the write and reports the verdict as the key's
    `status`, so saving is testing.
    ============================================================ */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import {
   ConfirmDialog,
@@ -82,10 +82,16 @@ function isExpressKey(key: BifrostKey): boolean {
   return Boolean(secretText(key.value)) && !secretText(key.vertex_key_config?.auth_credentials)
 }
 
-/** Healthy, not-yet-checked, or unlistable. A refused, disabled, or seed key is not. */
+/** Healthy, not-yet-checked, unlistable, or a probe that could not run
+    (`not_checked`, a Vertex express key). A refused, disabled, or seed key is not. */
 function keyCanTakeModel(verdict?: KeyVerdict) {
   const health = verdict?.health
-  return health === 'healthy' || health === 'unverified' || health === 'unverifiable'
+  return (
+    health === 'healthy' ||
+    health === 'unverified' ||
+    health === 'unverifiable' ||
+    health === 'not_checked'
+  )
 }
 
 interface AiProvidersPanelProps extends SectionProps {
@@ -146,27 +152,37 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
   // null until the assignment read lands, so the prompt does not flash on load
   const [unset, setUnset] = useState<boolean | null>(null)
   const [askModel, setAskModel] = useState(false)
+  // A key save and a model save both read assignments. A slower earlier read
+  // must not put the banner back after Chat has been set.
+  const assignGen = useRef(0)
 
-  const readAssignments = () =>
-    aiConfigApi
+  const readAssignments = () => {
+    const mine = ++assignGen.current
+    return aiConfigApi
       .getConfig()
       .then(({ data }) => {
         const open = chatModelUnset(data.assignments)
-        setUnset(open)
+        if (mine === assignGen.current) setUnset(open)
         return open
       })
       .catch(() => {
-        setUnset(null)
+        if (mine === assignGen.current) setUnset(null)
         return null
       })
+  }
 
   useEffect(() => {
     let live = true
     const load = () => {
+      const mine = ++assignGen.current
       aiConfigApi
         .getConfig()
-        .then(({ data }) => live && setUnset(chatModelUnset(data.assignments)))
-        .catch(() => live && setUnset(null))
+        .then(({ data }) => {
+          if (live && mine === assignGen.current) setUnset(chatModelUnset(data.assignments))
+        })
+        .catch(() => {
+          if (live && mine === assignGen.current) setUnset(null)
+        })
     }
     load()
     window.addEventListener(AGENT_MODELS_CHANGED, load)
@@ -357,7 +373,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
                             <button
                               type="button"
                               className="chip aim-model-chip"
-                              title="No agent has a model yet. Pick one for Chat (Ask Vigil)."
+                              title="Chat has no model yet. Agents without their own use it."
                               onClick={requestAgentModelPick}
                             >
                               No model
@@ -414,7 +430,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
                           <button
                             type="button"
                             className="chip aim-model-chip"
-                            title="No agent has a model yet. Pick one for Chat (Ask Vigil)."
+                            title="Chat has no model yet. Agents without their own use it."
                             onClick={requestAgentModelPick}
                           >
                             No model
@@ -603,7 +619,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
         open={askModel}
         danger={false}
         title="Pick a model"
-        body={`The key is saved. ${MODEL_UNSET_NOTE} Chat and agents cannot run until you do.`}
+        body={`The key is saved. ${MODEL_UNSET_NOTE}`}
         confirmLabel="Pick a model"
         onConfirm={() => {
           setAskModel(false)

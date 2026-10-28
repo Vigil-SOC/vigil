@@ -1,5 +1,6 @@
-/** Chat (Ask Vigil) is what every unassigned agent shows. With it empty, the
-    table reads "Not set" on every row. */
+/** Chat (Ask Vigil) is what an agent with no assignment of its own shows.
+    With Chat empty, those rows read Not set. An agent that already has its
+    own model does not. */
 export function chatModelUnset(
   assignments: Record<string, { model_id?: string | null } | undefined> | undefined,
 ): boolean {
@@ -22,6 +23,6 @@ export function requestAgentModelPick() {
 }
 
 export const MODEL_UNSET_NOTE =
-  'Every agent is still Not set. Pick a model for Chat (Ask Vigil); the others use it until you choose their own.'
+  'Chat is still Not set. Pick a model for Chat (Ask Vigil); every agent without its own model uses it.'
 
-export const KEY_SAVED_UNSET = 'Key saved. Every agent is still Not set — pick a model.'
+export const KEY_SAVED_UNSET = 'Key saved. Chat is still Not set — pick a model.'
