@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import String, Text, and_
 from sqlalchemy import case as sql_case
-from sqlalchemy import cast, distinct, exists, func, literal, or_, select, true
+from sqlalchemy import cast, delete, distinct, exists, func, literal, or_, select, true
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import array as pg_array
 from sqlalchemy.exc import InterfaceError, OperationalError
@@ -965,6 +965,54 @@ class DatabaseService:
             session.delete(finding)
             logger.info(f"Deleted finding: {finding_id}")
             return True
+
+    def count_findings_from_source(self, data_source: str) -> int:
+        """How many findings carry this ``data_source``."""
+        with self.db_manager.session_scope() as session:
+            return session.scalar(
+                select(func.count())
+                .select_from(Finding)
+                .where(Finding.data_source == data_source)
+            )
+
+    def delete_findings_from_source(self, data_source: str) -> Dict[str, int]:
+        """Delete every finding with this ``data_source``, and the cases that
+        held only such findings. A case that also holds another finding keeps
+        it and only loses the link. Returns ``{findings, cases}`` deleted."""
+        with self.db_manager.session_scope() as session:
+            from_source = select(Finding.finding_id).where(
+                Finding.data_source == data_source
+            )
+            touched = select(case_findings.c.case_id).where(
+                case_findings.c.finding_id.in_(from_source)
+            )
+            mixed = (
+                select(case_findings.c.case_id)
+                .join(Finding, Finding.finding_id == case_findings.c.finding_id)
+                .where(Finding.data_source != data_source)
+            )
+            case_ids = list(
+                session.scalars(
+                    select(Case.case_id).where(
+                        Case.case_id.in_(touched), Case.case_id.not_in(mixed)
+                    )
+                )
+            )
+            cases = 0
+            if case_ids:
+                cases = session.execute(
+                    delete(Case).where(Case.case_id.in_(case_ids))
+                ).rowcount
+            findings = session.execute(
+                delete(Finding).where(Finding.data_source == data_source)
+            ).rowcount
+            logger.info(
+                "Deleted %d finding(s) and %d case(s) from %s",
+                findings,
+                cases,
+                data_source,
+            )
+            return {"findings": findings, "cases": cases}
 
     @default_on_error(list)
     def get_findings_by_technique(

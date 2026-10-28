@@ -6,7 +6,7 @@ import homeCss from './home.css?inline'
 import { SETUP_HIDDEN_CHANGED } from './setupHidden'
 import { ToastProvider } from '../../shell/toast'
 import type { ConsoleScreenProps } from '../../shared/types'
-import { approvalsApi, configApi, triageApi, type NeedsYouItem } from '../../services/api'
+import { approvalsApi, configApi, ingestionApi, triageApi, type NeedsYouItem } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
   approvalsApi: {
@@ -17,6 +17,9 @@ vi.mock('../../services/api', () => ({
   configApi: {
     getSetupSteps: vi.fn(),
     setDemoMode: vi.fn(),
+  },
+  ingestionApi: {
+    loadSampleAlerts: vi.fn(),
   },
   triageApi: {
     get: vi.fn(),
@@ -624,6 +627,28 @@ describe('Home', () => {
       await screen.findByText('Demo mode enabled.'),
     ).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Explore with demo data' })).not.toBeInTheDocument()
+  })
+
+  it('sends sample alerts from the first-run card and says when they get triaged', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+      data: { steps: doneSteps, alerts_exist: 0, demo_enabled: false },
+    } as never)
+    vi.mocked(ingestionApi.loadSampleAlerts).mockResolvedValue({ data: { loaded: 8, total: 8 } } as never)
+    renderHome()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Send sample alerts' }))
+    expect(await screen.findByText(/8 sample alerts stored\. Vigil triages them within about five minutes/)).toBeInTheDocument()
+  })
+
+  it('hides Send sample alerts while demo mode is on', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+      data: { steps: doneSteps, alerts_exist: 0, demo_enabled: true },
+    } as never)
+    renderHome()
+    await screen.findByText('Not ready to connect yet?')
+    expect(screen.queryByRole('button', { name: 'Send sample alerts' })).not.toBeInTheDocument()
   })
 
   it('approves a reversible row after the 8 s fuse, not before', async () => {

@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { NotMeasured } from '../../shared/NotMeasured'
 import { SettingsCard } from '../../shared/ui'
-import { DemoDataClear, StreamsCard, UploadCard } from './DataIngestion'
+import { DemoDataClear, SampleAlertsCard, StreamsCard, UploadCard } from './DataIngestion'
 import DetectionRulesPanel from './DetectionRulesPanel'
 import LoglmCard from './LoglmCard'
 import type { SectionProps } from './types'
@@ -42,6 +42,7 @@ export default function DataUploadsSection({ notify }: SectionProps) {
     <div ref={page} className="data-page">
       <LoglmCard notify={notify} />
       <UploadCard notify={notify} />
+      <SampleAlertsCard notify={notify} />
       <StreamsCard notify={notify} />
       <div ref={rules} id="rule-sources" className="data-anchor">
         <DetectionRulesPanel notify={notify} />
