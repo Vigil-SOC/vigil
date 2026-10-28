@@ -4041,7 +4041,7 @@ export interface paths {
         };
         /**
          * Llm Path Health
-         * @description Per-provider routability for every signed-in user.
+         * @description Per-provider routability for the status line.
          */
         get: operations["get_api_llm_health"];
         put?: never;

@@ -814,11 +814,8 @@ def _role_entry(role: Role, holders: int) -> dict:
 
 
 def _require_permission(current_user: User, permission: str, session) -> None:
-    if not AuthService.check_permission(current_user.user_id, permission, session):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Permission denied: {permission} required",
-        )
+    # roles.manage is new in 0008; before it, nobody holds it and it stays shut.
+    deny_unless(current_user.user_id, permission, session, before_revision=permission)
 
 
 def _known(permissions: dict) -> dict:
