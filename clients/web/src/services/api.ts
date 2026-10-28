@@ -555,6 +555,9 @@ export const configApi = {
   setDemoMode: (enabled: boolean) => api.post('/config/demo-mode', { enabled }),
   getSetupSteps: () =>
     api.get<Schema<'SetupStepsResponse'>>('/config/setup-steps'),
+  getSetupState: () => api.get<Schema<'SetupState'>>('/config/setup-state'),
+  putSetupState: (update: Schema<'SetupStateUpdate'>) =>
+    api.put<Schema<'SetupState'>>('/config/setup-state', update),
   resetDemoData: () => api.post('/config/demo-mode/reset'),
   
   getIntegrations: () => api.get('/config/integrations'),
