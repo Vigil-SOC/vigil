@@ -48,7 +48,7 @@ EVENTS = [
         "severity": "high",
         "summary": "WINWORD.EXE started powershell.exe",
         "user": "j.doe",
-        "raw": {"CommandLine": "powershell -nop -enc AAAA"},
+        "raw": {"CommandLine": "powershell -nop -enc AAAA", "User": "EXAMPLE\\j.doe"},
         "mitre": "T1059.001",
     },
     {
@@ -138,6 +138,17 @@ def test_keys_negation_and_either(client, events):
     assert search(client, q="incident:case-7")["total"] == 1
     assert search(client, q="incident:*")["total"] == 1
     assert search(client, q="-incident:*")["total"] == 3
+    # events without the field are not left out with it (SQL's NOT NULL is NULL)
+    assert search(client, q="-incident:CASE-7")["total"] == 3
+    assert search(client, q="-user:j.doe")["total"] == 1
+
+
+def test_backslashes_and_like_wildcards_are_literal(client, events):
+    # the raw record is stored as JSON, which doubles the backslash
+    assert [e["id"] for e in search(client, q="EXAMPLE\\j.doe")["events"]] == [
+        "test-logs-3"
+    ]
+    assert search(client, q="j_doe")["total"] == 0
 
 
 def test_source_filter_keeps_counts_for_every_source(client, events):

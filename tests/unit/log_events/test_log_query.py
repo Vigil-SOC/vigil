@@ -53,10 +53,29 @@ def test_free_words_match_the_lowercased_search_text():
 def test_comma_means_either_and_minus_leaves_out():
     s = sql("sev:high,critical -action:deny")
     assert "log_events.severity = 'high' OR log_events.severity = 'critical'" in s
+    assert "NOT coalesce(lower(log_events.action) = 'deny', false)" in s
+
+
+def test_minus_keeps_events_without_the_field():
+    # NOT (incident = 'INC-7') is NULL for an everyday event with no incident,
+    # which would drop it too
     assert (
-        "lower(log_events.action) != 'deny'" in s
-        or "NOT (lower(log_events.action) = 'deny')" in s
+        sql("-incident:INC-7")
+        == "NOT coalesce(lower(log_events.incident) = 'inc-7', false)"
     )
+    assert sql("-user:j.doe").startswith("NOT coalesce(")
+
+
+def test_backslashes_are_kept_and_match_the_json_raw_record():
+    assert parse(r"EXAMPLE\j.doe C:\Windows\Temp") == [
+        Term(None, r"EXAMPLE\j.doe"),
+        Term(None, r"C:\Windows\Temp"),
+    ]
+    s = sql(r"example\j.doe")
+    # the summary has one backslash, the raw record's JSON has two; LIKE must
+    # not read either as an escape
+    assert r"'example\j.doe'" in s and r"'example\\j.doe'" in s
+    assert "ESCAPE '/'" in s
 
 
 def test_source_words_people_use():
@@ -86,3 +105,16 @@ def test_search_text_covers_the_readable_fields_and_the_raw_record():
     )
     for word in ("failed logon", "cr-10", "f.ortiz", "beacon", "powershell.exe"):
         assert word in text
+
+
+def test_short_aliases_ports_ip_prefixes_and_wildcards():
+    assert sql("source:admin") == "log_events.source IN ('admin')"  # not winsec's "ad"
+    assert sql("source:firewalls") == "log_events.source IN ('paloalto')"
+    assert sql("port:https") == "false" and sql("port:99999") == "false"
+    assert "'10.0.10.'" in sql("ip:10.0.10")  # not 10.0.100.x
+    assert (
+        sql("ip:2001:db8::1")
+        == "log_events.src_ip = '2001:db8::1' OR log_events.dst_ip = '2001:db8::1'"
+    )
+    assert "svc/_backup" in sql("user:svc_backup")
+    assert sql("sev:,") == "false"

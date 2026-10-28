@@ -107,8 +107,10 @@ export const sourceName = (key: string) => SOURCE_NAMES[key] ?? key
 export function toCsv(rows: LogRow[]): string {
   const cols: (keyof LogRow)[] = ['time', 'source', 'class', 'severity', 'srcIp', 'srcHost', 'dstIp', 'dstHost', 'dstPort', 'user', 'action', 'summary', 'loglm', 'mitre', 'incident', 'id']
   const cell = (v: unknown) => {
-    const s = v === null || v === undefined ? '' : String(v)
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+    let s = v === null || v === undefined ? '' : String(v)
+    // log text comes from the attacker's side: a cell starting =, +, - or @ would run as a formula in a spreadsheet
+    if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
   }
   return [cols.join(','), ...rows.map((r) => cols.map((c) => cell(r[c])).join(','))].join('\n')
 }

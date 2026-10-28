@@ -165,6 +165,8 @@ export default function LogsScreen() {
   const [now, setNow] = useState(Date.now())
   const [attempt, setAttempt] = useState(0)
   const abort = useRef<AbortController | null>(null)
+  // a person's search or Show more is in flight; a live tick waits so it does not cancel it
+  const inflight = useRef(false)
   const shownIds = useRef<Set<string>>(new Set())
 
   // follow ?q= and ?range= when another screen links here
@@ -194,7 +196,10 @@ export default function LogsScreen() {
     abort.current?.abort()
     const ctl = new AbortController()
     abort.current = ctl
-    if (!quiet) setLoading(true)
+    if (!quiet) {
+      setLoading(true)
+      inflight.current = true
+    }
     try {
       const r = await logsApi.search(argsFor(0), ctl.signal)
       if (ctl.signal.aborted) return
@@ -207,14 +212,21 @@ export default function LogsScreen() {
       setDown(false)
     } catch (e) {
       if (ctl.signal.aborted) return
+      if (quiet) return // one missed live poll keeps the rows on screen; the next tick asks again
       const res = (e as { response?: { status?: number; data?: { detail?: unknown } } }).response
       if (res?.status === 422) {
+        // nothing from the last search stays under the error
+        setResult(null)
+        setRows([])
         setError(typeof res.data?.detail === 'string' ? res.data.detail : 'That search could not be read.')
       } else {
         setDown(true)
       }
     } finally {
-      if (!ctl.signal.aborted) setLoading(false)
+      if (!ctl.signal.aborted) {
+        setLoading(false)
+        inflight.current = false
+      }
     }
   }, [argsFor])
 
@@ -231,7 +243,7 @@ export default function LogsScreen() {
     if (!live || !isRelative(range)) return
     const id = setInterval(() => {
       setNow(Date.now())
-      if (!paused) run(true)
+      if (!paused && !inflight.current) run(true)
       logsApi.sources().then(setSources).catch(() => undefined)
     }, LIVE_EVERY)
     return () => clearInterval(id)
@@ -242,9 +254,13 @@ export default function LogsScreen() {
   }, [])
 
   const more = async () => {
-    if (!result) return
+    if (!result || loading) return // a newer search is on its way; its rows are not these
     const args = { ...argsFor(rows.length), start: result.start, end: result.end }
-    const r = await logsApi.search(args).catch(() => null)
+    const ctl = abort.current // a new search aborts this one, so its page is not added under the new rows
+    inflight.current = true
+    const r = await logsApi.search(args, ctl?.signal).catch(() => null)
+    if (ctl === abort.current) inflight.current = false
+    if (ctl?.signal.aborted || ctl !== abort.current) return
     if (r) setRows((prev) => [...prev, ...r.events.filter((e) => !prev.some((p) => p.id === e.id))])
   }
 
@@ -522,7 +538,7 @@ export default function LogsScreen() {
           </table>
         </div>
         {rows.length < total && (
-          <button type="button" className="btn ghost lg-more" onClick={more}>
+          <button type="button" className="btn ghost lg-more" disabled={loading} onClick={more}>
             Show {Math.min(PAGE, total - rows.length).toLocaleString()} more of {(total - rows.length).toLocaleString()}
           </button>
         )}

@@ -98,6 +98,13 @@ describe('the search language', () => {
     expect(csv[0].startsWith('time,source,class')).toBe(true)
     expect(csv[1]).toContain('"a, ""b"""')
   })
+
+  it('keeps a spreadsheet from running log text as a formula', () => {
+    const csv = toCsv([event({ summary: '=HYPERLINK("http://x","click")', user: '-enc AAAA' })])
+    expect(csv).toContain(`"'=HYPERLINK(""http://x"",""click"")"`)
+    expect(csv).toContain(`'-enc AAAA`)
+    expect(toCsv([event({ summary: 'a\r=1+1' })])).toContain('"a\r=1+1"')
+  })
 })
 
 describe('LogsScreen', () => {
@@ -164,6 +171,8 @@ describe('LogsScreen', () => {
     vi.mocked(logsApi.search).mockRejectedValue({ response: { status: 422, data: { detail: 'start must be before end' } } })
     fireEvent.click(screen.getByRole('button', { name: 'Search' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('start must be before end')
+    // nothing from the last search stays under the error
+    expect(screen.queryByText('WINWORD.EXE started powershell.exe')).not.toBeInTheDocument()
   })
 
   it('offers a retry when the log store does not answer', async () => {

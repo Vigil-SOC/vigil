@@ -15,7 +15,7 @@ import shlex
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import and_, func, not_, or_
+from sqlalchemy import and_, false, func, not_, or_
 
 from core.storage.models.log_event import LogEvent
 
@@ -56,9 +56,17 @@ class Term:
     op: Optional[str] = None
 
 
+def _tokens(q: str) -> List[str]:
+    lex = shlex.shlex(q, posix=True)
+    lex.whitespace_split = True
+    lex.escape = ""  # keep backslashes: CORVANE\f.ortiz, C:\Windows\Temp
+    lex.commenters = ""
+    return list(lex)
+
+
 def parse(q: str) -> List[Term]:
     try:
-        tokens = shlex.split(q or "")
+        tokens = _tokens(q or "")
     except ValueError:  # an unclosed quote reads as plain words
         tokens = (q or "").replace('"', " ").split()
     terms: List[Term] = []
@@ -83,20 +91,25 @@ def _source_keys(value: str) -> List[str]:
     return [
         k
         for k, words in SOURCE_ALIASES.items()
-        if k == v or any(w.startswith(v) or v.startswith(w) for w in words)
+        # "fire" finds firewall and "firewalls" too, but a short alias is no
+        # prefix of other words: "admin" is not "ad"
+        if k == v
+        or any(w.startswith(v) or (len(w) >= 4 and v.startswith(w)) for w in words)
     ] or [v]
 
 
 def _like(col, value: str):
-    return col.ilike(f"%{value}%")
+    # "_" and "%" in svc_backup are letters, not wildcards
+    return col.icontains(value, autoescape=True)
 
 
 def condition(t: Term):
     if (
         t.key != "loglm" and "," in t.value and " " not in t.value
     ):  # sev:high,critical means either
-        c = or_(*[condition(Term(t.key, v)) for v in t.value.split(",") if v])
-        return not_(c) if t.negate else c
+        parts = [condition(Term(t.key, v)) for v in t.value.split(",") if v]
+        c = or_(*parts) if parts else false()
+        return _negate(c) if t.negate else c
     v = t.value
     E = LogEvent
     if t.key == "source":
@@ -104,24 +117,30 @@ def condition(t: Term):
     elif t.key == "host":
         c = or_(_like(E.src_host, v), _like(E.dst_host, v))
     elif t.key == "ip":
-        c = (
-            or_(E.src_ip == v, E.dst_ip == v)
-            if not v.endswith(".") and v.count(".") == 3
-            else or_(E.src_ip.startswith(v), E.dst_ip.startswith(v))
-        )
+        if ":" in v or (v.count(".") == 3 and not v.endswith(".")):
+            # a whole address (IPv6 is compared whole)
+            c = or_(E.src_ip == v, E.dst_ip == v)
+        else:
+            # a prefix ends on a dot, so 10.0.10 does not take in 10.0.100.x
+            p = v if v.endswith(".") else f"{v}."
+            c = or_(
+                E.src_ip.startswith(p, autoescape=True),
+                E.dst_ip.startswith(p, autoescape=True),
+            )
     elif t.key == "user":
         c = _like(E.user_name, v)
     elif t.key == "port":
-        c = E.dst_port == int(v) if v.isdigit() else E.dst_port.is_(None)
+        # not a port: nothing matches
+        c = E.dst_port == int(v) if v.isdigit() and int(v) <= 65535 else false()
     elif t.key == "incident":
         # incident:* is any event tied to a case
         c = E.incident.isnot(None) if v == "*" else func.lower(E.incident) == v.lower()
     elif t.key == "mitre":
-        c = E.mitre.ilike(f"{v}%")
+        c = E.mitre.istartswith(v, autoescape=True)
     elif t.key == "sev":
         c = E.severity == v.lower()
     elif t.key == "class":
-        c = E.event_class.ilike(f"{v}%")
+        c = E.event_class.istartswith(v, autoescape=True)
     elif t.key == "action":
         c = func.lower(E.action) == v.lower()
     elif t.key == "id":
@@ -138,8 +157,17 @@ def condition(t: Term):
             "<=": E.loglm <= n,
         }[t.op or ">="]
     else:
-        c = E.search_text.contains(v.lower())
-    return not_(c) if t.negate else c
+        w = v.lower()
+        c = E.search_text.contains(w, autoescape=True)
+        if "\\" in w:  # the raw record is stored as JSON, which doubles each backslash
+            c = or_(c, E.search_text.contains(w.replace("\\", "\\\\"), autoescape=True))
+    return _negate(c) if t.negate else c
+
+
+def _negate(c):
+    """NOT, where an event without the field counts as not matching (SQL's NOT
+    NULL is NULL)."""
+    return not_(func.coalesce(c, false()))
 
 
 def where(q: str):
