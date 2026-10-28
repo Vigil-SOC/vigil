@@ -1,4 +1,4 @@
-"""Service for generating custom integrations using Claude AI."""
+"""Service for generating custom integrations with the assigned AI model."""
 
 import json
 import logging
@@ -10,7 +10,6 @@ from typing import Any, Dict, List, Optional
 
 from core.config import vigil_path
 from core.exceptions import NotFoundError, SOCError
-from core.llm.defaults import DEFAULT_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +97,7 @@ class CustomIntegrationService:
         conversation_history: Optional[List[Dict[str, str]]] = None,
     ) -> Dict[str, Any]:
         """
-        Generate a custom integration from API documentation using Claude.
+        Generate a custom integration from API documentation with the assigned model.
 
         Args:
             documentation: API or MCP documentation text
@@ -110,49 +109,34 @@ class CustomIntegrationService:
             Dictionary with integration metadata and server code
         """
         try:
-            # Import Claude service
-            from core.llm.harness.claude import ClaudeService
+            from core.llm.oneshot import NoProviderConfigured, complete
 
-            # Initialize Claude
-            claude = await ClaudeService.acreate()
-
-            # Check if Claude is configured
-            if not claude.api_key or not claude.client:
-                return {
-                    "success": False,
-                    "error": "Claude API is not configured. Please configure it in Settings.",
-                }
-
-            # Create prompt for Claude to analyze the documentation
             system_prompt = "You are an expert at analyzing API documentation and generating Python MCP (Model Context Protocol) server code for security integrations."
 
-            if conversation_history:
-                # Interactive mode - continue the conversation
-                # Extract the last user message
-                last_message = (
-                    conversation_history[-1]["content"] if conversation_history else ""
-                )
-                context = (
-                    conversation_history[:-1] if len(conversation_history) > 1 else None
-                )
-
-                response = await claude.achat(
-                    message=last_message,
-                    context=context,
-                    system_prompt=system_prompt,
-                    model=DEFAULT_MODEL,
-                )
-            else:
-                # Initial generation - create the analysis prompt
-                prompt = self._create_analysis_prompt(
-                    documentation, integration_name, category
-                )
-
-                response = await claude.achat(
-                    message=prompt,
-                    system_prompt=system_prompt,
-                    model=DEFAULT_MODEL,
-                )
+            try:
+                if conversation_history:
+                    # Interactive mode - continue the conversation
+                    last_message = conversation_history[-1]["content"]
+                    context = (
+                        conversation_history[:-1]
+                        if len(conversation_history) > 1
+                        else None
+                    )
+                    response = await complete(
+                        message=last_message,
+                        context=context,
+                        system_prompt=system_prompt,
+                    )
+                else:
+                    # Initial generation - create the analysis prompt
+                    prompt = self._create_analysis_prompt(
+                        documentation, integration_name, category
+                    )
+                    response = await complete(
+                        message=prompt, system_prompt=system_prompt
+                    )
+            except NoProviderConfigured as e:
+                return {"success": False, "error": str(e)}
 
             # Check if Claude is asking questions or ready to generate
             if self._is_asking_questions(response):
@@ -186,7 +170,7 @@ class CustomIntegrationService:
             if not integration_data:
                 return {
                     "success": False,
-                    "error": "Failed to parse Claude's response. The documentation may be unclear or incomplete.",
+                    "error": "Failed to parse the model's response. The documentation may be unclear or incomplete.",
                 }
 
             # Generate integration ID
