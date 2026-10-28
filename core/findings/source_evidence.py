@@ -12,7 +12,7 @@ import json
 import math
 from collections.abc import Mapping
 from datetime import date, datetime
-from typing import Annotated, Any, Dict, List, Literal, Optional, get_args
+from typing import Annotated, Any, Dict, List, Literal, Optional, Tuple, get_args
 
 from pydantic import (
     BaseModel,
@@ -21,6 +21,8 @@ from pydantic import (
     ValidatorFunctionWrapHandler,
     WrapValidator,
 )
+
+from core.findings.netflow_digest import netflow_digest
 
 SOURCE_EVIDENCE_VERSION = 1
 SOURCE_EVIDENCE_PREVIEW_LIMIT = 100
@@ -280,22 +282,53 @@ def source_evidence_from_loglm_row(row: Mapping[str, Any]) -> Optional[Dict[str,
     into the same envelope.  ``source_evidence_kind`` is the explicit renderer
     selector; without it, embedded events use the generic-log renderer.
     """
+    return loglm_row_evidence(row)[0]
+
+
+def _with_digest(
+    envelope: Dict[str, Any], records: Any
+) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+    """Pair an available NetFlow envelope with a digest of *all* its records,
+    taken before the envelope keeps only its preview."""
+    if (
+        envelope.get("status") != "available"
+        or envelope.get("telemetry_kind") != "netflow"
+        or not isinstance(records, (list, tuple))
+        or not records
+    ):
+        return envelope, None
+    return envelope, netflow_digest(
+        records, total_records=envelope.get("total_records")
+    )
+
+
+def loglm_row_evidence(
+    row: Mapping[str, Any],
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """``source_evidence_from_loglm_row`` plus, for NetFlow, the flow digest."""
     kind_value = row.get("source_evidence_kind")
     kind = _telemetry_kind(kind_value)
     schema_id = row.get("source_evidence_schema_id")
     if kind_value is not None and kind is None:
-        return _invalid_evidence(schema_id=schema_id)
+        return _invalid_evidence(schema_id=schema_id), None
     explicit = row.get("source_evidence")
     if explicit is not None:
-        return normalize_source_evidence(
+        envelope = normalize_source_evidence(
             explicit,
             default_kind=kind,
             default_schema_id=schema_id,
         )
+        if isinstance(explicit, str):
+            try:
+                explicit = json.loads(explicit)
+            except (TypeError, ValueError):
+                explicit = None
+        records = explicit.get("records") if isinstance(explicit, Mapping) else None
+        return _with_digest(envelope, records)
 
     status = _text(row.get("source_evidence_status"))
     if status is not None and status not in SOURCE_EVIDENCE_STATUSES:
-        return _invalid_evidence(kind, schema_id)
+        return _invalid_evidence(kind, schema_id), None
     events_value = row.get("events_json")
     sequence_value = row.get("sequence")
     raw_text = (
@@ -309,20 +342,23 @@ def source_evidence_from_loglm_row(row: Mapping[str, Any]) -> Optional[Dict[str,
         for value in (kind_value, schema_id, status, events_value, sequence_value)
     )
     if not has_evidence_columns:
-        return None
+        return None, None
 
     resolved_kind = kind or "generic_log"
     if status in {"not_in_artifact", "redacted", "invalid"}:
-        return normalize_source_evidence(
-            {
-                "version": SOURCE_EVIDENCE_VERSION,
-                "telemetry_kind": resolved_kind,
-                "schema_id": _text(schema_id) or _DEFAULT_SCHEMA_IDS[resolved_kind],
-                "status": status,
-                "provenance": (
-                    _text(row.get("source_evidence_provenance")) or "embedded"
-                ),
-            }
+        return (
+            normalize_source_evidence(
+                {
+                    "version": SOURCE_EVIDENCE_VERSION,
+                    "telemetry_kind": resolved_kind,
+                    "schema_id": _text(schema_id) or _DEFAULT_SCHEMA_IDS[resolved_kind],
+                    "status": status,
+                    "provenance": (
+                        _text(row.get("source_evidence_provenance")) or "embedded"
+                    ),
+                }
+            ),
+            None,
         )
 
     records = None
@@ -332,35 +368,38 @@ def source_evidence_from_loglm_row(row: Mapping[str, Any]) -> Optional[Dict[str,
                 records = json.loads(events_value)
             except (TypeError, ValueError):
                 if raw_text is None:
-                    return _invalid_evidence(resolved_kind, schema_id)
+                    return _invalid_evidence(resolved_kind, schema_id), None
                 records = None
         else:
             records = events_value
         if records is not None and not isinstance(records, (list, tuple)):
             if raw_text is None:
-                return _invalid_evidence(resolved_kind, schema_id)
+                return _invalid_evidence(resolved_kind, schema_id), None
             records = None
 
     if records is None and raw_text is None:
         missing_status = (
             status if status in SOURCE_EVIDENCE_STATUSES else "not_in_artifact"
         )
-        return normalize_source_evidence(
-            {
-                "version": SOURCE_EVIDENCE_VERSION,
-                "telemetry_kind": resolved_kind,
-                "schema_id": _text(schema_id) or _DEFAULT_SCHEMA_IDS[resolved_kind],
-                "status": missing_status,
-                "provenance": (
-                    _text(row.get("source_evidence_provenance")) or "embedded"
-                ),
-            }
+        return (
+            normalize_source_evidence(
+                {
+                    "version": SOURCE_EVIDENCE_VERSION,
+                    "telemetry_kind": resolved_kind,
+                    "schema_id": _text(schema_id) or _DEFAULT_SCHEMA_IDS[resolved_kind],
+                    "status": missing_status,
+                    "provenance": (
+                        _text(row.get("source_evidence_provenance")) or "embedded"
+                    ),
+                }
+            ),
+            None,
         )
 
     total_records = row.get("source_evidence_total_records")
     if total_records is None and isinstance(records, (list, tuple)):
         total_records = len(records)
-    return normalize_source_evidence(
+    envelope = normalize_source_evidence(
         {
             "version": SOURCE_EVIDENCE_VERSION,
             "telemetry_kind": resolved_kind,
@@ -372,6 +411,7 @@ def source_evidence_from_loglm_row(row: Mapping[str, Any]) -> Optional[Dict[str,
             "raw_text": raw_text,
         }
     )
+    return _with_digest(envelope, records)
 
 
 def normalize_finding_source_evidence(finding: Dict[str, Any]) -> Dict[str, Any]:

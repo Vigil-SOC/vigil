@@ -103,14 +103,20 @@ class TestStatus:
 
     # A run that fails before its ledger opens is finalised on workflow_runs by the
     # mirror; reading only the ledger reported it queued forever (#3259).
-    def test_a_run_that_failed_before_its_ledger_is_terminal_not_queued(self):
+    def test_a_run_that_failed_before_its_ledger_is_terminal_not_queued(
+        self, authenticate_app
+    ):
         row = {
             "status": "failed",
             "outcome": "failed",
             "error": "its spec cannot be built: bad",
             "reason": "its spec cannot be built: bad",
         }
-        body = _client(FakeSession(run_row=row)).get(f"/api/agent-runs/{RUN}").json()
+        body = (
+            _client(FakeSession(run_row=row), authenticate_app)
+            .get(f"/api/agent-runs/{RUN}")
+            .json()
+        )
         assert body == {
             "run_id": RUN,
             "status": "terminal",
@@ -120,13 +126,19 @@ class TestStatus:
         }
 
     # A row the API finalised itself (queue down) has an error but no outcome.
-    def test_a_run_finalised_without_an_outcome_reports_its_status(self):
+    def test_a_run_finalised_without_an_outcome_reports_its_status(
+        self, authenticate_app
+    ):
         row = {"status": "failed", "error": "run queue unavailable"}
-        body = _client(FakeSession(run_row=row)).get(f"/api/agent-runs/{RUN}").json()
+        body = (
+            _client(FakeSession(run_row=row), authenticate_app)
+            .get(f"/api/agent-runs/{RUN}")
+            .json()
+        )
         assert (body["status"], body["outcome"]) == ("terminal", "failed")
         assert body["reason"] == "run queue unavailable"
 
-    def test_a_running_row_with_no_events_is_still_queued(self):
+    def test_a_running_row_with_no_events_is_still_queued(self, authenticate_app):
         session = FakeSession(run_row={"status": "running"})
-        body = _client(session).get(f"/api/agent-runs/{RUN}").json()
+        body = _client(session, authenticate_app).get(f"/api/agent-runs/{RUN}").json()
         assert body["status"] == "queued"

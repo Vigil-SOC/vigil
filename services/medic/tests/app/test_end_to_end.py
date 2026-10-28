@@ -31,6 +31,8 @@ JSON_REPLIES = {
     "/_gw/status": b'{"state":"ok","since":0}',
     "/containers/json": b"[]",
     "/api/federation/sources": b'{"sources":[],"global":{"enabled":false}}',
+    "/api/triage": b'{"sources":[]}',
+    "/api/v1/findings": b'{"findings":[]}',
 }
 
 

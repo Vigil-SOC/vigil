@@ -350,7 +350,13 @@ DEEPTEMPO_FINDING_TOOLS = [
             "escalations, and a page of the findings attached to the case, newest "
             "first, each a summary (id, title, severity, source, time, the hosts "
             "and users it names), with the total the case holds. Page with offset "
-            "while has_more is true. get_finding returns a finding's full record."
+            "while has_more is true. get_finding returns a finding's full record. "
+            "When the case holds network-flow findings, flows sums every flow "
+            "of all of them per host pair (not just this page): flows, first "
+            "and last seen, distinct destination ports, answered flows (any "
+            "bytes or packets back), bytes and packets each way, top servers. "
+            "no_digest names flow findings whose flows it does not count; "
+            "unknown counts flows that lacked a byte or packet field."
         ),
         "input_schema": {
             "type": "object",
