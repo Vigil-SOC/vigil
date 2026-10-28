@@ -258,7 +258,7 @@ function Expanded({ row, data }: { row: TriageRow; data: TriagePayload }) {
   )
 }
 
-const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, setViewFull, go }) => {
+const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, setViewFull, goSettings }) => {
   const autoOpsOff = useAutoOpsOff()
   const [searchParams, setSearchParams] = useSearchParams()
   const kind = searchParams.get('kind') ?? ''
@@ -411,7 +411,7 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
         </button>
       </div>
 
-      {autoOpsOff && <AutoOpsOffBanner go={go} />}
+      {autoOpsOff && <AutoOpsOffBanner goSettings={goSettings} />}
       {phase === 'loading' && <EmptyState loading icon="clock" title="Loading triage…" />}
       {phase === 'error' && (
         <EmptyState error icon="alert" title="Couldn’t load triage" primary={{ label: 'Retry', onClick: load, icon: 'refresh' }} />

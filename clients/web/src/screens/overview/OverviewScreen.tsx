@@ -72,7 +72,7 @@ function EvidenceBody({ item }: { item: OverviewFeedItem }) {
   )
 }
 
-export default function OverviewScreen({ go, openCase, setViewFull, setWallMode, chatOpen }: ConsoleScreenProps) {
+export default function OverviewScreen({ go, goSettings, openCase, setViewFull, setWallMode, chatOpen }: ConsoleScreenProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
   const alertId = searchParams.get('alert') || null // an empty value is no alert
@@ -302,7 +302,7 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
       {phase === 'ready' && data && (
         <>
           <FlowDiagram data={data} wall={wall} onToggleWall={toggleWall} />
-          {!wall && <AgentCards data={data} go={go} />}
+          {!wall && <AgentCards data={data} go={go} goSettings={goSettings} />}
         </>
       )}
       </div>
