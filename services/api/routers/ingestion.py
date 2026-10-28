@@ -415,7 +415,7 @@ class SampleAlertsCleared(BaseModel):
 
 
 # Clearing deletes the cases that held only sample alerts.
-_SAMPLE_CLEAR = [*_FINDINGS_WRITE, permission_gate("cases.write")]
+_SAMPLE_CLEAR = [*_FINDINGS_WRITE, permission_gate("cases.delete")]
 
 
 def _sample_db():
@@ -469,10 +469,32 @@ async def load_sample_alerts():
     response_model=SampleAlertsCleared,
     dependencies=_SAMPLE_CLEAR,
 )
-async def clear_sample_alerts():
+async def clear_sample_alerts(
+    current_user: User = Depends(get_current_user),
+):
     """Delete the sample alerts and the cases that held only them."""
+    from core.storage.config_service import get_config_service
+
     db = _sample_db()
     result = await run_in_threadpool(db.delete_findings_from_source, SAMPLE_DATA_SOURCE)
+    live = result["live"]
+    if live:
+        plural = "s" if len(live) != 1 else ""
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"a sample case has {len(live)} live investigation{plural} "
+                f"({', '.join(live)}); kill or finish them first"
+            ),
+        )
+    get_config_service(user_id=str(current_user.user_id)).record_audit(
+        config_type="findings",
+        config_key=SAMPLE_DATA_SOURCE,
+        action="delete",
+        old_value={"findings": result["findings"], "cases": result["cases"]},
+        new_value=None,
+        change_reason="Sample alerts cleared via API",
+    )
     return SampleAlertsCleared(
         findings_deleted=result["findings"], cases_deleted=result["cases"]
     )

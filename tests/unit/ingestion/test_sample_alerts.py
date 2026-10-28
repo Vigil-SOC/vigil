@@ -4,6 +4,7 @@ and that the daemon's backfill sees loaded samples as untriaged."""
 from __future__ import annotations
 
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -16,6 +17,7 @@ from core.ingestion.sample_alerts import (
     build_sample_alerts,
     sample_finding_id,
 )
+from core.storage.models import Investigation
 from core.storage.unit_of_work import unit_of_work
 
 pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.database]
@@ -25,6 +27,9 @@ REAL = "test-sample-real-1"
 
 def _purge():
     with unit_of_work() as s:
+        s.execute(
+            text("DELETE FROM investigations WHERE investigation_id LIKE 'test-sample-%'")
+        )
         s.execute(text("DELETE FROM cases WHERE case_id LIKE 'test-sample-%'"))
         s.execute(
             text("DELETE FROM findings WHERE data_source = :src OR finding_id = :real"),
@@ -43,13 +48,17 @@ def db(throwaway_database):
 
 @pytest.fixture
 def client(db, monkeypatch):
+    from core.auth.auth_service import AuthService
+    from core.auth.current_user import get_current_user
     from services.api.routers import ingestion
 
     monkeypatch.setattr(ingestion, "is_demo_mode", lambda: False)
+    monkeypatch.setattr(AuthService, "check_permission", lambda *_a, **_k: True)
     app = FastAPI()
     app.include_router(ingestion.router, prefix=ingestion.ROUTER_META.prefix)
-    for gate in ingestion._SAMPLE_CLEAR:
-        app.dependency_overrides[gate.dependency] = lambda: None
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+        user_id="u-1"
+    )
     return TestClient(app)
 
 
@@ -112,6 +121,28 @@ def test_clear_removes_samples_and_their_own_cases_only(client, db):
     kept = db.get_case("test-sample-case-b")
     assert [f.finding_id for f in kept.findings] == [REAL]
     assert db.get_finding(REAL) is not None
+
+
+def test_clear_refuses_while_a_sample_case_is_being_investigated(client, db):
+    client.post("/api/ingest/sample-alerts")
+    db.create_case("test-sample-case-live", "Sample story", [sample_finding_id("vuln-scan")])
+    with unit_of_work() as s:
+        s.add(
+            Investigation(
+                investigation_id="test-sample-inv-live",
+                case_id="test-sample-case-live",
+                workflow_id="incident-response",
+                trigger_type="finding",
+                status="executing",
+                workdir="/tmp/inv",
+            )
+        )
+
+    res = client.delete("/api/ingest/sample-alerts")
+    assert res.status_code == 409
+    assert "test-sample-inv-live" in res.json()["detail"]
+    assert db.get_case("test-sample-case-live") is not None
+    assert client.get("/api/ingest/sample-alerts").json()["loaded"] == SAMPLE_COUNT
 
 
 def test_demo_mode_refuses(client, monkeypatch):

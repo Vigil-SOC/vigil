@@ -23,10 +23,12 @@ from core.storage.case_repository import CaseRepository
 from core.storage.connection import get_db_manager
 from core.storage.ip_exclusion_repository import exclusion_view_filter
 from core.storage.models import (
+    LIVE_INVESTIGATION_STATUSES,
     AIDecisionLog,
     Case,
     Finding,
     FindingMitrePrediction,
+    Investigation,
     case_findings,
 )
 from core.storage.schemas import FindingSchema
@@ -978,7 +980,10 @@ class DatabaseService:
     def delete_findings_from_source(self, data_source: str) -> Dict[str, int]:
         """Delete every finding with this ``data_source``, and the cases that
         held only such findings. A case that also holds another finding keeps
-        it and only loses the link. Returns ``{findings, cases}`` deleted."""
+        it and only loses the link. Returns ``{findings, cases, live}``: when
+        one of those cases has a live Investigation nothing is deleted and
+        ``live`` names the blocking runs, as a single case delete refuses
+        (#1001)."""
         with self.db_manager.session_scope() as session:
             from_source = select(Finding.finding_id).where(
                 Finding.data_source == data_source
@@ -998,6 +1003,17 @@ class DatabaseService:
                     )
                 )
             )
+            if case_ids:
+                live = list(
+                    session.scalars(
+                        select(Investigation.investigation_id).where(
+                            Investigation.case_id.in_(case_ids),
+                            Investigation.status.in_(LIVE_INVESTIGATION_STATUSES),
+                        )
+                    )
+                )
+                if live:
+                    return {"findings": 0, "cases": 0, "live": live}
             cases = 0
             if case_ids:
                 cases = session.execute(
@@ -1012,7 +1028,7 @@ class DatabaseService:
                 cases,
                 data_source,
             )
-            return {"findings": findings, "cases": cases}
+            return {"findings": findings, "cases": cases, "live": []}
 
     @default_on_error(list)
     def get_findings_by_technique(
