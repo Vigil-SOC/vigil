@@ -1,5 +1,7 @@
 import { IntegrationMetadata } from './integrationSchema'
 import { basePath } from './basePath'
+import oktaLogo from '../assets/vendors/okta.svg'
+import splunkLogo from '../assets/vendors/splunk.svg'
 
 const INTEGRATIONS: IntegrationMetadata[] = [
   {
@@ -351,6 +353,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'splunk',
     name: 'Splunk',
+    logo: splunkLogo,
     category: 'SIEM',
     description: 'Connect to Splunk Enterprise or Splunk Cloud for log aggregation, search, and analysis with natural language query generation.',
     functionality_type: 'Log Analysis & SIEM',
@@ -710,6 +713,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'okta',
     name: 'Okta',
+    logo: oktaLogo,
     category: 'Identity & Access',
     description: 'Integrate with Okta for identity and access management, SSO, and MFA.',
     functionality_type: 'Identity & Access Management',

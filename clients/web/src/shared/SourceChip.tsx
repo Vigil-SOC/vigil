@@ -7,7 +7,7 @@ interface SourceChipProps {
 }
 
 export default function SourceChip({ source }: SourceChipProps) {
-  const { label, color, icon } = useSourceBadge()(source)
+  const { label, color, icon, logo } = useSourceBadge()(source)
   return (
     <span
       className="source-chip"
@@ -17,7 +17,7 @@ export default function SourceChip({ source }: SourceChipProps) {
         borderColor: `${color}40`,
       }}
     >
-      <Icon name={icon as IconName} size={12} />
+      {logo ? <img className="source-chip-logo" src={logo} alt="" /> : <Icon name={icon as IconName} size={12} />}
       <span>{label}</span>
     </span>
   )

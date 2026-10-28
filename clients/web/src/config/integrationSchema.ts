@@ -79,6 +79,9 @@ export interface IntegrationMetadata {
   functionality_type?: string
   has_ui?: boolean
   icon?: string
+  /** Vendor logo from the design package (assets/vendors); without one the
+   *  console shows the category icon (PRD D6). */
+  logo?: string
   fields: IntegrationField[]
   docs_url?: string
   // When true, the wizard appends the shared PROXY_FIELDS block to

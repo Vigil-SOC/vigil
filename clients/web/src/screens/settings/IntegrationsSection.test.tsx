@@ -227,6 +227,25 @@ describe('Integrations: Connected table', () => {
     expect(row('Security Detections').queryByRole('button', { name: 'Fetch rules' })).not.toBeInTheDocument()
   })
 
+  it('marks a row with its vendor logo, or its category icon when the vendor has none', async () => {
+    vi.mocked(mcpApi.listServers).mockResolvedValue({ data: { servers: ['splunk', 'crowdstrike'] } } as never)
+    vi.mocked(mcpApi.getStatuses).mockResolvedValue({
+      data: {
+        statuses: [
+          { name: 'splunk', status: 'running', enabled: true },
+          { name: 'crowdstrike', status: 'running', enabled: true },
+        ],
+      },
+    } as never)
+    renderSection()
+    await screen.findByRole('tab', { name: 'Connected 2' })
+    const mark = (name: string) => screen.getByText(name, { selector: '.int-name' }).closest('.int-ident')!.querySelector('.int-mark')!
+    // the official card has no setup form, but the catalog still names its vendor
+    expect(mark('Splunk').querySelector('img')).toHaveAttribute('src', expect.stringContaining('splunk.svg'))
+    expect(mark('Crowdstrike').querySelector('img')).toBeNull()
+    expect(mark('Crowdstrike').querySelector('svg')).not.toBeNull()
+  })
+
   it('shows a dash, not a level, where nothing was ever tested', async () => {
     vi.mocked(configApi.getIntegrations).mockResolvedValue({
       data: { enabled_integrations: ['github'], integrations: {}, secrets_set: {}, last_test: {} },
@@ -561,6 +580,13 @@ describe('Integrations: Add integration tab', () => {
     expect(within(card('GitHub')).queryByRole('button', { name: /Connect/ })).not.toBeInTheDocument()
     expect(within(card('Okta')).getByText('Available')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /Add integration/ })).toHaveAccessibleName(/^Add integration \d+$/)
+  })
+
+  it('shows the vendor logo on a card that has one, and the category icon on one that does not', async () => {
+    await open()
+    expect(card('Okta').querySelector('.int-mark img')).toHaveAttribute('src', expect.stringContaining('okta.svg'))
+    expect(card('CrowdStrike Falcon').querySelector('.int-mark img')).toBeNull()
+    expect(card('CrowdStrike Falcon').querySelector('.int-mark svg')).not.toBeNull()
   })
 
   it('filters by chip and search', async () => {
