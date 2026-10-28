@@ -31,7 +31,7 @@ class _Storage:
 
 
 @pytest.fixture
-def app(monkeypatch):
+def app(monkeypatch, authenticate_app):
     from fastapi import FastAPI
 
     from core.agents.agent_ai_generator import AgentAIGenerator
@@ -40,7 +40,6 @@ def app(monkeypatch):
     from core.workflows import workflows_router
     from core.workflows.workflow_ai_generator import WorkflowAIGenerator
     from services.api.main import health_check
-    from services.api.middleware.auth import get_current_active_user
     from services.api.routers import custom_agents, custom_integrations
 
     reply = {"value": "", "blocked_at": None}
@@ -65,9 +64,7 @@ def app(monkeypatch):
     monkeypatch.setattr(target, "resolve_dispatch", slow_resolve)
     monkeypatch.setattr(target, "resolve_effort", lambda component: None)
     monkeypatch.setattr(LLMRouter, "dispatch", dispatch)
-    monkeypatch.setattr(
-        custom_integrations, "require_integrations_admin", lambda u: None
-    )
+    monkeypatch.setattr(custom_integrations, "deny_unless", lambda *a, **k: None)
 
     # A fresh app with the real routers and health handler, so the shared
     # services.api.main app is left untouched for other tests.
@@ -75,7 +72,7 @@ def app(monkeypatch):
     for module in (workflows_router, custom_agents, custom_integrations):
         app.include_router(module.router, prefix=module.ROUTER_META.prefix)
     app.add_api_route("/api/health", health_check, methods=["GET"])
-    app.dependency_overrides[get_current_active_user] = lambda: object()
+    authenticate_app(app)
     app.state.health_storage = _Storage()
     app.state.workflow_ai = WorkflowAIGenerator()
     app.state.agent_ai = AgentAIGenerator()

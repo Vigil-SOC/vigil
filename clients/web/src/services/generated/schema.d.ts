@@ -4041,7 +4041,7 @@ export interface paths {
         };
         /**
          * Llm Path Health
-         * @description Per-provider routability for every signed-in user.
+         * @description Per-provider routability for the status line.
          */
         get: operations["get_api_llm_health"];
         put?: never;
@@ -4590,6 +4590,9 @@ export interface paths {
         /**
          * Get Overview
          * @description Arrivals, outcome nodes, agent rows, and the latest findings. Polled.
+         *
+         *     A missing read leaves that part empty and names the permission. The keys
+         *     stay arrays: the console calls ``feed.find``.
          */
         get: operations["get_api_overview"];
         put?: never;

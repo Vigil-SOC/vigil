@@ -23,7 +23,11 @@ from core.cases.case_status import (
 from core.cases.linked_entities import finding_entity_summary
 from core.findings.anomaly_score import stored_anomaly_score
 from core.llm.tool_schemas import ALL_TOOLS as BACKEND_TOOLS
-from core.llm.tool_schemas import FIND_INTEGRATION_TOOLS, INTEGRATION_TOOLS
+from core.llm.tool_schemas import (
+    CALL_INTEGRATION_TOOL,
+    FIND_INTEGRATION_TOOLS,
+    INTEGRATION_TOOLS,
+)
 from core.memory.recall_contract import RECALL_TOOL
 from core.skills.skill_library import READ_SKILL_TOOL, read_skill
 
@@ -39,6 +43,48 @@ MANIFEST: Dict[str, Dict[str, Any]] = {
 }
 
 Args = Dict[str, Any]
+
+# Every chat tool names the permission execute_backend_tool checks. A hunt that
+# bound nobody is still allowed: permission_refusal does not deny that caller.
+TOOL_PERMISSIONS: Dict[str, str] = {
+    "analyze_coverage": "detections.read",
+    "search_detections": "detections.read",
+    "identify_gaps": "detections.read",
+    "get_coverage_stats": "detections.read",
+    "get_detection_count": "detections.read",
+    "lint_detections": "detections.read",
+    "check_detection_candidate": "detections.read",
+    "reconstruct_run": "detections.read",
+    "list_findings": "findings.read",
+    "search_findings": "findings.read",
+    "get_findings_stats": "findings.read",
+    "get_finding": "findings.read",
+    "dismiss_finding": "findings.write",
+    "list_cases": "cases.read",
+    "get_case": "cases.read",
+    "case_records": "cases.read",
+    "create_case": "cases.write",
+    "add_finding_to_case": "cases.write",
+    "update_case": "cases.write",
+    "add_resolution_step": "cases.write",
+    "list_completed_hunts": "automation.read",
+    "replay_hunt": "automation.read",
+    "get_technique_rollup": "findings.read",
+    "list_pending_approvals": "ai_decisions.read",
+    "get_approval_action": "ai_decisions.read",
+    "approve_action": APPROVE_PERMISSION,
+    "reject_action": APPROVE_PERMISSION,
+    "get_approval_stats": "ai_decisions.read",
+    "lookup_indicators": "findings.read",
+    "propose_feed_hunts": "findings.read",
+    RECALL_TOOL: "automation.read",
+    "check_hunt_coverage": "automation.read",
+    "list_learning_episodes": "automation.read",
+    "export_learning_episodes": "automation.read",
+    READ_SKILL_TOOL: "automation.read",
+    FIND_INTEGRATION_TOOLS: "integrations.read",
+    CALL_INTEGRATION_TOOL: "integrations.write",
+}
 
 
 # A page of findings is what a hunt groups alerts by, so each carries the hosts,
@@ -264,6 +310,8 @@ def create_case(
 ) -> Args:
     if refusal := permission_refusal("cases.write"):
         return refusal
+    if assignee is not None and (refusal := permission_refusal("cases.assign")):
+        return refusal
     if refusal := _status_refusal(status):
         return refusal
     if assignee is not None:
@@ -333,6 +381,8 @@ def update_case(
     if priority:
         updates["priority"] = priority
     if assignee is not None:
+        if refusal := permission_refusal("cases.assign"):
+            return refusal
         # Blank unassigns; re-sending the stored value keeps it.
         updates["assignee"], refusal = _resolve_assignee(
             assignee, current=case.get("assignee")
@@ -763,6 +813,11 @@ async def execute_backend_tool(
     registry: Optional["MCPRegistry"] = None,
 ) -> Tuple[Any, bool]:
     args = dict(tool_input or {})
+    # permission_refusal reads the permissions-module binding, which is what
+    # the tool tests stub. An unbound caller stays allowed.
+    permission = TOOL_PERMISSIONS.get(tool_name)
+    if permission and (refusal := permission_refusal(permission)):
+        return refusal, True
 
     if tool_name == FIND_INTEGRATION_TOOLS and registry is not None:
         from core.agents.integration_tools import find_integration_tools

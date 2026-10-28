@@ -486,11 +486,12 @@ def test_attack_tab_and_timeline_describe_the_queue():
     assert [f["finding_id"] for f in drill["findings"]] == ["ipx-other"]
 
 
-def test_dashboard_timeline_hides_excluded_findings():
+def test_dashboard_timeline_hides_excluded_findings(authenticate_app):
     from services.api.routers.timeline import router as timeline_router
 
     app = FastAPI()
     app.include_router(timeline_router, prefix="/api/timeline")
+    authenticate_app(app)
     _standard_findings()
     _exclude()
     response = TestClient(app).get("/api/timeline/range", params={"limit": 5000})

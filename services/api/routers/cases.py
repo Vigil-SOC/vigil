@@ -18,8 +18,7 @@ from fastapi import (
 from pydantic import BaseModel, Field, field_validator
 
 from core.agents.projections import read_events
-from core.auth.auth_service import AuthService
-from core.auth.permissions import permission_gate
+from core.auth.permissions import deny_unless, permission_gate
 from core.cases import case_journal_service, case_records_service
 from core.cases.assignee import resolve_assignee, resolve_escalation_target
 from core.cases.case_attachment_service import attach_document
@@ -61,6 +60,7 @@ from services.api.middleware.auth import get_current_user
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+router.dependencies.append(permission_gate("cases.read"))
 
 _CASES_WRITE = [permission_gate("cases.write")]
 
@@ -119,10 +119,7 @@ async def clear_all_cases(
     current_user: User = Depends(get_current_user),
 ):
     """Delete all cases and case-derived generated data (requires cases.delete)."""
-    if not AuthService.check_permission(current_user.user_id, "cases.delete"):
-        raise HTTPException(
-            status_code=403, detail="Permission denied: cases.delete required"
-        )
+    deny_unless(current_user.user_id, "cases.delete", session)
 
     result = case_records_service.purge_all_cases(session)
     killed = len(result.killed_investigation_ids)
@@ -680,6 +677,8 @@ async def escalate_case(
     current_user: User = Depends(get_current_user),
 ):
     """Escalate case. Who escalated it is the signed-in user."""
+    # Escalation hands the case to escalated_to, which is an owner change.
+    deny_unless(current_user.user_id, "cases.assign", session)
     # Before the call: it swallows errors into "Failed to escalate case".
     escalated_to = resolve_escalation_target(session, data.escalated_to)
     workflow_service = CaseWorkflowService()

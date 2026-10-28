@@ -11,7 +11,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from core.auth.auth_service import AuthService
+from core.auth.permissions import deny_unless
 from core.integrations._base.config import resolve
 from core.integrations.jira.descriptor import JIRA
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
@@ -86,11 +86,7 @@ def export_case_to_jira(
         Export result with JIRA issue key
     """
     # Check permission
-    if not AuthService.check_permission(current_user.user_id, "cases.read"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Permission denied: cases.read required",
-        )
+    deny_unless(current_user.user_id, "cases.read")
 
     # get_integration_config strips secrets, so the token is never in that dict.
     jira = resolve(JIRA)

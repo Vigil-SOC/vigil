@@ -57,7 +57,7 @@ def _patch_reads(monkeypatch, routability_impl, *, vk=VK, quota=QUOTA):
     monkeypatch.setattr("core.llm.bifrost.costs.get_vk_quota", _quota)
     monkeypatch.setattr("core.llm.cost.budget.read_vk", lambda: vk)
     monkeypatch.setattr(
-        "services.api.routers.bifrost_config.AuthService.check_permission",
+        "core.auth.permissions.AuthService.check_permission",
         lambda *_a, **_k: True,
     )
     return counts
@@ -68,17 +68,20 @@ def app(monkeypatch):
     monkeypatch.setenv("TESTING", "true")
     from core.config import get_settings
     from services.api.main import app as fastapi_app
-    from services.api.middleware.auth import get_current_active_user
+    from services.api.middleware.auth import get_current_active_user, get_current_user
 
     get_settings.cache_clear()
     yield fastapi_app
     fastapi_app.dependency_overrides.pop(get_current_active_user, None)
+    fastapi_app.dependency_overrides.pop(get_current_user, None)
 
 
 def _as(app, user):
-    from services.api.middleware.auth import get_current_active_user
+    from services.api.middleware.auth import get_current_active_user, get_current_user
 
+    # The platform.read gate resolves the caller through get_current_user.
     app.dependency_overrides[get_current_active_user] = lambda: user
+    app.dependency_overrides[get_current_user] = lambda: user
 
 
 def test_anonymous_caller_is_refused(app):

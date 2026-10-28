@@ -28,6 +28,7 @@ from core.storage.models import User
 router = APIRouter()
 
 _DECIDE = [permission_gate("ai_decisions.approve")]
+router.dependencies.append(permission_gate("ai_decisions.read"))
 
 ROUTER_META = RouterMeta(
     # Versioned contract surface. The whole approvals router is external — every
