@@ -265,7 +265,7 @@ class TestUnwiredIsolation:
         response = AutonomousResponseService()
         result = response.create_isolation_action(
             ip_address="10.0.0.5",
-            hostname="host-a",
+            hostname="host-d",
             confidence=0.99,
             reason="test",
             evidence=["ev-1"],
@@ -279,7 +279,7 @@ class TestUnwiredIsolation:
 
         retry = response.create_isolation_action(
             ip_address="10.0.0.5",
-            hostname="host-a",
+            hostname="host-d",
             confidence=0.99,
             reason="test",
             evidence=["ev-1"],
@@ -292,7 +292,7 @@ class TestUnwiredIsolation:
         response = AutonomousResponseService()
         created = response.create_isolation_action(
             ip_address="10.0.0.6",
-            hostname="host-b",
+            hostname="host-e",
             confidence=0.50,
             reason="test",
             evidence=["ev-1"],
