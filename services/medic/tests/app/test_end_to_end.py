@@ -41,8 +41,8 @@ class Stub:
                 stub.hits += 1
                 path = self.path.split("?", 1)[0]
                 stub.paths.append(path)
-                # Compose also polls the Docker proxy. An empty list is a
-                # successful read, so that sensor doesn't go blind beside /readyz.
+                # Compose also polls the Docker proxy and the gateway. An empty
+                # list is a successful read, so no sensor goes blind beside /readyz.
                 if path == "/_gw/status":
                     body = b'{"state":"ok","since":0}'
                     self.send_response(200)
@@ -51,8 +51,13 @@ class Stub:
                     self.end_headers()
                     self.wfile.write(body)
                     return
-                if path == "/containers/json":
-                    body = b"[]"
+                empty = {
+                    "/containers/json": b"[]",
+                    "/api/triage": b'{"sources":[]}',
+                    "/api/v1/findings": b'{"findings":[]}',
+                }
+                if path in empty:
+                    body = empty[path]
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Content-Length", str(len(body)))
