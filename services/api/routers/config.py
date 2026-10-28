@@ -711,7 +711,7 @@ def build_setup_steps(
             "per_agent",
             "Pick a model per agent",
             model_line,
-            distinct >= 2,
+            distinct >= 1,
             "/settings?section=ai-config&tab=assignment",
         ),
     ]

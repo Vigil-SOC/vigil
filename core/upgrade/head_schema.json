@@ -424,6 +424,36 @@
   "nullable": true,
   "type": "bigint"
  },
+ "column audit_legacy_copy.copied": {
+  "default": null,
+  "nullable": false,
+  "type": "bigint"
+ },
+ "column audit_legacy_copy.id": {
+  "default": "1",
+  "nullable": false,
+  "type": "smallint"
+ },
+ "column audit_legacy_copy.passed": {
+  "default": null,
+  "nullable": false,
+  "type": "boolean"
+ },
+ "column audit_legacy_copy.read_only_since": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp with time zone"
+ },
+ "column audit_legacy_copy.reconciled_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp with time zone"
+ },
+ "column audit_legacy_copy.sources": {
+  "default": null,
+  "nullable": false,
+  "type": "jsonb"
+ },
  "column audit_trail.actor_text": {
   "acl": [
    "app:UPDATE"
@@ -3780,6 +3810,8 @@
  "constraint approval_actions.approval_actions_workflow_run_id_fkey": "FOREIGN KEY (workflow_run_id) REFERENCES workflow_runs(run_id) ON DELETE SET NULL",
  "constraint audit_feed_state.audit_feed_state_id_check": "CHECK ((id = 1))",
  "constraint audit_feed_state.audit_feed_state_pkey": "PRIMARY KEY (id)",
+ "constraint audit_legacy_copy.audit_legacy_copy_id_check": "CHECK ((id = 1))",
+ "constraint audit_legacy_copy.audit_legacy_copy_pkey": "PRIMARY KEY (id)",
  "constraint audit_trail.audit_trail_payload_check": "CHECK (((jsonb_typeof(payload) = 'object'::text) AND (NOT (payload ?| ARRAY['seq'::text, 'occurred_at'::text, 'late'::text]))))",
  "constraint audit_trail.audit_trail_pkey": "PRIMARY KEY (seq)",
  "constraint audit_trail_anchor.audit_trail_anchor_id_check": "CHECK ((id = 1))",
@@ -3868,7 +3900,7 @@
  "constraint findings.findings_pkey": "PRIMARY KEY (finding_id)",
  "constraint intake_triggers.intake_triggers_pkey": "PRIMARY KEY (id)",
  "constraint integration_configs.integration_configs_pkey": "PRIMARY KEY (integration_id)",
- "constraint investigation_logs.investigation_logs_investigation_id_fkey": "FOREIGN KEY (investigation_id) REFERENCES investigations(investigation_id) ON DELETE CASCADE",
+ "constraint investigation_logs.investigation_logs_investigation_id_fkey": "FOREIGN KEY (investigation_id) REFERENCES investigations(investigation_id)",
  "constraint investigation_logs.investigation_logs_pkey": "PRIMARY KEY (id)",
  "constraint investigations.investigations_case_id_fkey": "FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE SET NULL",
  "constraint investigations.investigations_pkey": "PRIMARY KEY (investigation_id)",
@@ -4033,6 +4065,7 @@
  "index ai_model_configs_pkey": "CREATE UNIQUE INDEX ai_model_configs_pkey ON public.ai_model_configs USING btree (component)",
  "index approval_actions_pkey": "CREATE UNIQUE INDEX approval_actions_pkey ON public.approval_actions USING btree (action_id)",
  "index audit_feed_state_pkey": "CREATE UNIQUE INDEX audit_feed_state_pkey ON public.audit_feed_state USING btree (id)",
+ "index audit_legacy_copy_pkey": "CREATE UNIQUE INDEX audit_legacy_copy_pkey ON public.audit_legacy_copy USING btree (id)",
  "index audit_trail_anchor_pkey": "CREATE UNIQUE INDEX audit_trail_anchor_pkey ON public.audit_trail_anchor USING btree (id)",
  "index audit_trail_held_pkey": "CREATE UNIQUE INDEX audit_trail_held_pkey ON public.audit_trail_held USING btree (id)",
  "index audit_trail_held_window_key_key": "CREATE UNIQUE INDEX audit_trail_held_window_key_key ON public.audit_trail_held USING btree (window_key)",
@@ -4431,6 +4464,25 @@
   "acl": [
    "app:SELECT",
    "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation audit_legacy_copy": {
+  "acl": [
+   "app:SELECT",
    "owner:DELETE",
    "owner:INSERT",
    "owner:REFERENCES",
