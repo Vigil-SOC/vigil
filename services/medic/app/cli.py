@@ -39,6 +39,7 @@ from services.medic.app.wiring import (
 from services.medic.redact import install_log_redaction
 from services.medic.sensors import Sensor
 from services.medic.sensors.containers import docker_containers
+from services.medic.sensors.daemon import backend_status_sensors, daemon_sensors
 from services.medic.sensors.federation import federation_sources
 from services.medic.sensors.gateway import address as gateway_address
 from services.medic.sensors.gateway import gateway_session
@@ -212,11 +213,15 @@ def sensors_for(env: Mapping[str, str], shape: str) -> list[Sensor]:
             sensors.extend(compose_log_sensors(proxy[0], proxy[1]))
     if shape == "helm":
         sensors.append(kube_pods())
+    daemon = config.daemon_addr(env, shape)
+    if daemon is not None:
+        sensors.extend(daemon_sensors(host=daemon[0], port=daemon[1]))
     gateway = gateway_address(env, shape)
     if gateway is not None:
         sensors.append(gateway_session(host=gateway[0], port=gateway[1]))
         sensors.append(federation_sources(host=gateway[0], port=gateway[1]))
         sensors.extend(work_sensors(host=gateway[0], port=gateway[1]))
+        sensors.extend(backend_status_sensors(host=gateway[0], port=gateway[1]))
     return sensors
 
 

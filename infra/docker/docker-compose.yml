@@ -672,6 +672,9 @@ services:
       VIGIL_MEDIC_INSTALL_SHAPE: compose
       # /readyz over medic-net (the real liveness signal; /healthz always says ok).
       VIGIL_MEDIC_AGENT_WORKER_ADDR: agent-worker:6990
+      # The daemon's /health and /status over medic-net (D6-6). Without the
+      # daemon profile the name doesn't resolve: "not installed", not "down".
+      VIGIL_MEDIC_DAEMON_ADDR: soc-daemon:9091
       # Docker Engine API, on medic-private only (D6-2). host:port.
       VIGIL_MEDIC_DOCKERPROXY_ADDR: medic-dockerproxy:8472
       # Read-only gateway, the medic-private alias (D6-7). Same DEV_MODE the

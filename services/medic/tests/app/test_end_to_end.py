@@ -33,6 +33,10 @@ JSON_REPLIES = {
     "/api/federation/sources": b'{"sources":[],"global":{"enabled":false}}',
     "/api/triage": b'{"sources":[]}',
     "/api/v1/findings": b'{"findings":[]}',
+    "/api/kafka/status": b'{"enabled":false,"daemon_reachable":true}',
+    "/api/orchestrator/status": b'{"enabled":false,"queued":0,"cost":{}}',
+    "/health": b'{"uptime_seconds":1,"components":{}}',
+    "/status": b'{"daemon":{"start_time":"2026-10-28T08:00:00+00:00"}}',
 }
 
 
@@ -135,6 +139,7 @@ def _env(data_dir: Path, stub: Stub, serve: Stub | None = None) -> dict[str, str
         "VIGIL_MEDIC_AGENT_SERVE_ADDR": (serve or stub).addr,
         "VIGIL_MEDIC_DOCKERPROXY_ADDR": stub.addr,
         "VIGIL_MEDIC_GATEWAY_ADDR": stub.addr,
+        "VIGIL_MEDIC_DAEMON_ADDR": stub.addr,
     }
 
 

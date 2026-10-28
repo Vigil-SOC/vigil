@@ -288,6 +288,7 @@ def test_medic_env_names_its_shape_and_targets(on) -> None:
     # only adds group bits, never clears "other").
     assert env["VIGIL_MEDIC_DATA_DIR"] == "/var/lib/vigil-medic/data"
     assert env["VIGIL_MEDIC_AGENT_WORKER_ADDR"] == f"{MEDIC}-agent-worker:6990"
+    assert env["VIGIL_MEDIC_DAEMON_ADDR"] == "rel-vigil-daemon:9091"
     # A3-3: the probe tries the gateway's inbound listener, which only the
     # backend may reach; the control is the outbound listener on the same pods,
     # so "control connects" proves the target has live endpoints (re-review).
@@ -544,11 +545,23 @@ def _allowed_pods(rules, docs):
     return out
 
 
-def test_medic_egress_is_gateway_agent_worker_dns_and_kube_api(all_on) -> None:
+def test_medic_egress_is_gateway_agent_worker_daemon_dns_and_kube_api(all_on) -> None:
     pol = named(all_on, "NetworkPolicy", MEDIC)
     assert sorted(pol["spec"]["policyTypes"]) == ["Egress", "Ingress"]
     egress = pol["spec"]["egress"]
-    assert _allowed_pods(egress, all_on) == {GATEWAY, "rel-vigil-agent-worker"}
+    assert _allowed_pods(egress, all_on) == {
+        GATEWAY,
+        "rel-vigil-agent-worker",
+        "rel-vigil-daemon",
+    }
+    # The daemon's health port (/health, /status) only: not webhook 8081 or metrics 9090.
+    daemon_ports = [
+        p["port"]
+        for r in egress
+        if _allowed_pods([r], all_on) == {"rel-vigil-daemon"}
+        for p in r["ports"]
+    ]
+    assert daemon_ports == [9091]
     blocks = [p["ipBlock"] for r in egress for p in _peers(r) if "ipBlock" in p]
     assert blocks == [{"cidr": KUBE_API}]
     api_rule = next(r for r in egress if any("ipBlock" in p for p in _peers(r)))
@@ -556,6 +569,13 @@ def test_medic_egress_is_gateway_agent_worker_dns_and_kube_api(all_on) -> None:
     for r in egress:
         assert r.get("to"), "an egress rule with no `to` allows every destination"
         assert r.get("ports"), "an egress rule with no ports allows every port"
+
+
+def test_daemon_off_means_no_daemon_egress_and_no_address(render) -> None:
+    docs = render({**MEDIC_ON, "daemon.enabled": "false"})
+    egress = named(docs, "NetworkPolicy", MEDIC)["spec"]["egress"]
+    assert 9091 not in [p["port"] for r in egress for p in r["ports"]]
+    assert "VIGIL_MEDIC_DAEMON_ADDR" not in str(named(docs, "Deployment", MEDIC))
 
 
 def test_probe_target_is_one_medics_own_policy_blocks(on) -> None:

@@ -133,6 +133,7 @@ def test_child_env_is_an_allowlist(box: Path) -> None:
     # L49: a host-native Medic says so, and reads the worker on loopback.
     assert env["VIGIL_MEDIC_INSTALL_SHAPE"] == "start_sh"
     assert env["VIGIL_MEDIC_AGENT_WORKER_ADDR"] == "127.0.0.1:6990"
+    assert env["VIGIL_MEDIC_DAEMON_ADDR"] == "127.0.0.1:9091"
     # Unset stays unset. A DEV_MODE already in this process is forwarded, which
     # is the point of the allowlist entry.
     assert set(env) <= {
@@ -146,6 +147,7 @@ def test_child_env_is_an_allowlist(box: Path) -> None:
         "VIGIL_MEDIC_DATA_DIR",
         "VIGIL_MEDIC_INSTALL_SHAPE",
         "VIGIL_MEDIC_AGENT_WORKER_ADDR",
+        "VIGIL_MEDIC_DAEMON_ADDR",
         "VIGIL_MEDIC_GATEWAY_ADDR",
         "DEV_MODE",
         # Set by the shells themselves, not passed through.
@@ -199,12 +201,18 @@ def test_agent_worker_address_is_passed_through(box: Path) -> None:
     assert env["VIGIL_MEDIC_INSTALL_SHAPE"] == "start_sh"
 
 
+def test_daemon_address_is_passed_through(box: Path) -> None:
+    env = _child_env(box, "--daemon", "127.0.0.1:19091")
+    assert env["VIGIL_MEDIC_DAEMON_ADDR"] == "127.0.0.1:19091"
+
+
+@pytest.mark.parametrize("flag", ["--agent-worker", "--daemon"])
 @pytest.mark.parametrize(
     "addr", ["", "127.0.0.1", "http://127.0.0.1:6990", "127.0.0.1:69x0", "a b:1"]
 )
-def test_bad_agent_worker_address_exits_2(box: Path, addr: str) -> None:
+def test_bad_address_exits_2(box: Path, flag: str, addr: str) -> None:
     out = subprocess.run(
-        _args(box, "--agent-worker", addr), capture_output=True, text=True, check=False
+        _args(box, flag, addr), capture_output=True, text=True, check=False
     )
     assert out.returncode == 2
     assert not _starts(box)
