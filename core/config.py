@@ -303,6 +303,16 @@ class Settings(BaseSettings):
     daemon_dry_run: bool = False
     daemon_escalation_enabled: bool = True
     daemon_escalate_severities: Annotated[List[str], NoDecode] = ["critical", "high"]
+    # Severity bands whose findings go to auto-investigation even when the
+    # response gate does not fire. A dismiss verdict never goes. Empty keeps only
+    # the response gate and threat-intel hits.
+    daemon_investigate_severities: Annotated[List[str], NoDecode] = [
+        "critical",
+        "high",
+        "medium",
+        "low",
+        "unknown",
+    ]
     # Call sites disagree on the default (config.from_env on, orchestrator off), so
     # this stays tri-state and each site supplies its own fallback.
     daemon_slack_enabled: Optional[bool] = None
@@ -378,6 +388,7 @@ class Settings(BaseSettings):
     @field_validator(
         "extension_connector_allowlist",
         "daemon_escalate_severities",
+        "daemon_investigate_severities",
         "kafka_topics",
         mode="before",
     )

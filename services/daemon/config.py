@@ -36,6 +36,11 @@ class ProcessingConfig:
     enrich_backfill_max_age_hours: int = (
         168  # only backfill findings stored within this window (7d), not by event time
     )
+    # Severity bands (critical/high/medium/low/unknown) whose findings are
+    # offered to intake even below the response gate; a dismiss verdict never is.
+    investigate_severities: List[str] = field(
+        default_factory=lambda: ["critical", "high", "medium", "low", "unknown"]
+    )
 
 
 @dataclass
@@ -155,6 +160,9 @@ class DaemonConfig:
         config.processing.enrich_backfill_max_age_hours = (
             settings.daemon_enrich_backfill_max_age_hours
         )
+        config.processing.investigate_severities = [
+            s.lower() for s in settings.daemon_investigate_severities
+        ]
 
         config.response = ResponseConfig.from_settings(settings)
 
