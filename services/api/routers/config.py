@@ -64,12 +64,12 @@ router = APIRouter()
 
 # Writes change what the platform connects to and trusts, so Auth.REQUIRED alone
 # (any active account) is not enough.
-_SETTINGS_WRITE = [permission_gate("settings.write")]
-_SETTINGS_READ = [permission_gate("settings.read")]
 _PLATFORM_WRITE = [permission_gate("platform.write")]
 _PLATFORM_READ = [permission_gate("platform.read")]
 _INTEGRATIONS_WRITE = [permission_gate("integrations.write")]
 _INTEGRATIONS_READ = [permission_gate("integrations.read")]
+_AUTONOMY_WRITE = [permission_gate("ai_autonomy.write")]
+_AUTONOMY_READ = [permission_gate("ai_autonomy.read")]
 
 ROUTER_META = RouterMeta(
     prefix="/api/config",
@@ -168,7 +168,7 @@ class PlatformDatabaseProxyConfig(BaseModel):
     verify_proxy_tls: bool = True
 
 
-@router.get("/demo-mode", dependencies=_SETTINGS_READ)
+@router.get("/demo-mode", dependencies=_PLATFORM_READ)
 def get_demo_mode():
     """
     Get demo mode configuration.
@@ -190,7 +190,7 @@ def get_demo_mode():
         return {"enabled": False, "error": INTERNAL_ERROR_DETAIL}
 
 
-@router.post("/demo-mode", dependencies=_SETTINGS_WRITE)
+@router.post("/demo-mode", dependencies=_PLATFORM_WRITE)
 def set_demo_mode(config: DemoModeConfig):
     """
     Set demo mode configuration.
@@ -229,7 +229,7 @@ def set_demo_mode(config: DemoModeConfig):
     }
 
 
-@router.post("/demo-mode/reset", dependencies=_SETTINGS_WRITE)
+@router.post("/demo-mode/reset", dependencies=_PLATFORM_WRITE)
 def reset_demo_data(demo_service=Depends(provide_demo_data)):
     """
     Reset demo data to regenerate sample findings and cases.
@@ -563,7 +563,7 @@ def set_platform_database_config(config: PlatformDatabaseProxyConfig):
     }
 
 
-@router.get("/theme", dependencies=_SETTINGS_READ)
+@router.get("/theme", dependencies=_PLATFORM_READ)
 def get_theme_config():
     """Get theme configuration; 503 when the database read fails."""
     try:
@@ -576,7 +576,7 @@ def get_theme_config():
     return value or ThemeConfig().model_dump()
 
 
-@router.post("/theme", dependencies=_SETTINGS_WRITE)
+@router.post("/theme", dependencies=_PLATFORM_WRITE)
 def set_theme_config(
     config: ThemeConfig,
     current_user: User = Depends(get_current_active_user),
@@ -739,7 +739,7 @@ def build_setup_steps(
 @router.get(
     "/setup-steps",
     response_model=SetupStepsResponse,
-    dependencies=_SETTINGS_READ,
+    dependencies=_PLATFORM_READ,
 )
 def get_setup_steps(
     session: UnitOfWorkSession,
@@ -1153,7 +1153,7 @@ async def test_integration(
     return result
 
 
-@router.get("/general", dependencies=_SETTINGS_READ)
+@router.get("/general", dependencies=_PLATFORM_READ)
 def get_general_config():
     """Get general application settings; 503 when the database read fails."""
     try:
@@ -1167,7 +1167,7 @@ def get_general_config():
     return GeneralConfig.model_validate(value or {}).model_dump()
 
 
-@router.post("/general", dependencies=_SETTINGS_WRITE)
+@router.post("/general", dependencies=_PLATFORM_WRITE)
 def set_general_config(
     config: GeneralConfig,
     current_user: User = Depends(get_current_active_user),
@@ -1294,7 +1294,7 @@ class AIOperationsSettingsConfig(BaseModel):
 AI_OPERATIONS_DEFAULTS = AIOperationsSettingsConfig().model_dump()
 
 
-@router.get("/ai-operations", dependencies=_SETTINGS_READ)
+@router.get("/ai-operations", dependencies=_PLATFORM_READ)
 def get_ai_operations_config():
     """Return the local-Ollama recovery toggles (defaults merged with DB overrides).
 
@@ -1323,7 +1323,7 @@ def get_ai_operations_config():
         }
 
 
-@router.post("/ai-operations", dependencies=_SETTINGS_WRITE)
+@router.post("/ai-operations", dependencies=_PLATFORM_WRITE)
 def set_ai_operations_config(
     config: AIOperationsSettingsConfig,
     current_user: User = Depends(get_current_active_user),
@@ -1520,7 +1520,9 @@ class IntentReportResponse(BaseModel):
     rows: list[IntentDiffRow] = Field(default_factory=list)
 
 
-@router.get("/intent", response_model=IntentReportResponse, dependencies=_SETTINGS_READ)
+@router.get(
+    "/intent", response_model=IntentReportResponse, dependencies=_AUTONOMY_READ
+)
 def get_intent_report() -> IntentReportResponse:
     """Declared intent beside effective config.
 
@@ -1550,7 +1552,7 @@ def get_intent_report() -> IntentReportResponse:
 @router.get(
     "/orchestrator",
     response_model=OrchestratorConfigResponse,
-    dependencies=_SETTINGS_READ,
+    dependencies=_AUTONOMY_READ,
 )
 def get_orchestrator_config():
     """Get orchestrator configuration.
@@ -1567,7 +1569,7 @@ def get_orchestrator_config():
         return _orchestrator_payload(None)
 
 
-@router.post("/orchestrator", dependencies=_SETTINGS_WRITE)
+@router.post("/orchestrator", dependencies=_AUTONOMY_WRITE)
 def set_orchestrator_config(
     config: OrchestratorSettingsConfig,
     current_user: User = Depends(get_current_active_user),

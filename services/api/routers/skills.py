@@ -46,10 +46,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # A saved skill's description reaches every agent's system prompt, so writing
-# one is automation.write (settings.write until the catalog revision).
+# one is automation.write. Running a skill's evals is too.
 _SKILLS_WRITE = [permission_gate("automation.write")]
-# Running a skill's evals had no gate. It stays open until the revision.
-_SKILL_TEST = [permission_gate("automation.write", introduced=True)]
+_SKILL_TEST = [permission_gate("automation.write")]
 router.dependencies.append(permission_gate("automation.read"))
 
 ROUTER_META = RouterMeta(
