@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { useAutoOpsOff } from '../../shared/useAutoOpsOff'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
 import { LevelBadge } from '../../shared/LevelBadge'
@@ -37,6 +38,7 @@ function AgentCard({ agent }: { agent: OverviewAgent }) {
 
 /** "Agents running now": one card per workflow, with its level pill and 30-day rate. */
 export default function AgentCards({ data, go }: { data: OverviewPayload; go: ConsoleScreenProps['go'] }) {
+  const autoOpsOff = useAutoOpsOff()
   const agents = [...data.agents].sort((a, b) => b.running - a.running || a.name.localeCompare(b.name))
   const idle = agents.every((a) => a.running === 0 && a.sample_size === 0)
   return (
@@ -61,13 +63,30 @@ export default function AgentCards({ data, go }: { data: OverviewPayload; go: Co
           Agents &amp; workflows →
         </button>
       </div>
+      {autoOpsOff && !idle && (
+        <div className="ov-agents-empty">
+          <span className="ov-tile accent"><Icon name="bot" size={18} /></span>
+          <div className="ov-txt">
+            <b>AutoOps is off</b>
+            <span>No agent picks up an alert until it is on.</span>
+          </div>
+          <button type="button" className="btn ghost" onClick={() => go('autoops')}>Open AutoOps →</button>
+        </div>
+      )}
       {idle ? (
         <div className="ov-agents-empty">
           <span className="ov-tile accent"><Icon name="bot" size={18} /></span>
           <div className="ov-txt">
-            <b>No agents running yet</b>
-            <span>Agents pick up work on their own once alerts arrive from a connected source.</span>
+            <b>{autoOpsOff ? 'No agents running: AutoOps is off' : 'No agents running yet'}</b>
+            <span>
+              {autoOpsOff
+                ? 'Agents pick up alerts only while AutoOps is on.'
+                : 'Agents pick up work on their own once alerts arrive from a connected source.'}
+            </span>
           </div>
+          {autoOpsOff && (
+            <button type="button" className="btn ghost" onClick={() => go('autoops')}>Open AutoOps →</button>
+          )}
           {data.empty && <Link className="btn primary no-underline" to={CONNECT_DATA}>Connect data</Link>}
         </div>
       ) : (

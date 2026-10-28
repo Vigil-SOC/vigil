@@ -142,3 +142,19 @@ describe('authBypassed', () => {
     expect(authBypassed(null)).toBe(false)
   })
 })
+
+describe('foldStatus AutoOps', () => {
+  const healthy = reads({ status: 'healthy', storage: { database_available: true } })
+
+  it('goes Fair when AutoOps is off, since nothing picks alerts up', () => {
+    expect(foldStatus({ ...healthy, autoOps: { enabled: false } })).toEqual({
+      level: 'fair',
+      sentence: 'AutoOps is off; alerts are not picked up.',
+    })
+  })
+
+  it('says nothing while AutoOps is on or its read failed', () => {
+    expect(foldStatus({ ...healthy, autoOps: { enabled: true } }).level).toBe('good')
+    expect(foldStatus({ ...healthy, autoOps: null }).level).toBe('good')
+  })
+})

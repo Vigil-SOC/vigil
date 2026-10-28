@@ -14,12 +14,16 @@ import { parseSourceEvidence } from '../../data/sourceEvidence'
 import { SourceEvidenceSection } from '../dashboard/SourceEvidenceSection'
 import { triageApi, type TriagePayload, type TriageRow, type TriageSource } from '../../services/api'
 import FindingDetails from '../../shared/FindingDetails'
+import { AutoOpsOffBanner } from '../../shared/AutoOpsOffBanner'
+import { useAutoOpsOff } from '../../shared/useAutoOpsOff'
 
 const POLL_MS = 10_000
 const ROW_CAP = 200 // the server stops at this many rows
 const BLANK = '—'
 const PAGE_DESC =
   'Every incoming alert and what triage did with it. Agents pick alerts up on their own; check that grouping looks right.'
+const PAGE_DESC_OFF =
+  'Every incoming alert and what triage did with it. Agents pick alerts up only while AutoOps is on; check that grouping looks right.'
 
 type Phase = 'loading' | 'error' | 'ready'
 type FilterKey = 'kind' | 'source' | 'state'
@@ -37,6 +41,7 @@ const STATES = [
   { value: 'merged', label: 'Added to a case', dot: 'ac' },
   { value: 'expired', label: 'Expired', dot: 'tx2' },
 ]
+const QUEUED_OFF = 'AutoOps is off'
 
 // DESIGN §2: "1.2 s", "42 s", "4 min 12 s", "7 h 5 min"
 function fmtDuration(seconds: number): string {
@@ -141,9 +146,10 @@ function Tiles({ data }: { data: TriagePayload }) {
 }
 
 function Filters({
-  data, kind, source, state, setFilter, clear,
+  data, kind, source, state, setFilter, clear, autoOpsOff,
 }: {
   data: TriagePayload
+  autoOpsOff: boolean | null
   kind: string
   source: string
   state: string
@@ -200,7 +206,7 @@ function Filters({
         <InfoTip label={data.arrival_info} text={data.arrival_info} align="start" />,
       )}
       <span className="tq-rule" />
-      {group('state', state, 'What happened', STATES)}
+      {group('state', state, 'What happened', autoOpsOff ? STATES.map((s) => (s.value === 'queued' ? { ...s, label: `Not picked up: ${QUEUED_OFF}` } : s)) : STATES)}
       {filtered ? (
         <span className="tq-summary">
           Showing {data.rows.length} of {data.matched} ·{' '}
@@ -252,7 +258,8 @@ function Expanded({ row, data }: { row: TriageRow; data: TriagePayload }) {
   )
 }
 
-const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, setViewFull }) => {
+const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, setViewFull, go }) => {
+  const autoOpsOff = useAutoOpsOff()
   const [searchParams, setSearchParams] = useSearchParams()
   const kind = searchParams.get('kind') ?? ''
   const source = searchParams.get('source') ?? ''
@@ -356,7 +363,10 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
     {
       key: 'state',
       label: 'What happened',
-      render: (row) => row.state_label ? <span className={`tq-pill ${row.state}`}>{row.state_label}</span> : BLANK,
+      render: (row) => {
+        const label = autoOpsOff && row.state === 'queued' ? QUEUED_OFF : row.state_label
+        return label ? <span className={`tq-pill ${row.state}`}>{label}</span> : BLANK
+      },
     },
     {
       key: 'why',
@@ -384,7 +394,7 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
         )
       },
     },
-  ], [openCase, openId, data])
+  ], [openCase, openId, data, autoOpsOff])
 
   const filtered = Boolean(kind || source || state)
 
@@ -394,13 +404,14 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
         <div className="tq-title">
           {/* inline weight: the shell's unlayered h1 rule would beat the stylesheet's */}
           <h1 style={{ fontWeight: 700, letterSpacing: '-0.2px' }}>Triage queue</h1>
-          <p>{PAGE_DESC}</p>
+          <p>{autoOpsOff ? PAGE_DESC_OFF : PAGE_DESC}</p>
         </div>
         <button type="button" className="btn ghost icon" title="Refresh" aria-label="Refresh" onClick={load}>
           <Icon name="refresh" />
         </button>
       </div>
 
+      {autoOpsOff && <AutoOpsOffBanner go={go} />}
       {phase === 'loading' && <EmptyState loading icon="clock" title="Loading triage…" />}
       {phase === 'error' && (
         <EmptyState error icon="alert" title="Couldn’t load triage" primary={{ label: 'Retry', onClick: load, icon: 'refresh' }} />
@@ -415,6 +426,7 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
             state={state}
             setFilter={setFilter}
             clear={() => setSearchParams({}, { replace: true })}
+            autoOpsOff={autoOpsOff}
           />
           <div className="tq-card" data-testid="triage-scroll">
             <DataTable
