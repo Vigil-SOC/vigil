@@ -27,6 +27,7 @@ from core.findings.source_evidence import (
     loglm_row_evidence,
     normalize_finding_source_evidence,
 )
+from core.ingestion.triage_signal import MAX_IDS
 from core.storage.score import optional_float as _optional_float
 from core.time import utcnow
 
@@ -234,6 +235,13 @@ class IngestionService:
         self._identity_warned: set = set()
         # Reason the first row failed; a str, so it stays out of the int-only stats.
         self.first_error: Optional[str] = None
+        # Ids stored by this service (bounded), for the API's triage signal.
+        self.stored_ids: List[str] = []
+
+    def _note_stored(self, *finding_ids: str) -> None:
+        room = MAX_IDS - len(self.stored_ids)
+        if room > 0:
+            self.stored_ids.extend(finding_ids[:room])
 
     def _record_error(self, message: str) -> None:
         if self.first_error is None:
@@ -265,6 +273,7 @@ class IngestionService:
         for key in self.stats:
             self.stats[key] = 0
         self.first_error = None
+        self.stored_ids = []
 
     def parse_timestamp(self, timestamp_value: Any) -> Optional[datetime]:
         """
@@ -398,6 +407,7 @@ class IngestionService:
 
                 if finding:
                     self.stats["findings_imported"] += 1
+                    self._note_stored(finding_id)
                     logger.debug(f"Imported finding: {finding_id}")
                     return True
                 else:
@@ -459,6 +469,9 @@ class IngestionService:
         try:
             result = self.db_service.bulk_create_findings(valid)
             self.stats["findings_imported"] += result["imported"]
+            if result["imported"]:
+                # Counts only: duplicates ride along; the daemon skips triaged ones.
+                self._note_stored(*(f["finding_id"] for f in valid))
             self.stats["findings_skipped"] += result["skipped"]
             self.stats["findings_errors"] += result.get("errors", 0)
             if result.get("first_error"):

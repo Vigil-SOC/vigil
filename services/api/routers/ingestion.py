@@ -37,6 +37,7 @@ from core.ingestion.sample_alerts import (
     SAMPLE_DATA_SOURCE,
     build_sample_alerts,
 )
+from core.ingestion.triage_signal import signal_new_findings
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
 from core.storage.s3_service import S3_LIST_ERRORS, describe_s3_error
@@ -232,6 +233,7 @@ async def ingest_from_string(
     stats = ingestion_service.ingest_from_string(
         data, format=format, data_type=data_type
     )
+    await run_in_threadpool(signal_new_findings, ingestion_service.stored_ids)
     success, message = summarize_stats(stats)
     return IngestionStats(**stats, success=success, message=message)
 
@@ -382,6 +384,7 @@ def ingest_s3_file(
 
         ingestion_service = IngestionService()
         stats = ingestion_service._ingest_file_by_format(tmp_path, fmt)
+        signal_new_findings(ingestion_service.stored_ids)
     finally:
         if tmp_path and tmp_path.exists():
             tmp_path.unlink()
@@ -453,12 +456,15 @@ async def load_sample_alerts():
     db = _sample_db()
 
     def _load():
-        result = db.bulk_create_findings(build_sample_alerts())
+        alerts = build_sample_alerts()
+        result = db.bulk_create_findings(alerts)
         if result.get("errors"):
             raise HTTPException(
                 status_code=503,
                 detail=result.get("first_error") or "Sample alerts could not be saved",
             )
+        if result.get("imported"):
+            signal_new_findings(a["finding_id"] for a in alerts)
         return _sample_status(db)
 
     return await run_in_threadpool(_load)

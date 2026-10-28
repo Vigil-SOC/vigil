@@ -42,6 +42,7 @@ class _FakeService:
     def __init__(self, result=None, raises=None, on_ingest=None):
         self.stats = _stats()
         self.first_error = None
+        self.stored_ids = []
         self._result = result
         self._raises = raises
         self._on_ingest = on_ingest
