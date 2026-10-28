@@ -14,23 +14,28 @@
 # Tuning (C5 §5.2 defaults): --backoff-start 5 --backoff-max 300 (seconds, doubling
 # per restart, back to the start after a run of --cap-window or longer);
 # --cap-exits 5 --cap-window 600 (more exits than that in the window: give up and
-# write `crash-looping` to the heartbeat file).
+# write `crash-looping` to the heartbeat file); --rss-max-mb 1024 --rss-every 5
+# (Medic's resident memory, read every N seconds; above the limit the loop stops
+# it and the backoff above applies). Medic runs under `nice -n 10` (C7: on this
+# shape CPU is priority, not a quota).
 #
 # Runs on macOS's bash 3.2: no associative arrays, no `wait -n`.
 set -u
+# A dead log reader must not end supervision (the watcher inherits this).
+trap '' PIPE
 
 usage() { sed -n '7,9p' "$0" | sed 's/^# *//' >&2; exit 2; }
 say() { printf 'medic-loop %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 
 PY="" APP="" DATA="" MODE=run WORKER=127.0.0.1:6990
-START=5 MAX=300 CAP=5 WINDOW=600
+START=5 MAX=300 CAP=5 WINDOW=600 RSS_MAX=1024 RSS_EVERY=5
 [ $# -gt 0 ] || usage
 while [ $# -gt 0 ]; do
     case "$1" in
         --api-key-stdin) KEYIN=1; shift ;;
         --probe) MODE=probe; shift; break ;;
         --check) MODE=check; shift ;;
-        --python|--app|--data-dir|--agent-worker|--backoff-start|--backoff-max|--cap-exits|--cap-window)
+        --python|--app|--data-dir|--agent-worker|--backoff-start|--backoff-max|--cap-exits|--cap-window|--rss-max-mb|--rss-every)
             [ $# -ge 2 ] || usage
             case "$1" in
                 --python) PY="$2" ;;
@@ -41,6 +46,8 @@ while [ $# -gt 0 ]; do
                 --backoff-max) MAX="$2" ;;
                 --cap-exits) CAP="$2" ;;
                 --cap-window) WINDOW="$2" ;;
+                --rss-max-mb) RSS_MAX="$2" ;;
+                --rss-every) RSS_EVERY="$2" ;;
             esac
             shift 2 ;;
         *) usage ;;
@@ -55,16 +62,18 @@ if [ "$MODE" = probe ]; then
 fi
 
 if [ -z "$PY" ] || [ -z "$APP" ] || [ -z "$DATA" ]; then usage; fi
-for n in "$START" "$MAX" "$CAP" "$WINDOW"; do
+for n in "$START" "$MAX" "$CAP" "$WINDOW" "$RSS_MAX" "$RSS_EVERY"; do
     case "$n" in ''|*[!0-9]*) usage ;; esac
 done
+[ "$RSS_EVERY" -gt 0 ] || usage  # 0 would spin
 # host:port, nothing else (Medic checks it again, app/config.py).
 case "${WORKER%:*}" in ''|*[!A-Za-z0-9.-]*) usage ;; esac
 case "${WORKER##*:}" in ''|*[!0-9]*) usage ;; esac
 
 # Medic gets a fresh environment: only these, never the caller's. sudo resets the
 # environment as well; this holds even where a sudoers rule keeps it (check 9).
-# exec: run in the background, $! is then Medic's own PID, so TERM reaches it.
+# exec: run in the background, $! is then Medic's own PID, so TERM reaches it
+# (env and nice both exec, so that still holds).
 # VIGIL_MEDIC_GATEWAY_ADDR and DEV_MODE are forwarded only when this process
 # was given them. Host-native has no gateway, so an unset address stays unset
 # and Medic does not register gateway_session. medic.sh still refuses to start
@@ -84,7 +93,7 @@ medic() {
         VIGIL_MEDIC_ENABLED=true VIGIL_MEDIC_DATA_DIR="$DATA" \
         VIGIL_MEDIC_INSTALL_SHAPE=start_sh VIGIL_MEDIC_AGENT_WORKER_ADDR="$WORKER" \
         ${extra[@]+"${extra[@]}"} \
-        "$PY" -m services.medic "$cmd"
+        nice -n 10 "$PY" -m services.medic "$cmd"
 }
 
 cd "$APP" || exit 1
@@ -132,7 +141,26 @@ mark_stopped() {
         "$$" > "$tmp" && mv -f "$tmp" "$dir/heartbeat"
 }
 
-child="" stopping=0
+# C7 RSS guard, run in the background next to Medic: above the limit, TERM,
+# then KILL after a grace. Medic's exit then goes through the usual backoff and
+# crash-loop cap. Its sleeps don't hold the log open after it is killed.
+watch_rss() {
+    local pid="$1" rss
+    while sleep "$RSS_EVERY" >/dev/null 2>&1; do
+        rss=$(ps -o rss= -p "$pid" 2>/dev/null) || return 0
+        rss="${rss//[!0-9]/}"
+        [ -n "$rss" ] || return 0
+        [ "$rss" -gt $((RSS_MAX * 1024)) ] || continue
+        # Say first: once TERM lands, the loop reaps Medic and ends this watcher.
+        say "Medic (pid $pid) uses $(((rss + 1023) / 1024)) MiB RSS, over the ${RSS_MAX} MiB limit; stopping it"
+        kill -TERM "$pid" 2>/dev/null
+        sleep 5 >/dev/null 2>&1
+        kill -KILL "$pid" 2>/dev/null
+        return 0
+    done
+}
+
+child="" watcher="" stopping=0
 on_stop() {
     stopping=1
     [ -n "$child" ] && kill -TERM "$child" 2>/dev/null
@@ -148,6 +176,8 @@ while :; do
     # TERM between `&` and `child=$!` found no child to pass on to.
     [ "$stopping" -eq 1 ] && kill -TERM "$child" 2>/dev/null
     say "started Medic (pid $child)"
+    watch_rss "$child" &
+    watcher=$!
     wait "$child"
     rc=$?
     # A trapped signal ends `wait` early; wait again for Medic's own exit.
@@ -156,6 +186,8 @@ while :; do
         rc=$?
     done
     child=""
+    kill "$watcher" 2>/dev/null
+    wait "$watcher" 2>/dev/null
     if [ "$stopping" -eq 1 ]; then
         # A kill -9 leaves the last beat "running". If this stop lands before
         # the replacement Medic can write "stopped" itself, `check` would stay
