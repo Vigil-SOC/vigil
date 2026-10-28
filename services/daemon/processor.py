@@ -1,6 +1,7 @@
 """AI processing pipeline for finding triage and enrichment."""
 
 import asyncio
+import json
 import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -8,8 +9,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from core.findings.exclusions import cached_active_ips, excluded_ips_of
 from core.ingestion.ack import settle_ack
 from core.ingestion.dedup import RedisDedupSet
+from core.ingestion.triage_signal import CHANNEL as TRIAGE_SIGNAL_CHANNEL
 from core.llm.outage import report_outage, report_recovered
 from core.llm.security import alert_text
+from core.redis_client import open_async_redis, redact_logged_text
 from core.storage.service import DAEMON_ENRICHMENT_KEYS
 from core.time import utcnow
 from services.daemon.config import ProcessingConfig, ResponseConfig
@@ -37,6 +40,12 @@ _STORE_ATTEMPTS = 3
 _STORE_RETRY_BACKOFF = 0.2  # seconds
 
 INPUT_QUEUE_MAXSIZE = 1000
+
+# API-stored findings: signals arriving within this window triage as one batch;
+# when Redis is unreachable the listener retries on this period.
+_SIGNAL_DEBOUNCE = 0.5  # seconds
+_SIGNAL_MAX_WAIT = 5.0  # a steady stream still flushes this often
+_SIGNAL_RETRY = 30  # seconds
 
 TRIAGE_KEYS = (
     "SEVERITY",
@@ -85,6 +94,9 @@ class FindingProcessor:
         # backpressure propagates to the poller.
         self._enrich_slots = asyncio.Semaphore(config.enrich_max_inflight)
         self._enrich_tasks = set()
+        # Ids with a triage task pending or running, so a signal or sweep that
+        # names one already being triaged does not start it twice.
+        self._enrich_inflight: set = set()
         self._enrich_failures = 0
         self._enrich_paused_until = 0.0
         self._enrich_breaker_tripped = False
@@ -235,15 +247,19 @@ class FindingProcessor:
 
         # Backfill sweeper: enriches findings that were stored but never enriched.
         backfill = asyncio.create_task(self._backfill_loop(shutdown_event))
+        # Triages findings the API stored right away, ahead of the next sweep.
+        signals = asyncio.create_task(self._signal_loop(shutdown_event))
 
         # Wait for shutdown
         await shutdown_event.wait()
 
         pending = list(self._enrich_tasks)
-        for task in [*workers, backfill, *pending]:
+        for task in [*workers, backfill, signals, *pending]:
             task.cancel()
 
-        await asyncio.gather(*workers, backfill, *pending, return_exceptions=True)
+        await asyncio.gather(
+            *workers, backfill, signals, *pending, return_exceptions=True
+        )
         logger.info("Finding processor stopped")
 
     async def _process_worker(self, worker_id: int, shutdown_event: asyncio.Event):
@@ -352,12 +368,19 @@ class FindingProcessor:
                     ", ".join(excluded),
                 )
                 return
+        finding_id = finding.get("finding_id")
+        if finding_id:
+            if finding_id in self._enrich_inflight:
+                return
+            # Claim before awaiting a slot so a concurrent caller sees it.
+            self._enrich_inflight.add(finding_id)
         await self._enrich_slots.acquire()
         task = asyncio.create_task(self._enrich_in_background(finding, source))
         self._enrich_tasks.add(task)
 
         def _done(t: asyncio.Task) -> None:
             self._enrich_tasks.discard(t)
+            self._enrich_inflight.discard(finding_id)
             self._enrich_slots.release()
 
         task.add_done_callback(_done)
@@ -480,6 +503,79 @@ class FindingProcessor:
                 if shutdown_event.is_set():
                     break
                 await self._spawn_enrich(finding)  # blocks on the cap → self-pacing
+
+    async def _signal_loop(self, shutdown_event: asyncio.Event):
+        """Triage findings the API process stored, within seconds, instead of
+        at the next backfill sweep. The API publishes their ids on Redis; with
+        no Redis the sweep still finds them."""
+        if not (self.config.auto_triage_enabled or self.config.auto_enrich_enabled):
+            return
+        while not shutdown_event.is_set():
+            client = None
+            try:
+                client = open_async_redis()
+                pubsub = client.pubsub()
+                await pubsub.subscribe(TRIAGE_SIGNAL_CHANNEL)
+                await self._drain_signals(pubsub, shutdown_event)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001
+                logger.debug(
+                    "Triage signal listener unavailable (%s); backfill sweep only",
+                    redact_logged_text(str(e)),
+                )
+            finally:
+                if client is not None:
+                    try:
+                        await client.aclose()
+                    except Exception:  # noqa: BLE001
+                        pass
+            try:
+                await asyncio.wait_for(shutdown_event.wait(), timeout=_SIGNAL_RETRY)
+            except asyncio.TimeoutError:
+                pass
+
+    async def _drain_signals(self, pubsub, shutdown_event: asyncio.Event):
+        pending: set = set()
+        first_at = 0.0
+        while not shutdown_event.is_set():
+            msg = await pubsub.get_message(
+                ignore_subscribe_messages=True, timeout=_SIGNAL_DEBOUNCE
+            )
+            if msg is not None:
+                try:
+                    ids = json.loads(msg["data"])
+                    pending.update(i for i in ids if isinstance(i, str))
+                except (TypeError, ValueError):
+                    logger.debug("Ignoring malformed triage signal")
+                first_at = first_at or time.monotonic()
+            # Flush once the burst goes quiet (or has run long enough).
+            if pending and (
+                msg is None or time.monotonic() - first_at >= _SIGNAL_MAX_WAIT
+            ):
+                ids, pending, first_at = list(pending), set(), 0.0
+                await self._triage_signalled(ids, shutdown_event)
+
+    async def _triage_signalled(self, ids: List[str], shutdown_event: asyncio.Event):
+        """Triage the named findings that still lack a triage result."""
+        if time.monotonic() < self._enrich_paused_until or not self._data_service:
+            return  # breaker open; the sweep retries
+        try:
+            batch = await asyncio.to_thread(
+                self._data_service.get_findings_missing_enrichment,
+                limit=len(ids),
+                exclusions="hide",
+                finding_ids=ids,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Signalled triage query failed: %s", e)
+            return
+        if batch:
+            logger.info("Triaging %d finding(s) stored by the API", len(batch))
+        for finding in batch:
+            if shutdown_event.is_set():
+                break
+            await self._spawn_enrich(finding)
 
     async def _store_with_retry(self, finding: Dict[str, Any]) -> bool:
         """True once the row is stored. A few attempts, then the caller gives up."""

@@ -31,6 +31,7 @@ class _FakeService:
 
     def __init__(self):
         self.first_error = None
+        self.stored_ids = []
         self.stats = {
             "findings_total": 0,
             "findings_imported": 0,

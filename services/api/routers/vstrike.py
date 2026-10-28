@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 
 from core.auth.permissions import permission_gate
 from core.config import get_settings
+from core.ingestion.triage_signal import signal_new_findings
 from core.integrations.vstrike.client import (
     get_vstrike_service,
 )
@@ -127,6 +128,7 @@ def ingest_findings(
     created = 0
     failed = 0
     upserted_ids: list[str] = []
+    created_ids: list[str] = []
 
     for item in request.findings:
         try:
@@ -201,6 +203,7 @@ def ingest_findings(
             if created_finding:
                 created += 1
                 upserted_ids.append(item.finding_id)
+                created_ids.append(item.finding_id)
                 results.append(
                     VStrikeFindingResult(finding_id=item.finding_id, status="created")
                 )
@@ -223,6 +226,8 @@ def ingest_findings(
                     error=INTERNAL_ERROR_DETAIL,
                 )
             )
+
+    signal_new_findings(created_ids)
 
     case_ids: list[str] = []
     if request.auto_cluster_cases and upserted_ids:
