@@ -327,7 +327,7 @@ async def test_triage_routes_a_disabled_workflow_to_the_fallback(session, monkey
     _disable(session, "full-investigation")
     orch = object.__new__(Orchestrator)
     orch.shared_intel = MagicMock()
-    orch.shared_intel.check_overlap.return_value = None
+    orch.shared_intel.matching_cases.return_value = []
     orch._create_investigation = AsyncMock()
     finding = {"finding_id": "f-1", "severity": "high"}
     assert select_workflow(finding) == "full-investigation"

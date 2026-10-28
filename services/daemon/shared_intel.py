@@ -1,8 +1,8 @@
-"""Cross-investigation IOC correlation over ``shared_iocs``.
+"""Cross-investigation IOC index over ``shared_iocs``.
 
-Nothing is held in process, so overlap survives a daemon restart. Dedup
-(``check_overlap``) is bounded to live investigations; correlation reads the
-whole table.
+Nothing is held in process, so a match survives a daemon restart. Intake reads
+it through ``matching_cases`` to join an alert to its open Case and to link a
+new Case to the closed ones before it.
 """
 
 import logging
@@ -10,7 +10,11 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Set
 
 from core.memory.entity_keys import entity_context_candidates
 from core.storage.connection import get_db_manager
-from core.storage.shared_ioc_repository import SharedIOCRepository, make_key
+from core.storage.shared_ioc_repository import (
+    CaseMatch,
+    SharedIOCRepository,
+    make_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,40 +55,39 @@ class SharedIntelligence:
             "register", lambda repo: repo.record(investigation_id, keys), None
         )
 
-    def check_overlap(
-        self, finding: Dict[str, Any], exclude_id: Optional[str] = None
-    ) -> List[str]:
-        """Live investigations already covering one of this finding's entities."""
+    def matching_cases(
+        self,
+        finding: Dict[str, Any],
+        *,
+        open: bool,
+        limit: Optional[int] = None,
+        exclude_case_id: Optional[str] = None,
+    ) -> List[CaseMatch]:
+        """Cases this finding belongs with, newest first. Raises on a failed read.
+
+        Not routed through ``_with_repo``: an empty answer on a failed read would
+        launch a new Case for an alert that has one.
+        """
+        with get_db_manager().session_scope() as session:
+            return SharedIOCRepository(session).matching_cases(
+                finding,
+                entity_context_candidates(finding),
+                open=open,
+                limit=limit,
+                exclude_case_id=exclude_case_id,
+            )
+
+    def record_on_case(self, case_id: str, finding: Dict[str, Any]) -> None:
+        """Index a merged finding's entities against its Case's newest investigation."""
         keys = _keys_from_finding(finding)
         if not keys:
-            return []
+            return
 
-        overlapping = self._with_repo(
-            "overlap lookup", lambda repo: repo.open_investigations_for(keys), set()
-        )
-        if exclude_id:
-            overlapping.discard(exclude_id)
-        return sorted(overlapping)
+        def _record(repo: SharedIOCRepository) -> int:
+            inv_id = repo.newest_investigation_of(case_id)
+            return repo.record(inv_id, keys) if inv_id else 0
 
-    def get_related_investigations(self, investigation_id: str) -> List[str]:
-        """Investigations that share an indicator with the given one, ever."""
-
-        def _related(repo: SharedIOCRepository) -> Set[str]:
-            keys = repo.keys_for(investigation_id)
-            return repo.investigations_for(keys) if keys else set()
-
-        related = self._with_repo("related lookup", _related, set())
-        related.discard(investigation_id)
-        return sorted(related)
-
-    def get_shared_iocs(self, inv_id_a: str, inv_id_b: str) -> List[str]:
-        return sorted(
-            self._with_repo(
-                "shared lookup",
-                lambda repo: repo.shared_between(inv_id_a, inv_id_b),
-                set(),
-            )
-        )
+        self._with_repo("merge write", _record, None)
 
     def close_investigation(self, investigation_id: str, case_id: Optional[str]):
         """Pick up what the case accumulated while the investigation ran."""
