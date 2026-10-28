@@ -2994,6 +2994,101 @@
   "nullable": false,
   "type": "timestamp without time zone"
  },
+ "column log_events.action": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(64)"
+ },
+ "column log_events.dst_host": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(255)"
+ },
+ "column log_events.dst_ip": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(64)"
+ },
+ "column log_events.dst_port": {
+  "default": null,
+  "nullable": true,
+  "type": "integer"
+ },
+ "column log_events.event_class": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(64)"
+ },
+ "column log_events.event_id": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(64)"
+ },
+ "column log_events.incident": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(32)"
+ },
+ "column log_events.loglm": {
+  "default": null,
+  "nullable": true,
+  "type": "double precision"
+ },
+ "column log_events.mitre": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(32)"
+ },
+ "column log_events.raw": {
+  "default": null,
+  "nullable": false,
+  "type": "jsonb"
+ },
+ "column log_events.search_text": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column log_events.severity": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(16)"
+ },
+ "column log_events.source": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(32)"
+ },
+ "column log_events.src_host": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(255)"
+ },
+ "column log_events.src_ip": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(64)"
+ },
+ "column log_events.summary": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column log_events.tags": {
+  "default": null,
+  "nullable": false,
+  "type": "jsonb"
+ },
+ "column log_events.time": {
+  "default": null,
+  "nullable": false,
+  "type": "timestamp with time zone"
+ },
+ "column log_events.user_name": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(128)"
+ },
  "column mcp_credentials.created_at": {
   "default": "now()",
   "nullable": false,
@@ -3858,6 +3953,7 @@
  "constraint llm_interaction_logs.llm_interaction_logs_interaction_id_key": "UNIQUE (interaction_id)",
  "constraint llm_interaction_logs.llm_interaction_logs_pkey": "PRIMARY KEY (id)",
  "constraint llm_provider_configs.llm_provider_configs_pkey": "PRIMARY KEY (provider_id)",
+ "constraint log_events.log_events_pkey": "PRIMARY KEY (event_id)",
  "constraint mcp_credentials.mcp_credentials_pkey": "PRIMARY KEY (credential_id)",
  "constraint mcp_credentials.mcp_credentials_token_hash_key": "UNIQUE (token_hash)",
  "constraint mcp_credentials.mcp_credentials_user_id_fkey": "FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE RESTRICT",
@@ -4212,10 +4308,14 @@
  "index investigations_pkey": "CREATE UNIQUE INDEX investigations_pkey ON public.investigations USING btree (investigation_id)",
  "index ip_exclusions_pkey": "CREATE UNIQUE INDEX ip_exclusions_pkey ON public.ip_exclusions USING btree (exclusion_id)",
  "index ix_ai_decision_logs_agent_id": "CREATE INDEX ix_ai_decision_logs_agent_id ON public.ai_decision_logs USING btree (agent_id)",
+ "index ix_log_events_incident": "CREATE INDEX ix_log_events_incident ON public.log_events USING btree (incident)",
+ "index ix_log_events_source_time": "CREATE INDEX ix_log_events_source_time ON public.log_events USING btree (source, \"time\")",
+ "index ix_log_events_time": "CREATE INDEX ix_log_events_time ON public.log_events USING btree (\"time\")",
  "index llm_interaction_logs_interaction_id_key": "CREATE UNIQUE INDEX llm_interaction_logs_interaction_id_key ON public.llm_interaction_logs USING btree (interaction_id)",
  "index llm_interaction_logs_pkey": "CREATE UNIQUE INDEX llm_interaction_logs_pkey ON public.llm_interaction_logs USING btree (id)",
  "index llm_provider_configs_pkey": "CREATE UNIQUE INDEX llm_provider_configs_pkey ON public.llm_provider_configs USING btree (provider_id)",
  "index llm_provider_default_per_type": "CREATE UNIQUE INDEX llm_provider_default_per_type ON public.llm_provider_configs USING btree (provider_type) WHERE (is_default = true)",
+ "index log_events_pkey": "CREATE UNIQUE INDEX log_events_pkey ON public.log_events USING btree (event_id)",
  "index mcp_credentials_pkey": "CREATE UNIQUE INDEX mcp_credentials_pkey ON public.mcp_credentials USING btree (credential_id)",
  "index mcp_credentials_token_hash_key": "CREATE UNIQUE INDEX mcp_credentials_token_hash_key ON public.mcp_credentials USING btree (token_hash)",
  "index medic_last_seen_pkey": "CREATE UNIQUE INDEX medic_last_seen_pkey ON public.medic_last_seen USING btree (id)",
@@ -5658,6 +5758,28 @@
   "sequence": "[\"integer\", 1, 1, 1, 2147483647, 1, false]"
  },
  "relation llm_provider_configs": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation log_events": {
   "acl": [
    "app:DELETE",
    "app:INSERT",
