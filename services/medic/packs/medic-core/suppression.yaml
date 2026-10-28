@@ -1,0 +1,5 @@
+# Dependency suppression (E3 §6). Entries are grouped by the class that owns the
+# child; keep each batch's entries under its heading when merging.
+apiVersion: medic.suppression/v1
+kind: Suppression
+entries: []
