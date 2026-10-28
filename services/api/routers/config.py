@@ -1585,9 +1585,7 @@ class IntentReportResponse(BaseModel):
     rows: list[IntentDiffRow] = Field(default_factory=list)
 
 
-@router.get(
-    "/intent", response_model=IntentReportResponse, dependencies=_AUTONOMY_READ
-)
+@router.get("/intent", response_model=IntentReportResponse, dependencies=_AUTONOMY_READ)
 def get_intent_report() -> IntentReportResponse:
     """Declared intent beside effective config.
 
