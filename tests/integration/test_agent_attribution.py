@@ -78,14 +78,14 @@ def _invoke(client, tool: str, principal: str):
 
 
 def _trail_actions(engine) -> list[str]:
-    # The upgrade writes roles.revised before the test. These assertions are
-    # about the rows the tool call added.
+    # The upgrade writes roles.revised and tools.classified before the test.
+    # These assertions are about the rows the tool call added.
     with engine.connect() as conn:
         return list(
             conn.execute(
                 text(
                     "SELECT payload->>'action' FROM audit_trail "
-                    "WHERE payload->>'action' IS DISTINCT FROM 'roles.revised' "
+                    "WHERE payload->>'action' NOT IN ('roles.revised', 'tools.classified') "
                     "ORDER BY seq"
                 )
             ).scalars()
@@ -192,7 +192,7 @@ def test_an_effectful_tool_is_recorded_before_it_runs(db, monkeypatch):
             conn.execute(
                 text(
                     "SELECT payload FROM audit_trail "
-                    "WHERE payload->>'action' IS DISTINCT FROM 'roles.revised' "
+                    "WHERE payload->>'action' NOT IN ('roles.revised', 'tools.classified') "
                     "ORDER BY seq"
                 )
             ).scalars()
