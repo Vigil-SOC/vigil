@@ -13,8 +13,6 @@ import {
   type Workflow,
   type AgentTemplate,
   type Skill,
-  type Decision,
-  type Outcome,
 } from './appData'
 import type { IconName } from '../shared/icons'
 import { techniqueTactic } from './mitre'
@@ -253,78 +251,6 @@ export function mapApiFinding(f: ApiFinding): Finding {
     caseId: f.case_id ?? null,
     extra: extraEntities(ec),
     excludedIps: f.excluded_ips ?? [],
-  }
-}
-
-export interface ApiDecision {
-  decision_id: string
-  agent_id?: string
-  decision_type?: string
-  confidence_score?: number // 0–1
-  reasoning?: string
-  recommended_action?: string
-  finding_id?: string
-  case_id?: string
-  workflow_id?: string
-  timestamp?: string
-  /** agree | partial | disagree — set once a human reviews */
-  human_decision?: string
-  feedback_timestamp?: string
-  decision_metadata?: { investigation_id?: string } & Record<string, unknown>
-  /** true_positive | false_positive | true_negative | false_negative | unknown */
-  actual_outcome?: string
-  time_saved_minutes?: number
-}
-
-/** `agent_id` is an action id from core/agents/builtins.py, already words, so
- *  the label is derived rather than mapped (#476) */
-export function getAgentDisplayName(agentId?: string): string {
-  if (!agentId) return DASH
-  return prettyHandle(agentId)
-}
-
-/** the human verdict, NOT the backend's actual_outcome — separate axes */
-function decisionOutcome(human?: string): Outcome {
-  if (human === 'agree') return 'agree'
-  if (human === 'disagree') return 'disagree'
-  if (human === 'partial') return 'modify'
-  return 'pending'
-}
-
-function timeSaved(minutes?: number): string {
-  if (!minutes || minutes <= 0) return DASH
-  if (minutes < 60) return `${minutes}m`
-  const hours = Math.floor(minutes / 60)
-  const mins = minutes % 60
-  return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`
-}
-
-/** first non-empty wins */
-function decisionInv(d: ApiDecision): string {
-  return (
-    d.workflow_id ||
-    d.decision_metadata?.investigation_id ||
-    d.finding_id ||
-    d.case_id ||
-    DASH
-  )
-}
-
-export function mapApiDecision(d: ApiDecision): Decision {
-  return {
-    id: d.decision_id,
-    agent: getAgentDisplayName(d.agent_id),
-    type: d.decision_type || DASH,
-    inv: decisionInv(d),
-    conf:
-      typeof d.confidence_score === 'number'
-        ? Math.round(d.confidence_score * 100)
-        : 0,
-    ai: d.recommended_action || DASH,
-    outcome: decisionOutcome(d.human_decision),
-    saved: timeSaved(d.time_saved_minutes),
-    time: fmt(d.timestamp, 'MMM d, HH:mm'),
-    rationale: d.reasoning || '',
   }
 }
 

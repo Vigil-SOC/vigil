@@ -35,7 +35,7 @@ export default function DashboardScreen({ openChat, goSettings }: ConsoleScreenP
   return (
     <>
       <div className="flex items-center gap-3 flex-wrap px-[22px] py-[13px] border-b border-line tabbar">
-        <div className="tabs" role="tablist" aria-label="Dashboard views">
+        <div className="tabs" role="tablist" aria-label="Findings views">
           {tabs.map(([k, label]) => (
             <button
               key={k}
