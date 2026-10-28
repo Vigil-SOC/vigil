@@ -261,6 +261,7 @@ describe('Home', () => {
     }
     expect(changed).toHaveBeenCalledOnce()
     expect(screen.queryByRole('heading', { name: 'Connect more tools' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /Where Vigil pings you/ })).toBeInTheDocument()
     expect(JSON.parse(localStorage.getItem('vigil.home.setup.hidden') || '[]')).toEqual(['connect_tools'])
     expect(screen.getByRole('link', { name: 'Browse integrations →' })).toBeInTheDocument()
   })
@@ -289,12 +290,12 @@ describe('Home', () => {
     }
     try {
       const plain = renderHome()
-      await screen.findByText('Nothing to suggest right now.')
+      await screen.findByText('Connect more tools')
       expect(scrolled).toEqual([])
       plain.unmount()
 
       const more = renderHome({}, '/home?section=setup')
-      await screen.findByText('Nothing to suggest right now.')
+      await screen.findByText('Connect more tools')
       // The scroll runs in an effect after the steps commit, so the text can land first.
       await waitFor(() => {
         expect(scrolled).toEqual([screen.getByRole('region', { name: 'Setup' })])
@@ -315,7 +316,7 @@ describe('Home', () => {
     }
   })
 
-  it('lays the open steps out in one numbered row and Not now renumbers the rest', async () => {
+  it('lays every step out in one row: done ones ticked with Edit, open ones numbered, Not now renumbers', async () => {
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
     vi.mocked(configApi.getSetupSteps).mockResolvedValue({
       data: {
@@ -332,20 +333,36 @@ describe('Home', () => {
     renderHome()
     await screen.findByRole('heading', { name: 'Connect more tools' })
     const rows = () => Array.from(document.querySelectorAll<HTMLElement>('.home-step'))
-    expect(rows().map((row) => row.querySelector('.home-step-no')?.textContent)).toEqual(['1', '2', '3'])
+    expect(rows().map((row) => row.querySelector('.home-step-no')?.textContent)).toEqual(['1', '', '3', '4'])
+    expect(rows().map((row) => row.querySelector('.home-step-no')?.className)).toEqual([
+      'home-step-no first',
+      'home-step-no done',
+      'home-step-no',
+      'home-step-no',
+    ])
     expect((document.querySelector('.home-steps') as HTMLElement).style.gridTemplateColumns).toBe(
-      'repeat(3, minmax(0, 1fr))',
+      'repeat(4, minmax(0, 1fr))',
     )
+    const done = rows()[1]
+    expect(within(done).getByText('Slack or PagerDuty route is set')).toBeInTheDocument()
+    expect(within(done).queryByRole('button', { name: 'Not now' })).not.toBeInTheDocument()
+    expect(within(done).getByRole('link', { name: 'Edit' })).toHaveAttribute('href', '/settings?section=integrations')
     expect(screen.getByText('Fixed order · most impact first')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'How Get more from Vigil is calculated' }))
     expect(screen.getByRole('tooltip')).toHaveTextContent('Source Setup stepsCalculation')
 
+    // hiding the first step moves the accent to the next open one and keeps the done step in its slot
     fireEvent.click(within(rows()[0]).getByRole('button', { name: 'Not now' }))
     expect(rows().map((row) => row.querySelector('h3')?.textContent)).toEqual([
+      'Where Vigil pings you (done)',
       'Link detection rules',
       'Pick a model per agent',
     ])
-    expect(rows().map((row) => row.querySelector('.home-step-no')?.textContent)).toEqual(['1', '2'])
+    expect(rows().map((row) => row.querySelector('.home-step-no')?.className)).toEqual([
+      'home-step-no done',
+      'home-step-no first',
+      'home-step-no',
+    ])
   })
 
   it('serves the custom skill step as a fifth card whose Add opens the Skills tab, and counts it on first run', async () => {
@@ -368,10 +385,15 @@ describe('Home', () => {
     expect(await screen.findByText('5 of 5 done')).toBeInTheDocument()
   })
 
-  it('says there is nothing to suggest when no step is open', async () => {
+  it('keeps every done step on the board, and says there is nothing to suggest only when all are hidden', async () => {
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
     renderHome()
-    expect(await screen.findByText('Nothing to suggest right now.')).toBeInTheDocument()
+    expect(await screen.findAllByRole('link', { name: 'Edit' })).toHaveLength(4)
+    expect(screen.queryByText('Nothing to suggest right now.')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Hide setup' }))
+    expect(screen.getByText('Nothing to suggest right now.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Show hidden steps' }))
+    expect(screen.getAllByRole('link', { name: 'Edit' })).toHaveLength(4)
   })
 
   it('first run puts the checklist under Needs your attention with no sub-line, Board clear or Get more', async () => {
