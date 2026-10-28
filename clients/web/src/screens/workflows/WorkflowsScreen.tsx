@@ -68,6 +68,9 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
   const wantWorkflow = searchParams.get('workflow')
   useEffect(() => {
     if (wantTab === 'agents' || wantTab === 'skills' || wantTab === 'commands' || wantTab === 'workflows') setTab(wantTab)
+    // the builder lives on the Workflows tab; leaving that tab leaves the builder
+    // (the shell's go() has already asked about unsaved builder edits before this URL changed)
+    if (wantTab === 'agents' || wantTab === 'skills' || wantTab === 'commands') setBuilding(null)
     if (wantWorkflow) { setTab('workflows'); setBuilding(null); setFocusId(wantWorkflow) }
   }, [wantTab, wantWorkflow])
   const workflows = useWorkflows()

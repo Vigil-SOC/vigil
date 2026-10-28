@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { configApi } from '../services/api'
 import { Icon } from '../shared/icons'
+import { leaveUnsaved } from '../shared/unsaved'
 import { HOME_SETUP_HREF } from '../screens/home/setupHidden'
 import { useColorScheme } from '../contexts/ColorSchemeContext'
 import { useToast } from './toast'
@@ -144,12 +145,12 @@ export default function UserMenu({
           </span>
         </div>
         <div className="user-pop-sep" />
-        <button role="menuitem" onClick={() => { setOpen(false); navigate('/setup') }}>
+        <button role="menuitem" onClick={() => { setOpen(false); if (leaveUnsaved()) navigate('/setup') }}>
           <Icon name="flow" size={15} /> Setup guide
         </button>
         {/* the count is Home's steps, not the wizard's, so it opens them like the chip does */}
         {setupLeft ? (
-          <button role="menuitem" onClick={() => { setOpen(false); navigate(HOME_SETUP_HREF) }}>
+          <button role="menuitem" onClick={() => { setOpen(false); if (leaveUnsaved()) navigate(HOME_SETUP_HREF) }}>
             <Icon name="check" size={15} />
             Finish setup
             <span className="user-pop-note">{setupLeft} left</span>
@@ -172,7 +173,7 @@ export default function UserMenu({
           Two-step sign-in
           <span className="user-pop-note">{user.mfa_enabled ? 'On' : 'Off'}</span>
         </button>
-        <button role="menuitem" onClick={() => { setOpen(false); navigate('/settings') }}>
+        <button role="menuitem" onClick={() => { setOpen(false); if (leaveUnsaved()) navigate('/settings') }}>
           <Icon name="gear" size={15} /> Settings
         </button>
         {!authBypassed && (

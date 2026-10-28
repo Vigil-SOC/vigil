@@ -4,11 +4,12 @@
 // saved until Save, and the server checks the result as it checks any other.
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { Icon } from '../../shared/icons'
+import { useWarnOnUnload } from '../../shared/unsaved'
 import { agentsApi, workflowApi } from '../../services/api'
 import ToolPicker from './ToolPicker'
 import { useToolCatalog } from './toolCatalog'
 import {
-  EMPTY_DRAFT, TIMEOUTS, blankStep, checkDraft, draftFrom, newKey, sameDraft, toPayload,
+  EMPTY_DRAFT, blankStep, checkDraft, draftFrom, newKey, sameDraft, toPayload,
   type BuilderAgent, type BuilderDraft, type BuilderStep, type Check,
 } from './workflowDraft'
 import './builder.css'
@@ -20,7 +21,6 @@ function errMsg(e: unknown): string {
   return (typeof text === 'string' && text) || r?.message || 'Something went wrong'
 }
 
-const fmtTimeout = (s: number) => (s < 60 ? `${s} seconds` : `${s / 60} minute${s === 60 ? '' : 's'}`)
 const agentColor = (a?: BuilderAgent) => a?.color || 'var(--ac)'
 
 type Drag = { kind: 'agent'; agentId: string } | { kind: 'blank' } | { kind: 'move'; key: string }
@@ -182,12 +182,6 @@ function StepInspector({ step, index, agents, onChange, onRemove, onDuplicate }:
           </span>
         </label>
       </div>
-
-      <Field label="Time limit" htmlFor="wb-s-timeout">
-        <select id="wb-s-timeout" className="wb-input" value={step.timeout_seconds} onChange={(e) => set('timeout_seconds', Number(e.target.value))}>
-          {[...new Set([...TIMEOUTS, step.timeout_seconds])].sort((a, b) => a - b).map((s) => <option key={s} value={s}>{fmtTimeout(s)}</option>)}
-        </select>
-      </Field>
     </div>
   )
 }
@@ -229,28 +223,37 @@ function WorkflowSettings({ draft, set, checks, onPick }: {
   )
 }
 
-/** The definition as JSON, editable. Applying a valid edit replaces the flow. */
-function CodeView({ draft, onApply }: { draft: BuilderDraft; onApply: (d: BuilderDraft) => void }) {
-  const text = useMemo(() => JSON.stringify(toPayload(draft), null, 2), [draft])
-  const [edit, setEdit] = useState(text)
-  const [err, setErr] = useState<string | null>(null)
-  useEffect(() => { setEdit(text); setErr(null) }, [text])
-  const apply = () => {
-    try {
-      const parsed = JSON.parse(edit)
-      if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.phases)) throw new Error('It needs a "phases" list.')
-      onApply(draftFrom(parsed))
-      setErr(null)
-    } catch (e) {
-      setErr((e as Error).message)
-    }
+const codeOf = (d: BuilderDraft) => JSON.stringify(toPayload(d), null, 2)
+
+/** A pasted or edited definition as a draft, or why it cannot be one. */
+function readCode(text: string): BuilderDraft | string {
+  try {
+    const parsed = JSON.parse(text)
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.phases)) return 'It needs a "phases" list.'
+    if (parsed.phases.some((p: unknown) => !p || typeof p !== 'object' || Array.isArray(p))) return 'Each entry in "phases" must be a step object.'
+    return draftFrom(parsed)
+  } catch (e) {
+    return (e as Error).message
   }
+}
+
+/** The definition as JSON, editable. Applying a valid edit replaces the flow; the builder holds the text so Save and Flow see it. */
+function CodeView({ text, edit, setEdit, err, onApply, onRevert }: {
+  text: string
+  edit: string
+  setEdit: (s: string) => void
+  err: string | null
+  onApply: () => void
+  onRevert: () => void
+}) {
+  const apply = onApply
   return (
     <div className="wb-code">
       <textarea className="wb-input mono" value={edit} spellCheck={false} aria-label="Workflow definition" onChange={(e) => setEdit(e.target.value)} />
       <div className="wb-code-foot">
-        {err ? <span className="wb-err">Not applied: {err}</span> : <span className="wb-hint">This is exactly what Save sends. Paste a definition to import it.</span>}
+        {err ? <span className="wb-err">Not applied: {err}</span> : <span className="wb-hint">{edit === text ? 'This is exactly what Save sends. Paste a definition to import it.' : 'Apply your edit (or switch to Flow) before you save.'}</span>}
         <button type="button" className="wb-btn ghost small" onClick={() => { navigator.clipboard?.writeText(edit).catch(() => {}) }}><Icon name="copy" size={12} /> Copy</button>
+        {edit !== text && <button type="button" className="wb-btn ghost small" onClick={onRevert}>Undo edit</button>}
         <button type="button" className="wb-btn small" disabled={edit === text} onClick={apply}>Apply</button>
       </div>
     </div>
@@ -278,6 +281,9 @@ export default function WorkflowBuilder({ initial, workflowId = null, origin, in
   const [loadErr, setLoadErr] = useState<string | null>(null)
   const [sel, setSel] = useState<string | null>(null)
   const [view, setView] = useState<'flow' | 'code'>(initialView)
+  // an edit in the Definition view not yet applied to the flow; null when there is none
+  const [code, setCode] = useState<string | null>(null)
+  const [codeErr, setCodeErr] = useState<string | null>(null)
   const sideRef = useRef<HTMLElement>(null)
   // a newly picked step's settings start at the top, not where the last one was scrolled
   useEffect(() => { if (sideRef.current) sideRef.current.scrollTop = 0 }, [sel])
@@ -299,7 +305,17 @@ export default function WorkflowBuilder({ initial, workflowId = null, origin, in
     return () => { cancelled = true }
   }, [workflowId, initial])
 
-  const dirty = !sameDraft(draft, saved)
+  const codeText = useMemo(() => codeOf(draft), [draft])
+  const codePending = code !== null && code !== codeText
+  const dirty = !sameDraft(draft, saved) || codePending
+  // apply a pending Definition edit; false (with the reason shown) when it cannot be read
+  const applyCode = (): boolean => {
+    if (!codePending) { setCode(null); setCodeErr(null); return true }
+    const d = readCode(code!)
+    if (typeof d === 'string') { setCodeErr(d); setView('code'); return false }
+    setDraft(d); setCode(null); setCodeErr(null)
+    return true
+  }
   const checks = useMemo(
     () => checkDraft(draft, agents, catalog.phase === 'ready' ? catalog.byName : null),
     [draft, agents, catalog],
@@ -336,6 +352,11 @@ export default function WorkflowBuilder({ initial, workflowId = null, origin, in
 
   const save = useCallback(() => {
     if (busy || errors.length) return
+    if (codePending) {
+      setView('code')
+      setSaveErr('Your Definition edit is not applied yet. Apply it, or press Undo edit, then save.')
+      return
+    }
     setBusy(true)
     setSaveErr(null)
     const body = toPayload(draft)
@@ -345,7 +366,7 @@ export default function WorkflowBuilder({ initial, workflowId = null, origin, in
       setSaved(draft)
       onSaved(workflowId ?? id?.id ?? id?.workflow_id ?? '')
     }).catch((e) => { setSaveErr(errMsg(e)); setBusy(false) })
-  }, [busy, errors.length, draft, workflowId, onSaved])
+  }, [busy, errors.length, codePending, draft, workflowId, onSaved])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -355,6 +376,7 @@ export default function WorkflowBuilder({ initial, workflowId = null, origin, in
     return () => window.removeEventListener('keydown', onKey)
   }, [save])
 
+  useWarnOnUnload(dirty)
   const leave = () => (dirty ? setConfirmLeave(true) : onCancel())
 
   // Drag and drop. Every drop lands in a slot between steps; clicks do the same without a mouse.
@@ -396,7 +418,7 @@ export default function WorkflowBuilder({ initial, workflowId = null, origin, in
   if (loadErr) return <div className="wb-state">Couldn’t load this workflow: {loadErr} <button type="button" className="wb-btn ghost small" onClick={onCancel}>Back</button></div>
 
   return (
-    <div className="wb" aria-label="Workflow builder">
+    <div className="wb" aria-label="Workflow builder" data-unsaved={dirty ? '' : undefined}>
       <div className="wb-top">
         <button type="button" className="wb-btn ghost" onClick={leave}><Icon name="chevL" size={13} /> {backLabel}</button>
         <div className="wb-names">
@@ -466,7 +488,7 @@ export default function WorkflowBuilder({ initial, workflowId = null, origin, in
 
         <section className="wb-canvas-wrap" aria-label="Flow">
           <div className="wb-views" role="tablist" aria-label="Builder view">
-            <button type="button" role="tab" aria-selected={view === 'flow'} onClick={() => setView('flow')}><Icon name="flow" size={13} /> Flow</button>
+            <button type="button" role="tab" aria-selected={view === 'flow'} onClick={() => { if (applyCode()) setView('flow') }}><Icon name="flow" size={13} /> Flow</button>
             <button type="button" role="tab" aria-selected={view === 'code'} onClick={() => setView('code')}><Icon name="doc" size={13} /> Definition</button>
             <span className="wb-views-meta">
               {draft.phases.length} step{draft.phases.length === 1 ? '' : 's'}
@@ -475,7 +497,7 @@ export default function WorkflowBuilder({ initial, workflowId = null, origin, in
             </span>
           </div>
           {view === 'code' ? (
-            <CodeView draft={draft} onApply={(d) => { setDraft((cur) => ({ ...d, phases: d.phases.map((p, i) => ({ ...p, phase_id: p.phase_id ?? cur.phases[i]?.phase_id })) })); setView('flow') }} />
+            <CodeView text={codeText} edit={code ?? codeText} setEdit={(t) => { setCode(t); setCodeErr(null) }} err={codeErr} onApply={() => { if (applyCode()) setView('flow') }} onRevert={() => { setCode(null); setCodeErr(null); setSaveErr(null) }} />
           ) : (
             <div className="wb-canvas" onClick={(e) => { if (e.target === e.currentTarget) setSel(null) }}>
               <div className="wb-node start">

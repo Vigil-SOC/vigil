@@ -75,8 +75,8 @@ describe('building a workflow by hand', () => {
       use_case: '',
       trigger_examples: [],
       phases: [
-        { order: 1, agent_id: 'responder', name: 'Response', purpose: 'Contain it', steps: ['Isolate the host'], tools: ['update_case', 'crowdstrike_contain_host'], expected_output: '', timeout_seconds: 300, approval_required: true },
-        { order: 2, agent_id: 'triage', name: 'Triage', purpose: '', steps: [], tools: ['get_finding'], expected_output: '', timeout_seconds: 300, approval_required: false },
+        { phase_id: 'phase-1', order: 1, agent_id: 'responder', name: 'Response', purpose: 'Contain it', steps: ['Isolate the host'], tools: ['update_case', 'crowdstrike_contain_host'], expected_output: '', timeout_seconds: 300, approval_required: true },
+        { phase_id: 'phase-2', order: 2, agent_id: 'triage', name: 'Triage', purpose: '', steps: [], tools: ['get_finding'], expected_output: '', timeout_seconds: 300, approval_required: false },
       ],
     })
   })
@@ -126,6 +126,23 @@ describe('building a workflow by hand', () => {
     expect(screen.getByDisplayValue('Pasted')).toBeInTheDocument()
     expect(stepNames()).toEqual(['One'])
   })
+
+  it('does not drop a Definition edit: switching to Flow applies it, Save waits for it', async () => {
+    mount({ initial: draftFrom({ name: 'x', description: 'y', phases: [{ agent_id: 'triage', name: 'One' }] }) })
+    fireEvent.click(screen.getByRole('tab', { name: /Definition/ }))
+    fireEvent.change(screen.getByLabelText('Workflow definition'), { target: { value: JSON.stringify({ name: 'x', description: 'y', phases: [{ agent_id: 'triage', name: 'Two' }] }) } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save workflow' }))
+    expect(workflowApi.createCustom).not.toHaveBeenCalled()
+    expect(screen.getByText(/Definition edit is not applied yet/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: /Flow/ }))
+    expect(stepNames()).toEqual(['Two'])
+    // a definition that cannot be read keeps the Definition view open with the reason
+    fireEvent.click(screen.getByRole('tab', { name: /Definition/ }))
+    fireEvent.change(screen.getByLabelText('Workflow definition'), { target: { value: '{ not json' } })
+    fireEvent.click(screen.getByRole('tab', { name: /Flow/ }))
+    expect(screen.getByLabelText('Workflow definition')).toBeInTheDocument()
+    expect(screen.getByText(/Not applied:/)).toBeInTheDocument()
+  })
 })
 
 describe('checks', () => {
@@ -152,11 +169,26 @@ describe('checks', () => {
     ])
   })
 
+  it('gives every step its own phase id, keeping saved ones', () => {
+    // a new step put before a saved "phase-1" would take "phase-1" from the server's position numbering
+    const d = draftFrom({ name: 'x', description: 'y', phases: [{ agent_id: 'triage', name: 'New' }, { phase_id: 'phase-1', agent_id: 'triage', name: 'Old' }, { phase_id: 'phase-1', agent_id: 'triage', name: 'Pasted twice' }] })
+    expect(toPayload(d).phases.map((p) => p.phase_id)).toEqual(['phase-2', 'phase-1', 'phase-3'])
+  })
+
+  it('reads a pasted definition of the wrong shape without breaking', () => {
+    const d = draftFrom({ name: 42, description: null, trigger_examples: 'one', phases: [{ name: 7, agent_id: 'triage', steps: 'Look up hashes', tools: 'splunk_search', approval_required: 'yes' }, 'junk', null] as never })
+    expect(d.name).toBe('42')
+    expect(d.description).toBe('')
+    expect(d.trigger_examples).toEqual(['one'])
+    expect(d.phases).toHaveLength(1)
+    expect(d.phases[0]).toMatchObject({ name: '7', steps: ['Look up hashes'], tools: ['splunk_search'], approval_required: false })
+  })
+
   it('sends trimmed text, numbered order and no empty instructions', () => {
     const body = toPayload(draftFrom({ name: ' n ', description: ' d ', trigger_examples: [' a ', ''], phases: [{ agent_id: 'triage', name: ' A ', steps: ['one', ' ', 'two'] }] }))
     expect(body).toEqual({
       name: 'n', description: 'd', use_case: '', trigger_examples: ['a'],
-      phases: [{ order: 1, agent_id: 'triage', name: 'A', purpose: '', steps: ['one', 'two'], tools: [], expected_output: '', timeout_seconds: 300, approval_required: false }],
+      phases: [{ phase_id: 'phase-1', order: 1, agent_id: 'triage', name: 'A', purpose: '', steps: ['one', 'two'], tools: [], expected_output: '', timeout_seconds: 300, approval_required: false }],
     })
   })
 })

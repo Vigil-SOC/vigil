@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Icon } from '../../shared/icons'
+import { useWarnOnUnload } from '../../shared/unsaved'
 import { agentsApi, aiConfigApi, type AIModelInfo, type GeneratedAgentDraft } from '../../services/api'
 import type { ToolChange } from '../../data/appData'
 import { errMsg } from './runRead'
@@ -88,7 +89,10 @@ export function AgentDrawer({
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>(isCreate ? 'ready' : 'loading')
   const [loadErr, setLoadErr] = useState<string | null>(null)
   const [form, setForm] = useState<AgentForm>({ ...BLANK_FORM })
+  // the form as loaded, so a stray Escape or click outside does not drop edits
+  const [base, setBase] = useState<AgentForm>({ ...BLANK_FORM })
   const [advanced, setAdvanced] = useState(false)
+  const [baseAdvanced, setBaseAdvanced] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
   const [models, setModels] = useState<AIModelInfo[]>([])
   const catalog = useToolCatalog()
@@ -105,13 +109,20 @@ export function AgentDrawer({
 
   const set = <K extends keyof AgentForm>(k: K, v: AgentForm[K]) => setForm((f) => ({ ...f, [k]: v }))
 
+  // Advanced decides whether Save keeps the whole-prompt override, so switching it is an edit too
+  const dirty = JSON.stringify(form) !== JSON.stringify(base) || advanced !== baseAdvanced || aiText.trim() !== ''
+  useWarnOnUnload(dirty)
+  const close = useCallback(() => {
+    if (!dirty || window.confirm('Discard your changes to this agent?')) onClose()
+  }, [dirty, onClose])
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape') close()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [close])
 
   useEffect(() => {
     let cancelled = false
@@ -130,7 +141,7 @@ export function AgentDrawer({
         if (builtIn) a.system_prompt_override = a.system_prompt || ''
         if (builtIn) a.recommended_tools = a.recommended_tools || []
         setAgent(a)
-        setForm({
+        const loaded: AgentForm = {
           name: a.name || '',
           specialization: a.specialization || '',
           description: a.description || '',
@@ -145,8 +156,11 @@ export function AgentDrawer({
           enable_thinking: !!a.enable_thinking,
           model: a.model || '',
           fallback_model: a.fallback_model || '',
-        })
+        }
+        setForm(loaded)
+        setBase(loaded)
         setAdvanced(!!a.system_prompt_override)
+        setBaseAdvanced(!!a.system_prompt_override)
         setPhase('ready')
       })
       .catch((e) => { if (!cancelled) { setLoadErr(errMsg(e)); setPhase('error') } })
@@ -239,11 +253,12 @@ export function AgentDrawer({
   const holdsSkills = form.tools.includes(READ_SKILL)
 
   return (
-    <div className="vg-side-scrim" onMouseDown={onClose}>
+    <div className="vg-side-scrim" onMouseDown={close}>
       <aside
         className="vg-side-panel"
         role="dialog"
         aria-label={isCreate ? 'New agent' : 'Edit agent'}
+        data-unsaved={dirty ? '' : undefined}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-start gap-3">
@@ -253,7 +268,7 @@ export function AgentDrawer({
               ? <span className="vg-side-hint">Built in. Saving creates your own editable copy; the original stays available.</span>
               : agent?.forked_from && <span className="vg-side-hint">Forked from <span className="mono">{agent.forked_from}</span></span>}
           </span>
-          <button type="button" className="vg-side-close" aria-label="Close" onClick={onClose}>
+          <button type="button" className="vg-side-close" aria-label="Close" onClick={close}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />
             </svg>
@@ -445,7 +460,7 @@ export function AgentDrawer({
 
             {error && <div className="vg-side-err">{error}</div>}
             <div className="vg-side-foot">
-              <button type="button" className="vg-side-btn" onClick={onClose}>Cancel</button>
+              <button type="button" className="vg-side-btn" onClick={close}>Cancel</button>
               <button type="button" className="vg-side-btn primary" disabled={!canSave} onClick={save}>
                 {busy ? (isCreate ? 'Creating…' : 'Saving…') : isCreate ? 'Create agent' : builtIn ? 'Save my copy' : 'Save'}
               </button>

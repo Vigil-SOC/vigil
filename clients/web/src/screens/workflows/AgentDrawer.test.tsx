@@ -158,6 +158,23 @@ describe('agent drawer', () => {
     expect(onClose).toHaveBeenCalledTimes(2)
   })
 
+  it('asks before Escape or the scrim drops edits', async () => {
+    const { onClose } = open()
+    await screen.findByText('search_logs', { selector: '.tp-chip-name' })
+    expect(screen.getByRole('dialog')).not.toHaveAttribute('data-unsaved')
+    fireEvent.change(screen.getByLabelText('Specialty'), { target: { value: 'changed' } })
+    expect(screen.getByRole('dialog')).toHaveAttribute('data-unsaved')
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.mouseDown(screen.getByRole('dialog').parentElement as HTMLElement)
+    expect(confirm).toHaveBeenCalledTimes(2)
+    expect(onClose).not.toHaveBeenCalled()
+    confirm.mockReturnValue(true)
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+    confirm.mockRestore()
+  })
+
   it('drafts a new agent from a description and applies its icon and colour', async () => {
     const draft = { name: 'Cloud IAM', description: 'd', specialization: 's', icon: 'C', color: '#abcdef', role: 'cloud triager', extra_principles: '', methodology: '', recommended_tools: ['search_logs'], max_tokens: 8192, enable_thinking: false }
     vi.mocked(agentsApi.generateCustom).mockResolvedValue({ data: { draft } } as never)

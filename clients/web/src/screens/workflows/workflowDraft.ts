@@ -64,49 +64,71 @@ export function blankStep(agent?: BuilderAgent, tools?: string[]): BuilderStep {
 export const EMPTY_DRAFT: BuilderDraft = { name: '', description: '', use_case: '', trigger_examples: [], phases: [] }
 
 interface LoosePhase {
-  phase_id?: string
-  agent_id?: string
-  agent?: string
-  name?: string
-  purpose?: string
-  steps?: string[]
-  tools?: string[]
-  expected_output?: string
-  approval_required?: boolean
-  timeout_seconds?: number | null
+  phase_id?: unknown
+  agent_id?: unknown
+  agent?: unknown
+  name?: unknown
+  purpose?: unknown
+  steps?: unknown
+  tools?: unknown
+  expected_output?: unknown
+  approval_required?: unknown
+  timeout_seconds?: unknown
 }
 
-/** A saved workflow, an AI draft or a template, as the builder holds it. */
-export function draftFrom(src: { name?: string; description?: string; use_case?: string; trigger_examples?: string[]; phases?: LoosePhase[] | null }): BuilderDraft {
+// A pasted definition can hold anything, so every field is read as the type the builder needs.
+const str = (v: unknown) => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '')
+const strs = (v: unknown) => (Array.isArray(v) ? v.map(str).filter(Boolean) : typeof v === 'string' && v.trim() ? [v] : [])
+
+/** A saved workflow, an AI draft, a template or a pasted definition, as the builder holds it. */
+export function draftFrom(src: { name?: unknown; description?: unknown; use_case?: unknown; trigger_examples?: unknown; phases?: LoosePhase[] | null }): BuilderDraft {
   return {
-    name: src.name ?? '',
-    description: src.description ?? '',
-    use_case: src.use_case ?? '',
-    trigger_examples: [...(src.trigger_examples ?? [])],
-    phases: (src.phases ?? []).map((p) => ({
+    name: str(src.name),
+    description: str(src.description),
+    use_case: str(src.use_case),
+    trigger_examples: strs(src.trigger_examples),
+    phases: (Array.isArray(src.phases) ? src.phases : []).filter((p) => p && typeof p === 'object').map((p) => ({
       key: newKey(),
-      ...(p.phase_id ? { phase_id: p.phase_id } : {}),
-      name: p.name ?? '',
-      agent_id: p.agent_id || p.agent || '',
-      purpose: p.purpose ?? '',
-      steps: [...(p.steps ?? [])],
-      tools: [...(p.tools ?? [])],
-      expected_output: p.expected_output ?? '',
-      approval_required: !!p.approval_required,
-      timeout_seconds: p.timeout_seconds || DEFAULT_TIMEOUT,
+      ...(str(p.phase_id) ? { phase_id: str(p.phase_id) } : {}),
+      name: str(p.name),
+      agent_id: str(p.agent_id) || str(p.agent),
+      purpose: str(p.purpose),
+      steps: strs(p.steps),
+      tools: strs(p.tools),
+      expected_output: str(p.expected_output),
+      approval_required: p.approval_required === true,
+      timeout_seconds: typeof p.timeout_seconds === 'number' && p.timeout_seconds > 0 ? p.timeout_seconds : DEFAULT_TIMEOUT,
     })),
   }
 }
 
+/**
+ * Every step's phase_id, unique. A saved step keeps its own so run history lines up; a new or
+ * duplicated one gets the first free `phase-N`. Left blank, the server numbers steps by position,
+ * and a step put before "phase-1" would collide with it and the workflow could not run.
+ */
+export function phaseIds(phases: BuilderStep[]): string[] {
+  const seen = new Set<string>()
+  const kept = phases.map((p) => (p.phase_id && !seen.has(p.phase_id) ? (seen.add(p.phase_id), p.phase_id) : null))
+  let n = 1
+  return kept.map((id) => {
+    if (id) return id
+    while (seen.has(`phase-${n}`)) n++
+    seen.add(`phase-${n}`)
+    return `phase-${n}`
+  })
+}
+
 /** The body of POST or PUT /workflows/custom. */
 export function toPayload(d: BuilderDraft) {
+  const ids = phaseIds(d.phases)
   return {
     name: d.name.trim(),
     description: d.description.trim(),
     use_case: d.use_case.trim(),
     trigger_examples: d.trigger_examples.map((t) => t.trim()).filter(Boolean),
     phases: d.phases.map((p, i) => ({
-      ...(p.phase_id ? { phase_id: p.phase_id } : {}),
+      phase_id: ids[i],
       order: i + 1,
       agent_id: p.agent_id,
       name: p.name.trim(),

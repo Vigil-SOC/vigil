@@ -44,6 +44,7 @@ import NotFoundScreen from '../screens/notfound/NotFoundScreen'
 import OverviewScreen from '../screens/overview/OverviewScreen'
 import TriageScreen from '../screens/triage/TriageScreen'
 import { VigilLogo } from '../shared/VigilLogo'
+import { leaveUnsaved } from '../shared/unsaved'
 import {
   authBypassed,
   foldStatus,
@@ -231,12 +232,14 @@ function SocConsoleInner() {
       // no-op that used to push a duplicate history entry, and an unbadged
       // click from ?tab=approvals is a real move that used to be swallowed.
       if (valid && next === current && search === location.search) return
+      if (!leaveUnsaved()) return // an open builder or agent form with edits asks first
       navigate({ pathname: `/${next}`, search }, { replace: options?.replace })
     },
     [valid, current, navigate, location.search],
   )
   const goSettings = useCallback(
     (section: SettingsSectionKey) => {
+      if (!leaveUnsaved()) return
       navigate({ pathname: '/settings', search: `?section=${section}` })
     },
     [navigate],
@@ -585,6 +588,7 @@ function SocConsoleInner() {
             {setupLeft !== null && setupLeft > 0 && (
               <Link
                 to={HOME_SETUP_HREF}
+                onClick={(e) => { if (!leaveUnsaved()) e.preventDefault() }}
                 className="vg-setup-chip"
                 title={setupTip(setupLeft)}
                 aria-label={setupTip(setupLeft)}
