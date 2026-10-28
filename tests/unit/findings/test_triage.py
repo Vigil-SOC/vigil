@@ -78,9 +78,16 @@ def _finding(finding_id: str, severity: str, **kw) -> None:
         )
 
 
-def _case(case_id: str) -> None:
+def _case(case_id: str, activities: list | None = None) -> None:
     with unit_of_work() as session:
-        session.add(Case(case_id=case_id, title=case_id, description=""))
+        session.add(
+            Case(
+                case_id=case_id,
+                title=case_id,
+                description="",
+                activities=activities or [],
+            )
+        )
 
 
 def _investigation(investigation_id: str, workflow_id: str) -> None:
@@ -108,6 +115,7 @@ def _trigger(**kw) -> int:
             investigation_id=kw.get("investigation_id"),
             case_id=kw.get("case_id"),
             merged_into=kw.get("merged_into"),
+            reason=kw.get("reason"),
             created_at=kw.get("created_at", NOW),
             decided_at=kw.get("decided_at"),
         )
@@ -269,6 +277,49 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
     assert filtered["strip"]["waiting"] == payload["strip"]["waiting"]
     assert waiting in [row["id"] for row in filtered["rows"]]
     assert {row["state"] for row in filtered["rows"]} == {"queued"}
+
+
+def _alert_added(finding_id: str, key: str, same_alert: bool = False) -> dict:
+    return {
+        "activity_type": "alert_added",
+        "details": {
+            "finding_id": finding_id,
+            "matched_key": key,
+            "same_alert": same_alert,
+        },
+    }
+
+
+def test_a_merged_row_names_what_it_matched():
+    _case(
+        "tr-case-m",
+        [
+            _alert_added("tr-m-ip", "ip:27.102.116.43"),
+            _alert_added("tr-m-host", "hostname:FIN-WS-1", same_alert=True),
+        ],
+    )
+    ids = {}
+    for name, reason in (
+        ("tr-m-ip", "entity_on_open_case"),
+        ("tr-m-host", "entity_on_open_case"),
+        ("tr-m-held", "finding_on_open_case"),
+        ("tr-m-old", None),
+    ):
+        _finding(name, "low")
+        ids[name] = _trigger(
+            state="merged",
+            finding_id=name,
+            merged_into="tr-case-m",
+            reason=reason,
+            decided_at=NOW,
+        )
+
+    rows = _by_id(triage_payload(now=NOW, day=DAY))
+
+    assert rows[ids["tr-m-ip"]]["merge_note"] == "same attacker 27.102.116.43"
+    assert rows[ids["tr-m-host"]]["merge_note"] == "same alert on FIN-WS-1"
+    assert rows[ids["tr-m-held"]]["merge_note"] == "already on this case"
+    assert rows[ids["tr-m-old"]]["merge_note"] is None
 
 
 def test_queued_rows_follow_rank_intake_row_severity_before_age():

@@ -82,7 +82,7 @@ function lagNote(source: TriageSource): string {
 // "Grouped into, and why": the door (when there is one) is drawn as a link, this follows it
 function groupedRest(row: TriageRow): string {
   if (!row.case_door) return row.workflow_id || BLANK
-  const why = row.state === 'launched' ? ' (new)' : row.state === 'merged' ? ' · overlaps open work' : ''
+  const why = row.state === 'launched' ? ' (new)' : row.state === 'merged' && row.merge_note ? ` · ${row.merge_note}` : ''
   return `${why}${row.workflow_id ? ` · ${row.workflow_id}` : ''}`
 }
 

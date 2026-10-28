@@ -1412,6 +1412,7 @@ export interface TriageRow {
   pickup_seconds: number | null
   workflow_id: string
   case_door: string | null
+  merge_note: string | null
   document: string | null
   source_link: string | null
   source_evidence: Record<string, unknown> | null

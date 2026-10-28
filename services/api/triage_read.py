@@ -19,9 +19,10 @@ from core.findings.source_evidence import project_finding_source_evidence_for_li
 from core.findings.source_link import resolve_source_link
 from core.storage.connection import get_db_manager
 from core.storage.models import Case, Finding, IntakeTrigger, Investigation
+from core.storage.shared_ioc_repository import CaseMatch
 from core.time import utcnow
 from services.daemon.config import OrchestratorConfig
-from services.daemon.orchestrator import intake_rank_inputs, rank_intake_row
+from services.daemon.orchestrator import _link_note, intake_rank_inputs, rank_intake_row
 
 ROW_CAP = 200
 ARRIVAL_INFO = "Arrivals count every finding stored today. The list is the intake rows."
@@ -285,14 +286,15 @@ def _load(
         ):
             workflows[inv_id] = workflow_id
     merged = {row.merged_into for row in triggers if row.merged_into}
-    case_ids: set[str] = set()
+    activities: dict[str, list] = {}
     if merged:
-        case_ids = {
-            case_id
-            for (case_id,) in session.query(Case.case_id)
+        activities = {
+            case_id: acts or []
+            for case_id, acts in session.query(Case.case_id, Case.activities)
             .filter(Case.case_id.in_(merged))
             .all()
         }
+    case_ids = set(activities)
     rows = []
     for row in triggers:
         raw = row.payload if isinstance(row.payload, dict) else {}
@@ -311,11 +313,40 @@ def _load(
                 "investigation_id": row.investigation_id,
                 "case_id": row.case_id,
                 "merged_into": row.merged_into,
+                "merge_note": _merge_note(
+                    row, activities.get(row.merged_into or "", [])
+                ),
                 "created_at": _naive(row.created_at),
                 "decided_at": _naive(row.decided_at),
             }
         )
     return rows, findings, workflows, case_ids
+
+
+def _merge_note(row, case_activities: list) -> Optional[str]:
+    """What a merged row matched, from the Case's ``alert_added`` activity; None when unknown."""
+    if row.state != "merged":
+        return None
+    if row.reason == "finding_on_open_case":
+        return "already on this case"
+    if row.reason != "entity_on_open_case":
+        return None
+    for activity in case_activities:
+        details = activity.get("details") if isinstance(activity, dict) else None
+        if (
+            isinstance(details, dict)
+            and activity.get("activity_type") == "alert_added"
+            and details.get("finding_id") == row.finding_id
+            and details.get("matched_key")
+        ):
+            return _link_note(
+                CaseMatch(
+                    row.merged_into,
+                    details["matched_key"],
+                    bool(details.get("same_alert")),
+                )
+            )
+    return None
 
 
 def _evidence(finding: Optional[dict]) -> Optional[dict]:
@@ -365,6 +396,7 @@ def _present(
         "pickup_seconds": pickup,
         "workflow_id": workflow,
         "case_door": door,
+        "merge_note": row.get("merge_note"),
         "document": _document_line(kind, row["payload"]),
         "source_link": (
             resolve_source_link(finding, configs=link_configs)

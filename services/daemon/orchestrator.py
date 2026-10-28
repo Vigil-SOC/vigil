@@ -617,10 +617,11 @@ def _match_phrase(match: CaseMatch) -> str:
 
 
 def _link_note(match: CaseMatch) -> str:
-    if match.same_alert:
-        return f"same alert on {match.key}"
+    """What matched, without the key's kind prefix: the phrasing of link notes and Triage."""
     kind, _, value = match.key.partition(":")
-    return f"same attacker {match.key}" if kind == "ip" else f"same {kind} {value}"
+    if match.same_alert:
+        return f"same alert on {value}"
+    return f"same attacker {value}" if kind == "ip" else f"same {kind} {value}"
 
 
 def _record_merge_activity(case_id: str, finding: Dict, match: CaseMatch) -> None:
