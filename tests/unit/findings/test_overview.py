@@ -319,7 +319,7 @@ def test_terminal_states_partition_the_day():
         assert node["count"] is None
         assert node["unmeasured_text"] == "Not measured yet"
     nodes = {node["state"]: node for node in payload["outcomes"]}
-    assert nodes["dismissed"]["label"] == "Dropped as noise"
+    assert nodes["dismissed"]["label"] == "Dismissed as noise"
     assert nodes["dismissed"]["count"] >= 1
     assert nodes["scoring"]["count"] >= 1
     assert "dropped" not in nodes
