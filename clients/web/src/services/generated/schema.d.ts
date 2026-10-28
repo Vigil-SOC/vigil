@@ -9623,8 +9623,16 @@ export interface components {
         };
         /** NeedsYouItem */
         NeedsYouItem: {
-            /** Case Id */
+            /**
+             * Case Id
+             * @description The first of case_ids: the case that asked.
+             */
             case_id?: string | null;
+            /**
+             * Case Ids
+             * @description Every case this item is on. A proposal several cases made is one item listing them all.
+             */
+            case_ids?: string[];
             /** Checkpoint Class */
             checkpoint_class?: string | null;
             /**
