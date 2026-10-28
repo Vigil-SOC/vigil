@@ -12,7 +12,8 @@ import { utcClock } from '../../shared/utc'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { parseSourceEvidence } from '../../data/sourceEvidence'
 import { SourceEvidenceSection } from '../dashboard/SourceEvidenceSection'
-import { triageApi, type TriagePayload, type TriageRow, type TriageSource } from '../../services/api'
+import { triageApi, type TriagePayload, type TriageRow, type TriageSource, type TriageVerdict } from '../../services/api'
+import { SeverityMark } from '../../shared/SeverityMark'
 import FindingDetails from '../../shared/FindingDetails'
 import { AutoOpsOffBanner } from '../../shared/AutoOpsOffBanner'
 import { useAutoOpsOff } from '../../shared/useAutoOpsOff'
@@ -233,10 +234,71 @@ function BreakdownRow({ label, children }: { label: string; children: ReactNode 
   )
 }
 
+const NOT_TRIAGED = 'Not triaged'
+const TRIAGE_FAILED = 'Triage failed'
+
+// category and confidence as saved; a part triage did not give is left out, not filled in
+function verdictParts(verdict: Extract<TriageVerdict, { state: 'done' }>): string[] {
+  const parts: string[] = []
+  if (verdict.category) parts.push(verdict.category)
+  if (verdict.confidence !== null) parts.push(`${Math.round(verdict.confidence * 100)}%`)
+  return parts
+}
+
+/** One line for the page snapshot: what triage decided, or why there is no verdict. */
+function verdictText(verdict: TriageVerdict | null): string {
+  if (!verdict) return '-'
+  if (verdict.state === 'failed') return TRIAGE_FAILED
+  if (verdict.state === 'none') return NOT_TRIAGED
+  return [verdict.severity ?? '', ...verdictParts(verdict)].filter(Boolean).join(' · ') || '-'
+}
+
+function Verdict({ verdict }: { verdict: TriageVerdict | null }) {
+  if (!verdict) return <>{BLANK}</>
+  if (verdict.state === 'failed') {
+    return <span className="tq-verdict muted" title={verdict.error}>{TRIAGE_FAILED}</span>
+  }
+  if (verdict.state === 'none') {
+    return (
+      <span className="tq-verdict muted" title="No verdict is saved: not triaged yet, or it arrived while triage was off">
+        {NOT_TRIAGED}
+      </span>
+    )
+  }
+  const parts = verdictParts(verdict)
+  if (!verdict.severity && parts.length === 0) return <>{BLANK}</>
+  return (
+    <span className="tq-verdict" title={verdict.reasoning ?? undefined}>
+      {verdict.severity && <SeverityMark level={verdict.severity} />}
+      {parts.length > 0 && <span className="tq-verdict-rest">{parts.join(' · ')}</span>}
+    </span>
+  )
+}
+
+function VerdictPanel({ verdict }: { verdict: TriageVerdict }) {
+  return (
+    <>
+      <span className="tq-h">What triage decided</span>
+      {verdict.state === 'done' && (
+        <>
+          <BreakdownRow label="Severity">{verdict.severity ?? BLANK}</BreakdownRow>
+          <BreakdownRow label="Category">{verdict.category ?? BLANK}</BreakdownRow>
+          <BreakdownRow label="Confidence">{verdict.confidence === null ? BLANK : `${Math.round(verdict.confidence * 100)}%`}</BreakdownRow>
+          <BreakdownRow label="Triaged at">{fmtArrived(verdict.triaged_at)}</BreakdownRow>
+          {verdict.reasoning && <p className="tq-reasoning">{verdict.reasoning}</p>}
+        </>
+      )}
+      {verdict.state === 'failed' && <BreakdownRow label={TRIAGE_FAILED}>{verdict.error}</BreakdownRow>}
+      {verdict.state === 'none' && <BreakdownRow label={NOT_TRIAGED}>No verdict is saved for this alert</BreakdownRow>}
+    </>
+  )
+}
+
 function Expanded({ row, data }: { row: TriageRow; data: TriagePayload }) {
   const tips = data.breakdown_info
   return (
     <div className="tq-panel" aria-label="Expanded row">
+      {row.triage && <VerdictPanel verdict={row.triage} />}
       <span className="tq-h">How the ranking was worked out</span>
       <BreakdownRow label="Severity band">{row.severity_band}</BreakdownRow>
       <BreakdownRow label="Age">{fmtDuration(row.age_seconds)}</BreakdownRow>
@@ -268,8 +330,8 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
   const [data, setData] = useState<TriagePayload | null>(null)
   usePageSnapshot('triage', phase === 'ready' && data ? [
     `Triage queue: ${data.matched} items. Picked up automatically ${data.strip.picked_up.launched_or_merged} of ${data.strip.picked_up.created_today} today; cases created today ${data.strip.cases_created_today}; waiting in line ${data.strip.waiting}.`,
-    'Rows (arrived | kind | source | alert | severity | what happened | picked up in | grouped into | finding):',
-    ...data.rows.slice(0, 60).map((r) => [r.created_at ?? '-', r.kind_label, r.source || '-', r.title || r.description || r.document || '-', r.severity_band, r.state_label, r.pickup_seconds ?? '-', r.case_door || r.workflow_id || '-', r.finding_id ?? '-'].join(' | ')),
+    'Rows (arrived | kind | source | alert | severity | triage verdict | what happened | picked up in | grouped into | finding):',
+    ...data.rows.slice(0, 60).map((r) => [r.created_at ?? '-', r.kind_label, r.source || '-', r.title || r.description || r.document || '-', r.severity_band, verdictText(r.triage), r.state_label, r.pickup_seconds ?? '-', r.case_door || r.workflow_id || '-', r.finding_id ?? '-'].join(' | ')),
   ].join('\n') : '')
   const [openId, setOpenId] = useState<number | null>(null)
   const loadTicket = useRef(0)
@@ -335,9 +397,14 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
       },
     },
     {
+      key: 'verdict',
+      label: 'Triage verdict',
+      render: (row) => <Verdict verdict={row.triage} />,
+    },
+    {
       key: 'score',
-      label: 'Score',
-      header: <span className="tq-th-info">Score{data && <InfoTip label="How the score is worked out" text={data.breakdown_info.score} align="start" />}</span>,
+      label: 'Intake score',
+      header: <span className="tq-th-info">Intake score{data && <InfoTip label="How the intake score is worked out" text={data.breakdown_info.score} align="start" />}</span>,
       render: (row) => (
         <button
           type="button"

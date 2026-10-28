@@ -40,6 +40,7 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
         },
         title: null,
         description: 'Odd login',
+        triage: { state: 'none' },
         finding_id: 'f-9',
         created_at: '2026-10-01T00:00:00',
         decided_at: '2026-10-01T00:00:04',
@@ -64,6 +65,7 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
         source_evidence: null,
         title: null,
         description: null,
+        triage: null,
         finding_id: null,
         created_at: '2026-10-01T00:00:00',
         decided_at: '2026-10-01T00:00:02',
@@ -284,13 +286,61 @@ describe('TriageScreen', () => {
     expect(screen.queryByText('microsoft_defender')).not.toBeInTheDocument()
   })
 
+  it('shows the verdict triage saved, and says so when there is none', async () => {
+    const base = payload().rows[0]
+    const rows = [
+      {
+        ...base,
+        id: 11,
+        triage: {
+          state: 'done' as const,
+          severity: 'critical' as const,
+          category: 'intrusion',
+          confidence: 0.95,
+          reasoning: 'Hidden encoded PowerShell from a UAC bypass.',
+          triaged_at: '2026-10-01T00:00:01',
+        },
+      },
+      {
+        ...base,
+        id: 12,
+        triage: { state: 'done' as const, severity: null, category: 'other', confidence: null, reasoning: null, triaged_at: null },
+      },
+      { ...base, id: 13, triage: { state: 'failed' as const, error: 'timed out after 60s' } },
+      { ...base, id: 14, triage: { state: 'none' as const } },
+    ]
+    vi.mocked(triageApi.get).mockResolvedValue({ data: payload({ rows }) } as never)
+    renderScreen()
+    await screen.findByLabelText('Intake strip')
+
+    const verdicts = Array.from(document.querySelectorAll('td .tq-verdict')).map((cell) => [cell.textContent, cell.getAttribute('title')])
+    expect(verdicts).toEqual([
+      ['Criticalintrusion · 95%', 'Hidden encoded PowerShell from a UAC bypass.'],
+      // a part triage did not give is left out, not guessed
+      ['other', null],
+      ['Triage failed', 'timed out after 60s'],
+      ['Not triaged', expect.stringContaining('No verdict is saved')],
+    ])
+    // the intake score is not computed, and stays blank
+    for (const button of screen.getAllByRole('button', { name: 'Show how this was ranked' })) {
+      expect(button).toHaveTextContent('—')
+    }
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Show how this was ranked' })[0])
+    const panel = await screen.findByLabelText('Expanded row')
+    expect(panel).toHaveTextContent('What triage decided')
+    expect(panel).toHaveTextContent('intrusion')
+    expect(panel).toHaveTextContent('95%')
+    expect(panel).toHaveTextContent('Hidden encoded PowerShell from a UAC bypass.')
+  })
+
   it('lays the rows out in the board’s columns and words', async () => {
     vi.mocked(triageApi.get).mockResolvedValue({ data: payload() } as never)
     renderScreen()
     await screen.findByLabelText('Intake strip')
     const headers = screen.getAllByRole('columnheader').map((th) => th.textContent)
     expect(headers).toEqual([
-      'Kind', 'Source', 'Alert, in the source’s words', 'Score', 'Arrived', 'Picked up in', 'What happened', 'Grouped into, and why',
+      'Kind', 'Source', 'Alert, in the source’s words', 'Triage verdict', 'Intake score', 'Arrived', 'Picked up in', 'What happened', 'Grouped into, and why',
     ].map((name) => expect.stringContaining(name)))
     // nothing sorts
     expect(document.querySelector('th.sortable')).toBeNull()
@@ -343,7 +393,7 @@ describe('TriageScreen', () => {
     vi.mocked(triageApi.get).mockResolvedValue({ data: payload() } as never)
     renderScreen()
     await screen.findByLabelText('Intake strip')
-    fireEvent.click(within(screen.getByRole('columnheader', { name: /Score/ })).getByRole('button'))
+    fireEvent.click(within(screen.getByRole('columnheader', { name: /Intake score/ })).getByRole('button'))
     expect(screen.getByRole('tooltip')).toHaveTextContent('Score tip')
 
     const [first, second] = screen.getAllByRole('button', { name: 'Show how this was ranked' })
@@ -372,7 +422,7 @@ describe('TriageScreen', () => {
     const panel = await screen.findByLabelText('Expanded row')
     // drawn as its own full-width row directly under the clicked row
     expect(panel.closest('tr')?.previousElementSibling).toBe(screen.getByText('Odd login').closest('tr'))
-    expect(panel.closest('td')).toHaveAttribute('colspan', '8')
+    expect(panel.closest('td')).toHaveAttribute('colspan', '9')
     expect(panel).toHaveTextContent('Severity bandcritical')
     expect(panel).toHaveTextContent('Time to live4 h')
     expect(panel).toHaveTextContent('In the last quarter of its waitNo')

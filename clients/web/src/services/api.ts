@@ -1390,10 +1390,25 @@ export interface TriageRow {
   source_evidence: Record<string, unknown> | null
   title: string | null
   description: string | null
+  /** What the daemon's triage saved; null on rows that are not alerts. */
+  triage: TriageVerdict | null
   finding_id: string | null
   created_at: string | null
   decided_at: string | null
 }
+
+/** A saved verdict reads as stored: a field triage did not give is null, never defaulted. */
+export type TriageVerdict =
+  | {
+      state: 'done'
+      severity: 'critical' | 'high' | 'medium' | 'low' | null
+      category: string | null
+      confidence: number | null
+      reasoning: string | null
+      triaged_at: string | null
+    }
+  | { state: 'failed'; error: string }
+  | { state: 'none' }
 
 export interface TriageSource {
   data_source: string

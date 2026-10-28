@@ -275,6 +275,7 @@ def _load(
                 "entity_context": finding.entity_context,
                 "title": finding.title,
                 "description": finding.description,
+                "ai_enrichment": finding.ai_enrichment,
             }
     inv_ids = {row.investigation_id for row in triggers if row.investigation_id}
     workflows: dict[str, str] = {}
@@ -362,6 +363,49 @@ def _evidence(finding: Optional[dict]) -> Optional[dict]:
     return evidence if isinstance(evidence, dict) else None
 
 
+_VERDICT_SEVERITIES = ("critical", "high", "medium", "low")
+
+
+def _triage(finding: Optional[dict]) -> dict:
+    """What the daemon's triage saved for this alert, read as stored.
+
+    ``done`` carries the saved severity, category, confidence and reasoning; a
+    field triage did not give, or gave out of range, is null rather than a
+    default. ``failed`` is a recorded error with no saved result. ``none`` is no
+    result at all: not triaged yet, or it arrived while triage was off.
+    """
+    enrichment = (finding or {}).get("ai_enrichment")
+    enrichment = enrichment if isinstance(enrichment, dict) else {}
+    stored = enrichment.get("ai_triage")
+    result = stored.get("result") if isinstance(stored, dict) else None
+    if isinstance(result, dict) and result:
+        severity = result.get("severity")
+        category = result.get("category")
+        confidence = result.get("confidence")
+        reasoning = result.get("reasoning")
+        when = stored.get("timestamp")
+        return {
+            "state": "done",
+            "severity": severity if severity in _VERDICT_SEVERITIES else None,
+            "category": category if isinstance(category, str) and category else None,
+            "confidence": (
+                float(confidence)
+                if isinstance(confidence, (int, float))
+                and not isinstance(confidence, bool)
+                and 0.0 <= confidence <= 1.0
+                else None
+            ),
+            "reasoning": (
+                reasoning if isinstance(reasoning, str) and reasoning else None
+            ),
+            "triaged_at": when if isinstance(when, str) else None,
+        }
+    error = enrichment.get("ai_triage_error")
+    if isinstance(error, str) and error:
+        return {"state": "failed", "error": error}
+    return {"state": "none"}
+
+
 def _present(
     row: dict,
     finding: Optional[dict],
@@ -406,6 +450,7 @@ def _present(
         "source_evidence": _evidence(finding) if kind == "detection" else None,
         "title": finding.get("title") if finding else None,
         "description": finding.get("description") if finding else None,
+        "triage": _triage(finding) if kind == "detection" else None,
         "finding_id": row.get("finding_id"),
         "created_at": _iso(created if isinstance(created, datetime) else None),
         "decided_at": _iso(decided if isinstance(decided, datetime) else None),
@@ -477,6 +522,7 @@ def _finding_view(finding: dict) -> dict:
         "entity_context": finding.get("entity_context"),
         "title": title if isinstance(title, str) else None,
         "description": description if isinstance(description, str) else None,
+        "ai_enrichment": finding.get("ai_enrichment"),
     }
 
 
