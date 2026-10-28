@@ -181,6 +181,12 @@
   color: var(--ac);
 }
 
+.home-screen .home-step-no.done {
+  background: var(--good);
+  border-color: var(--good);
+  color: var(--bg1);
+}
+
 .home-screen .home-step h3,
 .home-screen .home-step p {
   margin: 0;

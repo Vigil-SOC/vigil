@@ -2525,11 +2525,22 @@ class Orchestrator:
 
         deleted = 0
         try:
-            from core.storage.connection import get_db_manager
-            from core.storage.models import Investigation
+            from sqlalchemy import exists
 
+            from core.storage.connection import get_db_manager
+            from core.storage.models import Investigation, InvestigationLog
+
+            # investigation_logs no longer cascades (#3309): an investigation
+            # that still has old log rows stays, and so do they.
+            logged = exists().where(
+                InvestigationLog.investigation_id == Investigation.investigation_id
+            )
             with get_db_manager().session_scope() as session:
-                deleted = session.query(Investigation).delete(synchronize_session=False)
+                deleted = (
+                    session.query(Investigation)
+                    .filter(~logged)
+                    .delete(synchronize_session=False)
+                )
         except Exception as e:
             logger.error(f"Failed to delete investigations from DB: {e}")
             raise

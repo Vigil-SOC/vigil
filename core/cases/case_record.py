@@ -631,8 +631,11 @@ def merge_record(
         if legacy is not None:
             copied.add(legacy)
         principal = entry.get("actor")
-        # An unset caller is recorded as ``agent`` with no principal.
-        kind = (principal or {}).get("kind") or "agent"
+        # An unset caller is recorded as ``agent`` with no principal. A copied
+        # case-audit row nobody could be linked to stays a person's, as it read.
+        kind = (principal or {}).get("kind") or (
+            principals.PERSON if legacy is not None else "agent"
+        )
         rows.append(
             {
                 "id": f"trail:{entry['seq']}",

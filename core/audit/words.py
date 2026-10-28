@@ -56,6 +56,24 @@ def _upgrade(p: Mapping[str, Any]) -> str:
     return f"Upgraded to {p['to']}" if p.get("to") else "Ran an upgrade"
 
 
+def _case_history(p: Mapping[str, Any]) -> str:
+    """A copied case_audit_logs row (0018_legacy_audit_copy)."""
+    entity = _word(p.get("entity_type")) or "case"
+    verb, field = str(p.get("verb") or ""), _word(p.get("field_name"))
+    if verb == "attach":
+        return f"Attached a file to the {entity}"
+    done = {"create": "Created", "update": "Changed", "delete": "Deleted"}.get(verb)
+    if done is None:
+        return f"Recorded {_word(verb) or 'a change'} on the {entity}"
+    return f"{done} {field} on the {entity}" if field else f"{done} the {entity}"
+
+
+def _investigation_log(p: Mapping[str, Any]) -> str:
+    event = _word(p.get("event_type")) or "an event"
+    inv = p.get("investigation_id")
+    return f"Logged {event} on investigation {inv}" if inv else f"Logged {event}"
+
+
 def _role(verb: str) -> Callable[[Mapping[str, Any]], str]:
     return lambda p: (
         f"{verb} role {p['role_id']}" if p.get("role_id") else f"{verb} a role"
@@ -106,6 +124,9 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "case.close": "Closed the case",
     "approval.approve": _approve,
     "approval.reject": "Rejected an action",
+    # Old audit stores copied on upgrade (0018_legacy_audit_copy)
+    "case.history": _case_history,
+    "investigation.log": _investigation_log,
     # Agents (core/agents/attribution.py)
     "agent.run.start": _run_start,
     "agent.tool.intent": _tool("Asked to call"),
