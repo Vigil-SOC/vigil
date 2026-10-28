@@ -22,6 +22,14 @@
   border-bottom: 1px solid var(--ln0);
 }
 
+/* Unlayered so it outranks shell.css's left-anchored .vg-more-menu: the case menu opens leftward from ⋯ */
+.vg-more-menu.dh-menu {
+  top: calc(100% + 4px);
+  left: auto;
+  right: 0;
+  min-width: 168px;
+}
+
 .case-page .detail-head h2 {
   margin: 2px 0 0;
   font-size: 20px;

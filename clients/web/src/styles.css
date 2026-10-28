@@ -1405,13 +1405,6 @@
       gap: 6px;
    }
 
-   .vg-more-menu.dh-menu {
-      top: calc(100% + 4px);
-      left: auto;
-      right: 0;
-      min-width: 168px;
-   }
-
    .dh-menu button {
       display: flex;
       align-items: center;
