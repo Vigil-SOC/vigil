@@ -9,7 +9,18 @@ import { SETUP_HIDDEN_KEY } from '../screens/home/setupHidden'
 import { NAV } from '../data/data'
 import { notifyAutonomyChanged } from '../screens/settings/useSettings'
 // these resolve to the mocked implementations (vi.mock below is hoisted)
-import { streamFetch, aiDecisionsApi, approvalsApi, workflowApi, casesApi, configApi, consoleApi, overviewApi, timelineApi } from '../services/api'
+import { streamFetch, aiDecisionsApi, approvalsApi, autonomyApi, workflowApi, casesApi, configApi, consoleApi, overviewApi, timelineApi } from '../services/api'
+
+const CEILING = vi.hoisted(() => ({
+  act_reversible: true,
+  act_irreversible: false,
+  stopped: false,
+  read: true,
+  write: true,
+  propose: true,
+  environment_locked: false,
+  four_eyes: false,
+}))
 
 const authState = vi.hoisted(() => ({
   allow: (_permission: string): boolean => true,
@@ -207,6 +218,11 @@ vi.mock('../services/api', () => ({
       }),
     submitFeedback: vi.fn(() => Promise.resolve({})),
   },
+  autonomyApi: {
+    get: vi.fn(() => Promise.resolve({ data: CEILING })),
+    update: vi.fn(),
+    resume: vi.fn(),
+  },
   approvalsApi: {
     listPending: vi.fn(() => Promise.resolve({ data: { actions: [] } })),
     needsYou: vi.fn(() => Promise.resolve({ data: { count: 0, items: [] } })),
@@ -220,12 +236,8 @@ vi.mock('../services/api', () => ({
     getIntegrations: () => Promise.resolve({ data: { enabled_integrations: [] } }),
     getGeneral: () => Promise.resolve({ data: { show_notifications: false } }),
     getOrchestrator: () => Promise.resolve({ data: {} }),
-    getForceManualApproval: () => Promise.resolve({ data: { enabled: false, environment_wins: false } }),
     // the intent report card shows its own failed state; its contents aren't under test here
     getIntent: () => Promise.reject(new Error('not under test')),
-    getAutonomy: vi.fn(() => Promise.resolve({
-      data: { auto_response_enabled: true, force_manual_approval: false },
-    })),
     getDemoMode: vi.fn(() => Promise.resolve({ data: { enabled: false } })),
     getSetupSteps: vi.fn(() => Promise.resolve({
       data: { steps: [], alerts_exist: 1, demo_enabled: false },
@@ -323,9 +335,7 @@ afterEach(() => {
   vi.mocked(consoleApi.getProcesses).mockResolvedValue({
     data: { agent_layer: 'running', daemon: 'running' },
   } as never)
-  vi.mocked(configApi.getAutonomy).mockResolvedValue({
-    data: { auto_response_enabled: true, force_manual_approval: false },
-  } as never)
+  vi.mocked(autonomyApi.get).mockResolvedValue({ data: CEILING } as never)
   vi.mocked(configApi.getDemoMode).mockResolvedValue({ data: { enabled: false } } as never)
   vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
 })
@@ -1014,6 +1024,16 @@ describe('SocConsole', () => {
     expect(screen.getByRole('button', { name: /All decisions/ })).toBeInTheDocument()
   })
 
+  it('opens AI Decisions on ai_decisions.read, without review controls for a reader', async () => {
+    authState.allow = (permission: string) => permission !== 'ai_decisions.approve'
+    renderConsole()
+    clickScreen('AI Decisions')
+    fireEvent.click(await screen.findByText('Cluster merge'))
+    expect(screen.getByText('AI recommendation')).toBeInTheDocument()
+    expect(screen.queryByText('Your review')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Approve|Reject/ })).not.toBeInTheDocument()
+  })
+
   it('switches Workflows tabs and loads a read-only skills list from the API', async () => {
     renderConsole()
     clickScreen('Agents & workflows')
@@ -1285,7 +1305,7 @@ describe('SocConsole', () => {
     })
   })
 
-  it('shows Act, and Assist when force-manual is set or auto-response is off', async () => {
+  it('shows Act, and Assist when act is off, stopped or locked by the environment', async () => {
     const { unmount } = renderConsole()
     expect(await screen.findByText('Act · reversible changes on its own')).toBeInTheDocument()
     expect(screen.getByText('Autonomy', { selector: '.vg-autonomy-label' })).toBeInTheDocument()
@@ -1294,27 +1314,19 @@ describe('SocConsole', () => {
     expect(screen.getByRole('tooltip')).toHaveTextContent('while autonomy is stopped')
     unmount()
 
-    vi.mocked(configApi.getAutonomy).mockResolvedValueOnce({
-      data: { auto_response_enabled: true, force_manual_approval: true },
-    } as never)
-    const forced = renderConsole()
-    expect(await screen.findByText('Assist · asks before changes')).toBeInTheDocument()
-    forced.unmount()
-
-    vi.mocked(configApi.getAutonomy).mockResolvedValueOnce({
-      data: { auto_response_enabled: false, force_manual_approval: false },
-    } as never)
-    renderConsole()
-    expect(await screen.findByText('Assist · asks before changes')).toBeInTheDocument()
+    for (const off of [{ act_reversible: false }, { stopped: true }, { environment_locked: true }]) {
+      vi.mocked(autonomyApi.get).mockResolvedValueOnce({ data: { ...CEILING, ...off } } as never)
+      const assist = renderConsole()
+      expect(await screen.findByText('Assist · asks before changes')).toBeInTheDocument()
+      assist.unmount()
+    }
   })
 
   it('re-reads the autonomy badge when Settings saves Ask first / Act', async () => {
     renderConsole()
     expect(await screen.findByText('Act · reversible changes on its own')).toBeInTheDocument()
 
-    vi.mocked(configApi.getAutonomy).mockResolvedValueOnce({
-      data: { auto_response_enabled: true, force_manual_approval: true },
-    } as never)
+    vi.mocked(autonomyApi.get).mockResolvedValueOnce({ data: { ...CEILING, act_reversible: false } } as never)
     act(() => notifyAutonomyChanged())
     expect(await screen.findByText('Assist · asks before changes')).toBeInTheDocument()
   })
@@ -1327,9 +1339,7 @@ describe('SocConsole', () => {
     expect(where).toHaveAttribute('data-search', '?section=autoinvestigate')
     act.unmount()
 
-    vi.mocked(configApi.getAutonomy).mockResolvedValueOnce({
-      data: { auto_response_enabled: true, force_manual_approval: true },
-    } as never)
+    vi.mocked(autonomyApi.get).mockResolvedValueOnce({ data: { ...CEILING, act_reversible: false } } as never)
     renderConsole()
     fireEvent.click(await screen.findByRole('button', { name: 'Autonomy · Assist · asks before changes' }))
     expect(screen.getByTestId('console-location')).toHaveAttribute('data-search', '?section=autoinvestigate')
@@ -1434,8 +1444,8 @@ describe('SocConsole', () => {
     expect(line).not.toHaveTextContent('No routable provider.')
   })
 
-  it('shows No routable provider when settings.write is denied and nothing can route', async () => {
-    authState.allow = (permission) => permission !== 'settings.write'
+  it('shows No routable provider when platform.write is denied and nothing can route', async () => {
+    authState.allow = (permission) => permission !== 'platform.write'
     vi.mocked(consoleApi.getRoutability).mockResolvedValue({ data: { providers: {} } } as never)
     renderConsole()
     const line = await screen.findByRole('status', { name: 'System status' })

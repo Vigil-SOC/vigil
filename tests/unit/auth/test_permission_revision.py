@@ -80,7 +80,6 @@ def test_ceiling_gates_keep_their_live_name_until_the_revision(monkeypatch):
 
     from fastapi.params import Depends as DependsParam
 
-    from services.api.routers import config as config_router
     from services.api.routers.autonomy import _READ, _WRITE
     from services.api.routers.orchestrator import _STOP
 
@@ -91,15 +90,6 @@ def test_ceiling_gates_keep_their_live_name_until_the_revision(monkeypatch):
     assert _gate(_WRITE[0]).before_revision == "ai_autonomy.write"
     assert _gate(_STOP[0]).before_revision == "ai_autonomy.stop"
     assert _gate(_STOP[0]).permission == "ai_autonomy.stop"
-    force = next(
-        route
-        for route in config_router.router.routes
-        if route.path == "/force-manual-approval" and "POST" in route.methods
-    )
-    assert any(
-        getattr(dep.call, "before_revision", None) == "ai_autonomy.write"
-        for dep in force.dependant.dependencies
-    )
 
 
 def test_a_retargeted_write_keeps_the_live_check_until_the_revision(monkeypatch):

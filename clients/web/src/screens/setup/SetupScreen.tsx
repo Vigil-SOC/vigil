@@ -202,7 +202,7 @@ const SetupWizard = () => {
     setIndex(STEPS.indexOf(target)),
   )
 
-  if (!hasPermission('settings.write')) {
+  if (!hasPermission('platform.write')) {
     return (
       <>
         <TopBar />

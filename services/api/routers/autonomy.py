@@ -1,10 +1,8 @@
 """Read and write the autonomy ceiling (#2918).
 
-The compat Assist/Act endpoints stay on ``/api/config`` until the limits
-screen moves. This is the API that screen will use: the stored flags, the
-implied read/write/propose state, whether the environment has locked the act
-flags, and four-eyes. ``/tools`` lists and sets each outside tool's effect
-class (#3304).
+The one ceiling API: the stored flags, the implied read/write/propose state,
+whether the environment has locked the act flags, and four-eyes. ``/tools``
+lists and sets each outside tool's effect class (#3304).
 """
 
 from typing import List, Literal, Optional
@@ -19,6 +17,7 @@ from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
 from core.response.ceiling import (
     CeilingRefusal,
     CeilingWriteError,
+    _raises,
     ceiling_view,
     loosens,
     own_tool_names,
@@ -96,18 +95,40 @@ def get_ceiling() -> CeilingResponse:
         ) from exc
 
 
-@router.put("", dependencies=_WRITE, response_model=CeilingResponse)
+@router.put("", dependencies=_READ, response_model=CeilingResponse)
 def put_ceiling(
     body: CeilingBody,
+    session: UnitOfWorkSession,
     current_user: User = Depends(get_current_active_user),
 ) -> CeilingResponse:
+    """Edit the ceiling. The permission depends on the direction.
+
+    Only lowering act flags is ``ai_autonomy.stop``. Raising one, or changing
+    four-eyes, is ``ai_autonomy.write``.
+    """
+    try:
+        current = read_ceiling()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail="Could not read the autonomy ceiling"
+        ) from exc
+    lowers = (
+        not _raises(current.act_reversible, body.act_reversible)
+        and not _raises(current.act_irreversible, body.act_irreversible)
+        and body.four_eyes in (None, current.four_eyes)
+    )
+    perm = "ai_autonomy.stop" if lowers else "ai_autonomy.write"
+    deny_unless(current_user.user_id, perm, session, before_revision=perm)
+    edit = body.model_dump()
+    if lowers:
+        # A restated "on" is dropped, so a flag switched off since the read
+        # above is not turned back on under ai_autonomy.stop.
+        edit = {k: (None if v is True else v) for k, v in edit.items()}
     try:
         update_ceiling(
             user_id=str(current_user.user_id),
             caller_is_service=_is_service_account(current_user),
-            act_reversible=body.act_reversible,
-            act_irreversible=body.act_irreversible,
-            four_eyes=body.four_eyes,
+            **edit,
         )
         return _view()
     except CeilingRefusal as exc:

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import LimitsStep from './LimitsStep'
-import { configApi } from '../../services/api'
+import { autonomyApi, configApi } from '../../services/api'
 
 const balancedValues = {
   max_concurrent_agents: 3,
@@ -42,22 +42,28 @@ vi.mock('../../services/api', () => ({
   configApi: {
     getOrchestrator: vi.fn(),
     setOrchestrator: vi.fn(),
-    getForceManualApproval: vi.fn(),
-    setForceManualApproval: vi.fn(),
   },
+  autonomyApi: { get: vi.fn(), update: vi.fn() },
 }))
+
+const CEILING = {
+  act_reversible: true,
+  act_irreversible: false,
+  stopped: false,
+  read: true,
+  write: true,
+  propose: true,
+  environment_locked: false,
+  four_eyes: false,
+}
 
 describe('LimitsStep', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(configApi.getOrchestrator).mockResolvedValue({ data: { ...stored, profiles } } as never)
     vi.mocked(configApi.setOrchestrator).mockResolvedValue({ data: {} } as never)
-    vi.mocked(configApi.getForceManualApproval).mockResolvedValue({
-      data: { enabled: false, environment_wins: false },
-    } as never)
-    vi.mocked(configApi.setForceManualApproval).mockImplementation(async (enabled: boolean) => ({
-      data: { enabled, environment_wins: false },
-    }) as never)
+    vi.mocked(autonomyApi.get).mockResolvedValue({ data: CEILING } as never)
+    vi.mocked(autonomyApi.update).mockImplementation(async (body) => ({ data: { ...CEILING, ...body } }) as never)
   })
 
   it('selects the profile the saved config matches and lists its limits with units', async () => {
@@ -71,7 +77,7 @@ describe('LimitsStep', () => {
     expect(screen.getAllByText('Recommended')).toHaveLength(2) // Balanced and Act
     expect(screen.getByRole('button', { name: /Act/ })).toHaveAttribute('aria-pressed', 'true')
     expect(configApi.setOrchestrator).not.toHaveBeenCalled()
-    expect(configApi.setForceManualApproval).not.toHaveBeenCalled()
+    expect(autonomyApi.update).not.toHaveBeenCalled()
   })
 
   it('saves a lower profile at once, merged into the current config', async () => {
@@ -143,34 +149,34 @@ describe('LimitsStep', () => {
   })
 
   it('saves Assist immediately and Act only after confirm', async () => {
-    vi.mocked(configApi.getForceManualApproval).mockResolvedValue({
-      data: { enabled: true, environment_wins: false },
-    } as never)
+    vi.mocked(autonomyApi.get).mockResolvedValue({ data: { ...CEILING, act_reversible: false } } as never)
     render(<LimitsStep />)
     const assist = await screen.findByRole('button', { name: /Assist/ })
     expect(assist).toHaveAttribute('aria-pressed', 'true')
 
     fireEvent.click(screen.getByRole('button', { name: /Act/ }))
-    expect(configApi.setForceManualApproval).not.toHaveBeenCalled()
+    expect(autonomyApi.update).not.toHaveBeenCalled()
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     })
-    expect(configApi.setForceManualApproval).toHaveBeenCalledWith(false)
+    expect(autonomyApi.update).toHaveBeenCalledWith({ act_reversible: true })
+    expect(screen.getByRole('button', { name: /Act/ })).toHaveAttribute('aria-pressed', 'true')
     expect(configApi.setOrchestrator).not.toHaveBeenCalled()
 
-    vi.mocked(configApi.setForceManualApproval).mockClear()
+    vi.mocked(autonomyApi.update).mockClear()
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /Assist/ }))
     })
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(configApi.setForceManualApproval).toHaveBeenCalledWith(true)
+    expect(autonomyApi.update).toHaveBeenCalledWith({ act_reversible: false })
+    expect(screen.getByRole('button', { name: /Assist/ })).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('says the environment wins and leaves Act unsaved on 409', async () => {
-    vi.mocked(configApi.getForceManualApproval).mockResolvedValue({
-      data: { enabled: true, environment_wins: true },
+    vi.mocked(autonomyApi.get).mockResolvedValue({
+      data: { ...CEILING, act_reversible: false, environment_locked: true },
     } as never)
-    vi.mocked(configApi.setForceManualApproval).mockRejectedValue({
+    vi.mocked(autonomyApi.update).mockRejectedValue({
       response: { data: { detail: 'The environment wins; Act was not saved.' } },
     })
     render(<LimitsStep />)
@@ -178,7 +184,7 @@ describe('LimitsStep', () => {
     expect(screen.getByRole('button', { name: /Assist/ })).toHaveAttribute('aria-pressed', 'true')
     fireEvent.click(screen.getByRole('button', { name: /Act/ }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(configApi.setForceManualApproval).toHaveBeenCalledWith(false)
+    expect(autonomyApi.update).toHaveBeenCalledWith({ act_reversible: true })
     expect(await screen.findByText('The environment wins; Act was not saved.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Assist/ })).toHaveAttribute('aria-pressed', 'true')
     expect(configApi.setOrchestrator).not.toHaveBeenCalled()
