@@ -228,12 +228,12 @@ describe('Integrations: Connected table', () => {
   })
 
   it('marks a row with its vendor logo, or its category icon when the vendor has none', async () => {
-    vi.mocked(mcpApi.listServers).mockResolvedValue({ data: { servers: ['splunk', 'crowdstrike'] } } as never)
+    vi.mocked(mcpApi.listServers).mockResolvedValue({ data: { servers: ['splunk', 'shodan'] } } as never)
     vi.mocked(mcpApi.getStatuses).mockResolvedValue({
       data: {
         statuses: [
           { name: 'splunk', status: 'running', enabled: true },
-          { name: 'crowdstrike', status: 'running', enabled: true },
+          { name: 'shodan', status: 'running', enabled: true },
         ],
       },
     } as never)
@@ -242,8 +242,8 @@ describe('Integrations: Connected table', () => {
     const mark = (name: string) => screen.getByText(name, { selector: '.int-name' }).closest('.int-ident')!.querySelector('.int-mark')!
     // the official card has no setup form, but the catalog still names its vendor
     expect(mark('Splunk').querySelector('img')).toHaveAttribute('src', expect.stringContaining('splunk.svg'))
-    expect(mark('Crowdstrike').querySelector('img')).toBeNull()
-    expect(mark('Crowdstrike').querySelector('svg')).not.toBeNull()
+    expect(mark('Shodan').querySelector('img')).toBeNull()
+    expect(mark('Shodan').querySelector('svg')).not.toBeNull()
   })
 
   it('shows a dash, not a level, where nothing was ever tested', async () => {
@@ -585,8 +585,8 @@ describe('Integrations: Add integration tab', () => {
   it('shows the vendor logo on a card that has one, and the category icon on one that does not', async () => {
     await open()
     expect(card('Okta').querySelector('.int-mark img')).toHaveAttribute('src', expect.stringContaining('okta.svg'))
-    expect(card('CrowdStrike Falcon').querySelector('.int-mark img')).toBeNull()
-    expect(card('CrowdStrike Falcon').querySelector('.int-mark svg')).not.toBeNull()
+    expect(card('Security Detections').querySelector('.int-mark img')).toBeNull()
+    expect(card('Security Detections').querySelector('.int-mark svg')).not.toBeNull()
   })
 
   it('filters by chip and search', async () => {

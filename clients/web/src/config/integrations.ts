@@ -1,12 +1,33 @@
 import { IntegrationMetadata } from './integrationSchema'
 import { basePath } from './basePath'
+import awsSecurityHubLogo from '../assets/vendors/aws-security-hub.svg'
+import cloudflareLogo from '../assets/vendors/cloudflare.svg'
+import criblLogo from '../assets/vendors/cribl.svg'
+import crowdstrikeLogo from '../assets/vendors/crowdstrike.svg'
+import deeptempoShieldLogo from '../assets/vendors/deeptempo-shield.svg'
+import elasticLogo from '../assets/vendors/elastic.svg'
+import githubLogo from '../assets/vendors/github.svg'
+import googleLogo from '../assets/vendors/google.svg'
+import googleSecopsLogo from '../assets/vendors/google-secops.svg'
+import jiraLogo from '../assets/vendors/jira.svg'
+import microsoftDefenderLogo from '../assets/vendors/microsoft-defender.svg'
+import microsoftEntraIdLogo from '../assets/vendors/microsoft-entra-id.svg'
+import microsoftSentinelLogo from '../assets/vendors/microsoft-sentinel.svg'
+import microsoftTeamsLogo from '../assets/vendors/microsoft-teams.svg'
 import oktaLogo from '../assets/vendors/okta.svg'
+import opensearchLogo from '../assets/vendors/opensearch.svg'
+import pagerdutyLogo from '../assets/vendors/pagerduty.svg'
+import paloaltoLogo from '../assets/vendors/paloalto.svg'
+import sentineloneLogo from '../assets/vendors/sentinelone.svg'
+import slackLogo from '../assets/vendors/slack.svg'
 import splunkLogo from '../assets/vendors/splunk.svg'
+import virustotalLogo from '../assets/vendors/virustotal.svg'
 
 const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'github',
     name: 'GitHub',
+    logo: githubLogo,
     category: 'Reference / Platform',
     description: 'Access GitHub repositories, issues, pull requests, and code search via the official MCP server.',
     functionality_type: 'Source Control & Collaboration',
@@ -26,6 +47,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'virustotal',
     name: 'VirusTotal',
+    logo: virustotalLogo,
     category: 'Threat Intelligence',
     description: 'Check file hashes, URLs, domains, and IPs against VirusTotal\'s threat intelligence database.',
     functionality_type: 'Data Enrichment',
@@ -137,6 +159,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'gcp-threat-intel',
     name: 'Google Threat Intelligence',
+    logo: googleLogo,
     category: 'Threat Intelligence',
     description: 'Google Threat Intelligence (powered by VirusTotal/Mandiant) for file, URL, domain, and IP reputation lookups, threat actor profiles, and campaign tracking.',
     functionality_type: 'Data Enrichment',
@@ -194,6 +217,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'crowdstrike',
     name: 'CrowdStrike Falcon',
+    logo: crowdstrikeLogo,
     category: 'EDR/XDR',
     description: 'Connect to CrowdStrike Falcon for endpoint detection and response with threat intelligence.',
     functionality_type: 'Detection & Response',
@@ -226,6 +250,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'sentinelone',
     name: 'SentinelOne',
+    logo: sentineloneLogo,
     category: 'EDR/XDR',
     description: 'Integrate with SentinelOne for autonomous endpoint protection with AI-powered threat detection.',
     functionality_type: 'Detection & Response',
@@ -285,6 +310,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'microsoft-defender',
     name: 'Microsoft Defender',
+    logo: microsoftDefenderLogo,
     category: 'EDR/XDR',
     description: 'Integrate with Microsoft Defender for Endpoint (MDE) for enterprise endpoint protection.',
     functionality_type: 'Detection & Response',
@@ -315,6 +341,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'loglm',
     name: 'LogLM',
+    logo: deeptempoShieldLogo,
     category: 'Detection & AI',
     description:
       'DeepTempo LogLM anomaly detections stream into Vigil as findings, and the LogLM model-admin panel mounts natively inside the console. Requires the paid, opt-in LogLM connector.',
@@ -412,6 +439,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'cribl-stream',
     name: 'Cribl Stream',
+    logo: criblLogo,
     category: 'Data Pipeline',
     description: 'Observability pipeline for collecting, processing, enriching, and routing security data. Normalize logs, reduce volume, and optimize data flow before AI analysis.',
     functionality_type: 'Data Pipeline & Enrichment',
@@ -460,6 +488,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'elastic-siem',
     name: 'Elastic Security',
+    logo: elasticLogo,
     category: 'SIEM',
     description: 'Elastic Security SIEM with advanced analytics, threat hunting, and incident response capabilities. Also hunts over an OpenSearch-based Wazuh indexer.',
     functionality_type: 'Log Analysis & SIEM',
@@ -539,6 +568,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'opensearch',
     name: 'OpenSearch',
+    logo: opensearchLogo,
     category: 'SIEM',
     description: 'OpenSearch SIEM with the Security Analytics plugin: Sigma-rule detectors over centralized logs generate findings and alerts.',
     functionality_type: 'Log Analysis & SIEM',
@@ -602,6 +632,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'azure-sentinel',
     name: 'Microsoft Sentinel',
+    logo: microsoftSentinelLogo,
     category: 'SIEM',
     description: 'Microsoft Azure Sentinel cloud-native SIEM with AI-powered threat detection and response.',
     functionality_type: 'Log Analysis & SIEM',
@@ -649,6 +680,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'gcp-secops',
     name: 'Google SecOps (Chronicle)',
+    logo: googleSecopsLogo,
     category: 'SIEM',
     description: 'Google Security Operations (formerly Chronicle) for cloud-native threat detection, investigation, and response. Query security telemetry with UDM search and detection rules.',
     functionality_type: 'Log Analysis & SIEM',
@@ -683,6 +715,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'aws-security-hub',
     name: 'AWS Security Hub',
+    logo: awsSecurityHubLogo,
     category: 'Cloud Security',
     description: 'Integrate with AWS Security Hub for centralized security findings across AWS accounts.',
     functionality_type: 'Cloud Security Posture',
@@ -737,6 +770,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'azure-ad',
     name: 'Azure Active Directory',
+    logo: microsoftEntraIdLogo,
     category: 'Identity & Access',
     description: 'Connect to Azure AD (Entra ID) for identity management, authentication logs, and conditional access.',
     functionality_type: 'Identity & Access Management',
@@ -765,6 +799,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'palo-alto',
     name: 'Palo Alto Networks',
+    logo: paloaltoLogo,
     category: 'Network Security',
     description: 'Integrate with Palo Alto Networks firewalls and Panorama for policy management and threat prevention.',
     functionality_type: 'Network Protection',
@@ -802,6 +837,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'cloudflare',
     name: 'Cloudflare',
+    logo: cloudflareLogo,
     category: 'Network Security',
     description:
       'Cloudflare WAF, Zero Trust Gateway, and Access response actions, plus read-only IP/domain threat lookups. Lets Vigil propose and (with approval) execute WAF blocks, Gateway DNS/HTTP block policies, and Zero Trust session revocations.',
@@ -836,6 +872,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'cloudforce_one',
     name: 'Cloudflare Cloudforce One',
+    logo: cloudflareLogo,
     category: 'Threat Intelligence',
     description:
       'Cloudforce One STIX/TAXII 2.1 threat-intel feeds. Vigil polls configured collections, normalizes indicators, and enriches findings whose IOCs match. Operates independently of the Cloudflare WAF/Zero Trust integration so customers can subscribe to either or both.',
@@ -882,6 +919,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'jira',
     name: 'Jira',
+    logo: jiraLogo,
     category: 'Incident Management',
     description: 'Create and manage security incidents in Jira.',
     functionality_type: 'Incident Tracking & SOAR',
@@ -920,6 +958,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'slack',
     name: 'Slack',
+    logo: slackLogo,
     category: 'Communications',
     description: 'Send security alerts and notifications to Slack channels.',
     functionality_type: 'Alerting & Collaboration',
@@ -946,6 +985,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'pagerduty',
     name: 'PagerDuty',
+    logo: pagerdutyLogo,
     category: 'Communications',
     description: 'Create incidents and send alerts through PagerDuty for on-call management.',
     functionality_type: 'Alerting & Collaboration',
@@ -983,6 +1023,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'microsoft-teams',
     name: 'Microsoft Teams',
+    logo: microsoftTeamsLogo,
     category: 'Communications',
     description: 'Send security alerts and notifications to Microsoft Teams channels.',
     functionality_type: 'Alerting & Collaboration',
