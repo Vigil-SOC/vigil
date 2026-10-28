@@ -239,7 +239,7 @@ def _compose_pause_note(definition: WorkflowDefinition) -> str:
         for phase in definition.phases or []
         for tool in ((phase or {}).get("tools") or [])
     ]
-    if gated_tools(names):
+    if gated_tools(n for n in names if n not in CAPABILITIES):
         return "Direct-action calls pause for approval before they run."
     return "It pauses only at phases marked approval_required."
 

@@ -389,27 +389,22 @@ def store_tool_class(
     )
 
 
-# Hint sets already applied, so a per-turn registry refresh does not re-query.
-_tightened: set[tuple[str, ...]] = set()
-
-
-def tighten_from_hints(server: str, tools: Iterable[dict]) -> None:
+def tighten_from_hints(server: str, tools: Iterable[dict]) -> bool:
     """``destructiveHint: true`` raises an existing row to irreversible.
 
     It never inserts a row and never lowers one; ``readOnlyHint`` is not read.
-    Best effort: a server's connect does not fail on it.
+    Best effort: False when the store could not be written, so the caller can
+    try again; a server's connect does not fail on it.
     """
-    hinted = tuple(
-        sorted(
-            f"{server}_{tool['name']}"
-            for tool in tools
-            if tool.get("name")
-            and isinstance(tool.get("annotations"), dict)
-            and tool["annotations"].get("destructiveHint") is True
-        )
+    hinted = sorted(
+        f"{server}_{tool['name']}"
+        for tool in tools
+        if tool.get("name")
+        and isinstance(tool.get("annotations"), dict)
+        and tool["annotations"].get("destructiveHint") is True
     )
-    if not hinted or hinted in _tightened:
-        return
+    if not hinted:
+        return True
     try:
         with unit_of_work() as session:
             rows = (
@@ -428,6 +423,7 @@ def tighten_from_hints(server: str, tools: Iterable[dict]) -> None:
                 store_tool_class(
                     session, row.tool_name, row.effect_class, IRREVERSIBLE, _SYSTEM
                 )
-        _tightened.add(hinted)
+        return True
     except Exception as exc:  # noqa: BLE001
         logger.warning("destructiveHint from %s not applied: %s", server, exc)
+        return False

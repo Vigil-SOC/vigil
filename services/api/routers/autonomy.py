@@ -195,7 +195,7 @@ def list_tool_classes(
     return [rows[name] for name in sorted(rows)]
 
 
-@router.put("/tools/{name}", response_model=ToolClassEntry)
+@router.put("/tools/{name}", dependencies=_READ, response_model=ToolClassEntry)
 def put_tool_class(
     name: str,
     body: ToolClassBody,

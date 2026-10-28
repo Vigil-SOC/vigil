@@ -147,12 +147,20 @@ def _normalised(tool: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# The tool list each server's hints were last applied from. The client builds a
+# new list on every connect, so a per-turn refresh applies them once per connect.
+_hinted: Dict[str, List[Dict]] = {}
+
+
 def _register(registry: MCPRegistry, server_name: str, tools: List[Dict]) -> None:
     """Register a connected server's tools, after its destructiveHints tighten."""
     from core.response.ceiling import tighten_from_hints
 
     normalised = [_normalised(t) for t in tools]
-    tighten_from_hints(server_name, normalised)
+    if _hinted.get(server_name) is not tools and tighten_from_hints(
+        server_name, normalised
+    ):
+        _hinted[server_name] = tools
     registry.register_server(server_name, normalised)
 
 

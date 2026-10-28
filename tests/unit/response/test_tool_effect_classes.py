@@ -195,7 +195,6 @@ def test_destructive_hint_tightens_and_read_only_hint_does_not_loosen():
                     tool_name=name, effect_class=effect, classified_by="system"
                 )
             )
-    ceiling._tightened.clear()
     tighten_from_hints(
         "srv",
         [
@@ -209,3 +208,23 @@ def test_destructive_hint_tightens_and_read_only_hint_does_not_loosen():
         stored = ceiling.stored_classes(session, names)
     # A hint never writes a row for a name that has none.
     assert stored == {"srv_wipe": "irreversible", "srv_lookup": "irreversible"}
+
+
+def test_hints_apply_once_per_connect(monkeypatch):
+    from core.integrations.mcp import registry as mcp_registry
+
+    calls = []
+    monkeypatch.setattr(mcp_registry, "_hinted", {})
+    monkeypatch.setattr(
+        ceiling,
+        "tighten_from_hints",
+        lambda server, tools: calls.append(server) or True,
+    )
+    reg = mcp_registry.MCPRegistry()
+    first = [{"name": "wipe", "annotations": {"destructiveHint": True}}]
+    mcp_registry._register(reg, "srv", first)
+    mcp_registry._register(reg, "srv", first)  # a per-turn refresh
+    assert calls == ["srv"]
+    # A reconnect builds a new list, and the hints apply again.
+    mcp_registry._register(reg, "srv", list(first))
+    assert calls == ["srv", "srv"]
