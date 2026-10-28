@@ -70,9 +70,11 @@ def _samples(observations: list[dict], signal: str) -> list[dict]:
 
 def _values(obs: dict) -> list[tuple]:
     return [
-        (v["key"], v["value"], v.get("labels", {}).get("source"))
-        if v["key"] == "sources.arrivals"
-        else (v["key"], v["value"], v.get("labels", {}).get("probe"))
+        (
+            (v["key"], v["value"], v.get("labels", {}).get("source"))
+            if v["key"] == "sources.arrivals"
+            else (v["key"], v["value"], v.get("labels", {}).get("probe"))
+        )
         for v in obs["values"]
     ]
 
