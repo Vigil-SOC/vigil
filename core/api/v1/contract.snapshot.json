@@ -2635,7 +2635,16 @@
                 "type": "null"
               }
             ],
+            "description": "The first of case_ids: the case that asked.",
             "title": "Case Id"
+          },
+          "case_ids": {
+            "description": "Every case this item is on. A proposal several cases made is one item listing them all.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Case Ids",
+            "type": "array"
           },
           "checkpoint_class": {
             "anyOf": [
