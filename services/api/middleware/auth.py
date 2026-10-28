@@ -42,11 +42,6 @@ def _require_permission(current_user: User, permission: str) -> None:
     deny_unless(current_user.user_id, permission)
 
 
-def require_settings_admin(current_user: User) -> None:
-    """Raise 403 unless the user may change system settings."""
-    _require_permission(current_user, "settings.write")
-
-
 def require_integrations_admin(current_user: User) -> None:
     """Raise 403 unless the user may change integrations or MCP servers."""
     _require_permission(current_user, "integrations.write")

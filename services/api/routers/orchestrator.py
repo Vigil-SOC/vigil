@@ -37,18 +37,18 @@ ROUTER_META = RouterMeta(
 )
 logger = logging.getLogger(__name__)
 
-# Reads are automation.read. Enable and disable stay settings.write and still
-# require that read. Kill is only the ceiling gate: it is already ai_autonomy.stop
-# on main, and the catalog split must not rewrite it to settings.write or add
-# the area read. Wiping investigations is platform.
+# Reads are automation.read. Enabling the orchestrator is ai_autonomy.write and
+# disabling it ai_autonomy.stop, both with that read. Kill is only the ceiling
+# gate. Wiping investigations is platform.
 _AREA_READ = [permission_gate("automation.read")]
-_SETTINGS_WRITE = [permission_gate("settings.write"), *_AREA_READ]
+_ENABLE = [permission_gate("ai_autonomy.write"), *_AREA_READ]
+_DISABLE = [permission_gate("ai_autonomy.stop"), *_AREA_READ]
 _PLATFORM_WRITE = [permission_gate("platform.write"), *_AREA_READ]
 # Queueing an investigation is the same act as POST /api/v1/agent-runs.
 _RUN_AGENTS = [permission_gate("ai_chat.use"), *_AREA_READ]
 # Stopping one investigation is a decision, like resuming or cancelling a run.
 _KILL = [permission_gate("ai_decisions.approve"), *_AREA_READ]
-_STOP = [permission_gate("ai_autonomy.stop", before_revision="ai_autonomy.stop")]
+_STOP = [permission_gate("ai_autonomy.stop")]
 
 
 _cached_orchestrator = None
@@ -167,7 +167,7 @@ def _persist_orchestrator_enabled(
         raise RuntimeError("orchestrator.settings was not stored")
 
 
-@router.post("/enable", dependencies=_SETTINGS_WRITE)
+@router.post("/enable", dependencies=_ENABLE)
 def enable_orchestrator(
     current_user: User = Depends(get_current_active_user),
 ):
@@ -176,7 +176,7 @@ def enable_orchestrator(
     return {"success": True, "enabled": True, "message": "Orchestrator enabled"}
 
 
-@router.post("/disable", dependencies=_SETTINGS_WRITE)
+@router.post("/disable", dependencies=_DISABLE)
 def disable_orchestrator(
     current_user: User = Depends(get_current_active_user),
 ):

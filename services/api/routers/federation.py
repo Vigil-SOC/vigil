@@ -33,11 +33,8 @@ ROUTER_META = RouterMeta(
 )
 logger = logging.getLogger(__name__)
 
-# The global switch was settings.write. It becomes integrations.write with the
-# catalog revision. Each source was already integrations.write.
-_SETTINGS_WRITE = [
-    permission_gate("integrations.write", before_revision="settings.write")
-]
+# The global switch and each source are integration writes.
+_SETTINGS_WRITE = [permission_gate("integrations.write")]
 _INTEGRATIONS_WRITE = [permission_gate("integrations.write")]
 router.dependencies.append(permission_gate("integrations.read"))
 

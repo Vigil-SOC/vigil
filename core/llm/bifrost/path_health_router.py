@@ -1,7 +1,7 @@
 """GET /api/llm/health — the providers map the status line folds.
 
 Every built-in role, on ``platform.read`` like ``/api/processes``. Kept off the Bifrost proxy: that router requires
-``settings.write``, and its catch-all would take a path mounted there.
+``platform.write``, and its catch-all would take a path mounted there.
 The body is only ``providers``. When the refresh could not reach Bifrost
 the answer is 200 and an empty map, so the line can say "No routable provider."
 """

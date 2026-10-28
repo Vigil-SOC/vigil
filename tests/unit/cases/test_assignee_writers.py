@@ -39,6 +39,10 @@ def template(monkeypatch):
         return None  # The route's 500 is not under test; what was passed is.
 
     monkeypatch.setattr(workflow_service, "create_case_from_template", create)
+    # The caller holds cases.assign; the role gate is not under test.
+    monkeypatch.setattr(
+        "core.auth.auth_service.AuthService.check_permission", lambda *_a, **_k: True
+    )
     return made
 
 
