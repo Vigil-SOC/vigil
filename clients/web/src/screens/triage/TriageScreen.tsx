@@ -262,7 +262,7 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
   usePageSnapshot('triage', phase === 'ready' && data ? [
     `Triage queue: ${data.matched} items. Picked up automatically ${data.strip.picked_up.launched_or_merged} of ${data.strip.picked_up.created_today} today; cases created today ${data.strip.cases_created_today}; waiting in line ${data.strip.waiting}.`,
     'Rows (arrived | kind | source | alert | severity | what happened | picked up in | grouped into | finding):',
-    ...data.rows.slice(0, 60).map((r) => [r.created_at ?? '-', r.kind_label, r.source || '-', r.title || r.description || r.document || '-', r.severity_band, r.state_label, r.pickup_seconds ?? '-', r.case_door ?? r.workflow_id ?? '-', r.finding_id ?? '-'].join(' | ')),
+    ...data.rows.slice(0, 60).map((r) => [r.created_at ?? '-', r.kind_label, r.source || '-', r.title || r.description || r.document || '-', r.severity_band, r.state_label, r.pickup_seconds ?? '-', r.case_door || r.workflow_id || '-', r.finding_id ?? '-'].join(' | ')),
   ].join('\n') : '')
   const [openId, setOpenId] = useState<number | null>(null)
   const loadTicket = useRef(0)
