@@ -148,7 +148,13 @@ export interface paths {
         };
         /**
          * List Available Tools
-         * @description Return MCP tool names grouped by server prefix for the UI multiselect.
+         * @description Every tool an agent may be given, for the agent drawer's tool picker.
+         *
+         *     ``catalog`` has one row per tool: its name, the server that serves it
+         *     ("vigil" for Vigil's own) and the first sentence of its description.
+         *     ``changes`` marks each of them read_only or asks_first from its stored
+         *     effect class; a name missing there is not connected. ``tools`` lists the
+         *     connected MCP tool names.
          *
          *     Sources, in order of preference:
          *       1. Live MCP registry (populated when MCP servers connect at startup).
