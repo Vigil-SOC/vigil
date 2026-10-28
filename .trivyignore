@@ -6,3 +6,8 @@
 # is fastmcp 3.2.0. The flaw is in FastMCP's OpenAPI integration, which okta_mcp
 # never imports. Drop this line when the okta pin moves past fastmcp 3.2.0.
 CVE-2026-32871
+
+# Go stdlib 1.26.4 in restic 0.19.1 (Dockerfile.backend), the latest release;
+# the fix is Go 1.26.9. The flaw is os.Root following junctions on Windows, and
+# this image is Linux only. Drop this line when restic ships on Go 1.26.9+.
+CVE-2026-56857

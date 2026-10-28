@@ -110,4 +110,5 @@ async def test_health_answers_while_a_draft_generates(app, path, body, reply):
 
     assert health.status_code == 200
     assert response.status_code == 200, response.text
-    assert elapsed < 0.1, f"/api/health waited {elapsed:.2f}s behind {path}"
+    # A blocked loop waits out BLOCK_S; a fraction of it absorbs runner jitter.
+    assert elapsed < BLOCK_S / 5, f"/api/health waited {elapsed:.2f}s behind {path}"
