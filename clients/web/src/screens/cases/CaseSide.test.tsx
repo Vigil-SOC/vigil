@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { useRef } from 'react'
+import { MemoryRouter } from 'react-router-dom'
 import { CaseSide } from './CaseSide'
 import { casesApi } from '../../services/api'
 import { useNoSideways } from '../../shared/useNoSideways'
@@ -13,6 +14,7 @@ vi.mock('../../services/api', () => ({
     getComments: vi.fn(),
     getTasks: vi.fn(),
     getEscalations: vi.fn(),
+    getRelationships: vi.fn(),
   },
 }))
 
@@ -46,20 +48,22 @@ function renderSide({ keys = KEYS, entities = ['FIN-WS-114', 'priya.nair'], late
   recall?: boolean
 } = {}) {
   return render(
-    <aside className="case-side">
-      <CaseSide
-        caseId="case-1"
-        linked={[{ finding_id: 'dl-001', title: 'ISO delivered', description: null, source_link: null, entities }]}
-        owner="—"
-        latest={latest}
-        runs={[]}
-        workflowNames={{}}
-        sla={null}
-        closed={false}
-        fold={{ ...fold, recall: recall ? { ...(fold as unknown as { recall: object }).recall, keys } : null } as unknown as RunFold}
-        latestFold={null}
-      />
-    </aside>,
+    <MemoryRouter>
+      <aside className="case-side">
+        <CaseSide
+          caseId="case-1"
+          linked={[{ finding_id: 'dl-001', title: 'ISO delivered', description: null, source_link: null, entities }]}
+          owner="—"
+          latest={latest}
+          runs={[]}
+          workflowNames={{}}
+          sla={null}
+          closed={false}
+          fold={{ ...fold, recall: recall ? { ...(fold as unknown as { recall: object }).recall, keys } : null } as unknown as RunFold}
+          latestFold={null}
+        />
+      </aside>
+    </MemoryRouter>,
   )
 }
 
@@ -67,6 +71,43 @@ beforeEach(() => {
   vi.mocked(casesApi.getComments).mockResolvedValue({ data: { comments: [] } } as never)
   vi.mocked(casesApi.getTasks).mockResolvedValue({ data: { tasks: [] } } as never)
   vi.mocked(casesApi.getEscalations).mockResolvedValue({ data: { escalations: [] } } as never)
+  vi.mocked(casesApi.getRelationships).mockResolvedValue({ data: { relationships: [] } } as never)
+})
+
+describe('case side panel Related cases (#3293)', () => {
+  it('shows each linked Case with a link, its title, status and note', async () => {
+    vi.mocked(casesApi.getRelationships).mockResolvedValue({
+      data: {
+        relationships: [
+          { relationship_id: 1, related_case_id: 'case-2', related_title: 'Same host beacon', related_status: 'closed', notes: 'same host', relationship_type: 'related_to' },
+          { relationship_id: 2, related_case_id: 'case-3', related_title: 'Phish wave', related_status: 'open', notes: null, relationship_type: 'duplicate' },
+        ],
+      },
+    } as never)
+    renderSide()
+    const block = (await screen.findByRole('heading', { name: 'Related cases' })).closest('section') as HTMLElement
+    const links = within(block).getAllByRole('link')
+    expect(links.map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
+      ['case-2', '/cases?case=case-2'],
+      ['case-3', '/cases?case=case-3'],
+    ])
+    expect(within(block).getByTitle('Same host beacon')).toBeInTheDocument()
+    expect(within(block).getByText('Closed')).toBeInTheDocument()
+    expect(within(block).getByTitle('same host')).toBeInTheDocument()
+    expect(block.querySelectorAll('li')[1].querySelector('.side-meta')).toBeNull()
+  })
+
+  it('shows no block when the Case has no links or the read fails', async () => {
+    renderSide()
+    await screen.findByRole('heading', { name: 'Details' })
+    await Promise.resolve()
+    expect(screen.queryByRole('heading', { name: 'Related cases' })).toBeNull()
+
+    vi.mocked(casesApi.getRelationships).mockRejectedValue(new Error('boom'))
+    renderSide()
+    await Promise.resolve()
+    expect(screen.queryByRole('heading', { name: 'Related cases' })).toBeNull()
+  })
 })
 
 describe('case side panel Entities (#2284)', () => {

@@ -7833,6 +7833,30 @@ export interface components {
             text: string;
         };
         /**
+         * CaseRelatedSchema
+         * @description A link with the related Case's title and status, for the side panel.
+         */
+        CaseRelatedSchema: {
+            /** Case Id */
+            case_id?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Created By */
+            created_by?: string | null;
+            /** Notes */
+            notes?: string | null;
+            /** Related Case Id */
+            related_case_id?: string | null;
+            /** Related Status */
+            related_status?: string | null;
+            /** Related Title */
+            related_title?: string | null;
+            /** Relationship Id */
+            relationship_id?: number | null;
+            /** Relationship Type */
+            relationship_type?: string | null;
+        };
+        /**
          * CaseRelationshipSchema
          * @description CaseRelationship.
          */
@@ -7855,7 +7879,7 @@ export interface components {
         /** CaseRelationshipsResponse */
         CaseRelationshipsResponse: {
             /** Relationships */
-            relationships: components["schemas"]["CaseRelationshipSchema"][];
+            relationships: components["schemas"]["CaseRelatedSchema"][];
         };
         /**
          * CaseSLASchema
