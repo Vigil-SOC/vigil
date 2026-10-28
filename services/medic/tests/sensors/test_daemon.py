@@ -199,7 +199,7 @@ async def test_an_unresolvable_daemon_on_compose_is_not_installed() -> None:
         obs += await rig.tick(30)
     rig.assert_all_valid()
     # Compose without the daemon profile: not installed, never blind.
-    (sample, *_) = _samples(obs, "daemon_health")
+    sample = _samples(obs, "daemon_health")[0]
     assert sample["outcome"] == "error" and sample["error"]["class"] == "not_installed"
     assert rig.health("daemon.health")[-1]["state"] != "blind"
     assert rig.health("daemon.status")[-1]["state"] != "blind"
