@@ -41,9 +41,14 @@ def _clean(throwaway_database):
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    from core.auth.auth_service import AuthService
     from services.api.routers import findings
 
+    # The mark records this user. The role check would otherwise look them up.
+    monkeypatch.setattr(
+        AuthService, "check_permission", staticmethod(lambda *a, **k: True)
+    )
     app = FastAPI()
     app.dependency_overrides[get_current_user] = lambda: _User()
     app.include_router(findings.router, prefix="/api/findings")

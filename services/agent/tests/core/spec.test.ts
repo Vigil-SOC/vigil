@@ -226,6 +226,25 @@ describe("the loader refuses an arch it could not honour", () => {
     expect(() => buildSpec(missing, archFor("investigate").actions)).toThrow(SpecError);
     expect(() => buildSpec(missing, archFor("investigate").actions)).toThrow(/no such config file: \/nowhere\/vigil.config.yaml/);
   });
+
+  // A run's error is readable by any signed-in user, so it says where a file failed, never what it holds.
+  it("names the line of a file that is not YAML without quoting it", () => {
+    const arch = scratchFile("not-yaml.yaml", "MARKER-ONE: this is not yaml: a: b: c\n");
+    const failure = (() => {
+      try {
+        buildSpec({ ...CASE, arch }, ["EXAMINE", "CONCLUDE"]);
+      } catch (error) {
+        return error as Error;
+      }
+      throw new Error("expected the arch to be refused");
+    })();
+    expect(failure).toBeInstanceOf(SpecError);
+    expect(failure.message).toContain(arch);
+    expect(failure.message).toMatch(/not valid YAML at line 1, column \d+/);
+    expect(failure.message).not.toContain("MARKER");
+    expect(() => parseConfig("model: [MARKER-TWO")).toThrow(/^not valid YAML at line 1/);
+    expect(() => parseConfig("model: [MARKER-TWO")).not.toThrow(/MARKER/);
+  });
 });
 
 describe("the config layer", () => {

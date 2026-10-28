@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { parse as parseYaml } from "yaml";
+import { parse } from "yaml";
 import { DEFAULT_PARK_MS, type BudgetLimits } from "../contracts/budget.js";
 
 export class SpecError extends Error {}
@@ -225,6 +225,21 @@ function positive<T extends object>(block: T, what: string): T {
   return block;
 }
 
+// Where a parse failed, never what was there: the yaml package's message quotes
+// the offending source line, and a run's error is readable by any signed-in user.
+function position(error: unknown): string {
+  const at = (error as { linePos?: { line: number; col: number }[] }).linePos?.[0];
+  return at === undefined ? "" : ` at line ${at.line}, column ${at.col}`;
+}
+
+function parseYaml(text: string): unknown {
+  try {
+    return parse(text);
+  } catch (error) {
+    throw new SpecError(`not valid YAML${position(error)}`);
+  }
+}
+
 function splitFrontMatter(text: string): [Record<string, unknown>, string] {
   const trimmed = text.trimStart();
   if (!trimmed.startsWith("---")) return [asRecord(parseYaml(text), "document"), ""];
@@ -263,7 +278,7 @@ function load<T>(path: string, parse: (text: string) => T, layer: Layer): T {
     return parse(text);
   } catch (error) {
     if (error instanceof SpecError) throw new SpecError(`${path}: ${error.message}`);
-    throw new SpecError(`invalid ${layer} file ${path}: ${(error as Error).message}`);
+    throw new SpecError(`invalid ${layer} file ${path}${position(error)}`);
   }
 }
 

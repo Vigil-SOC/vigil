@@ -21,9 +21,9 @@ from core.agents.manager import CUSTOM_AGENT_ID_PREFIX
 from core.auth.permissions import permission_gate
 from core.deps import provide_agent_ai, provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry
-from core.llm.chat_layers import changes_for_tool
 from core.llm.system_prompt import validate_system_prompt
 from core.llm.tool_schemas import ALL_TOOLS
+from core.response.ceiling import asks_first
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
 from services.api.middleware.auth import get_current_active_user
@@ -39,9 +39,10 @@ ROUTER_META = RouterMeta(
 )
 service = CustomAgentService()
 
-# A saved custom agent's prompt and tools are loaded into workflow runs, so
-# writing one is a settings change. Generating a draft does not save it.
-_SETTINGS_WRITE = [permission_gate("settings.write")]
+# A saved custom agent's prompt and tools are loaded into workflow runs.
+# Generating a draft does not save it; both are automation.
+_SETTINGS_WRITE = [permission_gate("automation.write")]
+router.dependencies.append(permission_gate("automation.read"))
 
 
 def _refresh_manager() -> None:
@@ -194,14 +195,20 @@ def list_available_tools(
     # What each tool does to the outside world: the connected MCP tools and
     # Vigil's built-in ones, which are always there. A name missing here is not connected.
     names = set(tools) | {t["name"] for t in ALL_TOOLS if t.get("name")}
+    asking = asks_first(names)
     return {
         "tools": tools,
         "grouped": grouped,
-        "changes": {n: changes_for_tool(n) for n in sorted(names)},
+        "changes": {
+            n: "asks_first" if n in asking else "read_only" for n in sorted(names)
+        },
     }
 
 
-@router.post("/agents/custom/generate")
+@router.post(
+    "/agents/custom/generate",
+    dependencies=[permission_gate("automation.write", introduced=True)],
+)
 async def generate_custom_agent(
     payload: GenerateAgentRequest,
     generator: AgentAIGenerator = Depends(provide_agent_ai),

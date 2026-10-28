@@ -76,7 +76,7 @@ def test_metrics_omits_the_sample_when_the_timestamp_does_not_parse(vigil_dir, p
     assert read_last_success_at() is None
 
 
-def _status_client(monkeypatch) -> TestClient:
+def _status_client(monkeypatch, authenticate_app) -> TestClient:
     class _Service:
         def get_backend_info(self):
             return {"backend": "postgresql", "database_available": True}
@@ -87,13 +87,14 @@ def _status_client(monkeypatch) -> TestClient:
     )
     app = FastAPI()
     app.include_router(storage_status.router, prefix=storage_status.ROUTER_META.prefix)
+    authenticate_app(app)
     return TestClient(app)
 
 
-def test_storage_status_names_the_timestamp(vigil_dir, monkeypatch):
+def test_storage_status_names_the_timestamp(vigil_dir, monkeypatch, authenticate_app):
     _write_status(vigil_dir, {"last_success_at": WHEN.isoformat()})
 
-    response = _status_client(monkeypatch).get("/api/storage/status")
+    response = _status_client(monkeypatch, authenticate_app).get("/api/storage/status")
 
     assert response.status_code == 200
     body = response.json()
@@ -107,8 +108,10 @@ def test_storage_status_names_the_timestamp(vigil_dir, monkeypatch):
     ]
 
 
-def test_storage_status_keeps_the_setup_action_without_a_file(vigil_dir, monkeypatch):
-    response = _status_client(monkeypatch).get("/api/storage/status")
+def test_storage_status_keeps_the_setup_action_without_a_file(
+    vigil_dir, monkeypatch, authenticate_app
+):
+    response = _status_client(monkeypatch, authenticate_app).get("/api/storage/status")
 
     assert response.status_code == 200
     body = response.json()

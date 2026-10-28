@@ -18,6 +18,7 @@ import { childRunId } from "../../core/frames.js";
 import { localDispatch } from "../../core/dispatch.js";
 import type { Harness } from "../../core/loop.js";
 import { nullMemory } from "../../core/memory.js";
+import { isEmptyResult } from "../../core/call-view.js";
 import { classify, recordOf } from "../../core/record.js";
 import { registryOf } from "../../core/registry.js";
 import { replayFrames, trajectoryOf } from "../../core/replay.js";
@@ -149,6 +150,50 @@ describe("the hypothesis record", () => {
     expect(calls[2]?.result).toContain("r1 was a visibility gap, not evidence");
     expect(calls[3]?.result).toContain("h9 is not on the record");
     expect(recordOf(await state.read(RUN)).links).toEqual([]);
+  });
+
+  it("refuses to link a served result that found nothing, and links one that found something (#3263)", async () => {
+    const spec = specOf();
+    const plugin = quiet(pluginFor("investigate"));
+    const state = new InProcessState<AgentKinds>();
+    const answers: Record<string, () => ToolResult> = {
+      splunk_search: () => ({ ok: true, rows: [], rowCount: 0, capped: false, sourceSystem: "splunk" }),
+      get_finding: () => ({ ok: true, rows: [{ query: "case:x", total: 0, findings: [] }], rowCount: 1, capped: false, sourceSystem: "findings" }),
+    };
+    const tools = spec.tools.map((one) => (answers[one.id] === undefined ? tool(one.id) : tool(one.id, answers[one.id])));
+    const link = (ref: string, stance = "weakens") => call("link_evidence", { links: [{ evidence_id: ref, hypothesis_id: "h1", stance }] });
+    const provider = scriptedProvider([
+      { calls: [call("splunk_search", { q: "nothing" }), call("get_finding", { q: "case:x" }), call("propose_hypothesis", { statement: "an authorised scan" })] },
+      // r1 is zero rows, r2 a {total: 0} summary; one bad link refuses the whole call.
+      { calls: [link("r1"), link("r2"), call("link_evidence", { links: [{ evidence_id: "r2", hypothesis_id: "h1", stance: "weakens" }, { evidence_id: "r3", hypothesis_id: "h1", stance: "supports" }] })] },
+      STOP,
+      concluded("benign", ["r3"]),
+    ]);
+    await runAgent(harnessOf(spec, plugin, provider, state, tools), optionsOf(spec, plugin));
+
+    const calls = (await state.read(RUN)).filter((one) => one.kind === "call").map((one) => one.payload as CallPayload);
+    expect(calls.slice(3, 6).map((one) => one.class)).toEqual(["defect", "defect", "defect"]);
+    expect(calls[3]?.result).toContain("r1 found nothing, which bears on no explanation; open_question");
+    expect(calls[4]?.result).toContain("r2 found nothing");
+    expect(calls[5]?.result).toContain("r2 found nothing");
+    expect(recordOf(await state.read(RUN)).links).toEqual([]);
+  });
+});
+
+describe("isEmptyResult", () => {
+  const rendered = (rows: unknown[]) => `${rows.length} row(s) from x\n${JSON.stringify(rows, null, 2)}`;
+
+  it("is true for no rows, a {total: 0} summary, or a v3 search that matched nothing", () => {
+    expect(isEmptyResult(rendered([]))).toBe(true);
+    expect(isEmptyResult(`<vigil:tool_result ref="r1">\n${rendered([{ query: "q", total: 0, findings: [] }])}\n</vigil:tool_result>`)).toBe(true);
+    expect(isEmptyResult(rendered([{ output: "0 events matched, 0 results (showing 0)" }]))).toBe(true);
+  });
+
+  it("is false for rows, a total above 0, a lookup's known: false, or a count it cannot read", () => {
+    expect(isEmptyResult(rendered([{ a: 1 }, { a: 2 }]))).toBe(false);
+    expect(isEmptyResult(rendered([{ query: "q", total: 3, findings: [{}, {}, {}] }]))).toBe(false);
+    expect(isEmptyResult(rendered([{ value: "1.2.3.4", known: false }]))).toBe(false);
+    expect(isEmptyResult('1 row(s) from x, capped at the row limit\n[{"results": [')).toBe(false);
   });
 });
 

@@ -20,6 +20,7 @@ from services.medic.sensors import (
     Stats,
     Value,
 )
+from services.medic.sensors.logtail import bind_log_tails
 from services.medic.sensors.pipeline import VALIDATOR, Choke
 from services.medic.tests.fakes import FakeClock
 
@@ -71,15 +72,20 @@ class Rig:
         sensors: Sequence[Sensor],
         *,
         capacity: int = 1024,
+        log_capacity: int = 10_000,
         dev_mode: bool = False,
         choke: Choke | None = stamp_only,
     ) -> None:
         self.clock = FakeClock()
         self.stats = Stats()
         self.bus = Bus(self.stats, capacity)
+        self.log_bus = Bus(self.stats, log_capacity)
+        bind_log_tails(sensors, self.log_bus, self.clock)
         self.sink = MemorySink()
         runs = (f"run{n:013d}" for n in itertools.count())
-        self.pipeline = Pipeline(self.bus, self.sink, choke, run_id=lambda: next(runs))
+        self.pipeline = Pipeline(
+            self.bus, self.sink, choke, log_bus=self.log_bus, run_id=lambda: next(runs)
+        )
         ctx = SensorContext(shape="compose", vigil_dev_mode=dev_mode)
         self.scheduler = Scheduler(
             sensors, ctx, self.bus, self.clock, rng=random.Random(7)

@@ -98,6 +98,27 @@
 .ag-action { font-size: 13px; font-weight: 650; color: var(--tx0); }
 .ag-sub { color: var(--tx2); }
 
+/* the Cases board's owner cell: initials, a name, and a second line */
+.ag-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ag-avatar {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--bg3);
+  color: var(--tx1);
+  font-size: 9px;
+  font-weight: 700;
+  box-shadow: 0 0 0 2px var(--bg1);
+}
+.ag-who-text { display: flex; flex-direction: column; min-width: 0; }
+.ag-who-name, .ag-who-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ag-who-name { font-size: 12px; color: var(--tx0); }
+.ag-who-sub { font-size: 11px; color: var(--tx2); }
+
 .ag-marks { display: flex; gap: 6px; min-width: 0; overflow: hidden; }
 .ag-mark {
   padding: 2px 7px;

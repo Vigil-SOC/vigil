@@ -44,6 +44,7 @@ vi.mock('../../services/api', () => ({
     getEvidence: vi.fn(() => Promise.resolve({ data: { evidence: [] } })),
     getIOCs: vi.fn(() => Promise.resolve({ data: { iocs: [] } })),
     getEscalations: vi.fn(() => Promise.resolve({ data: { escalations: [] } })),
+    getRelationships: vi.fn(() => Promise.resolve({ data: { relationships: [] } })),
   },
   workflowApi: {
     listAll: vi.fn(() => Promise.resolve({ data: { workflows: [{ id: 'incident-response', name: 'Incident response' }] } })),
@@ -258,12 +259,11 @@ describe('case page', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: /Checked/ }))
     const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
-    expect(card).toHaveTextContent('What Vigil checked · 2 queries · $0.20')
+    expect(card).toHaveTextContent('What Vigil checked · 2 queries')
     expect(card).not.toHaveTextContent('no source')
-    // the run's cost in the header; each turn shows its words and its own cost once
+    // each turn shows its words once
     const turn = within(card).getByText('who logged in').closest('section') as HTMLElement
     expect(turn).toHaveTextContent('Turn 3')
-    expect(turn).toHaveTextContent('$0.01')
     const row = turn.querySelector('li') as HTMLElement
     expect(row).toHaveTextContent('search')
     expect(row).toHaveTextContent('12 chars')
@@ -812,7 +812,7 @@ describe('case page', () => {
     expect(within(doors).getAllByRole('button')).toHaveLength(5)
     expect(within(doors).getByText('1 forming · 1 ruled out')).toBeInTheDocument()
     expect(within(doors).getByText('0 support · 2 go against · 0 neither')).toBeInTheDocument()
-    expect(within(doors).getByText('$0.20 · 0 gaps')).toBeInTheDocument()
+    expect(within(doors).getByText('0 gaps')).toBeInTheDocument()
     expect(within(doors).getByText('Nothing recalled')).toBeInTheDocument()
     await waitFor(() => expect(within(doors).getByText('2 rows · 1 chained')).toBeInTheDocument())
     fireEvent.click(within(doors).getByRole('button', { name: /^Checked/ }))
@@ -950,14 +950,14 @@ describe('case page', () => {
       expect(await screen.findByRole('alert')).toHaveTextContent('The run could not be read.')
     })
 
-    it('lists the calls only, counts the no-source gaps in the header; "—" when the run has no cost', async () => {
+    it('lists the calls only, counts the no-source gaps in the header', async () => {
       await leadCase(lead({
         calls: [{ question: 'who logged in', tool: 'okta', result_length: 1240, cost_usd: 0.02, duration_ms: 800 }],
         gaps: [{ dispatch_id: 'dsp-1', agent_id: 'worker', failure_reason: 'tool down', query_intent: 'list users' }],
       }))
       await openChecked()
       const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
-      expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 1 query · — · 1 with no source')
+      expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 1 query · 1 with no source')
       // the gaps themselves are read on Memory and blind spots
       const rows = card.querySelectorAll('li')
       expect(rows).toHaveLength(1)
@@ -965,15 +965,13 @@ describe('case page', () => {
       expect(rows[0]).toHaveTextContent('1,240 chars')
       expect(rows[0]).toHaveTextContent('800 ms')
       expect(card).not.toHaveTextContent('tool down')
-      fireEvent.click(within(card).getByRole('button', { name: 'About the cost' }))
-      expect(screen.getByRole('tooltip')).toHaveTextContent(/turn's cost/)
     })
 
     it('keeps the header when there are gaps but no calls', async () => {
       await leadCase(lead({ cost_usd: 0.5, gaps: [{ dispatch_id: 'dsp-1', agent_id: 'worker', failure_reason: null, query_intent: 'list users' }] }))
       await openChecked()
       const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
-      expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 0 queries · $0.50 · 1 with no source')
+      expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 0 queries · 1 with no source')
       expect(card.querySelectorAll('li')).toHaveLength(0)
     })
 
@@ -1280,7 +1278,7 @@ describe('case page', () => {
       testState.recordRows = rows
       await openRecord()
       fireEvent.click(await screen.findByRole('button', { name: 'About the record' }))
-      expect(screen.getByRole('tooltip')).toHaveTextContent('Only run rows are hash-chained. Case audit and activity rows are not.')
+      expect(screen.getByRole('tooltip')).toHaveTextContent('Only run rows are chained on the run’s ledger. Audit trail rows are tamper-checked on the trail’s own chain')
     })
 
     it('Replay links to the run on Workflows, and leaves the drawer held for Back', async () => {
@@ -2147,7 +2145,7 @@ describe('case page', () => {
       investigations: [{ ...investigation('open', false, 'run-x'), cost_usd: cost, max_cost_usd: max, budget_health: health }],
     })
 
-    it('writes details, a level-coloured cost meter and the recall cards', async () => {
+    it('writes details and the recall cards', async () => {
       testState.cases = [withBudget(1, 2, 'warning')]
       testState.runs['run-x'] = {
         hunt: {
@@ -2163,45 +2161,12 @@ describe('case page', () => {
       await renderDetail('case-9')
       const panel = await side()
       expect(await panel.findByText('Incident response')).toBeInTheDocument()
-      expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('$2.00')
       expect(await panel.findByText('host-1')).toHaveClass('side-ent-head')
       expect(panel.getByText('ada')).toHaveClass('side-ent-head')
-      expect(panel.getByText('$1.00 of $2.00')).toBeInTheDocument()
-      expect(panel.getByText('Fair')).toHaveClass('fair')
-      const meter = panel.getByRole('meter')
-      expect(meter).toHaveAttribute('aria-valuenow', '50')
-      expect(meter.firstElementChild).toHaveClass('meter-fill', 'fair')
       expect(panel.getByText('proven — malicious').nextElementSibling).toHaveTextContent('Verdict')
       expect(panel.getByText('host-1 · splunk · 2 hits').nextElementSibling).toHaveTextContent('Sighting')
       expect(panel.getByText('no evidence gathered — no EDR').nextElementSibling).toHaveTextContent('Gap')
       expect(document.querySelector('.case-side .k')).toBeNull()
-    })
-
-    it('clamps an overspent bar and reads Poor', async () => {
-      testState.cases = [withBudget(3, 2, 'critical')]
-      await renderDetail('case-9')
-      const panel = await side()
-      const meter = await panel.findByRole('meter')
-      expect(meter).toHaveAttribute('aria-valuenow', '100')
-      expect(meter.firstElementChild).toHaveStyle({ width: '100%' })
-      expect(panel.getByText('Poor')).toBeInTheDocument()
-    })
-
-    it('shows Not measured, no bar and no Good for no run or a zero limit', async () => {
-      testState.cases = [base()]
-      const { unmount } = await renderDetail('case-9')
-      let panel = await side()
-      expect(await panel.findByText('Not measured yet')).toBeInTheDocument()
-      expect(panel.queryByRole('meter')).not.toBeInTheDocument()
-      expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('—')
-      unmount()
-
-      testState.cases = [withBudget(0, 0, 'healthy')]
-      await renderDetail('case-9')
-      panel = await side()
-      expect(await panel.findByText('Not measured yet')).toBeInTheDocument()
-      expect(panel.queryByRole('meter')).not.toBeInTheDocument()
-      expect(panel.queryByText('Good')).not.toBeInTheDocument()
     })
 
     it('keeps the two empty recall copies', async () => {
@@ -2453,7 +2418,6 @@ describe('a case with several runs', () => {
     expect(await within(now).findByText('Now · step 3')).toBeInTheDocument()
     const others = screen.getByRole('region', { name: 'Other runs on this case' })
     await waitFor(() => expect(others).toHaveTextContent('Concluded'))
-    expect(others).toHaveTextContent('$0.40 of $2.00')
     expect(within(others).getAllByRole('listitem')).toHaveLength(2)
 
     // the door counts what the tabs list across every run
@@ -2701,54 +2665,6 @@ describe('a case with several runs', () => {
     vi.mocked(workflowApi.getRun).mockImplementation((runId: string) => Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never))
   })
 
-  it('says how many runs are unpriced beside the total, on the Checked door and header, never as $0', async () => {
-    threeRuns('case-unpriced')
-    testState.runs['run-inv'] = { status: 'completed', projection: { findings: [{ agent_id: 'triage', answer: 'benign login' }] } }
-    await renderCase('case-unpriced')
-    const door = within(await screen.findByRole('region', { name: 'Audit doors' })).getByRole('button', { name: /^Checked/ })
-    await waitFor(() => expect(door).toHaveTextContent('$0.60 · 1 run unpriced'))
-    fireEvent.click(screen.getByRole('tab', { name: /Checked/ }))
-    const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
-    expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 2 queries · $0.60 · 1 run unpriced')
-  })
-
-  it('counts a run it could not read as unpriced, on the Checked door and header', async () => {
-    threeRuns('case-unread')
-    vi.mocked(workflowApi.getRun).mockImplementation((runId: string) =>
-      runId === 'run-inv' ? Promise.reject(new Error('down')) : Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never),
-    )
-    await renderCase('case-unread')
-    const door = within(await screen.findByRole('region', { name: 'Audit doors' })).getByRole('button', { name: /^Checked/ })
-    await waitFor(() => expect(door).toHaveTextContent('$0.60 · 1 run unpriced'))
-    fireEvent.click(screen.getByRole('tab', { name: /Checked/ }))
-    const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
-    expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 2 queries · $0.60 · 1 run unpriced')
-    vi.mocked(workflowApi.getRun).mockImplementation((runId: string) => Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never))
-  })
-
-  it('still counts the unpriced runs when none is priced', async () => {
-    threeRuns('case-none-priced')
-    testState.runs['run-inv'] = { status: 'completed', projection: { findings: [{ agent_id: 'triage', answer: 'benign login' }] } }
-    testState.runs['run-rca'] = { status: 'completed', projection: { ...ROOT_CAUSE, cost_usd: null } }
-    testState.runs['run-hunt'] = { status: 'running', hunt: { ...HUNT, status: 'running', cost_usd: null } }
-    await renderCase('case-none-priced')
-    const door = within(await screen.findByRole('region', { name: 'Audit doors' })).getByRole('button', { name: /^Checked/ })
-    await waitFor(() => expect(door).toHaveTextContent('3 runs unpriced'))
-    expect(door).not.toHaveTextContent('$')
-  })
-
-  it('adds no unpriced note when every run is priced', async () => {
-    threeRuns('case-all-priced')
-    await renderCase('case-all-priced')
-    const door = within(await screen.findByRole('region', { name: 'Audit doors' })).getByRole('button', { name: /^Checked/ })
-    await waitFor(() => expect(door).toHaveTextContent('$0.70'))
-    expect(door).not.toHaveTextContent('unpriced')
-    fireEvent.click(screen.getByRole('tab', { name: /Checked/ }))
-    const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
-    expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 2 queries · $0.70')
-    expect(card.querySelector('h3')).not.toHaveTextContent('unpriced')
-  })
-
   it('offers "Show older" again across runs when the hunt\'s larger read fails, and reads again on the next press', async () => {
     twoRuns('case-older-fail-many')
     const many = Array.from({ length: 50 }, (_, i) => evidence(`n${i}`, `row ${i}`, new Date(Date.UTC(2026, 5, 15, 9, 0, 0) - i * 1000).toISOString()))
@@ -2986,8 +2902,6 @@ describe('watching a run, its cost and its agents', () => {
     testState.runs[`run-${id}`] = run
     return renderDetail(id, props)
   }
-  const side = async () => within(await screen.findByRole('complementary', { name: 'Case details' }))
-
   it('links the Now card and the stopped card to Watch a run, and leaves the drawer held for Back', async () => {
     const onBack = vi.fn()
     await open('case-w', { status: 'running', hunt: hunt() }, {}, { onBack, onExpand: vi.fn() })
@@ -3007,59 +2921,6 @@ describe('watching a run, its cost and its agents', () => {
     await renderDetail('case-none')
     await screen.findByText('No live investigation.')
     expect(screen.queryByRole('link', { name: 'Watch it run' })).not.toBeInTheDocument()
-  })
-
-  it('shows a hunt’s live cost against the cap off the run, and keeps it once parked', async () => {
-    await open('case-c', { status: 'running', hunt: hunt({ cost_usd: 1.4989, budgets: { max_iterations: 10, max_cost_usd: 5 } }) })
-    const panel = await side()
-    expect(await panel.findByText('$1.50 of $5.00')).toBeInTheDocument()
-    expect(panel.getByText('Good')).toBeInTheDocument()
-    expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('$5.00')
-    expect(panel.queryByText('Not measured yet')).not.toBeInTheDocument()
-    // The header's trust strip is a different thing and stays.
-    expect(within(document.querySelector('.dh-meta') as HTMLElement).getByText(/Not measured yet/)).toBeInTheDocument()
-    cleanup()
-
-    await open('case-c2', { status: 'running', hunt: hunt({ status: 'parked', cost_usd: 4.8, budgets: { max_iterations: 10, max_cost_usd: 5 } }) })
-    const parked = await side()
-    expect(await parked.findByText('$4.80 of $5.00')).toBeInTheDocument()
-    expect(parked.getByText('Poor')).toBeInTheDocument()
-  })
-
-  it('shows the cost alone when no cap is known, and Not measured only when no cost is', async () => {
-    await open('case-c3', { status: 'running', hunt: hunt({ cost_usd: 0.4 }) })
-    const panel = await side()
-    expect(await panel.findByText('$0.40')).toBeInTheDocument()
-    expect(panel.queryByRole('meter')).not.toBeInTheDocument()
-    expect(panel.queryByText('Good')).not.toBeInTheDocument()
-    cleanup()
-
-    await open('case-c4', { status: 'running', hunt: hunt({ cost_usd: 0 }) })
-    expect(await (await side()).findByText('Not measured yet')).toBeInTheDocument()
-  })
-
-  it('shows a lead run’s cost against the cap off its projection, and never past full', async () => {
-    const lead = (cost: number, cap: number) => ({
-      status: 'completed',
-      projection: { iterations: 2, decisions: [], findings: [], calls: [], gaps: [], recall: null, outcome: 'completed', reason: 'done', cost_usd: cost, max_cost_usd: cap },
-    })
-    await open('case-l1', lead(2.1, 15), { workflow_id: 'root-cause-analysis', live: false, cost_usd: 2.1 })
-    const panel = await side()
-    expect(await panel.findByText('$2.10 of $15.00')).toBeInTheDocument()
-    expect(panel.getByText('Good')).toBeInTheDocument()
-    expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('$15.00')
-    cleanup()
-
-    await open('case-l2', lead(20, 15), { workflow_id: 'root-cause-analysis', live: false, cost_usd: 20 })
-    const over = await side()
-    expect(await over.findByText('$20.00 of $15.00')).toBeInTheDocument()
-    expect(over.getByRole('meter')).toHaveAttribute('aria-valuenow', '100')
-    cleanup()
-
-    await open('case-l3', lead(2.1, 0), { workflow_id: 'root-cause-analysis', live: false, cost_usd: 2.1 })
-    const none = await side()
-    expect(await none.findByText('$2.10')).toBeInTheDocument()
-    expect(none.queryByRole('meter')).not.toBeInTheDocument()
   })
 
   it('lists agents only while the run is in flight', async () => {
@@ -3283,22 +3144,6 @@ describe('a kernel hunt on its case', () => {
     expect(now).not.toHaveTextContent('{')
     const agents = screen.getByRole('table', { name: 'Agents' })
     expect(agents).toHaveTextContent('Hunt lead')
-  })
-
-  it('says not recorded for a cost the run never priced, and shows a sub-cent turn to the digit', async () => {
-    await open('case-costs', run({
-      calls: [
-        { question: 'q', tool: 'search_findings', result_length: 10, cost_usd: null, duration_ms: 8, iteration: 1 },
-        { question: 'q', tool: 'lookup_indicators', result_length: 10, cost_usd: 0.0015, iteration: 2 },
-      ],
-    }))
-    fireEvent.click(await screen.findByRole('tab', { name: /Checked/ }))
-    const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
-    const [unpriced, priced] = Array.from(card.querySelectorAll('section.checked-turn'))
-    expect(unpriced).toHaveTextContent('8 ms')
-    expect(unpriced).not.toHaveTextContent('$')
-    expect(priced).toHaveTextContent('$0.0015')
-    expect(priced).not.toHaveTextContent('$0.00 ')
   })
 
   it('says "Coming in a later release" on every drawn but not live control, never the internal wording', async () => {

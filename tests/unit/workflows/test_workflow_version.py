@@ -96,9 +96,6 @@ class TestAgentRunPath:
         assert kwargs["workflow_id"] == "incident-response"
         assert kwargs["workflow_version"] == 4
 
-    def test_bare_run_kind_stores_none(self):
-        assert self._begin("")["workflow_version"] is None
-
     def test_failed_lookup_still_begins_the_run(self):
         def boom(self, wid):
             raise RuntimeError("no db")

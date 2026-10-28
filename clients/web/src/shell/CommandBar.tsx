@@ -477,6 +477,12 @@ export default function CommandBar({
         <input
           ref={inputRef}
           role="combobox"
+          name="vigil-command"
+          autoComplete="off"
+          data-1p-ignore
+          data-lpignore="true"
+          data-bwignore
+          data-form-type="other"
           aria-label="Find a case, ask Vigil, or run a command"
           aria-expanded={open}
           aria-controls="vg-command-results"

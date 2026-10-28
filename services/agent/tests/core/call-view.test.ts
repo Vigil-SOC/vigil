@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { callViews, queryOf, rowsIn } from "../../core/call-view.js";
+import { callViews, isEmptyResult, queryOf, rowsIn } from "../../core/call-view.js";
+import { wrap as wrapResult } from "../../core/security.js";
 
 // A row of the Checked tab: the call's ref, the query it sent, how many rows came
 // back, how the kernel classed it, and the turn's words, read off the ledger call.
@@ -57,6 +58,14 @@ describe("how many rows a call got back", () => {
     expect(rowsIn(wrap("ERROR: bad search"))).toBeUndefined();
     // cut by the result cap, the wrapper does not parse
     expect(rowsIn(wrap("1 events matched, 1 results (showing 1 of 1)").slice(0, -40))).toBeUndefined();
+  });
+
+  it("counts nothing for a wrapper cut at the cap, and does not call it empty", () => {
+    const rows = [{ query: "", total: 0, findings: Array.from({ length: 200 }, (_, i) => ({ i, title: "y".repeat(80) })) }];
+    const cut = wrapResult("search_findings", { ok: true, rows, rowCount: 1, capped: false, sourceSystem: "vigil" }, () => false, 2_000).text;
+    expect(cut).toContain("cut at");
+    expect(rowsIn(cut)).toBeUndefined();
+    expect(isEmptyResult(cut)).toBe(false);
   });
 
   it("takes the count as said when the rows are the rows", () => {

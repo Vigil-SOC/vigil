@@ -10,7 +10,7 @@ from core.upgrade.command import PACKAGE_DIR
 
 def test_the_image_has_one_head_that_fits_the_version_column() -> None:
     head = schema_head()
-    assert head == "0016_retention"
+    assert head == "0017_tool_effect_classes"
     assert len(head) <= 32
 
 

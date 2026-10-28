@@ -49,7 +49,6 @@ def _orchestrator() -> Orchestrator:
     orch = object.__new__(Orchestrator)
     orch.config = OrchestratorConfig()
     orch.shared_intel = MagicMock()
-    orch.shared_intel.check_overlap.return_value = None
     orch.stats = {"dedup_prevented": 0}
     orch._log_ai_decision = MagicMock()
     orch._create_investigation = AsyncMock()
@@ -65,7 +64,6 @@ def _launching_orchestrator(tmp_path) -> Orchestrator:
     orch.shared_intel = MagicMock()
     orch.stats = {"investigations_created": 0}
     orch._save_investigation = MagicMock(return_value=True)
-    orch._check_cross_correlations = AsyncMock()
     return orch
 
 
@@ -274,7 +272,6 @@ async def test_detection_brief_names_the_minted_case(tmp_path):
     orch.shared_intel = MagicMock()
     orch.stats = {"investigations_created": 0}
     orch._save_investigation = MagicMock(return_value=True)
-    orch._check_cross_correlations = AsyncMock()
 
     await orch._create_investigation(
         workflow_id="incident-response",

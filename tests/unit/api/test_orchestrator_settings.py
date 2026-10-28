@@ -1,21 +1,16 @@
-"""Orchestrator settings: flat storage, profiles on GET, Assist/Act on the approval flag."""
+"""Orchestrator settings: flat storage, profiles on GET."""
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
 from pydantic import ValidationError
 
-from core.response.ceiling import CEILING_KEY
 from services.api.routers.config import (
-    ForceManualApprovalConfig,
     OrchestratorConfigResponse,
     OrchestratorSettingsConfig,
-    get_force_manual_approval,
     get_orchestrator_config,
-    set_force_manual_approval,
     set_orchestrator_config,
 )
 
@@ -86,13 +81,6 @@ def _store():
     return saved, svc
 
 
-def _settings(force: bool, auto: bool):
-    settings = MagicMock()
-    settings.daemon_force_approval = force
-    settings.daemon_auto_response = auto
-    return settings
-
-
 def test_get_profiles_and_post_keeps_the_flat_config():
     saved, svc = _store()
     body = OrchestratorSettingsConfig.model_validate(
@@ -127,98 +115,6 @@ def test_get_profiles_and_post_keeps_the_flat_config():
         assert profiles[key]["values"] == values
     assert result["enabled"] is True
     assert result["max_concurrent_agents"] == 2
-
-
-def test_assist_and_act_write_only_the_approval_flag():
-    saved, svc = _store()
-    saved["orchestrator.settings"] = {"enabled": True, "max_concurrent_agents": 3}
-    user = MagicMock()
-    with (
-        patch("services.api.routers.config.get_config_service", return_value=svc),
-        patch("core.storage.config_service.get_config_service", return_value=svc),
-        patch(
-            "services.api.routers.config.get_settings",
-            return_value=_settings(False, True),
-        ),
-    ):
-        missing = get_force_manual_approval()
-        svc.set_system_config.assert_not_called()
-        assist = set_force_manual_approval(
-            ForceManualApprovalConfig(enabled=True), user
-        )
-        act = set_force_manual_approval(ForceManualApprovalConfig(enabled=False), user)
-
-    assert missing.enabled is True
-    assert missing.environment_wins is False
-    assert assist.enabled is True
-    assert act.enabled is False
-    assert saved[CEILING_KEY] == {
-        "act_reversible": True,
-        "act_irreversible": False,
-        "stopped": False,
-        "four_eyes": False,
-    }
-    assert "approval.force_manual_approval" not in saved
-    assert saved["orchestrator.settings"] == {
-        "enabled": True,
-        "max_concurrent_agents": 3,
-    }
-    assert "tier" not in saved["orchestrator.settings"]
-
-
-def test_a_failed_approval_read_is_an_error_not_act():
-    svc = MagicMock()
-    svc.read_system_config.side_effect = RuntimeError("db down")
-    with (
-        patch("services.api.routers.config.get_config_service", return_value=svc),
-        patch("core.storage.config_service.get_config_service", return_value=svc),
-        patch(
-            "services.api.routers.config.get_settings",
-            return_value=_settings(False, True),
-        ),
-        pytest.raises(HTTPException) as exc,
-    ):
-        get_force_manual_approval()
-
-    assert exc.value.status_code == 503
-
-
-@pytest.mark.parametrize(
-    ("force", "auto"),
-    [(True, True), (False, False), (True, False)],
-)
-def test_act_is_refused_when_the_environment_wins(force, auto):
-    saved, svc = _store()
-    saved[CEILING_KEY] = {
-        "act_reversible": True,
-        "act_irreversible": False,
-        "stopped": False,
-        "four_eyes": False,
-    }
-    user = MagicMock()
-    with (
-        patch("services.api.routers.config.get_config_service", return_value=svc),
-        patch("core.storage.config_service.get_config_service", return_value=svc),
-        patch(
-            "services.api.routers.config.get_settings",
-            return_value=_settings(force, auto),
-        ),
-    ):
-        seen = get_force_manual_approval()
-        svc.set_system_config.reset_mock()
-        with pytest.raises(HTTPException) as exc:
-            set_force_manual_approval(ForceManualApprovalConfig(enabled=False), user)
-        svc.set_system_config.assert_not_called()
-        assist = set_force_manual_approval(
-            ForceManualApprovalConfig(enabled=True), user
-        )
-
-    assert seen.enabled is False
-    assert seen.environment_wins is True
-    assert exc.value.status_code == 409
-    assert saved[CEILING_KEY]["act_reversible"] is False
-    assert "orchestrator.settings" not in saved
-    assert assist.enabled is True
 
 
 def test_get_serves_defaults_and_bounds_that_match_the_model():

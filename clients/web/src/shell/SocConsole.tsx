@@ -5,7 +5,7 @@ import '../../../../docs/design/console/tokens/tokens.css'
 import '../styles.css'
 import './shell.css'
 import { useAuth } from '../contexts/AuthContext'
-import { approvalsApi, configApi, consoleApi, federationApi, mcpApi } from '../services/api'
+import { approvalsApi, autonomyApi, configApi, consoleApi, federationApi, mcpApi } from '../services/api'
 import { Icon, type IconName } from '../shared/icons'
 import { InfoTip } from '../shared/InfoTip'
 import { PageHead } from '../shared/PageHead'
@@ -85,9 +85,8 @@ const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Eleme
  *  Screens absent here are ungated, and DEV_MODE grants everything. */
 const SCREEN_PERMS: Partial<Record<ConsoleScreenKey, string>> = {
   cases: 'cases.read',
-  decisions: 'ai_decisions.approve',
+  decisions: 'ai_decisions.read',
   home: HOME_PERM,
-  settings: 'settings.read',
 }
 
 const CHAT_WIDTH = 400
@@ -359,13 +358,11 @@ function SocConsoleInner() {
   useEffect(() => {
     let live = true
     const read = () =>
-      configApi
-        .getAutonomy()
-        .then((res) => {
-          if (!live) return
-          const auto = Boolean(res.data?.auto_response_enabled)
-          const force = Boolean(res.data?.force_manual_approval)
-          setAssist(force || !auto)
+      autonomyApi
+        .get()
+        .then(({ data }) => {
+          // Act is effective act_reversible: stored, not stopped, not env-locked
+          if (live) setAssist(!(data.act_reversible && !data.stopped && !data.environment_locked))
         })
         .catch(() => {})
     read()

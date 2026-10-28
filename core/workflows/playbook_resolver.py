@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 import yaml
 
 from core.agents.enablement import disabled_agent_ids, disabled_message
-from core.llm.chat_layers import _is_destructive_mcp
 from core.llm.defaults import DEFAULT_MODEL
+from core.response.ceiling import gated_tools
 from core.skills.skill_library import READ_SKILL_TOOL
 
 if TYPE_CHECKING:
@@ -347,13 +347,14 @@ def _drop_missing(phases: List[Dict[str, Any]], declared: List[str]) -> None:
             ]
 
 
-# ART execute and any other direct-action MCP tool. The id must be one
-# config.tools actually carries: spec.ts refuses an approvals name that is not
-# declared. A phase that lists one parks on that call, arguments and all, until
-# someone who may approve releases it. Chat never grants these; a workflow must
-# not grant them ungated either.
+# Every outside tool whose stored class is reversible, irreversible, or none.
+# The id must be one config.tools actually carries: spec.ts refuses an approvals
+# name that is not declared. A phase that lists one parks on that call,
+# arguments and all, until someone who may approve releases it. Chat never
+# grants these; a workflow must not grant them ungated either.
 def _approvals_of(tools: List[Dict[str, Any]]) -> List[str]:
-    return [tool["id"] for tool in tools if _is_destructive_mcp(tool["id"])]
+    gated = gated_tools(tool["id"] for tool in tools)
+    return [tool["id"] for tool in tools if tool["id"] in gated]
 
 
 def resolve(
