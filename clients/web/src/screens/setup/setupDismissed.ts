@@ -1,5 +1,7 @@
-// Per-browser "I'm done here". An unset key is not yet dismissed, including
-// when a provider already exists. The account menu is the only way back.
+// "I'm done here", cached in this browser. The install's own record is on the
+// server (/config/setup-state): an admin finishing the wizard there lets every
+// browser through. An unset key is not yet dismissed, including when a
+// provider already exists. The account menu is the only way back.
 export const SETUP_DISMISSED_KEY = 'vigil.setupDismissed'
 
 export function readSetupDismissed(): boolean {
@@ -48,5 +50,13 @@ export function writeSetupProgress(progress: SetupProgress): void {
     localStorage.setItem(SETUP_PROGRESS_KEY, JSON.stringify(progress))
   } catch {
     /* private mode */
+  }
+}
+
+/** The furthest step and every step passed, from either copy: progress only grows. */
+export function mergeSetupProgress(a: SetupProgress, b: SetupProgress): SetupProgress {
+  return {
+    furthest: Math.max(a.furthest, b.furthest),
+    passed: [...new Set([...a.passed, ...b.passed])].sort((x, y) => x - y),
   }
 }
