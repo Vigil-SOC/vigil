@@ -10,7 +10,6 @@ from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Set, Tuple
 from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.orm import Session
 
-from core.memory.entity_keys import entity_context_candidates
 from core.storage.models import (
     Case,
     CaseIOC,
@@ -105,22 +104,29 @@ _KEY_RANK = {"ip": 0, "hash": 1, "hostname": 2}
 def finding_match_keys(finding: Dict[str, Any]) -> Tuple[Set[str], Set[str]]:
     """The keys a finding can join a Case on: ``(ip and hash keys, hostname keys)``.
 
-    Source IPs come from ``src_ip``/``src_ips`` alone; ``entity_context_candidates``
-    yields destination IPs as ``ip`` too, and an attacker is the source.
+    Read straight off ``entity_context``, spelled as ``core.memory.entity_keys``
+    maps it (storage may not import memory). Source IPs are ``src_ip``/``src_ips``
+    alone: an attacker is the source, and memory's map yields destinations as
+    ``ip`` too.
     """
     context = finding.get("entity_context")
     context = context if isinstance(context, dict) else {}
-    sources = list(context.get("src_ips") or []) + [context.get("src_ip")]
-    entity = {make_key("ip", str(v)) for v in sources if v}
-    hosts = set()
-    for kind, value in entity_context_candidates(finding):
-        if kind == "hash":
-            entity.add(make_key("hash", value))
-        elif kind == "host":
-            hosts.add(make_key("hostname", value))
-    entity.discard(None)
-    hosts.discard(None)
-    return entity, hosts
+
+    def values(*names: str) -> List[str]:
+        out: List[str] = []
+        for name in names:
+            value = context.get(name)
+            out += (
+                [str(v) for v in value]
+                if isinstance(value, (list, tuple))
+                else ([str(value)] if value else [])
+            )
+        return out
+
+    entity = {make_key("ip", v) for v in values("src_ips", "src_ip")}
+    entity |= {make_key("hash", v) for v in values("file_hashes")}
+    hosts = {make_key("hostname", v) for v in values("hostnames", "hostname")}
+    return entity - {None}, hosts - {None}
 
 
 class SharedIOCRepository:
