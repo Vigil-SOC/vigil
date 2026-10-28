@@ -76,6 +76,8 @@ const state = vi.hoisted(() => ({
   ceiling: null as Record<string, boolean> | null,
   ceilingPhase: 'ready' as Phase,
   perms: new Set<string>(),
+  tools: [] as { name: string; effect_class: string | null }[],
+  classify: vi.fn(() => Promise.resolve()),
 }))
 
 const WRITE = ['ai_autonomy.write', 'ai_autonomy.stop']
@@ -114,7 +116,9 @@ vi.mock('./useSettings', async () => {
       save: state.ceilingSave,
       stop: state.stop,
       resume: state.resume,
+      refresh: vi.fn(),
     }),
+    useUnverifiedTools: () => ({ tools: state.tools, phase: 'ready', classify: state.classify }),
   }
 })
 
@@ -135,6 +139,8 @@ describe('Limits and autonomy', () => {
     state.ceiling = { ...CEILING }
     state.ceilingPhase = 'ready'
     state.perms = new Set(WRITE)
+    state.tools = []
+    state.classify.mockClear()
     notify.mockClear()
   })
 
@@ -362,5 +368,74 @@ describe('Limits and autonomy', () => {
     expect(screen.getByText(/Could not load the autonomy ceiling/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /On their own/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Stop/ })).not.toBeInTheDocument()
+  })
+
+  describe('tools nobody has confirmed', () => {
+    const TOOLS = [
+      { name: 'splunk-selfhosted_splunk_search_ip', effect_class: 'read_unverified' },
+      { name: 'cape-sandbox_cape_submit_url', effect_class: null },
+    ]
+    const seg = (name: string) => screen.queryByRole('group', { name: `Class of ${name}` })
+
+    beforeEach(() => {
+      state.tools = TOOLS
+    })
+
+    it('lists each tool under its server with the count, and confirms a loosening first', async () => {
+      render(<AutoInvestigateSection notify={notify} />)
+      expect(screen.getByText('Tools nobody has confirmed')).toHaveTextContent('2')
+      expect(screen.getByText('splunk_search_ip')).toBeInTheDocument()
+      expect(screen.getByText('splunk-selfhosted')).toBeInTheDocument()
+
+      fireEvent.click(within(seg(TOOLS[0].name)!).getByRole('button', { name: 'Read' }))
+      expect(state.classify).not.toHaveBeenCalled()
+      expect(screen.getByRole('dialog', { name: /as a read\?/ })).toBeInTheDocument()
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+      })
+      expect(state.classify).toHaveBeenCalledWith(TOOLS[0].name, 'read')
+
+      // classing an unclassified tool loosens too
+      fireEvent.click(within(seg(TOOLS[1].name)!).getByRole('button', { name: 'Cannot be undone' }))
+      expect(screen.getByRole('dialog', { name: /impossible to undo\?/ })).toBeInTheDocument()
+    })
+
+    it('tightens an unconfirmed read at once', async () => {
+      render(<AutoInvestigateSection notify={notify} />)
+      await act(async () => {
+        fireEvent.click(within(seg(TOOLS[0].name)!).getByRole('button', { name: 'Reversible' }))
+      })
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(state.classify).toHaveBeenCalledWith(TOOLS[0].name, 'reversible')
+    })
+
+    it('gives a stop holder only the tightening choices', () => {
+      state.perms = new Set(['ai_autonomy.stop'])
+      render(<AutoInvestigateSection notify={notify} />)
+      const buttons = within(seg(TOOLS[0].name)!).getAllByRole('button')
+      expect(buttons.map((b) => b.textContent)).toEqual(['Reversible', 'Cannot be undone'])
+      expect(seg(TOOLS[1].name)).not.toBeInTheDocument()
+      expect(screen.getByText(/needs permission to loosen autonomy/)).toBeInTheDocument()
+    })
+
+    it('shows the list read-only to a role with neither write nor stop', () => {
+      state.perms = new Set()
+      render(<AutoInvestigateSection notify={notify} />)
+      expect(screen.getByText('splunk_search_ip')).toBeInTheDocument()
+      expect(seg(TOOLS[0].name)).not.toBeInTheDocument()
+      expect(seg(TOOLS[1].name)).not.toBeInTheDocument()
+      expect(screen.getByText('Your role can see these but not change them.')).toBeInTheDocument()
+    })
+
+    it('disables loosening while stopped and keeps tightening', () => {
+      state.ceiling = { ...CEILING, stopped: true }
+      render(<AutoInvestigateSection notify={notify} />)
+      expect(screen.getByText('Stopped: resume first')).toBeInTheDocument()
+      const unverified = within(seg(TOOLS[0].name)!)
+      expect(unverified.getByRole('button', { name: 'Read' })).toBeDisabled()
+      expect(unverified.getByRole('button', { name: 'Read' })).toHaveAttribute('title', 'Stopped: resume first')
+      expect(unverified.getByRole('button', { name: 'Reversible' })).toBeEnabled()
+      for (const b of within(seg(TOOLS[1].name)!).getAllByRole('button')) expect(b).toBeDisabled()
+    })
   })
 })
