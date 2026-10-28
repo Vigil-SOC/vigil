@@ -25,8 +25,6 @@ from typing import Any, Optional
 from alembic.util import CommandError
 from sqlalchemy import text
 
-from core.auth import principals
-
 logger = logging.getLogger(__name__)
 
 REVISION = "0002_audit_trail"
@@ -628,11 +626,15 @@ _ATTRIBUTIONS = {
     "unverified legacy": ATTRIBUTION_UNVERIFIED_LEGACY,
     "unverified_legacy": ATTRIBUTION_UNVERIFIED_LEGACY,
 }
-_COLUMNS = """
+# Erasure blanks a person's label (retention._blank_label); nothing else does.
+_ERASED = "({p}.label IS NULL AND {p}.kind IN ('person', 'service_account'))"
+_COLUMNS = f"""
     t.seq, t.occurred_at, t.late, t.entry_hash, t.payload,
     t.source_ip, t.actor_text, t.operator_text, t.attempted_name, t.personal,
     pa.label AS actor_label, pa.kind AS actor_kind, pa.deleted_at AS actor_deleted,
-    pb.label AS behalf_label, pb.kind AS behalf_kind, pb.deleted_at AS behalf_deleted
+    {_ERASED.format(p="pa")} AS actor_erased,
+    pb.label AS behalf_label, pb.kind AS behalf_kind, pb.deleted_at AS behalf_deleted,
+    {_ERASED.format(p="pb")} AS behalf_erased
 """
 # Who the actor and the person acted for are, read now, never stored in the hash.
 _FROM = f"""
@@ -640,8 +642,6 @@ _FROM = f"""
     LEFT JOIN public.principals AS pa ON pa.principal_id = t.payload->>'{ACTOR}'
     LEFT JOIN public.principals AS pb ON pb.principal_id = t.payload->>'{ON_BEHALF_OF}'
 """
-# Erasure blanks a person's label (retention._blank_label); nothing else does.
-_ERASABLE = frozenset({principals.PERSON, principals.SERVICE_ACCOUNT})
 # An intent no result entry names. INTENT on the result is that intent's seq.
 _UNKNOWN = (
     f"t.payload->>'{AWAITING}' = 'true' AND NOT EXISTS ("
@@ -770,7 +770,7 @@ def _iso(value: datetime) -> str:
     return _as_utc(value).isoformat()
 
 
-def _principal(principal_id: Any, label, kind, deleted_at) -> Optional[dict]:
+def _principal(principal_id: Any, label, kind, deleted_at, erased) -> Optional[dict]:
     """The principal an entry names: its label, kind, and deleted or erased mark."""
     if not isinstance(principal_id, str) or not principal_id:
         return None
@@ -779,7 +779,7 @@ def _principal(principal_id: Any, label, kind, deleted_at) -> Optional[dict]:
         "label": label,
         "kind": kind,
         "deleted": deleted_at is not None,
-        "erased": label is None and kind in _ERASABLE,
+        "erased": bool(erased),
     }
 
 
@@ -804,12 +804,14 @@ def _entry(row) -> dict[str, Any]:
             row["actor_label"],
             row["actor_kind"],
             row["actor_deleted"],
+            row["actor_erased"],
         ),
         "on_behalf_of": _principal(
             named.get(ON_BEHALF_OF),
             row["behalf_label"],
             row["behalf_kind"],
             row["behalf_deleted"],
+            row["behalf_erased"],
         ),
         "sentence": sentence(payload),
     }
