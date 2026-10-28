@@ -161,8 +161,9 @@ async def nap(_: float) -> None:
 
 def build(docker: FakeDocker, **kw: Any) -> tuple[Rig, LogTail]:
     catalog = kw.pop("catalog", frozenset())
+    sleep = kw.pop("sleep", nap)
     tail = LogTail(
-        "proxy", 8472, catalog=catalog, transport=docker.transport, sleep=nap
+        "proxy", 8472, catalog=catalog, transport=docker.transport, sleep=sleep
     )
     sensors = [LogStream(tail, s) for s in LOG_SERVICES]
     return Rig(sensors, **kw), tail
@@ -585,4 +586,29 @@ async def test_canary_secrets_never_reach_the_sink_or_medics_own_log(caplog) -> 
             assert part.strip() == "" or part not in blob, case["id"]
     assert "canaryXYZ12345" not in blob
     rig.assert_all_valid()
+    await tail.aclose()
+
+
+async def test_stopped_container_backs_off_and_a_lone_surrogate_is_kept() -> None:
+    docker = FakeDocker()
+    cid = docker.add("backend")
+    delays: list[float] = []
+
+    async def record(seconds: float) -> None:
+        delays.append(seconds)
+        await asyncio.sleep(0)
+
+    rig, tail = build(docker, sleep=record)
+    await pump(rig)
+    raw = r'{"level":"INFO","logger":"core.x","message":"bad \ud83d","msg_template":"bad \ud83d"}'
+    docker.write(cid, ts_ns(T0 + 1), raw)
+    await pump(rig)
+    assert [o["log"]["message"] for o in lines(rig)] == ["bad ?"]
+    assert rig.stats["docker.logs.backend"].redactor_failures == 0
+    docker.drop(cid)  # stopped: each reattach replays the cursor line and ends
+    for _ in range(6):
+        docker.drop(cid)
+        await settle()
+    assert delays and delays[-1] > 1.0  # backing off, not retrying every second
+    assert len(lines(rig)) == 1
     await tail.aclose()

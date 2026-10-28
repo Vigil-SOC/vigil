@@ -90,7 +90,10 @@ def _parse(
 
     def field(doc: dict[str, Any], key: str) -> str | None:
         value = doc.get(key)
-        return redactor.redact(value)[0] if isinstance(value, str) else None
+        if not isinstance(value, str):
+            return None
+        # JSON can carry a lone surrogate (\ud83d); fp1 couldn't hash it.
+        return redactor.redact(value.encode("utf-8", "replace").decode())[0]
 
     if text.startswith("{"):
         try:
@@ -466,17 +469,25 @@ class LogTail:
             try:
                 # No chunk size: a fixed one holds a quiet stream's lines back.
                 async for chunk in response.aiter_raw():
-                    got = True
                     for line in reader.feed(chunk):
-                        self._deliver(stream, line, base_ns, base_hashes)
+                        # Only a new line counts: a stopped container replays its
+                        # cursor line and ends, and that must keep backing off.
+                        got = self._deliver(stream, line, base_ns, base_hashes) or got
             except httpx.HTTPError:
                 pass  # reset or shed mid-stream: reattach from the cursor
         return got
 
     def _deliver(
         self, stream: _Stream, line: Line, base_ns: int, base_hashes: set[str]
-    ) -> None:
+    ) -> bool:
+        """Queue one line; False if it was a replay of one already delivered."""
         assert self._bus is not None and self._clock is not None
+        ts = line.ts_ns
+        # Docker's `since` is inclusive: a reattach replays the cursor line, and
+        # nothing older than the cursor is new.
+        if ts is not None and ts < base_ns:
+            return False
+        failed: str | None = None
         try:
             drafts, line_hash = line_drafts(
                 line,
@@ -490,25 +501,22 @@ class LogTail:
         # Fail closed: a line that can't be processed is dropped and counted,
         # and the cursor still moves past it so a reattach doesn't replay it.
         except Exception as exc:  # noqa: BLE001
-            drafts, line_hash = [], ""
-            self._bus.stats[f"docker.logs.{stream.service}"].redactor_failures += 1
-            log.warning(
-                "Dropped a %s log line: processing failed (%s)",
-                stream.service,
-                type(exc).__name__,
-            )
-        ts = line.ts_ns
+            drafts, line_hash, failed = [], "", type(exc).__name__
         if ts is not None:
-            # Docker's `since` is inclusive: what a reattach replays at the cursor
-            # (and anything older) was delivered before.
-            if ts < base_ns or (ts == base_ns and line_hash in base_hashes):
-                return
+            if ts == base_ns and line_hash in base_hashes:
+                return False
             if ts > stream.last_ns:
                 stream.last_ns, stream.hashes = ts, {line_hash}
             elif ts == stream.last_ns:
                 stream.hashes.add(line_hash)
+        if failed is not None:
+            self._bus.stats[f"docker.logs.{stream.service}"].redactor_failures += 1
+            log.warning(
+                "Dropped a %s log line: processing failed (%s)", stream.service, failed
+            )
         for draft in drafts:
             self._enqueue(draft)
+        return True
 
     def _enqueue(self, draft: dict[str, Any]) -> None:
         """The over-capacity seam. Today the oldest line goes and is counted
