@@ -10,12 +10,14 @@ import {
   matchesProfile,
   useCeiling,
   useOrchestrator,
+  useUnverifiedTools,
   type InvestigationProfileValues,
   type OrchestratorBound,
   type OrchestratorConfig,
 } from './useSettings'
 import type { SectionProps } from './types'
 import IntentReportCard from './IntentReportCard'
+import type { EffectClass, ToolClass } from '../../services/api'
 import { errorText } from '../../shared/errorText'
 
 // Raising any of these needs a confirm; lowering applies at once. Settings also
@@ -37,6 +39,30 @@ type PendingSave =
   | { kind: 'act' }
   | { kind: 'irreversible' }
   | { kind: 'stop' }
+  | { kind: 'tool'; name: string; to: EffectClass }
+
+// Tighter last, as in core/response/ceiling.py; an unclassified tool loosens to anything
+const CLASS_ORDER: EffectClass[] = ['read', 'read_unverified', 'reversible', 'irreversible']
+const loosens = (before: ToolClass['effect_class'], after: EffectClass) =>
+  before == null || CLASS_ORDER.indexOf(after) < CLASS_ORDER.indexOf(before)
+const CHOICES: { to: Exclude<EffectClass, 'read_unverified'>; label: string }[] = [
+  { to: 'read', label: 'Read' },
+  { to: 'reversible', label: 'Reversible' },
+  { to: 'irreversible', label: 'Cannot be undone' },
+]
+const CLASS_PHRASE: Record<EffectClass, string> = {
+  read: 'a read',
+  read_unverified: 'an unconfirmed read',
+  reversible: 'reversible',
+  irreversible: 'impossible to undo',
+}
+// Outside tools are flattened as server_tool; server names use hyphens, never underscores
+const splitTool = (name: string) => {
+  const at = name.indexOf('_')
+  return at > 0 ? { server: name.slice(0, at), tool: name.slice(at + 1) } : { server: '', tool: name }
+}
+const STOPPED_LOOSEN = 'Stopped: resume first'
+const TOOLS_SHOWN = 8
 
 const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
   switch (pending.kind) {
@@ -60,6 +86,16 @@ const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
         title: 'Stop autonomy?',
         body: 'No tool acts on its own, and unattended writes, proposals and outside actions are off until you resume; reads continue. Automatic investigation turns off and investigations in progress are marked failed.',
       }
+    case 'tool':
+      return pending.to === 'read'
+        ? {
+            title: `Confirm ${pending.name} as a read?`,
+            body: 'Runs no person started call it without asking. Confirm only if it never changes anything.',
+          }
+        : {
+            title: `Class ${pending.name} as ${CLASS_PHRASE[pending.to]}?`,
+            body: 'Runs no person started may then call it whenever tools of that kind may act on their own.',
+          }
     default: {
       const _exhaustive: never = pending
       return _exhaustive
@@ -97,6 +133,8 @@ const FLEET_ROWS: LimitRow[] = [
 export default function AutoInvestigateSection({ notify }: SectionProps) {
   const { config, setConfig, defaults, bounds, profiles, phase, reload, save } = useOrchestrator()
   const ceiling = useCeiling()
+  const unverified = useUnverifiedTools()
+  const [allTools, setAllTools] = useState(false)
   const { hasPermission } = useAuth()
   // write raises, resumes and switches four-eyes; stop stops and lowers
   const canRaise = hasPermission('ai_autonomy.write')
@@ -225,6 +263,16 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
     }
   }
 
+  const classifyTool = async (name: string, to: EffectClass) => {
+    try {
+      await unverified.classify(name, to)
+      notify('ok', `${name} is now ${CLASS_PHRASE[to]}.`)
+    } catch (err) {
+      notify('err', errorText(err, 'Failed to save the tool’s class.'))
+      ceiling.refresh() // a 409 means someone stopped meanwhile
+    }
+  }
+
   const confirmPending = () => {
     if (!pending) return
     const current = pending
@@ -241,6 +289,9 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
         return
       case 'stop':
         stopAll()
+        return
+      case 'tool':
+        classifyTool(current.name, current.to)
         return
       default: {
         const _exhaustive: never = current
@@ -338,6 +389,88 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
       )}
     </>
   )
+
+  // write may loosen (confirm first, refused while stopped); stop may only tighten
+  const toolRow = (t: ToolClass, stopped: boolean) => {
+    const { server, tool } = splitTool(t.name)
+    const choices = CHOICES.filter((c) => canRaise || (canLower && !loosens(t.effect_class, c.to)))
+    return (
+      <div className="lim-row" key={t.name}>
+        <span className="lim-row-title">
+          <span className="lim-tool-name" title={t.name}>{tool}</span>
+          <span title={server}>{server || 'Unknown server'}</span>
+        </span>
+        <span className={`lim-row-tag${t.effect_class ? '' : ' fair'}`}>
+          {t.effect_class ? 'Runs as a read, unconfirmed' : 'Unclassified, waits for a person'}
+        </span>
+        <span className="lim-row-ctl">
+          {choices.length > 0 && (
+            <div className="lim-seg" role="group" aria-label={`Class of ${t.name}`}>
+              {choices.map((c) => {
+                const loosen = loosens(t.effect_class, c.to)
+                const blocked = loosen && stopped
+                return (
+                  <button
+                    key={c.to}
+                    type="button"
+                    aria-pressed={false}
+                    disabled={blocked}
+                    title={blocked ? STOPPED_LOOSEN : undefined}
+                    onClick={() =>
+                      loosen ? setPending({ kind: 'tool', name: t.name, to: c.to }) : classifyTool(t.name, c.to)
+                    }
+                  >
+                    {c.label}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </span>
+      </div>
+    )
+  }
+
+  const toolList = (stopped: boolean) => {
+    const tools = (unverified.phase === 'ready' && unverified.tools) || []
+    const shown = allTools ? tools : tools.slice(0, TOOLS_SHOWN)
+    return (
+      <div className="lim-tools mt-3">
+        <div className="lim-tools-head">
+          <h4>
+            Tools nobody has confirmed{' '}
+            {unverified.phase === 'ready' && <span className="lim-tools-count">{tools.length}</span>}
+          </h4>
+          <span>
+            Each outside tool’s class decides when it may act on its own. These were guessed to be reads, or have
+            no class yet.
+          </span>
+          {!canLower && tools.length > 0 && <span>Your role can see these but not change them.</span>}
+          {canLower && !canRaise && tools.length > 0 && (
+            <span>Your role can mark a tool reversible or cannot be undone. Confirming a read, or classing a new tool, needs permission to loosen autonomy.</span>
+          )}
+          {stopped && canRaise && tools.length > 0 && (
+            <span className="lim-class-note">
+              <Icon name="alert" size={13} /> {STOPPED_LOOSEN}
+            </span>
+          )}
+        </div>
+        {unverified.phase === 'loading' && <span className="text-xs text-tx-3">Loading tools…</span>}
+        {unverified.phase === 'error' && (
+          <span className="text-xs text-tx-3">Could not load the tools. Reload to try again.</span>
+        )}
+        {unverified.phase === 'ready' && tools.length === 0 && (
+          <span className="text-xs text-tx-3">Every outside tool has a confirmed class.</span>
+        )}
+        {shown.map((t) => toolRow(t, stopped))}
+        {tools.length > TOOLS_SHOWN && (
+          <button type="button" className="btn ghost mt-2" onClick={() => setAllTools((a) => !a)}>
+            {allTools ? 'Show fewer' : `Show all ${tools.length}`}
+          </button>
+        )}
+      </div>
+    )
+  }
 
   const idle = bound('stale_threshold')
   const runtime = bound('max_runtime_per_investigation')
@@ -528,6 +661,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                 <span className="text-sm text-tx-2">{ceil.four_eyes ? 'On' : 'Off'}</span>
               )}
             </div>
+            {toolList(ceil.stopped)}
           </>
         )}
       </SettingsCard>
@@ -592,7 +726,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
         open={dialog != null}
         title={dialog?.title ?? ''}
         body={dialog?.body ?? ''}
-        confirmLabel={pending?.kind === 'stop' ? 'Stop' : 'Save'}
+        confirmLabel={pending?.kind === 'stop' ? 'Stop' : pending?.kind === 'tool' ? 'Confirm' : 'Save'}
         danger={pending?.kind === 'stop'}
         onConfirm={confirmPending}
         onClose={dismissPending}

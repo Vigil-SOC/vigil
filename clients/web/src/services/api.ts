@@ -1032,10 +1032,15 @@ export const workflowApi = {
 
 // The autonomy ceiling (#2918). Stop is orchestratorApi.kill; PUT has no stopped field.
 export type Ceiling = Schema<'CeilingResponse'>
+export type ToolClass = Schema<'ToolClassEntry'>
+export type EffectClass = NonNullable<ToolClass['effect_class']>
 export const autonomyApi = {
   get: () => api.get<Ceiling>('/autonomy'),
   update: (body: Schema<'CeilingBody'>) => api.put<Ceiling>('/autonomy', body),
   resume: () => api.post<Ceiling>('/autonomy/resume'),
+  tools: () => api.get<ToolClass[]>('/autonomy/tools'),
+  classifyTool: (name: string, effect_class: EffectClass) =>
+    api.put<ToolClass>(`/autonomy/tools/${encodeURIComponent(name)}`, { effect_class }),
 }
 
 export const orchestratorApi = {

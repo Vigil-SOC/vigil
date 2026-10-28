@@ -4857,6 +4857,49 @@
       outline-offset: 1px;
    }
 
+   /* Unconfirmed tools under the class cards: the board's rows and segment */
+   .lim-tools-head {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding-bottom: 10px;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--tx2);
+   }
+
+   .lim-tools-head h4 {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0;
+      font-size: 13px;
+      font-weight: 650;
+      color: var(--tx0);
+   }
+
+   .lim-tools-count {
+      padding: 0 7px;
+      border-radius: 999px;
+      background: var(--bg3);
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--tx1);
+   }
+
+   .lim-tool-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: var(--mono);
+   }
+
+   .lim-row-title .lim-tool-name {
+      font-size: 13px;
+      font-weight: 650;
+      color: var(--tx0);
+   }
+
    @media (max-width: 900px) {
       .lim-profiles,
       .lim-classes {
