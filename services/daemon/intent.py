@@ -35,7 +35,6 @@ from core.intent import (
     intent_file,
     read_intent,
 )
-from core.response.approval_service import Reversibility
 from core.response.ceiling import environment_locks_act, try_read_stored_ceiling
 from core.response.config import (
     ResponseConfig,
@@ -192,7 +191,8 @@ class ReplayFinding:
 class ReplayApproval:
     id: str
     confidence: float
-    reversibility: Reversibility
+    # The stored column, replayed as the class it names.
+    reversibility: str
 
 
 @dataclass(frozen=True)
@@ -363,7 +363,7 @@ def load_replay_rows(
                 ReplayApproval(
                     id=action.action_id,
                     confidence=float(action.confidence),
-                    reversibility=Reversibility(action.reversibility),
+                    reversibility=action.reversibility,
                 )
             )
     return findings, approvals

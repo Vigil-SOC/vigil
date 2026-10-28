@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import pytest
 
-from core.llm.chat_layers import changes_for_tool, changes_for_tools
 from core.workflows import catalog, hunt_preflight
 from core.workflows.hunt_preflight import HUNT_SKILLS
 from core.workflows.playbook_resolver import (
@@ -333,17 +332,24 @@ def test_no_model_resolving_is_null_not_a_guess():
     assert report["model"] is None and report["model_source"] is None
 
 
-def test_the_one_tool_classifier_agrees_with_the_list_form():
-    tools = ["get_finding", "create_approval_action", "block_ip", "create_case"]
+def test_asks_first_is_the_approval_tool_and_every_gated_outside_tool(
+    seeded_tool_classes,
+):
+    from core.response.ceiling import asks_first
 
-    for tool in tools:
-        assert changes_for_tools([tool]) == changes_for_tool(tool)
-    assert changes_for_tool("get_finding") == "read_only"
-    assert changes_for_tool("create_approval_action") == "asks_first"
-    assert changes_for_tool("block_ip") == "asks_first"
-    # The list is as hands-on as its most hands-on tool, in any order.
-    assert changes_for_tools(tools) == changes_for_tools(tools[::-1]) == "asks_first"
-    assert changes_for_tools([]) == "read_only"
+    tools = [
+        "get_finding",
+        "create_approval_action",
+        "block_ip",
+        "palo-alto_pan_block_ip",
+        "misp_misp_search_ioc",
+    ]
+    assert asks_first(tools) == {
+        "create_approval_action",
+        "block_ip",
+        "palo-alto_pan_block_ip",
+    }
+    assert asks_first([]) == frozenset()
 
 
 def test_the_catalog_read_of_a_hunt_carries_no_preflight():

@@ -11,6 +11,18 @@
     ],
     "why": "The browser-writable frontend logger is never trusted (B3-X1)"
   },
+  "catalog-is-a-list": {
+    "codes": [
+      "P-CATALOG"
+    ],
+    "why": "catalog.yaml must be a mapping"
+  },
+  "catalog-is-a-scalar": {
+    "codes": [
+      "P-CATALOG"
+    ],
+    "why": "catalog.yaml must be a mapping"
+  },
   "catalog-unreachable-rule": {
     "codes": [
       "P-CATALOG"
@@ -71,6 +83,12 @@
     ],
     "why": "zip-slip style name (K1 T-25)"
   },
+  "rule-deep-nesting": {
+    "codes": [
+      "P-RULE"
+    ],
+    "why": "A 12 KB rule nested past the parser's stack is refused with its rule code"
+  },
   "rule-misfiled": {
     "codes": [
       "P-PATH",
@@ -84,6 +102,12 @@
     ],
     "why": "One refused rule refuses the whole pack (E2 \u00a76)"
   },
+  "runbook-deep-nesting": {
+    "codes": [
+      "P-RUNBOOK"
+    ],
+    "why": "Nesting deep enough to exhaust the parser's stack is refused, not raised"
+  },
   "runbook-label-not-grouped": {
     "codes": [
       "P-RUNBOOK"
@@ -95,6 +119,12 @@
       "P-RUNBOOK"
     ],
     "why": "A port is a group-label name, never a literal"
+  },
+  "runbook-malformed-yaml": {
+    "codes": [
+      "P-RUNBOOK"
+    ],
+    "why": "A correctly hashed runbook that isn't YAML is refused, not raised"
   },
   "runbook-on-lane3-rule": {
     "codes": [
@@ -125,6 +155,12 @@
       "P-SUPPRESSION"
     ],
     "why": "llm suppresses P-4 and P-4 suppresses llm: two faults hide each other"
+  },
+  "suppression-malformed-yaml": {
+    "codes": [
+      "P-SUPPRESSION"
+    ],
+    "why": "A correctly hashed suppression.yaml that isn't YAML is refused, not raised"
   },
   "suppression-unknown-rule": {
     "codes": [

@@ -27,6 +27,19 @@ CANARY = "canaryS4readyz7Q2x9LmT"
 RULE = "pipeline.agent-worker-not-ready"
 
 
+JSON_REPLIES = {
+    "/_gw/status": b'{"state":"ok","since":0}',
+    "/containers/json": b"[]",
+    "/api/federation/sources": b'{"sources":[],"global":{"enabled":false}}',
+    "/api/triage": b'{"sources":[]}',
+    "/api/v1/findings": b'{"findings":[]}',
+    "/api/kafka/status": b'{"enabled":false,"daemon_reachable":true}',
+    "/api/orchestrator/status": b'{"enabled":false,"queued":0,"cost":{}}',
+    "/health": b'{"uptime_seconds":1,"components":{}}',
+    "/status": b'{"daemon":{"start_time":"2026-10-28T08:00:00+00:00"}}',
+}
+
+
 class Stub:
     """An agent worker whose readiness the test flips."""
 
@@ -41,18 +54,10 @@ class Stub:
                 stub.hits += 1
                 path = self.path.split("?", 1)[0]
                 stub.paths.append(path)
-                # Compose also polls the Docker proxy. An empty list is a
-                # successful read, so that sensor doesn't go blind beside /readyz.
-                if path == "/_gw/status":
-                    body = b'{"state":"ok","since":0}'
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
-                    return
-                if path == "/containers/json":
-                    body = b"[]"
+                # Compose also polls the Docker proxy and the gateway. Each gets
+                # a successful read, so no sensor goes blind beside /readyz.
+                if path in JSON_REPLIES:
+                    body = JSON_REPLIES[path]
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Content-Length", str(len(body)))
@@ -134,6 +139,7 @@ def _env(data_dir: Path, stub: Stub, serve: Stub | None = None) -> dict[str, str
         "VIGIL_MEDIC_AGENT_SERVE_ADDR": (serve or stub).addr,
         "VIGIL_MEDIC_DOCKERPROXY_ADDR": stub.addr,
         "VIGIL_MEDIC_GATEWAY_ADDR": stub.addr,
+        "VIGIL_MEDIC_DAEMON_ADDR": stub.addr,
     }
 
 

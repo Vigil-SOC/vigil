@@ -75,6 +75,14 @@ const state = vi.hoisted(() => ({
   resume: vi.fn(() => Promise.resolve()),
   ceiling: null as Record<string, boolean> | null,
   ceilingPhase: 'ready' as Phase,
+  perms: new Set<string>(),
+  tools: [] as { name: string; effect_class: string | null }[],
+  classify: vi.fn(() => Promise.resolve()),
+}))
+
+const WRITE = ['ai_autonomy.write', 'ai_autonomy.stop']
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: () => ({ hasPermission: (p: string) => state.perms.has(p) }),
 }))
 
 const CEILING = {
@@ -108,7 +116,9 @@ vi.mock('./useSettings', async () => {
       save: state.ceilingSave,
       stop: state.stop,
       resume: state.resume,
+      refresh: vi.fn(),
     }),
+    useUnverifiedTools: () => ({ tools: state.tools, phase: 'ready', classify: state.classify }),
   }
 })
 
@@ -128,6 +138,9 @@ describe('Limits and autonomy', () => {
     state.resume.mockClear()
     state.ceiling = { ...CEILING }
     state.ceilingPhase = 'ready'
+    state.perms = new Set(WRITE)
+    state.tools = []
+    state.classify.mockClear()
     notify.mockClear()
   })
 
@@ -283,9 +296,10 @@ describe('Limits and autonomy', () => {
     expect(state.stop).toHaveBeenCalledTimes(1)
     expect(state.reload).toHaveBeenCalled()
 
-    state.ceiling = { ...CEILING, act_reversible: true, stopped: true, read: false, write: false, propose: false }
+    state.ceiling = { ...CEILING, act_reversible: true, stopped: true, write: false, propose: false }
     view.rerender(<AutoInvestigateSection notify={notify} />)
-    expect(screen.getByText(/Off while stopped: read, write, propose/)).toBeInTheDocument()
+    expect(screen.getByText(/Off while stopped: write, propose/)).toBeInTheDocument()
+    expect(screen.getByText(/reads continue/)).toBeInTheDocument()
     // the stored flag stays and stays editable
     expect(seg('Tools that change something', 'On their own')).toHaveAttribute('aria-pressed', 'true')
     await act(async () => {
@@ -306,13 +320,44 @@ describe('Limits and autonomy', () => {
     }
   })
 
-  it('saves four-eyes and says it is not enforced yet', async () => {
+  it('saves four-eyes and says what it enforces', async () => {
     render(<AutoInvestigateSection notify={notify} />)
-    expect(screen.getByText(/Not enforced yet/)).toBeInTheDocument()
+    expect(screen.getByText(/Nobody approves an action they proposed/)).toBeInTheDocument()
     await act(async () => {
       fireEvent.click(screen.getByRole('switch', { name: 'Four-eyes approval' }))
     })
     expect(state.ceilingSave).toHaveBeenCalledWith({ four_eyes: true })
+  })
+
+  it('gives a stop holder Stop and lowering, and no raise, four-eyes or Resume', async () => {
+    state.perms = new Set(['ai_autonomy.stop'])
+    state.ceiling = { ...CEILING, act_reversible: true }
+    const view = render(<AutoInvestigateSection notify={notify} />)
+    expect(screen.queryByRole('group', { name: 'Tools that change something' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /On their own/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('switch', { name: 'Four-eyes approval' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Stop/ })).toBeInTheDocument()
+    // only the flag that is on offers to switch off
+    expect(screen.getAllByRole('button', { name: 'Switch to Ask first' })).toHaveLength(1)
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Switch to Ask first' }))
+    })
+    expect(state.ceilingSave).toHaveBeenCalledWith({ act_reversible: false, act_irreversible: false })
+
+    state.ceiling = { ...CEILING, act_reversible: true, stopped: true }
+    view.rerender(<AutoInvestigateSection notify={notify} />)
+    expect(screen.queryByRole('button', { name: /Resume/ })).not.toBeInTheDocument()
+  })
+
+  it('shows status only to a role with neither write nor stop', () => {
+    state.perms = new Set()
+    state.ceiling = { ...CEILING, act_reversible: true, four_eyes: true }
+    render(<AutoInvestigateSection notify={notify} />)
+    expect(screen.getByText('On their own.')).toBeInTheDocument()
+    expect(screen.getByText('Ask first.')).toBeInTheDocument()
+    expect(screen.getByText('On')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Stop|Resume|Ask first|On their own/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('switch', { name: 'Four-eyes approval' })).not.toBeInTheDocument()
   })
 
   it('shows an error, not a default, when the ceiling fails to load', () => {
@@ -323,5 +368,74 @@ describe('Limits and autonomy', () => {
     expect(screen.getByText(/Could not load the autonomy ceiling/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /On their own/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Stop/ })).not.toBeInTheDocument()
+  })
+
+  describe('tools nobody has confirmed', () => {
+    const TOOLS = [
+      { name: 'splunk-selfhosted_splunk_search_ip', effect_class: 'read_unverified' },
+      { name: 'cape-sandbox_cape_submit_url', effect_class: null },
+    ]
+    const seg = (name: string) => screen.queryByRole('group', { name: `Class of ${name}` })
+
+    beforeEach(() => {
+      state.tools = TOOLS
+    })
+
+    it('lists each tool under its server with the count, and confirms a loosening first', async () => {
+      render(<AutoInvestigateSection notify={notify} />)
+      expect(screen.getByText('Tools nobody has confirmed')).toHaveTextContent('2')
+      expect(screen.getByText('splunk_search_ip')).toBeInTheDocument()
+      expect(screen.getByText('splunk-selfhosted')).toBeInTheDocument()
+
+      fireEvent.click(within(seg(TOOLS[0].name)!).getByRole('button', { name: 'Read' }))
+      expect(state.classify).not.toHaveBeenCalled()
+      expect(screen.getByRole('dialog', { name: /as a read\?/ })).toBeInTheDocument()
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+      })
+      expect(state.classify).toHaveBeenCalledWith(TOOLS[0].name, 'read')
+
+      // classing an unclassified tool loosens too
+      fireEvent.click(within(seg(TOOLS[1].name)!).getByRole('button', { name: 'Cannot be undone' }))
+      expect(screen.getByRole('dialog', { name: /impossible to undo\?/ })).toBeInTheDocument()
+    })
+
+    it('tightens an unconfirmed read at once', async () => {
+      render(<AutoInvestigateSection notify={notify} />)
+      await act(async () => {
+        fireEvent.click(within(seg(TOOLS[0].name)!).getByRole('button', { name: 'Reversible' }))
+      })
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(state.classify).toHaveBeenCalledWith(TOOLS[0].name, 'reversible')
+    })
+
+    it('gives a stop holder only the tightening choices', () => {
+      state.perms = new Set(['ai_autonomy.stop'])
+      render(<AutoInvestigateSection notify={notify} />)
+      const buttons = within(seg(TOOLS[0].name)!).getAllByRole('button')
+      expect(buttons.map((b) => b.textContent)).toEqual(['Reversible', 'Cannot be undone'])
+      expect(seg(TOOLS[1].name)).not.toBeInTheDocument()
+      expect(screen.getByText(/needs permission to loosen autonomy/)).toBeInTheDocument()
+    })
+
+    it('shows the list read-only to a role with neither write nor stop', () => {
+      state.perms = new Set()
+      render(<AutoInvestigateSection notify={notify} />)
+      expect(screen.getByText('splunk_search_ip')).toBeInTheDocument()
+      expect(seg(TOOLS[0].name)).not.toBeInTheDocument()
+      expect(seg(TOOLS[1].name)).not.toBeInTheDocument()
+      expect(screen.getByText('Your role can see these but not change them.')).toBeInTheDocument()
+    })
+
+    it('disables loosening while stopped and keeps tightening', () => {
+      state.ceiling = { ...CEILING, stopped: true }
+      render(<AutoInvestigateSection notify={notify} />)
+      expect(screen.getByText('Stopped: resume first')).toBeInTheDocument()
+      const unverified = within(seg(TOOLS[0].name)!)
+      expect(unverified.getByRole('button', { name: 'Read' })).toBeDisabled()
+      expect(unverified.getByRole('button', { name: 'Read' })).toHaveAttribute('title', 'Stopped: resume first')
+      expect(unverified.getByRole('button', { name: 'Reversible' })).toBeEnabled()
+      for (const b of within(seg(TOOLS[1].name)!).getAllByRole('button')) expect(b).toBeDisabled()
+    })
   })
 })

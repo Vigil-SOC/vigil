@@ -12,6 +12,7 @@ import { stateWord } from '../../shared/findingState'
 import { Icon } from '../../shared/icons'
 import { SEND_TO_TRIAGE_FAILED, sendFindingToTriage } from '../../shared/sendToTriage'
 import SourceChip from '../../shared/SourceChip'
+import { useFindingEnrichment, type Enrichment } from '../../shared/useFindingEnrichment'
 import type { Phase } from '../cases/useCases'
 import { parseSourceEvidence } from '../../data/sourceEvidence'
 import { SourceEvidenceSection } from './SourceEvidenceSection'
@@ -20,28 +21,6 @@ interface RawFinding extends ApiFinding {
   description?: string
   cluster_id?: string | null
   ai_enrichment?: Enrichment | null
-}
-
-interface RelatedTechnique {
-  technique_id: string
-  technique_name: string
-  relevance?: string
-}
-interface Enrichment {
-  threat_summary?: string
-  threat_type?: string
-  risk_level?: string
-  confidence_score?: number
-  potential_impact?: string
-  recommended_actions?: string[]
-  investigation_questions?: string[]
-  related_techniques?: RelatedTechnique[]
-  timeline_context?: string
-  business_context?: string
-  indicators?: { malicious_ips?: string[]; suspicious_domains?: string[] }
-  analysis_notes?: string
-  raw_response?: string
-  generated_at?: string
 }
 
 const ENRICHMENT_PROGRESS = [
@@ -173,9 +152,13 @@ export default function FindingPopup({
   const [loadAttempt, setLoadAttempt] = useState(0)
 
   // on-demand: a getEnrichment call may invoke an LLM
-  const [enrichment, setEnrichment] = useState<Enrichment | null>(null)
-  const [enrichPhase, setEnrichPhase] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
-  const [enrichError, setEnrichError] = useState<'not_configured' | 'budget' | 'failed' | null>(null)
+  const {
+    enrichment,
+    phase: enrichPhase,
+    error: enrichError,
+    seed: seedEnrichment,
+    load: loadEnrichment,
+  } = useFindingEnrichment(id)
   const [enrichmentProgressIndex, setEnrichmentProgressIndex] = useState(0)
 
   const [acting, setActing] = useState(false)
@@ -200,9 +183,6 @@ export default function FindingPopup({
     setPhase('loading')
     setError(null)
     setRaw(null)
-    setEnrichment(null)
-    setEnrichPhase('idle')
-    setEnrichError(null)
     triageFor.current = id
     setTriageNote(null)
     setTriageError(null)
@@ -217,12 +197,7 @@ export default function FindingPopup({
         if (cancelled) return
         const data = res.data as RawFinding
         setRaw(data)
-        // The daemon writes triage keys into ai_enrichment too; only a
-        // generated analysis carries generated_at.
-        if (data.ai_enrichment?.generated_at) {
-          setEnrichment(data.ai_enrichment)
-          setEnrichPhase('ready')
-        }
+        seedEnrichment(data.ai_enrichment)
         setPhase('ready')
       })
       .catch((e) => {
@@ -238,7 +213,7 @@ export default function FindingPopup({
     return () => {
       cancelled = true
     }
-  }, [id, loadAttempt])
+  }, [id, loadAttempt, seedEnrichment])
 
   useEffect(() => {
     if (enrichPhase !== 'loading') {
@@ -251,32 +226,6 @@ export default function FindingPopup({
     )
     return () => timers.forEach(window.clearTimeout)
   }, [enrichPhase])
-
-  const loadEnrichment = (force = false) => {
-    if (!id) return
-    setEnrichPhase('loading')
-    setEnrichError(null)
-    setEnrichmentProgressIndex(0)
-    findingsApi
-      .getEnrichment(id, force)
-      .then((res) => {
-        setEnrichment((res.data?.enrichment || null) as Enrichment | null)
-        setEnrichPhase('ready')
-      })
-      .catch((e) => {
-        const response = (e as { response?: { status?: number; data?: { code?: string } } })?.response
-        const status = response?.status
-        const code = response?.data?.code
-        setEnrichError(
-          status === 402 || code === 'BUDGET_EXCEEDED'
-            ? 'budget'
-            : status === 503
-              ? 'not_configured'
-              : 'failed',
-        )
-        setEnrichPhase('error')
-      })
-  }
 
   const submitExclusion = () => {
     if (!id || !excludeIp || !excludeReason.trim()) return
@@ -521,6 +470,14 @@ export default function FindingPopup({
                 title="AI enrichment is not configured"
                 body="Add an AI provider and assign a chat/enrichment model before generating finding analysis."
                 primary={onConfigureAi ? { label: 'Open AI Config', onClick: onConfigureAi, icon: 'gear' } : undefined}
+              />
+            )}
+            {enrichPhase === 'error' && enrichError === 'forbidden' && (
+              <EmptyState
+                compact
+                icon="lock"
+                title="Your role can’t generate AI analysis"
+                body="Generating an analysis writes to the finding, so it needs findings write access."
               />
             )}
             {enrichPhase === 'error' && enrichError === 'budget' && (

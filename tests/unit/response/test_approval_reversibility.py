@@ -1,15 +1,11 @@
-"""Reversibility gate and idempotent create on ApprovalAction (#827)."""
+"""Effect-class gate and idempotent create on ApprovalAction (#827, #3304)."""
 
 from __future__ import annotations
 
 import pytest
 
-from core.response.approval_service import (
-    ActionStatus,
-    ActionType,
-    ApprovalService,
-    Reversibility,
-)
+from core.config import get_settings
+from core.response.approval_service import ActionStatus, ActionType, ApprovalService
 from core.response.autonomous_response_service import AutonomousResponseService
 
 pytestmark = pytest.mark.external_service
@@ -19,12 +15,11 @@ def _create(
     svc: ApprovalService,
     *,
     confidence: float,
-    reversibility: Reversibility = Reversibility.REVERSIBLE,
+    effect_class: str | None = "reversible",
     idempotency_key: str | None = None,
     target: str = "10.0.1.5",
     action_type: ActionType = ActionType.ISOLATE_HOST,
 ):
-    svc.force_manual_approval = False
     return svc.create_action(
         action_type=action_type,
         title=f"{action_type.value}: {target}",
@@ -34,37 +29,42 @@ def _create(
         reason="test",
         evidence=["ev-1"],
         created_by="pytest",
-        reversibility=reversibility,
+        effect_class=effect_class,
         idempotency_key=idempotency_key,
     )
 
 
-class TestReversibilityGate:
+class TestEffectClassGate:
     def test_irreversible_high_confidence_stays_pending(self):
         action = _create(
-            ApprovalService(),
-            confidence=0.99,
-            reversibility=Reversibility.IRREVERSIBLE,
+            ApprovalService(), confidence=0.99, effect_class="irreversible"
         )
         assert action.status == ActionStatus.PENDING.value
         assert action.requires_approval is True
-        assert action.reversibility == Reversibility.IRREVERSIBLE.value
-        assert action.reason == "test; reversibility=irreversible"
+        assert action.reversibility == "irreversible"
+        assert action.reason == "test; effect_class=irreversible"
+
+    def test_an_unclassified_tool_is_stored_irreversible(self):
+        action = _create(ApprovalService(), confidence=0.99, effect_class=None)
+        assert action.status == ActionStatus.PENDING.value
+        assert action.reversibility == "irreversible"
+        assert action.reason == "test; effect_class=unclassified"
 
     def test_reversible_high_confidence_stays_pending(self):
         svc = ApprovalService()
-        action = _create(svc, confidence=0.99, reversibility=Reversibility.REVERSIBLE)
+        action = _create(svc, confidence=0.99, effect_class="reversible")
         assert action.status == ActionStatus.PENDING.value
         assert action.requires_approval is True
-        assert action.reversibility == Reversibility.REVERSIBLE.value
-        assert action.reason == "test; reversibility=reversible"
+        assert action.reversibility == "reversible"
+        assert action.reason == "test; effect_class=reversible"
 
-    def test_forced_approval_records_the_force_switch(self):
+    def test_forced_approval_records_the_force_switch(self, monkeypatch):
         svc = ApprovalService()
         action = _create(svc, confidence=0.95)
         assert action.requires_approval is True
         assert action.status == ActionStatus.PENDING.value
-        svc.force_manual_approval = True
+        monkeypatch.setenv("DAEMON_FORCE_APPROVAL", "true")
+        get_settings.cache_clear()
         forced = svc.create_action(
             action_type=ActionType.ISOLATE_HOST,
             title="isolate_host: 10.0.1.6",
@@ -102,7 +102,6 @@ class TestIdempotencyKey:
 class TestIsolationIdempotency:
     def test_same_host_is_not_executed_twice(self):
         response = AutonomousResponseService()
-        response.approval_service.force_manual_approval = False
         executions: list[str] = []
 
         def _fake_execute(ip_address, hostname, reason, confidence):
@@ -146,7 +145,6 @@ class TestIsolationIdempotency:
 
     def test_rejected_isolate_is_not_executed_on_retry(self):
         response = AutonomousResponseService()
-        response.approval_service.force_manual_approval = False
         executions: list[str] = []
 
         def _fake_execute(ip_address, hostname, reason, confidence):
@@ -194,7 +192,6 @@ class TestIpLessIsolationKey:
 
     def test_different_hostnames_with_no_ip_get_distinct_rows(self):
         response = AutonomousResponseService()
-        response.approval_service.force_manual_approval = False
         executions: list[str] = []
 
         def _fake_execute(ip_address, hostname, reason, confidence):
@@ -227,7 +224,6 @@ class TestIpLessIsolationKey:
 
     def test_same_hostname_with_no_ip_reuses_one_row(self):
         response = AutonomousResponseService()
-        response.approval_service.force_manual_approval = False
         executions: list[str] = []
 
         def _fake_execute(ip_address, hostname, reason, confidence):
@@ -267,7 +263,6 @@ class TestUnwiredIsolation:
 
     def test_a_confidence_of_0_99_does_not_execute_isolation(self):
         response = AutonomousResponseService()
-        response.approval_service.force_manual_approval = False
         result = response.create_isolation_action(
             ip_address="10.0.0.5",
             hostname="host-a",
@@ -295,7 +290,6 @@ class TestUnwiredIsolation:
 
     def test_analyst_approved_isolation_is_recorded_failed(self):
         response = AutonomousResponseService()
-        response.approval_service.force_manual_approval = False
         created = response.create_isolation_action(
             ip_address="10.0.0.6",
             hostname="host-b",

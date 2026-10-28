@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import api, {
   aiConfigApi,
   autonomyApi,
@@ -18,9 +18,11 @@ import api, {
   type BudgetSettings,
   type Ceiling,
   type ComponentAssignment,
+  type EffectClass,
   type FederationSourceView,
   type IngestionJob,
   type PlatformDatabaseProxyConfig,
+  type ToolClass,
 } from '../../services/api'
 import type { Schema } from '../../services/apiTypes'
 import { loadCustomIntegrations } from '../../config/integrations'
@@ -587,7 +589,44 @@ export function useCeiling() {
   }, [refresh])
   const resume = useCallback(async () => apply((await autonomyApi.resume()).data), [apply])
 
-  return { ceiling, phase, save, stop, resume }
+  return { ceiling, phase, save, stop, resume, refresh }
+}
+
+/** Outside tools nobody has confirmed: stored as read_unverified, or exposed and unclassified. */
+export function useUnverifiedTools() {
+  const [tools, setTools] = useState<ToolClass[] | null>(null)
+  const [phase, setPhase] = useState<Phase>('loading')
+  const latest = useRef(0)
+
+  // only the newest request lands: two quick classifies must not restore an older list
+  const load = useCallback(() => {
+    const seq = ++latest.current
+    return autonomyApi
+      .tools()
+      .then(({ data }) => {
+        if (seq !== latest.current) return
+        setTools(data.filter((t) => t.effect_class == null || t.effect_class === 'read_unverified'))
+        setPhase('ready')
+      })
+      .catch(() => seq === latest.current && setPhase('error'))
+  }, [])
+  useEffect(() => {
+    load()
+  }, [load])
+
+  // refetch after a failure too: a 409 may mean someone stopped meanwhile
+  const classify = useCallback(
+    async (name: string, effectClass: EffectClass) => {
+      try {
+        await autonomyApi.classifyTool(name, effectClass)
+      } finally {
+        await load()
+      }
+    },
+    [load],
+  )
+
+  return { tools, phase, classify }
 }
 
 interface StorageInfo {

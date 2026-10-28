@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
+import { usePageSnapshot } from '../../shell/pageSnapshot'
 import AgentCards from './AgentCards'
 import AlertRail, { SevMark } from './AlertRail'
 import { clock } from './clock'
@@ -23,6 +24,7 @@ import {
   type OverviewPayload,
 } from '../../services/api'
 import { errorText } from '../../shared/errorText'
+import FindingDetails from '../../shared/FindingDetails'
 
 const NOISE_INFO =
   'The alert reads Dropped and leaves this feed and any read of open findings. Triage does not learn from the mark yet. Undo clears it.'
@@ -77,6 +79,13 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<OverviewPayload | null>(null)
+  usePageSnapshot('overview', phase === 'ready' && data ? [
+    'Overview, today (UTC). Alerts in by source: ' + (data.arrivals.map((x) => `${x.data_source} ${x.count}`).join(', ') || 'none') + '.',
+    'Outcomes: ' + data.outcomes.map((o) => `${o.label} ${o.count ?? 'not measured'}`).join(', ') + '.',
+    'Agents: ' + data.agents.map((g) => `${g.name} ${g.running} running${g.rate === null ? '' : `, ${Math.round(g.rate * 100)}% finish`}`).join('; ') + '.',
+    'Newest alerts (time | severity | source | title | case):',
+    ...data.feed.slice(0, 30).map((f) => [f.created_at ?? '-', f.severity ?? '-', f.data_source, f.title || f.description || f.finding_id, f.case_id ?? 'no case'].join(' | ')),
+  ].join('\n') : '')
   const [wall, setWall] = useState(false)
   const [paused, setPaused] = useState(false)
   const badgeOf = useSourceBadge()
@@ -264,6 +273,7 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
               {data?.empty
                 ? 'Where your data comes from, what Vigil does with it, and what comes out. Nothing is connected yet, so each part below shows where to connect.'
                 : `Where your data comes from, what Vigil does with it, and what came out. ${data ? `Today, UTC ${data.day}.` : ''}`.trim()}
+              {data?.missing?.length ? ` Not shown: your role lacks ${data.missing.join(' and ')}.` : ''}
             </p>
           </div>
           <div className="ov-head-r">
@@ -330,6 +340,7 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
             </dl>
             {open.title && open.description && <p className="ov-pop-desc">{open.description}</p>}
             <EvidenceBody item={open} />
+            <FindingDetails findingId={open.finding_id} />
             <div className="flex items-center gap-2 flex-wrap">
               <button type="button" className="btn ghost" onClick={markNoise} disabled={marking}>
                 {marked ? 'Undo' : 'Mark as noise'}

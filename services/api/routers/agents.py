@@ -22,7 +22,8 @@ ROUTER_META = RouterMeta(
 agent_manager = AgentManager()
 
 # A workflow phase that names a disabled agent fails to resolve.
-_SETTINGS_WRITE = [permission_gate("settings.write")]
+_SETTINGS_WRITE = [permission_gate("automation.write")]
+router.dependencies.append(permission_gate("automation.read"))
 
 
 def _resolve_agent(agent_id: str):

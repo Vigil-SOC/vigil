@@ -6,7 +6,7 @@ import homeCss from './home.css?inline'
 import { SETUP_HIDDEN_CHANGED } from './setupHidden'
 import { ToastProvider } from '../../shell/toast'
 import type { ConsoleScreenProps } from '../../shared/types'
-import { approvalsApi, configApi, triageApi, type NeedsYouItem } from '../../services/api'
+import { approvalsApi, configApi, ingestionApi, triageApi, type NeedsYouItem } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
   approvalsApi: {
@@ -17,6 +17,9 @@ vi.mock('../../services/api', () => ({
   configApi: {
     getSetupSteps: vi.fn(),
     setDemoMode: vi.fn(),
+  },
+  ingestionApi: {
+    loadSampleAlerts: vi.fn(),
   },
   triageApi: {
     get: vi.fn(),
@@ -69,7 +72,7 @@ const doneSteps = [
 ]
 
 beforeEach(() => {
-  sessionStorage.clear()
+  localStorage.clear()
   vi.mocked(configApi.getSetupSteps).mockResolvedValue({
     data: { steps: doneSteps, alerts_exist: 3, demo_enabled: false },
   } as never)
@@ -81,7 +84,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   vi.clearAllMocks()
-  sessionStorage.clear()
+  localStorage.clear()
 })
 
 describe('Home command chips', () => {
@@ -229,7 +232,7 @@ describe('Home', () => {
     expect(screen.queryByText(/Nothing waits on you\./)).not.toBeInTheDocument()
   })
 
-  it('hides a step for this tab when alerts exist, and keeps Get more from Vigil', async () => {
+  it('hides a step for this browser when alerts exist, and keeps Get more from Vigil', async () => {
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
     vi.mocked(configApi.getSetupSteps).mockResolvedValue({
       data: {
@@ -258,8 +261,23 @@ describe('Home', () => {
     }
     expect(changed).toHaveBeenCalledOnce()
     expect(screen.queryByRole('heading', { name: 'Connect more tools' })).not.toBeInTheDocument()
-    expect(JSON.parse(sessionStorage.getItem('vigil.home.setup.hidden') || '[]')).toEqual(['connect_tools'])
+    expect(JSON.parse(localStorage.getItem('vigil.home.setup.hidden') || '[]')).toEqual(['connect_tools'])
     expect(screen.getByRole('link', { name: 'Browse integrations →' })).toBeInTheDocument()
+  })
+
+  it('Hide setup on the first-run checklist hides every step but keeps the checklist, and Show hidden steps undoes it', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+      data: { steps: [{ ...doneSteps[0], done: false }, doneSteps[1]], alerts_exist: 0, demo_enabled: false },
+    } as never)
+    renderHome()
+    const ready = (await screen.findByRole('heading', { name: 'Get Vigil ready' })).closest('.home-ready') as HTMLElement
+    fireEvent.click(within(ready).getByRole('button', { name: 'Hide setup' }))
+    expect(JSON.parse(localStorage.getItem('vigil.home.setup.hidden') || '[]')).toEqual(['connect_tools', 'notify'])
+    expect(within(ready).getByRole('heading', { name: 'Connect more tools' })).toBeInTheDocument()
+    fireEvent.click(within(ready).getByRole('button', { name: 'Show hidden steps' }))
+    expect(localStorage.getItem('vigil.home.setup.hidden')).toBeNull()
+    expect(within(ready).getByRole('button', { name: 'Hide setup' })).toBeInTheDocument()
   })
 
   it('?section=setup scrolls to Get more from Vigil once the steps load, or to Get Vigil ready on first run', async () => {
@@ -624,6 +642,28 @@ describe('Home', () => {
       await screen.findByText('Demo mode enabled.'),
     ).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Explore with demo data' })).not.toBeInTheDocument()
+  })
+
+  it('sends sample alerts from the first-run card and says when they get triaged', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+      data: { steps: doneSteps, alerts_exist: 0, demo_enabled: false },
+    } as never)
+    vi.mocked(ingestionApi.loadSampleAlerts).mockResolvedValue({ data: { loaded: 8, total: 8 } } as never)
+    renderHome()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Send sample alerts' }))
+    expect(await screen.findByText(/8 sample alerts stored\. Vigil triages them within about five minutes/)).toBeInTheDocument()
+  })
+
+  it('hides Send sample alerts while demo mode is on', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+      data: { steps: doneSteps, alerts_exist: 0, demo_enabled: true },
+    } as never)
+    renderHome()
+    await screen.findByText('Not ready to connect yet?')
+    expect(screen.queryByRole('button', { name: 'Send sample alerts' })).not.toBeInTheDocument()
   })
 
   it('approves a reversible row after the 8 s fuse, not before', async () => {

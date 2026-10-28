@@ -34,10 +34,10 @@ from core.auth.auth_service import (
 from core.auth.bootstrap_code import has_human_user, setup_code_matches
 from core.auth.identity import claim_sign_in_names, identifier_in_use
 from core.auth.password_reset import (
-    consume_reset_token,
     decode_reset_token,
     default_base_url,
     generate_reset_token,
+    is_current,
     reset_link,
 )
 from core.auth.password_validator import (
@@ -288,8 +288,9 @@ def _session_sid(request: Request) -> Optional[str]:
     return payload.get("sid") if payload else None
 
 
-def _get_user(session: Session, user_id: str) -> Optional[User]:
-    return session.query(User).filter(User.user_id == user_id).first()
+def _get_user(session: Session, user_id: str, lock: bool = False) -> Optional[User]:
+    query = session.query(User).filter(User.user_id == user_id)
+    return (query.with_for_update() if lock else query).first()
 
 
 def _open_sign_in(session: Session, sid: str, user: User) -> Optional[SignIn]:
@@ -1180,7 +1181,7 @@ def password_reset_request(
     user = session.query(User).filter(User.email == body.email).first()
     # A service account's password belongs to its program: no reset mail.
     if user and user.is_active and not _is_service_account(user):
-        token = generate_reset_token(user.user_id)
+        token = generate_reset_token(user)
         link = reset_link(default_base_url(settings), token)
         subject = "Vigil SOC — password reset"
         body_text = (
@@ -1227,19 +1228,23 @@ async def password_reset_confirm(
     session: UnitOfWorkSession,
 ):
     """
-    Complete a password reset. Validates the signed token, enforces the
-    password strength policy + reuse check, consumes the token, rotates
-    the hash, and revokes every outstanding token so any existing
-    sessions die. A rejected password leaves the token usable.
+    Complete a password reset. Validates the signed token and that the
+    password hasn't changed since it was issued, enforces the password
+    strength policy + reuse check, rotates the hash (which voids this and
+    every other outstanding reset link), and revokes every outstanding
+    token so any existing sessions die. A rejected password leaves the
+    token usable.
     """
-    user_id = decode_reset_token(body.token)
-    if not user_id:
+    claim = decode_reset_token(body.token)
+    if not claim:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=_INVALID_RESET_TOKEN,
         )
 
-    user = await asyncio.to_thread(_get_user, session, user_id)
+    # Locked so two confirms of one link serialize: the second reads the
+    # password_changed_at the first wrote, and fails is_current.
+    user = await asyncio.to_thread(_get_user, session, claim.user_id, True)
     if user is not None and _is_service_account(user):
         logger.warning("Refused password reset for service account %s", user.username)
         raise HTTPException(
@@ -1250,6 +1255,11 @@ async def password_reset_confirm(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Account no longer eligible for reset",
+        )
+    if not is_current(claim, user):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_INVALID_RESET_TOKEN,
         )
 
     try:
@@ -1266,11 +1276,6 @@ async def password_reset_confirm(
 
     try:
         await asyncio.to_thread(_apply_new_password, user, body.new_password)
-        if not await consume_reset_token(body.token):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=_INVALID_RESET_TOKEN,
-            )
         # Clear any active lockout so the user can immediately log in.
         user.failed_login_count = 0
         user.locked_until = None

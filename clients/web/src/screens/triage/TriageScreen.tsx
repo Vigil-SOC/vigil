@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type React
 import { Link, useSearchParams } from 'react-router-dom'
 import { DataTable, type ColumnDef } from '../../shared/DataTable'
 import { Icon } from '../../shared/icons'
+import { usePageSnapshot } from '../../shell/pageSnapshot'
 import { FilterChip } from '../../shared/FilterChip'
 import { InfoTip } from '../../shared/InfoTip'
 import { NotMeasured } from '../../shared/NotMeasured'
@@ -12,6 +13,7 @@ import type { ConsoleScreenProps } from '../../shared/types'
 import { parseSourceEvidence } from '../../data/sourceEvidence'
 import { SourceEvidenceSection } from '../dashboard/SourceEvidenceSection'
 import { triageApi, type TriagePayload, type TriageRow, type TriageSource } from '../../services/api'
+import FindingDetails from '../../shared/FindingDetails'
 
 const POLL_MS = 10_000
 const ROW_CAP = 200 // the server stops at this many rows
@@ -82,7 +84,7 @@ function lagNote(source: TriageSource): string {
 // "Grouped into, and why": the door (when there is one) is drawn as a link, this follows it
 function groupedRest(row: TriageRow): string {
   if (!row.case_door) return row.workflow_id || BLANK
-  const why = row.state === 'launched' ? ' (new)' : row.state === 'merged' ? ' · overlaps open work' : ''
+  const why = row.state === 'launched' ? ' (new)' : row.state === 'merged' && row.merge_note ? ` · ${row.merge_note}` : ''
   return `${why}${row.workflow_id ? ` · ${row.workflow_id}` : ''}`
 }
 
@@ -128,7 +130,7 @@ function Tiles({ data }: { data: TriagePayload }) {
       <Tile label="Cases created today" info={<InfoTip label="How cases created today is worked out" {...info.cases_created_today} />}>
         <div className="tq-tile-val">{data.strip.cases_created_today}</div>
       </Tile>
-      <Tile label="Waiting in line" info={<InfoTip label="How waiting in line is worked out" {...info.waiting} />}>
+      <Tile label="Waiting for triage" info={<InfoTip label="How waiting for triage is worked out" {...info.waiting} />}>
         <div className="tq-tile-val">{data.strip.waiting}</div>
       </Tile>
       <Tile label="Trust floor">
@@ -237,7 +239,7 @@ function Expanded({ row, data }: { row: TriageRow; data: TriagePayload }) {
       <BreakdownRow label="Source trust"><NotMeasured align="end" tip={tips.trust} /></BreakdownRow>
       <BreakdownRow label="Weight"><NotMeasured align="end" tip={tips.weight} /></BreakdownRow>
       <BreakdownRow label="Score against a floor"><NotMeasured align="end" tip={tips.score} /></BreakdownRow>
-      {row.kind === 'detection' && <div className="tq-evidence"><EvidenceBody row={row} /></div>}
+      {row.kind === 'detection' && <div className="tq-evidence"><EvidenceBody row={row} />{row.finding_id && <FindingDetails findingId={row.finding_id} />}</div>}
       <div className="tq-actions">
         {row.source_link && (
           <a href={row.source_link} target="_blank" rel="noopener noreferrer">Open in source</a>
@@ -257,6 +259,11 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
   const state = searchParams.get('state') ?? ''
   const [phase, setPhase] = useState<Phase>('loading')
   const [data, setData] = useState<TriagePayload | null>(null)
+  usePageSnapshot('triage', phase === 'ready' && data ? [
+    `Triage queue: ${data.matched} items. Picked up automatically ${data.strip.picked_up.launched_or_merged} of ${data.strip.picked_up.created_today} today; cases created today ${data.strip.cases_created_today}; waiting in line ${data.strip.waiting}.`,
+    'Rows (arrived | kind | source | alert | severity | what happened | picked up in | grouped into | finding):',
+    ...data.rows.slice(0, 60).map((r) => [r.created_at ?? '-', r.kind_label, r.source || '-', r.title || r.description || r.document || '-', r.severity_band, r.state_label, r.pickup_seconds ?? '-', r.case_door || r.workflow_id || '-', r.finding_id ?? '-'].join(' | ')),
+  ].join('\n') : '')
   const [openId, setOpenId] = useState<number | null>(null)
   const loadTicket = useRef(0)
   const loadedFilter = useRef('')

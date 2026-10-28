@@ -17,6 +17,7 @@ from typing import Callable, List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from core.auth.permissions import deny_unless, permission_gate
 from core.llm.bifrost.admin import sync_after_ollama_start
 from core.platform import service_manager
 from core.platform.autostart_config import (
@@ -26,9 +27,10 @@ from core.platform.autostart_config import (
 from core.platform.service_manager import SERVICES, ActionResult, ServiceStatus
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
-from services.api.middleware.auth import get_current_active_user, require_settings_admin
+from services.api.middleware.auth import get_current_active_user
 
 router = APIRouter()
+router.dependencies.append(permission_gate("platform.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/services",
@@ -98,7 +100,7 @@ def get_splunk_status():
 
 @router.post("/splunk/start")
 def start_splunk(current_user: User = Depends(get_current_active_user)):
-    require_settings_admin(current_user)
+    deny_unless(current_user.user_id, "platform.write")
     r = service_manager.start("splunk")
     if not r.success:
         raise HTTPException(status_code=500, detail=r.message)
@@ -123,7 +125,7 @@ def start_splunk(current_user: User = Depends(get_current_active_user)):
 
 @router.post("/splunk/stop")
 def stop_splunk(current_user: User = Depends(get_current_active_user)):
-    require_settings_admin(current_user)
+    deny_unless(current_user.user_id, "platform.write")
     r = service_manager.stop("splunk")
     if not r.success:
         raise HTTPException(status_code=500, detail=r.message)
@@ -132,7 +134,7 @@ def stop_splunk(current_user: User = Depends(get_current_active_user)):
 
 @router.post("/splunk/restart")
 def restart_splunk(current_user: User = Depends(get_current_active_user)):
-    require_settings_admin(current_user)
+    deny_unless(current_user.user_id, "platform.write")
     r = service_manager.restart("splunk")
     if not r.success:
         raise HTTPException(status_code=500, detail=r.message)
@@ -169,7 +171,7 @@ def read_autostart():
 def write_autostart(
     body: AutostartRequest, current_user: User = Depends(get_current_active_user)
 ):
-    require_settings_admin(current_user)
+    deny_unless(current_user.user_id, "platform.write")
     try:
         return {"services": set_autostart_services(body.services)}
     except ValueError as e:
@@ -206,7 +208,7 @@ def service_start(
     wait: bool = Query(False),
     current_user: User = Depends(get_current_active_user),
 ):
-    require_settings_admin(current_user)
+    deny_unless(current_user.user_id, "platform.write")
     _resolve(name)
     # Composition root: the API may depend on both tiers, so it hands the LLM
     # catalog refresh to the platform supervisor, which must not import it.
@@ -219,7 +221,7 @@ def service_start(
 
 def _lifecycle(name: str, current_user: User, action: Callable[[str], ActionResult]):
     """Shared body for the stop/restart routes: gate, resolve, act, translate."""
-    require_settings_admin(current_user)
+    deny_unless(current_user.user_id, "platform.write")
     _resolve(name)
     r = action(name)
     if not r.success:

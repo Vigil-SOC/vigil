@@ -64,7 +64,56 @@ def _seeded_roles() -> dict[str, dict[str, bool]]:
         ):
             if role_id in roles:
                 roles[role_id] = {**json.loads(grants), **roles[role_id]}
-    return roles
+    return _apply_catalog(roles)
+
+
+def _apply_catalog(roles: dict[str, dict[str, bool]]) -> dict[str, dict[str, bool]]:
+    """0008's ``permissions || successor`` rules. Later keys win, as in the SQL.
+
+    The revision's statement is not a ``'(role-id)', '{...}'::jsonb`` row, so
+    the regex above does not see it.
+    """
+    reads = {
+        "detections.read": True,
+        "automation.read": True,
+        "ai_autonomy.read": True,
+        "platform.read": True,
+        "ai_decisions.read": True,
+        "integrations.read": True,
+    }
+    from_write = (
+        "detections.write",
+        "automation.write",
+        "ai_autonomy.write",
+        "ai_autonomy.stop",
+        "platform.write",
+    )
+    out = {}
+    for role_id, grants in roles.items():
+        updated = dict(grants)
+        if grants.get("settings.write"):
+            updated.update({name: True for name in from_write})
+        if grants.get("settings.read"):
+            for name in (
+                "detections.read",
+                "automation.read",
+                "ai_autonomy.read",
+                "platform.read",
+            ):
+                updated[name] = True
+        if grants.get("integrations.write"):
+            updated["integrations.install"] = True
+        if grants.get("cases.write"):
+            updated["cases.assign"] = True
+        updated.update(reads)
+        if "settings.read" in grants:
+            updated["settings.read"] = True
+        if role_id == "role-senior-analyst":
+            updated["ai_autonomy.stop"] = True
+        if role_id == "role-admin":
+            updated["roles.manage"] = True
+        out[role_id] = updated
+    return out
 
 
 def _gated_routes() -> list[tuple[str, str, tuple[tuple[str, bool], ...]]]:
@@ -184,6 +233,10 @@ def client(maker, monkeypatch):
 
     monkeypatch.setattr(current_user_module, "DEV_MODE", False)
     monkeypatch.setattr(current_user_module, "is_token_revoked", _not_revoked)
+    # The seeded grants include 0008, so the matrix checks the declared names.
+    monkeypatch.setattr(
+        "core.auth.permissions.catalog_revision_applied", lambda session: True
+    )
     # check_permission opens its own session through the unit of work.
     monkeypatch.setattr("core.storage.unit_of_work.get_db_session", maker)
     backend_main.app.dependency_overrides[request_unit_of_work] = _session

@@ -423,13 +423,14 @@ export function workerAt(fold: HuntFold, iteration: number): string | null {
 
 /**
  * Who wrote a record row. A case activity is typed by its own activity_type, never as the run-event
- * kind it may share a name with: runs and findings are the agent's, a merge the system's, the rest
- * an analyst's.
+ * kind it may share a name with: runs, their proposals and findings are the agent's, a merge or a
+ * repeated request the system's, the rest (approvals included) an analyst's. An audit trail row's kind is the server's word for its actor's principal.
  */
 export function recordChip(kind: string, source = 'run'): RecordChip {
+  if (source === 'audit_trail') return kind === 'human' || kind === 'system' ? kind : 'agent'
   if (source === 'case_activities') {
-    if (kind.startsWith('agent_run_') || kind === 'finding_added') return 'agent'
-    return kind === 'case_merged' ? 'system' : 'human'
+    if (kind.startsWith('agent_run_') || kind === 'finding_added' || kind === 'actions_proposed') return 'agent'
+    return kind === 'case_merged' || kind === 'alert_added' || kind === 'action_already_requested' ? 'system' : 'human'
   }
   switch (kind) {
     case 'recall':

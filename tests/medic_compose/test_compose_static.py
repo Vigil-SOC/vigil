@@ -267,6 +267,7 @@ def test_medic_watches_the_agent_worker_on_medic_net(on) -> None:
     env = env_of(on["services"]["medic"])
     assert env["VIGIL_MEDIC_INSTALL_SHAPE"] == "compose"
     assert env["VIGIL_MEDIC_AGENT_WORKER_ADDR"] == "agent-worker:6990"
+    assert env["VIGIL_MEDIC_DAEMON_ADDR"] == "soc-daemon:9091"
 
 
 def test_medic_is_told_the_docker_proxy_address(on) -> None:

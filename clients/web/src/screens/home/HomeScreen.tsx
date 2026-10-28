@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
-import { approvalsApi, configApi, triageApi, type NeedsYouItem } from '../../services/api'
+import { approvalsApi, configApi, ingestionApi, triageApi, type NeedsYouItem } from '../../services/api'
 import type { Schema } from '../../services/apiTypes'
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
@@ -9,7 +9,14 @@ import { InfoTip } from '../../shared/InfoTip'
 import { LIVE_COMMANDS } from '../../shell/commandBarModel'
 import { useToast } from '../../shell/toast'
 import { useFusedDecision } from '../../shell/useFusedDecision'
-import { HOME_SETUP_ID, hideSetupStep, openSetupSteps, readSetupHidden } from './setupHidden'
+import {
+  HOME_SETUP_ID,
+  clearSetupHidden,
+  hideSetupStep,
+  hideSetupSteps,
+  openSetupSteps,
+  readSetupHidden,
+} from './setupHidden'
 import { errorText } from '../../shared/errorText'
 import './home.css'
 
@@ -109,7 +116,10 @@ function DecisionCard({
   const [rejecting, setRejecting] = useState(false)
   const [reason, setReason] = useState('')
   const caseId = item.case_id
-  const meta = [caseId && `Case ${caseId}`, item.reason].filter(Boolean).join(' · ')
+  const asking = item.case_ids?.length ?? 0
+  const meta = [caseId && `Case ${caseId}`, asking > 1 && `requested by ${asking} cases`, item.reason]
+    .filter(Boolean)
+    .join(' · ')
   const ask = cardAsk(item)
 
   return (
@@ -256,6 +266,9 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
   }, [settled, load])
 
   const dismiss = (id: string) => setHidden(hideSetupStep(hidden, id))
+  // Hide setup hides every served step; a step the server starts serving later shows up again
+  const hideAll = () => setHidden(hideSetupSteps(hidden, (setup?.steps ?? []).map((step) => step.id)))
+  const showHidden = () => setHidden(clearSetupHidden())
 
   // ?section=setup (the shell's Finish setup chip) scrolls to whichever setup list is showing,
   // once the steps have loaded and picked it
@@ -276,6 +289,21 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
       setSetup((current) => (current ? { ...current, demo_enabled: true } : current))
     } catch (err) {
       setSetupError(errorText(err, 'Could not enable demo mode'))
+    } finally {
+      setDemoBusy(false)
+    }
+  }
+
+  const sendSamples = async () => {
+    setDemoBusy(true)
+    try {
+      const res = await ingestionApi.loadSampleAlerts()
+      setDemoMessage(
+        `${res.data.loaded} sample alerts stored. Vigil triages them within about five minutes; ` +
+          'clear them from Settings, Data.',
+      )
+    } catch (err) {
+      setDemoMessage(errorText(err, 'Could not load sample alerts'))
     } finally {
       setDemoBusy(false)
     }
@@ -322,6 +350,17 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
     ...(setup?.steps ?? []).filter((step) => step.done),
   ]
   const nextStepId = checklist.find((step) => !step.done)?.id
+  const anyHidden = (setup?.steps ?? []).some((step) => hidden.includes(step.id))
+  const hideSetupButton = (
+    <button type="button" className="home-step-skip" onClick={hideAll}>
+      Hide setup
+    </button>
+  )
+  const showHiddenButton = (
+    <button type="button" className="home-step-skip" onClick={showHidden}>
+      Show hidden steps
+    </button>
+  )
   // Later commands stay in the palette. A trailing space is the bar's signal to open that command's preview.
   const shownChips = fillCommand ? LIVE_COMMANDS : []
   const boardClear = shownCount !== null && !error && shown.length === 0 && !noAlerts
@@ -386,7 +425,11 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
               'Get more from Vigil',
               'Fixed order · most impact first',
               <InfoTip label="How Get more from Vigil is calculated" align="start" {...SETUP_TIP} />,
-              <Link to="/settings?section=integrations">Browse integrations →</Link>,
+              <div className="home-head-actions">
+                {anyHidden && showHiddenButton}
+                {openSteps.length > 0 && hideSetupButton}
+                <Link to="/settings?section=integrations">Browse integrations →</Link>
+              </div>,
             )}
             {setupError && <p role="alert">{setupError}</p>}
             {openSteps.length > 0 ? (
@@ -434,9 +477,13 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
                   <h2>Get Vigil ready</h2>
                   <p>Tick steps off as you go.</p>
                 </div>
-                <span className="home-ready-count" aria-live="polite">
-                  {doneCount} of {stepCount} done
-                </span>
+                <div className="home-head-actions">
+                  {/* the checklist keeps rendering (ON-P2); hiding only drops the chip and menu count */}
+                  {anyHidden ? showHiddenButton : openSteps.length > 0 && hideSetupButton}
+                  <span className="home-ready-count" aria-live="polite">
+                    {doneCount} of {stepCount} done
+                  </span>
+                </div>
               </div>
               <div className="home-bar" aria-hidden="true">
                 <span
@@ -485,14 +532,20 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
               <div className="home-notready">
                 <h3>Not ready to connect yet?</h3>
                 <p>
-                  Load a day of demo data from a sample estate. Everything is labelled demo and can be cleared in
-                  one click.
+                  Load a day of demo data from a sample estate, or send a few sample alerts and watch Vigil triage
+                  them. Both are labelled and can be cleared in one click.
                 </p>
                 <div className="home-notready-actions">
                   {!setup.demo_enabled && (
                     <button type="button" className="btn" disabled={demoBusy} onClick={() => void exploreDemo()}>
                       <Icon name="play" size={13} />
                       Explore with demo data
+                    </button>
+                  )}
+                  {!setup.demo_enabled && (
+                    <button type="button" className="btn" disabled={demoBusy} onClick={() => void sendSamples()}>
+                      <Icon name="plus" size={13} />
+                      Send sample alerts
                     </button>
                   )}
                   {startTour && (

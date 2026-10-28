@@ -6,36 +6,40 @@ Design:
   secret is reused from JWT_SECRET_KEY so we don't have yet another key
   to rotate; it's fine because the salt (purpose tag) keeps the two
   token spaces separate.
-- Tokens are **single-use**: on successful confirm we write the token's
-  hash into Redis, and any subsequent confirm with the same token is
-  rejected. TTL on that record matches token lifetime so it auto-expires.
-- If Redis is unavailable, we fall back to time-based expiry only. A
-  cache outage downgrades single-use to "valid once per TTL window" —
-  acceptable; the alternative is to reject all reset attempts during
-  the outage, which could lock users out.
+- Tokens are **single-use** by binding them to the account's password
+  state: the payload carries the user_id and the user's
+  ``password_changed_at`` at issue time (null if never changed). Every
+  password set — a completed reset or a change by any route — moves that
+  timestamp, so the confirm handler rejects any link whose stamp no longer
+  matches. A completed reset therefore voids that link and every other
+  outstanding one, with no cache involved; the confirm path locks the user
+  row so two confirms of one link cannot both pass.
+- A token without the stamp (issued before this rule) is invalid.
 
-The token payload is just the user_id. We look up the user at confirm
-time; if the email changed, that's fine — the reset still binds to the
-original user. If the account was deactivated in the meantime, the
-confirm handler rejects.
+We look up the user at confirm time; if the email changed, that's fine —
+the reset still binds to the original user. If the account was deactivated
+in the meantime, the confirm handler rejects.
 """
 
-import hashlib
 import logging
 import os
-from typing import Optional
+from datetime import datetime
+from typing import NamedTuple, Optional
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from core.config import get_settings
-from core.redis_client import get_async_redis
 
 logger = logging.getLogger(__name__)
 
 
 RESET_TOKEN_PURPOSE = "vigil-password-reset"
 
-_USED_TOKEN_PREFIX = "password_reset_used:"
+
+class ResetClaim(NamedTuple):
+    user_id: str
+    # isoformat of password_changed_at when issued; None if it was NULL.
+    changed_at: Optional[str]
 
 
 def _ttl_seconds() -> int:
@@ -49,19 +53,17 @@ def _get_serializer() -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(JWT_SECRET_KEY, salt=RESET_TOKEN_PURPOSE)
 
 
-def _token_hash(token: str) -> str:
-    """Stable hash of a token used as the "used" flag key in Redis. We
-    don't store the raw token because writing tokens into the cache, even
-    short-lived, expands the blast radius if Redis itself is breached."""
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+def _stamp(changed_at: Optional[datetime]) -> Optional[str]:
+    # isoformat keeps microseconds, so two sets in the same second still differ.
+    return changed_at.isoformat() if changed_at else None
 
 
-def _redis_client():
-    return get_async_redis("reset single-use check")
-
-
-def generate_reset_token(user_id: str) -> str:
-    return _get_serializer().dumps({"user_id": user_id})
+def generate_reset_token(user) -> str:
+    """Sign a reset token for ``user`` (anything with user_id and
+    password_changed_at), valid until its password next changes."""
+    return _get_serializer().dumps(
+        {"user_id": user.user_id, "changed_at": _stamp(user.password_changed_at)}
+    )
 
 
 def default_base_url(settings) -> str:
@@ -78,10 +80,11 @@ def reset_link(base_url: str, token: str) -> str:
     return f"{base_url.rstrip('/')}/reset-password?token={token}"
 
 
-def decode_reset_token(token: str) -> Optional[str]:
+def decode_reset_token(token: str) -> Optional[ResetClaim]:
     """
-    Return the user_id the token was issued for, or None if its signature
-    is bad or its TTL has passed. Does not check or record single use.
+    Return what the token was issued for, or None if its signature is bad,
+    its TTL has passed, or it predates the password stamp. Check the claim
+    against the user with ``is_current`` before acting on it.
     """
     try:
         payload = _get_serializer().loads(token, max_age=_ttl_seconds())
@@ -92,26 +95,16 @@ def decode_reset_token(token: str) -> Optional[str]:
         logger.info("Password reset token has a bad signature")
         return None
 
-    user_id = payload.get("user_id") if isinstance(payload, dict) else None
-    return user_id or None
+    if not isinstance(payload, dict) or not payload.get("user_id"):
+        return None
+    if "changed_at" not in payload:
+        logger.info("Password reset token predates the password stamp")
+        return None
+    return ResetClaim(payload["user_id"], payload["changed_at"])
 
 
-async def consume_reset_token(token: str) -> bool:
-    """
-    Mark the token used. Return False if it was already used, so a replay
-    within the TTL window is rejected.
-    """
-    client = _redis_client()
-    if client is None:
-        return True
-    try:
-        key = f"{_USED_TOKEN_PREFIX}{_token_hash(token)}"
-        if not await client.set(key, "1", ex=_ttl_seconds(), nx=True):
-            logger.info("Password reset token replay rejected")
-            return False
-    except Exception as exc:
-        logger.warning(
-            "Password reset single-use check failed (%s); allowing by signature only",
-            exc,
-        )
-    return True
+def is_current(claim: ResetClaim, user) -> bool:
+    """True while the user's password hasn't changed since the token was issued."""
+    return claim.user_id == user.user_id and claim.changed_at == _stamp(
+        user.password_changed_at
+    )

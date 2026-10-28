@@ -581,3 +581,53 @@ def test_a_hunt_with_no_case_names_the_case_its_handoff_opened():
     ]
     rows = merge_record([("r1", events)], [])
     assert rows[0]["text"] == f"Ended — as {handoff_case_id('r1', 'case-bbdf5773')}"
+
+
+def _entry(seq, at, kind, label, sentence, **payload):
+    actor = {"id": f"p-{seq}", "label": label, "kind": kind}
+    actor.update(deleted=False, erased=kind == "person" and label is None)
+    return {
+        "seq": seq,
+        "occurred_at": at,
+        "payload": {"action": "case.comment", "case_id": "case-1", **payload},
+        "actor": actor if kind else None,
+        "actor_text": None,
+        "sentence": sentence,
+    }
+
+
+def test_trail_rows_name_the_actor_and_are_typed_by_principal_kind():
+    entries = [
+        _entry(
+            1, "2026-06-01T00:00:00+00:00", "person", "Ada", "Commented on the case"
+        ),
+        _entry(2, "2026-06-02T00:00:00+00:00", "agent", "Hunt", "Closed the case"),
+        _entry(3, "2026-06-03T00:00:00+00:00", "system", "the system", "Escalated"),
+        _entry(4, "2026-06-04T00:00:00+00:00", "person", None, "Edited a comment"),
+    ]
+    rows = merge_record([], [], trail=entries)
+    assert [(r["kind"], r["source"], r["chained"]) for r in rows] == [
+        ("human", "audit_trail", False),
+        ("system", "audit_trail", False),
+        ("agent", "audit_trail", False),
+        ("human", "audit_trail", False),
+    ]
+    assert rows[0]["text"] == "p-4 (erased) edited a comment"
+    assert rows[3]["text"] == "Ada commented on the case"
+
+
+def test_a_legacy_row_copied_to_the_trail_is_shown_once():
+    at = datetime(2026, 6, 2, tzinfo=timezone.utc)
+    audits = [_audit(7, at, "ada commented"), _audit(8, at, "ada escalated")]
+    copy = _entry(
+        1,
+        "2026-06-02T00:00:00+00:00",
+        "person",
+        "Ada",
+        "Commented on the case",
+        legacy={"table": "case_audit_logs", "id": 7},
+    )
+    ids = {r["id"] for r in merge_record([], audits, trail=[copy])}
+    assert ids == {"trail:1", "audit:8"}
+    ids = {r["id"] for r in merge_record([], audits)}
+    assert ids == {"audit:7", "audit:8"}

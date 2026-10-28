@@ -115,6 +115,6 @@ export const TITLES: Record<ConsoleScreenKey, [string, string]> = {
   decisions: ['AI Decisions', 'Review and provide feedback for AI decisions'],
   workflows: ['Agents & workflows', 'How Vigil works a case. Workflows are the plays, agents do the work, skills are what agents know how to do, and tool permissions decide what they may change on their own.'],
   autoops: ['Auto Ops', 'Autonomous operations — master orchestrator and sub-agent investigations'],
-  health: ['Health', 'Operational health — LLM spend, approvals waiting, recent workflow runs, probe scores'],
+  health: ['Health', 'Operational health — approvals waiting, recent workflow runs, probe scores'],
   settings: ['Settings', 'Configure Vigil — AI, integrations, users and platform'],
 }

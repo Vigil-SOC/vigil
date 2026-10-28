@@ -9,7 +9,18 @@ import { SETUP_HIDDEN_KEY } from '../screens/home/setupHidden'
 import { NAV } from '../data/data'
 import { notifyAutonomyChanged } from '../screens/settings/useSettings'
 // these resolve to the mocked implementations (vi.mock below is hoisted)
-import api, { streamFetch, aiDecisionsApi, approvalsApi, workflowApi, casesApi, configApi, consoleApi, overviewApi, timelineApi } from '../services/api'
+import { streamFetch, aiDecisionsApi, approvalsApi, autonomyApi, workflowApi, casesApi, configApi, consoleApi, overviewApi, timelineApi } from '../services/api'
+
+const CEILING = vi.hoisted(() => ({
+  act_reversible: true,
+  act_irreversible: false,
+  stopped: false,
+  read: true,
+  write: true,
+  propose: true,
+  environment_locked: false,
+  four_eyes: false,
+}))
 
 const authState = vi.hoisted(() => ({
   allow: (_permission: string): boolean => true,
@@ -81,6 +92,7 @@ vi.mock('../services/api', () => ({
     getEvidence: () => Promise.resolve({ data: { evidence: [] } }),
     getIOCs: () => Promise.resolve({ data: { iocs: [] } }),
     getEscalations: () => Promise.resolve({ data: { escalations: [] } }),
+    getRelationships: () => Promise.resolve({ data: { relationships: [] } }),
   },
   exclusionsApi: {
     list: () => Promise.resolve({ data: { exclusions: [], total: 0 } }),
@@ -206,6 +218,11 @@ vi.mock('../services/api', () => ({
       }),
     submitFeedback: vi.fn(() => Promise.resolve({})),
   },
+  autonomyApi: {
+    get: vi.fn(() => Promise.resolve({ data: CEILING })),
+    update: vi.fn(),
+    resume: vi.fn(),
+  },
   approvalsApi: {
     listPending: vi.fn(() => Promise.resolve({ data: { actions: [] } })),
     needsYou: vi.fn(() => Promise.resolve({ data: { count: 0, items: [] } })),
@@ -219,12 +236,8 @@ vi.mock('../services/api', () => ({
     getIntegrations: () => Promise.resolve({ data: { enabled_integrations: [] } }),
     getGeneral: () => Promise.resolve({ data: { show_notifications: false } }),
     getOrchestrator: () => Promise.resolve({ data: {} }),
-    getForceManualApproval: () => Promise.resolve({ data: { enabled: false, environment_wins: false } }),
     // the intent report card shows its own failed state; its contents aren't under test here
     getIntent: () => Promise.reject(new Error('not under test')),
-    getAutonomy: vi.fn(() => Promise.resolve({
-      data: { auto_response_enabled: true, force_manual_approval: false },
-    })),
     getDemoMode: vi.fn(() => Promise.resolve({ data: { enabled: false } })),
     getSetupSteps: vi.fn(() => Promise.resolve({
       data: { steps: [], alerts_exist: 1, demo_enabled: false },
@@ -313,7 +326,6 @@ const defaultViewportWidth = window.innerWidth
 afterEach(() => {
   authState.allow = () => true
   localStorage.clear()
-  sessionStorage.clear()
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: defaultViewportWidth })
   vi.mocked(approvalsApi.listPending).mockResolvedValue({ data: { actions: [] } } as never)
   vi.mocked(consoleApi.getHealth).mockResolvedValue({
@@ -323,9 +335,7 @@ afterEach(() => {
   vi.mocked(consoleApi.getProcesses).mockResolvedValue({
     data: { agent_layer: 'running', daemon: 'running' },
   } as never)
-  vi.mocked(configApi.getAutonomy).mockResolvedValue({
-    data: { auto_response_enabled: true, force_manual_approval: false },
-  } as never)
+  vi.mocked(autonomyApi.get).mockResolvedValue({ data: CEILING } as never)
   vi.mocked(configApi.getDemoMode).mockResolvedValue({ data: { enabled: false } } as never)
   vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
 })
@@ -490,6 +500,36 @@ describe('SocConsole', () => {
     expect(screen.getByRole('button', { name: 'More' })).toHaveClass('active')
   })
 
+  it('folds screens into More from the right end of the bar when it is too narrow', async () => {
+    // jsdom has no layout: the bar is 500px wide and every button takes 100px.
+    const scroll = vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('vg-nav') ? this.querySelectorAll(':scope > .vg-nav-btn, :scope > .vg-more > .vg-nav-btn').length * 100 : 0
+    })
+    const client = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('vg-nav') ? 500 : 0
+    })
+    try {
+      renderConsole('/overview')
+      const nav = await screen.findByRole('navigation', { name: 'Primary' })
+      const onBar = () => within(nav).getAllByRole('button').map((b) => (b.getAttribute('aria-label') ?? '').replace(/ \(.*\)$/, ''))
+      const pinned = onBar()
+      expect(pinned).toEqual(['Home', 'Overview', 'Triage queue', 'Cases', 'More'])
+
+      // opening a folded screen leaves the bar as it was and lights up More
+      for (const folded of ['Settings', 'Agents & workflows']) {
+        fireEvent.click(within(nav).getByRole('button', { name: 'More' }))
+        const menu = screen.getByRole('menu', { name: 'More screens' })
+        expect(within(menu).getAllByRole('button').slice(0, 2).map((b) => b.getAttribute('aria-label'))).toEqual(['Agents & workflows', 'Settings'])
+        fireEvent.click(within(menu).getByRole('button', { name: folded }))
+        await waitFor(() => expect(within(nav).getByRole('button', { name: 'More' })).toHaveClass('active'))
+        expect(onBar()).toEqual(pinned)
+      }
+    } finally {
+      scroll.mockRestore()
+      client.mockRestore()
+    }
+  })
+
   it('draws a rule between nav groups, never two together when Cases is hidden', () => {
     const rules = () =>
       Array.from(screen.getByRole('navigation', { name: 'Primary' }).children).map((el) =>
@@ -583,14 +623,14 @@ describe('SocConsole', () => {
 
     it('leaves out steps hidden with Not now, and shows no chip once every open step is hidden', async () => {
       read(true, false, false)
-      sessionStorage.setItem(SETUP_HIDDEN_KEY, JSON.stringify(['b', 'a']))
+      localStorage.setItem(SETUP_HIDDEN_KEY, JSON.stringify(['b', 'a']))
       const first = renderConsole()
       expect(await screen.findByRole('link', { name: tip(1) })).toHaveTextContent('1 left')
       fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
       expect(screen.getByRole('menuitem', { name: 'Finish setup 1 left' })).toBeInTheDocument()
       first.unmount()
 
-      sessionStorage.setItem(SETUP_HIDDEN_KEY, JSON.stringify(['b', 'c']))
+      localStorage.setItem(SETUP_HIDDEN_KEY, JSON.stringify(['b', 'c']))
       renderConsole()
       await waitFor(() => expect(configApi.getSetupSteps).toHaveBeenCalled())
       await screen.findByText('Security operations overview')
@@ -613,6 +653,24 @@ describe('SocConsole', () => {
       // the chip recounted from the hidden list, not a fresh read
       expect(vi.mocked(configApi.getSetupSteps).mock.calls.length).toBe(calls)
       expect(screen.getByTestId('console-location')).toHaveAttribute('data-path', '/home')
+    })
+
+    it('Hide setup drops the chip and menu item at once, and Show hidden steps brings them back', async () => {
+      read(false, false)
+      renderConsole('/home')
+      expect(await screen.findByRole('link', { name: tip(2) })).toBeInTheDocument()
+      const setup = await screen.findByRole('region', { name: 'Setup' })
+      fireEvent.click(within(setup).getByRole('button', { name: 'Hide setup' }))
+      await waitFor(() => expect(screen.queryByRole('link', { name: /Finish setting up Vigil/ })).not.toBeInTheDocument())
+      fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+      expect(screen.queryByRole('menuitem', { name: /^Finish setup/ })).not.toBeInTheDocument()
+      // one list, per browser: every served step id
+      expect(JSON.parse(localStorage.getItem(SETUP_HIDDEN_KEY) || '[]')).toEqual(['a', 'b'])
+
+      fireEvent.click(within(setup).getByRole('button', { name: 'Show hidden steps' }))
+      expect(await screen.findByRole('link', { name: tip(2) })).toBeInTheDocument()
+      expect(within(setup).getAllByRole('button', { name: 'Not now' })).toHaveLength(2)
+      expect(localStorage.getItem(SETUP_HIDDEN_KEY)).toBeNull()
     })
 
     it('shows no chip for people who cannot open Home', async () => {
@@ -688,26 +746,20 @@ describe('SocConsole', () => {
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Overview')
   })
 
-  it('shows spend, approval depth and recent run outcomes on the Health screen', async () => {
+  it('shows approval depth and recent run outcomes on the Health screen, and no spend', async () => {
     renderConsole('/health')
-    // once in the total KPI, once in the by-model row
-    expect(await screen.findAllByText('$1.25')).toHaveLength(2)
-    expect(screen.getByText('12.0k / 3.4k')).toBeInTheDocument()
-    expect(screen.getByText('gemini-2.5-flash')).toBeInTheDocument()
     expect(await screen.findByText('Nothing waiting')).toBeInTheDocument()
     // runs are joined onto the workflow's declared kind; the hunt has none and is left out
     expect(await screen.findByText('compose · 1 workflow')).toBeInTheDocument()
     expect(screen.getByText('1 ok · 1 failed · 2 total')).toBeInTheDocument()
     expect(screen.queryByText(/^hunt ·/)).not.toBeInTheDocument()
+    expect(screen.queryByText('LLM spend and tokens')).not.toBeInTheDocument()
   })
 
-  it('renders the Health screen as clean empties when nothing has run or spent', async () => {
-    const empty = { calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, cost_usd: 0, cache_hit_rate: 0 }
-    vi.mocked(api.get).mockResolvedValueOnce({ data: { totals: empty, by_model: [] } } as never)
+  it('renders the Health screen as clean empties when nothing has run', async () => {
     vi.mocked(workflowApi.listRuns).mockResolvedValue({ data: { runs: [] } } as never)
     try {
       renderConsole('/health')
-      expect(await screen.findByText('No LLM traffic in this window')).toBeInTheDocument()
       expect(await screen.findByText('No runs yet')).toBeInTheDocument()
       expect(await screen.findByText('Nothing waiting')).toBeInTheDocument()
       // an empty deploy shows copy, never a zero dressed up as a metric
@@ -1002,6 +1054,16 @@ describe('SocConsole', () => {
     expect(screen.getByRole('button', { name: /All decisions/ })).toBeInTheDocument()
   })
 
+  it('opens AI Decisions on ai_decisions.read, without review controls for a reader', async () => {
+    authState.allow = (permission: string) => permission !== 'ai_decisions.approve'
+    renderConsole()
+    clickScreen('AI Decisions')
+    fireEvent.click(await screen.findByText('Cluster merge'))
+    expect(screen.getByText('AI recommendation')).toBeInTheDocument()
+    expect(screen.queryByText('Your review')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Approve|Reject/ })).not.toBeInTheDocument()
+  })
+
   it('switches Workflows tabs and loads a read-only skills list from the API', async () => {
     renderConsole()
     clickScreen('Agents & workflows')
@@ -1273,7 +1335,7 @@ describe('SocConsole', () => {
     })
   })
 
-  it('shows Act, and Assist when force-manual is set or auto-response is off', async () => {
+  it('shows Act, and Assist when act is off, stopped or locked by the environment', async () => {
     const { unmount } = renderConsole()
     expect(await screen.findByText('Act · reversible changes on its own')).toBeInTheDocument()
     expect(screen.getByText('Autonomy', { selector: '.vg-autonomy-label' })).toBeInTheDocument()
@@ -1282,27 +1344,19 @@ describe('SocConsole', () => {
     expect(screen.getByRole('tooltip')).toHaveTextContent('while autonomy is stopped')
     unmount()
 
-    vi.mocked(configApi.getAutonomy).mockResolvedValueOnce({
-      data: { auto_response_enabled: true, force_manual_approval: true },
-    } as never)
-    const forced = renderConsole()
-    expect(await screen.findByText('Assist · asks before changes')).toBeInTheDocument()
-    forced.unmount()
-
-    vi.mocked(configApi.getAutonomy).mockResolvedValueOnce({
-      data: { auto_response_enabled: false, force_manual_approval: false },
-    } as never)
-    renderConsole()
-    expect(await screen.findByText('Assist · asks before changes')).toBeInTheDocument()
+    for (const off of [{ act_reversible: false }, { stopped: true }, { environment_locked: true }]) {
+      vi.mocked(autonomyApi.get).mockResolvedValueOnce({ data: { ...CEILING, ...off } } as never)
+      const assist = renderConsole()
+      expect(await screen.findByText('Assist · asks before changes')).toBeInTheDocument()
+      assist.unmount()
+    }
   })
 
   it('re-reads the autonomy badge when Settings saves Ask first / Act', async () => {
     renderConsole()
     expect(await screen.findByText('Act · reversible changes on its own')).toBeInTheDocument()
 
-    vi.mocked(configApi.getAutonomy).mockResolvedValueOnce({
-      data: { auto_response_enabled: true, force_manual_approval: true },
-    } as never)
+    vi.mocked(autonomyApi.get).mockResolvedValueOnce({ data: { ...CEILING, act_reversible: false } } as never)
     act(() => notifyAutonomyChanged())
     expect(await screen.findByText('Assist · asks before changes')).toBeInTheDocument()
   })
@@ -1315,9 +1369,7 @@ describe('SocConsole', () => {
     expect(where).toHaveAttribute('data-search', '?section=autoinvestigate')
     act.unmount()
 
-    vi.mocked(configApi.getAutonomy).mockResolvedValueOnce({
-      data: { auto_response_enabled: true, force_manual_approval: true },
-    } as never)
+    vi.mocked(autonomyApi.get).mockResolvedValueOnce({ data: { ...CEILING, act_reversible: false } } as never)
     renderConsole()
     fireEvent.click(await screen.findByRole('button', { name: 'Autonomy · Assist · asks before changes' }))
     expect(screen.getByTestId('console-location')).toHaveAttribute('data-search', '?section=autoinvestigate')
@@ -1422,8 +1474,8 @@ describe('SocConsole', () => {
     expect(line).not.toHaveTextContent('No routable provider.')
   })
 
-  it('shows No routable provider when settings.write is denied and nothing can route', async () => {
-    authState.allow = (permission) => permission !== 'settings.write'
+  it('shows No routable provider when platform.write is denied and nothing can route', async () => {
+    authState.allow = (permission) => permission !== 'platform.write'
     vi.mocked(consoleApi.getRoutability).mockResolvedValue({ data: { providers: {} } } as never)
     renderConsole()
     const line = await screen.findByRole('status', { name: 'System status' })

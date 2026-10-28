@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from core.auth import trail_events
+from core.auth.permissions import permission_gate
 from core.deps import provide_mcp_client, provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry, deactivate, register_connected
 from core.integrations.mcp.service import MCPService
@@ -26,6 +27,9 @@ from services.api.middleware.auth import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+router.dependencies.append(permission_gate("integrations.read"))
+# A dependency, not a handler call: it refuses before the MCP client resolves.
+_INTEGRATIONS_WRITE = [permission_gate("integrations.write")]
 
 ROUTER_META = RouterMeta(
     prefix="/api/mcp",
@@ -170,7 +174,7 @@ async def get_servers_status(mcp_client=Depends(provide_mcp_client)):
     return {"statuses": statuses}
 
 
-@router.put("/servers/{server_name}/enabled")
+@router.put("/servers/{server_name}/enabled", dependencies=_INTEGRATIONS_WRITE)
 async def set_server_enabled(
     server_name: str,
     request: ServerEnabledRequest,
@@ -190,7 +194,6 @@ async def set_server_enabled(
     the toggle back off and surface the real reason (e.g. missing creds,
     bad binary) when the connect attempt fails.
     """
-    require_integrations_admin(current_user)
     _validate_known_server(server_name)
 
     success = mcp_service.set_server_enabled(server_name, request.enabled)
@@ -301,7 +304,7 @@ def _spawn_changed(old, new) -> bool:
     return spawn(old) != spawn(new)
 
 
-@router.post("/servers/reload")
+@router.post("/servers/reload", dependencies=_INTEGRATIONS_WRITE)
 async def reload_servers(
     current_user: User = Depends(get_current_active_user),
     mcp_client=Depends(provide_mcp_client),
@@ -324,7 +327,6 @@ async def reload_servers(
     ``reconnected``, ``disconnected`` and ``failed`` (name → error) report
     what happened; ``success`` is false if any reconnect or disconnect failed.
     """
-    require_integrations_admin(current_user)
     logger.info("User %s requested MCP server reload", current_user.user_id)
     svc = _service()
     try:

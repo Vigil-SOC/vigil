@@ -1405,13 +1405,6 @@
       gap: 6px;
    }
 
-   .vg-more-menu.dh-menu {
-      top: calc(100% + 4px);
-      left: auto;
-      right: 0;
-      min-width: 168px;
-   }
-
    .dh-menu button {
       display: flex;
       align-items: center;
@@ -4864,6 +4857,49 @@
       outline-offset: 1px;
    }
 
+   /* Unconfirmed tools under the class cards: the board's rows and segment */
+   .lim-tools-head {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding-bottom: 10px;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--tx2);
+   }
+
+   .lim-tools-head h4 {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0;
+      font-size: 13px;
+      font-weight: 650;
+      color: var(--tx0);
+   }
+
+   .lim-tools-count {
+      padding: 0 7px;
+      border-radius: 999px;
+      background: var(--bg3);
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--tx1);
+   }
+
+   .lim-tool-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: var(--mono);
+   }
+
+   .lim-row-title .lim-tool-name {
+      font-size: 13px;
+      font-weight: 650;
+      color: var(--tx0);
+   }
+
    @media (max-width: 900px) {
       .lim-profiles,
       .lim-classes {
@@ -7484,3 +7520,16 @@
       color: var(--tx2);
    }
    .int-card-cta { margin-top: 4px; }
+
+/* FindingDetails: what a finding is about, under its source evidence */
+.fd { display: grid; gap: 12px; margin-top: 10px; }
+.fd-sec h4 { margin: 0 0 4px; font-size: 11px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; color: var(--tx-3); }
+.fd-sec p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--tx); }
+.fd-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.fd-chips a.chip { text-decoration: none; }
+.fd-list { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.5; color: var(--tx-2); }
+.fd-kv { display: grid; grid-template-columns: minmax(110px, max-content) 1fr; gap: 3px 12px; margin: 0; font-size: 12.5px; }
+.fd-kv > div { display: contents; }
+.fd-kv dt { color: var(--tx-3); }
+.fd-kv dd { margin: 0; color: var(--tx); font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.fd-muted { color: var(--tx-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

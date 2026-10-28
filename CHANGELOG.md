@@ -2,6 +2,8 @@
 
 ## Upgrade notes (unreleased)
 
+* **intake:** a new detection now joins the open Case for its incident, whether or not that Case's run has finished: it matches on a source IP (`src_ip`/`src_ips`), a file hash, or a hostname plus the same `data_source` and title (trimmed, case-insensitive) on a finding the Case already holds. The intake row ends `merged` with reason `entity_on_open_case` (the old `overlaps_open_work` reason is gone), the alert's entities are indexed against the Case's newest investigation, the Case gets one `alert_added` activity naming the match, and its priority rises to the alert's severity when that is higher. A hostname, username, domain or destination IP alone no longer merges. A new Case is linked (`related_to`, both ways) to the 5 most recently updated closed Cases it matches by the same rules; the old cross-correlation, which linked any Cases sharing an indicator, is removed, so Cases linked only by a shared user, domain or destination IP are no longer linked. No schema change ([#3292](https://github.com/Vigil-SOC/vigil/issues/3292)).
+
 * **audit:** once a database's trail is in use (Postgres at `0002_audit_trail` with `audit_trail` present), adding, editing and deleting a case comment, attaching a document, escalating a case, and approving or rejecting a response action each append one trail entry in the action's own transaction, naming the signed-in user's principal (the username, the previous comment text, the escalation reason and a rejection reason sit beside the hash). Those case actions then stop writing `case_audit_logs`, so the case Record tab no longer lists them; Settings › Audit does. A failed append rolls the action back. Below that revision nothing changes ([#2761](https://github.com/Vigil-SOC/vigil/issues/2761)).
 
 * **findings:** a technique confidence the source did not supply is stored as null, and readers must handle null. `true` is stored as unknown, not 1.0. `python -m core.upgrade` applies `0014_mitre_confidence_nullable`, which drops `NOT NULL` on `finding_mitre_predictions.confidence`. `PATCH /api/v1/findings/{id}` accepts a null confidence; the contract snapshot is regenerated ([#3221](https://github.com/Vigil-SOC/vigil/issues/3221)).
@@ -55,6 +57,13 @@
 * **compose:** the State Directory (`master.key`, `secrets.enc`) and `data/investigations` now live in the `vigil_home` and `vigil_investigations` named volumes, shared by `backend`, `soc-daemon` and `llm-worker` ([#1263](https://github.com/Vigil-SOC/vigil/issues/1263)). The first `up` after this change recreates those containers and drops whatever is still in their writable layers. Save the backend's copy first: `docker cp deeptempo-backend:/home/vigil/.vigil ./vigil-state-backup`. After the upgrade, copy it into the volume and restart: `docker cp ./vigil-state-backup/. deeptempo-backend:/home/vigil/.vigil/ && docker exec -u 0 deeptempo-backend chown -R 1000:1000 /home/vigil/.vigil && docker compose restart backend soc-daemon llm-worker`.
 * **desktop:** Bifrost's runtime settings (provider keys, virtual keys, budgets, rate limits) now persist in a `bifrost_data` named volume, so they survive quitting the app ([#1452](https://github.com/Vigil-SOC/vigil/issues/1452)). Earlier versions kept them in an anonymous volume that every quit orphaned; those are not migrated, so re-enter any Bifrost settings made in its UI once. Providers seeded from environment variables come back on their own. Reclaim the orphaned volumes with `docker volume prune`.
 * **compose:** Bifrost's request log (`logs.db`) now lives in the `bifrost_data` volume, so gateway log history, cost time series and `recalculate-cost` survive a container recreate ([#1454](https://github.com/Vigil-SOC/vigil/issues/1454)). It was written to `/app/logs.db` in the container's writable layer. Applies to the server and desktop standalone stacks. The config store is untouched, so no volume reset is needed. History already in `/app/logs.db` is not migrated: the first recreate drops it, as every recreate did before. Snapshots still leave `logs.db` out, and a restore moves the live one aside into `.pre-restore-<stamp>` in the Bifrost data directory rather than restoring it.
+
+## [0.9.0](https://github.com/Vigil-SOC/vigil/compare/v0.8.1...v0.9.0) (2026-10-28)
+
+
+### Miscellaneous Chores
+
+* release 0.9.0 ([#3328](https://github.com/Vigil-SOC/vigil/issues/3328)) ([8feb812](https://github.com/Vigil-SOC/vigil/commit/8feb8120ca15c0f7e506c99d2d3efa032cb38344))
 
 ## [0.8.1](https://github.com/Vigil-SOC/vigil/compare/v0.8.0...v0.8.1) (2026-10-27)
 

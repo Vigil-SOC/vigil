@@ -132,6 +132,19 @@ def test_compose_reads_the_gateway_on_medic_private() -> None:
     assert sensor.uses_vigil_api is True
 
 
+def test_the_gateway_also_carries_the_work_sensors() -> None:
+    work = {
+        s.id: s
+        for s in sensors_for({}, "compose")
+        if s.id in ("gateway.triage", "gateway.probe_findings")
+    }
+    assert {(s.host, s.port, s.uses_vigil_api) for s in work.values()} == {
+        ("medic-gateway-out", 8471, True)
+    }
+    assert len(work) == 2
+    assert not any(s.id.startswith("gateway.") for s in sensors_for({}, "start_sh"))
+
+
 def test_the_variable_sets_the_gateway_address() -> None:
     (sensor,) = _gateway({GATEWAY_VAR: "127.0.0.1:18471"}, "compose")
     assert (sensor.host, sensor.port) == ("127.0.0.1", 18471)
@@ -217,3 +230,33 @@ def test_dev_mode_off_values(value: str | None) -> None:
 @pytest.mark.parametrize("value", ["true", "TRUE", " yes ", "1", "on", "maybe"])
 def test_dev_mode_on_values(value: str) -> None:
     assert dev_mode({DEV_MODE_VAR: value}) is True
+
+
+def _daemon(env: dict[str, str], shape: str) -> list:
+    return [s for s in sensors_for(env, shape) if s.id.startswith("daemon.")]
+
+
+@pytest.mark.parametrize(
+    ("shape", "addr"),
+    [("compose", ("soc-daemon", 9091)), ("start_sh", ("127.0.0.1", 9091))],
+)
+def test_the_daemon_is_read_by_default_off_helm(shape: str, addr) -> None:
+    assert {(s.id, s.host, s.port) for s in _daemon({}, shape)} == {
+        ("daemon.health", *addr),
+        ("daemon.status", *addr),
+    }
+
+
+def test_helm_reads_the_daemon_only_when_the_chart_names_it() -> None:
+    # daemon.enabled=false: the chart sets no address, so "not installed" isn't "down".
+    assert _daemon(_env("helm"), "helm") == []
+    named = _daemon(
+        _env("helm", VIGIL_MEDIC_DAEMON_ADDR="rel-vigil-daemon:9091"), "helm"
+    )
+    assert {(s.host, s.port) for s in named} == {("rel-vigil-daemon", 9091)}
+
+
+def test_kafka_and_orchestrator_status_ride_the_gateway() -> None:
+    ids = {s.id for s in sensors_for({}, "compose")}
+    assert {"gateway.kafka_status", "gateway.orchestrator_status"} <= ids
+    assert not any(s.id.startswith("gateway.") for s in sensors_for({}, "start_sh"))

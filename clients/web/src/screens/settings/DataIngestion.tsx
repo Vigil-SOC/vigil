@@ -130,6 +130,102 @@ export function DemoDataClear({ notify }: SectionProps) {
   )
 }
 
+export const SAMPLE_TRIAGE_NOTE = 'The daemon triages them like any other alert, within about five minutes.'
+
+function errorDetail(e: unknown, fallback: string): string {
+  return (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || fallback
+}
+
+export function SampleAlertsCard({ notify }: SectionProps) {
+  const [loaded, setLoaded] = useState<number | null>(null)
+  const [total, setTotal] = useState(0)
+  const [busy, setBusy] = useState(false)
+  const [confirmClear, setConfirmClear] = useState(false)
+
+  useEffect(() => {
+    let live = true
+    ingestionApi
+      .sampleAlerts()
+      .then((res) => {
+        if (!live) return
+        setLoaded(res.data.loaded)
+        setTotal(res.data.total)
+      })
+      // 409 in demo mode: the demo card covers that case
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [])
+
+  if (loaded === null) return null
+
+  const load = async () => {
+    setBusy(true)
+    try {
+      const res = await ingestionApi.loadSampleAlerts()
+      setLoaded(res.data.loaded)
+      setTotal(res.data.total)
+      notify('ok', `${res.data.loaded} sample alerts stored. ${SAMPLE_TRIAGE_NOTE}`)
+    } catch (e) {
+      notify('err', errorDetail(e, 'Could not load sample alerts.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const clear = async () => {
+    setBusy(true)
+    try {
+      const res = await ingestionApi.clearSampleAlerts()
+      setLoaded(0)
+      const cases = res.data.cases_deleted
+      notify(
+        'ok',
+        `Removed ${res.data.findings_deleted} sample alerts` +
+          (cases ? ` and ${cases} case${cases === 1 ? '' : 's'} made from them.` : '.'),
+      )
+    } catch (e) {
+      notify('err', errorDetail(e, 'Could not clear sample alerts.'))
+    } finally {
+      setBusy(false)
+      setConfirmClear(false)
+    }
+  }
+
+  return (
+    <SettingsCard
+      title="Sample alerts"
+      desc="A short set of example alerts, stored next to your real ones and marked vigil-sample, to watch triage work before a source is connected."
+    >
+      <div className="flex flex-wrap items-center gap-2.5">
+        {loaded < total && (
+          <button className="btn primary" onClick={load} disabled={busy}>
+            {busy ? 'Loading…' : 'Load sample alerts'}
+          </button>
+        )}
+        {loaded > 0 && (
+          <button className="btn ghost" onClick={() => setConfirmClear(true)} disabled={busy}>
+            Clear sample alerts
+          </button>
+        )}
+        <span className="text-xs text-tx-3">
+          {loaded ? `${loaded} of ${total} stored. ${SAMPLE_TRIAGE_NOTE}` : `${total} alerts across every severity.`}
+        </span>
+      </div>
+      <ConfirmDialog
+        open={confirmClear}
+        title="Clear sample alerts"
+        body="Deletes the sample alerts and any case that holds only sample alerts. Your real alerts and cases are not touched."
+        confirmLabel="Clear"
+        busy={busy}
+        onConfirm={clear}
+        onClose={() => setConfirmClear(false)}
+      />
+    </SettingsCard>
+  )
+}
+
 export const ACCEPTED_UPLOAD_TYPES = '.parquet,.csv,.json,.jsonl,.ndjson'
 
 export function UploadCard({ notify }: SectionProps) {

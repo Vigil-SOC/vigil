@@ -32,19 +32,18 @@ vi.mock('../../services/api', () => ({
   llmProviderApi: { list: vi.fn(() => Promise.resolve({ data: [] })) },
   aiConfigApi: { getConfig: vi.fn(() => Promise.resolve({ data: { components: [], assignments: {} } })) },
   workflowApi: { listAll: vi.fn(() => Promise.resolve({ data: { workflows: [] } })) },
+  autonomyApi: {
+    get: vi.fn(() =>
+      Promise.resolve({ data: { act_reversible: false, stopped: false, environment_locked: false } }),
+    ),
+    update: vi.fn(),
+  },
   configApi: {
     getSetupState: vi.fn(() => Promise.resolve({ data: { furthest: 1, passed: [], finished: false } })),
     putSetupState: vi.fn(() => Promise.resolve({ data: {} })),
     getOrchestrator: vi.fn(() => Promise.resolve({ data: { profiles: {} } })),
     setOrchestrator: vi.fn(),
-    getForceManualApproval: vi.fn(() =>
-      Promise.resolve({ data: { enabled: false, environment_wins: false } }),
-    ),
-    setForceManualApproval: vi.fn(),
     getIntegrations: vi.fn(() => Promise.resolve({ data: {} })),
-    getAutonomy: vi.fn(() =>
-      Promise.resolve({ data: { auto_response_enabled: false, force_manual_approval: true } }),
-    ),
     setIntegrations: vi.fn(() => Promise.resolve({ data: {} })),
     getDemoMode: vi.fn(() => Promise.resolve({ data: { enabled: false, source: 'file' } })),
     setDemoMode: vi.fn(() => Promise.resolve({ data: { enabled: true } })),

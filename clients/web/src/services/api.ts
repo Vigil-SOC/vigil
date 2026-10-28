@@ -317,6 +317,10 @@ export const casesApi = {
   getEscalations: (id: string) =>
     api.get<Schema<'CaseEscalationsResponse'>>(`/cases/${id}/escalations`),
 
+  /** Links to other Cases, each with that Case's title and status. */
+  getRelationships: (id: string) =>
+    api.get<Schema<'CaseRelationshipsResponse'>>(`/cases/${id}/relationships`),
+
   // The merged record. There is no audit-log route; this read replaced it.
   getRecord: (id: string) =>
     api.get<CaseRecordResponse>(`/cases/${id}/record`),
@@ -574,11 +578,6 @@ export const configApi = {
   getTheme: () => api.get('/config/theme'),
   setTheme: (theme: string) => api.post('/config/theme', { theme }),
 
-  getAutonomy: () =>
-    api.get<{ auto_response_enabled: boolean; force_manual_approval: boolean }>(
-      '/config/autonomy',
-    ),
-  
   getPostgreSQL: () => api.get('/config/postgresql'),
   setPostgreSQL: (connection_string: string) => api.post('/config/postgresql', { connection_string }),
 
@@ -630,10 +629,6 @@ export const configApi = {
     for (const key of ['profiles', 'defaults', 'bounds']) delete rest[key]
     return api.post('/config/orchestrator', rest)
   },
-
-  getForceManualApproval: () => api.get('/config/force-manual-approval'),
-  setForceManualApproval: (enabled: boolean) =>
-    api.post('/config/force-manual-approval', { enabled }),
 }
 
 export interface PlatformDatabaseProxyConfig {
@@ -758,7 +753,14 @@ export const ingestionApi = {
   },
   listJobs: () => api.get<IngestionJob[]>('/ingest/jobs'),
   getJob: (jobId: string) => api.get<IngestionJob>(`/ingest/jobs/${jobId}`),
+  // a fixed set of example alerts, stored as findings the daemon triages
+  sampleAlerts: () => api.get<SampleAlertsStatus>('/ingest/sample-alerts'),
+  loadSampleAlerts: () => api.post<SampleAlertsStatus>('/ingest/sample-alerts'),
+  clearSampleAlerts: () => api.delete<SampleAlertsCleared>('/ingest/sample-alerts'),
 }
+
+export type SampleAlertsStatus = Schema<'SampleAlertsStatus'>
+export type SampleAlertsCleared = Schema<'SampleAlertsCleared'>
 
 export interface BudgetSettings {
   default_vk: string
@@ -1040,10 +1042,15 @@ export const workflowApi = {
 
 // The autonomy ceiling (#2918). Stop is orchestratorApi.kill; PUT has no stopped field.
 export type Ceiling = Schema<'CeilingResponse'>
+export type ToolClass = Schema<'ToolClassEntry'>
+export type EffectClass = NonNullable<ToolClass['effect_class']>
 export const autonomyApi = {
   get: () => api.get<Ceiling>('/autonomy'),
   update: (body: Schema<'CeilingBody'>) => api.put<Ceiling>('/autonomy', body),
   resume: () => api.post<Ceiling>('/autonomy/resume'),
+  tools: () => api.get<ToolClass[]>('/autonomy/tools'),
+  classifyTool: (name: string, effect_class: EffectClass) =>
+    api.put<ToolClass>(`/autonomy/tools/${encodeURIComponent(name)}`, { effect_class }),
 }
 
 export const orchestratorApi = {
@@ -1080,6 +1087,15 @@ export type AuditFilter = Omit<
   'after'
 >
 
+/** A principal an entry names, read from principals when the entry is read (#3308). */
+export interface AuditPrincipal {
+  id: string
+  label: string | null
+  kind: string | null
+  deleted: boolean
+  erased: boolean
+}
+
 export interface AuditEntry {
   seq: number
   occurred_at: string
@@ -1091,6 +1107,10 @@ export interface AuditEntry {
   operator_text: string | null
   attempted_name: string | null
   personal: unknown
+  actor?: AuditPrincipal | null
+  on_behalf_of?: AuditPrincipal | null
+  /** What the entry was, in words, from the server. */
+  sentence?: string
 }
 
 export interface AuditTip { seq: number; hash: string }
@@ -1389,6 +1409,8 @@ export interface OverviewPayload {
   agents: OverviewAgent[]
   feed: OverviewFeedItem[]
   feed_limit: number
+  // Set when the role lacks a read: that part is empty and this names it.
+  missing?: string[]
 }
 
 export const overviewApi = {
@@ -1411,6 +1433,7 @@ export interface TriageRow {
   pickup_seconds: number | null
   workflow_id: string
   case_door: string | null
+  merge_note: string | null
   document: string | null
   source_link: string | null
   source_evidence: Record<string, unknown> | null

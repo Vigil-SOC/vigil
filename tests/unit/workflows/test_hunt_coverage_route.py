@@ -18,7 +18,7 @@ PATH = "/api/workflows/threat-hunt/coverage"
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(monkeypatch, authenticate_app):
     """The workflows router alone, mounted as the app mounts it, over a patched
     prior-hunts read. Any reach for execute_workflow fails the test."""
     monkeypatch.setattr(
@@ -39,6 +39,7 @@ def client(monkeypatch):
 
     app = FastAPI()
     app.include_router(router.router, prefix=router.ROUTER_META.prefix)
+    authenticate_app(app)
     return TestClient(app)
 
 

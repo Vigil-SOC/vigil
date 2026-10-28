@@ -13,6 +13,9 @@ Every 15 s tick (semantics §1) the scheduler:
 - writes `sensor_health` for every sensor at least once per interval, also while
   backing off or stuck.
 
+A cycle whose every read is `not_installed` (an optional service that isn't there)
+is not a failure: it never counts toward `blind`; `last_error` records the class.
+
 Backoff (C7 §4) applies only after 3 `outcome: error` cycles in a row: the gap
 doubles up to 4 × interval, never past 5 min (and never below the interval),
 ±10% jitter, reset on success. A read that worked and says Vigil is down is a
@@ -212,7 +215,10 @@ class Scheduler:
         for draft in drafts:
             self.bus.put(draft)
         errors = [r.error for r in readings if r.error is not None]
-        if readings and len(errors) == len(readings):
+        # An optional service that isn't installed was read correctly: not a
+        # failure, so it never goes blind. `last_error` still says why.
+        absent = bool(errors) and all(e.cls == "not_installed" for e in errors)
+        if readings and len(errors) == len(readings) and not absent:
             self._failed_cycle(st, errors[-1])
         else:
             st.consecutive_failures = 0
@@ -220,7 +226,7 @@ class Scheduler:
             st.last_error = errors[-1] if errors else None
             self._schedule(st, backoff=False)
         st.last_done = self.clock.monotonic()
-        self._health(st, reported_by="sensor", partial=bool(errors))
+        self._health(st, reported_by="sensor", partial=bool(errors) and not absent)
 
     def _fail(self, st: _State, error: ReadError) -> None:
         """A cycle that produced nothing: crash or timeout."""
