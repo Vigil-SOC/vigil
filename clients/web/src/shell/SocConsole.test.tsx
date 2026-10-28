@@ -9,7 +9,7 @@ import { SETUP_HIDDEN_KEY } from '../screens/home/setupHidden'
 import { NAV } from '../data/data'
 import { notifyAutonomyChanged } from '../screens/settings/useSettings'
 // these resolve to the mocked implementations (vi.mock below is hoisted)
-import api, { streamFetch, aiDecisionsApi, approvalsApi, workflowApi, casesApi, configApi, consoleApi, overviewApi, timelineApi } from '../services/api'
+import { streamFetch, aiDecisionsApi, approvalsApi, workflowApi, casesApi, configApi, consoleApi, overviewApi, timelineApi } from '../services/api'
 
 const authState = vi.hoisted(() => ({
   allow: (_permission: string): boolean => true,
@@ -81,6 +81,7 @@ vi.mock('../services/api', () => ({
     getEvidence: () => Promise.resolve({ data: { evidence: [] } }),
     getIOCs: () => Promise.resolve({ data: { iocs: [] } }),
     getEscalations: () => Promise.resolve({ data: { escalations: [] } }),
+    getRelationships: () => Promise.resolve({ data: { relationships: [] } }),
   },
   exclusionsApi: {
     list: () => Promise.resolve({ data: { exclusions: [], total: 0 } }),
@@ -313,7 +314,6 @@ const defaultViewportWidth = window.innerWidth
 afterEach(() => {
   authState.allow = () => true
   localStorage.clear()
-  sessionStorage.clear()
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: defaultViewportWidth })
   vi.mocked(approvalsApi.listPending).mockResolvedValue({ data: { actions: [] } } as never)
   vi.mocked(consoleApi.getHealth).mockResolvedValue({
@@ -583,14 +583,14 @@ describe('SocConsole', () => {
 
     it('leaves out steps hidden with Not now, and shows no chip once every open step is hidden', async () => {
       read(true, false, false)
-      sessionStorage.setItem(SETUP_HIDDEN_KEY, JSON.stringify(['b', 'a']))
+      localStorage.setItem(SETUP_HIDDEN_KEY, JSON.stringify(['b', 'a']))
       const first = renderConsole()
       expect(await screen.findByRole('link', { name: tip(1) })).toHaveTextContent('1 left')
       fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
       expect(screen.getByRole('menuitem', { name: 'Finish setup 1 left' })).toBeInTheDocument()
       first.unmount()
 
-      sessionStorage.setItem(SETUP_HIDDEN_KEY, JSON.stringify(['b', 'c']))
+      localStorage.setItem(SETUP_HIDDEN_KEY, JSON.stringify(['b', 'c']))
       renderConsole()
       await waitFor(() => expect(configApi.getSetupSteps).toHaveBeenCalled())
       await screen.findByText('Security operations overview')
@@ -613,6 +613,24 @@ describe('SocConsole', () => {
       // the chip recounted from the hidden list, not a fresh read
       expect(vi.mocked(configApi.getSetupSteps).mock.calls.length).toBe(calls)
       expect(screen.getByTestId('console-location')).toHaveAttribute('data-path', '/home')
+    })
+
+    it('Hide setup drops the chip and menu item at once, and Show hidden steps brings them back', async () => {
+      read(false, false)
+      renderConsole('/home')
+      expect(await screen.findByRole('link', { name: tip(2) })).toBeInTheDocument()
+      const setup = await screen.findByRole('region', { name: 'Setup' })
+      fireEvent.click(within(setup).getByRole('button', { name: 'Hide setup' }))
+      await waitFor(() => expect(screen.queryByRole('link', { name: /Finish setting up Vigil/ })).not.toBeInTheDocument())
+      fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+      expect(screen.queryByRole('menuitem', { name: /^Finish setup/ })).not.toBeInTheDocument()
+      // one list, per browser: every served step id
+      expect(JSON.parse(localStorage.getItem(SETUP_HIDDEN_KEY) || '[]')).toEqual(['a', 'b'])
+
+      fireEvent.click(within(setup).getByRole('button', { name: 'Show hidden steps' }))
+      expect(await screen.findByRole('link', { name: tip(2) })).toBeInTheDocument()
+      expect(within(setup).getAllByRole('button', { name: 'Not now' })).toHaveLength(2)
+      expect(localStorage.getItem(SETUP_HIDDEN_KEY)).toBeNull()
     })
 
     it('shows no chip for people who cannot open Home', async () => {
@@ -688,26 +706,20 @@ describe('SocConsole', () => {
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Overview')
   })
 
-  it('shows spend, approval depth and recent run outcomes on the Health screen', async () => {
+  it('shows approval depth and recent run outcomes on the Health screen, and no spend', async () => {
     renderConsole('/health')
-    // once in the total KPI, once in the by-model row
-    expect(await screen.findAllByText('$1.25')).toHaveLength(2)
-    expect(screen.getByText('12.0k / 3.4k')).toBeInTheDocument()
-    expect(screen.getByText('gemini-2.5-flash')).toBeInTheDocument()
     expect(await screen.findByText('Nothing waiting')).toBeInTheDocument()
     // runs are joined onto the workflow's declared kind; the hunt has none and is left out
     expect(await screen.findByText('compose · 1 workflow')).toBeInTheDocument()
     expect(screen.getByText('1 ok · 1 failed · 2 total')).toBeInTheDocument()
     expect(screen.queryByText(/^hunt ·/)).not.toBeInTheDocument()
+    expect(screen.queryByText('LLM spend and tokens')).not.toBeInTheDocument()
   })
 
-  it('renders the Health screen as clean empties when nothing has run or spent', async () => {
-    const empty = { calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, cost_usd: 0, cache_hit_rate: 0 }
-    vi.mocked(api.get).mockResolvedValueOnce({ data: { totals: empty, by_model: [] } } as never)
+  it('renders the Health screen as clean empties when nothing has run', async () => {
     vi.mocked(workflowApi.listRuns).mockResolvedValue({ data: { runs: [] } } as never)
     try {
       renderConsole('/health')
-      expect(await screen.findByText('No LLM traffic in this window')).toBeInTheDocument()
       expect(await screen.findByText('No runs yet')).toBeInTheDocument()
       expect(await screen.findByText('Nothing waiting')).toBeInTheDocument()
       // an empty deploy shows copy, never a zero dressed up as a metric

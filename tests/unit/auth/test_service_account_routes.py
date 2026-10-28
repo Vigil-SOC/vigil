@@ -126,15 +126,12 @@ def app(maker, mail, monkeypatch):
     async def _not_revoked(payload):
         return False
 
-    redis = AsyncMock()
-    redis.set = AsyncMock(return_value=True)
     monkeypatch.setattr(current_user_module, "DEV_MODE", False)
     monkeypatch.setattr(current_user_module, "is_token_revoked", _not_revoked)
     monkeypatch.setattr(auth, "is_token_revoked", _not_revoked)
     monkeypatch.setattr(auth, "consume_refresh_jti", AsyncMock(return_value=True))
     monkeypatch.setattr(auth, "blacklist_jti", AsyncMock())
     monkeypatch.setattr(auth, "revoke_all_for_user", AsyncMock())
-    monkeypatch.setattr(password_reset, "_redis_client", lambda: redis)
     monkeypatch.setattr("core.storage.unit_of_work.get_db_session", maker)
     backend_main.app.dependency_overrides[request_unit_of_work] = _session
     limiter.reset()
@@ -451,7 +448,11 @@ def test_reset_confirm_with_a_service_account_token_is_an_invalid_token(app, mak
             json={"token": token, "new_password": "orchid-tundra-saddle-907"},
         )
 
-    resp = confirm(password_reset.generate_reset_token("u-sa"))
+    resp = confirm(
+        password_reset.generate_reset_token(
+            SimpleNamespace(user_id="u-sa", password_changed_at=None)
+        )
+    )
     invalid = confirm("not-a-reset-token")
 
     assert resp.status_code == invalid.status_code == 400

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -37,16 +36,9 @@ def test_refused_without_a_sign_in(app):
     assert TestClient(app).get("/api/processes").status_code == 401
 
 
-def test_answers_a_signed_in_user(app):
-    from services.api.middleware.auth import get_current_active_user
-
-    app.dependency_overrides[get_current_active_user] = lambda: SimpleNamespace(
-        user_id="u-1"
-    )
-    try:
-        response = TestClient(app).get("/api/processes")
-    finally:
-        app.dependency_overrides.pop(get_current_active_user, None)
+def test_answers_a_signed_in_user(app, authenticate_app):
+    authenticate_app(app)
+    response = TestClient(app).get("/api/processes")
     assert response.status_code == 200
     assert response.json() == STATES
 

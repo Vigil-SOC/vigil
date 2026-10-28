@@ -12,7 +12,9 @@ pytestmark = pytest.mark.unit
 @pytest.mark.parametrize(
     "path", ["/api/analytics/budget", "/api/analytics/budget/quota"]
 )
-def test_budget_reads_answer_5xx_when_settings_read_fails(path, monkeypatch):
+def test_budget_reads_answer_5xx_when_settings_read_fails(
+    path, monkeypatch, authenticate_app
+):
     async def no_providers():
         return {"providers": {}, "keys": {}}
 
@@ -21,6 +23,7 @@ def test_budget_reads_answer_5xx_when_settings_read_fails(path, monkeypatch):
     monkeypatch.setattr("core.llm.bifrost.mirror.routability", no_providers)
     app = FastAPI()
     app.include_router(budgets.router, prefix="/api")
+    authenticate_app(app)
     client = TestClient(app, raise_server_exceptions=False)
     with patch(
         "core.llm.cost.budget.get_session", side_effect=RuntimeError("DB exploded")

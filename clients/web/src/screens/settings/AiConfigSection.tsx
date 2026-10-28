@@ -16,6 +16,7 @@ import { NumberInput, SettingsCard, ToggleRow } from '../../shared/ui'
 import AiProvidersPanel from './AiProvidersPanel'
 import AiModelsPanel from './AiModelsPanel'
 import AiBudgetsPanel from './AiBudgetsPanel'
+import AiSpendPanel from './AiSpendPanel'
 import AiModelsOverview, { AGENT_MODEL_TABLE_ID } from './AiModelsOverview'
 import {
   AI_OPS_DEFAULTS,
@@ -52,6 +53,7 @@ export default function AiConfigSection({ notify }: SectionProps) {
         <AiModelsOverview notify={notify} />
         <AiProvidersPanel notify={notify} addProviderRequested={addProvider} onAddProviderOpened={opened} />
         <AiBudgetsPanel notify={notify} />
+        <AiSpendPanel />
         <AdvancedPanel notify={notify} />
         <AiModelsPanel open={catalogue} onToggle={() => setCatalogue((c) => !c)} />
       </div>

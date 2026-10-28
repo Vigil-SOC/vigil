@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from core.agents.prompts import render_base_prompt
+from core.auth.current_user import get_current_user
 from core.config import Settings
 from core.llm.cost.budget import BudgetExceeded
 from core.llm.router.router import LLMRouter, ProviderSpec
@@ -538,6 +539,9 @@ def tester(monkeypatch):
     monkeypatch.setattr(LLMRouter, "dispatch", dispatch)
     app = FastAPI()
     app.include_router(skills_router.router, prefix="/api/skills")
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+        user_id="operator"
+    )
     register_exception_handlers(app)
     return TestClient(app, raise_server_exceptions=False), calls
 

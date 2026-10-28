@@ -317,6 +317,10 @@ export const casesApi = {
   getEscalations: (id: string) =>
     api.get<Schema<'CaseEscalationsResponse'>>(`/cases/${id}/escalations`),
 
+  /** Links to other Cases, each with that Case's title and status. */
+  getRelationships: (id: string) =>
+    api.get<Schema<'CaseRelationshipsResponse'>>(`/cases/${id}/relationships`),
+
   // The merged record. There is no audit-log route; this read replaced it.
   getRecord: (id: string) =>
     api.get<CaseRecordResponse>(`/cases/${id}/record`),
@@ -1386,6 +1390,8 @@ export interface OverviewPayload {
   agents: OverviewAgent[]
   feed: OverviewFeedItem[]
   feed_limit: number
+  // Set when the role lacks a read: that part is empty and this names it.
+  missing?: string[]
 }
 
 export const overviewApi = {
@@ -1408,6 +1414,7 @@ export interface TriageRow {
   pickup_seconds: number | null
   workflow_id: string
   case_door: string | null
+  merge_note: string | null
   document: string | null
   source_link: string | null
   source_evidence: Record<string, unknown> | null

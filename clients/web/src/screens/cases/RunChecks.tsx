@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { fmtCost } from '../../shared/cost'
 import { workflowApi } from '../../services/api'
 import { toolShown, type CallRow, type RunFold } from './caseFold'
 import { RunTag } from './RunTag'
@@ -151,16 +150,10 @@ function outcome(call: CallRow): string {
   return `${call.result_length.toLocaleString()} chars`
 }
 
-/** A turn's model spend, to the digit that shows it: a tenth of a cent is not $0.00. */
-function turnCost(usd: number): string {
-  return fmtCost(usd, undefined, usd > 0 && usd < 0.01 ? 4 : 2)
-}
-
 interface Turn {
   key: string
   iteration: number | null
   thought: string
-  cost: number | null
   calls: CallRow[]
 }
 
@@ -174,7 +167,7 @@ function turnsOf(calls: readonly CallRow[]): Turn[] {
       last.calls.push(call)
       continue
     }
-    turns.push({ key: `${call.iteration ?? 'x'}-${turns.length}`, iteration: call.iteration ?? null, thought, cost: call.cost_usd, calls: [call] })
+    turns.push({ key: `${call.iteration ?? 'x'}-${turns.length}`, iteration: call.iteration ?? null, thought, calls: [call] })
   }
   return turns
 }
@@ -191,7 +184,6 @@ export function CheckedList({ runId, calls, focusRef, tag }: { runId: string | n
           <header className="checked-turn-head">
             {tag && <RunTag label={tag} />}
             <span className="mono">{turn.iteration === null ? 'Turn' : `Turn ${turn.iteration}`}</span>
-            {turn.cost !== null && <span className="mono">{turnCost(turn.cost)}</span>}
             <p title={turn.thought}>{turn.thought || DASH}</p>
           </header>
           <ul className="checked-calls">

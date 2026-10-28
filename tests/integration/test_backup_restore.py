@@ -33,11 +33,24 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from core.api.v1.agent_runs_router import router
+from core.auth.auth_service import AuthService
+from core.auth.current_user import get_current_user
 from core.storage.connection import init_database
+from core.storage.models import User
 
 init_database()
 app = FastAPI()
 app.include_router(router, prefix="/api/v1/agent-runs")
+# The snapshot is what this proves. The route's permission gate is not.
+app.dependency_overrides[get_current_user] = lambda: User(
+    user_id="restore",
+    username="restore",
+    email="restore@test.local",
+    password_hash="",
+    role_id="role-admin",
+    is_active=True,
+)
+AuthService.check_permission = staticmethod(lambda *a, **k: True)
 response = TestClient(app).get("/api/v1/agent-runs/" + sys.argv[1])
 print(response.status_code)
 print(response.text)

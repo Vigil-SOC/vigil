@@ -7,6 +7,7 @@ that does not quote the OS error.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -31,11 +32,13 @@ DISK_ERROR = PermissionError(13, "Permission denied", "metadata.json")
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("VIGIL_DIR", str(tmp_path))
-    monkeypatch.setattr(ci, "require_integrations_admin", lambda user: None)
+    monkeypatch.setattr(ci, "deny_unless", lambda *a, **k: None)
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(ci.router, prefix="/api/custom-integrations")
-    app.dependency_overrides[get_current_active_user] = lambda: object()
+    app.dependency_overrides[get_current_active_user] = lambda: SimpleNamespace(
+        user_id="admin"
+    )
     return TestClient(app, raise_server_exceptions=False)
 
 

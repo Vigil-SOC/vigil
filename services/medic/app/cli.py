@@ -39,11 +39,13 @@ from services.medic.app.wiring import (
 from services.medic.redact import install_log_redaction
 from services.medic.sensors import Sensor
 from services.medic.sensors.containers import docker_containers
+from services.medic.sensors.federation import federation_sources
 from services.medic.sensors.gateway import address as gateway_address
 from services.medic.sensors.gateway import gateway_session
 from services.medic.sensors.http_ready import agent_serve_ready, agent_worker_ready
 from services.medic.sensors.kube import kube_pods
 from services.medic.sensors.logtail import compose_log_sensors
+from services.medic.sensors.work import work_sensors
 from services.medic.store import StoreError, open_writer
 
 log = logging.getLogger("services.medic")
@@ -213,6 +215,8 @@ def sensors_for(env: Mapping[str, str], shape: str) -> list[Sensor]:
     gateway = gateway_address(env, shape)
     if gateway is not None:
         sensors.append(gateway_session(host=gateway[0], port=gateway[1]))
+        sensors.append(federation_sources(host=gateway[0], port=gateway[1]))
+        sensors.extend(work_sensors(host=gateway[0], port=gateway[1]))
     return sensors
 
 

@@ -16,6 +16,7 @@ from core.storage.models.ai import (
     LLMProviderConfig,
 )
 from core.storage.models.auth import McpCredential, Principal, Role, SignIn, User
+from core.storage.models.autonomy import ToolEffectClass
 from core.storage.models.base import Base, JSONBList, case_findings
 from core.storage.models.case import Case
 from core.storage.models.case_entities import (
@@ -133,6 +134,7 @@ __all__ = [
     "SkillRead",
     "SystemConfig",
     "ThreatIndicator",
+    "ToolEffectClass",
     "User",
     "UserPreference",
     "WorkflowRun",

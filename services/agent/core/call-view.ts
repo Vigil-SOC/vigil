@@ -59,6 +59,8 @@ export function queryOf(args: unknown): string {
 
 // "N row(s) from <source>" opens every rendered result (core/security.ts).
 const ROWS = /^(?:<vigil:tool_result[^>]*>\s*)?(\d+) rows?\b/;
+// The header of a result cut at the cap: "..., cut at 20,000 of 68,312 characters: ...".
+const CUT = /^(?:<vigil:tool_result[^>]*>\s*)?\d+ rows?\b[^\n]*, cut at [\d,]+ of [\d,]+ characters:/;
 
 // The search tool's count line, "N events matched, M results (showing ...)" (rootcause/v3/tools/search.ts
 // writes it; it lives here because core cannot import a plugin). M is the count; a purpose or window line may open
@@ -78,6 +80,8 @@ export function rowsIn(result: string): number | undefined {
   if (said === null) return undefined;
   const count = Number(said[1]);
   if (count !== 1) return count;
+  // A cut wrapper's "1" is the wrapper, not its rows, and what it held is unknown.
+  if (CUT.test(result)) return undefined;
   const body = /^<vigil:tool_result[^>]*>\n?([\s\S]*?)\n?<\/vigil:tool_result>$/.exec(result)?.[1] ?? result;
   const split = body.indexOf("\n");
   try {
@@ -87,8 +91,23 @@ export function rowsIn(result: string): number | undefined {
     if (Array.isArray(only["results"])) return only["results"].length;
     return typeof only["output"] === "string" ? resultCountIn(only["output"]) : count;
   } catch {
-    // A wrapper cut short by the result cap does not parse; its "1" is the wrapper, not the rows.
+    // A body that does not parse (a ledger from before the cut was stated) counts nothing.
     return undefined;
+  }
+}
+
+// A served result that found nothing: no rows, or one summary row whose total is 0 (search_findings'
+// {query, total, findings: []}). A count it cannot read (a cut wrapper) is not empty.
+export function isEmptyResult(result: string): boolean {
+  const rows = rowsIn(result);
+  if (rows !== 1) return rows === 0;
+  const body = /^<vigil:tool_result[^>]*>\n?([\s\S]*?)\n?<\/vigil:tool_result>$/.exec(result)?.[1] ?? result;
+  try {
+    const parsed: unknown = JSON.parse(body.slice(body.indexOf("\n") + 1));
+    const only = Array.isArray(parsed) && parsed.length === 1 ? (parsed[0] as Record<string, unknown> | null) : null;
+    return only !== null && typeof only === "object" && only["total"] === 0;
+  } catch {
+    return false;
   }
 }
 

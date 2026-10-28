@@ -1,5 +1,5 @@
 """
-AI Insights Service - Generate intelligent insights using Claude
+AI Insights Service - Generate intelligent insights with the assigned model
 
 This service analyzes SOC metrics and patterns to generate:
 - Anomaly detection
@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 # Cache TTL: insights older than this are considered stale and trigger a
 # background regeneration on the next read.
 CACHE_TTL_SECONDS = 600  # 10 minutes
+
+# The Settings component whose provider and model write the insights.
+COMPONENT = "reporting"
 
 
 class AIInsightsService:
@@ -201,16 +204,29 @@ Provide ONLY the JSON array, no other text."""
         return context
 
     async def _call_claude(self, context: str) -> str:
-        """Call Claude API via the LLM queue for global rate limiting."""
+        """Call the model assigned to ``reporting`` via the LLM queue for
+        global rate limiting.
+
+        Without a provider_id the worker takes the Anthropic SDK path, so an
+        Ollama- or OpenAI-only install fell back to rule-based insights."""
         try:
             from core.llm.gateway.gateway import get_llm_gateway
+            from core.llm.target import resolve_dispatch
 
+            # The assignment lookup reads the database: keep it off the loop.
+            resolved = await asyncio.to_thread(resolve_dispatch, COMPONENT)
+            provider_id, model = (
+                (resolved[0].provider_id, resolved[1])
+                if resolved is not None
+                else (None, self.model)
+            )
             gateway = await get_llm_gateway()
             result = await gateway.submit(
                 prompt=context,
-                model=self.model,
+                model=model,
                 max_tokens=2000,
                 temperature=0.3,
+                provider_id=provider_id,
             )
             if result is None:
                 raise ValueError("Empty response from LLM queue")
@@ -221,7 +237,7 @@ Provide ONLY the JSON array, no other text."""
                 return result.get("content", "")
             return str(result)
         except Exception as e:
-            logger.error(f"Error calling Claude API: {str(e)}")
+            logger.error(f"Error calling the insights model: {str(e)}")
             raise
 
     def _parse_insights(self, insights_text: str) -> List[Dict[str, Any]]:

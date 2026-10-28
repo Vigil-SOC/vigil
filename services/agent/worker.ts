@@ -771,16 +771,19 @@ export function workerReady(worker: Worker<RunJob>): () => Promise<boolean> {
 // quietly inert when it is unset: runs still succeed, no phase progress ever reaches
 // the console, and a run that stops for a human parks until it is abandoned because
 // nothing can carry the decision back. Said once at startup, because nothing later
-// in the run says it -- a silently-off mirror looks exactly like a quiet one.
-function warnIfUnmirrored(): void {
+// in the run says it -- a silently-off mirror looks exactly like a quiet one. The
+// start line follows either way, so an alert on the ERROR can clear when a later
+// start says `mirror: "on"`. No URL or hostname in it.
+export function announceStart(): void {
   const url = process.env["VIGIL_RUNS_URL"];
-  if (url !== undefined && url !== "") return;
-  log.error("VIGIL_RUNS_URL is unset: run progress will not be mirrored to the backend and checkpoints cannot be answered");
+  const off = url === undefined || url === "";
+  if (off) log.error("VIGIL_RUNS_URL is unset: run progress will not be mirrored to the backend and checkpoints cannot be answered");
+  log.info("agent worker started", { queue: RUN_QUEUE, concurrency: runConcurrency(), mirror: off ? "off" : "on", health_port: healthPort() });
 }
 
 if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].split("/").pop() ?? "")) {
   initTracing("vigil-agent-worker");
-  warnIfUnmirrored();
+  announceStart();
   const running = startWorker();
   // Probes only. Chat moved to serve.ts when #635 split the two into Deployments
   // that scale on different things -- a queue's depth and an open connection count

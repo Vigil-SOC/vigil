@@ -69,7 +69,7 @@ def issue_link(session, who: str, base_url: str) -> int:
         )
         return 1
     print(f"Reset link for {user.username} <{user.email}>:")
-    print(reset_link(base_url, generate_reset_token(user.user_id)))
+    print(reset_link(base_url, generate_reset_token(user)))
     print("Valid for one hour; it works once.")
     return 0
 
