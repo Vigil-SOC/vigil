@@ -23,7 +23,7 @@ from starlette.concurrency import run_in_threadpool
 
 from core.auth.current_user import get_current_user
 from core.auth.permissions import deny_unless, permission_gate
-from core.config import get_settings
+from core.config import get_settings, is_demo_mode
 from core.ingestion.ingestion_jobs import (
     IngestionJob,
     IngestionJobConflict,
@@ -32,6 +32,11 @@ from core.ingestion.ingestion_jobs import (
     summarize_stats,
 )
 from core.ingestion.ingestion_service import IngestionService
+from core.ingestion.sample_alerts import (
+    SAMPLE_COUNT,
+    SAMPLE_DATA_SOURCE,
+    build_sample_alerts,
+)
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
 from core.storage.s3_service import S3_LIST_ERRORS, describe_s3_error
@@ -394,4 +399,102 @@ def ingest_s3_file(
         cases_errors=stats.get("cases_errors", 0),
         success=success,
         message=message,
+    )
+
+
+class SampleAlertsStatus(BaseModel):
+    """How many sample alerts are stored, out of the set."""
+
+    loaded: int
+    total: int
+
+
+class SampleAlertsCleared(BaseModel):
+    findings_deleted: int
+    cases_deleted: int
+
+
+# Clearing deletes the cases that held only sample alerts.
+_SAMPLE_CLEAR = [*_FINDINGS_WRITE, permission_gate("cases.delete")]
+
+
+def _sample_db():
+    """The database the sample alerts live in. Demo mode reads its own
+    in-memory set, so stored samples would never show up there."""
+    if is_demo_mode():
+        raise HTTPException(
+            status_code=409,
+            detail="Turn demo mode off first. Sample alerts are stored in your database.",
+        )
+    from core.storage.service import DatabaseService
+
+    return DatabaseService()
+
+
+def _sample_status(db) -> SampleAlertsStatus:
+    return SampleAlertsStatus(
+        loaded=db.count_findings_from_source(SAMPLE_DATA_SOURCE), total=SAMPLE_COUNT
+    )
+
+
+@router.get("/sample-alerts", response_model=SampleAlertsStatus)
+async def sample_alerts_status():
+    """How many of the sample alerts are stored."""
+    db = _sample_db()
+    return await run_in_threadpool(_sample_status, db)
+
+
+@router.post(
+    "/sample-alerts", response_model=SampleAlertsStatus, dependencies=_FINDINGS_WRITE
+)
+async def load_sample_alerts():
+    """Store the sample alerts as findings. The daemon triages them like any
+    other alert. Loading again while they are there adds nothing."""
+    db = _sample_db()
+
+    def _load():
+        result = db.bulk_create_findings(build_sample_alerts())
+        if result.get("errors"):
+            raise HTTPException(
+                status_code=503,
+                detail=result.get("first_error") or "Sample alerts could not be saved",
+            )
+        return _sample_status(db)
+
+    return await run_in_threadpool(_load)
+
+
+@router.delete(
+    "/sample-alerts",
+    response_model=SampleAlertsCleared,
+    dependencies=_SAMPLE_CLEAR,
+)
+async def clear_sample_alerts(
+    current_user: User = Depends(get_current_user),
+):
+    """Delete the sample alerts and the cases that held only them."""
+    from core.storage.config_service import get_config_service
+
+    db = _sample_db()
+    result = await run_in_threadpool(db.delete_findings_from_source, SAMPLE_DATA_SOURCE)
+    live = result["live"]
+    if live:
+        plural = "s" if len(live) != 1 else ""
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"a sample case has {len(live)} live investigation{plural} "
+                f"({', '.join(live)}); kill or finish them first"
+            ),
+        )
+    get_config_service(user_id=str(current_user.user_id)).record_audit(
+        config_type="findings",
+        config_key=SAMPLE_DATA_SOURCE,
+        action="delete",
+        old_value={"findings": result["findings"], "cases": result["cases"]},
+        new_value=None,
+        change_reason="Sample alerts cleared via API",
+    )
+    return SampleAlertsCleared(
+        findings_deleted=result["findings"], cases_deleted=result["cases"]
     )

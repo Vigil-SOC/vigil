@@ -750,7 +750,14 @@ export const ingestionApi = {
   },
   listJobs: () => api.get<IngestionJob[]>('/ingest/jobs'),
   getJob: (jobId: string) => api.get<IngestionJob>(`/ingest/jobs/${jobId}`),
+  // a fixed set of example alerts, stored as findings the daemon triages
+  sampleAlerts: () => api.get<SampleAlertsStatus>('/ingest/sample-alerts'),
+  loadSampleAlerts: () => api.post<SampleAlertsStatus>('/ingest/sample-alerts'),
+  clearSampleAlerts: () => api.delete<SampleAlertsCleared>('/ingest/sample-alerts'),
 }
+
+export type SampleAlertsStatus = Schema<'SampleAlertsStatus'>
+export type SampleAlertsCleared = Schema<'SampleAlertsCleared'>
 
 export interface BudgetSettings {
   default_vk: string

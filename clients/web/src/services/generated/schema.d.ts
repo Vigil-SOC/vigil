@@ -3879,6 +3879,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ingest/sample-alerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sample Alerts Status
+         * @description How many of the sample alerts are stored.
+         */
+        get: operations["get_api_ingest_sample-alerts"];
+        put?: never;
+        /**
+         * Load Sample Alerts
+         * @description Store the sample alerts as findings. The daemon triages them like any
+         *     other alert. Loading again while they are there adds nothing.
+         */
+        post: operations["post_api_ingest_sample-alerts"];
+        /**
+         * Clear Sample Alerts
+         * @description Delete the sample alerts and the cases that held only them.
+         */
+        delete: operations["delete_api_ingest_sample-alerts"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ingest/upload": {
         parameters: {
             query?: never;
@@ -10280,6 +10309,23 @@ export interface components {
             resolution_time_hours?: number | null;
             /** Response Time Hours */
             response_time_hours?: number | null;
+        };
+        /** SampleAlertsCleared */
+        SampleAlertsCleared: {
+            /** Cases Deleted */
+            cases_deleted: number;
+            /** Findings Deleted */
+            findings_deleted: number;
+        };
+        /**
+         * SampleAlertsStatus
+         * @description How many sample alerts are stored, out of the set.
+         */
+        SampleAlertsStatus: {
+            /** Loaded */
+            loaded: number;
+            /** Total */
+            total: number;
         };
         /**
          * SaveIntegrationRequest
@@ -18133,6 +18179,99 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_ingest_sample-alerts": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SampleAlertsStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_ingest_sample-alerts": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SampleAlertsStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "delete_api_ingest_sample-alerts": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SampleAlertsCleared"];
                 };
             };
             /** @description Validation Error */

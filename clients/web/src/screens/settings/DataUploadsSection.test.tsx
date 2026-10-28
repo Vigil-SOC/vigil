@@ -8,6 +8,7 @@ vi.mock('./DataIngestion', () => ({
   UploadCard: () => <section>Upload card</section>,
   StreamsCard: () => <section>Streams card</section>,
   DemoDataClear: () => <section>Demo card</section>,
+  SampleAlertsCard: () => <section>Sample alerts card</section>,
 }))
 vi.mock('./DetectionRulesPanel', () => ({ default: () => <section>Rules card</section> }))
 

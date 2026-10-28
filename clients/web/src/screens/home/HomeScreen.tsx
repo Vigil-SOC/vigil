@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
-import { approvalsApi, configApi, triageApi, type NeedsYouItem } from '../../services/api'
+import { approvalsApi, configApi, ingestionApi, triageApi, type NeedsYouItem } from '../../services/api'
 import type { Schema } from '../../services/apiTypes'
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
@@ -294,6 +294,21 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
     }
   }
 
+  const sendSamples = async () => {
+    setDemoBusy(true)
+    try {
+      const res = await ingestionApi.loadSampleAlerts()
+      setDemoMessage(
+        `${res.data.loaded} sample alerts stored. Vigil triages them within about five minutes; ` +
+          'clear them from Settings, Data.',
+      )
+    } catch (err) {
+      setDemoMessage(errorText(err, 'Could not load sample alerts'))
+    } finally {
+      setDemoBusy(false)
+    }
+  }
+
   // Reversible approve and every reject commit through the toast's undo fuse, shared with the case
   // page's decision block. A held (irreversible) approve commits at once.
   const fused = useFusedDecision(decisionFailText)
@@ -517,14 +532,20 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
               <div className="home-notready">
                 <h3>Not ready to connect yet?</h3>
                 <p>
-                  Load a day of demo data from a sample estate. Everything is labelled demo and can be cleared in
-                  one click.
+                  Load a day of demo data from a sample estate, or send a few sample alerts and watch Vigil triage
+                  them. Both are labelled and can be cleared in one click.
                 </p>
                 <div className="home-notready-actions">
                   {!setup.demo_enabled && (
                     <button type="button" className="btn" disabled={demoBusy} onClick={() => void exploreDemo()}>
                       <Icon name="play" size={13} />
                       Explore with demo data
+                    </button>
+                  )}
+                  {!setup.demo_enabled && (
+                    <button type="button" className="btn" disabled={demoBusy} onClick={() => void sendSamples()}>
+                      <Icon name="plus" size={13} />
+                      Send sample alerts
                     </button>
                   )}
                   {startTour && (
