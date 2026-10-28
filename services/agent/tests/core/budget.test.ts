@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addTokens, budgetOf, FRESH, unmeteredQuota } from "../../core/budget.js";
+import { addTokens, budgetOf, FRESH, seedFrom, unmeteredQuota, type SpentEvent } from "../../core/budget.js";
 import { UNPRICED_TOLERANCE, ZERO_TOKENS, type Quota, type SpendPayload, type TokenCounts } from "../../contracts/budget.js";
 import { noPrices } from "../../core/prices.js";
 
@@ -240,5 +240,80 @@ describe("a dollar ceiling with nothing pricing the calls", () => {
     const pool = budgetOf(limits, unmeteredQuota, Date.now, FRESH, noPrices);
     for (let call = 0; call < UNPRICED_TOLERANCE + 2; call += 1) pool.record(unpriced);
     expect(await pool.beginCall()).toBeNull();
+  });
+});
+
+// Parking on a ceiling is a wait for a person, like a checkpoint: the operator
+// decides whether to spend more. Billing that wait as work meant a run left
+// parked past its remaining wall time could never be extended back to life.
+describe("a run parked on its budget does not spend wall time", () => {
+  const at = (iso: string) => Date.parse(iso);
+  const ev = (kind: string, ts: string, payload: unknown = {}): SpentEvent => ({ kind, ts, payload });
+  const park = (ts: string, reason: string) =>
+    ev("patch", ts, { target: "run", id: "r-1", fields: { status: "parked", parked_at: ts, parked_reason: reason } });
+  const lift = (ts: string) => ev("patch", ts, { target: "run", id: "r-1", fields: { status: "active", parked_at: null, parked_reason: null } });
+  const wallUsed = (events: SpentEvent[], now: number) => now - seedFrom(events, now).started;
+
+  it("excuses the time from the park to the extension that lifted it", () => {
+    const events = [ev("run", "2026-10-28T17:28:39Z"), park("2026-10-28T17:32:12Z", "ran out of turns"), lift("2026-10-28T19:02:48Z")];
+    // 3 min 33 s of work, then a few seconds after the lift
+    expect(wallUsed(events, at("2026-10-28T19:02:50Z"))).toBe(213_000 + 2_000);
+  });
+
+  it("excuses a park still in place up to now", () => {
+    const events = [ev("run", "2026-10-28T17:28:39Z"), park("2026-10-28T17:32:12Z", "ran out of turns")];
+    expect(wallUsed(events, at("2026-10-28T23:00:00Z"))).toBe(213_000);
+  });
+
+  // The run that found it: every extend was refused with wall_exhausted at ~99 of
+  // 90 minutes, though it had worked under four.
+  it("lets the parked run resume on Keep going, as the extend asked", async () => {
+    const events = [
+      ev("run", "2026-10-28T17:28:39.748Z"),
+      park("2026-10-28T17:32:12.000Z", "ran out of turns: iteration 48 of 48"),
+      lift("2026-10-28T19:02:48.058Z"),
+      park("2026-10-28T19:02:48.153Z", "the budget refused another iteration: wall_exhausted"),
+      lift("2026-10-28T19:07:48.135Z"),
+    ];
+    const now = at("2026-10-28T19:07:48.200Z");
+    const budget = budgetOf(
+      { max_calls: 3600, max_cost_usd: 5, max_wall_ms: 5_400_000, max_park_ms: 604_800_000 },
+      unmeteredQuota,
+      () => now,
+      seedFrom(events, now),
+    );
+    expect(await budget.beginCall()).toBeNull();
+  });
+
+  it("does not excuse a park twice when a checkpoint covers the same wait", () => {
+    const events = [
+      ev("run", "2026-10-28T10:00:00Z"),
+      ev("checkpoint", "2026-10-28T10:01:00Z", { checkpoint_id: "cp-1" }),
+      park("2026-10-28T10:01:00Z", "awaiting approval at cp-1"),
+      ev("resolution", "2026-10-28T11:01:00Z", { checkpoint_id: "cp-1" }),
+      lift("2026-10-28T11:01:00Z"),
+    ];
+    expect(wallUsed(events, at("2026-10-28T11:02:00Z"))).toBe(120_000);
+  });
+
+  // Something else on the run marked parked is not the run waiting: only the row
+  // that carries parked_at stops the clock.
+  it("still counts time while only a part of the run is parked", () => {
+    const events = [
+      ev("run", "2026-10-28T10:00:00Z"),
+      ev("patch", "2026-10-28T10:01:00Z", { target: "item", id: "i-1", fields: { status: "parked", resolution_reason: "dropped" } }),
+    ];
+    expect(wallUsed(events, at("2026-10-28T11:00:00Z"))).toBe(3_600_000);
+  });
+
+  it("counts the work between parks", () => {
+    const events = [
+      ev("run", "2026-10-28T10:00:00Z"),
+      park("2026-10-28T10:10:00Z", "ran out of turns"),
+      lift("2026-10-28T12:00:00Z"),
+      park("2026-10-28T12:05:00Z", "ran out of money"),
+      lift("2026-10-28T15:00:00Z"),
+    ];
+    expect(wallUsed(events, at("2026-10-28T15:01:00Z"))).toBe((10 + 5 + 1) * 60_000);
   });
 });
