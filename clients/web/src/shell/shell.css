@@ -27,6 +27,9 @@
   flex-direction: column;
   min-width: 1440px;
   height: 100%;
+  /* clip, not .shell's hidden: hidden would make the shell the scroll
+     container, and the sticky header and nav below would never stick. */
+  overflow: clip;
 }
 
 /* The header and nav keep the window's width and stay put while the screen

@@ -455,10 +455,12 @@ function SocConsoleInner() {
     const nav = navRef.current
     if (nav && nav.scrollWidth > nav.clientWidth && folded < foldable.length) setFolded(folded + 1)
   })
-  // A width change can make room again: start over and refold.
+  // A width change can make room again: start over and refold. The window
+  // can also change width while the wall hides the bar, so refold on return.
   useEffect(() => {
     const nav = navRef.current
     if (!nav) return
+    setFolded(0)
     let width = nav.clientWidth
     const onResize = () => {
       if (nav.clientWidth !== width) {
