@@ -1,5 +1,5 @@
 // A finding's terminal state (core.findings.alert_outcomes) in the board's five
-// words: New, Scoring, Case NNNN, Resolved, Dropped. Both finding popups and the
+// words: New, Waiting for triage, Case NNNN, Resolved, Dropped. Both finding popups and the
 // Dashboard table read it from here.
 export type TerminalState =
   | 'waiting'
@@ -16,7 +16,7 @@ export function stateWord(state: string | null | undefined, caseId?: string | nu
     case 'waiting':
       return 'New'
     case 'scoring':
-      return 'Scoring'
+      return 'Waiting for triage'
     case 'working':
     case 'needs_you':
       return caseId ? `Case ${caseId}` : 'In a case'

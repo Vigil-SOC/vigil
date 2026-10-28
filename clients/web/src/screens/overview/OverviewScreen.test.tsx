@@ -505,6 +505,13 @@ describe('OverviewScreen', () => {
     expect(rail.querySelectorAll('.ov-mark-a')).toHaveLength(3)
   })
 
+  it('rail: a scoring alert reads "Waiting for triage" in the fair tone', async () => {
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ feed: [item('f-s', { terminal_state: 'scoring' })] }) } as never)
+    renderScreen()
+    const rail = await screen.findByRole('complementary', { name: 'Incoming alerts' })
+    expect(within(rail).getByText('Waiting for triage')).toHaveClass('ov-pill', 'fair')
+  })
+
   it('rail: Pause stops the poll and Resume loads at once and polls again', async () => {
     vi.useFakeTimers()
     vi.mocked(overviewApi.get).mockClear()
