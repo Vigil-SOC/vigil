@@ -44,6 +44,7 @@ from services.medic.sensors.gateway import address as gateway_address
 from services.medic.sensors.gateway import gateway_session
 from services.medic.sensors.http_ready import agent_serve_ready, agent_worker_ready
 from services.medic.sensors.kube import kube_pods
+from services.medic.sensors.logtail import compose_log_sensors
 from services.medic.sensors.work import work_sensors
 from services.medic.store import StoreError, open_writer
 
@@ -208,6 +209,7 @@ def sensors_for(env: Mapping[str, str], shape: str) -> list[Sensor]:
         proxy = config.dockerproxy_addr(env, shape)
         if proxy is not None:
             sensors.append(docker_containers(host=proxy[0], port=proxy[1]))
+            sensors.extend(compose_log_sensors(proxy[0], proxy[1]))
     if shape == "helm":
         sensors.append(kube_pods())
     gateway = gateway_address(env, shape)
