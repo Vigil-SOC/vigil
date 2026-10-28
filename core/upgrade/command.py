@@ -71,6 +71,8 @@ LEGACY_AUDIT_PK = {
     "investigation_logs": "id",
 }
 LEGACY_AUDIT_TABLES = tuple(LEGACY_AUDIT_PK)
+INVESTIGATION_LOGS = "investigation_logs"
+LEGACY_LOCK_TIMEOUT = "10s"
 LEGACY_COPY_REVISION = "0018_legacy_audit_copy"
 # A baseline view over config_audit_log that nothing reads; it goes with it.
 LEGACY_VIEW = "recent_config_changes"
@@ -489,10 +491,16 @@ def _drop(engine: Engine, script: ScriptDirectory) -> dict[str, Any]:
                 f"not eligible until {row.eligible_at.date().isoformat()}",
                 eligible_at=row.eligible_at.isoformat(),
             )
-        # No old pod can write a row between the check and the drop.
+        # No old pod can write a row between the check and the drop. The
+        # investigation_logs FK needs investigations locked too: taken first,
+        # so the DROP cannot deadlock with a reader; a busy table is a retry.
+        locked = [*present]
+        if INVESTIGATION_LOGS in present:
+            locked.insert(0, "investigations")
+        conn.execute(text(f"SET LOCAL lock_timeout = '{LEGACY_LOCK_TIMEOUT}'"))
         conn.execute(
             text(
-                f"LOCK TABLE {', '.join(f'public.{t}' for t in present)} "
+                f"LOCK TABLE {', '.join(f'public.{t}' for t in locked)} "
                 "IN ACCESS EXCLUSIVE MODE"
             )
         )
