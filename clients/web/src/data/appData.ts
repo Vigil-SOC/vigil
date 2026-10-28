@@ -49,21 +49,6 @@ export function prettyHandle(handle: string): string {
     .trim()
 }
 
-export type Outcome = 'agree' | 'disagree' | 'modify' | 'pending'
-
-export interface Decision {
-  id: string
-  agent: string
-  type: string
-  inv: string
-  conf: number
-  ai: string
-  outcome: Outcome
-  saved: string
-  time: string
-  rationale: string
-}
-
 export type ToolChange = 'read_only' | 'asks_first' | 'on_its_own'
 
 export interface AgentTemplate {
