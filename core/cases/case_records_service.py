@@ -9,7 +9,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
-from sqlalchemy import func
+from sqlalchemy import func, inspect, text
 from sqlalchemy.orm import Session
 
 from core.storage.models import (
@@ -107,7 +107,18 @@ def run_step_counts(session: Session, run_ids: Sequence[str]) -> Dict[str, int]:
 
 
 def list_case_audit(session: Session, case_id: str) -> List[CaseAuditLog]:
-    """Rows about this case. There is no ``case_id`` column on the table."""
+    """Rows about this case. There is no ``case_id`` column on the table.
+
+    None once the table is gone: a later revision drops it after the copy.
+    """
+    if session.get_bind().dialect.name == "postgresql":
+        present = session.execute(
+            text("SELECT to_regclass('public.case_audit_logs')")
+        ).scalar()
+    else:
+        present = inspect(session.get_bind()).has_table("case_audit_logs")
+    if not present:
+        return []
     return (
         session.query(CaseAuditLog)
         .filter(
@@ -116,6 +127,15 @@ def list_case_audit(session: Session, case_id: str) -> List[CaseAuditLog]:
         )
         .all()
     )
+
+
+def list_case_trail(session: Optional[Session], case_id: str) -> List[dict]:
+    """This case's audit trail entries, oldest first; none when it is not in use."""
+    from core.audit import trail
+
+    if session is None or not trail.in_use(session):
+        return []
+    return trail.read_all(session, trail.make_query(object_ref=case_id))
 
 
 def add_task(

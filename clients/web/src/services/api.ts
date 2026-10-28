@@ -1081,6 +1081,15 @@ export type AuditFilter = Omit<
   'after'
 >
 
+/** A principal an entry names, read from principals when the entry is read (#3308). */
+export interface AuditPrincipal {
+  id: string
+  label: string | null
+  kind: string | null
+  deleted: boolean
+  erased: boolean
+}
+
 export interface AuditEntry {
   seq: number
   occurred_at: string
@@ -1092,6 +1101,10 @@ export interface AuditEntry {
   operator_text: string | null
   attempted_name: string | null
   personal: unknown
+  actor?: AuditPrincipal | null
+  on_behalf_of?: AuditPrincipal | null
+  /** What the entry was, in words, from the server. */
+  sentence?: string
 }
 
 export interface AuditTip { seq: number; hash: string }

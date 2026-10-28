@@ -628,8 +628,18 @@ _ATTRIBUTIONS = {
 }
 _COLUMNS = """
     t.seq, t.occurred_at, t.late, t.entry_hash, t.payload,
-    t.source_ip, t.actor_text, t.operator_text, t.attempted_name, t.personal
+    t.source_ip, t.actor_text, t.operator_text, t.attempted_name, t.personal,
+    pa.label AS actor_label, pa.kind AS actor_kind, pa.deleted_at AS actor_deleted,
+    pb.label AS behalf_label, pb.kind AS behalf_kind, pb.deleted_at AS behalf_deleted
 """
+# Who the actor and the person acted for are, read now, never stored in the hash.
+_FROM = f"""
+    public.audit_trail AS t
+    LEFT JOIN public.principals AS pa ON pa.principal_id = t.payload->>'{ACTOR}'
+    LEFT JOIN public.principals AS pb ON pb.principal_id = t.payload->>'{ON_BEHALF_OF}'
+"""
+# Erasure blanks a person's label (retention._blank_label); nothing else does.
+_ERASABLE = frozenset({"person", "service_account"})
 # An intent no result entry names. INTENT on the result is that intent's seq.
 _UNKNOWN = (
     f"t.payload->>'{AWAITING}' = 'true' AND NOT EXISTS ("
@@ -722,9 +732,11 @@ def where_clause(query: TrailQuery) -> tuple[str, dict[str, Any]]:
         )
         params["person"] = query.person
     if query.object_ref is not None:
+        # A case's own entries name it as case_id (case_trail, agent_closure).
         parts.append(
             f"(t.payload->>'{OBJECT}' = :object_ref"
-            f" OR t.payload #>> '{{{OBJECT},id}}' = :object_ref)"
+            f" OR t.payload #>> '{{{OBJECT},id}}' = :object_ref"
+            " OR t.payload->>'case_id' = :object_ref)"
         )
         params["object_ref"] = query.object_ref
     if query.outcome == OUTCOME_RECORDED_LATE:
@@ -756,7 +768,24 @@ def _iso(value: datetime) -> str:
     return _as_utc(value).isoformat()
 
 
+def _principal(principal_id: Any, label, kind, deleted_at) -> Optional[dict]:
+    """The principal an entry names: its label, kind, and deleted or erased mark."""
+    if not isinstance(principal_id, str) or not principal_id:
+        return None
+    return {
+        "id": principal_id,
+        "label": label,
+        "kind": kind,
+        "deleted": deleted_at is not None,
+        "erased": label is None and kind in _ERASABLE,
+    }
+
+
 def _entry(row) -> dict[str, Any]:
+    from core.audit.words import sentence
+
+    payload = row["payload"]
+    named = payload if isinstance(payload, dict) else {}
     return {
         "seq": row["seq"],
         "occurred_at": _iso(row["occurred_at"]),
@@ -768,16 +797,26 @@ def _entry(row) -> dict[str, Any]:
         "operator_text": row["operator_text"],
         "attempted_name": row["attempted_name"],
         "personal": row["personal"],
+        "actor": _principal(
+            named.get(ACTOR),
+            row["actor_label"],
+            row["actor_kind"],
+            row["actor_deleted"],
+        ),
+        "on_behalf_of": _principal(
+            named.get(ON_BEHALF_OF),
+            row["behalf_label"],
+            row["behalf_kind"],
+            row["behalf_deleted"],
+        ),
+        "sentence": sentence(payload),
     }
 
 
 def read(session, query: TrailQuery, limit: Optional[int] = None) -> list[dict]:
     """Entries matching ``query``, oldest sequence first."""
     where, params = where_clause(query)
-    sql = (
-        f"SELECT {_COLUMNS} FROM public.audit_trail AS t"
-        f" WHERE {where} ORDER BY t.seq"
-    )
+    sql = f"SELECT {_COLUMNS} FROM {_FROM} WHERE {where} ORDER BY t.seq"
     if limit is not None:
         sql += " LIMIT :limit"
         params["limit"] = limit
@@ -814,7 +853,7 @@ def latest_restore(session) -> Optional[dict]:
     row = (
         session.execute(
             text(
-                f"SELECT {_COLUMNS} FROM public.audit_trail AS t"
+                f"SELECT {_COLUMNS} FROM {_FROM}"
                 f" WHERE t.payload->>'{ACTION}' = :action"
                 " ORDER BY t.seq DESC LIMIT 1"
             ),

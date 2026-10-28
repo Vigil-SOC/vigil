@@ -721,9 +721,9 @@ async def _run_events(ref: dict) -> tuple[Optional[list], str]:
 
 @router.get("/{case_id}/record", response_model=CaseRecordResponse)
 async def get_case_record(case_id: str, session: OptionalUnitOfWorkSession):
-    """The case record: every run's ledger, audit rows and activities.
+    """The case record: every run's ledger, trail entries, audit rows and activities.
 
-    Newest first. The agent returns each ledger with snapshots off, read
+    Newest first. Trail entries are the case's own (``payload.case_id``). The agent returns each ledger with snapshots off, read
     concurrently; a run that cannot be read is one row saying why, not a failed
     record. Audit rows are ``entity_type == case`` and ``entity_id`` this case —
     the table has no ``case_id`` column. ``run_id`` is the case's run
@@ -767,11 +767,17 @@ async def get_case_record(case_id: str, session: OptionalUnitOfWorkSession):
             runs.append((ref["run_id"], events))
 
     audits = case_records_service.list_case_audit(session, case_id)
+    entries = case_records_service.list_case_trail(session, case_id)
     return {
         "run_id": primary["run_id"] if primary else None,
         "investigation_id": primary["investigation_id"] if primary else None,
         "rows": merge_record(
-            runs, audits, case.get("activities") or [], unread, case_id=case_id
+            runs,
+            audits,
+            case.get("activities") or [],
+            unread,
+            case_id=case_id,
+            trail=entries,
         ),
     }
 
