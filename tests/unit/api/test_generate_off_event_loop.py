@@ -97,6 +97,10 @@ async def test_health_answers_while_a_draft_generates(app, path, body, reply):
     state.update(value=reply, blocked_at=None)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+        # The first health call in a process pays for lazy imports on the loop.
+        # That one-time cost is not what this test is about, and on a slow CI
+        # runner it alone exceeds the budget below, so pay it before measuring.
+        assert (await client.get("/api/health")).status_code == 200
         generate = asyncio.create_task(client.post(path, json=body))
         # Until the assignment lookup starts blocking (or the request fails first).
         while state["blocked_at"] is None and not generate.done():
