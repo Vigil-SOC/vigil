@@ -3438,12 +3438,12 @@
         "properties": {
           "arch": {
             "default": "",
-            "description": "Arch file path; empty routes through the run-kind registry.",
+            "description": "Must be empty: the arch comes from the run-kind registry.",
             "title": "Arch",
             "type": "string"
           },
           "config": {
-            "description": "Path to the deployment config.",
+            "description": "Must be empty: the workflow reference carries its config.",
             "title": "Config",
             "type": "string"
           },
@@ -3460,7 +3460,7 @@
             "title": "Overrides"
           },
           "playbook": {
-            "description": "Path to the playbook: the scenario as data.",
+            "description": "A workflow reference, workflow:<id>, naming an enabled workflow.",
             "title": "Playbook",
             "type": "string"
           },

@@ -283,7 +283,7 @@ def test_execute_signs_the_signed_in_user_onto_the_run(client, monkeypatch):
 
 def _start(playbook):
     return agent_runs_router.StartRunRequest(
-        run_kind="hunt", playbook=playbook, config="c"
+        run_kind="hunt", playbook=playbook, config=""
     )
 
 

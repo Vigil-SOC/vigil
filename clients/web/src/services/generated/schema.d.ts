@@ -10540,13 +10540,13 @@ export interface components {
         StartRunRequest: {
             /**
              * Arch
-             * @description Arch file path; empty routes through the run-kind registry.
+             * @description Must be empty: the arch comes from the run-kind registry.
              * @default
              */
             arch: string;
             /**
              * Config
-             * @description Path to the deployment config.
+             * @description Must be empty: the workflow reference carries its config.
              */
             config: string;
             /** Overrides */
@@ -10555,7 +10555,7 @@ export interface components {
             } | null;
             /**
              * Playbook
-             * @description Path to the playbook: the scenario as data.
+             * @description A workflow reference, workflow:<id>, naming an enabled workflow.
              */
             playbook: string;
             /**
