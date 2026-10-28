@@ -100,7 +100,7 @@ def resolve_integration_call(
     """The tool and arguments a ``call_integration_tool`` call stands for.
 
     Refused, as an ungranted tool is, when the name is not one chat may reach:
-    not connected, a built-in, or excluded by ``_is_destructive_mcp``.
+    not connected, a built-in, or an outside tool whose class is not a read.
     """
     name = str(args.get("name") or "")
     arguments = args.get("arguments") or {}

@@ -10,9 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from contextlib import contextmanager
-from contextvars import ContextVar
-from typing import Any, Iterator, Optional
+from typing import Any, Optional
 
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
@@ -20,8 +18,7 @@ from sqlalchemy.orm import Session
 
 from core.audit import trail
 from core.auth.principals import SYSTEM_PRINCIPAL_ID, agent_principal_id
-from core.auth.tool_principal import Claims
-from core.llm.chat_layers import _READONLY_LEADS
+from core.auth.tool_principal import Claims, bound_claims, current_claims  # noqa: F401
 from core.response.ceiling import effective_act_reversible, read_ceiling
 
 logger = logging.getLogger(__name__)
@@ -49,26 +46,6 @@ _TARGET_KEYS = (
 
 class TrailWriteError(Exception):
     """The trail is up and refused the entry. The action must not proceed."""
-
-
-_current: ContextVar[Optional[Claims]] = ContextVar("vigil_tool_claims", default=None)
-
-
-@contextmanager
-def bound_claims(claims: Optional[Claims]) -> Iterator[None]:
-    """The signed principal for the tool call running on this task."""
-    if claims is None:
-        yield
-        return
-    token = _current.set(claims)
-    try:
-        yield
-    finally:
-        _current.reset(token)
-
-
-def current_claims() -> Optional[Claims]:
-    return _current.get()
 
 
 def plugin_actor(run_kind: str) -> str:
@@ -108,12 +85,32 @@ def fingerprint(spec: Any) -> str:
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
+# Lead verbs of a read. Decided by name, not by the stored effect class: built-in
+# tools have no class, and their case writes are effects to record.
+_READONLY_LEADS = frozenset(
+    {
+        "get",
+        "list",
+        "search",
+        "describe",
+        "fetch",
+        "query",
+        "show",
+        "read",
+        "lookup",
+        "count",
+        "stats",
+        "status",
+        "check",
+    }
+)
+
+
 def effectful(tool: str) -> bool:
     """A tool is read-only only when its lead token is a known read.
 
     Every other name, including one this process has never heard of, is an
-    effect. ``changes_for_tool`` is the wrong check: it calls Vigil's own
-    case writes read-only.
+    effect, Vigil's own case writes included.
     """
     lead = tool.split("_", 1)[0] if tool else ""
     return lead not in _READONLY_LEADS

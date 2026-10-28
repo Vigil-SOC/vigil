@@ -12,8 +12,9 @@ off the frozen catalog read. Every shape is read from the engine's own constants
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.llm.chat_layers import changes_for_tool
+from core.response.ceiling import asks_first, gated_tools
 from core.workflows.playbook_resolver import (
+    CAPABILITIES,
     HUNT_CAPABILITIES,
     INVESTIGATE_CAPABILITIES,
     UnknownPlaybook,
@@ -184,13 +185,13 @@ def _permissions(
         h["tools"] for h in roles["helpers"]
     ]:
         names += [t for t in tools if t not in names]
+    # A capability is bound to a tool at run time; it is not a tool name.
+    asking = asks_first(n for n in names if n not in CAPABILITIES)
     rows = []
     for name in names:
         row: Dict[str, Any] = {
             "name": name,
-            "changes": (
-                "asks_you" if changes_for_tool(name) == "asks_first" else "on_its_own"
-            ),
+            "changes": "asks_you" if name in asking else "on_its_own",
         }
         if name in report["unbound"]:
             row["bound"] = False
@@ -238,12 +239,7 @@ def _compose_pause_note(definition: WorkflowDefinition) -> str:
         for phase in definition.phases or []
         for tool in ((phase or {}).get("tools") or [])
     ]
-    gated = [
-        name
-        for name in names
-        if name != "create_approval_action" and changes_for_tool(name) == "asks_first"
-    ]
-    if gated:
+    if gated_tools(n for n in names if n not in CAPABILITIES):
         return "Direct-action calls pause for approval before they run."
     return "It pauses only at phases marked approval_required."
 

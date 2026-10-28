@@ -66,8 +66,9 @@ _LIVE_ORDER = (
     "scoring",
     "waiting",
 )
-# The board names the dismissed node apart from its pill ("Dropped").
-_NODE_LABELS = {**TERMINAL_LABELS, "dismissed": "Dropped as noise"}
+# The dismissed node reads "Dismissed as noise", apart from its pill ("Dropped");
+# the board says "Dropped as noise", a wording changed on #3268.
+_NODE_LABELS = {**TERMINAL_LABELS, "dismissed": "Dismissed as noise"}
 _TERMINAL_STATUSES = ("completed", "failed", "cancelled")
 _OPEN_PHASE = ("running", "pending_approval")
 

@@ -10,11 +10,13 @@ not import core.deps, which reaches the capability domains.
 
 from fastapi import APIRouter, Depends
 
+from core.auth.permissions import permission_gate
 from core.deps import provide_process_health
 from core.platform.process_health import ProcessHealth, ProcessStates
 from core.routing import Auth, RouterMeta
 
 router = APIRouter()
+router.dependencies.append(permission_gate("platform.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/processes",

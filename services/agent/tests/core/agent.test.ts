@@ -297,6 +297,74 @@ describe("the kernel runs a plugin to a conclusion", () => {
     expect(resumed.some((one) => one.role === "tool" && one.content.includes('ref="r1"'))).toBe(true);
   });
 
+  // #3306: a run no person started has nobody to ask, so the invoke door decides.
+  describe("a run no person started", () => {
+    const denying = (id: string, ran: string[]): RegisteredTool =>
+      defineTool(
+        {
+          id,
+          description: `stand-in for ${id}`,
+          parameters: { type: "object", additionalProperties: true, properties: {} },
+          execute: async () => {
+            ran.push(id);
+            return id === "case_records"
+              ? { ok: false, failure: { kind: "denied", detail: "Stopped" } }
+              : { ok: true, rows: [{ id }], rowCount: 1, capped: false, sourceSystem: id };
+          },
+        },
+        { maxRows: 10, timeoutMs: 1_000 },
+      );
+    const harness = (spec: RunSpec, provider: ScriptedProvider, state: InProcessState<AgentKinds>, ran: string[]): Harness<AgentKinds> => ({
+      ...harnessOf(spec, plugin, provider, state),
+      registry: registryOf([...spec.tools.map((tool) => denying(tool.id, ran)), skillTool(plugin)], pluginGrants(plugin, spec.tools)),
+    });
+    const calls = () => scriptedProvider([{ calls: [{ tool: "get_finding", args: "{}" }, { tool: "case_records", args: '{"case_id":"c-1"}' }] }]);
+
+    it("sends a gated call without a checkpoint, and parks on its denial with the reason", async () => {
+      const spec = specOf();
+      const state = new InProcessState<AgentKinds>();
+      const ran: string[] = [];
+
+      const parked = await runAgent(harness(spec, calls(), state, ran), optionsOf(spec, plugin, { origin: "schedule" }));
+
+      expect(parked.status).toBe("waiting_approval");
+      expect(parked.reason).toBe("Stopped");
+      expect(parked.pending).toBeNull();
+      expect(ran).toEqual(["get_finding", "case_records"]);
+      const events = await state.read(RUN);
+      expect(events.some((one) => one.kind === "checkpoint")).toBe(false);
+      const denied = events.filter((one) => one.kind === "call").map((one) => one.payload as CallPayload).find((one) => one.tool === "case_records");
+      expect(denied?.failure).toBe("denied");
+    });
+
+    it("re-parks a resume on the same denial without asking the model again", async () => {
+      const spec = specOf();
+      const state = new InProcessState<AgentKinds>();
+      const ran: string[] = [];
+      await runAgent(harness(spec, calls(), state, ran), optionsOf(spec, plugin, { origin: "schedule" }));
+
+      const idle = scriptedProvider([]);
+      const again = await runAgent(harness(spec, idle, state, ran), optionsOf(spec, plugin, { origin: "schedule" }));
+
+      expect(again.status).toBe("waiting_approval");
+      expect(again.reason).toBe("Stopped");
+      expect(idle.requests).toHaveLength(0);
+      expect(ran).toEqual(["get_finding", "case_records"]);
+    });
+
+    it("keeps the approval for a run a person started", async () => {
+      const spec = specOf();
+      const state = new InProcessState<AgentKinds>();
+      const ran: string[] = [];
+
+      const parked = await runAgent(harness(spec, calls(), state, ran), optionsOf(spec, plugin, { origin: "person" }));
+
+      expect(parked.status).toBe("waiting_approval");
+      expect(parked.pending?.checkpoint_id).toEqual(expect.any(String));
+      expect(ran).toEqual(["get_finding"]);
+    });
+  });
+
   // #3248: an answer that could not look is not a clean bill of health.
   it("ends data_starved when the telemetry could not be reached and nothing served is cited", async () => {
     const spec = specOf();

@@ -14,6 +14,7 @@ from typing import Annotated, Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from core.auth.permissions import deny_unless, permission_gate
 from core.llm.bifrost.admin import (
     push_provider_key,
     sync_all_provider_models,
@@ -29,10 +30,11 @@ from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import delete_secret, secret_write_failure_detail, set_secret
 from core.storage.models import LLMProviderConfig, User
 from core.storage.schemas import LLMProviderConfigSchema
-from services.api.middleware.auth import get_current_active_user, require_settings_admin
+from services.api.middleware.auth import get_current_active_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+router.dependencies.append(permission_gate("platform.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/llm/providers",
@@ -156,7 +158,7 @@ async def create_provider(
     db: UnitOfWorkSession,
     current_user: Annotated[User, Depends(get_current_active_user)],
 ):
-    require_settings_admin(current_user)
+    deny_unless(current_user.user_id, "platform.write")
     _validate_type(payload.provider_type)
     _validate_provider_base_url_shape(payload.base_url)
 
@@ -202,7 +204,7 @@ async def update_provider(
     db: UnitOfWorkSession,
     current_user: Annotated[User, Depends(get_current_active_user)],
 ):
-    require_settings_admin(current_user)
+    deny_unless(current_user.user_id, "platform.write")
     _validate_provider_base_url_shape(payload.base_url)
     row = provider_service.get_provider(db, provider_id)
     if row is None:
@@ -274,7 +276,7 @@ async def delete_provider(
     db: UnitOfWorkSession,
     current_user: Annotated[User, Depends(get_current_active_user)],
 ):
-    require_settings_admin(current_user)
+    deny_unless(current_user.user_id, "platform.write")
     row = provider_service.get_provider(db, provider_id)
     if row is None:
         raise HTTPException(status_code=404, detail="provider not found")

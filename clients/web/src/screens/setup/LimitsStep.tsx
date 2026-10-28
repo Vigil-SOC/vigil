@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { configApi } from '../../services/api'
+import { autonomyApi, configApi, type Ceiling } from '../../services/api'
 import { fmtCost } from '../../shared/cost'
 import { Icon } from '../../shared/icons'
 import { ConfirmDialog } from '../../shared/ui'
 import {
   matchesProfile,
+  notifyAutonomyChanged,
   ORCHESTRATOR_DEFAULTS,
   raisesLimit,
   stripOrchestratorProfiles,
@@ -40,11 +41,6 @@ const PROFILE_FIELDS: {
 
 type LoadPhase = 'loading' | 'ready' | 'error'
 
-interface Approval {
-  enabled: boolean
-  environment_wins: boolean
-}
-
 export default function LimitsStep() {
   const [profiles, setProfiles] = useState<InvestigationProfiles>({})
   // The one current copy of the stored config; every save writes the whole of it.
@@ -52,7 +48,8 @@ export default function LimitsStep() {
   const [pendingLimits, setPendingLimits] = useState<OrchestratorConfig | null>(null)
   const [savingLimits, setSavingLimits] = useState(false)
   const [profilesPhase, setProfilesPhase] = useState<LoadPhase>('loading')
-  const [approval, setApproval] = useState<Approval>({ enabled: false, environment_wins: false })
+  // Assist is act_reversible off; Act is act_reversible on
+  const [ceiling, setCeiling] = useState<Ceiling | null>(null)
   const [approvalPhase, setApprovalPhase] = useState<LoadPhase>('loading')
   const [confirmAct, setConfirmAct] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -71,15 +68,11 @@ export default function LimitsStep() {
       .catch(() => {
         if (live) setProfilesPhase('error')
       })
-    configApi
-      .getForceManualApproval()
+    autonomyApi
+      .get()
       .then(({ data }) => {
         if (!live) return
-        const row = data as Partial<Approval>
-        setApproval({
-          enabled: Boolean(row.enabled),
-          environment_wins: Boolean(row.environment_wins),
-        })
+        setCeiling(data)
         setApprovalPhase('ready')
       })
       .catch(() => {
@@ -109,39 +102,34 @@ export default function LimitsStep() {
     else saveLimits(next)
   }
 
-  const saveApproval = async (enabled: boolean) => {
+  const saveAct = async (act: boolean) => {
     setError(null)
     try {
-      const { data } = await configApi.setForceManualApproval(enabled)
-      const row = data as Partial<Approval>
-      setApproval({
-        enabled: Boolean(row.enabled),
-        environment_wins: Boolean(row.environment_wins),
-      })
+      const { data } = await autonomyApi.update({ act_reversible: act })
+      setCeiling(data)
+      notifyAutonomyChanged()
     } catch (err) {
       setError(errorText(err, 'Could not save the response mode.'))
     }
   }
 
+  const actOn = Boolean(ceiling?.act_reversible)
+  const locked = Boolean(ceiling?.environment_locked)
+
   const selectAssist = () => {
-    if (approval.enabled) return
-    saveApproval(true)
+    if (actOn) saveAct(false)
   }
 
   const selectAct = () => {
-    if (approval.environment_wins) {
-      saveApproval(false)
-      return
-    }
-    if (!approval.enabled) return
-    setConfirmAct(true)
+    // A locked Act is sent anyway so the API's 409 explains why it was not saved
+    if (locked) saveAct(true)
+    else if (!actOn) setConfirmAct(true)
   }
 
   if (profilesPhase === 'loading' || approvalPhase === 'loading') {
     return <p className="text-tx-3 text-sm">Loading limits…</p>
   }
 
-  const actOn = approvalPhase === 'ready' && !approval.enabled
   const entries = Object.entries(profiles)
   const activeKey = entries.find(([, profile]) => matchesProfile(config, profile.values))?.[0] ?? null
   // Custom shows the saved values, since no profile describes them
@@ -193,7 +181,7 @@ export default function LimitsStep() {
         <p className="text-sm text-high">Could not read the response mode.</p>
       ) : (
         <>
-          {approval.environment_wins && (
+          {locked && (
             <div className="settings-banner info">
               <Icon name="info" size={14} />
               <span>The environment wins. Act cannot be saved.</span>
@@ -246,7 +234,7 @@ export default function LimitsStep() {
         danger={false}
         onConfirm={() => {
           setConfirmAct(false)
-          saveApproval(false)
+          saveAct(true)
         }}
         onClose={() => setConfirmAct(false)}
       />

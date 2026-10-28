@@ -209,6 +209,58 @@ describe("the OpenAI surface", () => {
     expect(bodies[2]!.tools).toHaveLength(1);
   });
 
+  it("answers in text over the same tools with tool_choice none, and drops a call it makes anyway", async () => {
+    const bodies: Body[] = [];
+    const surface = surfaceOf(async (body) => {
+      bodies.push(body);
+      return completion({ role: "assistant", content: "two hosts checked", tool_calls: [{ id: "1", function: { name: "search", arguments: "{}" } }] });
+    });
+    const request: TurnRequest = {
+      messages: [{ role: "user", content: "go" }],
+      tools: [{ id: "search", description: "search", parameters: {} }],
+      answer: true,
+    };
+
+    const answered = await turn(surface, request);
+    expect(answered.content).toBe("two hosts checked");
+    expect(answered.tool_calls).toEqual([]);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]!.tool_choice).toBe("none");
+    expect(bodies[0]!.tools).toHaveLength(1);
+  });
+
+  it("offers the tools without tool_choice once the gateway has refused none, and remembers it", async () => {
+    const bodies: Body[] = [];
+    const surface = surfaceOf(async (body) => {
+      bodies.push(body);
+      if (body.tool_choice !== undefined) throw Object.assign(new Error("tool_choice none is not supported"), { status: 400 });
+      return completion({ role: "assistant", content: "from what I gathered", tool_calls: [{ id: "1", function: { name: "search", arguments: "{}" } }] });
+    });
+    const request: TurnRequest = {
+      messages: [{ role: "user", content: "go" }],
+      tools: [{ id: "search", description: "search", parameters: {} }],
+      answer: true,
+    };
+
+    const first = await turn(surface, request);
+    expect(first.content).toBe("from what I gathered");
+    expect(first.tool_calls).toEqual([]);
+    expect(bodies.map((body) => body.tool_choice)).toEqual(["none", undefined]);
+    expect(bodies[1]!.tools).toHaveLength(1);
+
+    // Remembered: the next answer round spends no refusal finding that out again.
+    await turn(surface, request);
+    expect(bodies).toHaveLength(3);
+    expect(bodies[2]!.tool_choice).toBeUndefined();
+  });
+
+  it("fails an answer round that calls tools and says nothing as a silent model", async () => {
+    const surface = surfaceOf(async () => completion({ role: "assistant", content: "", tool_calls: [{ id: "1", function: { name: "search", arguments: "{}" } }] }));
+    const request: TurnRequest = { messages: [{ role: "user", content: "go" }], tools: [{ id: "search", description: "search", parameters: {} }], answer: true };
+
+    await expect(turn(surface, request)).rejects.toBeInstanceOf(ModelSilent);
+  });
+
   // A gateway that takes no tools still answers a zero-search turn in one call, as the emission did.
   it("asks a gateway that refuses tools at all for the forced tool's arguments as an emission, once found out", async () => {
     const bodies: Body[] = [];

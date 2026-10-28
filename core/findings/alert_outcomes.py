@@ -28,8 +28,8 @@ TERMINAL_LABELS = {
     "resolved_auto": "Resolved automatically",
     "resolved_person": "Closed by a person",
     "working": "Still working",
-    "scoring": "Scoring",
-    "waiting": "Not in a case",
+    "scoring": "Waiting for triage",
+    "waiting": "Not picked up",
 }
 
 

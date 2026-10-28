@@ -156,10 +156,11 @@ async def test_backend_tool_reports_a_bad_limit_as_an_error(monkeypatch):
     assert "limit" in result["error"]
 
 
-def test_route_returns_the_same_shape(monkeypatch, no_hunt_started):
+def test_route_returns_the_same_shape(monkeypatch, no_hunt_started, authenticate_app):
     _install(monkeypatch, [_row("ip", "203.0.113.7")])
     app = FastAPI()
     app.include_router(router.router, prefix=router.ROUTER_META.prefix)
+    authenticate_app(app)
 
     response = TestClient(app).get("/api/workflows/threat-hunt/feed-proposals")
 

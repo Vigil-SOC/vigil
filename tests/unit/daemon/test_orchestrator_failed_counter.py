@@ -59,7 +59,6 @@ def _orchestrator() -> Orchestrator:
     orch._reconcile = AsyncMock()
     orch._send_notification = MagicMock()
     orch._send_slack_for_notification = AsyncMock()
-    orch._check_cross_correlations = AsyncMock()
     return orch
 
 

@@ -23,7 +23,7 @@ const auth = vi.hoisted(() => ({
     mfa_enabled: false,
   },
   logout: vi.fn(),
-  perms: new Set<string>(['settings.write']),
+  perms: new Set<string>(['platform.write']),
   hasPermission: (p: string) => auth.perms.has(p),
 }))
 
@@ -58,7 +58,7 @@ describe('UserMenu', () => {
     auth.user.full_name = 'Test User'
     auth.user.mfa_enabled = false
     auth.logout.mockReset().mockResolvedValue(undefined)
-    auth.perms = new Set(['settings.write'])
+    auth.perms = new Set(['platform.write'])
     setTheme.mockReset().mockResolvedValue({ data: {} })
     localStorage.clear()
   })
@@ -133,7 +133,7 @@ describe('UserMenu', () => {
     expect(setTheme).not.toHaveBeenCalled()
   })
 
-  it('saves the default theme for a settings writer and reports a refusal', async () => {
+  it('saves the default theme for a platform writer and reports a refusal', async () => {
     setTheme.mockRejectedValue({ response: { status: 403 } })
     renderMenu()
     fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))

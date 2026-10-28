@@ -8,6 +8,7 @@ import type {
   PatchPayload,
   QuestionPayload,
 } from "../contracts/events.js";
+import { isEmptyResult } from "./call-view.js";
 import { isVisibilityGap } from "./security.js";
 
 // The hypothesis record: beliefs, what bears on each, and what the run could not answer.
@@ -232,7 +233,7 @@ export function recordTools(backend: RecordBackend): RegisteredTool[] {
     ),
     local(
       LINK_TOOL,
-      `Record how evidence bears on hypotheses. evidence_id is ${backend.evidence}. Name each hypothesis by hypothesis_id, or by statement to propose it here. Failed results are not evidence.`,
+      `Record how evidence bears on hypotheses. evidence_id is ${backend.evidence}. Name each hypothesis by hypothesis_id, or by statement to propose it here. Failed or empty results are not evidence.`,
       {
         type: "object",
         additionalProperties: false,
@@ -309,8 +310,8 @@ export interface KernelRecordPorts {
   write(kind: "hypothesis" | "link" | "question", payload: HypothesisPayload | LinkPayload | QuestionPayload): Promise<void>;
 }
 
-// Evidence is a call ref, and only one whose call was served: linking a refused
-// call or a timeout as evidence would count a blind spot as an observation.
+// Evidence is a call ref, and only one whose call was served and found something: linking a
+// refused call, a timeout, or an empty search would count a blind spot as an observation.
 export function kernelRecord(ports: KernelRecordPorts): RecordBackend {
   return {
     stances: ["supports", "weakens"],
@@ -332,6 +333,8 @@ export function kernelRecord(ports: KernelRecordPorts): RecordBackend {
         if (call === undefined) return refusedWith(`${one.evidence_id} is not a result this run holds`);
         const kind = classOf(call);
         if (kind !== "served") return refusedWith(`${one.evidence_id} was a ${kind === "defect" ? "defective call" : "visibility gap"}, not evidence`);
+        // A search that found nothing is a gap, not an answer: it bears on no explanation.
+        if (isEmptyResult(call.result)) return refusedWith(`${one.evidence_id} found nothing, which bears on no explanation; open_question for what it could not see`);
       }
       for (const one of links) await ports.write("link", one);
       return okWith([{ linked: links.length }]);

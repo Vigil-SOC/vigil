@@ -156,10 +156,10 @@ vi.mock('../../services/api', () => ({
   findingsApi: { getAll: vi.fn(() => Promise.resolve({ data: { findings: [] } })) },
   casesApi: { getAll: vi.fn(() => Promise.resolve({ data: { cases: [] } })) },
 }))
-// Skill writes need settings.write (the API answers 403 without it).
+// Skill writes need automation.write (the API answers 403 without it).
 const auth = vi.hoisted(() => ({ canWriteSkills: true }))
 vi.mock('../../contexts/AuthContext', () => ({
-  useAuth: () => ({ hasPermission: (p: string) => p !== 'settings.write' || auth.canWriteSkills }),
+  useAuth: () => ({ hasPermission: (p: string) => p !== 'automation.write' || auth.canWriteSkills }),
 }))
 vi.mock('../../services/skillsApi', () => ({
   skillsApi: {

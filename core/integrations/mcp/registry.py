@@ -138,11 +138,30 @@ def _normalised(tool: Dict[str, Any]) -> Dict[str, Any]:
     schema = tool.get("inputSchema", {})
     if not isinstance(schema, dict):
         schema = {}
+    annotations = tool.get("annotations")
     return {
         "name": tool.get("name", "unknown"),
         "description": tool.get("description", ""),
         "inputSchema": schema,
+        "annotations": annotations if isinstance(annotations, dict) else None,
     }
+
+
+# The tool list each server's hints were last applied from. The client builds a
+# new list on every connect, so a per-turn refresh applies them once per connect.
+_hinted: Dict[str, List[Dict]] = {}
+
+
+def _register(registry: MCPRegistry, server_name: str, tools: List[Dict]) -> None:
+    """Register a connected server's tools, after its destructiveHints tighten."""
+    from core.response.ceiling import tighten_from_hints
+
+    normalised = [_normalised(t) for t in tools]
+    if _hinted.get(server_name) is not tools and tighten_from_hints(
+        server_name, normalised
+    ):
+        _hinted[server_name] = tools
+    registry.register_server(server_name, normalised)
 
 
 # Whether this deployment dials every configured MCP server at startup. Off by
@@ -221,7 +240,7 @@ def register_connected(registry: MCPRegistry, mcp_client, server_name: str) -> b
         tools = (getattr(mcp_client, "tools_cache", None) or {}).get(server_name)
         if not isinstance(tools, list) or not tools:
             return False
-        registry.register_server(server_name, [_normalised(t) for t in tools])
+        _register(registry, server_name, tools)
         return True
     except Exception as exc:  # noqa: BLE001 — callers must not 500 on a registry write
         logger.warning("Could not register MCP server %s: %s", server_name, exc)
@@ -277,7 +296,7 @@ def refresh_from_client(registry: MCPRegistry) -> int:
     for name, tools in tools_dict.items():
         if connected and not connected.get(name, False):
             continue
-        registry.register_server(name, [_normalised(t) for t in tools])
+        _register(registry, name, tools)
         added += 1
     return added
 

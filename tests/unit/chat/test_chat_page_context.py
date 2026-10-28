@@ -19,8 +19,9 @@ MCP = [{"name": "vt_lookup", "description": "look up a hash"}]
 
 
 @pytest.fixture
-def turn(monkeypatch):
+def turn(monkeypatch, stored_tool_classes):
     """Run one chat turn; returns what the relay was handed."""
+    stored_tool_classes["vt_lookup"] = "read_unverified"
     seen: dict = {"agent_managers": 0}
 
     class _Registry:

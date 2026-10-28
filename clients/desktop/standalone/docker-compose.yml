@@ -155,11 +155,11 @@ services:
     environment: *agent-env
     healthcheck:
       # 6990 is probes only; Node 20 has global fetch, so no curl in the image.
-      test: ["CMD", "node", "-e", "fetch('http://localhost:6990/healthz').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:6990/readyz').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
@@ -178,11 +178,11 @@ services:
     command: ["node", "dist/serve.js"]
     environment: *agent-env
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:6989/healthz').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:6989/readyz').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 30s
     # An SSE stream can sit on one model call for minutes.
     stop_grace_period: 120s
     # Postgres only, plus the upgrade one-shot: serve never touches the queue.

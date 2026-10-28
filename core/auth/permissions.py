@@ -21,6 +21,7 @@ from core.auth.auth_cookies import ACCESS_COOKIE_NAME
 from core.auth.auth_service import AuthService
 from core.auth.current_user import get_current_user
 from core.auth.mcp_credential_service import looks_like_mcp_token
+from core.auth.tool_principal import current_claims
 from core.integrations.mcp.surface import current_caller
 from core.routing import UnitOfWorkSession
 from core.storage.models import User
@@ -222,6 +223,7 @@ PRESETS = {
             "platform.write",
             "settings.write",
             "integrations.install",
+            "ai_autonomy.write",
         ),
     },
     "detection-engineer": {
@@ -262,6 +264,191 @@ def builtin_diff(role_id: str, permissions: dict) -> dict:
 
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
+# The revision that copies successor grants onto roles (#2915). While it is
+# missing from alembic_version, a gate split from a live write keeps that
+# write, and a gate this revision introduces stays open.
+CATALOG_REVISION = "0008_permission_catalog"
+_WRITE_PARENTS = frozenset({"settings.write", "integrations.write"})
+_SPLIT_PREFIX = "split from "
+
+
+def catalog_revision_applied(session) -> bool:
+    """Whether ``session``'s database includes ``0008_permission_catalog``.
+
+    The same walk as ``trail_ready``: the table, then each stamped revision's
+    ancestors. A database that cannot be opened is handled by the caller as
+    not yet upgraded, and so is one that is not Postgres (a SQLite test
+    database has no migration chain). A read error once it is open raises, so
+    a transient failure cannot read the revision as absent and open the split
+    gates. Not a setting, and not a call to ``trail_ready``.
+    """
+    from alembic.util import CommandError
+    from sqlalchemy import text
+
+    from core.upgrade.command import script_directory
+
+    if session.get_bind().dialect.name != "postgresql":
+        return False
+    present = session.execute(
+        text("SELECT to_regclass('public.alembic_version')")
+    ).scalar()
+    if present is None:
+        return False
+    script = script_directory()
+    rows = session.execute(text("SELECT version_num FROM alembic_version"))
+    for (version,) in rows:
+        try:
+            if any(
+                revision.revision == CATALOG_REVISION
+                for revision in script.iterate_revisions(version, "base")
+            ):
+                return True
+        except CommandError:  # newer than this image: the upgrade refuses it too
+            continue
+    return False
+
+
+def enforced_permission(
+    permission: str,
+    session,
+    *,
+    introduced: bool = False,
+    before_revision: Optional[str] = None,
+) -> Optional[str]:
+    """The name to check, or None when the gate stays open.
+
+    With the catalog revision applied, the declared name is the check. Without
+    it, a successor of ``settings.write`` or ``integrations.write`` keeps that
+    parent, and every other catalog permission is new and stays open. A name
+    the catalog does not re-origin (the live gates, and ``{integration}.view``)
+    is checked either way. ``introduced`` is a route that had no gate: it stays
+    open until the revision even when its name is a write successor.
+    ``before_revision`` is the live check a route keeps when its new name is
+    itself a live permission (``integrations.write``), which the catalog does
+    not record as a successor. ``session`` may be None when no database is
+    open; that counts as the revision being absent unless the revision check
+    is stubbed to say otherwise.
+    """
+    if session is not None and catalog_revision_applied(session):
+        return permission
+    if session is None:
+        try:
+            if catalog_revision_applied(None):  # type: ignore[arg-type]
+                return permission
+        except Exception:
+            pass
+    if introduced:
+        return None
+    if before_revision is not None:
+        return before_revision
+    origin = CATALOG["permissions"].get(permission)
+    if isinstance(origin, str) and origin.startswith(_SPLIT_PREFIX):
+        parent = origin[len(_SPLIT_PREFIX) :]
+        if parent in _WRITE_PARENTS:
+            return parent
+    if origin is not None:
+        return None
+    return permission
+
+
+def _missing(
+    user_id: str,
+    permission: str,
+    session,
+    *,
+    introduced: bool = False,
+    before_revision: Optional[str] = None,
+) -> Optional[str]:
+    enforced = enforced_permission(
+        permission,
+        session,
+        introduced=introduced,
+        before_revision=before_revision,
+    )
+    if enforced is None:
+        return None
+    if AuthService.check_permission(user_id, enforced, session=session):
+        return None
+    return enforced
+
+
+def missing_permission(
+    user_id: str,
+    permission: str,
+    session=None,
+    *,
+    introduced: bool = False,
+    before_revision: Optional[str] = None,
+) -> Optional[str]:
+    """The permission a refusal should name, or None when the call is allowed.
+
+    No database yet (a unit test, or a process that has not connected) is the
+    same as the revision being absent: today's gates, and a stubbed
+    ``check_permission`` still runs.
+    """
+    if session is not None:
+        return _missing(
+            user_id,
+            permission,
+            session,
+            introduced=introduced,
+            before_revision=before_revision,
+        )
+    # A database this process cannot open is the same as the revision being
+    # absent. Unit tests point Postgres at an unreachable host. Only the open
+    # falls back: an error once the database is open is raised, so a transient
+    # failure cannot read the revision as absent and open the split gates.
+    from contextlib import ExitStack
+
+    from sqlalchemy.exc import SQLAlchemyError
+
+    with ExitStack() as stack:
+        try:
+            owned = stack.enter_context(unit_of_work())
+            # A session connects on first use: connect here, so a host that
+            # cannot be reached falls back and a later read error raises.
+            owned.connection()
+        except (RuntimeError, SQLAlchemyError):
+            return _missing(
+                user_id,
+                permission,
+                None,
+                introduced=introduced,
+                before_revision=before_revision,
+            )
+        return _missing(
+            user_id,
+            permission,
+            owned,
+            introduced=introduced,
+            before_revision=before_revision,
+        )
+
+
+def deny_unless(
+    user_id: str,
+    permission: str,
+    session=None,
+    *,
+    introduced: bool = False,
+    before_revision: Optional[str] = None,
+) -> None:
+    """403 naming the permission the check actually used."""
+    missing = missing_permission(
+        user_id,
+        permission,
+        session,
+        introduced=introduced,
+        before_revision=before_revision,
+    )
+    if missing is None:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=f"Permission denied: {missing} required",
+    )
+
+
 # A credential is refused before the role check (decision 9). 403, including
 # in dev mode, where the session dependency would otherwise accept it.
 MCP_CREDENTIAL_DENIED = "An MCP credential cannot do this"
@@ -269,26 +456,36 @@ SIGN_IN_REQUIRED = "A person sign-in is required"
 
 
 def require_permission(
-    permission: str, *, unsafe_only: bool = False
+    permission: str,
+    *,
+    unsafe_only: bool = False,
+    introduced: bool = False,
+    before_revision: Optional[str] = None,
 ) -> Callable[..., User]:
     """Dependency that answers 403 unless the signed-in user holds ``permission``.
 
     ``unsafe_only`` skips GET/HEAD/OPTIONS, for a router-level gate that guards
-    the writes of a router whose reads stay open to every role.
+    the writes of a router whose reads stay open to every role. ``introduced``
+    and ``before_revision`` select the pre-revision check; see
+    ``enforced_permission``.
     """
 
     def _check(request: Request, user: User = Depends(get_current_user)) -> User:
         if unsafe_only and request.method in _SAFE_METHODS:
             return user
-        if not AuthService.check_permission(user.user_id, permission):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Permission denied: {permission} required",
-            )
+        # Omit the default keywords so a test stub of the two-argument
+        # call still matches a gate that is not one of the two exceptions.
+        extra = {}
+        if introduced:
+            extra["introduced"] = True
+        if before_revision is not None:
+            extra["before_revision"] = before_revision
+        deny_unless(user.user_id, permission, **extra)
         return user
 
     # Introspectable by the role x route matrix test.
     _check.permission, _check.unsafe_only = permission, unsafe_only
+    _check.introduced, _check.before_revision = introduced, before_revision
     return _check
 
 
@@ -350,32 +547,43 @@ def require_person_permission(permission: str) -> Callable[..., User]:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED, detail=SIGN_IN_REQUIRED
                 )
-        if not AuthService.check_permission(user.user_id, permission):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Permission denied: {permission} required",
-            )
+        deny_unless(user.user_id, permission)
         return user
 
     _check.permission, _check.unsafe_only = permission, False
     return _check
 
 
-def permission_gate(permission: str, *, unsafe_only: bool = False) -> Depends:
+def permission_gate(
+    permission: str,
+    *,
+    unsafe_only: bool = False,
+    introduced: bool = False,
+    before_revision: Optional[str] = None,
+) -> Depends:
     """``Depends(require_permission(...))``, ready for ``dependencies=[...]``."""
-    return Depends(require_permission(permission, unsafe_only=unsafe_only))
+    return Depends(
+        require_permission(
+            permission,
+            unsafe_only=unsafe_only,
+            introduced=introduced,
+            before_revision=before_revision,
+        )
+    )
 
 
 def username_has_permission(username: str, permission: str) -> bool:
     """Whether the account named ``username`` holds ``permission``.
 
-    For paths that carry only a username (chat and MCP tool calls).
+    For paths that carry only a username (chat and MCP tool calls). An unknown
+    account holds nothing, except under DEV_MODE, which holds built-in Admin.
     """
     with unit_of_work() as session:
         user = session.query(User).filter(User.username == username).first()
-        user_id = user.user_id if user else ""
-    # An unknown id holds nothing, except under DEV_MODE, which grants all.
-    return AuthService.check_permission(user_id, permission)
+        return (
+            missing_permission(user.user_id if user else "", permission, session)
+            is None
+        )
 
 
 def permission_refusal(permission: str) -> Optional[dict[str, str]]:
@@ -383,12 +591,17 @@ def permission_refusal(permission: str) -> Optional[dict[str, str]]:
 
     A credential has no permissions of its own. The person it names is checked
     against their live role, so a demotion or a role edit applies on the next
-    call. No bound principal is a system run — one the orchestrator or a
-    handoff started — which is not a role to consult. A person who started a
-    run is named on it, and this check is theirs.
+    call. A run no person started is bound by its signed run claims, not a
+    role: the autonomy ceiling governs it at invoke. Nothing bound at all is
+    refused (#3306).
     """
     caller = current_caller()
-    if caller is None or username_has_permission(caller, permission):
+    if caller is None:
+        if current_claims() is not None:
+            return None
+        logger.warning("unbound caller refused: %s required", permission)
+        return {"error": f"no principal is bound: {permission} required"}
+    if username_has_permission(caller, permission):
         return None
     logger.warning("%s refused: %s required", caller, permission)
     return {"error": f"{caller} may not do this: {permission} required"}

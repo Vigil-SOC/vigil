@@ -2,7 +2,7 @@
 
 One append or one ``CaseAuditLog`` insert, in the caller's transaction,
 never both: ``trail.in_use`` decides. No revision is added here. The case
-Record tab keeps reading ``case_audit_logs`` and does not show these entries.
+Record tab reads both: these entries by ``case_id``, and ``case_audit_logs``.
 """
 
 from __future__ import annotations

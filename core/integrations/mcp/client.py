@@ -413,11 +413,19 @@ class MCPClient:
             # Cache tools
             self.tools_cache[server_name] = []
             for tool in tools_result.tools:
+                # Annotations are hints: a destructiveHint only tightens a
+                # stored class (core/response/ceiling.py), never loosens one.
+                annotations = getattr(tool, "annotations", None)
                 self.tools_cache[server_name].append(
                     {
                         "name": tool.name,
                         "description": tool.description or "",
                         "inputSchema": tool.input_schema,
+                        "annotations": (
+                            annotations.model_dump(by_alias=True, exclude_none=True)
+                            if annotations is not None
+                            else None
+                        ),
                     }
                 )
 

@@ -15,6 +15,11 @@ function ms(name: string, fallback: number): number {
 export const LEASE_TTL_MS = ms("VIGIL_LEASE_TTL_MS", 60_000);
 export const RENEW_EVERY_MS = ms("VIGIL_LEASE_RENEW_MS", 15_000);
 
+// How long a run parked on a denied call (#3306) waits before the model is asked
+// again. Nobody answers a denial: the ceiling or a role changes, or it does not,
+// so between those asks a resume re-parks without a model call.
+export const DENIAL_RECHECK_MS = ms("VIGIL_DENIAL_RECHECK_MS", 900_000);
+
 // How often the sweeper looks, and how long a parked run waits to be looked at.
 // The interval is the safety net once the console can pull a run forward.
 export const SWEEP_EVERY_MS = ms("VIGIL_SWEEP_MS", 30_000);

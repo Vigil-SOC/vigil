@@ -1,4 +1,4 @@
-"""Compose approvals: direct-action tools are gated; read-only grants are not."""
+"""Compose approvals: a tool whose stored class is not a read is gated (#3304)."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from core.integrations.atomic_red_team.descriptor import (
 from core.workflows.playbook_resolver import resolve, resolve_hunt
 from core.workflows.workflows_service import WorkflowDefinition
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("seeded_tool_classes")]
 
 
 class _Registry:
@@ -80,14 +80,23 @@ def test_compose_phase_that_grants_execute_puts_it_in_approvals(execute_id):
 
 def test_a_direct_action_tool_is_gated_and_a_read_is_not():
     config = _config(
-        ["microsoft-defender_mde_isolate", "get_isolation_status", "analyze_coverage"],
+        [
+            "microsoft-defender_mde_isolate",
+            "microsoft-defender_mde_get_machine",
+            "analyze_coverage",
+        ],
         "microsoft-defender_mde_isolate",
-        "get_isolation_status",
+        "microsoft-defender_mde_get_machine",
     )
     ids = [tool["id"] for tool in config["tools"]]
     assert "microsoft-defender_mde_isolate" in ids
-    assert "get_isolation_status" in ids
+    assert "microsoft-defender_mde_get_machine" in ids
     assert config["approvals"] == ["microsoft-defender_mde_isolate"]
+
+
+def test_an_unclassified_tool_is_gated():
+    config = _config(["okta_get_user"], "okta_get_user")
+    assert config["approvals"] == ["okta_get_user"]
 
 
 def test_incident_response_stays_ungated():
