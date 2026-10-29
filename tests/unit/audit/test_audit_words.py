@@ -34,3 +34,10 @@ def test_an_unknown_action_is_its_key_and_a_collapsed_one_counts():
         )
         == "Failed to sign in: bad password (4 times)"
     )
+
+
+def test_an_upgrade_says_when_it_was_refused_or_failed():
+    up = {"action": "upgrade.run", "from": "0.9.0", "to": "0.10.0"}
+    assert sentence({**up, "outcome": "applied"}) == "Upgraded from 0.9.0 to 0.10.0"
+    assert sentence({**up, "outcome": "refused"}) == "The upgrade to 0.10.0 was refused"
+    assert sentence({**up, "outcome": "failed"}) == "The upgrade to 0.10.0 failed"

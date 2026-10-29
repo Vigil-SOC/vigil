@@ -546,6 +546,30 @@ def _trail_text(entry: Mapping[str, Any]) -> str:
     return f"{who} {said[0].lower()}{said[1:]}"
 
 
+def _journaled(entry: Mapping[str, Any], activities: Sequence[Any]) -> Optional[int]:
+    """The activity a journal entry appended, when it is still on the case."""
+    payload = entry.get("payload") or {}
+    index = payload.get("activity")
+    if payload.get("action") != "case.journal" or isinstance(index, bool):
+        return None
+    if isinstance(index, int) and 0 <= index < len(activities):
+        return index if isinstance(activities[index], Mapping) else None
+    return None
+
+
+def _detail(entry: Mapping[str, Any], text: str) -> str:
+    """An assignee, a step or a journal line beside the hash, added to the row."""
+    action = (entry.get("payload") or {}).get("action")
+    beside = _short(entry.get("operator_text"))
+    if not beside or action not in (
+        "case.assign",
+        "case.resolution_step",
+        "case.journal",
+    ):
+        return text
+    return f"{text} to {beside}" if action == "case.assign" else _join(text, beside)
+
+
 def _legacy_id(entry: Mapping[str, Any]) -> Optional[str]:
     legacy = (entry.get("payload") or {}).get("legacy")
     if isinstance(legacy, Mapping) and legacy.get("table") == "case_audit_logs":
@@ -626,6 +650,8 @@ def merge_record(
                 }
             )
     copied: set[str] = set()
+    # A journal append is its trail entry's row, with the activity's words.
+    journaled: set[int] = set()
     for entry in trail:
         legacy = _legacy_id(entry)
         if legacy is not None:
@@ -636,6 +662,13 @@ def merge_record(
         kind = (principal or {}).get("kind") or (
             principals.PERSON if legacy is not None else "agent"
         )
+        index = _journaled(entry, activities)
+        if index is None:
+            text = _detail(entry, _trail_text(entry))
+        else:
+            journaled.add(index)
+            words = combined.words(str(activities[index].get("description") or ""))
+            text = _join(_trail_text(entry), _plain(words))
         rows.append(
             {
                 "id": f"trail:{entry['seq']}",
@@ -643,7 +676,7 @@ def merge_record(
                 "kind": _TRAIL_KIND.get(kind, "agent"),
                 "source": "audit_trail",
                 "chained": False,
-                "text": _trail_text(entry),
+                "text": text,
                 "_seq": 0,
             }
         )
@@ -663,7 +696,7 @@ def merge_record(
         )
     # Activities have no id; the list is only appended to, so the index is stable.
     for index, activity in enumerate(activities):
-        if not isinstance(activity, Mapping):
+        if not isinstance(activity, Mapping) or index in journaled:
             continue
         at = _parse(activity.get("timestamp"))
         if at is None:

@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from core.config import is_demo_mode
 from core.exceptions import DatabaseError
+from core.storage import case_trail_hook
 from core.storage.connection import (
     SchemaDriftError,
     SchemaRevisionError,
@@ -486,6 +487,8 @@ class DatabaseDataService:
                     priority=priority,
                 )
                 return CaseSchema.dump(case) if case else None
+            except case_trail_hook.RAISED:
+                raise
             except Exception as e:
                 logger.error(f"Error creating case in DB: {e}")
                 return None
@@ -497,6 +500,8 @@ class DatabaseDataService:
         if self._db_available:
             try:
                 return self._db_service.update_case(case_id, **updates)
+            except case_trail_hook.RAISED:
+                raise
             except Exception as e:
                 logger.error(f"Error updating case in DB: {e}")
                 return False
@@ -508,6 +513,8 @@ class DatabaseDataService:
         if self._db_available:
             try:
                 return self._db_service.delete_case(case_id)
+            except case_trail_hook.RAISED:
+                raise
             except Exception as e:
                 logger.error(f"Error deleting case from DB: {e}")
                 return False
@@ -562,6 +569,8 @@ class DatabaseDataService:
         if self._db_available:
             try:
                 return self._db_service.add_finding_to_case(case_id, finding_id)
+            except case_trail_hook.RAISED:
+                raise
             except Exception as e:
                 logger.error(f"Error adding finding to case in DB: {e}")
                 return False

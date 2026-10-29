@@ -30,26 +30,6 @@ class _User:
 _ADMIN = _User("admin-1")
 
 
-class _Audit:
-    def __init__(self):
-        self.user_ids: list[str] = []
-        self.calls: list[dict] = []
-
-    def record_audit(self, **kwargs):
-        self.calls.append(kwargs)
-
-
-@pytest.fixture
-def audit(monkeypatch):
-    recorder = _Audit()
-
-    def factory(user_id="system"):
-        recorder.user_ids.append(user_id)
-        return recorder
-
-    monkeypatch.setattr("services.api.routers.cases.get_config_service", factory)
-    return recorder
-
 pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.database]
 
 
@@ -95,7 +75,7 @@ def _investigation(session, inv_id, case_id, status, workdir="") -> Investigatio
 
 
 @pytest.mark.asyncio
-async def test_delete_case_with_live_investigation_is_409(session, audit):
+async def test_delete_case_with_live_investigation_is_409(session):
     from services.api.routers import cases
 
     _case(session, "case-1")
@@ -110,11 +90,10 @@ async def test_delete_case_with_live_investigation_is_409(session, audit):
     )
     assert session.get(Case, "case-1") is not None
     assert session.get(Investigation, "inv-1").status == "executing"
-    assert audit.calls == []
 
 
 @pytest.mark.asyncio
-async def test_the_409_names_every_blocking_run(session, audit):
+async def test_the_409_names_every_blocking_run(session):
     from services.api.routers import cases
 
     _case(session, "case-1")
@@ -124,14 +103,11 @@ async def test_the_409_names_every_blocking_run(session, audit):
     with pytest.raises(HTTPException) as exc:
         await cases.delete_case("case-1", session, _ADMIN)
 
-    assert audit.calls == []
-
     assert "2 live investigations" in exc.value.detail
     assert "inv-1" in exc.value.detail and "inv-2" in exc.value.detail
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("audit")
 async def test_a_finished_investigation_does_not_block_the_delete(session):
     from services.api.routers import cases
 
@@ -143,7 +119,6 @@ async def test_a_finished_investigation_does_not_block_the_delete(session):
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("audit")
 async def test_a_hunt_does_not_block_the_delete(session):
     """A hunt has no case_id, so the case-scoped filter never sees it."""
     from services.api.routers import cases
@@ -157,7 +132,6 @@ async def test_a_hunt_does_not_block_the_delete(session):
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("audit")
 async def test_a_live_run_on_another_case_does_not_block_the_delete(session):
     from services.api.routers import cases
 
@@ -169,49 +143,27 @@ async def test_a_live_run_on_another_case_does_not_block_the_delete(session):
 
 
 @pytest.mark.asyncio
-async def test_deleting_an_unknown_case_is_404(session, audit):
+async def test_deleting_an_unknown_case_is_404(session):
     from services.api.routers import cases
 
     with pytest.raises(HTTPException) as exc:
         await cases.delete_case("nope", session, _ADMIN)
 
     assert exc.value.status_code == 404
-    assert audit.calls == []
 
 
 @pytest.mark.asyncio
-async def test_successful_delete_records_who_and_which_case(session, audit):
-    from services.api.routers import cases
-
-    _case(session, "case-1")
-
-    assert await cases.delete_case("case-1", session, _ADMIN) == {"success": True}
-    assert audit.user_ids == ["admin-1"]
-    assert audit.calls == [
-        {
-            "config_type": "cases",
-            "config_key": "case-1",
-            "action": "delete",
-            "old_value": {"case_id": "case-1", "title": "case case-1"},
-            "new_value": None,
-            "change_reason": "Case deleted via API",
-        }
-    ]
-
-
-@pytest.mark.asyncio
-async def test_demo_delete_writes_no_audit(audit, monkeypatch):
+async def test_demo_delete_needs_no_session(monkeypatch):
     from services.api.routers import cases
 
     monkeypatch.setattr(cases.data_service, "is_demo_mode", lambda: True)
     monkeypatch.setattr(cases.data_service, "delete_case", lambda case_id: True)
 
     assert await cases.delete_case("case-1", None, _ADMIN) == {"success": True}
-    assert audit.calls == []
 
 
 @pytest.mark.asyncio
-async def test_purge_records_the_caller_and_the_counts(session, audit, monkeypatch):
+async def test_purge_returns_the_counts(session, monkeypatch):
     from fastapi import BackgroundTasks
 
     from core.auth.auth_service import AuthService
@@ -232,17 +184,6 @@ async def test_purge_records_the_caller_and_the_counts(session, audit, monkeypat
 
     assert result["deleted"] == 2
     assert result["killed_investigations"] == 1
-    assert audit.user_ids == ["admin-1"]
-    assert audit.calls == [
-        {
-            "config_type": "cases",
-            "config_key": "cases",
-            "action": "delete_all",
-            "old_value": {"count": 2, "killed_investigations": 1},
-            "new_value": None,
-            "change_reason": "All cases deleted via API",
-        }
-    ]
 
 
 def test_bulk_reset_kills_live_case_runs_and_leaves_hunts(session):
