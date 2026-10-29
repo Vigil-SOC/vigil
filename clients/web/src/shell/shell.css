@@ -1235,6 +1235,11 @@
   background: color-mix(in srgb, var(--bg0) 35%, transparent);
 }
 
+/* With Ask Vigil open the case sits beside the dock, not under it. */
+.chat-active .vg-drawer-scrim {
+  right: var(--chat-w);
+}
+
 .vg-case-drawer {
   width: 75%;
   height: 100%;
