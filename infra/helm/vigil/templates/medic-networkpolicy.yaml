@@ -84,6 +84,16 @@ spec:
         - protocol: TCP
           port: {{ .Values.daemon.ports.health }}
     {{- end }}
+    {{- if .Values.agentServe.enabled }}
+    # agent-serve /readyz (D6-8). The policy opens the Service port.
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "agent-serve") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.agentServe.service.port }}
+    {{- end }}
     # The Kubernetes API, by endpoint address (see vigil.medic.kubeApiCidrs).
     - to:
         {{- range (include "vigil.medic.kubeApiCidrs" . | fromJsonArray) }}

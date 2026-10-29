@@ -22,8 +22,8 @@
 # vigil-backend:$TAG for backend. CLUSTER names the kind cluster (default
 # medic-<mode>); KEEP=1 leaves it up.
 # Only stub pods stand in for Vigil: the backend and agent worker are tiny HTTP
-# servers wearing the chart's labels, so the chart's own Services and policies
-# select them as they would the real thing.
+# servers wearing the chart's labels, so Medic's policies select them as they
+# would the real pods. The worker has no Service: Medic reads its pod IP.
 set -euo pipefail
 
 MODE=${1:?usage: e2e.sh calico|kindnet|nopolicy|backend}
@@ -393,7 +393,9 @@ expect "$be_ip" 6987 timeout "R1 backend pod"
 expect "$gw_ip" 8471 connected "gateway outbound"
 expect "$gw_ip" 8470 timeout "gateway inbound (backend's side)"
 expect "$FN-medic-gateway" 8470 timeout "probe target (gateway Service, port 8470)"
-expect "$FN-medic-agent-worker" 6990 connected "agent worker /readyz"
+aw_ip=$($K -n "$NS" get pod -l app.kubernetes.io/component=agent-worker -o jsonpath='{.items[0].status.podIP}')
+[[ -n $aw_ip ]] || fail "no agent-worker pod IP"
+expect "$aw_ip" 6990 connected "agent worker /readyz"
 expect 1.1.1.1 443 timeout "R2 internet"
 expect "$api_ep" "$api_port" connected "check 15 Kubernetes API"
 

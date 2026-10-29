@@ -314,12 +314,14 @@ medic_host_start() {
     _medic_log_shift "$log"
     # L49: the worker's /readyz on loopback. scripts/agent_up.sh always starts
     # it on 6990 (AGENT_HEALTH_PORT in .env doesn't move it), so neither does this.
+    # agent-serve's /readyz is 6989, where agent_up.sh binds it.
     # The SOC daemon (D6-6) always runs beside a host-native Medic (start.sh -d).
     # The log writer is a process substitution, so $! stays the loop's PID
     # (shutdown_all.sh and the already-running check above look for medic-loop).
     (cd / && exec nohup sudo -n -u "$_MEDIC_USER" -- "$runtime/bin/medic-loop" \
         --python "$runtime/venv/bin/python" --app "$runtime/app" --data-dir "$data" \
-        --agent-worker 127.0.0.1:6990 --daemon "127.0.0.1:${DAEMON_HEALTH_PORT:-9091}" \
+        --agent-worker 127.0.0.1:6990 --agent-serve 127.0.0.1:6989 \
+        --daemon "127.0.0.1:${DAEMON_HEALTH_PORT:-9091}" \
         --api-key-stdin) \
         < "$keyin" > >(_medic_log_writer "$log") 2>&1 &
     echo $! > "$pidfile"
