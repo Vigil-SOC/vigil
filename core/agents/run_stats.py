@@ -26,18 +26,26 @@ def agent_run_stats() -> Dict[str, dict]:
     since = utcnow() - WINDOW
     runs: Counter = Counter()
     done: Counter = Counter()
+    # a step a person rejected is a decision, not a failure: it counts as a run but
+    # stays out of the success rate
+    rejected: Counter = Counter()
     with get_db_manager().session_scope() as session:
         phases = (
             session.query(
                 WorkflowRunPhase.agent_id,
                 WorkflowRunPhase.status,
+                WorkflowRunPhase.approval_state,
                 func.count(),
             )
             .filter(
                 WorkflowRunPhase.status.in_(("completed", "failed")),
                 WorkflowRunPhase.started_at >= since,
             )
-            .group_by(WorkflowRunPhase.agent_id, WorkflowRunPhase.status)
+            .group_by(
+                WorkflowRunPhase.agent_id,
+                WorkflowRunPhase.status,
+                WorkflowRunPhase.approval_state,
+            )
             .all()
         )
         chats = (
@@ -51,7 +59,10 @@ def agent_run_stats() -> Dict[str, dict]:
             .group_by(Conversation.agent_id, ChatMessage.complete)
             .all()
         )
-    for agent_id, status, n in phases:
+    for agent_id, status, approval, n in phases:
+        if status == "failed" and approval == "rejected":
+            rejected[agent_id] += n
+            continue
         runs[agent_id] += n
         done[agent_id] += n if status == "completed" else 0
     for agent_id, complete, n in chats:
@@ -59,9 +70,13 @@ def agent_run_stats() -> Dict[str, dict]:
         done[agent_id] += n if complete else 0
     return {
         agent_id: {
-            "runs_7d": n,
-            "success_rate": done[agent_id] / n,
-            "success_level": completion_level(n, done[agent_id]),
+            "runs_7d": runs[agent_id] + rejected[agent_id],
+            "success_rate": done[agent_id] / runs[agent_id] if runs[agent_id] else None,
+            "success_level": (
+                completion_level(runs[agent_id], done[agent_id])
+                if runs[agent_id]
+                else None
+            ),
         }
-        for agent_id, n in runs.items()
+        for agent_id in runs.keys() | rejected.keys()
     }
