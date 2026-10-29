@@ -9,12 +9,21 @@ is ``rank_intake_row``; this module does not keep a second sort key.
 
 from __future__ import annotations
 
+import hashlib
 from datetime import date, datetime
 from typing import Optional
 
-import hashlib
-
-from sqlalchemy import Integer, String, case, cast, distinct, exists, func, literal, null
+from sqlalchemy import (
+    Integer,
+    String,
+    case,
+    cast,
+    distinct,
+    exists,
+    func,
+    literal,
+    null,
+)
 
 from core.federation.lag import source_collection_lag
 from core.findings.arrival_counts import arrivals_today_by_source, utc_day_bounds
@@ -225,7 +234,9 @@ def _rows(session):
     return intake.union_all(never_queued).subquery("triage_rows")
 
 
-def _filtered(query, rows, kind: Optional[str], source: Optional[str], state: Optional[str]):
+def _filtered(
+    query, rows, kind: Optional[str], source: Optional[str], state: Optional[str]
+):
     if kind:
         query = query.filter(rows.c.kind == kind)
     if state == NOISE_STATE:
@@ -419,7 +430,11 @@ def _never_queued_row(finding: dict) -> dict:
         "id": _never_queued_id(finding["finding_id"]),
         "kind": "detection",
         "state": NOT_PICKED_UP,
-        "source": data_source if isinstance(data_source, str) and data_source else UNKNOWN_SOURCE,
+        "source": (
+            data_source
+            if isinstance(data_source, str) and data_source
+            else UNKNOWN_SOURCE
+        ),
         "priority": None,
         "finding_id": finding["finding_id"],
         "payload": {},
@@ -527,7 +542,9 @@ def _present(
         row["state"], row.get("case_id"), row.get("merged_into"), case_ids
     )
     dismissed = bool(
-        finding and finding.get("noise_marked_at") and row["state"] in _NOISE_LABEL_STATES
+        finding
+        and finding.get("noise_marked_at")
+        and row["state"] in _NOISE_LABEL_STATES
     )
     if dismissed:
         label = NOISE_LABEL
