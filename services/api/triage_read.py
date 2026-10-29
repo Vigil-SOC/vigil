@@ -25,7 +25,6 @@ from sqlalchemy import (
     func,
     literal,
     null,
-    or_,
 )
 from sqlalchemy.orm import aliased
 
@@ -261,14 +260,12 @@ def _rows(session, day: Optional[date]):
         )
         .select_from(IntakeTrigger)
         .outerjoin(Finding, Finding.finding_id == IntakeTrigger.finding_id)
-        # only an alert's latest row; Ask and schedule rows have no finding and all stay
+        # only an alert's latest row; a null finding_id (Ask, schedule) matches no
+        # newer row, so those all stay, and the plan stays an anti-join
         .filter(
-            or_(
-                IntakeTrigger.finding_id.is_(None),
-                ~exists().where(
-                    newer.finding_id == IntakeTrigger.finding_id,
-                    newer.id > IntakeTrigger.id,
-                ),
+            ~exists().where(
+                newer.finding_id == IntakeTrigger.finding_id,
+                newer.id > IntakeTrigger.id,
             )
         )
     )

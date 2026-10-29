@@ -288,6 +288,7 @@ def _matches(
     closed_by: Optional[str],
     alerts_from: Optional[str],
     today: date,
+    best_case: dict[str, dict],
 ) -> bool:
     # Demo cases have no workflow and no SLA, so those filters keep nothing.
     if workflow_constrained or sla_at_risk:
@@ -310,11 +311,13 @@ def _matches(
     if closed_by and (status != _CLOSED or closed_by != "agent"):
         return False
     if alerts_from:
+        # only alerts Overview counts under this case: not noise, and this is their case
         whens = [
             _when(findings_by_id[finding_id])
             for finding_id in _ids(case.get("finding_ids"))
-            # a noise-marked alert counts under Dismissed, not its case
-            if finding_id in findings_by_id and not _noise(findings_by_id[finding_id])
+            if finding_id in findings_by_id
+            and not _noise(findings_by_id[finding_id])
+            and best_case.get(finding_id) is case
         ]
         if alerts_from == "today":
             whens = [when for when in whens if when and when.date() == today]
@@ -363,6 +366,7 @@ def case_queue(
 ) -> dict:
     """One page of demo cases, in the queue's shape. The strip ignores the filters."""
     needs = open_case_ids(cases)
+    best = best_case_by_finding(cases)
     findings_by_id = {
         finding["finding_id"]: finding
         for finding in findings
@@ -388,6 +392,7 @@ def case_queue(
             closed_by=closed_by,
             alerts_from=alerts_from,
             today=now.date(),
+            best_case=best,
         )
     ]
     matched.sort(

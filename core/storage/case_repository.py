@@ -21,9 +21,10 @@ from sqlalchemy import (
     func,
     or_,
     select,
+    tuple_,
     union_all,
 )
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from core.storage.models import (
     Case,
@@ -277,13 +278,30 @@ def _sla_at_risk(sla, now):
 def _alerts_in_exists(start: Optional[datetime], end: Optional[datetime]):
     """The case holds an alert created in ``[start, end)``; no bounds is any day.
 
-    A noise-marked alert does not count: Overview files it under Dismissed, not its case.
+    Only alerts Overview counts under this case: not noise-marked (those are
+    Dismissed), and on no newer case (``alert_outcomes._cases_for`` reads the
+    one with the latest ``(updated_at, case_id)``).
     """
+    other_link = case_findings.alias("other_link")
+    other_case = aliased(Case)
+    newer_case = exists(
+        select(other_link.c.case_id)
+        .join(other_case, other_case.case_id == other_link.c.case_id)
+        .where(
+            other_link.c.finding_id == case_findings.c.finding_id,
+            tuple_(other_case.updated_at, other_case.case_id)
+            > tuple_(Case.updated_at, Case.case_id),
+        )
+        # Case is two levels up; auto-correlation only reaches one
+        .correlate(Case, case_findings)
+    )
     stmt = (
         select(case_findings.c.finding_id)
         .join(Finding, Finding.finding_id == case_findings.c.finding_id)
         .where(
-            case_findings.c.case_id == Case.case_id, Finding.noise_marked_at.is_(None)
+            case_findings.c.case_id == Case.case_id,
+            Finding.noise_marked_at.is_(None),
+            ~newer_case,
         )
     )
     if start is not None and end is not None:
