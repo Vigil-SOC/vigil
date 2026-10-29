@@ -22,7 +22,15 @@ vi.mock('../../services/api', () => ({
   },
 }))
 
-const CONNECTED = { search_logs: 'read_only', create_approval_action: 'asks_first', isolate_host: 'on_its_own', read_skill: 'read_only', get_alert: 'read_only' }
+const CONNECTED = { search_logs: 'read_only', create_approval_action: 'asks_first', isolate_host: 'on_its_own', read_skill: 'read_only', get_alert: 'read_only', crowdstrike_contain_host: 'asks_first' }
+const CATALOG = [
+  { name: 'create_approval_action', server: 'vigil', description: 'Ask a person to approve an action.' },
+  { name: 'get_alert', server: 'vigil', description: 'Read one alert.' },
+  { name: 'read_skill', server: 'vigil', description: 'Read a skill file.' },
+  { name: 'search_logs', server: 'vigil', description: 'Search the logs.' },
+  { name: 'crowdstrike_contain_host', server: 'crowdstrike', description: 'Cut a host off the network until it is lifted.' },
+  { name: 'isolate_host', server: 'crowdstrike', description: 'Isolate a host.' },
+]
 const SAVED = {
   id: 'custom-mine', name: 'Mine', specialization: 'Hunts', description: 'Hunts things', icon: 'M', color: '#112233',
   role: 'investigator', extra_principles: 'Be careful', methodology: '1. look', system_prompt_override: null,
@@ -41,7 +49,7 @@ describe('agent drawer', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(agentsApi.getCustom).mockResolvedValue({ data: SAVED } as never)
-    vi.mocked(agentsApi.getAvailableTools).mockResolvedValue({ data: { tools: [], changes: CONNECTED } } as never)
+    vi.mocked(agentsApi.getAvailableTools).mockResolvedValue({ data: { tools: [], changes: CONNECTED, catalog: CATALOG } } as never)
   })
 
   it('creates a blank agent with the defaults and null models', async () => {
@@ -91,18 +99,41 @@ describe('agent drawer', () => {
     await screen.findByText('search_logs')
     fireEvent.click(screen.getByRole('button', { name: 'Remove search_logs' }))
     expect(screen.queryByRole('button', { name: 'Remove search_logs' })).toBeNull()
-    await waitFor(() => expect(within(screen.getByLabelText('Add tool')).getByRole('option', { name: 'get_alert' })).toBeInTheDocument())
-    fireEvent.change(screen.getByLabelText('Add tool'), { target: { value: 'get_alert' } })
-    expect((await screen.findByText('get_alert')).closest('.vg-side-tool')).toHaveTextContent('On its own')
-    expect(screen.queryByRole('textbox', { name: /tools/i })).toBeNull()
+    fireEvent.click(await screen.findByRole('button', { name: /^Vigil/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add get_alert' }))
+    expect(screen.getByText('get_alert').closest('.vg-side-tool')).toHaveTextContent('On its own')
+    expect(screen.queryByRole('button', { name: 'Add get_alert' })).toBeNull()
+    // the removed tool can be added back; a name the catalog does not hold cannot be added at all
+    expect(screen.getByRole('button', { name: 'Add search_logs' })).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Find a tool'), { target: { value: 'okta_lock_user' } })
+    fireEvent.keyDown(screen.getByLabelText('Find a tool'), { key: 'Enter' })
+    expect(screen.getByText('No tool matches “okta_lock_user”.')).toBeInTheDocument()
+    expect(screen.queryByText('okta_lock_user')).toBeNull()
+  })
+
+  it('files tools under their server, folded until a search finds one by what it does', async () => {
+    open()
+    const crowdstrike = await screen.findByRole('button', { name: /^crowdstrike/ })
+    // isolate_host is already chosen, so crowdstrike has one tool left to add
+    expect(crowdstrike).toHaveTextContent('crowdstrike1')
+    expect(crowdstrike).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('button', { name: 'Add crowdstrike_contain_host' })).toBeNull()
+    fireEvent.change(screen.getByLabelText('Find a tool'), { target: { value: 'off the network' } })
+    const found = screen.getByRole('button', { name: 'Add crowdstrike_contain_host' })
+    expect(found).toHaveTextContent('Cut a host off the network until it is lifted.')
+    expect(found).toHaveTextContent('Asks you')
+    expect(screen.queryByRole('button', { name: /^Vigil/ })).toBeNull()
+    fireEvent.keyDown(screen.getByLabelText('Find a tool'), { key: 'Enter' })
+    expect(screen.getByText('crowdstrike_contain_host').closest('.vg-side-tool')).toHaveTextContent('Asks you')
+    expect(screen.getByLabelText('Find a tool')).toHaveValue('')
   })
 
   it('says which skills it is offered', async () => {
     open({ skillCount: 12 })
     await screen.findByText('search_logs')
     expect(screen.getByText('Not offered skills.')).toBeInTheDocument()
-    await waitFor(() => expect(within(screen.getByLabelText('Add tool')).getByRole('option', { name: 'read_skill' })).toBeInTheDocument())
-    fireEvent.change(screen.getByLabelText('Add tool'), { target: { value: 'read_skill' } })
+    fireEvent.change(await screen.findByLabelText('Find a tool'), { target: { value: 'read_skill' } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Add read_skill' }))
     expect(screen.getByText('Offered every skill in the library (12). Choosing single skills comes later.')).toBeInTheDocument()
   })
 

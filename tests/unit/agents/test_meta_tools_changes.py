@@ -1,12 +1,16 @@
-"""GET /agents/custom/_meta/tools marks each tool read_only, asks_first or on_its_own."""
+"""GET /agents/custom/_meta/tools lists every tool an agent may be given and
+marks each read_only or asks_first."""
 
-from types import SimpleNamespace
-
+from core.integrations.mcp.registry import MCPRegistry
+from core.integrations.mcp.surface import VIGIL_SERVER
 from services.api.routers.custom_agents import list_available_tools
 
 
-def registry(*names):
-    return SimpleNamespace(get_tool_names=lambda: list(names))
+def registry(**servers):
+    reg = MCPRegistry()
+    for server, tools in servers.items():
+        reg.register_server(server, tools=[{"name": n} for n in tools])
+    return reg
 
 
 def test_changes_marks_connected_and_built_in_tools(stored_tool_classes):
@@ -15,11 +19,10 @@ def test_changes_marks_connected_and_built_in_tools(stored_tool_classes):
     )
     body = list_available_tools(
         registry(
-            "splunk_search",
-            "crowdstrike_isolate_host",
-            "splunk_get_events",
-            "okta_get_user",
-            "create_approval_action",
+            splunk=["search", "get_events"],
+            crowdstrike=["isolate_host"],
+            okta=["get_user"],
+            vigil=["create_approval_action"],
         )
     )
     assert "splunk_search" in body["tools"]
@@ -33,3 +36,28 @@ def test_changes_marks_connected_and_built_in_tools(stored_tool_classes):
     assert changes["read_skill"] == "read_only"
     # A name no one lists has no mark: the drawer shows it as not connected.
     assert "okta_revoke_session" not in changes
+
+
+def test_catalog_lists_each_tool_under_the_server_that_serves_it(stored_tool_classes):
+    reg = MCPRegistry()
+    reg.register_server(
+        "splunk",
+        tools=[{"name": "search", "description": "Run an SPL search. Returns events."}],
+    )
+    # Vigil's own MCP tools are not prefixed; their names say nothing of the server.
+    reg.register_server(
+        VIGIL_SERVER, tools=[{"name": "get_case", "description": "Read a case."}]
+    )
+    body = list_available_tools(reg)
+    rows = {r["name"]: r for r in body["catalog"]}
+    assert rows["splunk_search"] == {
+        "name": "splunk_search",
+        "server": "splunk",
+        "description": "Run an SPL search.",
+    }
+    assert rows["get_case"]["server"] == VIGIL_SERVER
+    assert rows["read_skill"]["server"] == VIGIL_SERVER
+    assert rows["read_skill"]["description"]
+    # The catalog and the marks name the same tools; Vigil's come first.
+    assert set(rows) == set(body["changes"])
+    assert body["catalog"][-1]["server"] == "splunk"
