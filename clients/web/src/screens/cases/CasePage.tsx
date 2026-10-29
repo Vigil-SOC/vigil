@@ -25,6 +25,7 @@ import { RunNotes, RunTag } from './RunTag'
 import { BlindSpots, CheckedList, blindSpotsOf } from './RunChecks'
 import { EvidenceCard, IOCsCard } from './CaseSections'
 import { CloseCaseDialog } from './ClosureFields'
+import { closesOnCase } from '../../shared/closesOnCase'
 import { CaseSide } from './CaseSide'
 import { caseCitations, evidenceInNote } from './caseCitations'
 import type { Citation } from '../../shell/citations'
@@ -197,17 +198,25 @@ function ExplanationRow({ row, rootCauseRunId, cites, onCite, tag }: { row: Hypo
 /** A paused run's question, or a hunt stopped at a limit: each gets the full block. */
 const blocks = (it: NeedsYouItem) => it.kind === 'checkpoint' || it.kind === 'parked'
 
-/** Paused runs first, then proposed approvals, each kind in the order served. */
+/** Advice nothing in Vigil executes: answered in the analyst's own tools, then by closing the case. */
+const advice = (it: NeedsYouItem) => it.kind === 'recommendation'
+
+/** Paused runs first, then proposed approvals, then recommendations, each kind in the order served. */
 function byWeight(items: NeedsYouItem[]): NeedsYouItem[] {
-  return [...items.filter(blocks), ...items.filter((it) => !blocks(it))]
+  return [...items.filter(blocks), ...items.filter((it) => !blocks(it) && !advice(it)), ...items.filter(advice)]
 }
 
-/** What's waiting, in a line: a paused run's ask, else the one proposal, else how many there are. */
+/** What's waiting, in a line: a paused run's ask, else the one proposal, else how many there are; recommendations only when nothing else waits. */
 function needsAsk(items: NeedsYouItem[]): string | undefined {
   const paused = items.find(blocks)
-  if (paused || items.length < 2) return (paused ?? items[0])?.title
-  return `${items.length} proposed actions`
+  const decisions = items.filter((it) => !advice(it))
+  const pool = decisions.length > 0 ? decisions : items
+  if (paused || pool.length < 2) return (paused ?? pool[0])?.title
+  return decisions.length > 0 ? `${pool.length} proposed actions` : `${pool.length} recommended actions`
 }
+
+/** Nothing waiting is a decision: only recommendations. */
+const onlyAdvice = (items: NeedsYouItem[]) => items.length > 0 && items.every(advice)
 
 /** Stands in for a run's checkpoint until the approvals queue serves it; answered through the queue. */
 const FROM_RUN = 'run-checkpoint:'
@@ -248,13 +257,13 @@ function approvedRows(item: NeedsYouItem, board: HypothesisRow[]): ApprovedRow[]
 }
 
 /** Under the tabs on every tab but Summary while a decision waits; the decision itself is on Summary. */
-function NeedsStrip({ ask, onDecide }: { ask?: string; onDecide: () => void }) {
+function NeedsStrip({ ask, advising, onDecide }: { ask?: string; advising: boolean; onDecide: () => void }) {
   return (
     <div className="case-needs-strip">
       <span className="strip-dot" aria-hidden="true" />
       <b>Needs you</b>
       {ask && <span className="strip-ask">{ask}</span>}
-      <button type="button" onClick={onDecide}>Decide on Summary</button>
+      <button type="button" onClick={onDecide}>{advising ? 'Review on Summary' : 'Decide on Summary'}</button>
     </div>
   )
 }
@@ -269,6 +278,7 @@ function CaseNeeds({
   board,
   onApprove,
   onReject,
+  onCloseCase,
 }: {
   items: NeedsYouItem[]
   busy: boolean
@@ -277,12 +287,16 @@ function CaseNeeds({
   board: HypothesisRow[]
   onApprove: (item: NeedsYouItem) => void
   onReject: (item: NeedsYouItem, reason: string) => void
+  /** Set when the viewer may close the case. */
+  onCloseCase?: () => void
 }) {
   const [showAll, setShowAll] = useState(false)
   if (items.length === 0) return null
   // Every paused run gets the full block; with none, the first proposal does. Other proposals wait without blocking, so they collapse.
-  const ordered = byWeight(items)
-  const full = Math.max(1, ordered.filter(blocks).length)
+  // A recommendation is never a decision, so it never takes the block.
+  const ordered = byWeight(items).filter((it) => !advice(it))
+  const recommended = items.filter(advice)
+  const full = ordered.length > 0 ? Math.max(1, ordered.filter(blocks).length) : 0
   const rows = ordered.slice(full)
   const visible = showAll ? rows : rows.slice(0, ROWS_SHOWN)
   return (
@@ -305,6 +319,29 @@ function CaseNeeds({
               <button type="button" className="btn neutral" onClick={() => setShowAll(true)}>Show all</button>
             </div>
           )}
+        </div>
+      )}
+      {recommended.length > 0 && (
+        <div className="needs-more">
+          <h3>Recommended actions · {recommended.length}</h3>
+          <p className="needs-note">{recommended.length === 1 ? 'Vigil has no executor for this. Do it' : 'Vigil has no executor for these. Do them'} in your own tools, then close the case.</p>
+          <ul aria-label="Recommended actions">
+            {recommended.map((item) => (
+              <li key={item.source_id}>
+                <div className="needs-row">
+                  <span className="needs-row-title">{item.title}</span>
+                  {onCloseCase && closesOnCase(item, items) && (
+                    <div className="needs-actions">
+                      <button type="button" className="btn primary" aria-label={`Close case for ${item.title}`} onClick={onCloseCase}>
+                        Close case
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {item.reason && <p className="needs-row-reason">{item.reason}</p>}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </section>
@@ -1481,6 +1518,7 @@ export function CasePage({
       board={hypotheses}
       onApprove={approve}
       onReject={reject}
+      onCloseCase={canWrite ? () => setClosing(true) : undefined}
     />
   )
 
@@ -1548,7 +1586,7 @@ export function CasePage({
         />
       </div>
 
-      {needsShown > 0 && tab !== 'Summary' && <NeedsStrip ask={needsAsk(shownNeeds)} onDecide={() => setTab('Summary')} />}
+      {needsShown > 0 && tab !== 'Summary' && <NeedsStrip ask={needsAsk(shownNeeds)} advising={onlyAdvice(shownNeeds)} onDecide={() => setTab('Summary')} />}
 
       <div className="case-stage">
         <div className="detail-body" key={tab}>
@@ -1738,7 +1776,7 @@ export function CasePage({
             </section>
           )}
           {tab === 'Summary' && note && <p className="muted">{note}</p>}
-          <CloseCaseDialog open={closing} id={id} onClose={() => setClosing(false)} onClosed={onChanged} />
+          <CloseCaseDialog open={closing} id={id} onClose={() => setClosing(false)} onClosed={() => { void loadNeeds(); onChanged() }} />
         </div>
 
         <aside className="case-side" aria-label="Case details">
