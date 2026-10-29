@@ -25,7 +25,6 @@ import { RunNotes, RunTag } from './RunTag'
 import { BlindSpots, CheckedList, blindSpotsOf } from './RunChecks'
 import { EvidenceCard, IOCsCard } from './CaseSections'
 import { CloseCaseDialog } from './ClosureFields'
-import { closesOnCase } from '../../shared/closesOnCase'
 import { CaseSide } from './CaseSide'
 import { caseCitations, evidenceInNote } from './caseCitations'
 import type { Citation } from '../../shell/citations'
@@ -278,7 +277,6 @@ function CaseNeeds({
   board,
   onApprove,
   onReject,
-  onCloseCase,
 }: {
   items: NeedsYouItem[]
   busy: boolean
@@ -287,8 +285,6 @@ function CaseNeeds({
   board: HypothesisRow[]
   onApprove: (item: NeedsYouItem) => void
   onReject: (item: NeedsYouItem, reason: string) => void
-  /** Set when the viewer may close the case. */
-  onCloseCase?: () => void
 }) {
   const [showAll, setShowAll] = useState(false)
   if (items.length === 0) return null
@@ -330,13 +326,6 @@ function CaseNeeds({
               <li key={item.source_id}>
                 <div className="needs-row">
                   <span className="needs-row-title">{item.title}</span>
-                  {onCloseCase && closesOnCase(item, items) && (
-                    <div className="needs-actions">
-                      <button type="button" className="btn primary" aria-label={`Close case for ${item.title}`} onClick={onCloseCase}>
-                        Close case
-                      </button>
-                    </div>
-                  )}
                 </div>
                 {item.reason && <p className="needs-row-reason">{item.reason}</p>}
               </li>
@@ -1518,7 +1507,6 @@ export function CasePage({
       board={hypotheses}
       onApprove={approve}
       onReject={reject}
-      onCloseCase={canWrite ? () => setClosing(true) : undefined}
     />
   )
 
@@ -1553,7 +1541,10 @@ export function CasePage({
           <div className="muted" style={{ padding: '6px 0' }}>Couldn’t load this case: {error}</div>
         ) : c ? (
           <>
-            <h2>{c.title}</h2>
+            <div className="case-title-row">
+              <h2>{c.title}</h2>
+              {canWrite && !closed && <button type="button" className="btn primary" onClick={() => setClosing(true)}>Close case</button>}
+            </div>
             <div className="case-state-line">
               <SeverityMark level={c.prio} />
               <StatePill state={pillState} needs={needsShown > 0} />
@@ -1620,11 +1611,6 @@ export function CasePage({
             ) : (
               <>
                 {needsBlock}
-                {canWrite && (
-                  <div className="case-actions">
-                    <button type="button" className="btn" onClick={() => setClosing(true)}>Close case</button>
-                  </div>
-                )}
                 {verdict && <VerdictBlock verdict={verdict} card />}
                 {startedCard}
                 {running && <NowCard fold={fold} phase={foldPhase} watch={watch} />}
