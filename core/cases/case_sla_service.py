@@ -11,12 +11,13 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import and_
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from core.exceptions import default_on_error
+from core.storage.connection import get_db_manager
 from core.storage.database_data_service import DatabaseDataService
-from core.storage.models import Case, CaseSLA, SLAPolicy
+from core.storage.models import Case, CaseSLA, SLAPolicy, case_findings
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
@@ -634,3 +635,25 @@ def open_case(
             "Case %s opened with no SLA: %s", case["case_id"], assignment.outcome.value
         )
     return case
+
+
+def open_case_holding(finding_id: str) -> Optional[str]:
+    """The newest not-closed Case already linked to this finding, or None. Raises on a failed read."""
+    with get_db_manager().session_scope() as session:
+        return session.execute(
+            select(Case.case_id)
+            .join(case_findings, case_findings.c.case_id == Case.case_id)
+            .where(case_findings.c.finding_id == finding_id, Case.status != "closed")
+            .order_by(Case.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+
+def case_title(title: str, limit: int = 200) -> str:
+    """A title cut on a whole word, so a long one does not end mid-token."""
+    title = " ".join(title.split())
+    if len(title) <= limit:
+        return title
+    head = title[: limit + 1]
+    # The character past the limit is a space when the limit lands on a word end.
+    return (head.rsplit(" ", 1)[0] if " " in head else title[:limit]).rstrip(" ,;:.-")

@@ -406,28 +406,88 @@ async def execute_workflow(
             ),
         )
 
-    # The row names the person. Daemon and handoff starts call the service
-    # directly and pass their own marker; this door always has a session.
-    result = await service.execute_workflow(
-        workflow_id,
-        parameters,
-        triggered_by=user.username,
-        principal=tool_principal.mint(
-            user.username,
-            person_id=getattr(user, "principal_id", None)
-            or getattr(user, "user_id", None),
-            origin="person",
-            ttl=tool_principal.RUN_TTL,
-        ),
-    )
+    # Every run starts on a case, so a run that stops at a limit has one to answer on.
+    opened = None
+    if not parameters.get("case_id"):
+        parameters["case_id"], opened = _case_for_start(workflow_id, parameters)
 
+    try:
+        # The row names the person. Daemon and handoff starts call the service
+        # directly and pass their own marker; this door always has a session.
+        result = await service.execute_workflow(
+            workflow_id,
+            parameters,
+            triggered_by=user.username,
+            principal=tool_principal.mint(
+                user.username,
+                person_id=getattr(user, "principal_id", None)
+                or getattr(user, "user_id", None),
+                origin="person",
+                ttl=tool_principal.RUN_TTL,
+            ),
+        )
+    except Exception:
+        _drop_case(opened)
+        raise
+
+    # Once a run row exists the case stays: the failed run lives on it.
+    if not result.get("run_id"):
+        _drop_case(opened)
     if not result.get("success"):
         error = result.get("error", "Unknown error during workflow execution")
         raise HTTPException(
             status_code=409 if result.get("disabled") else 500, detail=error
         )
 
-    return result
+    return {**result, "case_id": parameters["case_id"]}
+
+
+def _case_for_start(
+    workflow_id: str, parameters: Dict[str, Any]
+) -> Tuple[str, Optional[str]]:
+    """The case a start with none runs on, and the id of it if opened for this start.
+
+    The newest not-closed case holding the named alert, else a new one.
+    """
+    from core.cases.case_sla_service import case_title, open_case, open_case_holding
+    from core.storage.database_data_service import DatabaseDataService
+
+    finding_id = parameters.get("finding_id")
+    try:
+        if finding_id and (holding := open_case_holding(finding_id)):
+            return holding, None
+        data = DatabaseDataService()
+        finding = (data.get_finding(finding_id) if finding_id else None) or {}
+        text = (
+            parameters.get("hypothesis")
+            or parameters.get("context")
+            or finding.get("description")
+        )
+        opened = open_case(
+            data,
+            title=case_title(text or finding.get("title") or workflow_id, 60),
+            finding_ids=[finding_id] if finding_id else [],
+            priority="medium",
+            description=parameters.get("hypothesis") or parameters.get("context") or "",
+        )
+    except Exception:
+        logger.exception("could not open a case for a %s start", workflow_id)
+        opened = None
+    if not opened:
+        raise HTTPException(
+            status_code=500, detail="Could not open a case for this run"
+        )
+    return opened["case_id"], opened["case_id"]
+
+
+def _drop_case(case_id: Optional[str]) -> None:
+    """Delete the case opened for a start that never made a run."""
+    if not case_id:
+        return
+    from core.storage.database_data_service import DatabaseDataService
+
+    if not DatabaseDataService().delete_case(case_id):
+        logger.error("could not delete case %s opened for a refused start", case_id)
 
 
 # ---------------------------------------------------------------------------

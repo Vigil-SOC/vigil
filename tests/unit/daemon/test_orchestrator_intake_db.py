@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from services.daemon.config import OrchestratorConfig
@@ -389,9 +391,10 @@ def test_a_hunt_records_no_evidence_and_keeps_the_document_on_the_payload():
 
 def test_open_case_holding_finds_open_cases_and_skips_closed_ones():
     """A finding already on a not-closed Case merges into it; a closed one does not count (#2245)."""
+    from core.cases.case_sla_service import open_case_holding
     from core.storage.connection import get_db_manager
     from core.storage.models import Case
-    from services.daemon.orchestrator import CaseSpec, _mint_case, _open_case_holding
+    from services.daemon.orchestrator import CaseSpec, _mint_case
 
     finding_id = "f-held-2245"
     _finding(finding_id)
@@ -405,8 +408,42 @@ def test_open_case_holding_finds_open_cases_and_skips_closed_ones():
                 case_id="case-2245-open",
             ),
         )
-    assert _open_case_holding(finding_id) == "case-2245-open"
+    assert open_case_holding(finding_id) == "case-2245-open"
 
     with get_db_manager().session_scope() as session:
         session.get(Case, "case-2245-open").status = "closed"
-    assert _open_case_holding(finding_id) is None
+    assert open_case_holding(finding_id) is None
+
+
+@pytest.mark.asyncio
+async def test_a_scheduled_hunt_launches_on_a_case_of_its_own(tmp_path):
+    from core.storage.connection import get_db_manager
+    from core.storage.models import Case, Investigation
+    from services.daemon.workdir import WorkdirManager
+
+    trigger_id = insert_intake_trigger(
+        kind="schedule",
+        priority="low",
+        payload={
+            "workflow_id": "threat-hunt",
+            "hypothesis": "credentials taken from HOST-42 were reused elsewhere",
+        },
+    )
+    orch = object.__new__(Orchestrator)
+    orch.config = OrchestratorConfig(dry_run=True)
+    orch.workdir = WorkdirManager(str(tmp_path))
+    orch.shared_intel = MagicMock()
+    orch.stats = {"investigations_created": 0}
+
+    await orch._process_intake_row(_row(trigger_id), None)
+
+    dumped = _row(trigger_id)
+    assert dumped["state"] == "launched"
+    case_id = dumped["case_id"]
+    assert case_id and case_id.startswith("case-")
+    with get_db_manager().session_scope() as session:
+        assert session.get(Investigation, dumped["investigation_id"]).case_id == case_id
+        case = session.get(Case, case_id)
+        assert case.status == "open" and case.priority == "low"
+        assert case.title == "credentials taken from HOST-42 were reused elsewhere"
+        assert case.findings == []

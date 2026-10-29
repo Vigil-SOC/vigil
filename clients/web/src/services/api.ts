@@ -941,7 +941,7 @@ export const workflowApi = {
     hypothesis_subjects?: Record<string, string[]>
     iterations?: number
     approve_hypotheses?: boolean
-  }) => api.post(`/workflows/${id}/execute`, params, { timeout: LLM_TIMEOUT }),
+  }) => api.post<{ run_id?: string; case_id?: string }>(`/workflows/${id}/execute`, params, { timeout: LLM_TIMEOUT }),
   /** Reads an attached file on the server and keeps nothing. Over 64 KB it is condensed, and says so on line one. */
   readHuntDocument: (file: File) => {
     const form = new FormData()
