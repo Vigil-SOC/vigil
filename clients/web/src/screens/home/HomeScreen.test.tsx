@@ -6,7 +6,7 @@ import homeCss from './home.css?inline'
 import { SETUP_HIDDEN_CHANGED } from './setupHidden'
 import { ToastProvider } from '../../shell/toast'
 import type { ConsoleScreenProps } from '../../shared/types'
-import { approvalsApi, configApi, ingestionApi, triageApi, type NeedsYouItem } from '../../services/api'
+import { approvalsApi, casesApi, configApi, ingestionApi, triageApi, type NeedsYouItem } from '../../services/api'
 import type { ApiMock } from '../../test/apiMock'
 
 vi.mock('../../services/api', () => ({
@@ -26,7 +26,15 @@ vi.mock('../../services/api', () => ({
   triageApi: {
     get: vi.fn(),
   },
+  casesApi: {
+    closeCase: vi.fn(() => Promise.resolve({ data: { success: true } })),
+  },
 }) satisfies ApiMock)
+
+const auth = vi.hoisted(() => ({ canWrite: true }))
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: () => ({ hasPermission: (p: string) => (p === 'cases.write' ? auth.canWrite : true) }),
+}))
 
 const props = {
   openChat: vi.fn(),
@@ -84,6 +92,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  auth.canWrite = true
   vi.useRealTimers()
   vi.clearAllMocks()
   localStorage.clear()
@@ -189,7 +198,7 @@ describe('Home', () => {
     expect(within(card).getByText('Case')).toBeInTheDocument()
     expect(within(card).queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
     expect(within(card).queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument()
-    expect(within(card).getByRole('link', { name: 'Open case' })).toHaveAttribute('href', '/cases?case=case-demo')
+    expect(within(card).getByRole('link', { name: 'View case' })).toHaveAttribute('href', '/cases?case=case-demo')
     expect(screen.getByText('1 open · oldest first')).toBeInTheDocument()
   })
 
@@ -201,14 +210,14 @@ describe('Home', () => {
     expect(within(card).getByText('Stopped at a limit')).toBeInTheDocument()
     expect(within(card).queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
     expect(within(card).queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument()
-    expect(within(card).getByRole('link', { name: 'Open case' })).toHaveClass('primary')
+    expect(within(card).getByRole('link', { name: 'View case' })).toHaveClass('primary')
   })
 
   it('links a hunt stopped with no case and no alert to its run', async () => {
     mockQueue([item({ kind: 'parked', source_id: 'run-9', run_id: 'run-9', case_id: null, title: 'Keep the hunt going?', reason: 'Ran out of turns', created_at: '' })])
     renderHome()
     const card = (await screen.findByRole('heading', { name: 'Keep the hunt going?' })).closest('article') as HTMLElement
-    expect(within(card).queryByRole('link', { name: 'Open case' })).not.toBeInTheDocument()
+    expect(within(card).queryByRole('link', { name: 'View case' })).not.toBeInTheDocument()
     const link = within(card).getByRole('link', { name: 'Open run' })
     expect(link).toHaveAttribute('href', '/workflows?run=run-9')
     expect(link).toHaveClass('primary')
@@ -449,10 +458,10 @@ describe('Home', () => {
     const second = screen.getByRole('heading', { name: 'Declare incident' }).closest('article') as HTMLElement
     expect(within(second).getByText('Checkpoint')).toBeInTheDocument()
     expect(second.querySelector('.home-card-meta')).toBeNull()
-    expect(within(second).queryByRole('link', { name: 'Open case' })).not.toBeInTheDocument()
+    expect(within(second).queryByRole('link', { name: 'View case' })).not.toBeInTheDocument()
   })
 
-  it('offers Open alert when the approval has no case yet, and Open case once it does', async () => {
+  it('offers Open alert when the approval has no case yet, and View case once it does', async () => {
     mockQueue([
       item({ source_id: 'a', title: 'Isolate host a', case_id: null, finding_id: 'f-1 x' }),
       item({ source_id: 'b', title: 'Isolate host b', case_id: 'case-2', finding_id: 'f-2' }),
@@ -462,12 +471,60 @@ describe('Home', () => {
     const card = async (name: string) => (await screen.findByRole('heading', { name })).closest('article') as HTMLElement
     const a = await card('Isolate host a')
     expect(within(a).getByRole('link', { name: 'Open alert' })).toHaveAttribute('href', '/overview?alert=f-1%20x')
-    expect(within(a).queryByRole('link', { name: 'Open case' })).not.toBeInTheDocument()
+    expect(within(a).queryByRole('link', { name: 'View case' })).not.toBeInTheDocument()
     const b = await card('Isolate host b')
-    expect(within(b).getByRole('link', { name: 'Open case' })).toBeInTheDocument()
+    expect(within(b).getByRole('link', { name: 'View case' })).toBeInTheDocument()
     expect(within(b).queryByRole('link', { name: 'Open alert' })).not.toBeInTheDocument()
     const c = await card('Isolate host c')
     expect(within(c).queryByRole('link')).not.toBeInTheDocument()
+  })
+
+  it('offers Close case, not Approve or Reject, on a recommendation, and reloads once the case closes', async () => {
+    mockQueue([item({ kind: 'recommendation', title: 'Isolate host 10.0.0.5', case_id: 'case-a', case_ids: ['case-a'] })])
+    renderHome()
+    const card = (await screen.findByRole('heading', { name: 'Isolate host 10.0.0.5' })).closest('article') as HTMLElement
+    expect(within(card).getByText('Recommended action')).toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument()
+    expect(within(card).getByRole('link', { name: 'View case' })).toHaveClass('ghost')
+    mockQueue([])
+    fireEvent.click(within(card).getByRole('button', { name: 'Close case' }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close case' }))
+    await waitFor(() => expect(casesApi.closeCase).toHaveBeenCalledWith('case-a', expect.objectContaining({ closure_category: 'resolved' })))
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Isolate host 10.0.0.5' })).not.toBeInTheDocument())
+  })
+
+  it('offers View case only when closing would not clear a recommendation or would skip a decision', async () => {
+    mockQueue([
+      item({ source_id: 'shared', kind: 'recommendation', title: 'Block IP shared', case_id: 'case-a', case_ids: ['case-a', 'case-b'] }),
+      item({ source_id: 'gated', kind: 'recommendation', title: 'Block IP gated', case_id: 'case-c', case_ids: ['case-c'] }),
+      item({ source_id: 'gate', kind: 'checkpoint', title: 'Declare incident', case_id: 'case-c', case_ids: ['case-c'] }),
+    ])
+    renderHome()
+    for (const name of ['Block IP shared', 'Block IP gated']) {
+      const card = (await screen.findByRole('heading', { name })).closest('article') as HTMLElement
+      expect(within(card).queryByRole('button', { name: 'Close case' })).not.toBeInTheDocument()
+      expect(within(card).getByRole('link', { name: 'View case' })).toHaveClass('primary')
+    }
+  })
+
+  it('hides Close case from someone who cannot write cases', async () => {
+    auth.canWrite = false
+    mockQueue([item({ kind: 'recommendation', title: 'Isolate host', case_id: 'case-a', case_ids: ['case-a'] })])
+    renderHome()
+    const card = (await screen.findByRole('heading', { name: 'Isolate host' })).closest('article') as HTMLElement
+    expect(within(card).queryByRole('button', { name: 'Close case' })).not.toBeInTheDocument()
+  })
+
+  it('keeps Reject on a recommendation with no case, with Open alert as its primary link', async () => {
+    mockQueue([item({ kind: 'recommendation', title: 'Disable user bob', case_id: null, case_ids: [], finding_id: 'f-1' })])
+    renderHome()
+    const card = (await screen.findByRole('heading', { name: 'Disable user bob' })).closest('article') as HTMLElement
+    expect(within(card).queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: 'Close case' })).not.toBeInTheDocument()
+    expect(within(card).getByRole('link', { name: 'Open alert' })).toHaveClass('primary')
+    expect(within(card).getByRole('button', { name: 'Reject' })).toBeInTheDocument()
   })
 
   it('names the explanation a hypothesis approval starts testing, shortened, with the full text on hover (#2456)', async () => {
@@ -490,7 +547,7 @@ describe('Home', () => {
     const head = await screen.findByRole('heading', { name: 'Start testing “A finance workstation that opened an invoice-themed ISO…”' })
     expect(head).toHaveAttribute('title', pdf)
     expect(screen.queryByText(/on 2 explanations/)).not.toBeInTheDocument()
-    expect(within(head.closest('article') as HTMLElement).getByRole('link', { name: 'Open case' })).toHaveAttribute('href', '/cases?case=case-7')
+    expect(within(head.closest('article') as HTMLElement).getByRole('link', { name: 'View case' })).toHaveAttribute('href', '/cases?case=case-7')
   })
 
   it('counts the other explanations a hypothesis approval tests, and keeps the served title for anything else', async () => {

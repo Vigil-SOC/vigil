@@ -9,7 +9,9 @@ from fastapi.testclient import TestClient
 from core.api.v1.approvals_router import router as approvals_router
 from core.findings.alert_outcomes import finding_states
 from core.response.approval_service import (
+    EXECUTABLE_ACTION_TYPES,
     ApprovalService,
+    _kind_for_action,
     _row_to_pending,
     needs_you_case_ids,
 )
@@ -40,7 +42,7 @@ def client(authenticate_app):
 def _approval(action_id: str, created_at: datetime, **kw) -> ApprovalAction:
     return ApprovalAction(
         action_id=action_id,
-        action_type="block_ip",
+        action_type=kw.pop("action_type", "block_ip"),
         title=kw.pop("title", action_id),
         description="hold",
         target=kw.pop("target", "host"),
@@ -515,3 +517,86 @@ def test_a_proposal_two_cases_made_is_one_item_on_both(client, shared):
     # A decided ask takes no more cases.
     service.reject_action("ny-shared", reason="no", rejected_by="pytest")
     assert service.add_proposal_case("ny-shared", "ny-c3") is None
+
+
+def test_only_an_action_nothing_executes_is_a_recommendation():
+    def kind(action_type, **kw):
+        return _kind_for_action(
+            _row_to_pending(_approval("ny-k", OLDER, action_type=action_type, **kw))
+        )
+
+    assert kind("isolate_host") == "recommendation"
+    assert kind("block_ip", parameters={"run_id": "r"}) == "recommendation"
+    assert kind("waf_block") == "approval"
+    assert kind("block_ip", workflow_run_id="r") == "approval"
+    assert kind("block_ip", parameters={"checkpoint_id": "chk"}) == "checkpoint"
+    assert all(kind(one) == "approval" for one in EXECUTABLE_ACTION_TYPES)
+
+
+@pytest.fixture
+def advice(throwaway_database):
+    with unit_of_work() as session:
+        session.add_all(
+            [
+                Case(case_id="ny-open", title="open", status="open"),
+                Case(case_id="ny-shut", title="shut", status="closed"),
+                Case(case_id="ny-shut2", title="shut", status="closed"),
+            ]
+        )
+        session.flush()
+        session.add_all(
+            [
+                _approval("ny-adv-shut", OLDER, parameters={"case_ids": ["ny-shut"]}),
+                _approval(
+                    "ny-adv-both",
+                    OLDER,
+                    parameters={"case_ids": ["ny-shut", "ny-open"]},
+                ),
+                _approval(
+                    "ny-adv-allshut",
+                    OLDER,
+                    parameters={"case_ids": ["ny-shut", "ny-shut2"]},
+                ),
+                _approval("ny-adv-caseless", OLDER, parameters={}),
+                _approval(
+                    "ny-adv-waf",
+                    OLDER,
+                    action_type="waf_block",
+                    parameters={"case_ids": ["ny-shut"]},
+                ),
+            ]
+        )
+    yield
+    with unit_of_work() as session:
+        session.query(ApprovalAction).filter(
+            ApprovalAction.action_id.like("ny-adv-%")
+        ).delete(synchronize_session=False)
+        session.query(Case).filter(
+            Case.case_id.in_(["ny-open", "ny-shut", "ny-shut2"])
+        ).delete(synchronize_session=False)
+
+
+def test_closing_every_case_of_a_recommendation_clears_it(client, advice):
+    mine = {
+        i["source_id"]: i["kind"]
+        for i in _mine(client.get("/api/approvals/needs-you").json())
+        if i["source_id"].startswith("ny-adv-")
+    }
+    # One case still open keeps it; a caseless one is never dropped; an
+    # executable approval stays whatever its case.
+    assert mine == {
+        "ny-adv-both": "recommendation",
+        "ny-adv-caseless": "recommendation",
+        "ny-adv-waf": "approval",
+    }
+    assert "ny-shut2" not in needs_you_case_ids()
+
+    with unit_of_work() as session:
+        session.query(Case).filter(Case.case_id == "ny-shut").update({"status": "open"})
+    body = client.get("/api/approvals/needs-you", params={"case_id": "ny-shut"})
+    assert {i["source_id"] for i in _mine(body.json())} == {
+        "ny-adv-shut",
+        "ny-adv-both",
+        "ny-adv-allshut",
+        "ny-adv-waf",
+    }

@@ -222,7 +222,7 @@ class TestAConclusionFilesItsProposals:
         [report, proposed] = cases.cases["case-1"]["activities"]
         assert report["activity_type"] == "agent_run_report"
         assert proposed["activity_type"] == "actions_proposed"
-        assert proposed["description"] == "Run run-1 proposed 2 actions for approval"
+        assert proposed["description"] == "Run run-1 recommended 2 actions"
         assert proposed["details"] == {
             "run_id": "run-1",
             "action_ids": ["action-0", "action-1"],

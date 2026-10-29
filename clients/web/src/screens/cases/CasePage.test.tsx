@@ -1905,6 +1905,49 @@ describe('case page', () => {
     expect(document.querySelector('.case-needs-strip')?.textContent).toContain('3 proposed actions')
   })
 
+  it('shows a recommendation read-only after the approvals, with Close case in place of Approve and Reject', async () => {
+    testState.cases = [decCase]
+    queue(
+      need({ source_id: 'r1', kind: 'recommendation', title: 'Isolate host 10.0.0.5', reason: 'beaconing', case_ids: ['case-dec'] }),
+      need({ source_id: 'a1', title: 'Block on WAF' }),
+    )
+    await renderCase('case-dec')
+
+    // The approval keeps the block; the recommendation is a row with no decision on it.
+    expect(await screen.findByRole('heading', { name: 'Block on WAF' })).toBeInTheDocument()
+    const recs = screen.getByRole('list', { name: 'Recommended actions' })
+    expect(within(recs).getByText('Isolate host 10.0.0.5')).toBeInTheDocument()
+    expect(within(recs).getByText('beaconing')).toBeInTheDocument()
+    expect(screen.getByText(/Vigil has no executor for this/)).toBeInTheDocument()
+    expect(within(recs).queryByRole('button', { name: /Approve|Reject/ })).not.toBeInTheDocument()
+    // An approval still waits on this case, so closing it would skip that decision.
+    expect(within(recs).queryByRole('button', { name: /Close case/ })).not.toBeInTheDocument()
+    expect(document.querySelector('.case-reason')?.textContent).toBe('Block on WAF')
+  })
+
+  it('closes the case from a recommendation and never says Decide when only recommendations wait', async () => {
+    testState.cases = [decCase]
+    queue(
+      need({ source_id: 'r1', kind: 'recommendation', title: 'Isolate WS-1', case_ids: ['case-dec'] }),
+      need({ source_id: 'r2', kind: 'recommendation', title: 'Block 5.6.7.8', case_ids: ['case-dec', 'case-other'] }),
+    )
+    await renderCase('case-dec')
+
+    const recs = await screen.findByRole('list', { name: 'Recommended actions' })
+    expect(document.querySelectorAll('.case-needs article')).toHaveLength(0)
+    expect(document.querySelector('.case-reason')?.textContent).toBe('2 recommended actions')
+    // Closing this case leaves the shared one up for the other.
+    expect(within(recs).queryByRole('button', { name: 'Close case for Block 5.6.7.8' })).not.toBeInTheDocument()
+    fireEvent.click(within(recs).getByRole('button', { name: 'Close case for Isolate WS-1' }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close case' }))
+    await waitFor(() => expect(casesApi.closeCase).toHaveBeenCalledWith('case-dec', expect.anything()))
+
+    fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
+    expect(screen.getByRole('button', { name: 'Review on Summary' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Decide on Summary' })).not.toBeInTheDocument()
+  })
+
   it('shows the error and renders nothing without items', async () => {
     testState.cases = [{ case_id: 'case-dec', title: 'Decision case', status: 'open', priority: 'high', finding_ids: [], created_at: '2026-06-15T09:14:00Z', combined_state: 'open', investigations: [] }]
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
