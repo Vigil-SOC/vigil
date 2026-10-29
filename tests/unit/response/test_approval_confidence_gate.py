@@ -3,11 +3,7 @@
 import pytest
 
 from core.response.autonomous_response_service import AutonomousResponseService
-from core.response.config import (
-    ResponseConfig,
-    approval_requirement,
-    response_action_decision,
-)
+from core.response.config import ResponseConfig, approval_requirement
 
 pytestmark = pytest.mark.unit
 
@@ -21,14 +17,6 @@ def test_a_confidence_outside_zero_to_one_holds_the_action(confidence):
     )
     assert required is True
     assert rule.startswith("response.confidence_range")
-
-
-@pytest.mark.parametrize("confidence", [1.01, 42.0, float("nan")])
-def test_a_confidence_outside_zero_to_one_decides_no_response(confidence):
-    assert (
-        response_action_decision("critical", confidence, "isolate", ResponseConfig())
-        is None
-    )
 
 
 def test_an_ordinary_confidence_does_not_approve():

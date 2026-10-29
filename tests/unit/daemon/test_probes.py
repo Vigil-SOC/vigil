@@ -1,5 +1,5 @@
 # Three known-answer probes go through store → triage once a day and stop there
-# (#923): never the responder, never the orchestrator.
+# (#923): never the orchestrator.
 
 from __future__ import annotations
 
@@ -350,7 +350,6 @@ class TestTheProcessorGuard:
         await processor._enrich_in_background(probe, PROBE_DATA_SOURCE)
 
         processor._evaluate_for_response.assert_not_awaited()
-        assert processor.stats["queued_for_response"] == 0
         assert processor.stats["queued_for_investigation"] == 0
 
     async def test_an_ordinary_finding_still_does(self):

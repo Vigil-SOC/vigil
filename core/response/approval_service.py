@@ -256,9 +256,10 @@ def _host_names(*names: Optional[str]) -> List[str]:
 
 
 def _isolations_of(names: Sequence[str]):
-    """Isolations of a host named by any of ``names``: the auto-responder's, which
-    key on the IP when the alert had one and on the hostname when not, and runs'
-    proposals, which name the host as the model did."""
+    """Isolations of a host named by any of ``names``: the retired daemon
+    responder's (rows remain on installs), which key on the IP when the alert had
+    one and on the hostname when not, and runs' proposals, which name the host as
+    the model did."""
     target = func.lower(func.trim(ApprovalActionRow.target))
     hostname = func.lower(func.trim(ApprovalActionRow.parameters["hostname"].astext))
     return (
@@ -756,7 +757,7 @@ class ApprovalService:
     ) -> Optional[PendingAction]:
         """The row a run's proposal would repeat: its own (by ``key``) first, else
         the newest run proposal of the same action on the same target, any status.
-        An isolation also matches the auto-responder's isolation of that host,
+        An isolation also matches a retired responder's isolation of that host,
         whether its alert named the host by IP or by hostname."""
         db = get_db_manager()
         with db.session_scope() as session:
@@ -785,7 +786,7 @@ class ApprovalService:
     ) -> Optional[PendingAction]:
         """List ``case_id`` on a pending proposal, once. None when it is not pending.
 
-        A row that names no case of its own, the auto-responder's, first lists the
+        A row that names no case of its own, a retired responder's, first lists the
         case its alerts resolve to, so joining it does not take it off that case."""
         db = get_db_manager()
         with db.session_scope() as session:
@@ -867,8 +868,8 @@ def _case_ids_for_action(
         from_investigation = _text_id(investigations.get(investigation_id))
         if from_investigation:
             return [from_investigation]
-    # The responder saves its approval before intake makes the alert's case, so
-    # the alert ids in evidence are the only link until then.
+    # An approval that names only alert ids (a retired responder's, or one from
+    # the create_approval_action tool) has no case link but the alerts' own.
     for finding_id in _evidence_ids(action):
         found = (evidence_cases or {}).get(finding_id)
         if found:

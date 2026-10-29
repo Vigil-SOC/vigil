@@ -297,12 +297,8 @@ class Settings(BaseSettings):
     # The rest of the confidence band (#916); see core.response.config.
     daemon_review_threshold: float = 0.85
     daemon_monitor_threshold: float = 0.70
-    daemon_critical_action_floor: float = 0.70
-    daemon_high_action_floor: float = 0.80
     daemon_force_approval: bool = False
     daemon_dry_run: bool = False
-    daemon_escalation_enabled: bool = True
-    daemon_escalate_severities: Annotated[List[str], NoDecode] = ["critical", "high"]
     # Severity bands whose findings go to auto-investigation even when the
     # response gate does not fire. A dismiss verdict never goes. Empty keeps only
     # the response gate and threat-intel hits.
@@ -316,7 +312,6 @@ class Settings(BaseSettings):
     # Call sites disagree on the default (config.from_env on, orchestrator off), so
     # this stays tri-state and each site supplies its own fallback.
     daemon_slack_enabled: Optional[bool] = None
-    daemon_slack_channel: str = "#soc-alerts"
     daemon_pagerduty_enabled: bool = False
     daemon_threat_hunt_interval: int = 86400
     # Known-answer probes (#923): an hourly sweep, injected once a day by id.
@@ -387,7 +382,6 @@ class Settings(BaseSettings):
 
     @field_validator(
         "extension_connector_allowlist",
-        "daemon_escalate_severities",
         "daemon_investigate_severities",
         "kafka_topics",
         mode="before",

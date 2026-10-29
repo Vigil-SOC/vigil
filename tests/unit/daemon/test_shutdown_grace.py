@@ -26,7 +26,7 @@ def _daemon(**components):
         "poller",
         "kafka_ingestor",
         "processor",
-        "responder",
+        "executor",
         "scheduler",
         "orchestrator",
         "metrics_server",
@@ -84,6 +84,6 @@ async def test_component_past_grace_is_cancelled(monkeypatch):
             await shutdown_event.wait()
             cleaned.append(True)
 
-    await _run_then_sigterm(_daemon(processor=Stuck(), responder=Prompt()))
+    await _run_then_sigterm(_daemon(processor=Stuck(), executor=Prompt()))
     assert cancelled == [True]
     assert cleaned == [True]

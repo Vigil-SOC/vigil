@@ -18,7 +18,7 @@ Vigil ships a set of built-in specialist agents covering the core SOC roles — 
 
 Every agent can call Vigil's backend tools (findings, cases, approvals, detections, ATT&CK, threat intel, memory, skills) and the tools of whichever MCP integrations you have connected. Each agent's tool list, prompt, model, and extended-thinking budget are visible in its definition.
 
-Response actions are proposed as approval requests. A request from the Response agent always waits for an analyst. The daemon's auto-responder routes by confidence: by default, at or above 0.90 is auto-approved, 0.85–0.90 gets a quick review, 0.70–0.85 needs analyst review, and below 0.70 escalates (configurable). The approval pipeline records `isolate_host` actions but does not execute them; host isolation or quarantine happens only when an agent calls an EDR integration's tool directly.
+Response actions are proposed as approval requests. A request from the Response agent always waits for an analyst. The daemon's executor carries out an approved action within about 30 seconds unless Stop holds it, and an AutoOps investigation that proposes containment pages PagerDuty when it is enabled. The approval pipeline records `isolate_host` actions but does not execute them; host isolation or quarantine happens only when an agent calls an EDR integration's tool directly.
 
 ## Workflows
 

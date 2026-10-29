@@ -1,8 +1,7 @@
 """The confidence band for autonomous response, in one place (#916).
 
-Every comparison against a confidence — the approval gate, the correlator's
-recommendation ladder, the daemon's response queue and severity floors, and the
-band text the agents are prompted with — reads a field here, so raising a
+Every comparison against a confidence — the approval gate, the daemon's intake
+line, and the band text the agents are prompted with — reads a field here, so raising a
 threshold in env moves every branch rather than one. Defaults are the literals
 the code carried before, so a default install behaves as it did.
 
@@ -59,18 +58,13 @@ class ResponseConfig:
     auto_response_enabled: bool = True
     # Routing and prompt band. A confidence at or above this used to
     # auto-approve a reversible row; the approval gate no longer does that
-    # (#2918). The daemon's finding-side response still reads it.
+    # (#2918).
     confidence_threshold: float = 0.90
-    # The "quick review" line: the correlator recommends isolation with
-    # approval, and the processor queues a finding for response, at or above it.
+    # The "quick review" line: the processor offers a finding to intake at or
+    # above it.
     review_threshold: float = 0.85
     # Below this the recommendation is to keep monitoring rather than act.
     monitor_threshold: float = 0.70
-    # Severity-conditioned floors the daemon responder applies even below
-    # confidence_threshold: a critical finding is isolated, and a high one
-    # investigated, at or above these.
-    critical_action_floor: float = 0.70
-    high_action_floor: float = 0.80
     # Process copy of DAEMON_FORCE_APPROVAL. With auto-response off, it forces
     # the ceiling's effective act flags off. It is not a grant, and it does
     # not release a row.
@@ -85,43 +79,9 @@ class ResponseConfig:
             confidence_threshold=s.daemon_confidence_threshold,
             review_threshold=s.daemon_review_threshold,
             monitor_threshold=s.daemon_monitor_threshold,
-            critical_action_floor=s.daemon_critical_action_floor,
-            high_action_floor=s.daemon_high_action_floor,
             force_manual_approval=s.daemon_force_approval,
             dry_run=s.daemon_dry_run,
         )
-
-
-def response_action_decision(
-    severity: str,
-    confidence: float,
-    recommended: str,
-    config: ResponseConfig,
-) -> Optional[tuple[str, str]]:
-    """The finding-side response, or None when nothing would be acted on.
-
-    Returns ``(action, rule)``. Auto-response off is a decision, not a
-    precondition: a manifest that disables it reports every finding that
-    would have acted as losing its action.
-    """
-    if not config.auto_response_enabled or not 0.0 <= confidence <= 1.0:
-        return None
-    if confidence >= config.confidence_threshold and recommended in (
-        "isolate",
-        "block",
-    ):
-        return recommended, decision_rule(
-            "response.confidence_threshold", config.confidence_threshold, confidence
-        )
-    if severity == "critical" and confidence >= config.critical_action_floor:
-        return "isolate", decision_rule(
-            "response.critical_action_floor", config.critical_action_floor, confidence
-        )
-    if severity == "high" and confidence >= config.high_action_floor:
-        return "investigate", decision_rule(
-            "response.high_action_floor", config.high_action_floor, confidence
-        )
-    return None
 
 
 def approval_requirement(

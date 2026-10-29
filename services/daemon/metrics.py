@@ -126,7 +126,7 @@ class MetricsServer:
         self.poller = None
         self.kafka_ingestor = None
         self.processor = None
-        self.responder = None
+        self.executor = None
         self.scheduler = None
         self.orchestrator = None
 
@@ -212,7 +212,7 @@ class MetricsServer:
                 ("poller", self.poller),
                 ("kafka", self.kafka_ingestor),
                 ("processor", self.processor),
-                ("responder", self.responder),
+                ("executor", self.executor),
                 ("scheduler", self.scheduler),
                 ("orchestrator", self.orchestrator),
             )
@@ -237,7 +237,7 @@ class MetricsServer:
             "poller": metrics.get("poller", {}),
             "kafka": metrics.get("kafka", {}),
             "processor": metrics.get("processor", {}),
-            "responder": metrics.get("responder", {}),
+            "executor": metrics.get("executor", {}),
             "scheduler": metrics.get("scheduler", {}),
             "orchestrator": metrics.get("orchestrator", {}),
             "federation": metrics["federation"],
@@ -263,9 +263,7 @@ class MetricsServer:
         processor_stats.update(_processor_pipeline(self.processor))
         metrics["processor"] = processor_stats
 
-        responder_stats = self.responder.stats.copy() if self.responder else {}
-        responder_stats["queue_depth"] = _queue_depth(self.responder)
-        metrics["responder"] = responder_stats
+        metrics["executor"] = self.executor.stats.copy() if self.executor else {}
 
         if self.scheduler:
             metrics["scheduler"] = self.scheduler.stats.copy()
@@ -334,15 +332,6 @@ def _enrich_paused_until(processor: Any) -> Optional[str]:
     if remaining <= 0:
         return None
     return (utcnow() + timedelta(seconds=remaining)).isoformat()
-
-
-def _queue_depth(component: Any) -> int:
-    if component is None:
-        return 0
-    queue = getattr(component, "input_queue", None)
-    if queue is None:
-        return 0
-    return queue.qsize()
 
 
 def _orchestrator_capacity(orchestrator: Any) -> Dict[str, int]:
