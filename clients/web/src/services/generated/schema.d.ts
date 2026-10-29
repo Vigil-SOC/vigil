@@ -4653,6 +4653,8 @@ export interface paths {
          * Get Overview
          * @description Arrivals, outcome nodes, agent rows, and the latest findings. Polled.
          *
+         *     ``range`` bounds arrivals and outcomes to the UTC day, or not at all.
+         *
          *     A missing read leaves that part empty and names the permission. The keys
          *     stay arrays: the console calls ``feed.find``.
          */
@@ -19699,7 +19701,9 @@ export interface operations {
     };
     get_api_overview: {
         parameters: {
-            query?: never;
+            query?: {
+                range?: "today" | "all";
+            };
             header?: {
                 authorization?: string | null;
             };
@@ -20996,6 +21000,7 @@ export interface operations {
                 kind?: string | null;
                 source?: string | null;
                 state?: string | null;
+                range?: "today" | "all";
             };
             header?: {
                 authorization?: string | null;
