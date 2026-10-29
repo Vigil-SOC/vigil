@@ -4,6 +4,7 @@ import { MemoryRouter, useLocation } from 'react-router-dom'
 import OverviewScreen from './OverviewScreen'
 import { heldCase } from '../../shell/heldCase'
 import { casesApi, configApi, findingsApi, overviewApi, type OverviewAgent, type OverviewFeedItem, type OverviewPayload } from '../../services/api'
+import type { ApiMock } from '../../test/apiMock'
 
 vi.mock('../../services/api', () => ({
   casesApi: { exportJira: vi.fn() },
@@ -21,8 +22,9 @@ vi.mock('../../services/api', () => ({
         secrets_set: { jira: { api_token: true } },
       },
     })),
+    getOrchestrator: vi.fn(() => Promise.resolve({ data: { enabled: true } })),
   },
-}))
+}) satisfies ApiMock)
 
 const SOURCE = 'Findings created today (UTC) with this data source.'
 
@@ -119,7 +121,7 @@ function renderScreen(url = '/overview', chatOpen = false) {
       <Where />
     </MemoryRouter>,
   )
-  return { setWallMode, openCase, go, setViewFull, unmount }
+  return { setWallMode, openCase, go, goSettings, setViewFull, unmount }
 }
 
 const where = () => screen.getByTestId('where').textContent
@@ -219,6 +221,15 @@ describe('OverviewScreen', () => {
     expect(screen.queryByRole('link', { name: 'Connect data' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Agents & workflows →' }))
     expect(go).toHaveBeenCalledWith('workflows')
+  })
+
+  it('agent cards: with AutoOps off, the button opens Limits & autonomy, where the switch is', async () => {
+    vi.mocked(configApi.getOrchestrator).mockResolvedValueOnce({ data: { enabled: false } } as never)
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ agents: [agent({ running: 0, current_step: null })] }) } as never)
+    const { goSettings } = renderScreen()
+    expect(await screen.findByText('No agents running: AutoOps is off')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Open Limits & autonomy →' }))
+    expect(goSettings).toHaveBeenCalledWith('autoinvestigate')
   })
 
   it('shows five outcome nodes with counts, names the unmeasured ones, and opens the feed', async () => {

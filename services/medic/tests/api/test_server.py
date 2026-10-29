@@ -140,7 +140,7 @@ def test_401_comes_before_routing(server) -> None:
 @pytest.mark.parametrize(
     "target",
     [
-        "/v1/incidents",  # later G3, not served yet
+        "/v1/pack",  # waits on a trust root (#2025)
         "/v1/export",  # #2111; this listener leaves it 404
         "/v1/export?from=2026-10-01T00:00:00Z&to=2026-10-08T00:00:00Z",
         "/v1/status/",

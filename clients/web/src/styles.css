@@ -6159,11 +6159,12 @@
 
    .tq-table thead th:nth-child(1) { width: 100px; }
    .tq-table thead th:nth-child(2) { width: 124px; }
-   .tq-table thead th:nth-child(4) { width: 84px; }
-   .tq-table thead th:nth-child(5) { width: 112px; }
-   .tq-table thead th:nth-child(6) { width: 108px; }
-   .tq-table thead th:nth-child(7) { width: 176px; }
-   .tq-table thead th:nth-child(8) { width: 26%; }
+   .tq-table thead th:nth-child(4) { width: 190px; }
+   .tq-table thead th:nth-child(5) { width: 108px; }
+   .tq-table thead th:nth-child(6) { width: 96px; }
+   .tq-table thead th:nth-child(7) { width: 108px; }
+   .tq-table thead th:nth-child(8) { width: 176px; }
+   .tq-table thead th:nth-child(9) { width: 20%; }
 
    .tq-th-info {
       display: inline-flex;
@@ -7192,3 +7193,26 @@
 }
 .autoops-off svg { color: var(--fair); flex-shrink: 0; }
 .autoops-off .btn { margin-left: auto; }
+
+/* Triage queue: the verdict the daemon's triage saved */
+.tq-verdict {
+   display: inline-flex;
+   align-items: center;
+   gap: 8px;
+   max-width: 100%;
+   white-space: nowrap;
+}
+.tq-verdict.muted { color: var(--tx3); }
+.tq-verdict-rest {
+   min-width: 0;
+   overflow: hidden;
+   text-overflow: ellipsis;
+   color: var(--tx2);
+}
+.tq-reasoning {
+   margin: 4px 0 10px;
+   color: var(--tx1);
+   font-size: 12.5px;
+   line-height: 1.5;
+   white-space: pre-wrap;
+}

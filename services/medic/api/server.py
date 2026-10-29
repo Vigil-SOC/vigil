@@ -1,5 +1,6 @@
-"""Medic's API listener (X2): `GET /v1/status` and the decision log. The other
-operations are later G3 work; `/v1/export` is one of them and stays 404.
+"""Medic's API listener (X2): `GET /v1/status`, the decision log, incidents and
+sensors. The other operations are later G3 work: `/v1/pack`, `/v1/export` and
+the feedback POST are not routed (404).
 
 stdlib only, like the gateway (SP1 ⚑5). Every request needs `X-Medic-Key`,
 compared in constant time with the key file, re-read on each request so a new
@@ -29,12 +30,14 @@ from pathlib import Path
 from typing import Any
 
 from services.medic.api.decisions import Problem, get_decision, list_page
+from services.medic.api.incidents import get_incident, list_incidents
 from services.medic.api.status import API_VERSION, serve_view
 from services.medic.app.config import API_KEY_FILE_VAR
 
 log = logging.getLogger("services.medic")
 
 STATUS_PATH = "/v1/status"
+SENSORS_PATH = "/v1/sensors"
 # The main loop's tick (wiring.TICK_S, semantics.md §1; a test pins the two).
 # Not imported: the listener stays light enough for the backend's own tests.
 TICK_S = 15
@@ -59,16 +62,31 @@ class StatusBoard:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._current: tuple[dict[str, Any], float, float] | None = None
+        self._sensors: dict[str, Any] | None = None
 
     def publish(
-        self, snapshot: dict[str, Any], *, started_at: float, taken_at: float
+        self,
+        snapshot: dict[str, Any],
+        *,
+        started_at: float,
+        taken_at: float,
+        sensors: dict[str, Any] | None = None,
     ) -> None:
+        """`sensors` is the `SensorList` body, published with the status it
+        was taken with (so it goes stale with it)."""
         with self._lock:
             self._current = (snapshot, started_at, taken_at)
+            self._sensors = sensors
 
     def read(self) -> tuple[dict[str, Any], float, float] | None:
         with self._lock:
             return self._current
+
+    def read_sensors(self) -> tuple[dict[str, Any] | None, float] | None:
+        with self._lock:
+            if self._current is None:
+                return None
+            return self._sensors, self._current[2]
 
 
 def read_key(path: Path) -> bytes | None:
@@ -186,16 +204,23 @@ class Handler(BaseHTTPRequestHandler):
             self.server.in_flight.release()
 
     def _handler(self) -> Callable[[], None] | None:
-        """Status is the exact target. Decisions take a query. Every other path,
-        including `/v1/export`, is not this listener's."""
+        """Status and sensors are exact targets. Decisions and incidents take a
+        query. Every other path, including `/v1/pack` and `/v1/export`, is not
+        this listener's."""
         path, _, query = self.raw_target.partition("?")
         if self.raw_target == STATUS_PATH:
             return self._status
+        if self.raw_target == SENSORS_PATH:
+            return self._sensors
         if path == "/v1/decisions":
             return lambda: self._finish(list_page(self.data_dir, query))
-        head, _, seq = path.rpartition("/")
-        if head == "/v1/decisions" and seq:
-            return lambda: self._finish(get_decision(self.data_dir, seq, query))
+        if path == "/v1/incidents":
+            return lambda: self._finish(list_incidents(self.data_dir, query))
+        head, _, tail = path.rpartition("/")
+        if head == "/v1/decisions" and tail:
+            return lambda: self._finish(get_decision(self.data_dir, tail, query))
+        if head == "/v1/incidents" and tail:
+            return lambda: self._finish(get_incident(self.data_dir, tail, query))
         return None
 
     def _finish(self, result: dict | Problem) -> None:
@@ -216,6 +241,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._problem(503, "busy", retry_after_s=RETRY_AFTER_S)
         snapshot, started_at, _ = current
         doc = serve_view(snapshot, now=now, started_at=started_at)
+        self._send(200, doc, "application/json")
+
+    def _sensors(self) -> None:
+        current = self.board.read_sensors()
+        if current is None or current[0] is None:
+            return self._problem(503, "busy", retry_after_s=RETRY_AFTER_S)
+        doc, taken_at = current
+        if self.wall() - taken_at > SNAPSHOT_MAX_AGE_S:
+            return self._problem(503, "busy", retry_after_s=RETRY_AFTER_S)
         self._send(200, doc, "application/json")
 
     def __getattr__(self, name: str):  # every method token, e.g. "POST" or "get"

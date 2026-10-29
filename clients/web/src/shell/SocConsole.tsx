@@ -5,7 +5,7 @@ import '../../../../docs/design/console/tokens/tokens.css'
 import '../styles.css'
 import './shell.css'
 import { useAuth } from '../contexts/AuthContext'
-import { approvalsApi, autonomyApi, configApi, consoleApi, federationApi, mcpApi, orchestratorApi } from '../services/api'
+import { approvalsApi, autonomyApi, configApi, consoleApi, federationApi, mcpApi } from '../services/api'
 import { Icon, type IconName } from '../shared/icons'
 import { InfoTip } from '../shared/InfoTip'
 import { PageHead } from '../shared/PageHead'
@@ -375,7 +375,7 @@ function SocConsoleInner() {
         settled(mcpApi.getStatuses().then((res) => res.data as McpRead)),
         settled(consoleApi.getRoutability().then((res) => res.data as RoutabilityRead)),
         settled(consoleApi.getProcesses().then((res) => res.data)),
-        settled(orchestratorApi.getStatus().then((res) => res.data as { enabled?: boolean })),
+        settled(configApi.getOrchestrator().then((res) => res.data as { enabled?: boolean })),
       ]).then(([health, federation, mcp, routability, processes, autoOps]) => {
         inFlight = false
         if (!live) return

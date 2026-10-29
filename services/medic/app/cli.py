@@ -15,6 +15,7 @@ from pathlib import Path
 
 from services.medic.api.history import record_exit, record_start
 from services.medic.api.ready import check_ready
+from services.medic.api.sensors import build_sensors
 from services.medic.api.server import Api, StatusBoard
 from services.medic.api.status import build_status, read_chain
 from services.medic.app import config
@@ -46,6 +47,7 @@ from services.medic.sensors.gateway import gateway_session
 from services.medic.sensors.http_ready import agent_serve_ready, agent_worker_ready
 from services.medic.sensors.kube import kube_pods
 from services.medic.sensors.logtail import compose_log_sensors
+from services.medic.sensors.providers import llm_providers
 from services.medic.sensors.work import work_sensors
 from services.medic.store import StoreError, open_writer
 
@@ -220,6 +222,7 @@ def sensors_for(env: Mapping[str, str], shape: str) -> list[Sensor]:
     if gateway is not None:
         sensors.append(gateway_session(host=gateway[0], port=gateway[1]))
         sensors.append(federation_sources(host=gateway[0], port=gateway[1]))
+        sensors.append(llm_providers(host=gateway[0], port=gateway[1]))
         sensors.extend(work_sensors(host=gateway[0], port=gateway[1]))
         sensors.extend(backend_status_sensors(host=gateway[0], port=gateway[1]))
     return sensors
@@ -522,13 +525,20 @@ class _Status:
                 decisions_lost=self.medic.unstored,
                 chain=read_chain(self.data_dir),
             )
+            sensors = build_sensors(
+                self.medic.scheduler.sensor_states(),
+                self.medic.engine.status(),
+                now=now,
+            )
         except Exception as exc:  # noqa: BLE001 (never the loop's problem)
             if not self._failing:
                 log.error("Status snapshot not built: %s", type(exc).__name__)
             self._failing = True
         else:
             self._failing = False
-            self.board.publish(snapshot, started_at=self.started_at, taken_at=now)
+            self.board.publish(
+                snapshot, started_at=self.started_at, taken_at=now, sensors=sensors
+            )
         if self.api is not None:
             try:
                 self.api.ensure()
