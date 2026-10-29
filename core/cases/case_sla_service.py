@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
-from core.exceptions import default_on_error
+from core.cases import case_trail
 from core.storage.connection import get_db_manager
 from core.storage.database_data_service import DatabaseDataService
 from core.storage.models import Case, CaseSLA, SLAPolicy, case_findings
@@ -167,6 +167,8 @@ class CaseSLAService:
         session: Optional[Session] = None,
         *,
         fall_back_to_default: bool = False,
+        record: bool = False,
+        signed_in: Optional[str] = None,
     ) -> SlaAssignment:
         """
         Assign an SLA policy to a case.
@@ -181,6 +183,9 @@ class CaseSLAService:
                 template that names a retired policy, where refusing means a
                 case with no deadlines and no breach tracking. A person naming
                 a policy by hand is told instead.
+            record: append ``case.sla.assign`` as ``signed_in``. Only a direct
+                assignment does; one made while opening a case belongs to
+                that action.
 
         Returns:
             An ``SlaAssignment`` saying what happened, carrying the row when
@@ -304,6 +309,14 @@ class CaseSLAService:
             )
 
             session.add(case_sla)
+            if record:
+                case_trail.append_or_legacy(
+                    session,
+                    action=case_trail.SLA_ASSIGN,
+                    signed_in=signed_in,
+                    case_id=case_id,
+                    ids=lambda: {"sla_policy_id": policy.policy_id},
+                )
 
             logger.info(
                 f"SLA assigned to case {case_id}: "
@@ -447,19 +460,21 @@ class CaseSLAService:
                 "health_status": health_status,
             }
 
-    @default_on_error(False)
+    @case_trail.on_error(False)
     def pause_sla(
         self,
         case_id: str,
         reason: Optional[str] = None,
         session: Optional[Session] = None,
+        *,
+        signed_in: Optional[str] = None,
     ) -> bool:
         """
-        Pause SLA timer for a case.
+        Pause SLA timer for a case, on the trail as ``signed_in``.
 
         Args:
             case_id: Case ID
-            reason: Reason for pausing
+            reason: Reason for pausing, beside the entry's hash
             session: Database session (optional)
 
         Returns:
@@ -478,14 +493,28 @@ class CaseSLAService:
 
             case_sla.is_paused = True
             case_sla.paused_at = utcnow()
+            case_trail.append_or_legacy(
+                session,
+                action=case_trail.SLA_PAUSE,
+                signed_in=signed_in,
+                case_id=case_id,
+                operator_text=reason,
+                ids=lambda: {"sla_policy_id": case_sla.sla_policy_id},
+            )
 
             logger.info(f"SLA paused for case {case_id}: {reason}")
             return True
 
-    @default_on_error(False)
-    def resume_sla(self, case_id: str, session: Optional[Session] = None) -> bool:
+    @case_trail.on_error(False)
+    def resume_sla(
+        self,
+        case_id: str,
+        session: Optional[Session] = None,
+        *,
+        signed_in: Optional[str] = None,
+    ) -> bool:
         """
-        Resume SLA timer for a case.
+        Resume SLA timer for a case, on the trail as ``signed_in``.
 
         Args:
             case_id: Case ID
@@ -517,16 +546,25 @@ class CaseSLAService:
 
             case_sla.is_paused = False
             case_sla.resumed_at = utcnow()
+            case_trail.append_or_legacy(
+                session,
+                action=case_trail.SLA_RESUME,
+                signed_in=signed_in,
+                case_id=case_id,
+                ids=lambda: {"sla_policy_id": case_sla.sla_policy_id},
+            )
 
             logger.info(f"SLA resumed for case {case_id}")
             return True
 
-    @default_on_error(False)
+    @case_trail.on_error(False)
     def mark_resolution_complete(
         self, case_id: str, session: Optional[Session] = None
     ) -> bool:
         """
         Mark that case resolution has been completed.
+
+        No entry of its own: closing the case, which calls this, is the entry.
 
         Args:
             case_id: Case ID

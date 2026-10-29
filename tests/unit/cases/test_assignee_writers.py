@@ -77,6 +77,9 @@ async def test_a_template_case_with_a_blank_assignee_is_unassigned(template):
     assert template[0]["assignee"] is None
 
 
+ANALYST = SimpleNamespace(username="ada")
+
+
 @pytest.fixture
 def tasks(monkeypatch):
     added = []
@@ -86,7 +89,7 @@ def tasks(monkeypatch):
         "add_task",
         lambda session, case_id, **kw: added.append(kw["assignee"]) or task,
     )
-    monkeypatch.setattr(case_records_service, "update_task", lambda *a: task)
+    monkeypatch.setattr(case_records_service, "update_task", lambda *a, **k: task)
     monkeypatch.setattr(cases_routes.CaseTaskSchema, "dump", staticmethod(lambda t: {}))
     return added, task
 
@@ -94,7 +97,7 @@ def tasks(monkeypatch):
 async def test_task_create_stores_the_username(tasks):
     added, _ = tasks
     await cases_routes.add_task(
-        "c-1", cases_routes.TaskAdd(title="t", assignee="ALICE"), people()
+        "c-1", cases_routes.TaskAdd(title="t", assignee="ALICE"), people(), ANALYST
     )
     assert added == ["alice"]
 
@@ -104,7 +107,7 @@ async def test_task_create_for_a_non_person_is_refused(tasks, sent):
     added, _ = tasks
     with pytest.raises(AssigneeRefused):
         await cases_routes.add_task(
-            "c-1", cases_routes.TaskAdd(title="t", assignee=sent), people()
+            "c-1", cases_routes.TaskAdd(title="t", assignee=sent), people(), ANALYST
         )
     assert added == []
 
@@ -114,14 +117,16 @@ async def test_task_update_for_a_non_person_is_refused(tasks, sent):
     _, task = tasks
     with pytest.raises(AssigneeRefused):
         cases_routes.update_task(
-            "c-1", 5, cases_routes.TaskUpdate(assignee=sent), people()
+            "c-1", 5, cases_routes.TaskUpdate(assignee=sent), people(), ANALYST
         )
     assert task.assignee == "alice"
 
 
 async def test_task_update_with_a_blank_assignee_clears_it(tasks):
     _, task = tasks
-    cases_routes.update_task("c-1", 5, cases_routes.TaskUpdate(assignee=""), people())
+    cases_routes.update_task(
+        "c-1", 5, cases_routes.TaskUpdate(assignee=""), people(), ANALYST
+    )
     assert task.assignee is None
 
 
@@ -191,7 +196,7 @@ def mcp(monkeypatch):
         "add_task",
         lambda session, case_id, **kw: added.append(kw["assignee"]) or task,
     )
-    monkeypatch.setattr(case_records_service, "update_task", lambda *a: task)
+    monkeypatch.setattr(case_records_service, "update_task", lambda *a, **k: task)
     monkeypatch.setattr(vigil.CaseTaskSchema, "dump", staticmethod(lambda t: {}))
     monkeypatch.setattr(
         CaseWorkflowService,

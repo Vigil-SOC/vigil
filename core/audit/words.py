@@ -74,6 +74,32 @@ def _investigation_log(p: Mapping[str, Any]) -> str:
     return f"Logged {event} on investigation {inv}" if inv else f"Logged {event}"
 
 
+def _task_update(p: Mapping[str, Any]) -> str:
+    status = _word(p.get("status"))
+    return f"Updated a task, now {status}" if status else "Updated a task"
+
+
+def _link(p: Mapping[str, Any]) -> str:
+    related, kind = p.get("related_case_id"), _word(p.get("relationship_type"))
+    if not related:
+        return "Linked the case to another"
+    return f"Linked the case to {related}" + (f" ({kind})" if kind else "")
+
+
+def _merge(p: Mapping[str, Any]) -> str:
+    moved = p.get("findings_moved")
+    count = f", moving {moved} finding{'' if moved == 1 else 's'}"
+    return (
+        f"Merged {p.get('source_case_id') or 'a case'} into "
+        f"{p.get('case_id') or 'this case'}" + (count if moved is not None else "")
+    )
+
+
+def _sla_assign(p: Mapping[str, Any]) -> str:
+    policy = p.get("sla_policy_id")
+    return f"Assigned SLA policy {policy}" if policy else "Assigned an SLA policy"
+
+
 def _role(verb: str) -> Callable[[Mapping[str, Any]], str]:
     return lambda p: (
         f"{verb} role {p['role_id']}" if p.get("role_id") else f"{verb} a role"
@@ -122,6 +148,13 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "case.evidence": "Attached a file to the case",
     "case.escalate": "Escalated the case",
     "case.close": "Closed the case",
+    "case.task": "Added a task",
+    "case.task.update": _task_update,
+    "case.link": _link,
+    "case.merge": _merge,
+    "case.sla.assign": _sla_assign,
+    "case.sla.pause": "Paused the SLA",
+    "case.sla.resume": "Resumed the SLA",
     "approval.approve": _approve,
     "approval.reject": "Rejected an action",
     # Old audit stores copied on upgrade (0018_legacy_audit_copy)

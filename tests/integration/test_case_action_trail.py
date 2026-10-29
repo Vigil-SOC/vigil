@@ -3,12 +3,17 @@
 A signed-in comment writes one ``audit_trail`` row and no ``case_audit_logs``
 row. A failed append leaves the comment uncommitted, and an approval the same
 way: the row stays pending. The audit reader's filter sees the row, and so
-do the case record and the case's export, by ``case_id`` (#3308).
+do the case record and the case's export, by ``case_id`` (#3308). Tasks,
+links, a merge and the direct SLA routes append the same way (#3428).
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
@@ -16,13 +21,18 @@ from sqlalchemy.orm import sessionmaker
 from core.audit import trail
 from core.cases import case_records_service, case_trail
 from core.cases.case_attachment_service import attach_document
-from core.cases.case_record import merge_record
 from core.cases.case_collaboration_service import CaseCollaborationService
 from core.cases.case_evidence_service import CaseEvidenceService
+from core.cases.case_record import merge_record
+from core.cases.case_sla_service import CaseSLAService, open_case
 from core.cases.case_workflow_service import CaseWorkflowService
 from core.response.approval_service import ApprovalService
 from core.storage.connection import get_db_manager, get_db_session
-from core.storage.models import CaseAuditLog
+from core.storage.database_data_service import DatabaseDataService
+from core.storage.models import CaseAuditLog, User
+from services.api.errors import register_exception_handlers
+from services.api.middleware.auth import get_current_user
+from services.api.routers import cases as case_routes
 from tests.integration.test_upgrade_command import _run, _scratch
 
 pytestmark = [pytest.mark.integration, pytest.mark.database]
@@ -70,7 +80,8 @@ def db(engine):
             text(
                 "TRUNCATE audit_trail, audit_trail_held, case_audit_logs, "
                 "case_comments, case_escalations, case_evidence, "
-                "case_notifications, approval_actions RESTART IDENTITY CASCADE"
+                "case_notifications, approval_actions, case_tasks, "
+                "case_relationships, case_slas RESTART IDENTITY CASCADE"
             )
         )
         conn.execute(text("UPDATE audit_trail_anchor SET seq = 0, entry_hash = ''"))
@@ -421,3 +432,198 @@ def test_entries_name_each_principal_and_mark_deleted_and_erased(db):
         ("Grace", "person", True, False, "Ada", said),
         (None, "person", False, True, "Ada", said),
     ]
+
+
+def _case(engine, case_id, priority="high"):
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO cases (case_id, title, description, priority, timeline) "
+                "VALUES (:id, 'Hunt', '', :priority, '[]'::jsonb) "
+                "ON CONFLICT (case_id) DO NOTHING"
+            ),
+            {"id": case_id, "priority": priority},
+        )
+
+
+def _verified(engine):
+    with sessionmaker(bind=engine)() as session:
+        assert trail.verify(session).ok
+
+
+def _record(engine, case_id, activities=()):
+    with sessionmaker(bind=engine)() as session, session.begin():
+        entries = case_records_service.list_case_trail(session, case_id)
+        return [
+            row["text"]
+            for row in merge_record([], [], activities=activities, trail=entries)
+        ]
+
+
+def test_adding_and_updating_a_task_are_two_entries_with_text_beside(db):
+    with sessionmaker(bind=db)() as session, session.begin():
+        task = case_records_service.add_task(
+            session,
+            "c-1",
+            title="Pull the mailbox",
+            description="All of last week",
+            assignee=None,
+            priority="high",
+            due_date=None,
+            checklist_items=None,
+            signed_in="ada",
+        )
+        task_id = task.task_id
+    with sessionmaker(bind=db)() as session, session.begin():
+        case_records_service.update_task(
+            session, task_id, {"status": "in_progress"}, signed_in="ada"
+        )
+
+    added, updated = _payloads(db)
+    assert added[0] == {
+        "action": "case.task",
+        "actor": "prin-ada",
+        "case_id": "c-1",
+        "task_id": task_id,
+        "status": "pending",
+    }
+    assert (added[1], added[2]) == ("ada", "Pull the mailbox\n\nAll of last week")
+    assert updated[0]["status"] == "in_progress"
+    assert updated[2] == "Pull the mailbox"
+    _verified(db)
+    assert _record(db, "c-1") == [
+        "Ada updated a task, now in progress",
+        "Ada added a task",
+    ]
+
+
+def test_linking_two_cases_is_an_entry_on_each(db):
+    _case(db, "c-link")
+    with sessionmaker(bind=db)() as session, session.begin():
+        case_records_service.link_cases(
+            session,
+            "c-1",
+            "c-link",
+            relationship_type="related_to",
+            created_by="ada",
+        )
+
+    rows = [row[0] for row in _payloads(db)]
+    assert [(p["case_id"], p["related_case_id"]) for p in rows] == [
+        ("c-1", "c-link"),
+        ("c-link", "c-1"),
+    ]
+    assert rows[0]["relationship_type"] == "related_to"
+    _verified(db)
+    assert _record(db, "c-link") == ["Ada linked the case to c-1 (related to)"]
+
+
+def test_a_merge_is_one_entry_found_from_both_cases(db):
+    _case(db, "c-target")
+    _case(db, "c-source")
+    CaseWorkflowService().merge_cases("c-target", "c-source", "ada")
+
+    rows = _payloads(db)
+    assert [row[0] for row in rows] == [
+        {
+            "action": "case.merge",
+            "actor": "prin-ada",
+            "case_id": "c-target",
+            "source_case_id": "c-source",
+            "findings_moved": 0,
+        }
+    ]
+    _verified(db)
+    said = "Ada merged c-source into c-target, moving 0 findings"
+    assert _record(db, "c-source") == [said]
+    # The merge's own activity on the target is the same action, shown once.
+    with db.connect() as conn:
+        activities = conn.execute(
+            text("SELECT activities FROM cases WHERE case_id = 'c-target'")
+        ).scalar_one()
+    assert _record(db, "c-target", activities) == [said]
+
+
+def test_a_refused_merge_append_rolls_the_merge_back(db, monkeypatch):
+    _case(db, "c-keep")
+    _case(db, "c-kept")
+    _fail(monkeypatch)
+
+    with pytest.raises(case_trail.TrailWriteError):
+        CaseWorkflowService().merge_cases("c-keep", "c-kept", "ada")
+
+    with db.connect() as conn:
+        status = conn.execute(
+            text("SELECT status FROM cases WHERE case_id = 'c-kept'")
+        ).scalar_one()
+    assert status != "closed"
+    assert _count(db, "case_relationships") == 0
+
+
+def test_sla_assign_pause_and_resume_append_and_open_and_close_do_not(db):
+    opened = open_case(
+        DatabaseDataService(),
+        title="Opened",
+        finding_ids=[],
+        priority="high",
+        description="",
+    )
+    case_id = opened["case_id"]
+    assert _count(db, "case_slas") == 1
+    sla = CaseSLAService()
+    assert sla.pause_sla(case_id, "waiting on the vendor", signed_in="ada")
+    assert sla.resume_sla(case_id, signed_in="ada")
+    with sessionmaker(bind=db)() as session, session.begin():
+        CaseWorkflowService().close_case(
+            session, case_id, closure_category="duplicate", closed_by="ada"
+        )
+    _case(db, "c-sla", priority="low")
+    assert sla.assign_sla_to_case(
+        "c-sla", "sla-high-default", record=True, signed_in="ada"
+    )
+
+    rows = _payloads(db)
+    actions = [row[0]["action"] for row in rows]
+    assert [a for a in actions if a.startswith("case.sla")] == [
+        "case.sla.pause",
+        "case.sla.resume",
+        "case.sla.assign",
+    ]
+    assert rows[0][0]["sla_policy_id"] == "sla-high-default"
+    assert rows[0][2] == "waiting on the vendor"
+    assert rows[-1][0] == {
+        "action": "case.sla.assign",
+        "actor": "prin-ada",
+        "case_id": "c-sla",
+        "sla_policy_id": "sla-high-default",
+    }
+    _verified(db)
+
+
+def test_a_refused_pause_rolls_back_and_a_paused_trail_is_a_503(db, monkeypatch):
+    _case(db, "c-sla")
+    assert CaseSLAService().assign_sla_to_case("c-sla")
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.add_api_route("/{case_id}/sla/pause", case_routes.pause_sla, methods=["POST"])
+    app.dependency_overrides[get_current_user] = lambda: User(username="ada")
+    client = TestClient(app, raise_server_exceptions=False)
+
+    _fail(monkeypatch)
+    assert client.post("/c-sla/sla/pause").status_code == 500
+
+    until = datetime.now(timezone.utc) + timedelta(seconds=30)
+
+    def paused(*_args, **_kwargs):
+        raise trail.Paused(1, until)
+
+    monkeypatch.setattr(trail, "append", paused)
+    answer = client.post("/c-sla/sla/pause")
+    assert answer.status_code == 503
+    assert int(answer.headers["Retry-After"]) > 0
+
+    with db.connect() as conn:
+        assert not conn.execute(
+            text("SELECT is_paused FROM case_slas WHERE case_id = 'c-sla'")
+        ).scalar_one()
+    assert _count(db, "audit_trail") == 0
