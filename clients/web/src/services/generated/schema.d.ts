@@ -2393,7 +2393,7 @@ export interface paths {
         put?: never;
         /**
          * Assign Sla
-         * @description Assign SLA policy to case.
+         * @description Assign SLA policy to case. Who assigned it is the signed-in user.
          */
         post: operations["post_api_cases_case_id_sla"];
         delete?: never;
@@ -2413,7 +2413,7 @@ export interface paths {
         put?: never;
         /**
          * Pause Sla
-         * @description Pause SLA timer.
+         * @description Pause SLA timer. Who paused it is the signed-in user.
          */
         post: operations["post_api_cases_case_id_sla_pause"];
         delete?: never;
@@ -2433,7 +2433,7 @@ export interface paths {
         put?: never;
         /**
          * Resume Sla
-         * @description Resume SLA timer.
+         * @description Resume SLA timer. Who resumed it is the signed-in user.
          */
         post: operations["post_api_cases_case_id_sla_resume"];
         delete?: never;
@@ -2457,7 +2457,7 @@ export interface paths {
         put?: never;
         /**
          * Add Task
-         * @description Add task to case.
+         * @description Add task to case. Who added it is the signed-in user.
          */
         post: operations["post_api_cases_case_id_tasks"];
         delete?: never;
@@ -2476,7 +2476,7 @@ export interface paths {
         get?: never;
         /**
          * Update Task
-         * @description Update task.
+         * @description Update task. Who updated it is the signed-in user.
          */
         put: operations["put_api_cases_case_id_tasks_task_id"];
         post?: never;
