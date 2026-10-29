@@ -267,6 +267,13 @@ export function commandRemainder(query: string, name: string): string {
   return ''
 }
 
+/** The live command the line starts with, and its argument. Null when the line is not one. */
+export function liveCommandIn(text: string): { id: LiveCommandId; arg: string } | null {
+  const lower = text.toLowerCase()
+  const command = LIVE_COMMANDS.find((c) => lower.startsWith(`${c.name} `))
+  return command ? { id: command.id as LiveCommandId, arg: commandRemainder(text, command.name) } : null
+}
+
 export function jiraReadiness(data: JiraConfigRead | null): JiraReadiness {
   if (!data) return { gap: 'Jira configuration could not be read', projectKey: '' }
   const enabled = (data.enabled_integrations ?? []).includes('jira')
