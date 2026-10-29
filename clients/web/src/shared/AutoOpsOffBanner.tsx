@@ -10,7 +10,7 @@ export function AutoOpsOffBanner({ goSettings }: { goSettings: ConsoleScreenProp
         <b>AutoOps is off.</b> Alerts are triaged but no agent picks them up until it is on.
       </span>
       <button type="button" className="btn ghost" onClick={() => goSettings('autoinvestigate')}>
-        Turn it on in Settings →
+        Open Limits &amp; autonomy →
       </button>
     </div>
   )

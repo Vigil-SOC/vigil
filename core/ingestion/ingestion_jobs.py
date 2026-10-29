@@ -163,6 +163,7 @@ def summarize_stats(stats: Dict[str, int], first_error: Optional[str] = None) ->
 def run_job(job: IngestionJob, source_path: Path) -> None:
     """Ingest source_path on a worker thread, then delete it. Never raises."""
     from core.ingestion.ingestion_service import IngestionService
+    from core.ingestion.triage_signal import signal_new_findings
 
     try:
         service = IngestionService()
@@ -170,6 +171,7 @@ def run_job(job: IngestionJob, source_path: Path) -> None:
         stats = service._ingest_file_by_format(
             source_path, job.format, data_type=job.data_type
         )
+        signal_new_findings(service.stored_ids)
         success, message = summarize_stats(stats or {}, service.first_error)
         if success:
             job.finish(message)
