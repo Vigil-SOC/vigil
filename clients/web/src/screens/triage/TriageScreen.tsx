@@ -41,6 +41,8 @@ const STATES = [
   { value: 'launched', label: 'Picked up or started a case', dot: 'good' },
   { value: 'merged', label: 'Added to a case', dot: 'ac' },
   { value: 'expired', label: 'Expired', dot: 'tx2' },
+  // an alert that never got an intake row and is on no case
+  { value: 'not_picked_up', label: 'Not picked up', dot: 'tx3' },
   // not an intake state: rows whose alert was marked as noise, in whichever state above
   { value: 'dismissed', label: 'Dismissed as noise', dot: 'tx3' },
 ]
@@ -433,6 +435,7 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
       key: 'state',
       label: 'What happened',
       render: (row) => {
+        if (row.dismissed) return <span className="tq-pill dismissed">{row.state_label}</span>
         const label = autoOpsOff && row.state === 'queued' ? QUEUED_OFF : row.state_label
         return label ? <span className={`tq-pill ${row.state}`}>{label}</span> : BLANK
       },

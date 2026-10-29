@@ -7,7 +7,6 @@
 # fixture can neutralize env_file.
 
 import os
-from unittest.mock import patch
 
 os.environ["DEV_MODE"] = "false"
 # `or`, not setdefault: a shell that sourced .env exports JWT_SECRET_KEY="".
@@ -22,8 +21,7 @@ os.environ["VIGIL_DISABLE_DOTENV"] = "1"
 # the request proceeds. Stated once rather than by whichever test module
 # happens to be collected first: three modules used to set
 # `VIGIL_CSRF_ENABLED=false` at import, process-wide and without cleanup, so
-# what the suite ran under depended on the order pytest walked it in. A test
-# of the product default unsets the pin itself (tests/unit/api/test_csrf_default.py).
+# what the suite ran under depended on the order pytest walked it in.
 os.environ["VIGIL_CSRF_ENABLED"] = "true"
 os.environ["VIGIL_CSRF_REPORT_ONLY"] = "true"
 
@@ -42,24 +40,13 @@ def _reset_settings_cache():
     get_settings.cache_clear()
 
 
-# Tests that legitimately talk to Postgres: `external_service` ones (unit/conftest.py
-# provisions a throwaway database from the POSTGRES_* env) and the integration and
-# smoke trees, which CI runs against a service container.
-_DB_TREES = ("integration", "smoke")
-
-
 @pytest.fixture(autouse=True)
-def _no_ambient_postgres(request, monkeypatch):
+def _no_ambient_postgres(monkeypatch):
     """Point any accidental DB connection at a host that cannot resolve (#1456).
 
-    Without this a unit test falls back to localhost:5432 and the built-in
-    password, i.e. a developer's own running stack.
+    Without this a test falls back to localhost:5432 and the built-in password,
+    i.e. a developer's own running stack.
     """
-    if request.node.get_closest_marker("external_service") or any(
-        part in _DB_TREES for part in request.path.parts
-    ):
-        yield
-        return
     monkeypatch.setenv("POSTGRES_HOST", "postgres-blocked-in-unit-tests.invalid")
     monkeypatch.setenv("POSTGRES_PORT", "1")
     monkeypatch.setenv("POSTGRES_PASSWORD", "blocked-in-unit-tests")
@@ -89,51 +76,6 @@ def _reset_llm_path_cache():
     mod = sys.modules.get("core.llm.bifrost.path_health")
     if mod is not None:
         mod.reset()
-
-
-@pytest.fixture
-def authenticate_app():
-    """Make a FastAPI app treat every request as a permitted admin.
-
-    ``authenticate_app(app)`` overrides the session-auth dependencies on that
-    app and returns the stand-in user; the override is removed at teardown.
-    Overriding alone is not enough: ``services/api/middleware/auth.py`` resolves
-    permissions by ``user_id`` against the database, and a synthetic user has
-    none, so ``check_permission`` is patched to allow for the test's duration.
-    The real cookie/JWT path is exercised by tests/security/ and the bootstrap
-    test in tests/integration/.
-    """
-    # lazy: AST tests need no app deps
-    from core.storage.models import User
-    from services.api.middleware.auth import get_current_active_user, get_current_user
-
-    user = User(
-        user_id="test-admin",
-        principal_id="test-admin",
-        username="test-admin",
-        email="admin@test.local",
-        password_hash="",
-        full_name="Test Admin",
-        role_id="role-admin",
-        is_active=True,
-        mfa_enabled=False,
-    )
-    apps = []
-
-    def _apply(app):
-        app.dependency_overrides[get_current_user] = lambda: user
-        app.dependency_overrides[get_current_active_user] = lambda: user
-        apps.append(app)
-        return user
-
-    with patch(
-        "core.auth.auth_service.AuthService.check_permission", return_value=True
-    ):
-        yield _apply
-
-    for app in apps:
-        app.dependency_overrides.pop(get_current_user, None)
-        app.dependency_overrides.pop(get_current_active_user, None)
 
 
 @pytest.fixture(autouse=True)

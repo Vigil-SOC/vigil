@@ -281,7 +281,7 @@ export function honestLine(): string {
 }
 
 // The hypothesis statuses explanationWord maps: HYPOTHESIS_STATUSES in services/agent
-// contracts/events.ts, held to it by tests/unit/_ratchets/test_recall_contract_agrees.py.
+// contracts/events.ts.
 export const EXPLAINED_STATUSES = ['active', 'proven', 'disproven', 'inconclusive', 'parked', 'handed_off'] as const
 
 /** The design's word for a hypothesis: forming, standing, weakened, ruled out or proven, never a ledger status.

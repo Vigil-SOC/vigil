@@ -43,7 +43,6 @@ from core.version import __version__
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 # The schema a database at head should have, as schema_state() reports it.
-# tests/integration/test_upgrade_command.py checks it and says how to rewrite it.
 HEAD_SCHEMA = PACKAGE_DIR / "head_schema.json"
 # The schema at 0001_baseline, which adoption must reach before it stamps it.
 # Frozen: head_schema.json moves on with each later revision.

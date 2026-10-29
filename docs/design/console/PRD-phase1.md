@@ -201,7 +201,7 @@ A phase-1 requirement is done when:
 2. Every number on screen comes from an API response or a configuration value served by the API. No preset, limit or threshold is written in the UI.
 3. Every action that exists today still works through its existing endpoint, with the confirmation class from principle 7.
 4. Every placeholder is labelled per section 2 and its ⓘ says what will fill it.
-5. The screen has tests for its data mapping and its states (empty, loading, populated, error, demo).
+5. The screen handles each of its states: empty, loading, populated, error, demo.
 6. Nothing phase 2 has a nav entry, a route or a fake result.
 
 Rev 1.1's L test (fold from record events, byte-identical replay) is not applied in phase 1.
@@ -267,4 +267,4 @@ One epic each; the groomer decides PR size. Foundation first; pages after the sh
 12. Agents & workflows (section 12, B12).
 13. Settings: AI models, Integrations, Custom integration (section 13).
 14. Settings: Alert collection, SLA, Limits and autonomy, Data and uploads, System tab (section 13, B9).
-15. Cut-over: retire the old rail, styles.css, Appearance, and the old tests; move legacy screens under More.
+15. Cut-over: retire the old rail, styles.css and Appearance; move legacy screens under More.

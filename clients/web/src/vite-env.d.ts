@@ -1,5 +1,4 @@
 /// <reference types="vite/client" />
-/// <reference types="vitest/globals" />
 
 interface ImportMetaEnv {
   readonly VITE_DEV_MODE?: string
@@ -10,7 +9,4 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv
 }
-
-// Global test utilities
-declare const global: typeof globalThis
 

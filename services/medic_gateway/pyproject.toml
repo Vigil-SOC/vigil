@@ -20,12 +20,6 @@ dev = [
 [tool.uv]
 package = false
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-# The repo root, so `services.medic_gateway` imports the way it does at runtime.
-pythonpath = ["../.."]
-addopts = ["--import-mode=importlib"]
-
 [tool.ruff]
 target-version = "py312"
 
