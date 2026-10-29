@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import OverviewScreen from './OverviewScreen'
+import FlowDiagram from './FlowDiagram'
 import { heldCase } from '../../shell/heldCase'
 import { casesApi, configApi, findingsApi, overviewApi, type OverviewAgent, type OverviewFeedItem, type OverviewPayload } from '../../services/api'
 import type { ApiMock } from '../../test/apiMock'
@@ -634,5 +635,43 @@ describe('OverviewScreen', () => {
     // no title: the description is the header and is not repeated
     expect(second.querySelector('.ov-pop-d')).toHaveTextContent('Quiet one')
     expect(second.querySelector('.ov-pop-desc')).toBeNull()
+  })
+})
+
+describe('FlowDiagram outcome bands', () => {
+  // Where each band lands on its row, read from the path's "L x2 y-th/2 → x2 y+th/2" edge.
+  const ends = (container: HTMLElement) =>
+    [...container.querySelectorAll<SVGPathElement>('.ov-band path:not(.ov-zero)')].map((p) => {
+      const m = p.getAttribute('d')!.match(/, (\S+) (\S+) L \S+ (\S+)/)!
+      return [Number(m[2]), Number(m[3])] as const
+    })
+  const draw = (counts: number[], wall: boolean) => {
+    const outcomes = OUTCOMES.map((o, i) => (o.count === null ? o : { ...o, count: counts[i] }))
+    const { container, unmount } = render(
+      <MemoryRouter>
+        <FlowDiagram data={payload({ outcomes })} wall={wall} onToggleWall={vi.fn()} />
+      </MemoryRouter>,
+    )
+    const edges = ends(container)
+    unmount()
+    return edges
+  }
+
+  it.each([false, true])('a dominant outcome stays inside its row (wall=%s)', (wall) => {
+    const H = wall ? 600 : 400
+    for (const counts of [[0, 0, 0, 0, 0, 0, 3], [1, 1, 1, 1, 1, 1, 14]]) {
+      const edges = draw(counts, wall)
+      expect(edges).toHaveLength(counts.filter((c) => c > 0).length)
+      edges.forEach(([top, bottom], i) => {
+        expect(top).toBeGreaterThanOrEqual(0)
+        expect(bottom).toBeLessThanOrEqual(H)
+        if (i > 0) expect(top).toBeGreaterThan(edges[i - 1][1])
+      })
+    }
+  })
+
+  it.each([false, true])('a spread-out day keeps the full 150px total (wall=%s)', (wall) => {
+    const edges = draw([5, 5, 4, 4, 4, 4, 4], wall)
+    expect(edges.reduce((n, [top, bottom]) => n + bottom - top, 0)).toBeCloseTo(150)
   })
 })
