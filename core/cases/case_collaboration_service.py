@@ -12,9 +12,9 @@ from sqlalchemy.orm import Session
 
 from core.audit import trail
 from core.cases import case_trail
+from core.cases.agent_closure import principal_for_username
 from core.cases.case_notification_service import CaseNotificationService
-from core.exceptions import default_on_error
-from core.storage.models import CaseAuditLog, CaseComment, CaseWatcher
+from core.storage.models import CaseAuditLog, CaseComment, CaseWatcher, User
 from core.storage.unit_of_work import unit_of_work
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,35 @@ def _comment_audit(
         ),
         ids=lambda: {"comment_id": comment_id},
     )
+
+
+def _watcher_audit(
+    session: Session,
+    action: str,
+    case_id: str,
+    user_id: str,
+    signed_in: Optional[str],
+) -> None:
+    """The watcher's principal id is hashed; a ``user_id`` that names no live
+    account (a free string the route accepts) goes beside it instead."""
+    principal = _principal_of(session, user_id)
+    case_trail.append_or_legacy(
+        session,
+        action=action,
+        signed_in=signed_in,
+        case_id=case_id,
+        operator_text=None if principal else user_id,
+        ids=lambda: {"watcher": principal},
+    )
+
+
+def _principal_of(session: Session, user_id: str) -> Optional[str]:
+    """A watcher is named by username or by account id."""
+    principal = principal_for_username(session, user_id)
+    if principal is None:
+        row = session.get(User, user_id)
+        principal = row.principal_id if row is not None else None
+    return principal
 
 
 class CaseCollaborationService:
@@ -276,13 +305,13 @@ class CaseCollaborationService:
 
             return query.order_by(CaseComment.created_at.asc()).all()
 
-    @default_on_error(None)
     def add_watcher(
         self,
         case_id: str,
         user_id: str,
         notification_preferences: Optional[Dict] = None,
         session: Optional[Session] = None,
+        added_by: Optional[str] = None,
     ) -> Optional[CaseWatcher]:
         """
         Add a watcher to a case.
@@ -292,38 +321,58 @@ class CaseCollaborationService:
             user_id: User ID to add as watcher
             notification_preferences: Notification preferences
             session: Database session (optional)
+            added_by: Signed-in username; unset is the bound caller
 
         Returns:
             Created CaseWatcher or None
+
+        A new watcher is one ``case.watcher.add`` entry; a failed append fails
+        the write, as ``add_comment``.
         """
-        with unit_of_work(session) as session:
-            # Check if already watching
-            existing = (
-                session.query(CaseWatcher)
-                .filter(
-                    and_(CaseWatcher.case_id == case_id, CaseWatcher.user_id == user_id)
+        joined = session is not None
+        try:
+            with unit_of_work(session) as session:
+                # Check if already watching
+                existing = (
+                    session.query(CaseWatcher)
+                    .filter(
+                        and_(
+                            CaseWatcher.case_id == case_id,
+                            CaseWatcher.user_id == user_id,
+                        )
+                    )
+                    .first()
                 )
-                .first()
-            )
 
-            if existing:
-                logger.info(f"User {user_id} already watching case {case_id}")
-                return existing
+                if existing:
+                    logger.info(f"User {user_id} already watching case {case_id}")
+                    return existing
 
-            watcher = CaseWatcher(
-                case_id=case_id,
-                user_id=user_id,
-                notification_preferences=notification_preferences or {},
-            )
+                watcher = CaseWatcher(
+                    case_id=case_id,
+                    user_id=user_id,
+                    notification_preferences=notification_preferences or {},
+                )
 
-            session.add(watcher)
+                session.add(watcher)
+                _watcher_audit(
+                    session, case_trail.WATCHER_ADD, case_id, user_id, added_by
+                )
 
-            logger.info(f"Added watcher {user_id} to case {case_id}")
-            return watcher
+                logger.info(f"Added watcher {user_id} to case {case_id}")
+                return watcher
+        except Exception as exc:
+            if case_trail.propagates(exc, joined):
+                raise
+            logger.exception("CaseCollaborationService.add_watcher failed")
+            return None
 
-    @default_on_error(False)
     def remove_watcher(
-        self, case_id: str, user_id: str, session: Optional[Session] = None
+        self,
+        case_id: str,
+        user_id: str,
+        session: Optional[Session] = None,
+        removed_by: Optional[str] = None,
     ) -> bool:
         """
         Remove a watcher from a case.
@@ -332,26 +381,43 @@ class CaseCollaborationService:
             case_id: Case ID
             user_id: User ID to remove
             session: Database session (optional)
+            removed_by: Signed-in username; unset is the bound caller
 
         Returns:
             True if successful
+
+        One ``case.watcher.remove`` entry; a failed append fails it, as
+        ``add_watcher``.
         """
-        with unit_of_work(session) as session:
-            watcher = (
-                session.query(CaseWatcher)
-                .filter(
-                    and_(CaseWatcher.case_id == case_id, CaseWatcher.user_id == user_id)
+        joined = session is not None
+        try:
+            with unit_of_work(session) as session:
+                watcher = (
+                    session.query(CaseWatcher)
+                    .filter(
+                        and_(
+                            CaseWatcher.case_id == case_id,
+                            CaseWatcher.user_id == user_id,
+                        )
+                    )
+                    .first()
                 )
-                .first()
-            )
 
-            if not watcher:
-                return False
+                if not watcher:
+                    return False
 
-            session.delete(watcher)
+                session.delete(watcher)
+                _watcher_audit(
+                    session, case_trail.WATCHER_REMOVE, case_id, user_id, removed_by
+                )
 
-            logger.info(f"Removed watcher {user_id} from case {case_id}")
-            return True
+                logger.info(f"Removed watcher {user_id} from case {case_id}")
+                return True
+        except Exception as exc:
+            if case_trail.propagates(exc, joined):
+                raise
+            logger.exception("CaseCollaborationService.remove_watcher failed")
+            return False
 
     def get_case_watchers(
         self, case_id: str, session: Optional[Session] = None

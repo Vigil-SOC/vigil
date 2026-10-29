@@ -1,14 +1,17 @@
 """Case and approval actions on a migrated trail (#2761).
 
 A signed-in comment writes one ``audit_trail`` row and no ``case_audit_logs``
-row. A failed append leaves the comment uncommitted, and an approval the same
+row; so do evidence, an IOC, a bulk IOC add and a watcher (#3427). A failed append leaves the comment uncommitted, and an approval the same
 way: the row stays pending. The audit reader's filter sees the row, and so
 do the case record and the case's export, by ``case_id`` (#3308).
 """
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
@@ -16,13 +19,14 @@ from sqlalchemy.orm import sessionmaker
 from core.audit import trail
 from core.cases import case_records_service, case_trail
 from core.cases.case_attachment_service import attach_document
-from core.cases.case_record import merge_record
 from core.cases.case_collaboration_service import CaseCollaborationService
 from core.cases.case_evidence_service import CaseEvidenceService
+from core.cases.case_record import merge_record
 from core.cases.case_workflow_service import CaseWorkflowService
 from core.response.approval_service import ApprovalService
 from core.storage.connection import get_db_manager, get_db_session
-from core.storage.models import CaseAuditLog
+from core.storage.models import CaseAuditLog, User
+from core.time import utcnow
 from tests.integration.test_upgrade_command import _run, _scratch
 
 pytestmark = [pytest.mark.integration, pytest.mark.database]
@@ -70,7 +74,8 @@ def db(engine):
             text(
                 "TRUNCATE audit_trail, audit_trail_held, case_audit_logs, "
                 "case_comments, case_escalations, case_evidence, "
-                "case_notifications, approval_actions RESTART IDENTITY CASCADE"
+                "case_notifications, case_iocs, case_watchers, approval_actions "
+                "RESTART IDENTITY CASCADE"
             )
         )
         conn.execute(text("UPDATE audit_trail_anchor SET seq = 0, entry_hash = ''"))
@@ -421,3 +426,245 @@ def test_entries_name_each_principal_and_mark_deleted_and_erased(db):
         ("Grace", "person", True, False, "Ada", said),
         (None, "person", False, True, "Ada", said),
     ]
+
+
+@pytest.fixture
+def ada_client(db, monkeypatch):
+    """The mounted app, signed in as ada."""
+    from services.api import main as backend_main
+    from services.api.middleware import auth as auth_module
+
+    user = User(
+        user_id="prin-ada",
+        principal_id="prin-ada",
+        username="ada",
+        email="ada@example.com",
+        password_hash="",
+        role_id="role-analyst",
+        is_active=True,
+        mfa_enabled=False,
+    )
+    monkeypatch.setattr(
+        "core.auth.auth_service.AuthService.check_permission",
+        lambda *args, **kwargs: True,
+    )
+    app = backend_main.app
+    overrides = (auth_module.get_current_user, auth_module.get_current_active_user)
+    for dep in overrides:
+        app.dependency_overrides[dep] = lambda: user
+    try:
+        yield TestClient(app, raise_server_exceptions=False)
+    finally:
+        for dep in overrides:
+            app.dependency_overrides.pop(dep, None)
+
+
+def _verified(engine):
+    with sessionmaker(bind=engine)() as session:
+        return trail.verify(session).ok
+
+
+def test_evidence_and_custody_through_rest_are_one_entry_each(db, ada_client):
+    resp = ada_client.post(
+        "/api/v1/cases/c-1/evidence",
+        json={"evidence_type": "log", "name": "ada-laptop auth.log"},
+    )
+    assert resp.status_code == 200, resp.text
+    evidence_id = resp.json()["evidence_id"]
+    resp = ada_client.post(
+        f"/api/cases/c-1/evidence/{evidence_id}/chain-of-custody",
+        json={"action": "transferred", "notes": "handed to Grace"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    evidence, custody = _payloads(db)
+    assert evidence[0] == {
+        "action": "case.evidence",
+        "actor": "prin-ada",
+        "case_id": "c-1",
+        "evidence_id": evidence_id,
+    }
+    assert evidence[1:] == ("ada", "ada-laptop auth.log")
+    assert custody[0] == {
+        "action": "case.evidence.custody",
+        "actor": "prin-ada",
+        "case_id": "c-1",
+        "evidence_id": evidence_id,
+    }
+    assert custody[2] == "transferred: handed to Grace"
+    with db.connect() as conn:
+        chain = conn.execute(
+            text("SELECT chain_of_custody FROM case_evidence")
+        ).scalar_one()
+    assert [step["action"] for step in chain] == ["collected", "transferred"]
+    assert _verified(db)
+
+    with sessionmaker(bind=db)() as session, session.begin():
+        entries = case_records_service.list_case_trail(session, "c-1")
+        audits = case_records_service.list_case_audit(session, "c-1")
+        texts = [r["text"] for r in merge_record([], audits, trail=entries)]
+    assert texts == [
+        "Ada added to an evidence item's chain of custody",
+        "Ada added evidence to the case",
+    ]
+
+
+def test_a_hunt_attachment_is_one_evidence_entry_with_its_hashes(db, tmp_path):
+    source = tmp_path / "advisory.pdf"
+    source.write_bytes(b"%PDF original")
+    with sessionmaker(bind=db)() as session:
+        evidence = attach_document(
+            session,
+            "c-1",
+            source,
+            "advisory.pdf",
+            name=None,
+            pages=2,
+            collected_by="ada",
+            store=CaseEvidenceService(storage_path=str(tmp_path / "evidence")),
+        )
+        held = (evidence.evidence_id, evidence.file_hash_sha256, evidence.file_hash_md5)
+        session.commit()
+
+    [(payload, actor_text, operator_text)] = _payloads(db)
+    assert payload["action"] == "case.evidence"
+    assert (
+        payload["evidence_id"],
+        payload["file_hash_sha256"],
+        payload["file_hash_md5"],
+    ) == held
+    assert held[1]
+    assert "advisory.pdf" not in payload.values()
+    assert (actor_text, operator_text) == ("ada", "advisory.pdf")
+    assert _count(db, "case_audit_logs") == 0
+    assert _verified(db)
+
+
+def test_an_ioc_is_one_entry_and_its_value_sits_beside_the_hash(db, ada_client):
+    body = {"ioc_type": "domain", "value": "evil.example"}
+    resp = ada_client.post("/api/v1/cases/c-1/iocs", json=body)
+    assert resp.status_code == 200, resp.text
+    # The same IOC again adds no row and no entry.
+    assert ada_client.post("/api/v1/cases/c-1/iocs", json=body).status_code == 200
+
+    [(payload, actor_text, operator_text)] = _payloads(db)
+    assert payload == {
+        "action": "case.ioc",
+        "actor": "prin-ada",
+        "case_id": "c-1",
+        "ioc_id": resp.json()["ioc_id"],
+        "ioc_type": "domain",
+    }
+    assert (actor_text, operator_text) == ("ada", "evil.example")
+    assert _verified(db)
+
+
+def test_a_bulk_ioc_add_is_one_entry_with_the_count(db, ada_client):
+    resp = ada_client.post(
+        "/api/v1/cases/c-1/iocs/bulk",
+        json={
+            "iocs": [
+                {"ioc_type": "ip", "value": "10.0.0.5"},
+                {"ioc_type": "ip", "value": "10.0.0.6"},
+                {"ioc_type": "domain", "value": "evil.example"},
+            ]
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"added": 3}
+
+    [(payload, _actor, operator_text)] = _payloads(db)
+    assert payload["action"] == "case.ioc.bulk"
+    assert payload["count"] == 3
+    assert payload["ioc_types"] == ["domain", "ip"]
+    assert len(payload["ioc_ids"]) == 3
+    assert "10.0.0.5" in operator_text
+    assert _count(db, "case_iocs") == 3
+    assert _verified(db)
+
+
+def test_adding_and_removing_a_watcher_name_the_watcher_by_principal(db, ada_client):
+    resp = ada_client.post("/api/cases/c-1/watchers", json={"user_id": "ada"})
+    assert resp.status_code == 200, resp.text
+    resp = ada_client.delete("/api/cases/c-1/watchers/ada")
+    assert resp.status_code == 200, resp.text
+
+    added, removed = _payloads(db)
+    for entry, action in (
+        (added, "case.watcher.add"),
+        (removed, "case.watcher.remove"),
+    ):
+        assert entry[0] == {
+            "action": action,
+            "actor": "prin-ada",
+            "case_id": "c-1",
+            "watcher": "prin-ada",
+        }
+        assert entry[2] is None
+    assert _count(db, "case_watchers") == 0
+    assert _verified(db)
+
+
+@pytest.mark.parametrize(
+    "method, path, body, table",
+    [
+        (
+            "post",
+            "/api/v1/cases/c-1/evidence",
+            {"evidence_type": "log", "name": "x"},
+            "case_evidence",
+        ),
+        (
+            "post",
+            "/api/v1/cases/c-1/iocs",
+            {"ioc_type": "ip", "value": "10.0.0.5"},
+            "case_iocs",
+        ),
+        (
+            "post",
+            "/api/v1/cases/c-1/iocs/bulk",
+            {"iocs": [{"ioc_type": "ip", "value": "1"}]},
+            "case_iocs",
+        ),
+        ("post", "/api/cases/c-1/watchers", {"user_id": "ada"}, "case_watchers"),
+    ],
+)
+def test_a_refused_append_rolls_back_the_row_and_a_pause_is_503(
+    db, ada_client, monkeypatch, method, path, body, table
+):
+    _fail(monkeypatch)
+    resp = getattr(ada_client, method)(path, json=body)
+    assert resp.status_code == 500, resp.text
+    assert _count(db, table) == 0
+    assert _count(db, "audit_trail") == 0
+
+    def paused(*_args, **_kwargs):
+        raise trail.Paused(1, utcnow() + timedelta(seconds=30))
+
+    monkeypatch.setattr(trail, "append", paused)
+    resp = getattr(ada_client, method)(path, json=body)
+    assert resp.status_code == 503, resp.text
+    assert int(resp.headers["Retry-After"]) >= 1
+    assert _count(db, table) == 0
+
+
+def test_removing_a_watcher_rolls_back_when_the_append_is_refused(
+    db, ada_client, monkeypatch
+):
+    assert (
+        ada_client.post("/api/cases/c-1/watchers", json={"user_id": "ada"}).status_code
+        == 200
+    )
+    _fail(monkeypatch)
+    assert ada_client.delete("/api/cases/c-1/watchers/ada").status_code == 500
+    assert _count(db, "case_watchers") == 1
+
+
+def test_a_missing_case_is_still_a_404(db, ada_client):
+    for path, body in (
+        ("/api/v1/cases/nope/evidence", {"evidence_type": "log", "name": "x"}),
+        ("/api/v1/cases/nope/iocs", {"ioc_type": "ip", "value": "10.0.0.5"}),
+        ("/api/cases/nope/watchers", {"user_id": "ada"}),
+    ):
+        assert ada_client.post(path, json=body).status_code == 404, path
+    assert _count(db, "audit_trail") == 0

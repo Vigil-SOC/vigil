@@ -5,6 +5,7 @@ These force the trail path. The rollback cases are the ones a comment or an
 escalation must not survive.
 """
 
+import hashlib
 from contextlib import contextmanager
 from datetime import datetime
 from unittest.mock import MagicMock
@@ -282,7 +283,10 @@ def test_an_attachment_names_the_evidence_row(tmp_path, monkeypatch):
         "actor": "prin-ada",
         "case_id": "c-1",
         "evidence_id": 5,
+        "file_hash_sha256": hashlib.sha256(b"%PDF original").hexdigest(),
+        "file_hash_md5": hashlib.md5(b"%PDF original").hexdigest(),
     }
+    assert held["beside"]["operator_text"] == "advisory.pdf"
     assert not any(
         isinstance(call.args[0], CaseAuditLog) for call in session.add.call_args_list
     )

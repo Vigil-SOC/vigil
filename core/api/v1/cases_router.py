@@ -585,6 +585,12 @@ def get_cases_summary():
     return data_service.get_cases_summary()
 
 
+def _missing_case(case_id: str) -> None:
+    """A write that failed on a case that is not there is a 404, not a 500."""
+    if not data_service.get_case(case_id):
+        raise HTTPException(status_code=404, detail="Case not found")
+
+
 @router.post(
     "/{case_id}/evidence", dependencies=_CASES_WRITE, response_model=CaseEvidenceSchema
 )
@@ -610,6 +616,7 @@ def add_evidence(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     if not evidence:
+        _missing_case(case_id)
         raise HTTPException(status_code=500, detail="Failed to add evidence")
     return CaseEvidenceSchema.dump(evidence)
 
@@ -623,7 +630,11 @@ def get_evidence(case_id: str, evidence_type: Optional[str] = None):
 
 
 @router.post("/{case_id}/iocs", dependencies=_CASES_WRITE, response_model=CaseIOCSchema)
-def add_ioc(case_id: str, data: IOCAdd):
+def add_ioc(
+    case_id: str,
+    data: IOCAdd,
+    current_user: User = Depends(get_current_user),
+):
     """Add IOC to case."""
     ioc_service = CaseIOCService()
     ioc = ioc_service.add_ioc(
@@ -635,8 +646,10 @@ def add_ioc(case_id: str, data: IOCAdd):
         source=data.source,
         tags=data.tags,
         context=data.context,
+        added_by=current_user.username,
     )
     if not ioc:
+        _missing_case(case_id)
         raise HTTPException(status_code=500, detail="Failed to add IOC")
     return CaseIOCSchema.dump(ioc)
 
@@ -671,10 +684,19 @@ def get_iocs(case_id: str, session: UnitOfWorkSession, ioc_type: Optional[str] =
     dependencies=_CASES_WRITE,
     response_model=CaseIOCBulkResponse,
 )
-def bulk_add_iocs(case_id: str, data: IOCBulkAdd):
+def bulk_add_iocs(
+    case_id: str,
+    data: IOCBulkAdd,
+    current_user: User = Depends(get_current_user),
+):
     """Bulk add IOCs to case."""
     ioc_service = CaseIOCService()
-    count = ioc_service.bulk_add_iocs(case_id, data.iocs)
+    count = ioc_service.bulk_add_iocs(
+        case_id, data.iocs, added_by=current_user.username
+    )
+    if count is None:
+        _missing_case(case_id)
+        raise HTTPException(status_code=500, detail="Failed to add IOCs")
     return {"added": count}
 
 

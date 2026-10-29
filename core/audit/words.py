@@ -119,7 +119,21 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "case.comment": "Commented on the case",
     "case.comment.update": "Edited a comment",
     "case.comment.delete": "Deleted a comment",
-    "case.evidence": "Attached a file to the case",
+    "case.evidence": lambda p: (
+        "Attached a file to the case"
+        if p.get("file_hash_sha256")
+        else "Added evidence to the case"
+    ),
+    "case.evidence.custody": "Added to an evidence item's chain of custody",
+    "case.ioc": lambda p: "Added an indicator to the case"
+    + (f" ({_word(p['ioc_type'])})" if p.get("ioc_type") else ""),
+    "case.ioc.bulk": lambda p: (
+        f"Added {p['count']} indicator{'' if p['count'] == 1 else 's'} to the case"
+        if isinstance(p.get("count"), int)
+        else "Added indicators to the case"
+    ),
+    "case.watcher.add": "Added a watcher to the case",
+    "case.watcher.remove": "Removed a watcher from the case",
     "case.escalate": "Escalated the case",
     "case.close": "Closed the case",
     "approval.approve": _approve,
