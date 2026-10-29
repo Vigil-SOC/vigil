@@ -62,6 +62,13 @@
 * **desktop:** Bifrost's runtime settings (provider keys, virtual keys, budgets, rate limits) now persist in a `bifrost_data` named volume, so they survive quitting the app ([#1452](https://github.com/Vigil-SOC/vigil/issues/1452)). Earlier versions kept them in an anonymous volume that every quit orphaned; those are not migrated, so re-enter any Bifrost settings made in its UI once. Providers seeded from environment variables come back on their own. Reclaim the orphaned volumes with `docker volume prune`.
 * **compose:** Bifrost's request log (`logs.db`) now lives in the `bifrost_data` volume, so gateway log history, cost time series and `recalculate-cost` survive a container recreate ([#1454](https://github.com/Vigil-SOC/vigil/issues/1454)). It was written to `/app/logs.db` in the container's writable layer. Applies to the server and desktop standalone stacks. The config store is untouched, so no volume reset is needed. History already in `/app/logs.db` is not migrated: the first recreate drops it, as every recreate did before. Snapshots still leave `logs.db` out, and a restore moves the live one aside into `.pre-restore-<stamp>` in the Bifrost data directory rather than restoring it.
 
+## [0.10.3](https://github.com/Vigil-SOC/vigil/compare/v0.10.2...v0.10.3) (2026-10-29)
+
+
+### Miscellaneous Chores
+
+* release 0.10.3 ([#3487](https://github.com/Vigil-SOC/vigil/issues/3487)) ([89339c6](https://github.com/Vigil-SOC/vigil/commit/89339c695035ac582cccb55de88929120c66c01c))
+
 ## [0.10.2](https://github.com/Vigil-SOC/vigil/compare/v0.10.1...v0.10.2) (2026-10-29)
 
 
