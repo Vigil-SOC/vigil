@@ -1686,10 +1686,12 @@ select.vg-side-input {
 }
 
 .vg-side-finder-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
+  overflow-wrap: anywhere;
   color: var(--tx2);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .vg-side-err {
