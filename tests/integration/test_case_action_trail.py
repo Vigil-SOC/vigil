@@ -490,9 +490,8 @@ def test_evidence_and_custody_through_rest_are_one_entry_each(db, ada_client):
         "actor": "prin-ada",
         "case_id": "c-1",
         "evidence_id": evidence_id,
-        "custody_action": "transferred",
     }
-    assert custody[2] == "handed to Grace"
+    assert custody[2] == "transferred: handed to Grace"
     with db.connect() as conn:
         chain = conn.execute(
             text("SELECT chain_of_custody FROM case_evidence")
@@ -505,7 +504,7 @@ def test_evidence_and_custody_through_rest_are_one_entry_each(db, ada_client):
         audits = case_records_service.list_case_audit(session, "c-1")
         texts = [r["text"] for r in merge_record([], audits, trail=entries)]
     assert texts == [
-        "Ada added to an evidence item's chain of custody: transferred",
+        "Ada added to an evidence item's chain of custody",
         "Ada added evidence to the case",
     ]
 

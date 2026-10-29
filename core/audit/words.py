@@ -124,8 +124,7 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
         if p.get("file_hash_sha256")
         else "Added evidence to the case"
     ),
-    "case.evidence.custody": lambda p: "Added to an evidence item's chain of custody"
-    + (f": {_word(p['custody_action'])}" if p.get("custody_action") else ""),
+    "case.evidence.custody": "Added to an evidence item's chain of custody",
     "case.ioc": lambda p: "Added an indicator to the case"
     + (f" ({_word(p['ioc_type'])})" if p.get("ioc_type") else ""),
     "case.ioc.bulk": lambda p: (

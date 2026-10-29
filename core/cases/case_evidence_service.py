@@ -236,8 +236,10 @@ class CaseEvidenceService:
                     action=case_trail.CUSTODY,
                     signed_in=user,
                     case_id=evidence.case_id,
-                    operator_text=notes or None,
-                    ids=lambda: {"evidence_id": evidence_id, "custody_action": action},
+                    # The action is free text from the request, so it is
+                    # erasable with the notes, not in the hashed payload.
+                    operator_text=": ".join(filter(None, [action, notes])) or None,
+                    ids=lambda: {"evidence_id": evidence_id},
                 )
 
                 logger.info(f"Added chain of custody entry for evidence {evidence_id}")
