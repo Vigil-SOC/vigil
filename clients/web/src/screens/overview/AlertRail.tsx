@@ -77,7 +77,9 @@ function Row({ item, onOpen, openCase }: { item: OverviewFeedItem; onOpen: (id: 
   return (
     <div role="button" tabIndex={0} className="ov-row" onClick={() => onOpen(item.finding_id)} onKeyDown={onKey}>
       <div className="ov-row-1">
-        <span className="ov-st" title={badge.label}><Icon name={badge.icon as IconName} size={11} /></span>
+        <span className={`ov-st${badge.logo ? ' logo' : ''}`} title={badge.label}>
+          {badge.logo ? <img src={badge.logo} alt="" /> : <Icon name={badge.icon as IconName} size={11} />}
+        </span>
         <SevMark severity={item.severity} />
         <span className="ov-row-r">
           <AgentMark item={item} />
