@@ -152,7 +152,7 @@ function DecisionCard({
       <div className="home-actions">
         {/* A hunt stopped at a limit is answered with Keep going on its case, not approved here. */}
         {caseId && onCloseCase && (
-          <button type="button" className="home-btn primary" disabled={busy} onClick={() => onCloseCase(caseId)}>
+          <button type="button" className="home-btn primary" aria-label={`Close case for ${ask.text}`} disabled={busy} onClick={() => onCloseCase(caseId)}>
             Close case
           </button>
         )}
