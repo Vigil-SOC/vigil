@@ -43,7 +43,6 @@ ARRIVAL_SOURCE = {
 RUNNING_SOURCE = "Runs still in history whose status is running or paused."
 STEP_SOURCE = "The open phase on the newest live run, or that run's status when it has no phase row."
 UNMEASURED_TEXT = "Not measured yet"
-NEEDS_YOU_INFO = "This count is alerts, not decisions."
 
 # Ticket, paused, stuck, and incidents stay outside the sum.
 _UNMEASURED = (
@@ -72,6 +71,8 @@ _LIVE_ORDER = (
 # The dismissed node reads "Dismissed as noise", apart from its pill ("Dropped");
 # the board says "Dropped as noise", a wording changed on #3268.
 _NODE_LABELS = {**TERMINAL_LABELS, "dismissed": "Dismissed as noise"}
+# Alert outcomes that sit on a case; their node also says how many cases.
+_CASE_STATES = ("needs_you", "working", "resolved_auto", "resolved_person")
 _TERMINAL_STATUSES = ("completed", "failed", "cancelled")
 _OPEN_PHASE = ("running", "pending_approval")
 
@@ -89,6 +90,11 @@ def completion_level(sample: int, completed: int) -> Optional[str]:
 
 def _outcome_nodes(states: list[dict]) -> list[dict]:
     counts = Counter(row["terminal_state"] for row in states)
+    # From the same rows as the alert count, so the two cannot disagree.
+    cases: dict[str, set[str]] = {}
+    for row in states:
+        if row["terminal_state"] in _CASE_STATES and row.get("case_id"):
+            cases.setdefault(row["terminal_state"], set()).add(row["case_id"])
     nodes = []
     for state in _LIVE_ORDER:
         nodes.append(
@@ -96,7 +102,10 @@ def _outcome_nodes(states: list[dict]) -> list[dict]:
                 "state": state,
                 "label": _NODE_LABELS[state],
                 "count": counts.get(state, 0),
-                "info": NEEDS_YOU_INFO if state == "needs_you" else None,
+                "case_count": (
+                    len(cases.get(state, ())) if state in _CASE_STATES else None
+                ),
+                "info": None,
                 "unmeasured_text": None,
             }
         )
@@ -106,6 +115,7 @@ def _outcome_nodes(states: list[dict]) -> list[dict]:
                 "state": state,
                 "label": label,
                 "count": None,
+                "case_count": None,
                 "info": info,
                 "unmeasured_text": UNMEASURED_TEXT,
             }

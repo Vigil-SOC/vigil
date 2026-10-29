@@ -43,9 +43,9 @@ const STATES = [
   { value: 'launched', label: 'Picked up or started a case', dot: 'good' },
   { value: 'merged', label: 'Added to a case', dot: 'ac' },
   { value: 'expired', label: 'Expired', dot: 'tx2' },
-  // an alert that never got an intake row and is on no case
+  // an alert on no case that is not waiting: never queued, or its latest row expired or lost its case
   { value: 'not_picked_up', label: 'Not picked up', dot: 'tx3' },
-  // not an intake state: rows whose alert was marked as noise, in whichever state above
+  // not an intake state: an alert marked as noise counts only here, not under its state above
   { value: 'dismissed', label: 'Dismissed as noise', dot: 'tx3' },
 ]
 const QUEUED_OFF = 'AutoOps is off'

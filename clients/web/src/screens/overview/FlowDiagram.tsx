@@ -23,12 +23,7 @@ const SLOT_W = 236
 const SLOT_DOT_X = 246
 const ENGINE_R = 52
 
-// The three served states that carry a sub-line, and the colour token of each outcome.
-const OUTCOME_SUB: Record<string, string> = {
-  resolved_auto: 'closed without a person',
-  working: 'cases in progress',
-  needs_you: 'alerts waiting on a person',
-}
+// The colour token of each outcome. An outcome in a case carries a case_count, and its sub-line says it.
 const OUTCOME_COLOR: Record<string, string> = {
   resolved_auto: 'var(--good)',
   resolved_person: 'var(--vio)',
@@ -39,16 +34,22 @@ const OUTCOME_COLOR: Record<string, string> = {
   waiting: 'var(--tx3)',
 }
 // OV-P1: where a populated outcome's count opens, and what it opens. Outcomes in a case open
-// Cases on the matching chip; the others open the Triage queue on the matching state.
+// Cases on the matching filters, always with alerts_from (on Cases no range means any day);
+// the others open the Triage queue on the matching state, with withRange.
 const OUTCOME_LINK: Record<string, [string, string]> = {
-  resolved_auto: ['/cases?state=closed', 'Opens closed cases.'],
-  resolved_person: ['/cases?state=closed', 'Opens closed cases.'],
-  working: ['/cases', 'Opens open cases.'],
-  needs_you: ['/cases?needs_you=1', 'Opens the cases that need you.'],
+  resolved_auto: ['/cases?state=closed&closed_by=agent', 'Opens closed cases an agent closed'],
+  resolved_person: ['/cases?state=closed&closed_by=person', 'Opens closed cases a person closed'],
+  working: ['/cases?working=1', 'Opens open cases that do not need you'],
+  needs_you: ['/cases?needs_you=1', 'Opens the cases that need you'],
   dismissed: ['/triage?state=dismissed', 'Opens the Triage queue at alerts dismissed as noise.'],
   scoring: ['/triage?state=queued', 'Opens the Triage queue at alerts waiting for triage.'],
-  waiting: ['/triage?state=expired', 'Opens the Triage queue at alerts whose wait expired.'],
+  waiting: ['/triage?state=not_picked_up', 'Opens the Triage queue at alerts no one picked up.'],
 }
+const outcomeHref = (path: string, range: CountRange) =>
+  path.startsWith('/cases') ? `${path}&alerts_from=${range}` : withRange(path, range)
+const outcomeTitle = (path: string, what: string, range: CountRange) =>
+  path.startsWith('/cases') ? `${what}, holding alerts from ${range === 'all' ? 'any day' : 'today (UTC)'}.` : what
+const inCases = (n: number) => `in ${fmt(n)} case${n === 1 ? '' : 's'}`
 const SLOTS: { label: string; sub: string; icon: IconName }[] = [
   { label: 'Connect a SIEM', sub: 'Splunk, Sentinel or Elastic', icon: 'search' },
   { label: 'Connect an EDR', sub: 'CrowdStrike or Defender', icon: 'shield' },
@@ -222,7 +223,7 @@ export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }
             align="start"
             label="About this diagram"
             source={data.arrivals[0]?.source_text}
-            calculation={`Line thickness is the number of alerts. Each alert is counted once, at the outcome it reached${all ? '' : ' today (UTC)'}. Not picked up is Triage's Not picked up plus Expired`}
+            calculation={`Line thickness is the number of alerts. Each alert is counted once, at the outcome it reached${all ? '' : ' today (UTC)'}. An outcome in a case also says how many cases hold its alerts`}
             limit="Hover a source or an outcome to follow it"
           />
         )}
@@ -411,6 +412,7 @@ export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }
                 ))
             : bands.map((b) => {
                 const link = b.o.count > 0 ? OUTCOME_LINK[b.o.state] : undefined
+                const sub = b.o.case_count != null ? inCases(b.o.case_count) : null
                 const head = (
                   <>
                     <b style={{ color: b.color }}>{fmt(b.o.count)}</b>
@@ -432,15 +434,15 @@ export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }
                     onBlur={leave}
                   >
                     {link ? (
-                      <Link to={link[0].startsWith('/triage') ? withRange(link[0], range) : link[0]} className="ov-out-l" title={`${b.o.label}: ${alerts(b.o.count)} ${when}. ${link[1]}`}>
+                      <Link to={outcomeHref(link[0], range)} className="ov-out-l" title={`${b.o.label}: ${alerts(b.o.count)} ${when}. ${outcomeTitle(link[0], link[1], range)}`}>
                         {head}
                       </Link>
                     ) : (
                       <span className="ov-out-l">{head}</span>
                     )}
-                    {(OUTCOME_SUB[b.o.state] || b.o.info) && (
+                    {(sub || b.o.info) && (
                       <span className="ov-out-s">
-                        {OUTCOME_SUB[b.o.state]}
+                        {sub}
                         {b.o.info && <InfoTip label={b.o.info} text={b.o.info} />}
                       </span>
                     )}

@@ -390,6 +390,8 @@
 .filter-chip.list.active { border-color: var(--ac-ln); color: var(--tx0); }
 .filter-chip .chip-dot { width: 7px; height: 7px; border-radius: 999px; flex-shrink: 0; }
 .filter-chip .chip-count { color: var(--tx2); }
+.filter-chip .chip-x { color: var(--tx2); flex-shrink: 0; }
+.filter-chip:hover .chip-x { color: var(--tx0); }
 
 @media (prefers-reduced-motion: reduce) {
   .state-pill.needs .state-dot { animation: none; }

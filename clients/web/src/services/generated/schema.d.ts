@@ -1453,7 +1453,10 @@ export interface paths {
          *     ``needs_you`` on each row. Page size defaults to the repository limit.
          *     ``needs_you=true`` keeps just those cases, and ``kind`` keeps cases whose
          *     latest investigation ran a workflow of that ``run_kind`` (none when no
-         *     workflow has it); both compose with the other filters.
+         *     workflow has it); both compose with the other filters. ``working`` keeps
+         *     open cases that do not need you, ``closed_by`` closed cases by who closed
+         *     them, and ``alerts_from`` cases holding an alert created today (UTC) or on
+         *     any day: the cases behind an Overview outcome node.
          */
         get: operations["get_api_cases"];
         put?: never;
@@ -5784,7 +5787,10 @@ export interface paths {
          *     ``needs_you`` on each row. Page size defaults to the repository limit.
          *     ``needs_you=true`` keeps just those cases, and ``kind`` keeps cases whose
          *     latest investigation ran a workflow of that ``run_kind`` (none when no
-         *     workflow has it); both compose with the other filters.
+         *     workflow has it); both compose with the other filters. ``working`` keeps
+         *     open cases that do not need you, ``closed_by`` closed cases by who closed
+         *     them, and ``alerts_from`` cases holding an alert created today (UTC) or on
+         *     any day: the cases behind an Overview outcome node.
          */
         get: operations["get_api_v1_cases"];
         put?: never;
@@ -13923,6 +13929,9 @@ export interface operations {
                 closed?: boolean | null;
                 query?: string | null;
                 needs_you?: boolean;
+                working?: boolean;
+                closed_by?: ("agent" | "person") | null;
+                alerts_from?: ("today" | "all") | null;
                 kind?: string | null;
                 limit?: number;
                 offset?: number;
@@ -21706,6 +21715,9 @@ export interface operations {
                 closed?: boolean | null;
                 query?: string | null;
                 needs_you?: boolean;
+                working?: boolean;
+                closed_by?: ("agent" | "person") | null;
+                alerts_from?: ("today" | "all") | null;
                 kind?: string | null;
                 limit?: number;
                 offset?: number;

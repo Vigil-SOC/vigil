@@ -8,7 +8,7 @@ the database, or nothing. None of this opens a database connection.
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from core.cases.combined_state import QueueItem
@@ -188,6 +188,7 @@ def overview_parts(
                 "finding_id": finding.get("finding_id"),
                 "data_source": source,
                 "terminal_state": terminal_state(case, dismissed=_noise(finding)),
+                "case_id": case.get("case_id") if case else None,
             }
         )
     configs: dict = {}
@@ -283,6 +284,10 @@ def _matches(
     needs_you_ids: set[str],
     workflow_constrained: bool,
     data_source: Optional[str],
+    working: bool,
+    closed_by: Optional[str],
+    alerts_from: Optional[str],
+    today: date,
 ) -> bool:
     # Demo cases have no workflow and no SLA, so those filters keep nothing.
     if workflow_constrained or sla_at_risk:
@@ -299,6 +304,22 @@ def _matches(
     case_id = case.get("case_id") or ""
     if needs_you_only and case_id not in needs_you_ids:
         return False
+    if working and (status == _CLOSED or case_id in needs_you_ids):
+        return False
+    # A demo case has no closure row, so every close is an agent's.
+    if closed_by and (status != _CLOSED or closed_by != "agent"):
+        return False
+    if alerts_from:
+        whens = [
+            _when(findings_by_id[finding_id])
+            for finding_id in _ids(case.get("finding_ids"))
+            # a noise-marked alert counts under Dismissed, not its case
+            if finding_id in findings_by_id and not _noise(findings_by_id[finding_id])
+        ]
+        if alerts_from == "today":
+            whens = [when for when in whens if when and when.date() == today]
+        if not whens:
+            return False
     if priority and (case.get("priority") or "") != priority:
         return False
     if assignee is not None and (case.get("assignee") or "") != assignee:
@@ -336,6 +357,9 @@ def case_queue(
     needs_you_only: bool = False,
     workflow_constrained: bool = False,
     data_source: Optional[str] = None,
+    working: bool = False,
+    closed_by: Optional[str] = None,
+    alerts_from: Optional[str] = None,
 ) -> dict:
     """One page of demo cases, in the queue's shape. The strip ignores the filters."""
     needs = open_case_ids(cases)
@@ -360,6 +384,10 @@ def case_queue(
             needs_you_ids=needs,
             workflow_constrained=workflow_constrained,
             data_source=data_source,
+            working=working,
+            closed_by=closed_by,
+            alerts_from=alerts_from,
+            today=now.date(),
         )
     ]
     matched.sort(

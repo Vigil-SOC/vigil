@@ -3,6 +3,7 @@ import { utcDayClock } from '../../shared/utc'
 import { casesApi } from '../../services/api'
 import { mapApiCase, mapQueueCase } from '../../data/mappers'
 import type { CaseRow } from '../../data/data'
+import type { CountRange } from '../../services/api'
 import type { Schema } from '../../services/apiTypes'
 
 export type Phase = 'loading' | 'ready' | 'error'
@@ -61,6 +62,12 @@ export interface CaseFilters {
   query: string
   state: string
   needsYou: boolean
+  /** Open cases that do not need you. */
+  working: boolean
+  /** Closed cases by who closed them; '' is anyone. */
+  closedBy: '' | 'agent' | 'person'
+  /** Cases holding an alert from this range, as an Overview node counts them; '' is no filter. */
+  alertsFrom: '' | CountRange
   kind: string
   priority: string
   sla: '' | 'risk'
@@ -75,6 +82,9 @@ export const INITIAL_CASE_FILTERS: CaseFilters = {
   query: '',
   state: '',
   needsYou: false,
+  working: false,
+  closedBy: '',
+  alertsFrom: '',
   kind: '',
   priority: 'any',
   sla: '',
@@ -109,6 +119,9 @@ function toParams(f: CaseFilters) {
   if (f.state === 'closed') params.closed = true
   else if (f.state) params.state = f.state
   if (f.needsYou) params.needs_you = true
+  if (f.working) params.working = true
+  if (f.closedBy) params.closed_by = f.closedBy
+  if (f.alertsFrom) params.alerts_from = f.alertsFrom
   if (f.kind) params.kind = f.kind
   if (f.priority && f.priority !== 'any') params.priority = f.priority
   if (f.sla === 'risk') params.sla_at_risk = true

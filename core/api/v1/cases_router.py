@@ -17,7 +17,7 @@ contract); the console router does not use them.
 import logging
 from dataclasses import asdict
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -32,7 +32,7 @@ from core.cases.case_ioc_service import CaseIOCService
 from core.cases.case_sla_service import open_case
 from core.cases.case_state import detail_fields
 from core.cases.case_status import CaseStatus, record_status_change, status_change
-from core.cases.closure import ClosureCategory
+from core.cases.closure import PERSON_CHANNELS, ClosureCategory
 from core.cases.combined_state import queue_item
 from core.cases.linked_entities import (
     LINKED_SOURCE,
@@ -40,6 +40,7 @@ from core.cases.linked_entities import (
     linked_iocs,
 )
 from core.deps import provide_workflows
+from core.findings.arrival_counts import utc_day_bounds
 from core.findings.source_link import resolve_source_link
 from core.integrations.elastic.ingestion import ElasticIngestion
 from core.response.approval_service import needs_you_case_ids
@@ -251,6 +252,9 @@ def get_cases(
     closed: Optional[bool] = None,
     query: Optional[str] = None,
     needs_you_only: bool = Query(default=False, alias="needs_you"),
+    working: bool = False,
+    closed_by: Optional[Literal["agent", "person"]] = None,
+    alerts_from: Optional[Literal["today", "all"]] = None,
     kind: Optional[str] = None,
     limit: int = Query(default=PAGE_LIMIT, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
@@ -264,7 +268,10 @@ def get_cases(
     ``needs_you`` on each row. Page size defaults to the repository limit.
     ``needs_you=true`` keeps just those cases, and ``kind`` keeps cases whose
     latest investigation ran a workflow of that ``run_kind`` (none when no
-    workflow has it); both compose with the other filters.
+    workflow has it); both compose with the other filters. ``working`` keeps
+    open cases that do not need you, ``closed_by`` closed cases by who closed
+    them, and ``alerts_from`` cases holding an alert created today (UTC) or on
+    any day: the cases behind an Overview outcome node.
     """
     # Demo cases live in memory. The database being down is a different empty.
     if data_service.is_demo_mode():
@@ -286,6 +293,9 @@ def get_cases(
             needs_you_only=needs_you_only,
             workflow_constrained=bool(_blank(workflow) or _blank(kind)),
             data_source=_blank(data_source),
+            working=working,
+            closed_by=closed_by,
+            alerts_from=alerts_from,
         )
     if not data_service.is_using_database():
         return _empty_queue(limit, offset)
@@ -298,6 +308,12 @@ def get_cases(
         if kind
         else None
     )
+    # Overview counts by the UTC day of an alert's arrival; no bounds is any day.
+    alerts_in = None
+    if alerts_from == "today":
+        alerts_in = utc_day_bounds()
+    elif alerts_from == "all":
+        alerts_in = (None, None)
     with unit_of_work() as session:
         repo = CaseRepository(session)
         rows, total = repo.queue(
@@ -315,6 +331,10 @@ def get_cases(
             needs_you_ids=needs_you_ids,
             needs_you_only=needs_you_only,
             workflow_ids=workflow_ids,
+            working=working,
+            closed_by=closed_by,
+            person_channels=PERSON_CHANNELS,
+            alerts_in=alerts_in,
         )
         strip = repo.strip(now=now, needs_you_ids=needs_you_ids)
     return {

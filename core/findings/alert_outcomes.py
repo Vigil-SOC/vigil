@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Optional, Sequence
 
-from core.cases.closure import trust_word
+from core.cases.closure import closed_by
 from core.findings.arrival_counts import utc_day_bounds
 from core.response.approval_service import needs_you_case_ids
 from core.storage.connection import get_db_manager
@@ -57,7 +57,7 @@ def _state(
         return "needs_you"
     if case.status == "closed":
         # No closure row counts as an agent close.
-        if trust_word(case.close_channel) == "analyst":
+        if closed_by(case.close_channel) == "person":
             return "resolved_person"
         return "resolved_auto"
     return "working"
@@ -152,7 +152,7 @@ def finding_states(finding_ids: Sequence[str]) -> dict[str, tuple[str, Optional[
 def terminal_states_today(
     day: Optional[date] = None, *, all_time: bool = False
 ) -> list[dict]:
-    """One row per finding created that day, or ever with ``all_time``: id, source, and one state."""
+    """One row per finding created that day, or ever with ``all_time``: id, source, state, and the case it reads."""
     db = get_db_manager()
     with db.session_scope() as session:
         query = session.query(Finding.finding_id, Finding.data_source)
@@ -160,12 +160,13 @@ def terminal_states_today(
             start, end = utc_day_bounds(day)
             query = query.filter(Finding.created_at >= start, Finding.created_at < end)
         rows = query.all()
-    states = terminal_states_for([finding_id for finding_id, _source in rows])
+    states = finding_states([finding_id for finding_id, _source in rows])
     return [
         {
             "finding_id": finding_id,
             "data_source": source,
-            "terminal_state": states[finding_id],
+            "terminal_state": states[finding_id][0],
+            "case_id": states[finding_id][1],
         }
         for finding_id, source in rows
     ]

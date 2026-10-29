@@ -274,6 +274,33 @@ def _sla_at_risk(sla, now):
     )
 
 
+def _alerts_in_exists(start: Optional[datetime], end: Optional[datetime]):
+    """The case holds an alert created in ``[start, end)``; no bounds is any day.
+
+    A noise-marked alert does not count: Overview files it under Dismissed, not its case.
+    """
+    stmt = (
+        select(case_findings.c.finding_id)
+        .join(Finding, Finding.finding_id == case_findings.c.finding_id)
+        .where(
+            case_findings.c.case_id == Case.case_id, Finding.noise_marked_at.is_(None)
+        )
+    )
+    if start is not None and end is not None:
+        stmt = stmt.where(Finding.created_at >= start, Finding.created_at < end)
+    return exists(stmt)
+
+
+def _closed_by_person(person_channels: Sequence[str]):
+    """``closure.closed_by``'s rule in SQL: no closure row is an agent close."""
+    return exists(
+        select(CaseClosureInfo.case_id).where(
+            CaseClosureInfo.case_id == Case.case_id,
+            CaseClosureInfo.close_channel.in_(list(person_channels)),
+        )
+    )
+
+
 def _finding_source_exists(data_source: str):
     return exists(
         select(Finding.finding_id)
@@ -578,6 +605,10 @@ class CaseRepository:
         needs_you_ids: Optional[set[str]] = None,
         needs_you_only: bool = False,
         workflow_ids: Optional[set[str]] = None,
+        working: bool = False,
+        closed_by: Optional[str] = None,
+        person_channels: Sequence[str] = (),
+        alerts_in: Optional[Tuple[Optional[datetime], Optional[datetime]]] = None,
     ) -> Tuple[List[CaseQueueRow], int]:
         """One page of the queue.
 
@@ -591,6 +622,13 @@ class CaseRepository:
         ``needs_you_only`` keeps just the cases in ``needs_you_ids``; an empty
         set then returns no rows. ``workflow_ids`` keeps cases whose latest
         investigation ran one of those workflows (an empty set returns none).
+
+        ``working`` keeps open cases not in ``needs_you_ids``. ``closed_by``
+        (``agent``/``person``) keeps closed cases by who closed them, a person
+        being a close through one of ``person_channels`` (``closure.PERSON_CHANNELS``;
+        this layer does not import the cases domain).
+        ``alerts_in`` keeps cases holding an alert created in ``[start, end)``,
+        or any alert when both are None.
         """
         now = now or utcnow()
         latest = _latest_investigations()
@@ -675,6 +713,17 @@ class CaseRepository:
             workflow_ids=workflow_ids,
             only_ids=(needs_you_ids or set()) if needs_you_only else None,
         )
+        if working:
+            stmt = stmt.where(Case.status != "closed")
+            if needs_you_ids:
+                stmt = stmt.where(Case.case_id.notin_(sorted(needs_you_ids)))
+        if closed_by in ("agent", "person"):
+            person = _closed_by_person(person_channels)
+            stmt = stmt.where(
+                Case.status == "closed", person if closed_by == "person" else ~person
+            )
+        if alerts_in is not None:
+            stmt = stmt.where(_alerts_in_exists(*alerts_in))
         total = self.session.execute(
             select(func.count()).select_from(stmt.subquery())
         ).scalar_one()
