@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import OverviewScreen from './OverviewScreen'
+import FlowDiagram from './FlowDiagram'
 import { heldCase } from '../../shell/heldCase'
 import { casesApi, configApi, findingsApi, overviewApi, type OverviewAgent, type OverviewFeedItem, type OverviewPayload } from '../../services/api'
 import type { ApiMock } from '../../test/apiMock'
@@ -596,5 +597,38 @@ describe('OverviewScreen', () => {
     // no title: the description is the header and is not repeated
     expect(second.querySelector('.ov-pop-d')).toHaveTextContent('Quiet one')
     expect(second.querySelector('.ov-pop-desc')).toBeNull()
+  })
+})
+
+describe('FlowDiagram outcome bands', () => {
+  // A band's thickness where it lands on its row, read from the path's "L x2 y-th/2 → x2 y+th/2" edge.
+  const ends = (container: HTMLElement) =>
+    [...container.querySelectorAll<SVGPathElement>('.ov-band path:not(.ov-zero)')].map((p) => {
+      const m = p.getAttribute('d')!.match(/, (\S+) (\S+) L \S+ (\S+)/)!
+      return Number(m[3]) - Number(m[2])
+    })
+  const draw = (counts: number[], wall: boolean) => {
+    const outcomes = OUTCOMES.map((o, i) => (o.count === null ? o : { ...o, count: counts[i] }))
+    const { container, unmount } = render(
+      <MemoryRouter>
+        <FlowDiagram data={payload({ outcomes })} wall={wall} onToggleWall={vi.fn()} />
+      </MemoryRouter>,
+    )
+    const th = ends(container)
+    unmount()
+    return th
+  }
+
+  it.each([false, true])('a dominant outcome stays inside its row (wall=%s)', (wall) => {
+    const gap = ((wall ? 600 : 400) - 104) / 6
+    const th = draw([0, 0, 0, 0, 0, 0, 3], wall)
+    expect(th).toHaveLength(1)
+    expect(th[0]).toBeCloseTo(gap - 10)
+    for (const t of draw([1, 1, 1, 1, 1, 1, 14], wall)) expect(t).toBeLessThanOrEqual(gap - 10 + 1e-9)
+  })
+
+  it.each([false, true])('a spread-out day keeps the full 150px total (wall=%s)', (wall) => {
+    const th = draw([5, 5, 4, 4, 4, 4, 4], wall)
+    expect(th.reduce((n, t) => n + t, 0)).toBeCloseTo(150)
   })
 })

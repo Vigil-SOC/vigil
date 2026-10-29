@@ -170,10 +170,14 @@ export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
     return { ya, paths }
   })
 
-  // Outcome bands: stacked at the engine's right edge, landing on five evenly spaced rows.
-  let top = cy - BAND_TOTAL / 2
+  // Outcome bands: stacked at the engine's right edge, landing on evenly spaced rows.
+  // Shrink the total so the biggest band fits its row with 10px to spare (rows spaced as rowY does).
+  const rowGap = measured.length <= 1 ? H / 2 : (H - 2 * 52) / (measured.length - 1)
+  const maxShare = outTotal ? Math.max(...measured.map((o) => o.count)) / outTotal : 0
+  const bandTotal = maxShare ? Math.min(BAND_TOTAL, (rowGap - 10) / maxShare) : BAND_TOTAL
+  let top = cy - bandTotal / 2
   const bands = measured.map((o, j) => {
-    const th = o.count === 0 ? 0 : Math.max(2.5, (BAND_TOTAL * o.count) / (outTotal || 1))
+    const th = o.count === 0 ? 0 : Math.max(2.5, (bandTotal * o.count) / (outTotal || 1))
     const y = rowY(j, measured.length, H, 52, cy)
     const t0 = top
     top += th
