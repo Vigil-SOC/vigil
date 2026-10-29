@@ -645,3 +645,57 @@ def test_a_paused_trail_answers_503_and_leaves_the_case(db, monkeypatch):
     assert response.status_code == 503
     assert int(response.headers["Retry-After"]) >= 1
     assert _case(db, "status") == "open"
+
+
+@pytest.mark.usefixtures("ada")
+def test_a_findings_link_is_one_entry_from_either_path(db, monkeypatch):
+    with db.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO findings "
+                "(finding_id, data_source, created_at, updated_at, timestamp) "
+                "VALUES ('f-1', 'splunk', now(), now(), now()), "
+                "('f-2', 'splunk', now(), now(), now()) ON CONFLICT DO NOTHING"
+            )
+        )
+        conn.execute(text("DELETE FROM case_findings WHERE case_id = 'c-1'"))
+
+    # The route's path (the journal service) and the daemon's (add_finding_to_case).
+    assert case_journal_service.link_finding(_data(monkeypatch), "c-1", "f-1") is True
+    assert DatabaseService().add_finding_to_case("c-1", "f-2") is True
+
+    rows = [row[0] for row in _payloads(db)]
+    assert [(p["action"], p["linked"]) for p in rows] == [
+        ("case.findings.link", ["f-1"]),
+        ("case.findings.link", ["f-2"]),
+    ]
+    assert _verified(db)
+
+
+@pytest.mark.usefixtures("ada")
+def test_a_reopen_is_a_status_entry(db):
+    with db.begin() as conn:
+        conn.execute(text("UPDATE cases SET status = 'closed' WHERE case_id = 'c-1'"))
+
+    assert DatabaseService().update_case("c-1", status="open") is True
+
+    (payload, *_), *more = _payloads(db)
+    assert more == []
+    assert (payload["action"], payload["status"]) == ("case.status", "open")
+
+
+@pytest.mark.usefixtures("ada")
+def test_without_the_trail_a_case_write_appends_nothing(db, monkeypatch):
+    with db.begin() as conn:
+        conn.execute(text("ALTER TABLE audit_trail RENAME TO audit_trail_hidden"))
+    try:
+        assert DatabaseService().update_case("c-1", status="investigating") is True
+        assert case_journal_service.append_activity(
+            _data(monkeypatch), "c-1", "note", "kept"
+        )
+        assert _case(db, "status") == "investigating"
+        assert _count(db, "case_audit_logs") == 0
+    finally:
+        with db.begin() as conn:
+            conn.execute(text("ALTER TABLE audit_trail_hidden RENAME TO audit_trail"))
+    assert _count(db, "audit_trail") == 0

@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from core.agents.projections import read_call, read_projection, read_replay, read_verify
 from core.agents.run_limits import MAX_COST_USD, MAX_ITERATIONS
+from core.audit import trail
 from core.auth import tool_principal
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
@@ -470,6 +471,8 @@ def _case_for_start(
             priority="medium",
             description=parameters.get("hypothesis") or parameters.get("context") or "",
         )
+    except trail.Paused:
+        raise  # a 503 with Retry-After, as a comment is
     except Exception:
         logger.exception("could not open a case for a %s start", workflow_id)
         opened = None

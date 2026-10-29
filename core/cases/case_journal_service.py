@@ -13,8 +13,9 @@ ORM objects. Two spellings of one operation over one column is how the two
 surfaces come to disagree about what a Case says.
 
 Each function answers ``None`` when the Case does not exist, so a caller can say
-so in its own idiom -- a 404 from a route, an error payload from a tool -- and
-raises nothing a caller has to know about.
+so in its own idiom -- a 404 from a route, an error payload from a tool. A
+refused trail append raises ``TrailWriteError`` and a paused trail
+``trail.Paused`` (a 500 and a 503 at a route), with nothing written.
 
 The data service is passed in rather than held here. Constructing one runs
 ``init_database`` and a health check, so it is a resource a process owns once;
