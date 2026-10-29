@@ -104,27 +104,37 @@ def stored_finding_states(data, finding_ids: Sequence[str]) -> dict:
     return finding_states(finding_ids)
 
 
+# An all-time read can hold every finding; one IN list per this many ids.
+_ID_CHUNK = 5000
+
+
 def finding_states(finding_ids: Sequence[str]) -> dict[str, tuple[str, Optional[str]]]:
     """``{finding_id: (terminal_state, case_id)}``; the case is the one the state reads."""
     ids = list(finding_ids)
     if not ids:
         return {}
     needs_you_ids = needs_you_case_ids()
+    cases: dict[str, _LinkedCase] = {}
+    dismissed: set[str] = set()
+    scoring: set[str] = set()
     db = get_db_manager()
     with db.session_scope() as session:
-        cases = _cases_for(session, ids)
-        dismissed = {
-            row[0]
-            for row in session.query(Finding.finding_id).filter(
-                Finding.finding_id.in_(ids), Finding.noise_marked_at.isnot(None)
+        for at in range(0, len(ids), _ID_CHUNK):
+            chunk = ids[at : at + _ID_CHUNK]
+            cases.update(_cases_for(session, chunk))
+            dismissed.update(
+                row[0]
+                for row in session.query(Finding.finding_id).filter(
+                    Finding.finding_id.in_(chunk), Finding.noise_marked_at.isnot(None)
+                )
             )
-        }
-        scoring = {
-            row[0]
-            for row in session.query(IntakeTrigger.finding_id).filter(
-                IntakeTrigger.finding_id.in_(ids), IntakeTrigger.state == "queued"
+            scoring.update(
+                row[0]
+                for row in session.query(IntakeTrigger.finding_id).filter(
+                    IntakeTrigger.finding_id.in_(chunk),
+                    IntakeTrigger.state == "queued",
+                )
             )
-        }
     return {
         finding_id: (
             _state(
@@ -139,16 +149,17 @@ def finding_states(finding_ids: Sequence[str]) -> dict[str, tuple[str, Optional[
     }
 
 
-def terminal_states_today(day: Optional[date] = None) -> list[dict]:
-    """One row per finding created that day: id, source, and one state."""
-    start, end = utc_day_bounds(day)
+def terminal_states_today(
+    day: Optional[date] = None, *, all_time: bool = False
+) -> list[dict]:
+    """One row per finding created that day, or ever with ``all_time``: id, source, and one state."""
     db = get_db_manager()
     with db.session_scope() as session:
-        rows = (
-            session.query(Finding.finding_id, Finding.data_source)
-            .filter(Finding.created_at >= start, Finding.created_at < end)
-            .all()
-        )
+        query = session.query(Finding.finding_id, Finding.data_source)
+        if not all_time:
+            start, end = utc_day_bounds(day)
+            query = query.filter(Finding.created_at >= start, Finding.created_at < end)
+        rows = query.all()
     states = terminal_states_for([finding_id for finding_id, _source in rows])
     return [
         {

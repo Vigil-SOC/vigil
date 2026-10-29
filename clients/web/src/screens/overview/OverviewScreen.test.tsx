@@ -71,6 +71,7 @@ const agent = (over: Partial<OverviewAgent> = {}): OverviewAgent => ({
 function payload(overrides: Partial<OverviewPayload> = {}): OverviewPayload {
   return {
     day: '2026-10-01',
+    range: 'today',
     empty: false,
     arrivals: [{ data_source: 'splunk', count: 2, source_text: SOURCE }],
     outcomes: OUTCOMES,
@@ -649,7 +650,7 @@ describe('FlowDiagram outcome bands', () => {
     const outcomes = OUTCOMES.map((o, i) => (o.count === null ? o : { ...o, count: counts[i] }))
     const { container, unmount } = render(
       <MemoryRouter>
-        <FlowDiagram data={payload({ outcomes })} wall={wall} onToggleWall={vi.fn()} />
+        <FlowDiagram data={payload({ outcomes })} wall={wall} onToggleWall={vi.fn()} range="today" onRange={vi.fn()} />
       </MemoryRouter>,
     )
     const edges = ends(container)

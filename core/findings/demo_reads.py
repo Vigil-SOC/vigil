@@ -165,13 +165,16 @@ def overview_parts(
     day,
     feed_limit: int,
 ) -> dict:
-    """Arrivals, today's states, and the feed. Agents and outcome nodes stay with Overview."""
+    """Arrivals, the day's states (every finding when ``day`` is None), and the feed.
+
+    Agents and outcome nodes stay with Overview.
+    """
     linked = best_case_by_finding(cases)
     arrivals: dict[str, int] = {}
     states = []
     for finding in findings:
         when = _when(finding)
-        if when is None or when.date() != day:
+        if day is not None and (when is None or when.date() != day):
             continue
         source = (
             finding.get("data_source")

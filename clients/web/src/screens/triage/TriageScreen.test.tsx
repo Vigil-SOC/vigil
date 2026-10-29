@@ -89,6 +89,7 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
       { data_source: 'splunk', arrivals: 2, lag_seconds: 90, quiet: true },
       { data_source: 'never', arrivals: 0, lag_seconds: null, quiet: true },
     ],
+    range: 'today',
     arrival_info: 'Arrivals count every finding stored today. The list is the intake rows.',
     strip_info: {
       picked_up: { source: 'Picked source', calculation: 'Picked calc' },

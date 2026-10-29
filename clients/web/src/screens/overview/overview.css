@@ -1019,3 +1019,10 @@ button.ov-pill:hover {
   font-weight: 600;
   color: var(--ac);
 }
+
+.ov-flow-ctl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}

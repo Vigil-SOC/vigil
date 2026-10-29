@@ -6008,6 +6008,13 @@
       gap: 20px;
    }
 
+   .tq-head-r {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+   }
+
    .tq-title {
       display: flex;
       flex-direction: column;
@@ -6186,7 +6193,7 @@
    .tq-table thead th:nth-child(2) { width: 124px; }
    .tq-table thead th:nth-child(4) { width: 190px; }
    .tq-table thead th:nth-child(5) { width: 108px; }
-   .tq-table thead th:nth-child(6) { width: 96px; }
+   .tq-table thead th:nth-child(6) { width: 116px; } /* fits "26 Oct 12:40" on an older row */
    .tq-table thead th:nth-child(7) { width: 108px; }
    .tq-table thead th:nth-child(8) { width: 176px; }
    .tq-table thead th:nth-child(9) { width: 20%; }

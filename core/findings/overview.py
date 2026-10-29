@@ -36,7 +36,10 @@ RATE_INFO = (
     "being able to look at its data, counts as completed, because that is "
     "how the row is stored."
 )
-ARRIVAL_SOURCE = "Findings created today (UTC) with this data source."
+ARRIVAL_SOURCE = {
+    "today": "Findings created today (UTC) with this data source.",
+    "all": "Findings ever created with this data source.",
+}
 RUNNING_SOURCE = "Runs still in history whose status is running or paused."
 STEP_SOURCE = "The open phase on the newest live run, or that run's status when it has no phase row."
 UNMEASURED_TEXT = "Not measured yet"
@@ -301,9 +304,12 @@ def overview_alert(finding_id: str) -> Optional[dict]:
 
 
 def overview_payload(
-    day: Optional[date] = None, now: Optional[datetime] = None
+    day: Optional[date] = None,
+    now: Optional[datetime] = None,
+    range: str = "today",
 ) -> dict:
-    """One payload for the Overview screen. ``day`` defaults to the UTC day."""
+    """One payload for the Overview screen. ``day`` defaults to the UTC day; ``range="all"`` drops it."""
+    all_time = range == "all"
     if day is None:
         day = utcnow().date()
     if now is None:
@@ -312,12 +318,16 @@ def overview_payload(
         from core.findings.demo_reads import load_demo, overview_parts
 
         findings, cases = load_demo()
-        parts = overview_parts(findings, cases, day=day, feed_limit=FEED_LIMIT)
+        parts = overview_parts(
+            findings, cases, day=None if all_time else day, feed_limit=FEED_LIMIT
+        )
         return {
             "day": day.isoformat(),
+            "range": range,
             "empty": parts["empty"],
             "arrivals": [
-                {**row, "source_text": ARRIVAL_SOURCE} for row in parts["arrivals"]
+                {**row, "source_text": ARRIVAL_SOURCE[range]}
+                for row in parts["arrivals"]
             ],
             "outcomes": _outcome_nodes(parts["states"]),
             "running_source": RUNNING_SOURCE,
@@ -330,9 +340,10 @@ def overview_payload(
             "feed_limit": FEED_LIMIT,
         }
     arrivals = [
-        {**row, "source_text": ARRIVAL_SOURCE} for row in arrivals_today_by_source(day)
+        {**row, "source_text": ARRIVAL_SOURCE[range]}
+        for row in arrivals_today_by_source(day, all_time=all_time)
     ]
-    states = terminal_states_today(day)
+    states = terminal_states_today(day, all_time=all_time)
     arrival_total = sum(row["count"] for row in arrivals)
     db = get_db_manager()
     with db.session_scope() as session:
@@ -343,6 +354,7 @@ def overview_payload(
         )
     return {
         "day": day.isoformat(),
+        "range": range,
         "empty": enabled_count == 0 and arrival_total == 0,
         "arrivals": arrivals,
         "outcomes": _outcome_nodes(states),

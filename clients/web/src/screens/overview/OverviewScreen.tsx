@@ -10,6 +10,7 @@ import { LevelBadge } from '../../shared/LevelBadge'
 import { useSourceBadge } from '../../shared/useSourceBadge'
 import { SEND_TO_TRIAGE_FAILED, sendFindingToTriage } from '../../shared/sendToTriage'
 import { EmptyState, Popup } from '../../shared/ui'
+import { useCountRange, withRange } from '../../shared/countRange'
 import { stateWord } from '../../shared/findingState'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { parseSourceEvidence } from '../../data/sourceEvidence'
@@ -34,6 +35,11 @@ const POLL_MS = 10_000
 type Phase = 'loading' | 'error' | 'ready'
 // The single read of an alert that is not in the feed.
 type AlertRead = { id: string; status: 'loading' | 'ready' | 'error' | 'missing'; item?: OverviewFeedItem }
+
+/** "Today, UTC 2026-10-29." or "All time." for the range the payload counted. */
+function rangeText(data: OverviewPayload): string {
+  return data.range === 'all' ? 'All time.' : `Today, UTC ${data.day}.`
+}
 
 function legendTitle(data: OverviewPayload): string {
   const pct = (n: number) => Math.round(n * 100)
@@ -79,8 +85,9 @@ export default function OverviewScreen({ go, goSettings, openCase, setViewFull, 
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<OverviewPayload | null>(null)
+  const [range, setRange] = useCountRange()
   usePageSnapshot('overview', phase === 'ready' && data ? [
-    'Overview, today (UTC). Alerts in by source: ' + (data.arrivals.map((x) => `${x.data_source} ${x.count}`).join(', ') || 'none') + '.',
+    `Overview, ${data.range === 'all' ? 'all time' : 'today (UTC)'}. Alerts in by source: ` + (data.arrivals.map((x) => `${x.data_source} ${x.count}`).join(', ') || 'none') + '.',
     'Outcomes: ' + data.outcomes.map((o) => `${o.label} ${o.count ?? 'not measured'}`).join(', ') + '.',
     'Agents: ' + data.agents.map((g) => `${g.name} ${g.running} running${g.rate === null ? '' : `, ${Math.round(g.rate * 100)}% finish`}`).join('; ') + '.',
     'Newest alerts (time | severity | source | title | case):',
@@ -126,7 +133,7 @@ export default function OverviewScreen({ go, goSettings, openCase, setViewFull, 
 
   const load = useCallback(() => {
     overviewApi
-      .get()
+      .get(range)
       .then((res) => {
         setData(res.data)
         setPhase('ready')
@@ -136,7 +143,7 @@ export default function OverviewScreen({ go, goSettings, openCase, setViewFull, 
         setPhase('error')
         setError('Couldn’t load overview')
       })
-  }, [])
+  }, [range])
 
   // Pausing clears the interval; resuming loads at once and starts a fresh one.
   useEffect(() => {
@@ -272,7 +279,7 @@ export default function OverviewScreen({ go, goSettings, openCase, setViewFull, 
             <p>
               {data?.empty
                 ? 'Where your data comes from, what Vigil does with it, and what comes out. Nothing is connected yet, so each part below shows where to connect.'
-                : `Where your data comes from, what Vigil does with it, and what came out. ${data ? `Today, UTC ${data.day}.` : ''}`.trim()}
+                : `Where your data comes from, what Vigil does with it, and what came out. ${data ? rangeText(data) : ''}`.trim()}
               {data?.missing?.length ? ` Not shown: your role lacks ${data.missing.join(' and ')}.` : ''}
             </p>
           </div>
@@ -301,14 +308,14 @@ export default function OverviewScreen({ go, goSettings, openCase, setViewFull, 
       )}
       {phase === 'ready' && data && (
         <>
-          <FlowDiagram data={data} wall={wall} onToggleWall={toggleWall} />
+          <FlowDiagram data={data} wall={wall} onToggleWall={toggleWall} range={range} onRange={setRange} />
           {!wall && <AgentCards data={data} go={go} goSettings={goSettings} />}
         </>
       )}
       </div>
 
       {phase === 'ready' && data && !chatOpen && (
-        <AlertRail data={data} paused={paused} onTogglePause={() => setPaused((p) => !p)} onOpen={setAlert} openCase={openCase} />
+        <AlertRail data={data} range={range} paused={paused} onTogglePause={() => setPaused((p) => !p)} onOpen={setAlert} openCase={openCase} />
       )}
 
       <Popup open={alertId !== null} onClose={() => setAlert(null)} title={open ? <PopupTitle item={open} /> : (alertId ?? 'Alert')} width={860}>
@@ -365,7 +372,7 @@ export default function OverviewScreen({ go, goSettings, openCase, setViewFull, 
             </div>
             {launchNote && (
               <p>
-                <Link to="/triage">{launchNote}</Link>
+                <Link to={withRange('/triage', range)}>{launchNote}</Link>
               </p>
             )}
             {ticketNote && <p>{ticketNote}</p>}

@@ -56,25 +56,42 @@ NOISE_LABEL = "Dismissed as noise"
 # A noise mark wins over "no case" (alert_outcomes._state); a decided row keeps its word.
 _NOISE_LABEL_STATES = ("queued", NOT_PICKED_UP)
 
-# The ⓘ copy for each strip figure, worded from what _strip counts.
+ARRIVAL_INFO_ALL = "Arrivals count every finding stored. The list is the intake rows."
+_TRUST_FLOOR_INFO = {
+    "source": "Not recorded yet: Vigil keeps no per-source trust score.",
+    "calculation": "The lowest score a finding needs before it is picked up automatically.",
+    "limit": "No score is computed, so no floor can be shown.",
+}
+# The ⓘ copy for each strip figure, worded from what _strip counts, per range.
 STRIP_INFO = {
     "picked_up": {
         "source": "Intake rows, all kinds, created today (UTC day).",
         "calculation": "Rows that launched a workflow or merged into a case, divided by rows created today.",
     },
     "waiting": {
-        "source": "Intake rows still queued, from any day.",
+        "source": "Rows in the list that arrived today (UTC day) and are still queued.",
         "calculation": "A count of rows in the Waiting state right now.",
     },
     "cases_created_today": {
         "source": "Intake rows launched today (UTC day) that opened a case.",
         "calculation": "The number of distinct cases across those rows.",
     },
-    "trust_floor": {
-        "source": "Not recorded yet: Vigil keeps no per-source trust score.",
-        "calculation": "The lowest score a finding needs before it is picked up automatically.",
-        "limit": "No score is computed, so no floor can be shown.",
+    "trust_floor": _TRUST_FLOOR_INFO,
+}
+STRIP_INFO_ALL = {
+    "picked_up": {
+        "source": "Intake rows, all kinds, from any day.",
+        "calculation": "Rows that launched a workflow or merged into a case, divided by all rows.",
     },
+    "waiting": {
+        "source": "Intake rows still queued, from any day.",
+        "calculation": "A count of rows in the Waiting state right now.",
+    },
+    "cases_created_today": {
+        "source": "Intake rows from any day that launched and opened a case.",
+        "calculation": "The number of distinct cases across those rows.",
+    },
+    "trust_floor": _TRUST_FLOOR_INFO,
 }
 
 _KIND_LABELS = {
@@ -164,10 +181,11 @@ def _ranking(row: dict, now: datetime, config: OrchestratorConfig) -> dict:
     }
 
 
-def _sources(day: date, now: datetime) -> list[dict]:
-    """Arrivals already keep enabled sources. Lag only annotates those."""
+def _sources(day: Optional[date], now: datetime) -> list[dict]:
+    """Arrivals in range (all time when ``day`` is None) already keep enabled sources. Lag only annotates those."""
     arrivals = {
-        row["data_source"]: row["count"] for row in arrivals_today_by_source(day)
+        row["data_source"]: row["count"]
+        for row in arrivals_today_by_source(day, all_time=day is None)
     }
     lags = {row["source_id"]: row for row in source_collection_lag(now)}
     sources = []
@@ -197,8 +215,12 @@ def _source_column():
     )
 
 
-def _rows(session):
-    """Intake rows and never-queued findings as one table, ``intake_id`` null for the latter."""
+def _rows(session, day: Optional[date]):
+    """Intake rows and never-queued findings as one table, ``intake_id`` null for the latter.
+
+    ``arrived_at`` is when the row's alert arrived (an Ask or schedule row's own
+    creation); with ``day`` set only rows that arrived that UTC day are kept.
+    """
     intake = (
         session.query(
             IntakeTrigger.id.label("intake_id"),
@@ -212,6 +234,13 @@ def _rows(session):
             IntakeTrigger.created_at.label("created_at"),
             # decided rows sort newest first by this; a never-queued finding by its arrival
             IntakeTrigger.decided_at.label("order_at"),
+            case(
+                (
+                    IntakeTrigger.kind == "detection",
+                    func.coalesce(Finding.created_at, IntakeTrigger.created_at),
+                ),
+                else_=IntakeTrigger.created_at,
+            ).label("arrived_at"),
         )
         .select_from(IntakeTrigger)
         .outerjoin(Finding, Finding.finding_id == IntakeTrigger.finding_id)
@@ -227,11 +256,17 @@ def _rows(session):
         Finding.severity,
         Finding.created_at,
         Finding.created_at,
+        Finding.created_at,
     ).filter(
         ~exists().where(IntakeTrigger.finding_id == Finding.finding_id),
         ~exists().where(case_findings.c.finding_id == Finding.finding_id),
     )
-    return intake.union_all(never_queued).subquery("triage_rows")
+    rows = intake.union_all(never_queued).subquery("all_triage_rows")
+    query = session.query(rows)
+    if day is not None:
+        start, end = utc_day_bounds(day)
+        query = query.filter(rows.c.arrived_at >= start, rows.c.arrived_at < end)
+    return query.subquery("triage_rows")
 
 
 def _filtered(
@@ -616,29 +651,27 @@ def _counts(session, rows) -> dict:
     return {"total": total, "kind": kinds, "source": sources, "state": states}
 
 
-def _strip(session, counts: dict, day: date) -> dict:
-    start, end = utc_day_bounds(day)
-    denominator, numerator = (
-        session.query(
-            func.count(IntakeTrigger.id),
-            func.count(IntakeTrigger.id).filter(
-                IntakeTrigger.state.in_(_PICKUP_STATES)
-            ),
-        )
-        .filter(IntakeTrigger.created_at >= start, IntakeTrigger.created_at < end)
-        .one()
+def _strip(session, counts: dict, day: Optional[date]) -> dict:
+    """The strip for one UTC day, or every row when ``day`` is None."""
+    picked = session.query(
+        func.count(IntakeTrigger.id),
+        func.count(IntakeTrigger.id).filter(IntakeTrigger.state.in_(_PICKUP_STATES)),
     )
-    cases = (
-        session.query(func.count(distinct(IntakeTrigger.case_id)))
-        .filter(
-            IntakeTrigger.state == "launched",
-            IntakeTrigger.case_id.isnot(None),
-            IntakeTrigger.case_id != "",
-            IntakeTrigger.decided_at >= start,
-            IntakeTrigger.decided_at < end,
-        )
-        .scalar()
+    cases = session.query(func.count(distinct(IntakeTrigger.case_id))).filter(
+        IntakeTrigger.state == "launched",
+        IntakeTrigger.case_id.isnot(None),
+        IntakeTrigger.case_id != "",
     )
+    if day is not None:
+        start, end = utc_day_bounds(day)
+        picked = picked.filter(
+            IntakeTrigger.created_at >= start, IntakeTrigger.created_at < end
+        )
+        cases = cases.filter(
+            IntakeTrigger.decided_at >= start, IntakeTrigger.decided_at < end
+        )
+    denominator, numerator = picked.one()
+    cases = cases.scalar()
     return {
         "picked_up": {
             "launched_or_merged": numerator,
@@ -674,10 +707,13 @@ def _demo_triage(
     kind: Optional[str],
     source: Optional[str],
     state: Optional[str],
-    day: date,
+    day: Optional[date],
     now: datetime,
 ) -> dict:
-    """One detection row per demo finding. A linked case counts as launched; no case is not picked up."""
+    """One detection row per demo finding. A linked case counts as launched; no case is not picked up.
+
+    With ``day`` set only findings that arrived that UTC day are rows.
+    """
     from core.findings.demo_reads import (
         _noise,
         _ord,
@@ -703,6 +739,8 @@ def _demo_triage(
             continue
         case = linked.get(finding_id)
         created = _when(finding)
+        if day is not None and (created is None or created.date() != day):
+            continue
         decided = parse_utc(case.get("created_at")) if case else None
         view = _finding_view(finding)
         view["noise_marked_at"] = _noise(finding)
@@ -743,22 +781,20 @@ def _demo_triage(
         value = row.get(field)
         return value if isinstance(value, datetime) else None
 
-    today = [
-        row
-        for row in built
-        if (stamp := _at(row, "created_at")) and stamp.date() == day
-    ]
-    launched_today = sum(1 for row in today if row["state"] in _PICKUP_STATES)
+    # rows are already in range; under today a case also counts only when opened that day
+    launched_today = sum(1 for row in built if row["state"] in _PICKUP_STATES)
     cases_today = {
         row["case_id"]
         for row in built
         if row["state"] == "launched"
         and isinstance(row["case_id"], str)
-        and (stamp := _at(row, "decided_at")) is not None
-        and stamp.date() == day
+        and (
+            day is None
+            or ((stamp := _at(row, "decided_at")) is not None and stamp.date() == day)
+        )
     }
     arrivals: dict[str, int] = {}
-    for row in today:
+    for row in built:
         arrivals[row["source"]] = arrivals.get(row["source"], 0) + 1
 
     selected = [
@@ -795,7 +831,7 @@ def _demo_triage(
         _present(row, row["_finding"], "", case_ids, now, config, link_configs)
         for row in shown
     ]
-    denominator = len(today)
+    denominator = len(built)
     return {
         "rows": presented,
         "matched": len(selected),
@@ -823,8 +859,9 @@ def _demo_triage(
             }
             for name in sorted(arrivals)
         ],
-        "arrival_info": ARRIVAL_INFO,
-        "strip_info": STRIP_INFO,
+        "range": "today" if day is not None else "all",
+        "arrival_info": ARRIVAL_INFO if day is not None else ARRIVAL_INFO_ALL,
+        "strip_info": STRIP_INFO if day is not None else STRIP_INFO_ALL,
         "breakdown_info": BREAKDOWN_INFO,
     }
 
@@ -836,14 +873,20 @@ def triage_payload(
     state: Optional[str] = None,
     day: Optional[date] = None,
     now: Optional[datetime] = None,
+    range: str = "today",
 ) -> dict:
-    """Queued rows by ``rank_intake_row``, then decided rows newest first."""
+    """Queued rows by ``rank_intake_row``, then decided rows newest first.
+
+    ``range="today"`` keeps rows that arrived on ``day`` (the UTC day by
+    default); ``"all"`` keeps every row.
+    """
     if now is None:
         now = utcnow()
     if now.tzinfo is not None:
         now = now.replace(tzinfo=None)
     if day is None:
         day = now.date()
+    bound: Optional[date] = None if range == "all" else day
     from core.config import is_demo_mode
 
     if is_demo_mode():
@@ -851,16 +894,16 @@ def triage_payload(
 
         findings, cases = load_demo()
         return _demo_triage(
-            findings, cases, kind=kind, source=source, state=state, day=day, now=now
+            findings, cases, kind=kind, source=source, state=state, day=bound, now=now
         )
     config = OrchestratorConfig()
     with get_db_manager().session_scope() as session:
         # One snapshot for every read: a row claimed between the queued and
         # decided queries would otherwise be listed twice.
         session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
-        rows = _rows(session)
+        rows = _rows(session, bound)
         counts = _counts(session, rows)
-        strip = _strip(session, counts, day)
+        strip = _strip(session, counts, bound)
         keys, matched = _page_keys(session, rows, kind, source, state, now, config)
         shown, findings, workflows, case_ids = _load(session, keys)
     link_configs: dict[str, dict[str, str]] = {}
@@ -880,8 +923,9 @@ def triage_payload(
         "matched": matched,
         "strip": strip,
         "counts": counts,
-        "sources": _sources(day, now),
-        "arrival_info": ARRIVAL_INFO,
-        "strip_info": STRIP_INFO,
+        "sources": _sources(bound, now),
+        "range": range,
+        "arrival_info": ARRIVAL_INFO if bound else ARRIVAL_INFO_ALL,
+        "strip_info": STRIP_INFO if bound else STRIP_INFO_ALL,
         "breakdown_info": BREAKDOWN_INFO,
     }
