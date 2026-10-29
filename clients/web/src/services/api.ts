@@ -1450,7 +1450,10 @@ export interface TriagePayload {
       created_today: number
       share: number | null
     }
+    /** alerts only, as Overview counts them */
     waiting: number
+    /** queued schedule and ask rows, which are not alerts */
+    waiting_other: number
     cases_created_today: number
   }
   /** rows that pass the filters, before the row cap */

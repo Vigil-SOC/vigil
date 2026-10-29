@@ -1,7 +1,9 @@
 """One terminal state per finding that arrived on a UTC day.
 
 The live states partition those arrivals, so their counts sum to the
-inflow. #1319 does not call this: Triage speaks in intake states.
+inflow. ``alert_group`` is the one rule for which group an alert is in; Overview
+reads it here and Triage reads it in SQL, so the two pages cannot disagree.
+Triage keeps intake words only where they add detail.
 """
 
 from __future__ import annotations
@@ -9,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Optional, Sequence
+
+from sqlalchemy import case, exists, literal
 
 from core.cases.closure import closed_by_person
 from core.findings.arrival_counts import utc_day_bounds
@@ -41,22 +45,40 @@ class _LinkedCase:
     close_channel: Optional[str]
 
 
-def _state(
-    case: Optional[_LinkedCase],
-    needs_you_ids: set[str],
-    *,
-    dismissed: bool = False,
-    scoring: bool = False,
-) -> str:
-    # A dismissal is the finding's own terminal state, ahead of any case.
-    if dismissed:
-        return "dismissed"
-    if case is None:
-        return "scoring" if scoring else "waiting"
-    if case.case_id in needs_you_ids:
+def alert_group():
+    """SQL: which of four groups each ``Finding`` is in, in Overview's order.
+
+    ``dismissed`` (marked as noise), ``on_case`` (a ``case_findings`` row),
+    ``scoring`` (a queued intake row), else ``waiting``. A dismissal is the
+    finding's own terminal state, ahead of any case.
+    """
+    return case(
+        (Finding.noise_marked_at.isnot(None), literal("dismissed")),
+        (
+            exists().where(case_findings.c.finding_id == Finding.finding_id),
+            literal("on_case"),
+        ),
+        (
+            exists().where(
+                IntakeTrigger.finding_id == Finding.finding_id,
+                IntakeTrigger.state == "queued",
+            ),
+            literal("scoring"),
+        ),
+        else_=literal("waiting"),
+    )
+
+
+def _state(group: str, linked: Optional[_LinkedCase], needs_you_ids: set[str]) -> str:
+    """Overview's state: the group, with ``on_case`` split by what the case needs."""
+    if group != "on_case":
+        return group
+    if linked is None:  # the case went between the two reads
+        return "waiting"
+    if linked.case_id in needs_you_ids:
         return "needs_you"
-    if case.status == "closed":
-        if closed_by_person(case.close_channel):
+    if linked.status == "closed":
+        if closed_by_person(linked.close_channel):
             return "resolved_person"
         return "resolved_auto"
     return "working"
@@ -109,33 +131,22 @@ def finding_states(finding_ids: Sequence[str]) -> dict[str, tuple[str, Optional[
         return {}
     needs_you_ids = needs_you_case_ids()
     cases: dict[str, _LinkedCase] = {}
-    dismissed: set[str] = set()
-    scoring: set[str] = set()
+    groups: dict[str, str] = {}
     db = get_db_manager()
     with db.session_scope() as session:
         for at in range(0, len(ids), _ID_CHUNK):
             chunk = ids[at : at + _ID_CHUNK]
             cases.update(_cases_for(session, chunk))
-            dismissed.update(
-                row[0]
-                for row in session.query(Finding.finding_id).filter(
-                    Finding.finding_id.in_(chunk), Finding.noise_marked_at.isnot(None)
-                )
-            )
-            scoring.update(
-                row[0]
-                for row in session.query(IntakeTrigger.finding_id).filter(
-                    IntakeTrigger.finding_id.in_(chunk),
-                    IntakeTrigger.state == "queued",
+            groups.update(
+                session.query(Finding.finding_id, alert_group()).filter(
+                    Finding.finding_id.in_(chunk)
                 )
             )
     return {
         finding_id: (
+            # an id with no finding row is in no group
             _state(
-                cases.get(finding_id),
-                needs_you_ids,
-                dismissed=finding_id in dismissed,
-                scoring=finding_id in scoring,
+                groups.get(finding_id, "waiting"), cases.get(finding_id), needs_you_ids
             ),
             cases[finding_id].case_id if finding_id in cases else None,
         )
