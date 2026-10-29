@@ -186,8 +186,8 @@ class _BackupLastSuccessCollector:
 
 
 def _register_backup_collector() -> None:
-    # tests/unit/platform/test_monitoring.py reimports this module. The
-    # previous collector still owns the series name on the default registry.
+    # After a reimport of this module the previous collector still owns the
+    # series name on the default registry.
     previous = REGISTRY._names_to_collectors.get(_BACKUP_METRIC)
     if previous is not None:
         REGISTRY.unregister(previous)

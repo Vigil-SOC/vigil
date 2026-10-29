@@ -8,9 +8,7 @@ payload would be a second contract, and the second one drifts.
 
 A mismatch between the halves fails as "no history", which is indistinguishable
 from an entity nobody has looked at. The TypeScript half is
-``services/agent/contracts/memory.ts`` and
-``tests/unit/_ratchets/test_recall_contract_agrees.py`` fails when they
-disagree.
+``services/agent/contracts/memory.ts``, and the two must agree.
 """
 
 from __future__ import annotations

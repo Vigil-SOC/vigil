@@ -1,6 +1,6 @@
 # Decision record v1 and lane rules (G1 + G2)
 
-**Status:** final, 2026-10-07. ⚑ calls decided by Craig (§8): all five as recommended. **Amended 2026-10-07 by S4b** (⚑ S4b-3 (a): evidence tie order, "signal" = rule signal). Aligned the same day with **E3 (Accepted)**, which defines incidents and suppression, including every field E3's note on the G2 page asks for (record `at` gives `opened_at`, `resolving_since`, `routed_at` and `resolved_at`). · **Contract:** `decision-record.schema.json`, `decision_chain.py`, `lane_ref.py`, `vectors/lanes/lanes-*.yaml` (10; integer-second format, its own folder since X1 #7), `fixtures/decision-records/` (4 valid chains covering all 9 record types, 19 invalid), `tests/test_decision_record.py`, `tests/test_lanes.py`, `tools/gen_g2_fixtures.py`. Test count: see `uv run pytest contracts/` (the whole suite; this file no longer pins a number). **Amended 2026-10-07 by S0** (X1 ⚑1–5, A3-5, S0 review): `pack_event`, derived ids, tick-stamped engine records, random `instance_id`. **Amended 2026-10-07 by S4** (S2-5 (a), decided by Craig): record type `gap` for a time Medic was stalled or off, and chain error `E-GAP`.
+**Status:** final, 2026-10-07. ⚑ calls decided by Craig (§8): all five as recommended. **Amended 2026-10-07 by S4b** (⚑ S4b-3 (a): evidence tie order, "signal" = rule signal). Aligned the same day with **E3 (Accepted)**, which defines incidents and suppression, including every field E3's note on the G2 page asks for (record `at` gives `opened_at`, `resolving_since`, `routed_at` and `resolved_at`). · **Contract:** `decision-record.schema.json`, `decision_chain.py`, `lane_ref.py`, `vectors/lanes/lanes-*.yaml` (10; integer-second format, its own folder since X1 #7), `fixtures/decision-records/` (4 valid chains covering all 9 record types, 19 invalid), `tools/gen_g2_fixtures.py`. **Amended 2026-10-07 by S0** (X1 ⚑1–5, A3-5, S0 review): `pack_event`, derived ids, tick-stamped engine records, random `instance_id`. **Amended 2026-10-07 by S4** (S2-5 (a), decided by Craig): record type `gap` for a time Medic was stalled or off, and chain error `E-GAP`.
 **Builds on:** E2 (rule `lane`, `fault`, trust and lane-1 gate), E3 (one incident per rule × group; flapping reopen; suppression, 5-min routing hold, child-outlives-parent; built-in `watcher.sensor-blind`, lane 3), D3 (observation IDs, label rules), C2 (lane can depend on install shape), C4 (append-only S1/S2, sequence numbers, anchors, reset, sizing), K1 §6 row G2 and T-04/T-05/T-09/T-17, I1 and A4 (gate fields), Program Plan (L1 = admin clicks, L2 = watcher runs alone; 1C5 escalation after two failures). **Not yet available:** G4 (runbook descriptors), H2 (UX spec).
 
 ## 1. Decision in one paragraph
@@ -85,9 +85,9 @@ Envelope: `v`, `seq` (strictly increasing, no gaps), `at`, `type`, `prev`, `hash
 | 16 KB record cap and excerpt truncation in the writer; both backends | G3 |
 | Re-run K1 T-04 and T-17 against this schema | K1 delta (W4) |
 
-## 7. K1 §6 row G2, verified by tests
+## 7. K1 §6 row G2
 
-*Every stored field typed:* `test_every_leaf_field_carries_an_allowed_type_tag`, `test_free_text_is_only_ever_excerpt_or_pack_text`, and the invalid fixtures. *Append-only, hash-chained:* `test_editing_a_past_record_breaks_the_chain`, `…rehashing_one_record_still_breaks_the_next_link`, `…deleting_a_middle_record…`, `…reordering…`, `…purge_without_an_anchor…`.
+*Every stored field typed:* every leaf field carries an allowed `x-medic-type`, and free text is only ever a redacted excerpt or pack text; the invalid fixtures break each rule. *Append-only, hash-chained:* editing a past record, rehashing one record, deleting a middle record, reordering, and a purge without an anchor each break the chain (`decision_chain.verify`).
 
 ## 8. ⚑ ENG decisions (decided by Craig, 2026-10-07: 1c · 2a · 3a · 4a · 5b)
 

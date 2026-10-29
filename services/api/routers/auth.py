@@ -123,8 +123,8 @@ ROUTER_META = RouterMeta(
     auth=Auth.ROUTER_MANAGED,
     reason=(
         "A deliberate mix. login / refresh / password-reset / bootstrap "
-        "cannot require auth (chicken-and-egg) and are listed in "
-        "PUBLIC_API_PATHS; the inner /me, /change-password and /mfa routes "
+        "cannot require auth (chicken-and-egg); the inner /me, "
+        "/change-password and /mfa routes "
         "declare get_current_active_user inline. A router-level auth "
         "dependency here would break login."
     ),

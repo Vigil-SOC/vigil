@@ -9,9 +9,6 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:unit": "vitest run tests/core tests/hunt tests/chat",
-    "test:integration": "vitest run tests/integration",
     "build": "tsc -p tsconfig.build.json",
     "worker": "tsx worker.ts",
     "serve": "tsx serve.ts",
@@ -35,10 +32,6 @@
     "@types/node": "^22.20.5",
     "@types/pg": "^8.23.1",
     "tsx": "^4.23.15",
-    "typescript": "^5.7.2",
-    "vitest": "^5.0.5"
-  },
-  "overrides": {
-    "vite": "^6.4.4"
+    "typescript": "^5.7.2"
   }
 }

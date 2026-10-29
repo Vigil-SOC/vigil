@@ -27,13 +27,6 @@ dev = [
 [tool.uv]
 package = false
 
-[tool.pytest.ini_options]
-testpaths = ["contracts/tests", "tests"]
-# The repo root, so `services.medic` imports the way it does at runtime.
-pythonpath = ["../.."]
-# importlib: the contract tests and Medic's tests both have bare test_*.py names.
-addopts = ["--import-mode=importlib"]
-
 [tool.ruff]
 target-version = "py312"
 # "contracts" in src keeps the contracts' own modules first-party, as they were

@@ -531,9 +531,9 @@ function looksUnfinished(line: string): boolean {
 
 /** The ten kinds a key can carry, held to the hunt's own closed set by the spec
  *  loader, which refuses anything else rather than coercing it. Spelled here so
- *  the operator is told before submitting, and ratcheted against
- *  `plugins/hunt/types.ts` by `test_recall_contract_agrees` — a list that
- *  drifts tells them a key is fine that no reader will ever query. */
+ *  the operator is told before submitting, and kept in step with
+ *  `plugins/hunt/types.ts` — a list that drifts tells them a key is fine that
+ *  no reader will ever query. */
 const ENTITY_TYPES = ['ip', 'domain', 'host', 'url', 'email', 'hash', 'arn', 'aws_key', 'user', 'process']
 
 /** `type:value`, comma separated — the form the hunt already writes an entity in.
@@ -1878,10 +1878,10 @@ function tieText(tie: V3ChainEvent['tie']): string {
   return bits.join(' · ')
 }
 
-/** Brings the row an event chip opened into view. jsdom has no scrollIntoView. */
+/** Brings the row an event chip opened into view. */
 function useScrolledTo(focus: string | null) {
   const row = useRef<HTMLTableRowElement | null>(null)
-  useEffect(() => { if (focus) row.current?.scrollIntoView?.({ block: 'center' }) }, [focus])
+  useEffect(() => { if (focus) row.current?.scrollIntoView({ block: 'center' }) }, [focus])
   return row
 }
 

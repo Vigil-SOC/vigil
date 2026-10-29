@@ -118,4 +118,3 @@ authored sequence rather than one agent's judgement. Compose's phases use it.
 1. Write `<id>/plugin.yaml` and its skills.
 2. If it needs code, write `<id>/hooks.ts` and register it in `index.ts`.
 3. Give its run kind an entry in `plugins/kinds.ts`, and a projection if the console reads it in a shape of its own.
-4. Test it with a scripted model that answers what it is shown. See `tests/hunt/kernel-hunt.test.ts`.

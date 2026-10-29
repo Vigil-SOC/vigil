@@ -38,8 +38,8 @@ log = logging.getLogger("services.medic")
 
 STATUS_PATH = "/v1/status"
 SENSORS_PATH = "/v1/sensors"
-# The main loop's tick (wiring.TICK_S, semantics.md §1; a test pins the two).
-# Not imported: the listener stays light enough for the backend's own tests.
+# The main loop's tick (wiring.TICK_S, semantics.md §1); keep the two equal.
+# Not imported, so the listener stays light.
 TICK_S = 15
 # X2: "a snapshot no older than 15 s". The loop publishes every 15 s tick, at
 # the end of a cycle, so a cycle's own run time is allowed on top; older than
