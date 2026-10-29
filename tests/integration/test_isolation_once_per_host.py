@@ -1,9 +1,9 @@
 """One host is asked to be isolated once, whatever names it.
 
-The auto-responder keys an isolation on the alert's IP, or on the hostname when
-the alert had no IP, and an investigation's proposal keys on its run. Alerts
-about one host, with and without its IP, and a run that proposes isolating it,
-all land on the one approval.
+The retired daemon responder keyed an isolation on the alert's IP, or on the
+hostname when the alert had no IP, and installs still hold those rows. An
+investigation's proposal keys on its run. Rows about one host, with and without
+its IP, and a run that proposes isolating it, all land on the one approval.
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
-from core.response.approval_service import ApprovalService
-from core.response.autonomous_response_service import AutonomousResponseService
+from core.agents.builtins import AgentId
+from core.response.approval_service import ActionType, ApprovalService
 from core.response.config import ResponseConfig
 from core.storage.connection import get_db_manager
 from core.workflows import run_bridge_router as rbr
@@ -70,19 +70,24 @@ def db(engine):
         manager._engine, manager._session_factory = saved
 
 
-def _responder() -> AutonomousResponseService:
-    return AutonomousResponseService(config=ResponseConfig())
-
-
 def _isolate(ip: str, hostname: str | None) -> dict:
-    return _responder().create_isolation_action(
-        ip_address=ip,
-        hostname=hostname,
+    """A row as the retired responder filed it: keyed on the IP, or the hostname
+    when there is none."""
+    key = ip if ip != "unknown" else f"host:{hostname}"
+    action, inserted = ApprovalService(config=ResponseConfig())._put_action(
+        action_type=ActionType.ISOLATE_HOST,
+        title=f"Isolate Host: {hostname or ip}",
+        description="test",
+        target=ip,
         confidence=0.95,
         reason="encoded PowerShell",
         evidence=["f-1"],
-        correlation_data={"indicators": [], "reasoning": []},
+        created_by=AgentId.AUTO_RESPONDER.value,
+        parameters={"hostname": hostname},
+        idempotency_key=f"isolate_host:{key}",
+        same_host=(ip, hostname),
     )
+    return {"action_id": action.action_id, "reused": not inserted}
 
 
 def _propose(case_id: str, run_id: str, target: str) -> None:
@@ -118,7 +123,7 @@ def test_an_alert_with_the_ip_and_one_without_ask_once(db, first, second):
     filed = _isolate(*first)
     again = _isolate(*second)
 
-    assert filed["status"] == "pending_approval"
+    assert filed["reused"] is False
     assert again["reused"] is True
     assert again["action_id"] == filed["action_id"]
     assert len(_isolations(db)) == 1
@@ -149,7 +154,7 @@ def test_a_hostname_matches_whatever_its_case(db):
     assert _isolate("unknown", "fyodor-l")["action_id"] == filed["action_id"]
 
 
-def test_a_run_proposal_joins_the_responders_ask_on_its_case_and_the_alerts(db):
+def test_a_run_proposal_joins_a_responder_row_on_its_case_and_the_alerts(db):
     filed = _isolate(IP, HOST)
 
     _propose("c-1", "run-1", HOST)
@@ -160,7 +165,7 @@ def test_a_run_proposal_joins_the_responders_ask_on_its_case_and_the_alerts(db):
     assert rows[0].parameters["case_ids"] == ["c-2", "c-1"]
 
 
-def test_a_run_on_the_alerts_own_case_joins_the_responders_ask(db):
+def test_a_run_on_the_alerts_own_case_joins_a_responder_row(db):
     filed = _isolate("unknown", HOST)
 
     _propose("c-2", "run-1", HOST)
@@ -170,7 +175,7 @@ def test_a_run_on_the_alerts_own_case_joins_the_responders_ask(db):
     assert rows[0].parameters["case_ids"] == ["c-2"]
 
 
-def test_a_run_proposal_naming_the_ip_joins_the_responders_ask(db):
+def test_a_run_proposal_naming_the_ip_joins_a_responder_row(db):
     _isolate(IP, HOST)
     _isolate("unknown", HOST)
 
@@ -179,7 +184,7 @@ def test_a_run_proposal_naming_the_ip_joins_the_responders_ask(db):
     assert len(_isolations(db)) == 1
 
 
-def test_the_responder_joins_a_pending_run_proposal(db):
+def test_a_responder_row_joins_a_pending_run_proposal(db):
     _propose("c-1", "run-1", HOST)
 
     again = _isolate(IP, HOST)
@@ -206,5 +211,5 @@ def test_a_failed_isolation_is_asked_again(db):
 
     again = _isolate("unknown", HOST)
 
-    assert again["status"] == "pending_approval"
+    assert again["reused"] is False
     assert again["action_id"] != filed["action_id"]

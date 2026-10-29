@@ -10,7 +10,7 @@ import type { BoardLink } from './commandBarModel'
 import shellCss from './shell.css?inline'
 
 const { execute, createCase, deleteCase, readDoc, checkCoverage, attachDocument, getCase, getFinding, findFindings, getIntegrations, exportJira, apiGet, search } = vi.hoisted(() => ({
-  execute: vi.fn((..._args: unknown[]) => Promise.resolve({ data: {} })),
+  execute: vi.fn((..._args: unknown[]) => Promise.resolve({ data: { run_id: 'run-new', case_id: 'case-new' } })),
   createCase: vi.fn((..._args: unknown[]) => Promise.resolve({ data: { case_id: 'case-new' } })),
   deleteCase: vi.fn((..._args: unknown[]) => Promise.resolve({ data: {} })),
   readDoc: vi.fn((..._args: unknown[]) => Promise.resolve({ data: { text: '', pages: 1, condensed: false } })),
@@ -145,7 +145,7 @@ beforeEach(() => {
   getFinding.mockClear()
   findFindings.mockClear()
   execute.mockClear()
-  execute.mockResolvedValue({ data: {} })
+  execute.mockResolvedValue({ data: { run_id: 'run-new', case_id: 'case-new' } })
   createCase.mockClear()
   deleteCase.mockClear()
   readDoc.mockReset()
@@ -620,6 +620,7 @@ describe('CommandBar', () => {
 
     await runCommand('/investigate f-1')
     expect(await screen.findByText('Started Incident response workflow')).toBeInTheDocument()
+    expect(onOpenCase).toHaveBeenCalledWith('case-new')
     expect(input).toHaveValue('')
 
     await runCommand('/replay case-7')
@@ -701,50 +702,38 @@ describe('CommandBar', () => {
       fireEvent.click(await screen.findByRole('button', { name: 'Run' }))
     }
 
-    it('opens a case with a short title, runs the hunt on it, and clears the bar', async () => {
+    it('runs the hunt, opens the case the server returns, and clears the bar', async () => {
       const { onOpenCase, input } = renderHunt()
       await runHunt(input, HYPOTHESIS)
       await waitFor(() => expect(onOpenCase).toHaveBeenCalledWith('case-new'))
-      expect(createCase).toHaveBeenCalledWith({
-        title: 'a service account key was used from a new network and then',
-        description: HYPOTHESIS,
-        finding_ids: [],
-        priority: 'medium',
-        status: 'open',
-      })
-      expect(execute).toHaveBeenCalledWith('threat-hunt', { hypothesis: HYPOTHESIS, case_id: 'case-new' })
-      expect(createCase.mock.invocationCallOrder[0]).toBeLessThan(execute.mock.invocationCallOrder[0])
+      // The server opens the case: none is made or sent from the browser.
+      expect(execute).toHaveBeenCalledWith('threat-hunt', { hypothesis: HYPOTHESIS })
+      expect(createCase).not.toHaveBeenCalled()
       expect(input.value).toBe('')
       expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
       expect(await screen.findByText(/Hunt started on case "a service account key/)).toBeInTheDocument()
       expect(deleteCase).not.toHaveBeenCalled()
     })
 
-    it('removes the case when the server refuses the hunt, and leaves the preview open', async () => {
+    it('leaves the preview open when the server refuses the hunt, and deletes nothing', async () => {
       execute.mockRejectedValue({ response: { data: { detail: 'Workflow threat-hunt is disabled' } } })
       const { onOpenCase, input } = renderHunt()
       await runHunt(input, 'credential access')
       expect(await screen.findByText('Workflow threat-hunt is disabled')).toBeInTheDocument()
-      expect(deleteCase).toHaveBeenCalledWith('case-new')
+      expect(createCase).not.toHaveBeenCalled()
+      expect(deleteCase).not.toHaveBeenCalled()
       expect(onOpenCase).not.toHaveBeenCalled()
       expect(input.value).toBe('/hunt credential access')
       expect(screen.getByRole('button', { name: 'Run' })).toBeEnabled()
     })
 
-    it('keeps the case when the request got no answer, since the run may be queued', async () => {
-      execute.mockRejectedValue(new Error('timeout of 120000ms exceeded'))
-      const { input } = renderHunt()
-      await runHunt(input, 'credential access')
-      expect(await screen.findByText('timeout of 120000ms exceeded')).toBeInTheDocument()
-      expect(deleteCase).not.toHaveBeenCalled()
-    })
-
-    it('starts no run when the case cannot be created', async () => {
-      createCase.mockRejectedValue({ response: { data: { detail: 'Failed to create case' } } })
-      const { input } = renderHunt()
+    it('reports an error, not a start, when the response names no case', async () => {
+      execute.mockResolvedValue({ data: { run_id: 'run-new' } } as never)
+      const { onOpenCase, input } = renderHunt()
       await runHunt(input, HYPOTHESIS)
-      expect(await screen.findByText('Failed to create case')).toBeInTheDocument()
-      expect(execute).not.toHaveBeenCalled()
+      expect(await screen.findByText('The hunt started without a case')).toBeInTheDocument()
+      expect(onOpenCase).not.toHaveBeenCalled()
+      expect(input.value).toBe(`/hunt ${HYPOTHESIS}`)
     })
 
     describe('attached intelligence', () => {
@@ -788,7 +777,7 @@ describe('CommandBar', () => {
         expect(checkCoverage).not.toHaveBeenCalled()
         fireEvent.click(screen.getByRole('button', { name: 'Run' }))
         await waitFor(() => expect(onOpenCase).toHaveBeenCalledWith('case-new'))
-        expect(execute).toHaveBeenCalledWith('threat-hunt', { hypothesis: 'credential access', case_id: 'case-new', document: REPORT })
+        expect(execute).toHaveBeenCalledWith('threat-hunt', { hypothesis: 'credential access', document: REPORT })
         expect(attachDocument).toHaveBeenCalledWith('case-new', file, { name: undefined, pages: 3 })
         expect(execute.mock.invocationCallOrder[0]).toBeLessThan(attachDocument.mock.invocationCallOrder[0])
       })
@@ -825,7 +814,7 @@ describe('CommandBar', () => {
         expect(screen.getByText(/Proposed from the document/)).toBeInTheDocument()
         fireEvent.click(screen.getByRole('button', { name: 'Run' }))
         await waitFor(() => expect(execute).toHaveBeenCalled())
-        expect(execute).toHaveBeenCalledWith('threat-hunt', { hypothesis: PROPOSED, case_id: 'case-new', document: REPORT, hypothesis_subjects: { [PROPOSED]: ['ip:203.0.113.9'] }, approve_hypotheses: true })
+        expect(execute).toHaveBeenCalledWith('threat-hunt', { hypothesis: PROPOSED, document: REPORT, hypothesis_subjects: { [PROPOSED]: ['ip:203.0.113.9'] }, approve_hypotheses: true })
       })
 
       it('says why there is no proposal and keeps Run disabled', async () => {
@@ -910,7 +899,7 @@ describe('CommandBar', () => {
         await screen.findByText('3 pages')
         fireEvent.click(screen.getByRole('button', { name: 'Run' }))
         expect(await screen.findByText('Workflow threat-hunt is disabled')).toBeInTheDocument()
-        expect(deleteCase).toHaveBeenCalledWith('case-new')
+        expect(deleteCase).not.toHaveBeenCalled()
         expect(attachDocument).not.toHaveBeenCalled()
         expect(screen.getByText('advisory.pdf')).toBeInTheDocument()
       })

@@ -148,7 +148,13 @@ export interface paths {
         };
         /**
          * List Available Tools
-         * @description Return MCP tool names grouped by server prefix for the UI multiselect.
+         * @description Every tool an agent may be given, for the agent drawer's tool picker.
+         *
+         *     ``catalog`` has one row per tool: its name, the server that serves it
+         *     ("vigil" for Vigil's own) and the first sentence of its description.
+         *     ``changes`` marks each of them read_only or asks_first from its stored
+         *     effect class; a name missing there is not connected. ``tools`` lists the
+         *     connected MCP tool names.
          *
          *     Sources, in order of preference:
          *       1. Live MCP registry (populated when MCP servers connect at startup).
@@ -1094,7 +1100,8 @@ export interface paths {
         /**
          * Regenerate Recovery Codes
          * @description Generate a fresh set of one-time MFA recovery codes, invalidating any
-         *     previous codes. Requires MFA to already be set up.
+         *     previous codes. Requires MFA to be enabled and a current TOTP or
+         *     recovery code.
          *
          *     Returns:
          *         The new plaintext recovery codes, shown only once.
@@ -13350,7 +13357,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MFAVerifyRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

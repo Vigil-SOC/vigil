@@ -231,6 +231,8 @@ interface HuntCall {
 interface HuntBudgets {
   max_iterations: number
   max_cost_usd: number
+  /** Extensions included; absent on older runs. */
+  max_wall_ms?: number
 }
 export interface HuntView {
   run_id?: string
@@ -249,6 +251,9 @@ export interface HuntView {
   cost_usd?: number
   /** What this run was granted, extensions included — not the shipped default. */
   budgets?: HuntBudgets
+  /** Wall time used against max_wall_ms as the agent counts it, waits on a person left out.
+   *  Read at request time while the run is live; absent before it started. */
+  wall_used_ms?: number
   hypotheses: HuntStanding[]
   /** Every critic verdict, in ledger order; absent before the projection carried them. */
   reviews?: HuntReview[]

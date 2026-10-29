@@ -1,18 +1,13 @@
-"""Default rows for the tables that only create_all builds.
+"""Reading the default-row seed, ``05_case_management_extended.sql``.
 
-``05_case_management_extended.sql`` holds the default SLA policies and case
-templates. A fresh install gets those rows from the upgrade baseline. A 0.7 or
-0.8 Helm install never applied the file. ``seed_reference_tables`` fills each
-empty table.
+The file holds the default SLA policies and case templates. Every install gets
+those rows from the upgrade baseline; adoption, the Helm row-count check and
+the seed-column ratchet read the file through these helpers.
 """
 
 import re
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Tuple
-
-from sqlalchemy import text
-from sqlalchemy.engine import Connection
-from sqlalchemy.exc import SQLAlchemyError
+from typing import Dict, Iterator, List, Optional
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SEED_FILE = "05_case_management_extended.sql"
@@ -112,45 +107,3 @@ def inserts_by_table(sql: str) -> Dict[str, List[str]]:
         if match:
             tables.setdefault(target_table(match), []).append(statement)
     return tables
-
-
-def seed_empty_tables(
-    conn: Connection, sql: Optional[str] = None
-) -> Tuple[Dict[str, int], Dict[str, str]]:
-    """Run the seed's INSERTs into each of its tables that has no rows yet.
-
-    A table with any row is left alone, so a default an operator deleted stays
-    deleted. The file's ON CONFLICT DO NOTHING covers two processes seeding one
-    empty table at once. Each table has its own savepoint, so a table that
-    fails leaves the others seeded.
-
-    Returns the rows inserted per seeded table, and the error per failed one.
-    """
-    if sql is None:
-        path = find_seed_file()
-        if path is None:
-            raise FileNotFoundError(
-                f"{SEED_FILE} is not under {REPO_ROOT} in any of "
-                + ", ".join(str(d) for d in SEED_DIRS)
-            )
-        sql = path.read_text(encoding="utf-8")
-    quote = conn.dialect.identifier_preparer.quote
-    inserted: Dict[str, int] = {}
-    failed: Dict[str, str] = {}
-    for table, statements in inserts_by_table(sql).items():
-        savepoint = conn.begin_nested()
-        try:
-            has_rows = conn.execute(
-                text(f"SELECT EXISTS (SELECT 1 FROM {quote(table)})")
-            ).scalar()
-            if not has_rows:
-                inserted[table] = sum(
-                    conn.execute(text(statement)).rowcount for statement in statements
-                )
-            savepoint.commit()
-        except SQLAlchemyError as e:
-            savepoint.rollback()
-            inserted.pop(table, None)
-            message = str(getattr(e, "orig", e)).splitlines()
-            failed[table] = message[0] if message else type(e).__name__
-    return inserted, failed

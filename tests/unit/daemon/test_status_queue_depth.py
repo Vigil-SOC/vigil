@@ -1,9 +1,7 @@
 """Queue depths, legacy poll times, and Redis depths on GET /status."""
 
-import asyncio
 import json
 from datetime import timedelta
-from types import SimpleNamespace
 
 import pytest
 
@@ -38,30 +36,22 @@ async def _status(server):
 @pytest.mark.asyncio
 async def test_queue_depths_follow_the_queues():
     processor = FindingProcessor(ProcessingConfig(auto_enrich_enabled=False))
-    responder = SimpleNamespace(stats={}, input_queue=asyncio.Queue())
     for n in range(3):
         processor.input_queue.put_nowait({"n": n})
-    for n in range(2):
-        responder.input_queue.put_nowait({"n": n})
     processor._enrich_tasks.add(object())
 
     server = MetricsServer(MetricsConfig())
     server.processor = processor
-    server.responder = responder
     body = await _status(server)
     assert body["processor"]["queue_depth"] == 3
     assert body["processor"]["queue_max"] == INPUT_QUEUE_MAXSIZE
     assert body["processor"]["processed"] == 0
     assert body["processor"]["enrich_inflight"] == 1
-    assert body["responder"]["queue_depth"] == 2
 
     for _ in range(3):
         processor.input_queue.get_nowait()
-    responder.input_queue.get_nowait()
-    responder.input_queue.get_nowait()
     body = await _status(server)
     assert body["processor"]["queue_depth"] == 0
-    assert body["responder"]["queue_depth"] == 0
 
 
 @pytest.mark.asyncio
@@ -74,7 +64,8 @@ async def test_missing_components_emit_zeros_and_health_stays_put():
     assert body["processor"]["enrich_breaker_tripped"] is False
     assert body["processor"]["enrich_paused_until"] is None
     assert body["processor"]["auto_triage_enabled"] is False
-    assert body["responder"]["queue_depth"] == 0
+    assert body["executor"] == {}
+    assert "responder" not in body
     assert body["orchestrator"] == {"max_concurrent_agents": 0, "free_slots": 0}
     assert body["federation"] == {"polls": 0, "findings": 0, "errors": 0, "dropped": 0}
     assert body["llm_queue_depth"] is None

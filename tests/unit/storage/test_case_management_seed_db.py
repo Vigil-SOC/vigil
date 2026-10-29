@@ -1,9 +1,9 @@
 """The case-management seed on the tables create_all builds.
 
-compose's db-seed and ``scripts/seed_reference_data.py`` apply
-``05_case_management_extended.sql`` after create_all, one statement at a time,
-and tolerate every failure. A statement Postgres rejects leaves nothing behind
-but a missing row, which is how the eight default case templates went missing:
+Adoption applies ``05_case_management_extended.sql`` to tables an older release
+built with create_all. The old seed scripts applied it one statement at a time
+and tolerated every failure, so a statement Postgres rejected left nothing
+behind but a missing row. That is how the eight default case templates went missing:
 ``case_templates.usage_count`` was NOT NULL with no DEFAULT and the seed left it
 out. Each test runs in a transaction that is rolled back, with a savepoint per
 statement, so the shared database is left as it was found.

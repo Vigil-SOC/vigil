@@ -16,7 +16,7 @@ COMPONENTS = [
     ("poller", "DataPoller"),
     ("kafka_ingestor", "KafkaIngestor"),
     ("processor", "FindingProcessor"),
-    ("responder", "AutonomousResponder"),
+    ("executor", "ApprovedActionExecutor"),
     ("scheduler", "TaskScheduler"),
     ("orchestrator", "Orchestrator"),
 ]
@@ -39,8 +39,6 @@ class _Component:
         return 0
 
     def set_output_queue(self, queue): ...
-
-    def set_response_queue(self, queue): ...
 
     def set_processor_queue(self, queue): ...
 

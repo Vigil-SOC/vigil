@@ -1,12 +1,12 @@
-"""Unit tests for the approval gate's confidence band and the correlation logic."""
+"""Unit tests for the approval gate's confidence band."""
 
-import pytest
 from contextlib import contextmanager
 from unittest.mock import MagicMock, Mock, patch
 
+import pytest
+
 from core.config import get_settings
 from core.response.approval_service import ActionStatus, ActionType, ApprovalService
-from core.response.autonomous_response_service import AutonomousResponseService
 from core.response.config import ResponseConfig
 
 
@@ -123,45 +123,3 @@ class TestConfidenceThresholds:
         assert action.status == ActionStatus.PENDING.value
         assert action.reason.endswith("approval.force_manual_approval=True")
         store.set_system_config.assert_not_called()
-
-
-class TestConfiguredBands:
-    """Every other comparison reads the same ResponseConfig (#916)."""
-
-    def test_recommendation_ladder_follows_config(self):
-        svc = AutonomousResponseService(
-            approvals=Mock(spec=ApprovalService),
-            config=ResponseConfig(
-                confidence_threshold=0.95,
-                review_threshold=0.90,
-                monitor_threshold=0.80,
-            ),
-        )
-        assert svc._get_recommendation(0.95, []).startswith("AUTO-ISOLATE")
-        assert svc._get_recommendation(0.92, []).startswith("ISOLATE WITH APPROVAL")
-        assert svc._get_recommendation(0.85, []).startswith("MANUAL REVIEW")
-        assert svc._get_recommendation(0.79, []).startswith("MONITOR")
-
-
-class TestAutonomousResponse:
-    """Test autonomous response service."""
-
-    def test_correlate_alerts(self):
-        """Test correlating alerts from multiple sources."""
-        service = AutonomousResponseService()
-
-        # Create mock alert data matching the actual method signature
-        tempo_flow_alert = {
-            "finding_id": "f-12345",
-            "severity": "high",
-            "mitre_predictions": {"T1486": "ransomware", "T1071": "c2_communication"},
-            "entity_context": {"src_ips": ["10.0.1.5"]},
-        }
-
-        correlation = service.correlate_alerts(tempo_flow_alert=tempo_flow_alert)
-
-        # Check that correlation returns expected structure
-        assert "confidence" in correlation
-        assert "indicators" in correlation
-        assert "evidence" in correlation
-        assert correlation["confidence"] > 0

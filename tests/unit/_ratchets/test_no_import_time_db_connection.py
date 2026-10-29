@@ -1,7 +1,7 @@
 """Importing a router module must not open a database connection (#1456).
 
-A module-level ``DatabaseDataService()`` used to run ``init_database(create_tables=True)``
-at import, so a unit test importing a router connected to whatever Postgres the
+A module-level ``DatabaseDataService()`` used to run ``init_database()``, which then
+created tables, at import, so a unit test importing a router connected to whatever Postgres the
 developer had on localhost:5432 and could create tables in it. CI has no Postgres,
 so only developer machines ever saw it.
 

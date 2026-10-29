@@ -41,6 +41,8 @@ const STATES = [
   { value: 'launched', label: 'Picked up or started a case', dot: 'good' },
   { value: 'merged', label: 'Added to a case', dot: 'ac' },
   { value: 'expired', label: 'Expired', dot: 'tx2' },
+  // not an intake state: rows whose alert was marked as noise, in whichever state above
+  { value: 'dismissed', label: 'Dismissed as noise', dot: 'tx3' },
 ]
 const QUEUED_OFF = 'AutoOps is off'
 

@@ -1,6 +1,6 @@
 """
 Unit tests for daemon/autonomous operations.
-Tests configured floors, triage provider resolution and triage timeouts.
+Tests the intake line, triage provider resolution and triage timeouts.
 """
 
 import asyncio
@@ -10,132 +10,34 @@ import pytest
 
 from services.daemon.config import ProcessingConfig
 from services.daemon.processor import TRIAGE_MAX_TOKENS, FindingProcessor
-from services.daemon.responder import AutonomousResponder
 
 
 class TestConfiguredFloors:
-    """The responder's severity floors and the processor's queue line read
-    ResponseConfig rather than literals (#916)."""
-
-    def _responder(self):
-        from services.daemon.config import EscalationConfig, ResponseConfig
-
-        return AutonomousResponder(
-            ResponseConfig(),
-            EscalationConfig(),
-            response_service=Mock(),
-            approvals=Mock(),
-        )
+    """The processor's intake line reads ResponseConfig rather than a literal
+    (#916), and an alert never opens a response queue."""
 
     @pytest.mark.asyncio
-    async def test_reason_carries_rule_and_dry_run_logs_it(self, caplog):
-        from services.daemon.config import EscalationConfig, ResponseConfig
-
-        finding = {
-            "finding_id": "f-917",
-            "severity": "critical",
-            "triage_confidence": 0.75,
-            "entity_context": {"src_ips": ["10.0.0.9"]},
-        }
-        responder = self._responder()
-        await responder._evaluate_response(finding)
-        reason = responder._response_service.create_isolation_action.call_args.kwargs[
-            "reason"
-        ]
-        assert reason == (
-            "Automated response to f-917; "
-            "response.critical_action_floor=0.70 met (0.75)"
-        )
-
-        dry = AutonomousResponder(
-            ResponseConfig(dry_run=True),
-            EscalationConfig(),
-            response_service=Mock(),
-            approvals=Mock(),
-        )
-        with caplog.at_level("INFO", logger="services.daemon.responder"):
-            await dry._evaluate_response(finding)
-        assert "response.critical_action_floor=0.70 met (0.75)" in caplog.text
-        dry._response_service.create_isolation_action.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_reused_isolation_is_not_counted_as_auto_executed(self):
-        """#1217: a reused isolation (collapsed by the idempotency key) must not
-        be logged or counted the same as a fresh auto-execution."""
-        finding = {
-            "finding_id": "f-1217",
-            "severity": "critical",
-            "triage_confidence": 0.75,
-            "entity_context": {"hostnames": ["host-b"]},
-        }
-        responder = self._responder()
-        responder._response_service.create_isolation_action.return_value = {
-            "status": "executed",
-            "reused": True,
-            "action_id": "action-existing",
-        }
-        await responder._evaluate_response(finding)
-        assert responder.stats["auto_executed"] == 0
-        assert responder.stats["reused"] == 1
-
-    @pytest.mark.asyncio
-    async def test_fresh_isolation_is_counted_as_auto_executed(self):
-        finding = {
-            "finding_id": "f-1217b",
-            "severity": "critical",
-            "triage_confidence": 0.75,
-            "entity_context": {"hostnames": ["host-a"]},
-        }
-        responder = self._responder()
-        responder._response_service.create_isolation_action.return_value = {
-            "status": "executed",
-            "action_id": "action-new",
-        }
-        await responder._evaluate_response(finding)
-        assert responder.stats["auto_executed"] == 1
-        assert responder.stats["reused"] == 0
-
-    @pytest.mark.asyncio
-    async def test_failed_isolation_is_not_counted_as_auto_executed(self, caplog):
-        """#1276: a failed isolation must not be logged or counted as contained."""
-        finding = {
-            "finding_id": "f-1276",
-            "severity": "critical",
-            "triage_confidence": 0.95,
-            "entity_context": {"src_ips": ["10.0.0.5"]},
-        }
-        responder = self._responder()
-        responder._response_service.create_isolation_action.return_value = {
-            "status": "failed",
-            "action_id": "action-failed",
-            "result": {"success": False, "error": "unsupported_action_type"},
-        }
-        with caplog.at_level("INFO", logger="services.daemon.responder"):
-            await responder._evaluate_response(finding)
-        assert responder.stats["auto_executed"] == 0
-        assert "Auto-executed" not in caplog.text
-
-    @pytest.mark.asyncio
-    async def test_processor_queues_at_review_threshold(self):
+    async def test_processor_offers_intake_at_review_threshold(self):
         from services.daemon.config import ResponseConfig
 
         processor = FindingProcessor(
-            ProcessingConfig(), response_config=ResponseConfig(review_threshold=0.95)
+            ProcessingConfig(investigate_severities=[]),
+            response_config=ResponseConfig(review_threshold=0.95),
         )
-        queue = asyncio.Queue()
-        processor.set_response_queue(queue)
-        with patch("services.daemon.orchestrator.insert_intake_trigger"):
+        assert not hasattr(processor, "set_response_queue")
+        assert "queued_for_response" not in processor.stats
+        with patch("services.daemon.orchestrator.insert_intake_trigger") as insert:
             await processor._evaluate_for_response(
                 {"finding_id": "f-1", "severity": "low", "triage_confidence": 0.90}
             )
-            assert queue.empty()
+            insert.assert_not_called()
             await processor._evaluate_for_response(
                 {"finding_id": "f-2", "severity": "low", "triage_confidence": 0.95}
             )
-            assert queue.qsize() == 1
+            insert.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_processor_feed_hit_offers_detection_without_response(self):
+    async def test_processor_feed_hit_offers_detection(self):
         """#1008: a threat_indicators hit reaches intake even when Gate 1 is false."""
         from services.daemon.config import ResponseConfig
 
@@ -144,8 +46,6 @@ class TestConfiguredFloors:
             ProcessingConfig(investigate_severities=[]),
             response_config=ResponseConfig(review_threshold=0.95),
         )
-        queue = asyncio.Queue()
-        processor.set_response_queue(queue)
         below_gate = {"severity": "medium", "triage_confidence": 0.5}
         hit = {"threat_indicators": {"src_ip": [{"indicator": "10.0.0.9"}]}}
 
@@ -156,7 +56,6 @@ class TestConfiguredFloors:
             insert.assert_called_once()
             assert insert.call_args.kwargs["kind"] == "detection"
             assert insert.call_args.kwargs["finding_id"] == "f-hit"
-            assert queue.empty()
 
         # No hit: the key is absent when the lookup found nothing, and the
         # whole enrichment block is absent when enrichment is off.
@@ -168,14 +67,12 @@ class TestConfiguredFloors:
                 {"finding_id": "f-bare", **below_gate}
             )
             insert.assert_not_called()
-            assert queue.empty()
 
         with patch("services.daemon.orchestrator.insert_intake_trigger") as insert:
             await processor._evaluate_for_response(
                 {"finding_id": "f-both", "severity": "high", "enrichment": hit}
             )
             insert.assert_called_once()
-            assert queue.qsize() == 1
 
     @pytest.mark.asyncio
     async def test_processor_offers_every_investigated_severity_below_the_gate(self):
@@ -185,8 +82,6 @@ class TestConfiguredFloors:
         processor = FindingProcessor(
             ProcessingConfig(), response_config=ResponseConfig(review_threshold=0.95)
         )
-        queue = asyncio.Queue()
-        processor.set_response_queue(queue)
         below_gate = {"triage_confidence": 0.5, "recommended_action": "investigate"}
 
         with patch("services.daemon.orchestrator.insert_intake_trigger") as insert:
@@ -201,8 +96,6 @@ class TestConfiguredFloors:
             )
         priorities = [c.kwargs["priority"] for c in insert.call_args_list]
         assert priorities == ["medium", "low", "unknown"]
-        # Offered for investigation, never widened into the response queue.
-        assert queue.empty()
 
     @pytest.mark.asyncio
     async def test_processor_does_not_investigate_a_dismissal_or_a_left_out_band(self):

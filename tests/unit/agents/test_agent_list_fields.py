@@ -157,7 +157,7 @@ def test_runs_success_and_level_from_phases_and_chats(throwaway_database, monkey
     monkeypatch.setattr(manager_module, "_read_assignments", lambda: {})
     monkeypatch.setattr("core.agents.run_stats.utcnow", lambda: NOW)
 
-    def phase(run, phase_id, agent, status, started):
+    def phase(run, phase_id, agent, status, started, approval_state=None):
         return WorkflowRunPhase(
             run_id=run,
             phase_id=phase_id,
@@ -165,6 +165,7 @@ def test_runs_success_and_level_from_phases_and_chats(throwaway_database, monkey
             agent_id=agent,
             status=status,
             started_at=started,
+            approval_state=approval_state,
         )
 
     def turn(conv, seq, role, complete, at):
@@ -195,6 +196,10 @@ def test_runs_success_and_level_from_phases_and_chats(throwaway_database, monkey
                 phase("al-run", "d", "triage", "completed", EDGE - SECOND),
                 phase("al-run", "e", "triage", "running", NOW),
                 phase("al-run", "f", "triage", "completed", None),
+                # a step a person rejected is a decision, not a failed run
+                phase(
+                    "al-run", "g", "triage", "failed", NOW, approval_state="rejected"
+                ),
                 Conversation(id="al-conv", agent_id="triage"),
                 Conversation(id="al-anon", agent_id=None),
             ]
@@ -213,7 +218,8 @@ def test_runs_success_and_level_from_phases_and_chats(throwaway_database, monkey
         row = {r["id"]: r for r in AgentManager().get_agent_list()}
         triage = row["triage"]
         # Phases: completed x2, failed x1. Chat: complete x1, incomplete x1.
-        assert triage["runs_7d"] == 5
+        # the rejected step is a run, but not in the rate
+        assert triage["runs_7d"] == 6
         assert triage["success_rate"] == pytest.approx(3 / 5)
         assert triage["success_level"] == "poor"
         reporter = row["reporter"]

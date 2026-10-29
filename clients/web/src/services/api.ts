@@ -947,7 +947,7 @@ export const workflowApi = {
     hypothesis_subjects?: Record<string, string[]>
     iterations?: number
     approve_hypotheses?: boolean
-  }) => api.post(`/workflows/${id}/execute`, params, { timeout: LLM_TIMEOUT }),
+  }) => api.post<{ run_id?: string; case_id?: string }>(`/workflows/${id}/execute`, params, { timeout: LLM_TIMEOUT }),
   /** Reads an attached file on the server and keeps nothing. Over 64 KB it is condensed, and says so on line one. */
   readHuntDocument: (file: File) => {
     const form = new FormData()
@@ -1034,6 +1034,8 @@ export const autonomyApi = {
 }
 
 export const orchestratorApi = {
+  // AutoOps on or off, for the banners and the status line.
+  getStatus: () => api.get<{ enabled?: boolean }>('/orchestrator/status'),
   kill: () => api.post('/orchestrator/kill'),
   purgeAll: () => api.post('/orchestrator/investigations/purge'),
 }
@@ -1496,8 +1498,10 @@ export const mfaApi = {
     api.post<Schema<'RecoveryCodesResponse'>>('/auth/mfa/verify', {
       code,
     } satisfies Schema<'MFAVerifyRequest'>),
-  regenerateRecoveryCodes: () =>
-    api.post<Schema<'RecoveryCodesResponse'>>('/auth/mfa/recovery-codes'),
+  regenerateRecoveryCodes: (code: string) =>
+    api.post<Schema<'RecoveryCodesResponse'>>('/auth/mfa/recovery-codes', {
+      code,
+    } satisfies Schema<'MFAVerifyRequest'>),
   // axios sends a DELETE body only through `data`
   disable: (code: string) =>
     api.delete<{ message: string }>('/auth/mfa', {

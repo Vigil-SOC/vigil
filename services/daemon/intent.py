@@ -2,7 +2,7 @@
 
 Run from a shell without a daemon:  python -m services.daemon.intent
 
-``--replay`` re-decides recent findings and approval actions under the
+``--replay`` re-decides recent approval actions under the
 declared manifest and the effective config, and prints the rows whose
 outcome would differ. Read-only.
 
@@ -36,13 +36,9 @@ from core.intent import (
     read_intent,
 )
 from core.response.ceiling import environment_locks_act, try_read_stored_ceiling
-from core.response.config import (
-    ResponseConfig,
-    approval_requirement,
-    response_action_decision,
-)
+from core.response.config import ResponseConfig, approval_requirement
 from core.storage.connection import get_db_manager
-from core.storage.models import ApprovalAction, Finding
+from core.storage.models import ApprovalAction
 from core.time import utcnow
 from services.daemon.config import CeilingConfig, DaemonConfig
 
@@ -180,14 +176,6 @@ def parse_since(text: str) -> timedelta:
 
 
 @dataclass(frozen=True)
-class ReplayFinding:
-    id: str
-    severity: str
-    confidence: float
-    recommended: str
-
-
-@dataclass(frozen=True)
 class ReplayApproval:
     id: str
     confidence: float
@@ -210,11 +198,9 @@ class ReplayReport:
     rows: List[ReplayDiff]
     actions_now_requiring_approval: int
     actions_now_unattended: int
-    findings_gained_or_lost: int
 
 
 def replay_decisions(
-    findings: Sequence[ReplayFinding],
     approvals: Sequence[ReplayApproval],
     effective: ResponseConfig,
     declared: ResponseConfig,
@@ -223,30 +209,6 @@ def replay_decisions(
     rows: List[ReplayDiff] = []
     now_require = 0
     now_unattended = 0
-    gained_or_lost = 0
-    for finding in findings:
-        eff = response_action_decision(
-            finding.severity, finding.confidence, finding.recommended, effective
-        )
-        dec = response_action_decision(
-            finding.severity, finding.confidence, finding.recommended, declared
-        )
-        eff_action = eff[0] if eff else None
-        dec_action = dec[0] if dec else None
-        if eff_action == dec_action:
-            continue
-        if (eff_action is None) != (dec_action is None):
-            gained_or_lost += 1
-        rows.append(
-            ReplayDiff(
-                kind="finding",
-                id=finding.id,
-                effective=eff_action or "none",
-                declared=dec_action or "none",
-                effective_rule=eff[1] if eff else "",
-                declared_rule=dec[1] if dec else "",
-            )
-        )
     for action in approvals:
         eff_req, eff_rule = approval_requirement(
             effective.force_manual_approval,
@@ -280,7 +242,6 @@ def replay_decisions(
         rows=rows,
         actions_now_requiring_approval=now_require,
         actions_now_unattended=now_unattended,
-        findings_gained_or_lost=gained_or_lost,
     )
 
 
@@ -293,62 +254,24 @@ def format_replay(report: ReplayReport) -> List[str]:
             f"{row.kind} {row.id}: effective={row.effective}{effective_rule} "
             f"declared={row.declared}{declared_rule}"
         )
-    findings = report.findings_gained_or_lost
-    finding_noun = "finding" if findings == 1 else "findings"
     actions = report.actions_now_requiring_approval
     action_noun = "action" if actions == 1 else "actions"
     lines.append(
         "summary: "
         f"{actions} {action_noun} would have required approval that did not, "
-        f"{report.actions_now_unattended} would have executed unattended that waited, "
-        f"{findings} {finding_noun} would have gained or lost a response action"
+        f"{report.actions_now_unattended} would have executed unattended that waited"
     )
     return lines
 
 
-def load_replay_rows(
-    since: timedelta,
-) -> tuple[List[ReplayFinding], List[ReplayApproval]]:
-    """Findings and approval actions created inside the window."""
+def load_replay_rows(since: timedelta) -> List[ReplayApproval]:
+    """Approval actions created inside the window."""
     cutoff = utcnow() - since
-    findings: List[ReplayFinding] = []
     approvals: List[ReplayApproval] = []
     db = get_db_manager()
     if db._engine is None:
         db.initialize()
     with db.session_scope() as session:
-        finding_rows = (
-            session.execute(
-                select(Finding)
-                .where(Finding.created_at >= cutoff)
-                .order_by(Finding.created_at.asc())
-            )
-            .scalars()
-            .all()
-        )
-        for finding in finding_rows:
-            enrichment = (
-                finding.ai_enrichment if isinstance(finding.ai_enrichment, dict) else {}
-            )
-            if enrichment.get("triage_confidence") is None:
-                continue
-            try:
-                confidence = float(enrichment["triage_confidence"])
-            except (TypeError, ValueError):
-                logger.warning(
-                    "finding %s: triage_confidence %r is not a number; skipped",
-                    finding.finding_id,
-                    enrichment.get("triage_confidence"),
-                )
-                continue
-            findings.append(
-                ReplayFinding(
-                    id=finding.finding_id,
-                    severity=str(finding.severity or "medium").lower(),
-                    confidence=confidence,
-                    recommended=str(enrichment.get("recommended_action") or "").lower(),
-                )
-            )
         action_rows = (
             session.execute(
                 select(ApprovalAction)
@@ -366,7 +289,7 @@ def load_replay_rows(
                     reversibility=action.reversibility,
                 )
             )
-    return findings, approvals
+    return approvals
 
 
 def _report_main() -> int:
@@ -397,10 +320,8 @@ def _replay_main(since_text: str) -> int:
         return 1
     effective = effective_daemon_config(DaemonConfig.from_env())
     proposed = declared_daemon_config(effective, declared)
-    findings, approvals = load_replay_rows(since)
-    report = replay_decisions(
-        findings, approvals, effective.response, proposed.response
-    )
+    approvals = load_replay_rows(since)
+    report = replay_decisions(approvals, effective.response, proposed.response)
     print(f"{path}: replay since {since_text}")
     for line in format_replay(report):
         print(line)
@@ -413,7 +334,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "--replay",
         action="store_true",
-        help="re-decide recent findings and approval actions under declared intent",
+        help="re-decide recent approval actions under declared intent",
     )
     parser.add_argument(
         "--since",

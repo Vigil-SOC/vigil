@@ -13,7 +13,6 @@ import {
   CASES_CHANGED,
   CASE_PAGE_LIMIT,
   INITIAL_CASE_FILTERS,
-  CLOSURE_CATEGORIES,
   isCaseStatus,
   type CaseFilters,
   type CaseStatus,
@@ -31,6 +30,7 @@ import { useToast } from '../../shell/toast'
 import { inputCls } from './CaseSections'
 import { CasePage } from './CasePage'
 import { errorDetail } from './caseFormat'
+import { ClosureFields, closurePayload, closureProblem, type ClosureCategory } from './ClosureFields'
 import { LATER_RELEASE } from '../../shared/later'
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1)
@@ -117,7 +117,12 @@ export default function CasesScreen({ setViewFull, viewFull, openCase, caseSeed,
   // the full page is a ?case=<id> param, so it is deep-linkable; rows open the drawer instead
   const [searchParams, setSearchParams] = useSearchParams()
   const selected = searchParams.get('case')
-  const [filters, setFilters] = useState(INITIAL_CASE_FILTERS)
+  // ?state=closed and ?needs_you=1 open the list on that chip, so an Overview count can link to it
+  const [filters, setFilters] = useState<CaseFilters>(() => ({
+    ...INITIAL_CASE_FILTERS,
+    state: searchParams.get('state') === 'closed' ? 'closed' : '',
+    needsYou: searchParams.get('needs_you') === '1',
+  }))
   const backToList = useCallback(() => setSearchParams({}), [setSearchParams])
 
   useEffect(() => {
@@ -683,10 +688,6 @@ function NewCaseDialog({ open, onClose, onCreated }: { open: boolean; onClose: (
   )
 }
 
-/** What a closer says a Case turned out to be. `duplicate` is bookkeeping rather
- *  than a determination, so it records a category and mints no verdict. */
-type ClosureCategory = (typeof CLOSURE_CATEGORIES)[number]['value']
-
 function EditCaseDialog({ open, c, onClose, onSaved }: { open: boolean; c: CaseRow | null; onClose: () => void; onSaved: () => void }) {
   const [title, setTitle] = useState('')
   const [priority, setPriority] = useState('medium')
@@ -719,12 +720,8 @@ function EditCaseDialog({ open, c, onClose, onSaved }: { open: boolean; c: CaseR
   const submit = async () => {
     if (!c) return
     if (!title.trim()) { setErr('Title is required.'); return }
-    // The determination the epic exists for. "It is benign" with nothing behind it
-    // is the one claim nobody can weigh later, so it is the one reason required.
-    if (closing && category === 'false_positive' && !reason.trim()) {
-      setErr('Say why this is a false positive — it becomes the reason on the record.')
-      return
-    }
+    const problem = closing ? closureProblem(category, reason) : null
+    if (problem) { setErr(problem); return }
     setBusy(true)
     setErr('')
     try {
@@ -742,13 +739,7 @@ function EditCaseDialog({ open, c, onClose, onSaved }: { open: boolean; c: CaseR
       // Second, so a close that fails leaves the edits saved and the Case open,
       // rather than closed under a title that never landed.
       if (closing) {
-        const said = reason.trim() || undefined
-        await casesApi.closeCase(c.id, {
-          closure_category: category,
-          ...(category === 'false_positive'
-            ? { false_positive_reason: said }
-            : { closure_notes: said }),
-        })
+        await casesApi.closeCase(c.id, closurePayload(category, reason))
       }
       onSaved()
       onClose()
@@ -778,32 +769,7 @@ function EditCaseDialog({ open, c, onClose, onSaved }: { open: boolean; c: CaseR
             ]} />
           </label>
         </div>
-        {closing && (
-          <>
-            <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
-              <span>What it turned out to be</span>
-              <Select value={category} onSelect={(v) => setCategory(v as ClosureCategory)} options={[...CLOSURE_CATEGORIES]} />
-            </label>
-            <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
-              <span>{category === 'false_positive' ? 'Why it is benign' : 'Reason'}</span>
-              <textarea
-                className={inputCls}
-                rows={3}
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder={category === 'false_positive'
-                  ? 'The scanner runs from that host every Sunday…'
-                  : 'Optional — what a reader should know about how this ended.'}
-                style={{ resize: 'vertical' }}
-              />
-              <span className="text-[11.5px] font-normal normal-case tracking-normal text-tx-3 leading-[1.45]">
-                {category === 'duplicate'
-                  ? 'Recorded on the case as bookkeeping. A duplicate is not a finding about the estate, so it adds nothing to memory.'
-                  : 'Kept as the reason on the record, and read back as why this case ended.'}
-              </span>
-            </label>
-          </>
-        )}
+        {closing && <ClosureFields category={category} reason={reason} onCategory={setCategory} onReason={setReason} />}
         <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
           <span>Assignee</span>
           <input className={inputCls} placeholder="name or email" value={assignee} onChange={(e) => setAssignee(e.target.value)} />
@@ -924,6 +890,7 @@ export function CasesDetail({
     useCaseDetail(id)
   const { hasPermission } = useAuth()
   const canDelete = hasPermission('cases.delete')
+  const canWrite = hasPermission('cases.write')
   const [action, setAction] = useState<'edit' | 'merge' | 'delete' | null>(null)
   // a list left mounted behind the drawer reloads on this
   const onChanged = () => { reloadDetail(); notifyCasesChanged() }
@@ -949,6 +916,7 @@ export function CasesDetail({
         onMerge={() => setAction('merge')}
         onDelete={() => setAction('delete')}
         canDelete={canDelete}
+        canWrite={canWrite}
         onChanged={onChanged}
         onRefresh={refresh}
       />

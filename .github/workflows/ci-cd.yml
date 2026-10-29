@@ -674,44 +674,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.lock
 
-      - name: Enable Postgres extensions
-        run: |
-          PGPASSWORD=test psql -h localhost -p 5432 -U test -d deeptempo_test \
-            -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
-
       - name: Initialize schema
-        # Strict here, and only here: CI provisions from empty, so a schema that
-        # cannot serve the models at this point is a provisioning bug rather
-        # than a stale deployment (#562). Scoped to the step rather than the job
-        # so it does not change how every test in the job behaves.
+        # As every install builds it: python -m core.upgrade as the owner (test
+        # is the service's superuser). The baseline brings the extensions, the
+        # agent-layer tables, the vigil_app role and the default rows. A fresh
+        # database has nothing to restore, so the acknowledgement stands in for
+        # a restore point. Then init_database() strict, and only here: a schema
+        # that cannot serve the models is a provisioning bug rather than a stale
+        # deployment (#562). Scoped to the step so it does not change how every
+        # test in the job behaves.
         env:
-          DB_STRICT_SCHEMA: "true"
+          VIGIL_UPGRADE_ACK_REASON: CI-fresh-database
         run: |
-          python - <<'PY'
-          from core.storage.connection import (
-              get_db_manager,
-              init_database,
-              seed_reference_tables,
-              stamp_schema_head,
-          )
-          manager = get_db_manager()
-          manager.initialize()
-          manager.create_tables()
-          seed_reference_tables(manager)
-          stamp_schema_head(manager.engine)
-          init_database()
-          PY
-
-      # The agent layer's tables are raw SQL with no ORM model, deliberately:
-      # Python makes two reads against the ledger and a model invites writes.
-      # create_tables() builds from the models, so it creates none of them.
-      - name: Apply agent-layer schema
-        run: |
-          PGPASSWORD=test psql -h localhost -p 5432 -U test -d deeptempo_test \
-            -f infra/database/init/19_agent_ledger.sql \
-            -f infra/database/init/31_agent_ledger_hash_chain.sql \
-            -f infra/database/init/20_agent_directives.sql \
-            -f infra/database/init/21_agent_run_leases.sql
+          VIGIL_UPGRADE_ACK_VERSION="$(tr -d '[:space:]' < VERSION)" python -m core.upgrade
+          DB_STRICT_SCHEMA=true python -c "from core.storage.connection import init_database; init_database()"
 
       - name: Install restic and pg_dump
         # backup create shells out to both. pg_dump's major must be at least the
@@ -852,33 +828,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.lock
 
-      - name: Enable Postgres extensions
-        run: |
-          PGPASSWORD=test psql -h localhost -p 5432 -U test -d deeptempo_test \
-            -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
-
       - name: Initialize schema
-        # Strict here, and only here: CI provisions from empty, so a schema that
-        # cannot serve the models at this point is a provisioning bug rather
-        # than a stale deployment (#562). Scoped to the step rather than the job
-        # so it does not change how every test in the job behaves.
+        # As every install builds it: python -m core.upgrade as the owner (test
+        # is the service's superuser). The baseline brings the extensions, the
+        # agent-layer tables, the vigil_app role and the default rows. A fresh
+        # database has nothing to restore, so the acknowledgement stands in for
+        # a restore point. Then init_database() strict, and only here: a schema
+        # that cannot serve the models is a provisioning bug rather than a stale
+        # deployment (#562). Scoped to the step so it does not change how every
+        # test in the job behaves.
         env:
-          DB_STRICT_SCHEMA: "true"
+          VIGIL_UPGRADE_ACK_REASON: CI-fresh-database
         run: |
-          python - <<'PY'
-          from core.storage.connection import (
-              get_db_manager,
-              init_database,
-              seed_reference_tables,
-              stamp_schema_head,
-          )
-          manager = get_db_manager()
-          manager.initialize()
-          manager.create_tables()
-          seed_reference_tables(manager)
-          stamp_schema_head(manager.engine)
-          init_database()
-          PY
+          VIGIL_UPGRADE_ACK_VERSION="$(tr -d '[:space:]' < VERSION)" python -m core.upgrade
+          DB_STRICT_SCHEMA=true python -c "from core.storage.connection import init_database; init_database()"
 
       - name: Run DB-backed unit tests
         run: |
@@ -889,7 +852,7 @@ jobs:
   # ============================================================================
   # Helm Install Schema — does a fresh chart install end with every ORM table?
   # ============================================================================
-  # The jobs above run create_all() as the database owner, so they cannot see
+  # The jobs above build and test as the database owner, so they cannot see
   # what a Helm install does. There the post-install Job is the only schema
   # writer: helm_upgrade.py install runs python -m core.upgrade as the owner,
   # then sets vigil_app's password. The backend starts as vigil_app and only
@@ -1056,13 +1019,11 @@ jobs:
               check_schema_drift,
               get_db_manager,
               init_database,
-              seed_reference_tables,
           )
 
           manager = get_db_manager()
           manager.initialize()
           manager.create_tables()
-          seed_reference_tables(manager)
           check_schema_drift(manager, provisioned=True)
           init_database()
           PY
@@ -1091,10 +1052,9 @@ jobs:
           PY
 
       - name: Default rows are seeded
-        # seed_reference_tables fills the default SLA policies and case templates
-        # into empty tables (#1246), and logs rather than fails when it cannot,
-        # so only a count shows an install left without them. The
-        # expected count is one row per INSERT the backend's seeder finds, so a
+        # The upgrade baseline writes the default SLA policies and case
+        # templates (#1246); only a count shows an install left without them.
+        # The expected count is one row per INSERT in the seed file, so a
         # multi-row VALUES default would need this to count rows instead.
         env:
           POSTGRES_USER: vigil_app

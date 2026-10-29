@@ -70,13 +70,11 @@ class FindingProcessor:
         response_config: Optional[ResponseConfig] = None,
     ):
         self.config = config
-        # The queue-for-response line is the band's review threshold, so the
-        # processor reads the same ResponseConfig the responder does (#916).
+        # The intake line is the band's review threshold (#916).
         self.response_config = response_config or ResponseConfig.from_settings()
         # Bounded so a stalled processor holds producers back (put blocks)
         # instead of piling findings up in memory.
         self.input_queue: asyncio.Queue = asyncio.Queue(maxsize=INPUT_QUEUE_MAXSIZE)
-        self._response_queue: Optional[asyncio.Queue] = None
 
         # Services (lazy loaded)
         self._data_service = None
@@ -107,7 +105,6 @@ class FindingProcessor:
             "triaged": 0,
             "enriched": 0,
             "errors": 0,
-            "queued_for_response": 0,
             "queued_for_investigation": 0,
             "sanitization_flagged": 0,
             "store_dropped": 0,
@@ -159,10 +156,6 @@ class FindingProcessor:
                 "patterns": sorted(set(patterns)),
             },
         )
-
-    def set_response_queue(self, queue: asyncio.Queue):
-        """Set the queue for findings requiring response."""
-        self._response_queue = queue
 
     def _init_services(self):
         """Initialize required services."""
@@ -430,7 +423,7 @@ class FindingProcessor:
                     self.stats["errors"] += 1
 
         # A known-answer probe stops here (#923): it exists to exercise the
-        # triage path and must never reach the responder or the orchestrator,
+        # triage path and must never reach the orchestrator,
         # whatever triage did or failed to do above.
         if finding.get("data_source") == PROBE_DATA_SOURCE:
             return
@@ -851,8 +844,8 @@ REASONING: [Brief explanation]
             confidence = float(fields.get("CONFIDENCE") or "")
         except ValueError:
             confidence = None
-        # Out of [0, 1] (or NaN) is not a confidence; leaving it unset keeps the
-        # responder's default, which sits below every action threshold.
+        # Out of [0, 1] (or NaN) is not a confidence; leaving it unset keeps
+        # the default, which sits below every action threshold.
         if confidence is not None and 0.0 <= confidence <= 1.0:
             triage_result["confidence"] = confidence
             finding["triage_confidence"] = confidence
@@ -1095,29 +1088,15 @@ REASONING: [Brief explanation]
         recommended_action = finding.get("recommended_action", "").lower()
         confidence = finding.get("triage_confidence", 0.5)
 
-        # Queue for response if high severity or action recommended
+        # Offer to intake if high severity or action recommended
         should_respond = (
             severity in ["critical", "high"]
             or recommended_action in ["isolate", "block"]
             or confidence >= self.response_config.review_threshold
         )
 
-        if should_respond and self._response_queue:
-            await self._response_queue.put(
-                {
-                    "type": "response_candidate",
-                    "finding": finding,
-                    "timestamp": utcnow().isoformat(),
-                }
-            )
-            self.stats["queued_for_response"] += 1
-            logger.info(
-                f"Finding {finding.get('finding_id')} queued for response evaluation"
-            )
-
         # A threat-intel feed hit (stamped by _enrich_finding) offers the same
-        # Finding to intake as a detection, but never widens the response queue
-        # above: containment stays on Gate 1 alone.
+        # Finding to intake as a detection.
         feed_hit = bool((finding.get("enrichment") or {}).get("threat_indicators"))
 
         from services.daemon.orchestrator import (
@@ -1125,9 +1104,8 @@ REASONING: [Brief explanation]
             intake_severity_band,
         )
 
-        # Every severity the install investigates is offered too, below the
-        # response gate, unless triage said to dismiss it. Severity then ranks
-        # it in the queue; it does not decide whether it is looked at.
+        # Every severity the install investigates is offered too, unless triage
+        # said to dismiss it. Severity then ranks it in the queue; it does not decide whether it is looked at.
         band = intake_severity_band("detection", finding_severity=severity)
         by_severity = (
             band in self.config.investigate_severities

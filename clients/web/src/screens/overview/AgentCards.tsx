@@ -15,12 +15,15 @@ function fmtRate(rate: number | null): string {
   return `${(rate * 100).toFixed(1)}%`
 }
 
+/** The name links to the workflow on Agents & workflows; the link covers the card. */
 function AgentCard({ agent }: { agent: OverviewAgent }) {
   const doing = agent.current_step ? `${agent.running} running · ${agent.current_step}` : `${agent.running} running`
   const measured = agent.sample_size > 0 && agent.level !== null
   return (
     <div role="listitem" className={`ov-agent${agent.level === 'fair' || agent.level === 'poor' ? ` ${agent.level}` : ''}`}>
-      <b title={agent.name}>{agent.name}</b>
+      <b title={agent.name}>
+        <Link className="ov-agent-open" to={`/workflows?workflow=${encodeURIComponent(agent.workflow_id)}`}>{agent.name}</Link>
+      </b>
       <span className="ov-agent-doing" title={doing}>{doing}</span>
       <div className="ov-agent-rate">
         {measured ? (

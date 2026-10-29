@@ -182,6 +182,8 @@ export interface HypothesisStanding extends RecordStanding {
 // A reader may ask for more than EVIDENCE_SHOWN rows, to page back through a long hunt.
 export interface ProjectionOptions {
   evidence_limit?: number;
+  // The read's clock, for wall time used on a live run. Tests pin it.
+  now?: number;
 }
 
 export function huntProjection(runId: string, events: readonly HuntEvent[], options: ProjectionOptions = {}): HuntProjection {

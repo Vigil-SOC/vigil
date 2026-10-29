@@ -1104,21 +1104,24 @@ def verify_mfa(
 @limiter.limit("5/minute", key_func=session_rate_key)
 def regenerate_recovery_codes(
     request: Request,
+    body: MFAVerifyRequest,
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: UnitOfWorkSession,
 ):
     """
     Generate a fresh set of one-time MFA recovery codes, invalidating any
-    previous codes. Requires MFA to already be set up.
+    previous codes. Requires MFA to be enabled and a current TOTP or
+    recovery code.
 
     Returns:
         The new plaintext recovery codes, shown only once.
     """
-    codes = AuthService.get_mfa_recovery_codes(current_user.user_id, session)
+    raise_if_locked(current_user)
+    codes = AuthService.get_mfa_recovery_codes(current_user.user_id, body.code, session)
     if codes is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="MFA is not set up for this user",
+            detail="Invalid MFA code or MFA is not enabled",
         )
     _record_mfa(session, request, current_user, "auth.recovery_codes_regenerated")
 

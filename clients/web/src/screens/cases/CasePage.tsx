@@ -24,6 +24,7 @@ import { EvidenceTrail, MergedEvidenceTrail } from './EvidenceTrail'
 import { RunNotes, RunTag } from './RunTag'
 import { BlindSpots, CheckedList, blindSpotsOf } from './RunChecks'
 import { EvidenceCard, IOCsCard } from './CaseSections'
+import { CloseCaseDialog } from './ClosureFields'
 import { CaseSide } from './CaseSide'
 import { caseCitations, evidenceInNote } from './caseCitations'
 import type { Citation } from '../../shell/citations'
@@ -948,6 +949,7 @@ export function CasePage({
   onMerge,
   onDelete,
   canDelete,
+  canWrite,
   onChanged,
   onRefresh,
 }: {
@@ -973,6 +975,8 @@ export function CasePage({
   onMerge: () => void
   onDelete: () => void
   canDelete: boolean
+  /** cases.write: the close route and the status PATCH Reopen uses both need it. */
+  canWrite: boolean
   onChanged: () => void
   /** Re-read the case in place, without blanking it. Used while the run is live. */
   onRefresh?: () => void
@@ -996,6 +1000,7 @@ export function CasePage({
   const [recStatus, setRecStatus] = useState<{ level: Level; text: string } | null>(null)
   const recStatusTicket = useRef(0)
   const [busy, setBusy] = useState(false)
+  const [closing, setClosing] = useState(false)
   const canReadAudit = useAuth().hasPermission('audit.read')
   const [needsItems, setNeedsItems] = useState<NeedsYouItem[]>([])
   const [needsCount, setNeedsCount] = useState(0)
@@ -1552,9 +1557,11 @@ export function CasePage({
                     <button type="button" className="btn" disabled title={LATER_RELEASE}>Agree</button>
                     <button type="button" className="btn" disabled title={LATER_RELEASE}>Disagree</button>
                     <span className="case-assess-later">{LATER_RELEASE}</span>
-                    <div className="case-actions">
-                      <button className="btn" onClick={reopen} disabled={busy}>Reopen</button>
-                    </div>
+                    {canWrite && (
+                      <div className="case-actions">
+                        <button className="btn" onClick={reopen} disabled={busy}>Reopen</button>
+                      </div>
+                    )}
                   </div>
                 </section>
                 {startedCard}
@@ -1564,6 +1571,11 @@ export function CasePage({
             ) : (
               <>
                 {needsBlock}
+                {canWrite && (
+                  <div className="case-actions">
+                    <button type="button" className="btn" onClick={() => setClosing(true)}>Close case</button>
+                  </div>
+                )}
                 {verdict && <VerdictBlock verdict={verdict} card />}
                 {startedCard}
                 {running && <NowCard fold={fold} phase={foldPhase} watch={watch} />}
@@ -1715,6 +1727,7 @@ export function CasePage({
             </section>
           )}
           {tab === 'Summary' && note && <p className="muted">{note}</p>}
+          <CloseCaseDialog open={closing} id={id} onClose={() => setClosing(false)} onClosed={onChanged} />
         </div>
 
         <aside className="case-side" aria-label="Case details">

@@ -76,6 +76,7 @@ def _finding(finding_id: str, severity: str, **kw) -> None:
                 entity_context=kw.get("entity_context"),
                 ai_enrichment=kw.get("ai_enrichment"),
                 created_at=kw.get("created_at", NOW),
+                noise_marked_at=kw.get("noise_marked_at"),
             )
         )
 
@@ -263,7 +264,10 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
 
     assert all("tr-" not in row["state_label"] for row in payload["rows"])
     counts = payload["counts"]
-    assert counts["total"] == sum(counts["state"].values())
+    # the intake states partition the rows; "dismissed" counts across them
+    assert counts["total"] == sum(
+        n for name, n in counts["state"].items() if name != "dismissed"
+    )
     added = _added(before, counts)
     assert added["total"] == 7
     assert added["state"] == {"queued": 1, "launched": 3, "merged": 2, "expired": 1}
@@ -556,3 +560,26 @@ def test_each_alert_shows_the_verdict_triage_saved_and_nothing_it_did_not():
     }
     assert rows[ids["none"]]["triage"] == {"state": "none"}
     assert rows[ask]["triage"] is None
+
+
+def test_dismissed_lists_the_rows_whose_alert_was_marked_as_noise(client):
+    before = _counts()
+    _finding("tr-noise", "low", data_source="tr-noise-src", noise_marked_at=NOW)
+    _finding("tr-kept", "low", data_source="tr-noise-src")
+    noise = _trigger(state="expired", finding_id="tr-noise", decided_at=NOW)
+    kept = _trigger(state="expired", finding_id="tr-kept", decided_at=NOW)
+
+    counts = _counts()
+    assert _added(before, counts)["state"] == {"expired": 2, "dismissed": 1}
+
+    response = client.get("/api/triage", params={"state": "dismissed"})
+    assert response.status_code == 200
+    narrowed = response.json()
+    assert narrowed["matched"] == counts["state"]["dismissed"]
+    ids = {row["id"] for row in narrowed["rows"]}
+    assert noise in ids and kept not in ids
+    # the row still says what intake did with it
+    assert _by_id(narrowed)[noise]["state"] == "expired"
+    # and it narrows with the other filters
+    both = triage_payload(now=NOW, day=DAY, state="dismissed", source="tr-noise-src")
+    assert [row["id"] for row in both["rows"]] == [noise]
