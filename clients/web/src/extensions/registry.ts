@@ -106,5 +106,11 @@ export async function fetchManifest(
     return null
   }
   manifest.render = { ...manifest.render, bundleUrl }
+  // The badge logo resolves the same way; one from another origin is dropped,
+  // not the connector, so the chip falls back to its icon.
+  if (manifest.badge?.logo) {
+    const logo = resolveUrl(base, manifest.badge.logo)
+    manifest.badge = { ...manifest.badge, logo: sameOrigin(logo, base) ? logo : undefined }
+  }
   return { integrationId, connectorUrl: base, manifest }
 }

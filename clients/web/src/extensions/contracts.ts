@@ -39,6 +39,9 @@ interface ExtensionBadge {
   color?: string
   /** host IconName; unknown names fall back to neutral */
   icon?: string
+  /** vendor logo image, shown in place of `icon`; may be relative to the
+   *  connector base, and must share its origin */
+  logo?: string
 }
 
 export interface ExtensionManifest {

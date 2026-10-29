@@ -1,5 +1,6 @@
 import { getAllIntegrations } from '../../config/integrations'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
+import type { IconName } from '../../shared/icons'
 
 export const SERVER_TO_INTEGRATION = new Map(Object.entries({
   'aws-security': 'aws-security-hub',
@@ -17,6 +18,11 @@ export function getIntegrationForServer(serverName: string): IntegrationMetadata
   const id = SERVER_TO_INTEGRATION.get(serverName) ?? serverName
   return getAllIntegrations().find((i) => i.id === id)
 }
+
+/** A server's vendor logo, from its catalog entry. Unlike getIntegrationForServer,
+ *  the official `splunk` card has one: the logo names the vendor, not the form. */
+export const logoForServer = (serverName: string) =>
+  getAllIntegrations().find((i) => i.id === (SERVER_TO_INTEGRATION.get(serverName) ?? serverName))?.logo
 
 export const WIP_SERVERS = new Set([
   'carbon-black', 'hybrid-analysis', 'anyrun',
@@ -47,25 +53,30 @@ export const SERVER_DISPLAY_NAMES = new Map(Object.entries({
 
 interface McpCategory {
   label: string
+  /** the neutral mark of a vendor with no logo (PRD D6) */
+  icon: IconName
   servers: string[]
 }
 
 /** Display categories, in order. A server matches the first category whose
     `servers` list contains it; anything unmatched lands in "Other". */
 export const MCP_CATEGORIES: McpCategory[] = [
-  { label: 'Internal / Platform', servers: ['security-detections'] },
-  { label: 'DeepTempo', servers: ['loglm'] },
-  { label: 'Reference Servers', servers: ['github'] },
-  { label: 'EDR / XDR', servers: ['crowdstrike', 'sentinelone', 'carbon-black', 'microsoft-defender'] },
-  { label: 'SIEM / Data Lake', servers: ['splunk', 'splunk-selfhosted', 'elastic', 'opensearch', 'azure-sentinel', 'gcp-secops', 'cribl-stream'] },
-  { label: 'Threat Intelligence', servers: ['virustotal', 'gcp-threat-intel', 'shodan', 'alienvault-otx', 'misp', 'firecrawl', 'cloudforce_one'] },
-  { label: 'Cloud Security', servers: ['aws-security', 'gcp-scc', 'palo-alto'] },
-  { label: 'Identity & Access', servers: ['okta', 'azure-ad'] },
-  { label: 'Network Security', servers: ['vstrike', 'cloudflare'] },
-  { label: 'Incident Management', servers: ['jira', 'pagerduty', 'slack', 'microsoft-teams'] },
-  { label: 'Sandbox / Analysis', servers: ['joe-sandbox', 'hybrid-analysis', 'anyrun', 'url-analysis', 'ip-geolocation', 'cape-sandbox'] },
-  { label: 'Adversary Emulation', servers: ['atomic-red-team'] },
+  { label: 'Internal / Platform', icon: 'grid', servers: ['security-detections'] },
+  { label: 'DeepTempo', icon: 'brain', servers: ['loglm'] },
+  { label: 'Reference Servers', icon: 'doc', servers: ['github'] },
+  { label: 'EDR / XDR', icon: 'shield', servers: ['crowdstrike', 'sentinelone', 'carbon-black', 'microsoft-defender'] },
+  { label: 'SIEM / Data Lake', icon: 'search', servers: ['splunk', 'splunk-selfhosted', 'elastic', 'opensearch', 'azure-sentinel', 'gcp-secops', 'cribl-stream'] },
+  { label: 'Threat Intelligence', icon: 'target', servers: ['virustotal', 'gcp-threat-intel', 'shodan', 'alienvault-otx', 'misp', 'firecrawl', 'cloudforce_one'] },
+  { label: 'Cloud Security', icon: 'cloud', servers: ['aws-security', 'gcp-scc', 'palo-alto'] },
+  { label: 'Identity & Access', icon: 'user', servers: ['okta', 'azure-ad'] },
+  { label: 'Network Security', icon: 'globe', servers: ['vstrike', 'cloudflare'] },
+  { label: 'Incident Management', icon: 'alert', servers: ['jira', 'pagerduty', 'slack', 'microsoft-teams'] },
+  { label: 'Sandbox / Analysis', icon: 'eye', servers: ['joe-sandbox', 'hybrid-analysis', 'anyrun', 'url-analysis', 'ip-geolocation', 'cape-sandbox'] },
+  { label: 'Adversary Emulation', icon: 'bolt', servers: ['atomic-red-team'] },
 ]
+
+/** The neutral icon for a category; anything unlisted ("Other") gets a plain link. */
+export const categoryIcon = (label: string): IconName => MCP_CATEGORIES.find((c) => c.label === label)?.icon ?? 'link'
 
 export const SERVER_DESCRIPTIONS = new Map(Object.entries({
   firecrawl: 'Web search and page retrieval for an investigation. Retrieved pages are scrubbed and delimited before a model sees them — a page is data, not direction.',

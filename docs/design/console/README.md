@@ -45,7 +45,7 @@ The six `SettingsSessions` scenes `team-signins`, `team-end-one`, `team-end-all`
 
 ## Assets
 
-`assets/logos/` holds the Vigil lockups (dark and light), app icon and mark, the DeepTempo shield (colour and mono), and `vendors/` (CloudTrail, Okta, Splunk). Per PRD D6 these ship into `clients/web/src/assets/vendors/` and the integration catalog gets a `logo` field; a vendor without a logo here shows a category icon with its name. `assets/icons/` holds the 82-icon line set (24 viewBox, 1.8 stroke, `currentColor`) with `icons.json`.
+`assets/logos/` holds the Vigil lockups (dark and light), app icon and mark, the DeepTempo shield (colour and mono), and `vendors/` (vendor marks for the integration catalog; each file's source is in its README). Per PRD D6 these ship into `clients/web/src/assets/vendors/` and the integration catalog gets a `logo` field; a vendor without a logo here shows a category icon with its name. `assets/icons/` holds the 82-icon line set (24 viewBox, 1.8 stroke, `currentColor`) with `icons.json`.
 
 Fonts: Plus Jakarta Sans 400–700 and Roboto Mono 400–500. The boards load them from Google Fonts; production self-hosts them (PRD epic 1).
 

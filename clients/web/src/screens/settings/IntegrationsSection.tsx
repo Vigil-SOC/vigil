@@ -15,6 +15,7 @@ import {
   SERVER_DESCRIPTIONS,
   SERVER_DISPLAY_NAMES,
   WIP_SERVERS,
+  logoForServer,
   prettyServerName,
   INTEGRATIONS_DESC,
   tabFromQuery,
@@ -26,6 +27,7 @@ import AddIntegrationTab from './AddIntegrationTab'
 import AuditFeedCard from './AuditFeedCard'
 import { buildCatalog } from './integrationCatalog'
 import CustomIntegrationBuilder from './CustomIntegrationBuilder'
+import IntegrationMark from './IntegrationMark'
 import IntegrationWizard from './IntegrationWizard'
 import McpSurfacePanel from './McpSurfacePanel'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
@@ -284,12 +286,17 @@ export default function IntegrationsSection({ notify }: SectionProps) {
             {connected.map((r) => (
               <tr key={r.name}>
                 <td>
-                  <span className="int-name">
-                    {displayName(r.name)}
-                    {WIP_SERVERS.has(r.name) && <span className="chip int-wip">WIP</span>}
-                    {EXPERIMENTAL_SERVERS.has(r.name) && <span className="chip int-exp" title={EXPERIMENTAL_NOTE}>Experimental</span>}
-                  </span>
-                  <span className="int-sub">{categoryOf(r.name)}</span>
+                  <div className="int-ident">
+                    <IntegrationMark logo={logoForServer(r.name)} category={categoryOf(r.name)} />
+                    <div>
+                      <span className="int-name">
+                        {displayName(r.name)}
+                        {WIP_SERVERS.has(r.name) && <span className="chip int-wip">WIP</span>}
+                        {EXPERIMENTAL_SERVERS.has(r.name) && <span className="chip int-exp" title={EXPERIMENTAL_NOTE}>Experimental</span>}
+                      </span>
+                      <span className="int-sub">{categoryOf(r.name)}</span>
+                    </div>
+                  </div>
                 </td>
                 <td>
                   {r.level ? <LevelBadge level={r.level} variant="pill" /> : <span className="int-neutral">{r.word}</span>}
