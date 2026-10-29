@@ -37,24 +37,17 @@ async def test_clear_all_cases_denied_without_permission(monkeypatch):
     monkeypatch.setattr(
         AuthService, "check_permission", staticmethod(lambda *a, **k: False)
     )
-    calls = []
-
-    class _Svc:
-        def record_audit(self, **kwargs):
-            calls.append(kwargs)
-
-    monkeypatch.setattr(cases, "get_config_service", lambda user_id="system": _Svc())
-
+    session = MagicMock()
     with pytest.raises(HTTPException) as exc:
         # The permission check must reject before the session is touched.
         await cases.clear_all_cases(
-            session=MagicMock(),
+            session=session,
             background_tasks=BackgroundTasks(),
             current_user=_User("analyst-1"),
         )
 
     assert exc.value.status_code == 403
-    assert calls == []
+    session.query.assert_not_called()
 
 
 @pytest.mark.asyncio

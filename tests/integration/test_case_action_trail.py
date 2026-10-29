@@ -3,7 +3,9 @@
 A signed-in comment writes one ``audit_trail`` row and no ``case_audit_logs``
 row. A failed append leaves the comment uncommitted, and an approval the same
 way: the row stays pending. The audit reader's filter sees the row, and so
-do the case record and the case's export, by ``case_id`` (#3308).
+do the case record and the case's export, by ``case_id`` (#3308). Edits,
+assignments, journal lines, deletes and purges of the case row append the
+same way (#3403).
 """
 
 from __future__ import annotations
@@ -14,18 +16,23 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
 from core.audit import trail
-from core.cases import case_records_service, case_trail
+from core.auth.tool_principal import Claims, bound_claims
+from core.cases import case_journal_service, case_records_service, case_trail
+from core.cases.agent_closure import clear_http_actor, note_http_actor
 from core.cases.case_attachment_service import attach_document
-from core.cases.case_record import merge_record
 from core.cases.case_collaboration_service import CaseCollaborationService
 from core.cases.case_evidence_service import CaseEvidenceService
+from core.cases.case_record import merge_record
 from core.cases.case_workflow_service import CaseWorkflowService
 from core.response.approval_service import ApprovalService
 from core.storage.connection import get_db_manager, get_db_session
-from core.storage.models import CaseAuditLog
+from core.storage.database_data_service import DatabaseDataService
+from core.storage.models import Case, CaseAuditLog
+from core.storage.service import DatabaseService
 from tests.integration.test_upgrade_command import _run, _scratch
 
-pytestmark = [pytest.mark.integration, pytest.mark.database]
+# Direct service calls stand in for a signed-in request, not a tool call.
+pytestmark = [pytest.mark.integration, pytest.mark.database, pytest.mark.unbound]
 
 
 @pytest.fixture(scope="module")
@@ -74,6 +81,18 @@ def db(engine):
             )
         )
         conn.execute(text("UPDATE audit_trail_anchor SET seq = 0, entry_hash = ''"))
+        conn.execute(
+            text(
+                "INSERT INTO cases (case_id, title, description, timeline) "
+                "VALUES ('c-1', 'Hunt', '', '[]'::jsonb) ON CONFLICT DO NOTHING"
+            )
+        )
+        conn.execute(
+            text(
+                "UPDATE cases SET status = 'open', priority = 'medium', "
+                "assignee = NULL, activities = '[]'::jsonb WHERE case_id = 'c-1'"
+            )
+        )
     try:
         yield engine
     finally:
@@ -421,3 +440,208 @@ def test_entries_name_each_principal_and_mark_deleted_and_erased(db):
         ("Grace", "person", True, False, "Ada", said),
         (None, "person", False, True, "Ada", said),
     ]
+
+
+@pytest.fixture
+def ada():
+    """Signed in as ada, as get_current_user notes her for the request."""
+    note_http_actor(username="ada", principal_id="prin-ada", via="cookie", person=True)
+    try:
+        yield
+    finally:
+        clear_http_actor()
+
+
+def _data(monkeypatch) -> DatabaseDataService:
+    monkeypatch.setattr(
+        "core.storage.database_data_service.is_demo_mode", lambda: False
+    )
+    data = DatabaseDataService()
+    data._db_service, data._db_connected = DatabaseService(), True
+    return data
+
+
+def _case(engine, column):
+    with engine.connect() as conn:
+        return conn.execute(
+            text(f"SELECT {column} FROM cases WHERE case_id = 'c-1'")
+        ).scalar_one()
+
+
+def _verified(engine):
+    with sessionmaker(bind=engine)() as session:
+        return trail.verify(session).ok
+
+
+@pytest.mark.usefixtures("ada")
+def test_a_status_change_is_one_entry_and_a_repeat_is_none(db):
+    service = DatabaseService()
+    assert service.update_case("c-1", status="investigating") is True
+    assert service.update_case("c-1", status="investigating") is True
+
+    rows = _payloads(db)
+    assert len(rows) == 1
+    payload, actor_text, operator_text = rows[0]
+    assert payload == {
+        "action": "case.status",
+        "actor": "prin-ada",
+        "case_id": "c-1",
+        "changed": ["status"],
+        "status": "investigating",
+    }
+    assert (actor_text, operator_text) == ("ada", None)
+    assert _verified(db)
+    with sessionmaker(bind=db)() as session:
+        (entry,) = trail.read(session, trail.make_query(object_ref="c-1"))
+        assert entry["sentence"] == "Changed status to Investigating"
+
+
+@pytest.mark.usefixtures("ada")
+def test_an_assignment_names_the_principal_and_keeps_the_name_beside(db):
+    assert DatabaseService().update_case("c-1", assignee="ada") is True
+    assert DatabaseService().update_case("c-1", assignee=None) is True
+
+    (assigned, *_), (unassigned, *_) = _payloads(db)
+    assert assigned["action"] == "case.assign"
+    assert assigned["assignee"] == "prin-ada"
+    assert "ada" not in assigned.values()
+    assert _payloads(db)[0][2] == "ada"
+    assert unassigned["unassigned"] is True
+    assert _verified(db)
+
+
+@pytest.mark.usefixtures("ada")
+def test_a_journal_append_is_one_entry_and_one_record_row(db, monkeypatch):
+    entry = case_journal_service.append_activity(
+        _data(monkeypatch), "c-1", "note", "Isolated the host"
+    )
+
+    assert entry is not None
+    (payload, actor_text, operator_text), *more = _payloads(db)
+    assert more == []
+    assert payload["action"] == "case.journal"
+    assert payload["activity"] == 0
+    assert "Isolated the host" not in payload.values()
+    assert operator_text == "Isolated the host"
+    with sessionmaker(bind=db)() as session:
+        activities = session.get(Case, "c-1").activities
+        entries = case_records_service.list_case_trail(session, "c-1")
+        rows = merge_record([], [], activities, trail=entries)
+    assert [(r["kind"], r["text"]) for r in rows] == [
+        ("human", "Ada added to the journal — Isolated the host")
+    ]
+    assert _verified(db)
+
+
+def test_an_agent_tool_update_is_the_agents_on_behalf_of_the_person(db):
+    from core.integrations.mcp.surface import acting_as
+
+    claims = Claims(
+        username="ada",
+        person_id="prin-ada",
+        agent_id="agent:hunt",
+        run_id=None,
+        origin="person",
+    )
+    with acting_as("ada"), bound_claims(claims):
+        assert DatabaseService().update_case("c-1", priority="high") is True
+
+    (payload, actor_text, _), *more = _payloads(db)
+    assert more == []
+    assert payload == {
+        "action": "case.priority",
+        "actor": "agent:hunt",
+        "case_id": "c-1",
+        "on_behalf_of": "prin-ada",
+        "changed": ["priority"],
+        "priority": "high",
+    }
+    assert actor_text == "agent:hunt"
+    assert _verified(db)
+
+
+@pytest.mark.usefixtures("ada")
+def test_a_refused_append_leaves_the_case_unchanged(db, monkeypatch):
+    _fail(monkeypatch)
+
+    with pytest.raises(case_trail.TrailWriteError):
+        DatabaseService().update_case("c-1", status="investigating")
+    with pytest.raises(case_trail.TrailWriteError):
+        case_journal_service.append_activity(_data(monkeypatch), "c-1", "note", "lost")
+
+    assert _case(db, "status") == "open"
+    assert _case(db, "activities") == []
+    assert _count(db, "audit_trail") == 0
+
+
+@pytest.mark.usefixtures("ada")
+def test_a_close_is_the_close_entry_alone(db):
+    assert DatabaseService().update_case("c-1", status="closed") is True
+    assert _payloads(db) == []
+
+
+@pytest.mark.usefixtures("ada")
+def test_a_delete_and_a_purge_are_one_entry_each(db):
+    with db.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO cases (case_id, title, description, timeline) VALUES "
+                "('c-2', 'Phish', '', '[]'::jsonb), ('c-3', 'Beacon', '', '[]'::jsonb)"
+            )
+        )
+    with sessionmaker(bind=db)() as session, session.begin():
+        assert case_records_service.delete_case(session, "c-2") == []
+    with sessionmaker(bind=db)() as session, session.begin():
+        assert case_records_service.purge_all_cases(session).cases == 2
+
+    deleted, purged = _payloads(db)
+    assert deleted[0] == {
+        "action": "case.delete",
+        "actor": "prin-ada",
+        "case_id": "c-2",
+    }
+    assert deleted[2] == "Phish"
+    assert purged[0] == {
+        "action": "case.purge",
+        "actor": "prin-ada",
+        "count": 2,
+        "killed_investigations": 0,
+    }
+    assert _count(db, "config_audit_log") == 0
+    assert _verified(db)
+
+
+def test_a_paused_trail_answers_503_and_leaves_the_case(db, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from fastapi.testclient import TestClient
+
+    from core.api.v1 import cases_router
+    from services.api import main as backend_main
+    from services.api.middleware import auth as auth_module
+
+    monkeypatch.setattr(cases_router, "data_service", _data(monkeypatch))
+    monkeypatch.setattr(
+        "core.auth.auth_service.AuthService.check_permission",
+        lambda *args, **kwargs: True,
+    )
+    until = datetime.now(timezone.utc) + timedelta(seconds=30)
+
+    def paused(*_args, **_kwargs):
+        raise trail.Paused(1, until)
+
+    monkeypatch.setattr(trail, "append", paused)
+    app = backend_main.app
+    with sessionmaker(bind=db)() as session:
+        user = session.query(auth_module.User).filter_by(username="ada").one()
+    app.dependency_overrides[auth_module.get_current_user] = lambda: user
+    try:
+        response = TestClient(app).patch(
+            "/api/v1/cases/c-1", json={"status": "investigating"}
+        )
+    finally:
+        app.dependency_overrides.pop(auth_module.get_current_user, None)
+
+    assert response.status_code == 503
+    assert int(response.headers["Retry-After"]) >= 1
+    assert _case(db, "status") == "open"

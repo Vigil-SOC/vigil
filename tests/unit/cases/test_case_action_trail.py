@@ -22,7 +22,8 @@ from core.response import ceiling
 from core.response.approval_service import AlreadyDecided, ApprovalService
 from core.storage.models import CaseAuditLog, CaseComment, CaseEvidence
 
-pytestmark = pytest.mark.unit
+# Direct service calls stand in for a signed-in request, not a tool call.
+pytestmark = [pytest.mark.unit, pytest.mark.unbound]
 
 
 @pytest.fixture(autouse=True)

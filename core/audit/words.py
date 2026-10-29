@@ -51,6 +51,12 @@ def _checkpoint(p: Mapping[str, Any]) -> str:
 
 
 def _upgrade(p: Mapping[str, Any]) -> str:
+    to = f" to {p['to']}" if p.get("to") else ""
+    outcome = p.get(trail.OUTCOME)
+    if outcome == "refused":
+        return f"The upgrade{to} was refused"
+    if outcome == "failed":
+        return f"The upgrade{to} failed"
     if p.get("from") and p.get("to"):
         return f"Upgraded from {p['from']} to {p['to']}"
     return f"Upgraded to {p['to']}" if p.get("to") else "Ran an upgrade"
@@ -66,6 +72,27 @@ def _case_history(p: Mapping[str, Any]) -> str:
     if done is None:
         return f"Recorded {_word(verb) or 'a change'} on the {entity}"
     return f"{done} {field} on the {entity}" if field else f"{done} the {entity}"
+
+
+def _to(field: str) -> Callable[[Mapping[str, Any]], str]:
+    def said(p: Mapping[str, Any]) -> str:
+        value = _word(p.get(field)).capitalize()
+        return f"Changed {field} to {value}" if value else f"Changed {field}"
+
+    return said
+
+
+def _assign(p: Mapping[str, Any]) -> str:
+    return "Unassigned the case" if p.get("unassigned") else "Assigned the case"
+
+
+def _findings(verb: str, key: str) -> Callable[[Mapping[str, Any]], str]:
+    def said(p: Mapping[str, Any]) -> str:
+        ids = p.get(key)
+        n = len(ids) if isinstance(ids, list) else 0
+        return f"{verb} {n} findings" if n > 1 else f"{verb} a finding"
+
+    return said
 
 
 def _investigation_log(p: Mapping[str, Any]) -> str:
@@ -122,6 +149,18 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "case.evidence": "Attached a file to the case",
     "case.escalate": "Escalated the case",
     "case.close": "Closed the case",
+    "case.create": "Opened the case",
+    "case.status": _to("status"),
+    "case.priority": _to("priority"),
+    "case.assign": _assign,
+    "case.edit": lambda p: "Edited the case" + _fields(p.get("changed")),
+    "case.findings.link": _findings("Linked", "linked"),
+    "case.findings.unlink": _findings("Unlinked", "unlinked"),
+    "case.journal": "Added to the journal",
+    "case.resolution_step": "Added a resolution step",
+    "case.delete": "Deleted the case",
+    "case.purge": lambda p: "Deleted every case"
+    + (f" ({p['count']})" if p.get("count") else ""),
     "approval.approve": _approve,
     "approval.reject": "Rejected an action",
     # Old audit stores copied on upgrade (0018_legacy_audit_copy)
