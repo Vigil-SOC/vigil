@@ -14,7 +14,6 @@ from core.intent import (
     HIGHER_TIGHTER,
     INTENT_FIELDS,
     LOWER_TIGHTER,
-    SHORTER_TIGHTER,
     diff_intent,
     effective_values,
     label,
@@ -103,13 +102,6 @@ def test_fresh_checkout_reports_no_differences(offline_config, caplog, monkeypat
     [
         (HIGHER_TIGHTER, 0.95, 0.90, "tighten"),
         (HIGHER_TIGHTER, 0.85, 0.90, "loosen"),
-        (SHORTER_TIGHTER, ["critical"], ["critical", "high"], "tighten"),
-        (
-            SHORTER_TIGHTER,
-            ["critical", "high", "medium"],
-            ["critical", "high"],
-            "loosen",
-        ),
         (LOWER_TIGHTER, 2.0, 5.0, "tighten"),
         (LOWER_TIGHTER, 10.0, 5.0, "loosen"),
         (LOWER_TIGHTER, False, True, "tighten"),
@@ -117,18 +109,10 @@ def test_fresh_checkout_reports_no_differences(offline_config, caplog, monkeypat
         (HIGHER_TIGHTER, True, False, "tighten"),  # four_eyes
         (HIGHER_TIGHTER, False, True, "loosen"),
         (LOWER_TIGHTER, 0.9, 0.9, "same"),
-        (SHORTER_TIGHTER, ["high", "critical"], ["critical", "high"], "same"),
-        (SHORTER_TIGHTER, ["critical", "medium"], ["critical", "high"], "same"),
     ],
 )
 def test_label(rule, declared, effective, expected):
     assert label(rule, declared, effective) == expected
-
-
-def test_reordered_or_recased_severities_are_not_a_difference():
-    config = DaemonConfig()
-    declared = {"escalate.severities": ["HIGH", "critical", "high"]}
-    assert diff_intent(declared, effective_values(config), {}) == []
 
 
 @pytest.mark.parametrize(
@@ -136,7 +120,7 @@ def test_reordered_or_recased_severities_are_not_a_difference():
     [
         ("triage.auto_triage", 1),
         ("respond.confidence_threshold", "0.95"),
-        ("escalate.severities", "critical"),
+        ("triage.auto_triage", ["critical"]),
         ("investigate.enabled", None),
     ],
 )

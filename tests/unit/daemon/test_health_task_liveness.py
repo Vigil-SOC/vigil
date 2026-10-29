@@ -13,7 +13,7 @@ from services.daemon.metrics import MetricsServer
 
 pytestmark = pytest.mark.unit
 
-NAMES = ("poller", "kafka", "processor", "responder", "scheduler", "orchestrator")
+NAMES = ("poller", "kafka", "processor", "executor", "scheduler", "orchestrator")
 
 
 async def _forever():
@@ -26,7 +26,7 @@ async def _server(**overrides):
     server.poller = SimpleNamespace()
     server.kafka_ingestor = SimpleNamespace()
     server.processor = SimpleNamespace()
-    server.responder = SimpleNamespace()
+    server.executor = SimpleNamespace()
     server.scheduler = SimpleNamespace()
     server.orchestrator = SimpleNamespace(enabled=False)
     for name in NAMES:

@@ -1,4 +1,4 @@
-"""What-if replay of response decisions under declared intent (#1064).
+"""What-if replay of approval decisions under declared intent (#1064).
 
 The pure functions and the diff need no Postgres. ``main`` without ``--replay``
 keeps the observe-mode report.
@@ -11,15 +11,10 @@ from pathlib import Path
 import pytest
 
 from core.intent import IntentDiff, format_rows
-from core.response.config import (
-    ResponseConfig,
-    approval_requirement,
-    response_action_decision,
-)
+from core.response.config import ResponseConfig, approval_requirement
 from services.daemon.config import DaemonConfig
 from services.daemon.intent import (
     ReplayApproval,
-    ReplayFinding,
     declared_daemon_config,
     effective_daemon_config,
     format_replay,
@@ -31,42 +26,11 @@ from services.daemon.intent import (
 pytestmark = pytest.mark.unit
 
 
-def _finding(finding_id, severity, confidence, recommended=""):
-    return ReplayFinding(finding_id, severity, confidence, recommended)
-
-
 def _approval(action_id, confidence, reversibility="reversible"):
     return ReplayApproval(action_id, confidence, reversibility)
 
 
 # --- hoisted decisions -------------------------------------------------------
-
-
-def test_response_action_matches_the_live_branches():
-    config = ResponseConfig()
-    assert response_action_decision("critical", 0.70, "", config) == (
-        "isolate",
-        "response.critical_action_floor=0.70 met (0.70)",
-    )
-    assert response_action_decision("critical", 0.69, "", config) is None
-    assert response_action_decision("high", 0.80, "", config)[0] == "investigate"
-    assert response_action_decision("medium", 0.92, "isolate", config) == (
-        "isolate",
-        "response.confidence_threshold=0.90 met (0.92)",
-    )
-    assert response_action_decision("medium", 0.92, "block", config)[0] == "block"
-
-
-def test_raised_floors_move_the_decision():
-    config = ResponseConfig(critical_action_floor=0.90, high_action_floor=0.95)
-    assert response_action_decision("critical", 0.85, "", config) is None
-    assert response_action_decision("high", 0.90, "", config) is None
-    assert response_action_decision("high", 0.79, "", config) is None
-
-
-def test_auto_response_off_is_no_action():
-    config = ResponseConfig(auto_response_enabled=False)
-    assert response_action_decision("critical", 0.99, "isolate", config) is None
 
 
 def test_approval_requirement_matches_the_live_branch():
@@ -104,30 +68,24 @@ def test_unknown_effect_class_raises():
 
 
 def _seeded():
-    findings = [_finding("f-crit", "critical", 0.72)]
-    approvals = [
+    return [
         _approval("a-87", 0.87),
         _approval("a-92", 0.92),
         _approval("a-96", 0.96),
     ]
-    return findings, approvals
 
 
 def test_equal_configs_differ_on_nothing():
-    findings, approvals = _seeded()
-    report = replay_decisions(findings, approvals, ResponseConfig(), ResponseConfig())
+    report = replay_decisions(_seeded(), ResponseConfig(), ResponseConfig())
     assert report.rows == []
     text = "\n".join(format_replay(report))
     assert "0 actions would have required approval that did not" in text
     assert "0 would have executed unattended that waited" in text
-    assert "0 findings would have gained or lost a response action" in text
 
 
 def test_a_raised_threshold_does_not_release_or_hold_an_approval():
-    findings, approvals = _seeded()
     report = replay_decisions(
-        findings,
-        approvals,
+        _seeded(),
         ResponseConfig(),
         ResponseConfig(confidence_threshold=0.95),
     )
@@ -136,38 +94,8 @@ def test_a_raised_threshold_does_not_release_or_hold_an_approval():
     assert report.actions_now_unattended == 0
 
 
-def test_raised_critical_floor_drops_the_finding_action():
-    findings, approvals = _seeded()
-    report = replay_decisions(
-        findings,
-        approvals,
-        ResponseConfig(),
-        ResponseConfig(critical_action_floor=0.75),
-    )
-    assert len(report.rows) == 1
-    row = report.rows[0]
-    assert row.kind == "finding" and row.id == "f-crit"
-    assert row.effective == "isolate"
-    assert row.declared == "none"
-    assert row.effective_rule == "response.critical_action_floor=0.70 met (0.72)"
-    assert report.findings_gained_or_lost == 1
-
-
-def test_auto_response_off_reports_the_finding_losing_its_action():
-    report = replay_decisions(
-        [_finding("f-1", "medium", 0.92, "isolate")],
-        [],
-        ResponseConfig(),
-        ResponseConfig(auto_response_enabled=False),
-    )
-    assert report.rows[0].effective == "isolate"
-    assert report.rows[0].declared == "none"
-    assert report.findings_gained_or_lost == 1
-
-
 def test_loosened_threshold_does_not_run_unattended():
     report = replay_decisions(
-        [],
         [_approval("a-87", 0.87)],
         ResponseConfig(),
         ResponseConfig(confidence_threshold=0.80),
@@ -179,7 +107,6 @@ def test_loosened_threshold_does_not_run_unattended():
 
 def test_same_action_under_a_different_rule_is_not_a_row():
     report = replay_decisions(
-        [],
         [_approval("a-96", 0.96)],
         ResponseConfig(),
         ResponseConfig(confidence_threshold=0.95),
@@ -239,11 +166,11 @@ def test_wrong_type_is_skipped_and_a_sibling_key_still_applies(caplog):
         DaemonConfig(),
         {
             "respond.confidence_threshold": "0.95",
-            "respond.critical_action_floor": 0.75,
+            "respond.review_threshold": 0.75,
         },
     )
     assert declared.response.confidence_threshold == 0.90
-    assert declared.response.critical_action_floor == 0.75
+    assert declared.response.review_threshold == 0.75
     assert any("confidence_threshold" in r.message for r in caplog.records)
 
 

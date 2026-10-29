@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -16,6 +16,7 @@ from core.agents.internal_auth import authorise
 from core.cases.agent_closure import activity_actor
 from core.deps import provide_approvals, provide_mcp_registry, provide_workflow_runs
 from core.integrations.mcp.registry import MCPRegistry
+from core.integrations.pagerduty.page import page_proposed_containment
 from core.response.approval_service import ApprovalService, proposal_case_ids
 from core.response.checkpoints import (
     proposer_principal_id,
@@ -528,7 +529,8 @@ def _proposal(raw: Any) -> Optional[Dict[str, Any]]:
 # case ids in parameters are what put it on each case's decisions. Keyed per run,
 # action and target, so a terminal that arrives twice files each one once; and
 # asked once across cases, so a second case's run joins a pending ask, or is told
-# it was already decided, instead of asking again.
+# it was already decided, instead of asking again. One page per call that files
+# something new.
 def _propose_actions(
     case_id: str,
     run_id: str,
@@ -540,6 +542,7 @@ def _propose_actions(
     service = approvals or ApprovalService()
     proposer = proposer_principal_id(run_id) if proposals else None
     filed: List[str] = []
+    created: List[Tuple[str, str]] = []  # (title, target) newly filed in this call
     for index, raw in enumerate(proposals):
         proposal = _proposal(raw)
         if proposal is None:
@@ -584,9 +587,14 @@ def _propose_actions(
             )
             continue
         filed.append(action.action_id)
+        created.append((title, target))
 
     if filed:
         _record_proposals(case_id, run_id, filed)
+    # Only what this call created: a re-sent terminal, or an ask another run
+    # already made, pages nobody.
+    if created:
+        page_proposed_containment(case_id, run_id, created)
 
 
 # True when another run's proposal already covers this one: a pending ask now

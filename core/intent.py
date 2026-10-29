@@ -30,7 +30,6 @@ DEFAULT_INTENT_FILE = REPO_ROOT / "INTENT.md"
 # declared value over the effective one would do to the daemon's autonomy.
 HIGHER_TIGHTER = "higher_tighter"  # confidence thresholds, four_eyes
 LOWER_TIGHTER = "lower_tighter"  # budgets, auto_* / enabled booleans
-SHORTER_TIGHTER = "shorter_tighter"  # severity lists
 
 
 @dataclass(frozen=True)
@@ -80,18 +79,6 @@ INTENT_FIELDS: Tuple[IntentField, ...] = (
         "daemon_monitor_threshold",
         HIGHER_TIGHTER,
     ),
-    IntentField(
-        "respond.critical_action_floor",
-        "response.critical_action_floor",
-        "daemon_critical_action_floor",
-        HIGHER_TIGHTER,
-    ),
-    IntentField(
-        "respond.high_action_floor",
-        "response.high_action_floor",
-        "daemon_high_action_floor",
-        HIGHER_TIGHTER,
-    ),
     # Act flags: off is tighter. The named settings are the env floor, which
     # can only force them off. four_eyes on is tighter.
     IntentField(
@@ -111,12 +98,6 @@ INTENT_FIELDS: Tuple[IntentField, ...] = (
         "ceiling.four_eyes",
         "daemon_force_approval",
         HIGHER_TIGHTER,
-    ),
-    IntentField(
-        "escalate.severities",
-        "escalation.escalate_severities",
-        "daemon_escalate_severities",
-        SHORTER_TIGHTER,
     ),
     IntentField(
         "investigate.enabled",
@@ -214,14 +195,12 @@ def effective_values(config: Any) -> Dict[str, Any]:
 
 
 def _normalize(value: Any) -> Any:
-    """Comparable form: severity lists as lower-cased sets, numbers as floats.
+    """Comparable form: numbers as floats.
 
     Returns ``None`` for a value of the wrong shape (a quoted number, ``1`` for
-    a boolean, a bare string for a list): YAML is loose and a typo must not
-    become a crash or a silent "no difference".
+    a boolean): YAML is loose and a typo must not become a crash or a silent
+    "no difference".
     """
-    if isinstance(value, (list, tuple)):
-        return frozenset(str(v).lower() for v in value)
     if isinstance(value, bool):
         return value
     if isinstance(value, (int, float)):
@@ -233,12 +212,6 @@ def label(rule: str, declared: Any, effective: Any) -> str:
     declared, effective = _normalize(declared), _normalize(effective)
     if declared == effective:
         return "same"
-    if rule == SHORTER_TIGHTER:
-        # Length, as the issue states the rule; two lists of equal length with
-        # different members are neither direction.
-        if len(declared) == len(effective):
-            return "same"
-        return "tighten" if len(declared) < len(effective) else "loosen"
     if rule == HIGHER_TIGHTER:
         return "tighten" if declared > effective else "loosen"
     if rule == LOWER_TIGHTER:

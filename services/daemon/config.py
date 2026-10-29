@@ -44,23 +44,6 @@ class ProcessingConfig:
 
 
 @dataclass
-class EscalationConfig:
-    enabled: bool = True
-    escalate_severities: List[str] = field(default_factory=lambda: ["critical", "high"])
-    slack_enabled: bool = True
-    slack_channel: str = "#soc-alerts"
-    pagerduty_enabled: bool = False
-    pagerduty_severity_map: dict = field(
-        default_factory=lambda: {
-            "critical": "critical",
-            "high": "error",
-            "medium": "warning",
-            "low": "info",
-        }
-    )
-
-
-@dataclass
 class SchedulerConfig:
     threat_hunt_interval: int = 86400  # Daily (24 hours)
     probes_enabled: bool = True  # known-answer probes (#923)
@@ -114,7 +97,6 @@ class DaemonConfig:
     processing: ProcessingConfig = field(default_factory=ProcessingConfig)
     response: ResponseConfig = field(default_factory=ResponseConfig)
     ceiling: CeilingConfig = field(default_factory=CeilingConfig)
-    escalation: EscalationConfig = field(default_factory=EscalationConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     metrics: MetricsConfig = field(default_factory=MetricsConfig)
     orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
@@ -165,18 +147,6 @@ class DaemonConfig:
         ]
 
         config.response = ResponseConfig.from_settings(settings)
-
-        config.escalation.enabled = settings.daemon_escalation_enabled
-        config.escalation.slack_enabled = (
-            True
-            if settings.daemon_slack_enabled is None
-            else settings.daemon_slack_enabled
-        )
-        config.escalation.slack_channel = settings.daemon_slack_channel
-        config.escalation.pagerduty_enabled = settings.daemon_pagerduty_enabled
-        config.escalation.escalate_severities = list(
-            settings.daemon_escalate_severities
-        )
 
         config.scheduler.threat_hunt_interval = settings.daemon_threat_hunt_interval
         config.scheduler.probes_enabled = settings.daemon_probes_enabled

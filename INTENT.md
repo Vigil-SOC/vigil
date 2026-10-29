@@ -23,15 +23,11 @@ respond:
   # Minimum triage confidence for an unattended response; higher is tighter.
   # (DAEMON_CONFIDENCE_THRESHOLD)
   confidence_threshold: 0.90
-  # Confidence bands the responder decides on below that line; higher is tighter.
-  # Queue for response / correlator "act" line. (DAEMON_REVIEW_THRESHOLD)
+  # Offer a finding to AutoOps intake at or above this; higher is tighter.
+  # (DAEMON_REVIEW_THRESHOLD)
   review_threshold: 0.85
   # Below this, keep monitoring rather than act. (DAEMON_MONITOR_THRESHOLD)
   monitor_threshold: 0.70
-  # Propose isolation for a critical finding at or above this. (DAEMON_CRITICAL_ACTION_FLOOR)
-  critical_action_floor: 0.70
-  # Investigate a high finding at or above this. (DAEMON_HIGH_ACTION_FLOOR)
-  high_action_floor: 0.80
 
 act:
   # Unattended reversible outside action. Off until a person raises it.
@@ -42,11 +38,6 @@ act:
   irreversible: false
   # Two-person rule. Stored on the ceiling and not enforced.
   four_eyes: false
-
-escalate:
-  # Severities that page a human; a shorter list is tighter.
-  # (DAEMON_ESCALATE_SEVERITIES)
-  severities: [critical, high]
 
 investigate:
   # Autonomous investigation orchestrator. (ORCHESTRATOR_ENABLED, or the

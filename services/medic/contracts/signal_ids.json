@@ -23,7 +23,7 @@
   "daemon_status.poller",
   "daemon_status.kafka",
   "daemon_status.processor",
-  "daemon_status.responder",
+  "daemon_status.executor",
   "daemon_status.scheduler",
   "daemon_status.orchestrator",
   "daemon_status.vendors",

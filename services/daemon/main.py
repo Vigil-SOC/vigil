@@ -53,7 +53,7 @@ class SOCDaemon:
         self._poller = None
         self._kafka_ingestor = None
         self._processor = None
-        self._responder = None
+        self._executor = None
         self._scheduler = None
         self._orchestrator = None
         self._metrics_server = None
@@ -96,12 +96,12 @@ class SOCDaemon:
         from core.response.approval_service import ApprovalService
         from core.response.autonomous_response_service import AutonomousResponseService
         from core.storage.connection import get_db_manager
+        from services.daemon.executor import ApprovedActionExecutor
         from services.daemon.kafka_ingestor import KafkaIngestor
         from services.daemon.metrics import MetricsServer
         from services.daemon.orchestrator import Orchestrator
         from services.daemon.poller import DataPoller
         from services.daemon.processor import FindingProcessor
-        from services.daemon.responder import AutonomousResponder
         from services.daemon.scheduler import TaskScheduler
 
         # Resolve the DB credentials now so a missing password stops startup,
@@ -118,13 +118,8 @@ class SOCDaemon:
         set_process_mcp_client(build_mcp_client())
         approvals = ApprovalService(config=self.config.response)
 
-        self._responder = AutonomousResponder(
-            self.config.response,
-            self.config.escalation,
-            response_service=AutonomousResponseService(
-                approvals=approvals, config=self.config.response
-            ),
-            approvals=approvals,
+        self._executor = ApprovedActionExecutor(
+            AutonomousResponseService(approvals=approvals, config=self.config.response)
         )
         self._scheduler = TaskScheduler(self.config.scheduler)
         self._orchestrator = Orchestrator(
@@ -137,14 +132,13 @@ class SOCDaemon:
         # Connect components via queues
         self._poller.set_output_queue(self._processor.input_queue)
         self._kafka_ingestor.set_output_queue(self._processor.input_queue)
-        self._processor.set_response_queue(self._responder.input_queue)
         self._scheduler.set_processor_queue(self._processor.input_queue)
 
         # Wire up metrics server with component references
         self._metrics_server.poller = self._poller
         self._metrics_server.kafka_ingestor = self._kafka_ingestor
         self._metrics_server.processor = self._processor
-        self._metrics_server.responder = self._responder
+        self._metrics_server.executor = self._executor
         self._metrics_server.scheduler = self._scheduler
         self._metrics_server.orchestrator = self._orchestrator
 
@@ -182,8 +176,8 @@ class SOCDaemon:
         if self._processor:
             start("processor", self._processor, "Finding processor")
 
-        if self._responder:
-            start("responder", self._responder, "Autonomous responder")
+        if self._executor:
+            start("executor", self._executor, "Approved-action executor")
 
         if self._scheduler:
             start("scheduler", self._scheduler, "Task scheduler")
