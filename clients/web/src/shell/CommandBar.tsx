@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { useAuth } from '../contexts/AuthContext'
-import api, { casesApi, findingsApi, workflowApi } from '../services/api'
+import { casesApi, findingsApi, searchApi, workflowApi } from '../services/api'
 import { Icon } from '../shared/icons'
 import { useToast } from './toast'
 import type { ConsoleScreenGoOptions } from '../shared/types'
@@ -26,73 +26,13 @@ import {
   tagText,
   writeRecent,
   type BoardLink,
-  type Hit,
   type HuntAttachment,
-  type MatchType,
   type LiveCommandId,
   type PaletteRow,
   type SearchHits,
   useJiraReadiness,
 } from './commandBarModel'
 import { errorText } from '../shared/errorText'
-
-const str = (value: unknown): string | undefined => (typeof value === 'string' && value.trim() ? value : undefined)
-
-function hitFrom(id: unknown, title: unknown, extra?: Partial<Hit>): Hit | null {
-  if (typeof id !== 'string' || !id) return null
-  return { id, title: str(title) ?? id, ...extra }
-}
-
-function casesOf(data: unknown, matchType?: MatchType): Hit[] {
-  const cases = (data as { cases?: unknown } | null)?.cases
-  if (!Array.isArray(cases)) return []
-  return cases
-    .map((item) => {
-      const row = item as { case_id?: unknown; title?: unknown; content?: unknown; name?: unknown; priority?: unknown; status?: unknown; match_type?: unknown }
-      const type = row.match_type === 'case' || row.match_type === 'comment' || row.match_type === 'evidence' || row.match_type === 'alert' ? row.match_type : matchType
-      return hitFrom(row.case_id, row.title ?? row.name ?? row.content, {
-        priority: str(row.priority),
-        status: str(row.status),
-        matchType: type,
-      })
-    })
-    .filter((hit): hit is Hit => hit !== null)
-}
-
-function alertOf(item: unknown): Hit | null {
-  const data = item as { finding_id?: unknown; title?: unknown; data_source?: unknown; severity?: unknown } | null
-  return hitFrom(data?.finding_id, data?.title, { dataSource: str(data?.data_source), severity: str(data?.severity) })
-}
-
-// Below this a trigram index can't serve the match, and an id isn't this short.
-const MIN_SEARCH_CHARS = 3
-
-async function searchAll(query: string, signal: AbortSignal): Promise<SearchHits> {
-  const broad = query.length >= MIN_SEARCH_CHARS
-  const [caseExact, findingExact, text, ioc, alerts] = await Promise.all([
-    casesApi.getById(query, signal).then((res) => {
-      const data = res.data as { priority?: unknown; status?: unknown }
-      return hitFrom(res.data.case_id, res.data.title, { priority: str(data.priority), status: str(data.status) })
-    }).catch(() => null),
-    findingsApi.getById(query, signal).then((res) => alertOf(res.data)).catch(() => null),
-    broad ? api.get('/cases/search/full-text', { params: { query, limit: 5 }, signal }).then((res) => res.data).catch(() => null) : null,
-    broad ? api.get('/cases/search/by-ioc', { params: { ioc_value: query }, signal }).then((res) => res.data).catch(() => null) : null,
-    // Matches entity_context too, so a host, user or IP finds its alerts.
-    broad ? findingsApi.getAll({ search: query, limit: 5 }, signal).then((res) => (res.data as { findings?: unknown })?.findings).catch(() => null) : null,
-  ])
-  const textData = text as { cases?: unknown; comments?: unknown; evidence?: unknown } | null
-  return {
-    caseExact,
-    findingExact,
-    textCases: [
-      ...casesOf(textData, 'case'),
-      ...casesOf({ cases: textData?.comments }, 'comment'),
-      ...casesOf({ cases: textData?.evidence }, 'evidence'),
-    ],
-    iocCases: casesOf(ioc),
-    alertHits: Array.isArray(alerts) ? alerts.map(alertOf).filter((hit): hit is Hit => hit !== null) : [],
-  }
-}
 
 // A disabled button gets no hover, so the tooltip sits on a wrapper.
 function LaterTip({ later, children }: { later: boolean; children: ReactNode }) {
@@ -187,11 +127,11 @@ export default function CommandBar({
     let live = true
     const round = new AbortController()
     const timer = setTimeout(() => {
-      void searchAll(q, round.signal).then((next) => {
+      void searchApi.query(q, round.signal).then((res) => {
         if (!live) return
-        setHits(next)
+        setHits(res.data)
         setActive(0)
-      })
+      }).catch(() => {})
     }, 150)
     return () => {
       live = false
@@ -309,7 +249,10 @@ export default function CommandBar({
     }
     remember(query)
     if (row.dest === 'Case' && row.caseId) onOpenCase(row.caseId)
-    else if (row.dest === 'Page' && row.page) onGo(row.page)
+    else if (row.dest === 'Page' && row.page) {
+      if (row.search) onGo(row.page, { search: row.search })
+      else onGo(row.page)
+    }
     else if (row.dest === 'Alert' && row.findingId) {
       // The popup hands focus back to its opener, which would reopen this menu.
       inputRef.current?.blur()

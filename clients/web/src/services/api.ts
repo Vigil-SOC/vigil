@@ -383,6 +383,12 @@ export const caseSearchApi = {
     api.post<Schema<'CaseSearchResponse'>>('/cases/search', data),
 }
 
+/** The command bar's one search: exact ids, cases, alerts, workflows, agents and skills. */
+export const searchApi = {
+  query: (q: string, signal?: AbortSignal) =>
+    api.get<Schema<'SearchResults'>>('/search', { params: { q }, signal }),
+}
+
 export interface ReloadServersResponse {
   /** false when any server in `failed` could not be reconnected or disconnected */
   success: boolean

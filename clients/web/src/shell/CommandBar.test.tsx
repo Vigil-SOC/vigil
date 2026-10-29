@@ -9,7 +9,7 @@ import { ToastProvider } from './toast'
 import type { BoardLink } from './commandBarModel'
 import shellCss from './shell.css?inline'
 
-const { execute, createCase, deleteCase, readDoc, checkCoverage, attachDocument, getCase, getFinding, findFindings, getIntegrations, exportJira, apiGet } = vi.hoisted(() => ({
+const { execute, createCase, deleteCase, readDoc, checkCoverage, attachDocument, getCase, getFinding, findFindings, getIntegrations, exportJira, apiGet, search } = vi.hoisted(() => ({
   execute: vi.fn((..._args: unknown[]) => Promise.resolve({ data: { run_id: 'run-new', case_id: 'case-new' } })),
   createCase: vi.fn((..._args: unknown[]) => Promise.resolve({ data: { case_id: 'case-new' } })),
   deleteCase: vi.fn((..._args: unknown[]) => Promise.resolve({ data: {} })),
@@ -22,6 +22,7 @@ const { execute, createCase, deleteCase, readDoc, checkCoverage, attachDocument,
   getIntegrations: vi.fn(),
   exportJira: vi.fn(),
   apiGet: vi.fn(),
+  search: vi.fn(),
 }))
 
 vi.mock('../contexts/AuthContext', () => ({
@@ -63,6 +64,7 @@ vi.mock('../services/api', () => ({
   },
   timelineApi: {},
   caseSearchApi: { search: vi.fn() },
+  searchApi: { query: (q: string, signal?: AbortSignal) => search(q, signal) },
   agentsApi: { listAgents: vi.fn(() => Promise.resolve({ data: { agents: [] } })) },
   conversationsApi: {
     list: vi.fn(() => Promise.resolve({ data: { conversations: [] } })),
@@ -173,20 +175,30 @@ beforeEach(() => {
       ? Promise.resolve({ data: { finding_id: 'f-1', title: 'LSASS', data_source: 'CrowdStrike', severity: 'high' } })
       : Promise.reject(new Error('missing finding'))
   ))
-  apiGet.mockImplementation((path: string) => {
-    if (path === '/cases/search/full-text') {
+  apiGet.mockImplementation((path: string) => Promise.reject(new Error(path)))
+  search.mockReset()
+  search.mockImplementation((q: string) => {
+    if (q === 'case') {
       return Promise.resolve({
         data: {
-          cases: [{ case_id: 'case-2', title: 'Loader in mail', match_type: 'case' }],
-          comments: [{ case_id: 'case-4', content: 'Saw it twice', match_type: 'comment' }],
-          evidence: [],
+          case_exact: { id: 'case', title: 'Exact case', priority: 'high', status: 'open' },
+          cases: [
+            { id: 'case-2', title: 'Loader in mail', match_type: 'case' },
+            { id: 'case-4', title: 'Saw it twice', match_type: 'comment' },
+            { id: 'case-3', title: 'Beacon host' },
+          ],
         },
       })
     }
-    if (path === '/cases/search/by-ioc') {
-      return Promise.resolve({ data: { cases: [{ case_id: 'case-3', title: 'Beacon host' }] } })
+    if (q === 'f-1') {
+      return Promise.resolve({
+        data: {
+          finding_exact: { id: 'f-1', title: 'LSASS', data_source: 'CrowdStrike', severity: 'high' },
+          cases: [{ id: 'case-3', title: 'Beacon host' }],
+        },
+      })
     }
-    return Promise.reject(new Error(path))
+    return Promise.resolve({ data: {} })
   })
 })
 
@@ -319,27 +331,25 @@ describe('CommandBar', () => {
       'Real-time SOC performance analytics',
       'Opens chat with your question',
     ])
-    expect(getCase).toHaveBeenCalledWith('case', expect.any(AbortSignal))
-    expect(getFinding).toHaveBeenCalledWith('case', expect.any(AbortSignal))
-    expect(apiGet).toHaveBeenCalledWith('/cases/search/full-text', { params: { query: 'case', limit: 5 }, signal: expect.any(AbortSignal) })
-    expect(apiGet).toHaveBeenCalledWith('/cases/search/by-ioc', { params: { ioc_value: 'case' }, signal: expect.any(AbortSignal) })
+    expect(search).toHaveBeenCalledWith('case', expect.any(AbortSignal))
 
     fireEvent.click(screen.getByRole('option', { name: /Loader in mail/ }))
     expect(onOpenCase).toHaveBeenCalledWith('case-2')
     expect(JSON.parse(localStorage.getItem(RECENTS) || '[]')).toEqual(['case'])
 
-    getCase.mockImplementation(() => new Promise(() => {}))
-    apiGet.mockImplementation(() => new Promise(() => {}))
+    search.mockImplementation(() => new Promise(() => {}))
     fireEvent.change(input, { target: { value: 'other' } })
     expect(screen.queryByRole('option', { name: /Exact case/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('option', { name: /Loader in mail/ })).not.toBeInTheDocument()
   })
 
-  it('runs only the exact-id lookups below three characters', async () => {
+  it('asks the one search and none of the per-kind reads', async () => {
     renderBar()
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'ws' } })
-    await waitFor(() => expect(getCase).toHaveBeenCalledWith('ws', expect.any(AbortSignal)))
-    expect(getFinding).toHaveBeenCalledWith('ws', expect.any(AbortSignal))
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'ws-042' } })
+    await waitFor(() => expect(search).toHaveBeenCalledWith('ws-042', expect.any(AbortSignal)))
+    expect(search).toHaveBeenCalledTimes(1)
+    expect(getCase).not.toHaveBeenCalled()
+    expect(getFinding).not.toHaveBeenCalled()
     expect(apiGet).not.toHaveBeenCalled()
     expect(findFindings).not.toHaveBeenCalled()
   })
@@ -348,8 +358,8 @@ describe('CommandBar', () => {
     renderBar()
     const input = screen.getByRole('combobox')
     fireEvent.change(input, { target: { value: 'ws-04' } })
-    await waitFor(() => expect(getCase).toHaveBeenCalledTimes(1))
-    const first = getCase.mock.calls[0][1] as AbortSignal
+    await waitFor(() => expect(search).toHaveBeenCalledTimes(1))
+    const first = search.mock.calls[0][1] as AbortSignal
     expect(first.aborted).toBe(false)
     fireEvent.change(input, { target: { value: 'ws-042' } })
     expect(first.aborted).toBe(true)
@@ -431,20 +441,37 @@ describe('CommandBar', () => {
 
   it('finds a case and its alert by a host the alert names', async () => {
     const { onOpenCase } = renderBar()
-    apiGet.mockImplementation((path: string) => Promise.resolve({
-      data: path === '/cases/search/by-ioc'
-        ? { cases: [{ case_id: 'case-7', title: 'Finance hunt', priority: 'high', status: 'open', match_type: 'alert' }] }
-        : { cases: [], comments: [], evidence: [] },
-    }))
-    findFindings.mockResolvedValueOnce({ data: { findings: [{ finding_id: 'f-7', title: 'Beacon from host', data_source: 'zeek', severity: 'high' }] } })
+    search.mockResolvedValueOnce({
+      data: {
+        cases: [{ id: 'case-7', title: 'Finance hunt', priority: 'high', status: 'open', match_type: 'alert' }],
+        alerts: [{ id: 'f-7', title: 'Beacon from host', data_source: 'zeek', severity: 'high' }],
+      },
+    })
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'FIN-WS-114' } })
     const caseRow = await screen.findByRole('option', { name: /Finance hunt/ })
-    expect(findFindings).toHaveBeenCalledWith({ search: 'FIN-WS-114', limit: 5 }, expect.any(AbortSignal))
     expect(caseRow.querySelector('.vg-command-desc')).toHaveTextContent('high · open · Matched an alert')
     expect(sections().slice(0, 2)).toEqual(['Cases', 'Alerts'])
     expect(screen.getByRole('option', { name: /Beacon from host/ })).toHaveTextContent('zeek · high')
     fireEvent.click(caseRow)
     expect(onOpenCase).toHaveBeenCalledWith('case-7')
+  })
+
+  it('opens a found workflow, agent or skill in Agents & workflows', async () => {
+    const { onGo } = renderBar()
+    search.mockResolvedValue({
+      data: {
+        workflows: [{ id: 'phishing-response', title: 'Phishing response', description: 'Contain a reported lure' }],
+        agents: [{ id: 'triage', title: 'Triage' }],
+        skills: [{ id: 'phishing-triage', title: 'phishing-triage' }],
+      },
+    })
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'phish' } })
+    const row = await screen.findByRole('option', { name: /Phishing response/ })
+    expect(sections()).toEqual(['Agents & workflows', 'Commands', 'Ask Vigil'])
+    expect(row.querySelector('.vg-command-desc')).toHaveTextContent('Workflow · Contain a reported lure')
+    expect(row.querySelector('.vg-command-dest')).toHaveTextContent('Opens page')
+    fireEvent.click(row)
+    expect(onGo).toHaveBeenCalledWith('workflows', { search: '?workflow=phishing-response' })
   })
 
   it('explains Later rows on hover and skips them with the arrow keys', () => {
