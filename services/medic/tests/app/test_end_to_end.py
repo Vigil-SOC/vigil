@@ -31,6 +31,7 @@ JSON_REPLIES = {
     "/_gw/status": b'{"state":"ok","since":0}',
     "/containers/json": b"[]",
     "/api/federation/sources": b'{"sources":[],"global":{"enabled":false}}',
+    "/api/llm/providers": b"[]",
     "/api/triage": b'{"sources":[]}',
     "/api/v1/findings": b'{"findings":[]}',
     "/api/kafka/status": b'{"enabled":false,"daemon_reachable":true}',
