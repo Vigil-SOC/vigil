@@ -26,8 +26,11 @@ export function layoutOutcomes(counts: number[], H: number) {
     k = lo
   }
   const th = thick(k)
-  const slots = th.map((t) => Math.max(slotMin, t + 2 * OUT_GAP))
-  let at = OUT_PAD + Math.max(0, (avail - slots.reduce((n, x) => n + x, 0)) / 2)
+  // Spare height is shared out between the rows, so they still spread over the board as before.
+  const rowNeed = th.map((t) => Math.max(slotMin, t + 2 * OUT_GAP))
+  const spare = Math.max(0, avail - rowNeed.reduce((n, x) => n + x, 0)) / Math.max(1, counts.length)
+  const slots = rowNeed.map((h) => h + spare)
+  let at = OUT_PAD
   const ys = slots.map((h) => {
     const y = at + h / 2
     at += h

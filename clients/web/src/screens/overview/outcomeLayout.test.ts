@@ -29,6 +29,8 @@ describe('layoutOutcomes', () => {
       const { th, ys } = layoutOutcomes([100, 100, 100, 100, 100, 100, 100], H)
       expect(overlaps(th, ys)).toBe(false)
       expect(ys[ys.length - 1]).toBeLessThanOrEqual(H - 20)
+      expect(ys[0]).toBeLessThanOrEqual(60) // the rows spread over the board rather than bunching in the middle
+      expect(ys[ys.length - 1]).toBeGreaterThanOrEqual(H - 60)
     }
   })
 
