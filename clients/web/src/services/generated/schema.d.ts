@@ -1382,8 +1382,8 @@ export interface paths {
          * Recheck Key
          * @description Run the express probe again for one key, ignoring the cached verdict.
          *
-         *     The following routability read hits that fresh cache entry, so the page
-         *     does not call the model a second time.
+         *     The express probe is cached on the key, so the following routability read
+         *     rebuilds the shared snapshot without calling the model a second time.
          */
         post: operations["post_api_bifrost_routability_recheck_key_id"];
         delete?: never;

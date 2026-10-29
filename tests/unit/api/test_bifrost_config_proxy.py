@@ -160,7 +160,9 @@ def test_vertex_api_key_edit_without_stored_scope_asks_for_it(monkeypatch):
     from fastapi import HTTPException
 
     monkeypatch.setattr(
-        proxy, "get_secret", lambda ref: "AQ.express-key" if ref == "llm_key_v3" else None
+        proxy,
+        "get_secret",
+        lambda ref: "AQ.express-key" if ref == "llm_key_v3" else None,
     )
     with pytest.raises(HTTPException) as exc:
         proxy._resolve_key_value({"vertex_key_config": {}}, "v3", "vertex")
@@ -278,7 +280,10 @@ def test_saving_a_host_allows_private_network_and_clearing_drops_both():
 
 @pytest.mark.unit
 def test_clearing_nothing_leaves_a_seeded_private_flag_alone():
-    seeded = {**_DOC, "network_config": {**_DOC["network_config"], "allow_private_network": True}}
+    seeded = {
+        **_DOC,
+        "network_config": {**_DOC["network_config"], "allow_private_network": True},
+    }
     out = proxy._merge_base_url(seeded, {"network_config": {"base_url": ""}})
     assert out["network_config"]["allow_private_network"] is True
 
@@ -460,7 +465,10 @@ def test_editing_a_custom_provider_url_keeps_its_custom_block(monkeypatch):
     doc = {
         **_DOC,
         "name": "lan-vllm",
-        "network_config": {"base_url": "http://10.0.0.5:8000", "allow_private_network": True},
+        "network_config": {
+            "base_url": "http://10.0.0.5:8000",
+            "allow_private_network": True,
+        },
         "custom_provider_config": {"base_provider_type": "openai", "is_key_less": True},
     }
     gw = _FakeGateway(doc)
@@ -514,3 +522,68 @@ def test_a_custom_provider_cannot_lose_its_host_or_its_custom_block(monkeypatch)
     )
     assert cleared.status_code == unset.status_code == 400
     assert gw.writes == []
+
+
+def _warm_routability_snapshot():
+    from core.llm.bifrost import path_health
+
+    path_health.reset()
+    path_health._answer = (
+        0.0,
+        {
+            "routability": {"providers": {}, "keys": {}},
+            "routability_error": None,
+            "vk": None,
+            "quota": None,
+            "quota_error": None,
+        },
+    )
+    return path_health
+
+
+@pytest.mark.unit
+def test_an_accepted_key_write_drops_the_routability_snapshot(monkeypatch):
+    path_health = _warm_routability_snapshot()
+    _mirrored(monkeypatch)
+    res = _client(monkeypatch, _FakeGateway({})).post(
+        "/api/bifrost/providers/anthropic/keys",
+        json={"name": "k", "value": "sk-test"},
+    )
+    assert res.status_code == 200
+    assert path_health._answer is None
+
+
+@pytest.mark.unit
+def test_a_refused_key_write_keeps_the_routability_snapshot(monkeypatch):
+    path_health = _warm_routability_snapshot()
+    _mirrored(monkeypatch)
+    res = _client(monkeypatch, _FakeGateway({})).post(
+        "/api/bifrost/providers/anthropic/keys",
+        json={"name": "k"},
+    )
+    assert res.status_code == 400
+    assert path_health._answer is not None
+
+
+@pytest.mark.unit
+def test_recheck_drops_the_routability_snapshot(monkeypatch):
+    path_health = _warm_routability_snapshot()
+
+    async def routability():
+        return {
+            "keys": {
+                "k1": {
+                    "provider": "vertex",
+                    "routable": True,
+                    "health": "healthy",
+                }
+            }
+        }
+
+    monkeypatch.setattr(proxy.mirror, "routability", routability)
+    monkeypatch.setattr(proxy.mirror, "invalidate_express_probe", lambda key_id: None)
+    res = _client(monkeypatch, _FakeGateway({})).post(
+        "/api/bifrost/routability/recheck/k1"
+    )
+    assert res.status_code == 200
+    assert path_health._answer is None

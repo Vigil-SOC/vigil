@@ -1,9 +1,10 @@
 /* The overview's states (loading, empty, error, populated) and the one rule that
    matters: only the chat_default row asks before it saves. */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { BifrostProvider } from '../../services/bifrostApi'
 import AiModelsOverview from './AiModelsOverview'
+import { PICK_AGENT_MODEL } from './modelPrompt'
 
 const bifrost = vi.fn()
 const assignment = vi.fn()
@@ -479,5 +480,18 @@ describe('reset to defaults', () => {
     expect(rowOf('Triage agent').querySelector('.aim-model')).not.toBeNull()
     fireEvent.click(resetButton())
     expect(rowOf('Triage agent').querySelector('.aim-model')).toBeNull()
+  })
+
+  it('opens Chat’s editor when a saved key asks to pick a model', () => {
+    const reload = vi.fn()
+    assignment.mockReturnValue(assignmentsReady({ assignments: {}, reload }))
+    mount()
+    expect(within(rowOf('Chat (Ask Vigil)')).getByText('Not set')).toBeTruthy()
+    act(() => {
+      window.dispatchEvent(new Event(PICK_AGENT_MODEL))
+    })
+    expect(reload).toHaveBeenCalled()
+    expect(within(rowOf('Chat (Ask Vigil)')).getByRole('button', { name: 'Cancel' })).toBeTruthy()
+    expect(within(rowOf('Chat (Ask Vigil)')).getByText('Select provider')).toBeTruthy()
   })
 })

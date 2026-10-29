@@ -8,6 +8,7 @@ import { CONSOLE_TOUR_SEEN_KEY } from './consoleTourSeen'
 import { SETUP_HIDDEN_KEY } from '../screens/home/setupHidden'
 import { NAV } from '../data/data'
 import { notifyAutonomyChanged } from '../screens/settings/useSettings'
+import { ROUTABILITY_CHANGED } from '../screens/settings/routabilityChanged'
 // these resolve to the mocked implementations (vi.mock below is hoisted)
 import { streamFetch, approvalsApi, autonomyApi, workflowApi, casesApi, configApi, consoleApi, overviewApi, timelineApi } from '../services/api'
 
@@ -1389,6 +1390,19 @@ describe('SocConsole', () => {
     const line = await screen.findByRole('status', { name: 'System status' })
     expect(line).toHaveAttribute('data-level', 'good')
     expect(line).not.toHaveTextContent('No routable provider.')
+  })
+
+  it('clears No routable provider as soon as a key write says routability changed', async () => {
+    vi.mocked(consoleApi.getRoutability).mockResolvedValue({ data: { providers: { anthropic: false } } } as never)
+    renderConsole()
+    const line = await screen.findByRole('status', { name: 'System status' })
+    expect(line).toHaveTextContent('No routable provider.')
+    vi.mocked(consoleApi.getRoutability).mockResolvedValue({ data: { providers: { anthropic: true } } } as never)
+    act(() => {
+      window.dispatchEvent(new Event(ROUTABILITY_CHANGED))
+    })
+    await waitFor(() => expect(line).not.toHaveTextContent('No routable provider.'))
+    expect(line).toHaveTextContent('No problems reported.')
   })
 
   it('shows No routable provider when platform.write is denied and nothing can route', async () => {
