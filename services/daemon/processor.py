@@ -10,6 +10,7 @@ from core.findings.exclusions import cached_active_ips, excluded_ips_of
 from core.ingestion.ack import settle_ack
 from core.ingestion.dedup import RedisDedupSet
 from core.ingestion.triage_signal import CHANNEL as TRIAGE_SIGNAL_CHANNEL
+from core.llm.gateway.gateway import JOB_TIMEOUT
 from core.llm.outage import report_outage, report_recovered
 from core.llm.security import alert_text
 from core.redis_client import open_async_redis, redact_logged_text
@@ -655,13 +656,17 @@ class FindingProcessor:
     async def _triage_finding(self, finding: Dict[str, Any]) -> Dict[str, Any]:
         """Use AI to triage and classify finding."""
 
+        started = time.monotonic()
         try:
             # Build triage prompt
             prompt = self._build_triage_prompt(finding)
 
-            # Get AI assessment with timeout
+            # The gateway gives up at triage_timeout only if no worker has
+            # started the call; a started one is still answering. This bound
+            # is for a stuck Redis connection.
             response, error = await asyncio.wait_for(
-                self._get_ai_triage(prompt), timeout=self.config.triage_timeout
+                self._get_ai_triage(prompt),
+                timeout=self.config.triage_timeout + JOB_TIMEOUT,
             )
 
             if response:
@@ -672,7 +677,7 @@ class FindingProcessor:
                 finding["ai_triage_error"] = error or "empty LLM response"
 
         except asyncio.TimeoutError:
-            seconds = self.config.triage_timeout
+            seconds = round(time.monotonic() - started)
             logger.warning(
                 f"AI triage timed out after {seconds}s for "
                 f"{finding.get('finding_id')} (DAEMON_TRIAGE_TIMEOUT)"
@@ -804,6 +809,8 @@ REASONING: [Brief explanation]
                 timeout=self.config.triage_timeout,
                 max_tokens=TRIAGE_MAX_TOKENS,
             )
+        except asyncio.TimeoutError:
+            raise  # _triage_finding reports it against DAEMON_TRIAGE_TIMEOUT
         except Exception as e:
             logger.error(f"LLM queue triage error: {e}")
             return None, f"{type(e).__name__}: {e}"
