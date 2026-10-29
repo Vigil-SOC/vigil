@@ -213,6 +213,13 @@ const SCOPE_BAR: Record<ScopeState, { pct: number; color: string }> = {
   extended: { pct: 100, color: 'var(--fair)' },
 }
 
+/** "3.6 of 60 min": both in the limit's unit, hours once it passes 90 min. */
+function wallText(used: number, limit: number): string {
+  const unit = limit > 90 * 60_000 ? 3_600_000 : 60_000
+  const n = (ms: number) => { const v = ms / unit; return v < 10 ? String(Number(v.toFixed(1))) : String(Math.round(v)) }
+  return `${n(used)} of ${n(limit)} ${unit === 60_000 ? 'min' : 'h'}`
+}
+
 function huntRows(hunt: HuntView, iteration: number, last: boolean, recorded: Recorded | undefined): LimitRow[] {
   const grant = hunt.budgets
   const digest = recorded === undefined || recorded === 'failed' ? null : recorded.budget_remaining
@@ -230,6 +237,12 @@ function huntRows(hunt: HuntView, iteration: number, last: boolean, recorded: Re
   const steps: LimitRow = grant
     ? { label: 'Steps', value: `${used} of ${grant.max_iterations}`, pct: share(used, grant.max_iterations) }
     : { label: 'Steps', value: `${used} so far` }
+  // The agent's figure, which is now's: only the newest step has one.
+  const limitMs = grant?.max_wall_ms
+  const wall: LimitRow | null = limitMs === undefined ? null
+    : last && hunt.wall_used_ms !== undefined
+      ? { label: 'Wall time', value: wallText(hunt.wall_used_ms, limitMs), pct: share(hunt.wall_used_ms, limitMs) }
+      : { label: 'Wall time', value: 'Not recorded for this step.' }
 
   const state = scopeState(hunt, iteration, last)
   const where = scopeText(hunt.scope)
@@ -237,7 +250,7 @@ function huntRows(hunt: HuntView, iteration: number, last: boolean, recorded: Re
   const scope: LimitRow = where === null && state === 'within scope'
     ? { label: 'Scope', value: 'Not recorded' }
     : { label: 'Scope', value: `${where ?? 'Not recorded'}${state === 'within scope' ? '' : ` (${state})`}`, ...SCOPE_BAR[state] }
-  return [budget, steps, scope]
+  return wall === null ? [budget, steps, scope] : [budget, steps, wall, scope]
 }
 
 /** Prose written at length: two lines, with "Show all" once it overflows them. `label` sits inside the clamp. */

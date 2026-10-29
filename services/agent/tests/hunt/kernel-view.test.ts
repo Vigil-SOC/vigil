@@ -83,3 +83,46 @@ describe("a kernel hunt's moves", () => {
     expect(replay.decisions.map((one) => one.recorded.iteration)).toEqual([1, 2]);
   });
 });
+
+describe("a kernel hunt's wall time used", () => {
+  const T0 = Date.parse("2026-10-06T13:00:00Z");
+  const MIN = 60_000;
+  async function ledger() {
+    const state = new InProcessState<HuntKinds>();
+    await runHunt(harnessOf(specOf(), modelOf([() => ({ tool: "search_findings", args: { query: "45.77.53.176" } })]), state), {
+      run_id: RUN,
+      run_kind: "hunt",
+      spec: specOf(),
+      actions: [],
+      queue: new InProcessDirectiveQueue(),
+    });
+    // One event a second from T0, so the figure does not hang on how fast the test ran.
+    return (await state.read(RUN)).map((event, index) => ({ ...event, ts: new Date(T0 + index * 1000).toISOString() }));
+  }
+
+  it("holds still through an hour parked, as the budget counts it", async () => {
+    const events = await ledger();
+    // Cut where the first turn was counted, then park the hunt there five minutes later.
+    const cut = events.findIndex((event) => event.kind === "patch" && (event.payload as { fields: object }).fields.hasOwnProperty("iteration"));
+    const live = events.slice(0, cut + 1);
+    const hunt = (live[cut]?.payload as { id: string }).id;
+    const parkedAt = Date.parse(live[cut]?.ts as string) + 5 * MIN;
+    const park = { ...live[cut], seq: cut + 1, ts: new Date(parkedAt).toISOString(), payload: { target: "hunt", id: hunt, fields: { status: "parked", parked_at: new Date(parkedAt).toISOString() } } };
+    const parked = [...live, park] as never;
+    const inside = huntView(RUN, parked, { now: parkedAt + 10 * MIN });
+    const after = huntView(RUN, parked, { now: parkedAt + 70 * MIN });
+    // What it had used when it parked: work up to then, less the opening checkpoint's second.
+    expect(inside.wall_used_ms).toBe(huntView(RUN, live as never, { now: parkedAt }).wall_used_ms);
+    expect(after.wall_used_ms).toBe(inside.wall_used_ms);
+  });
+
+  it("stops counting when the run ended", async () => {
+    const events = (await ledger()) as never as { ts: string }[];
+    const ended = Date.parse(events.at(-1)?.ts as string);
+    const first = huntView(RUN, events as never, { now: ended + MIN });
+    expect(first.status).toBe("terminal");
+    // To the last event, less the second the opening checkpoint waited on its answer.
+    expect(first.wall_used_ms).toBe(ended - T0 - 1000);
+    expect(huntView(RUN, events as never, { now: ended + 60 * MIN }).wall_used_ms).toBe(first.wall_used_ms);
+  });
+});
