@@ -16,7 +16,7 @@ httpx>=0.28.1
 # No longer used by any application code — only the scripts/ utilities.
 requests>=2.34.2
 urllib3>=2.8.0
-boto3>=1.43.77
+boto3>=1.43.118
 aiohttp>=3.14.5
 
 # Core declared transitive deps
