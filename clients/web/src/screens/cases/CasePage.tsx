@@ -765,6 +765,36 @@ function VerdictBlock({ verdict, card }: { verdict: CaseVerdict; card: boolean }
   )
 }
 
+/** Each concluded run's report in full, newest first, earlier ones folded under it. Not drawn on the
+ *  CaseDetail board; it stands outside `ended`, so a pending decision or a close does not hide it. */
+function RunReports({ runs, names }: { runs: CaseRun[]; names: Record<string, string> }) {
+  const reports = [...runs]
+    .sort((a, b) => (b.ref.created_at ?? '').localeCompare(a.ref.created_at ?? ''))
+    .flatMap((run) => {
+      const ended = endedRun(run.fold) // concluded: completed, or a terminal hunt
+      const text = ended ? (ended.raw || run.fold?.run.reason || '').trim() : ''
+      return text ? [{ run, text }] : []
+    })
+  if (reports.length === 0) return null
+  const [newest, ...earlier] = reports
+  // runLabel has the clock, not the day; refs carry naive UTC stamps
+  const day = (at?: string | null) => utcDay(at && (/(Z|[+-]\d\d:?\d\d)$/.test(at) ? at : `${at}Z`))
+  const label = (run: CaseRun) => [runLabel(run.ref, names), day(run.ref.created_at)].filter(Boolean).join(' · ')
+  return (
+    <section className="case-card case-report" aria-label="Report">
+      <h3>Report</h3>
+      <span className="case-report-run">{label(newest.run)}</span>
+      <p className="case-report-text">{newest.text}</p>
+      {earlier.map(({ run, text }) => (
+        <details key={run.ref.run_id} className="case-report-earlier">
+          <summary>{label(run)}</summary>
+          <p className="case-report-text">{text}</p>
+        </details>
+      ))}
+    </section>
+  )
+}
+
 /** Five doors into the audit tabs, in every mood. */
 function Doors({ counts: n, lines, onOpen }: { counts: Record<Tab, number>; lines: Record<Exclude<Tab, 'Summary'>, string>; onOpen: (tab: Tab) => void }) {
   return (
@@ -1035,6 +1065,13 @@ export function CasePage({
   const recordReady = useRef(false)
   recordReady.current = recordPhase === 'ready'
   const [chip, setChip] = useState<RecordChip | 'all'>('all')
+  const [openRows, setOpenRows] = useState<ReadonlySet<string>>(new Set()) // Record rows shown in full
+  const toggleRow = (rowId: string) =>
+    setOpenRows((held) => {
+      const next = new Set(held)
+      if (!next.delete(rowId)) next.add(rowId)
+      return next
+    })
   const [runFilter, setRunFilter] = useState<string | null>(null)
   const [askSeed, setAskSeed] = useState<{ id: string; text: string } | null>(null)
   const [focusEvidence, setFocusEvidence] = useState<string | null>(null)
@@ -1102,6 +1139,7 @@ export function CasePage({
     setFocusEvidence(null)
     setNote('')
     setChip('all')
+    setOpenRows(new Set())
     setRunFilter(null)
     setEvidenceLimits({})
   }, [id])
@@ -1502,6 +1540,7 @@ export function CasePage({
   // A case with several runs can ask where they part ways; the brief carries every run.
   const started = howStarted(runs)
   const startedCard = started && <HowStarted started={started} names={workflowNames} />
+  const reports = <RunReports runs={runs} names={workflowNames} />
   const disagree = investigations.length > 1 && (
     <div className="case-disagree">
       <button type="button" className="btn" onClick={() => setAskSeed({ id, text: DISAGREE_ASK })}>
@@ -1613,6 +1652,7 @@ export function CasePage({
                     )}
                   </div>
                 </section>
+                {reports}
                 {startedCard}
                 {disagree}
                 {doors}
@@ -1639,11 +1679,12 @@ export function CasePage({
                     </div>
                   </section>
                 )}
+                {reports}
                 <OtherRuns runs={runs.filter((one) => one.ref !== latest)} names={workflowNames} />
                 {runId !== null && (
                   <section className="case-card" aria-label="Findings so far">
                     <h3>Findings so far</h3>
-                    <FindingList fold={fold} />
+                    <FindingList key={id} fold={fold} />
                   </section>
                 )}
                 {disagree}
@@ -1762,11 +1803,13 @@ export function CasePage({
                       <div key={row.id} className="rec-row">
                         <span className="rec-time" title={when(row.at)}>{clock(row.at)}</span>
                         <span className={`rec-type ${type}`}>{type[0].toUpperCase() + type.slice(1)}</span>
-                        <span className="rec-text" title={row.text}>
-                          {runLabel && <span className="rec-run">{runLabel}</span>}
-                          {row.text || row.kind}
-                          {row.chained && <span className="rec-chained">chained</span>}
-                        </span>
+                        <button type="button" className="clamp-toggle" title={row.text} aria-expanded={openRows.has(row.id)} onClick={() => toggleRow(row.id)}>
+                          <span className={`rec-text${openRows.has(row.id) ? ' open' : ''}`}>
+                            {runLabel && <span className="rec-run">{runLabel}</span>}
+                            {row.text || row.kind}
+                            {row.chained && <span className="rec-chained">chained</span>}
+                          </span>
+                        </button>
                         <button type="button" className="rec-why" onClick={() => setAskSeed({ id, text: promptFor(row.text) })}>Why?</button>
                       </div>
                     )
@@ -2131,13 +2174,21 @@ function ClosedRows({ fold, phase }: { fold: RunFold | null; phase: Phase }) {
   )
 }
 
-/** Two lines, then an ellipsis; the full text is on hover. */
+/** Two lines, then an ellipsis; a click shows the rest in place. */
 function Clamped({ text }: { text: string }) {
-  return <span className="clamp2" title={text}>{text}</span>
+  const [open, setOpen] = useState(false)
+  return (
+    <button type="button" className="clamp-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
+      <span className={open ? undefined : 'clamp2'}>{text}</span>
+    </button>
+  )
 }
+
+const FINDINGS_SHOWN = 6
 
 /** Findings so far as rows, never as raw list markup: a hunt's explanations by their word, a lead's answers as one plain line each. */
 function FindingList({ fold }: { fold: RunFold | null }) {
+  const [all, setAll] = useState(false)
   if (!fold) return <p className="muted">No findings yet.</p>
   const ranked = [...(foldRecord(fold)?.hypotheses ?? [])].sort((a, b) => b.supports - a.supports || b.weakens - a.weakens)
   // A hunt's findings are its explanations; an investigation's are its answer, a held one first, then what it weighed.
@@ -2145,30 +2196,39 @@ function FindingList({ fold }: { fold: RunFold | null }) {
   const held = lead?.held ?? null
   const answers = lead?.findings ?? []
   if (!held && answers.length === 0 && ranked.length === 0) return <p className="muted">No findings yet.</p>
+  const more = Math.max(0, answers.length - FINDINGS_SHOWN) + Math.max(0, ranked.length - FINDINGS_SHOWN)
+  const cut = all ? Infinity : FINDINGS_SHOWN
   return (
-    <ul className="case-findings">
-      {held && (
-        <li>
-          <span className="case-expl-pill poor">Held</span>
-          <Clamped text={`${heldLine(held)}: ${held.reason}`} />
-        </li>
-      )}
-      {answers.slice(0, 6).map((row, i) => (
-        <li key={i}>
-          <span className="case-findings-who">{row.agent_id}</span>
-          <Clamped text={plainLine(row.answer) || '—'} />
-        </li>
-      ))}
-      {ranked.slice(0, 6).map((row) => {
-        const word = explanationWord(row.status, row.supports, row.weakens)
-        return (
-          <li key={row.hypothesis_id}>
-            <span className={`case-expl-pill ${EXPLANATION_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>
-            <Clamped text={row.statement || row.hypothesis_id} />
-            {row.status === 'handed_off' && <span className="case-findings-next">handed off</span>}
+    <>
+      <ul className="case-findings">
+        {held && (
+          <li>
+            <span className="case-expl-pill poor">Held</span>
+            <Clamped text={`${heldLine(held)}: ${held.reason}`} />
           </li>
-        )
-      })}
-    </ul>
+        )}
+        {answers.slice(0, cut).map((row, i) => (
+          <li key={i}>
+            <span className="case-findings-who">{row.agent_id}</span>
+            <Clamped text={plainLine(row.answer) || '—'} />
+          </li>
+        ))}
+        {ranked.slice(0, cut).map((row) => {
+          const word = explanationWord(row.status, row.supports, row.weakens)
+          return (
+            <li key={row.hypothesis_id}>
+              <span className={`case-expl-pill ${EXPLANATION_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>
+              <Clamped text={row.statement || row.hypothesis_id} />
+              {row.status === 'handed_off' && <span className="case-findings-next">handed off</span>}
+            </li>
+          )
+        })}
+      </ul>
+      {more > 0 && (
+        <button type="button" className="btn neutral case-findings-all" aria-expanded={all} onClick={() => setAll(!all)}>
+          {all ? 'Show fewer' : `Show all (${more} more)`}
+        </button>
+      )}
+    </>
   )
 }

@@ -1202,6 +1202,7 @@
   -webkit-line-clamp: 2;
   overflow: hidden;
 }
+.case-page .rec-text.open { display: block; overflow: visible; }
 .case-page .rec-run { margin-right: 8px; font-size: 12px; color: var(--tx2); white-space: nowrap; }
 .case-page .rec-chained { margin-left: 8px; font-size: 11.5px; color: var(--tx3); }
 
@@ -1982,3 +1983,30 @@
   .case-page .how-rows li { grid-template-columns: minmax(0, 1fr) auto; }
   .case-page .how-event { grid-column: 1 / -1; }
 }
+
+/* Clamped text that opens in place on click: a bare button around the clamped span. */
+.case-page .clamp-toggle {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.case-page .case-findings-all { align-self: flex-start; }
+
+/* Report: the newest concluded run's own words in full, earlier runs' folded under it. */
+.case-page .case-report-run { font-size: 12px; color: var(--tx2); }
+.case-page .case-report-text {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--tx1);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.case-page .case-report-earlier { border-top: 1px solid var(--ln0); padding-top: var(--card-gap); }
+.case-page .case-report-earlier > summary { font-size: 12px; color: var(--tx2); cursor: pointer; }
+.case-page .case-report-earlier[open] > summary { margin-bottom: 8px; }
