@@ -1490,8 +1490,10 @@ export const mfaApi = {
     api.post<Schema<'RecoveryCodesResponse'>>('/auth/mfa/verify', {
       code,
     } satisfies Schema<'MFAVerifyRequest'>),
-  regenerateRecoveryCodes: () =>
-    api.post<Schema<'RecoveryCodesResponse'>>('/auth/mfa/recovery-codes'),
+  regenerateRecoveryCodes: (code: string) =>
+    api.post<Schema<'RecoveryCodesResponse'>>('/auth/mfa/recovery-codes', {
+      code,
+    } satisfies Schema<'MFAVerifyRequest'>),
   // axios sends a DELETE body only through `data`
   disable: (code: string) =>
     api.delete<{ message: string }>('/auth/mfa', {

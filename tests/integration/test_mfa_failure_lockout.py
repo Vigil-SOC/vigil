@@ -192,7 +192,10 @@ def test_wrong_enable_code_counts(db):
     assert user.mfa_enabled is False
 
 
-@pytest.mark.parametrize("method,path", [("POST", "/mfa/verify"), ("DELETE", "/mfa")])
+@pytest.mark.parametrize(
+    "method,path",
+    [("POST", "/mfa/verify"), ("POST", "/mfa/recovery-codes"), ("DELETE", "/mfa")],
+)
 def test_mfa_routes_refuse_a_locked_account_with_423(db, method, path):
     _add_user(db, failed_login_count=5, locked_until=utcnow() + timedelta(minutes=5))
     client = _client(current_user=_stored(db))
@@ -206,3 +209,23 @@ def test_mfa_routes_refuse_a_locked_account_with_423(db, method, path):
     user = _stored(db)
     assert user.failed_login_count == 5
     assert user.mfa_enabled is True
+
+
+def test_regenerating_recovery_codes_needs_a_current_code(db):
+    _add_user(db, mfa_recovery_codes=["old-hash"])
+    client = _client(current_user=_stored(db))
+
+    assert client.post("/api/auth/mfa/recovery-codes").status_code == 422
+    resp = client.post("/api/auth/mfa/recovery-codes", json={"code": WRONG_CODE})
+    assert resp.status_code == 400
+    user = _stored(db)
+    assert user.mfa_recovery_codes == ["old-hash"]
+    assert user.failed_login_count == 1
+
+    resp = client.post(
+        "/api/auth/mfa/recovery-codes", json={"code": pyotp.TOTP(TOTP_SECRET).now()}
+    )
+    assert resp.status_code == 200
+    codes = resp.json()["recovery_codes"]
+    assert len(codes) == 10
+    assert _stored(db).mfa_recovery_codes != ["old-hash"]
