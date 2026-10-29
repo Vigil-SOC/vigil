@@ -159,3 +159,35 @@ def test_proposer_is_the_agent_named_on_parameters_or_the_run():
     assert proposer_principal_id(run_id, {"agent_id": "agent:x"}) == "agent:x"
     assert proposer_principal_id(run_id) == "agent:hunt"
     assert proposer_principal_id(_run(triggered_by=None)) is None
+
+
+# The run's directive inbox answers the same row, so it is held to the same rule.
+def test_the_directive_inbox_refuses_the_person_the_run_acted_for(four_eyes):
+    from core.response.approval_service import four_eyes_refuses
+
+    run_id = _run(triggered_by="person-a")
+    _seed(workflow_run_id=run_id, parameters={"checkpoint_id": "cp-1"})
+
+    with unit_of_work() as session:
+        assert four_eyes_refuses(session, run_id, "cp-1", "person-a")
+        assert not four_eyes_refuses(session, run_id, "cp-1", "person-b")
+    four_eyes(False)
+    with unit_of_work() as session:
+        assert not four_eyes_refuses(session, run_id, "cp-1", "person-a")
+
+
+# A checkpoint with no pending row (not raised yet, withdrawn, or a hunt's own)
+# is still the run's: its person must not approve it either.
+def test_the_directive_inbox_refuses_the_run_person_with_no_pending_row(four_eyes):
+    from core.response.approval_service import four_eyes_refuses
+
+    run_id = _run(triggered_by="person-a")
+    _seed(workflow_run_id=run_id, parameters={"checkpoint_id": "cp-1"})
+    nobodys = _run(triggered_by=None)
+
+    with unit_of_work() as session:
+        assert four_eyes_refuses(session, run_id, "cp-other", "person-a")
+        assert not four_eyes_refuses(session, run_id, "cp-other", "person-b")
+        assert not four_eyes_refuses(session, nobodys, "cp-1", "person-a")
+        assert not four_eyes_refuses(session, "wfr-missing", "cp-1", "person-a")
+        assert not four_eyes_refuses(session, run_id, "cp-other", None)

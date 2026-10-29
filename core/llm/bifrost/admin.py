@@ -990,7 +990,7 @@ async def _fetch_meta_for_row(
 
     if provider_type == "ollama":
         # ``base_url`` comes from a persisted provider row, which only a
-        # ``settings.write`` admin can create/update (shape-validated at
+        # ``platform.write`` admin can create/update (shape-validated at
         # save time). Self-hosted Ollama on a loopback/private address is
         # the expected deployment, so skip the SSRF IP gate here — the
         # same trust anchor as the admin-gated test and discover-models

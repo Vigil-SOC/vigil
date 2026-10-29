@@ -51,6 +51,30 @@ BACKOFF_MAX_S = 300
 FRAMEWORK_ID = "medic.framework"
 
 
+_OFF_REASONS = {"vigil_dev_mode": "disabled_by_config"}
+_ERROR_REASONS = {
+    "refused": "unreachable",
+    "dns": "unreachable",
+    "timeout": "timeout",
+    "parse": "parse_error",
+}
+
+
+def _reason(error: ReadError | None) -> str:
+    """ReadError → X2 `Sensor.reason` (PROVISIONAL enum, D5 owns it)."""
+    if error is None:
+        return "unknown"
+    status = error.http_status
+    if error.cls in ("auth", "http_status") and status in (401, 403):
+        return f"auth_{status}"
+    if error.cls == "http_status" and status is not None:
+        if 500 <= status <= 599:
+            return "http_5xx"
+        if status == 404:
+            return "not_found"
+    return _ERROR_REASONS.get(error.cls, "unknown")
+
+
 def iso(wall: float) -> str:
     return datetime.fromtimestamp(wall, UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
@@ -69,6 +93,8 @@ class _State:
     last_error: ReadError | None = None
     dropped_seen: int = 0
     off_reason: str | None = None
+    view: str | None = None  # the API state (`sensor_states`) last reported
+    since: str | None = None  # when `view` last changed
 
 
 class Scheduler:
@@ -114,6 +140,30 @@ class Scheduler:
             "redactor_failures": self.bus.stats.total("redactor_failures"),
             "vigil_dev_mode": self.ctx.vigil_dev_mode,
         }
+
+    def sensor_states(self) -> list[dict[str, Any]]:
+        """Each sensor's API view (X2 `Sensor`, less what the scheduler can't
+        know): state, the reason it can't see, and when that state began."""
+        out = []
+        for st in self._states.values():
+            if st.off_reason is not None:
+                view, reason = "off", _OFF_REASONS.get(st.off_reason, "unknown")
+            elif self._health_state(st) in ("blind", "stopped"):
+                view, reason = "cant_see", _reason(st.last_error)
+            else:
+                view, reason = "reporting", None
+            if view != st.view:
+                st.view, st.since = view, iso(self.clock.wall())
+            out.append(
+                {
+                    "id": st.sensor.id,
+                    "state": view,
+                    "since": st.since,
+                    "last_good_at": st.last_ok_at,
+                    "reason": reason,
+                }
+            )
+        return out
 
     async def run(self, drain: Any, stop: asyncio.Event) -> None:
         """The production loop (S4 wires `drain` to the pipeline)."""

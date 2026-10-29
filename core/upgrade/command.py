@@ -9,7 +9,9 @@ transaction. A database with tables and no ``alembic_version`` is adopted
 first (``core/upgrade/adopt.py``): ``--check`` runs the adoption in a
 transaction it rolls back. Apply outcomes other than a restart are appended to
 ``$VIGIL_UPGRADE_DIR/history.jsonl``. A revision may stash a report; that
-report is a field of the same record, not a second line.
+report is a field of the same record, not a second line. After the revisions,
+the old audit stores' read-only stamp is set once their copy passed, and six
+months after it they are dropped; the record says when, or why not.
 """
 
 from __future__ import annotations
@@ -60,6 +62,21 @@ RESTART, APPLY, NEEDS_RESTORE_POINT, REFUSE = (
     "refuse",
 )
 OVERRIDDEN = "overridden"
+
+# The old audit stores copied onto the trail (#3309) and dropped here (#3310),
+# by their primary key column.
+LEGACY_AUDIT_PK = {
+    "case_audit_logs": "audit_id",
+    "config_audit_log": "id",
+    "investigation_logs": "id",
+}
+LEGACY_AUDIT_TABLES = tuple(LEGACY_AUDIT_PK)
+INVESTIGATION_LOGS = "investigation_logs"
+LEGACY_LOCK_TIMEOUT = "10s"
+LEGACY_COPY_REVISION = "0018_legacy_audit_copy"
+# A baseline view over config_audit_log that nothing reads; it goes with it.
+LEGACY_VIEW = "recent_config_changes"
+ACTION_LEGACY_DROP = "audit.legacy_dropped"
 
 
 class UpgradeBusy(RuntimeError):
@@ -295,6 +312,8 @@ def check_report(
         drift = current.adoption.drift
     elif current.verdict != REFUSE and current.revision and not current.pending:
         drift = compare(_schema(HEAD_SCHEMA), schema_state(conn))
+        if _legacy_dropped(conn):
+            drift = [d for d in drift if not _legacy_object(d)]
     db_bytes = conn.execute(
         text("SELECT pg_database_size(current_database())")
     ).scalar_one()
@@ -310,6 +329,45 @@ def check_report(
     if upgrade_dir is not None and upgrade_dir.is_dir():
         report["free_bytes"] = shutil.disk_usage(upgrade_dir).free
     return report
+
+
+def _present(conn, table: str) -> bool:
+    return (
+        conn.execute(text("SELECT to_regclass(:t)"), {"t": f"public.{table}"}).scalar()
+        is not None
+    )
+
+
+def _legacy_dropped(conn) -> bool:
+    """The old audit stores are gone after their stamp was set: dropped here."""
+    if any(_present(conn, t) for t in LEGACY_AUDIT_TABLES) or not _present(
+        conn, "audit_legacy_copy"
+    ):
+        return False
+    return bool(
+        conn.execute(
+            text(
+                "SELECT read_only_since IS NOT NULL FROM public.audit_legacy_copy "
+                "WHERE id = 1"
+            )
+        ).scalar()
+    )
+
+
+def _legacy_object(entry: dict[str, Any]) -> bool:
+    """A drift entry for an object that went with the old audit stores."""
+    if entry["actual"] is not None:
+        return False
+    kind, _, name = entry["object"].partition(" ")
+    if kind == "index":
+        return any(
+            f" ON public.{t} " in str(entry["expected"]) for t in LEGACY_AUDIT_TABLES
+        )
+    gone = (*LEGACY_AUDIT_TABLES, LEGACY_VIEW)
+    sequences = {f"{t}_{pk}_seq" for t, pk in LEGACY_AUDIT_PK.items()}
+    return (
+        name in sequences or name in gone or any(name.startswith(f"{g}.") for g in gone)
+    )
 
 
 def _migrate(engine: Engine, script: ScriptDirectory) -> list[dict]:
@@ -341,6 +399,147 @@ def _migrate(engine: Engine, script: ScriptDirectory) -> list[dict]:
     return take_reports()
 
 
+def _stamp_read_only(engine: Engine) -> dict[str, Any]:
+    """Set the old audit stores' read-only stamp once their copy passed (#3309).
+
+    Never set by the revision that copies them. Its time, or why it is not set.
+    Runs on a restart too, so a stamp a crash or an error left unset is retried;
+    an error here never turns a committed upgrade into a failed one.
+    """
+    try:
+        return _set_stamp(engine)
+    except Exception as e:  # noqa: BLE001 - reported; the next run retries
+        return {"set": False, "reason": f"{type(e).__name__}: {e}"}
+
+
+def _set_stamp(engine: Engine) -> dict[str, Any]:
+    from core.audit import trail
+
+    with engine.connect() as conn, conn.begin():
+        if (
+            conn.execute(
+                text("SELECT to_regclass('public.audit_legacy_copy')")
+            ).scalar()
+            is None
+        ):
+            return {"set": False, "reason": "no audit_legacy_copy table"}
+        row = conn.execute(
+            text(
+                "SELECT passed, read_only_since FROM public.audit_legacy_copy "
+                "WHERE id = 1 FOR UPDATE"
+            )
+        ).first()
+        if row is None:
+            return {"set": False, "reason": "no reconciliation is stored"}
+        if row.read_only_since is not None:
+            return {"set": True, "at": row.read_only_since.isoformat()}
+        if not row.passed:
+            return {"set": False, "reason": "the reconciliation did not pass"}
+        if not trail.in_use(conn):
+            return {"set": False, "reason": "the audit trail is not in use"}
+        at = conn.execute(
+            text(
+                "UPDATE public.audit_legacy_copy SET read_only_since = now() "
+                "WHERE id = 1 RETURNING read_only_since"
+            )
+        ).scalar_one()
+        return {"set": True, "at": at.isoformat()}
+
+
+def _drop_legacy(engine: Engine, script: ScriptDirectory) -> dict[str, Any]:
+    """Drop the old audit stores once this install has earned it (#3310).
+
+    Six months after the read-only stamp, with a passed reconciliation and
+    every row still in them copied onto the trail. Never a revision and never
+    forced; as with the stamp, an error is reported and never fails a
+    committed upgrade.
+    """
+    try:
+        return _drop(engine, script)
+    except Exception as e:  # noqa: BLE001 - reported; the next run retries
+        return {"dropped": False, "reason": f"{type(e).__name__}: {e}"}
+
+
+def _drop(engine: Engine, script: ScriptDirectory) -> dict[str, Any]:
+    from core.audit import trail
+
+    def no(reason: str, **extra: Any) -> dict[str, Any]:
+        return {"dropped": False, "reason": reason, **extra}
+
+    with engine.connect() as conn, conn.begin():
+        present = [t for t in LEGACY_AUDIT_TABLES if _present(conn, t)]
+        if not present:
+            return no("the old audit stores are already dropped", gone=True)
+        if not _present(conn, "audit_legacy_copy"):
+            return no("no audit_legacy_copy table")
+        row = conn.execute(
+            text(
+                "SELECT passed, read_only_since, "
+                "read_only_since + interval '6 months' AS eligible_at, "
+                "read_only_since + interval '6 months' <= now() AS due "
+                "FROM public.audit_legacy_copy WHERE id = 1 FOR UPDATE"
+            )
+        ).first()
+        if row is None:
+            return no("no reconciliation is stored")
+        if not row.passed:
+            return no("the reconciliation did not pass")
+        if row.read_only_since is None:
+            return no("the read-only stamp is not set")
+        if not row.due:
+            return no(
+                f"not eligible until {row.eligible_at.date().isoformat()}",
+                eligible_at=row.eligible_at.isoformat(),
+            )
+        # No old pod can write a row between the check and the drop. The
+        # investigation_logs FK needs investigations locked too: taken first,
+        # so the DROP cannot deadlock with a reader; a busy table is a retry.
+        locked = [*present]
+        if INVESTIGATION_LOGS in present:
+            locked.insert(0, "investigations")
+        conn.execute(text(f"SET LOCAL lock_timeout = '{LEGACY_LOCK_TIMEOUT}'"))
+        conn.execute(
+            text(
+                f"LOCK TABLE {', '.join(f'public.{t}' for t in locked)} "
+                "IN ACCESS EXCLUSIVE MODE"
+            )
+        )
+        keys = script.get_revision(LEGACY_COPY_REVISION).module._on_trail(conn)
+        rows: dict[str, int] = {}
+        uncopied: dict[str, int] = {}
+        for table in present:
+            ids = (
+                conn.execute(
+                    text(f"SELECT {LEGACY_AUDIT_PK[table]}::text FROM public.{table}")
+                )
+                .scalars()
+                .all()
+            )
+            rows[table] = len(ids)
+            if missing := sum((table, i) not in keys for i in ids):
+                uncopied[table] = missing
+        if uncopied:
+            return no(
+                "rows with no copy on the trail in "
+                + ", ".join(f"{t} ({n})" for t, n in uncopied.items()),
+                uncopied=uncopied,
+            )
+        # Plain DROP: anything else that depends on these fails the drop.
+        conn.execute(text(f"DROP VIEW IF EXISTS public.{LEGACY_VIEW}"))
+        for table in present:
+            conn.execute(text(f"DROP TABLE public.{table}"))
+        trail.append(
+            conn,
+            {
+                trail.ACTION: ACTION_LEGACY_DROP,
+                trail.ACTOR: trail.SYSTEM,
+                "release": __version__,
+                "tables": rows,
+            },
+        )
+        return {"dropped": True, "tables": rows}
+
+
 def _record(
     upgrade_dir: Optional[Path],
     current: Plan,
@@ -348,6 +547,8 @@ def _record(
     reason: str,
     adoption: Optional[adopt.Adoption] = None,
     reports: Optional[list[dict]] = None,
+    legacy_stamp: Optional[dict] = None,
+    legacy_drop: Optional[dict] = None,
 ):
     entry: dict[str, Any] = {
         "time": datetime.now(timezone.utc).isoformat(),
@@ -364,6 +565,10 @@ def _record(
             entry["drift"] = adoption.drift
     if reports:
         entry["reports"] = reports
+    if legacy_stamp is not None:
+        entry["legacy_audit_read_only"] = legacy_stamp
+    if legacy_drop is not None:
+        entry["legacy_audit_drop"] = legacy_drop
     if upgrade_dir is not None:
         upgrade_dir.mkdir(parents=True, exist_ok=True)
         with (upgrade_dir / "history.jsonl").open("a", encoding="utf-8") as f:
@@ -410,7 +615,15 @@ def run(
                     )
 
             if current.verdict == RESTART:
-                emit({"outcome": RESTART, "reason": current.reason, "to": __version__})
+                emit(
+                    {
+                        "outcome": RESTART,
+                        "reason": current.reason,
+                        "to": __version__,
+                        "legacy_audit_read_only": _stamp_read_only(engine),
+                        "legacy_audit_drop": _drop_legacy(engine, script),
+                    }
+                )
                 return EXIT_OK
             if current.verdict != APPLY:
                 emit(
@@ -448,7 +661,20 @@ def run(
                 )
                 return EXIT_FAILED
             reason = ack_reason.strip() if current.restore_point == OVERRIDDEN else ""
-            emit(_record(upgrade_dir, current, "applied", reason, adoption, reports))
+            legacy_stamp = _stamp_read_only(engine)
+            legacy_drop = _drop_legacy(engine, script)
+            emit(
+                _record(
+                    upgrade_dir,
+                    current,
+                    "applied",
+                    reason,
+                    adoption,
+                    reports,
+                    legacy_stamp,
+                    legacy_drop,
+                )
+            )
             return EXIT_OK
     except UpgradeBusy as e:
         emit({"outcome": "refused", "reason": str(e)})

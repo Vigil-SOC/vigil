@@ -3,9 +3,8 @@ import { Icon } from '../../shared/icons'
 import { EmptyState } from '../../shared/ui'
 import { Hbars, Pie } from '../../shared/charts'
 import type { ConsoleScreenProps } from '../../shared/types'
-import { usePendingApprovals } from '../decisions/useDecisions'
 import {
-  PROBE_OUTCOMES, PROBE_TALLY_DAYS, RUNS_PER_WORKFLOW, RUN_STATUSES, useProbeScores, useRunOutcomes,
+  PROBE_OUTCOMES, PROBE_TALLY_DAYS, RUNS_PER_WORKFLOW, RUN_STATUSES, usePendingApprovals, useProbeScores, useRunOutcomes,
   type ProbeOutcome, type ProbeScores, type ProbeSummary, type RunKindOutcomes, type RunStatus,
 } from './useHealth'
 
@@ -66,8 +65,8 @@ export default function HealthScreen({ go }: ConsoleScreenProps) {
                   <span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1] text-high">{approvals.actions.length}</span>
                   <span className="text-xs text-tx-faint">pending</span>
                 </div>
-                <button className="btn primary self-start" onClick={() => go('decisions', { search: '?tab=approvals' })}>
-                  <Icon name="brain" /> Open approvals
+                <button className="btn primary self-start" onClick={() => go('home')}>
+                  <Icon name="brain" /> Review on Home
                 </button>
               </div>
             )

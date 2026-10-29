@@ -2,6 +2,7 @@ import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { fileURLToPath } from 'url'
 import { dirname, resolve } from 'path'
+import { parseAllowedHosts } from './viteAllowedHosts'
 
 // Get __dirname equivalent in ES modules
 const __filename = fileURLToPath(import.meta.url)
@@ -37,6 +38,13 @@ export default defineConfig(({ mode }) => {
   const extensionAllowlist =
     process.env.EXTENSION_CONNECTOR_ALLOWLIST || env.EXTENSION_CONNECTOR_ALLOWLIST || ''
 
+  // Hostnames the dev server accepts besides localhost and IPs, for a host
+  // reached by name or through a reverse proxy. Read from the root .env so it
+  // survives upgrades; unset leaves Vite's default in place.
+  const allowedHosts = parseAllowedHosts(
+    process.env.VIGIL_ALLOWED_HOSTS || env.VIGIL_ALLOWED_HOSTS,
+  )
+
   return {
     base,
     plugins: [
@@ -65,6 +73,7 @@ export default defineConfig(({ mode }) => {
       },
       port: 6988,
       host: '127.0.0.1', // Use IPv4 explicitly
+      ...(allowedHosts !== undefined && { allowedHosts }),
       proxy: {
         // Dev proxy must match the context-path-prefixed API calls.
         [`${contextPath}/api`]: {

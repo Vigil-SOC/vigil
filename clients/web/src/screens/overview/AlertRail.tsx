@@ -25,7 +25,7 @@ function pillTone(word: string): string {
   if (word.startsWith('Case')) return 'ac'
   if (word === 'New') return 'poor'
   if (word === 'Resolved') return 'good'
-  if (word === 'Scoring') return 'fair'
+  if (word === 'Waiting for triage') return 'fair'
   return ''
 }
 

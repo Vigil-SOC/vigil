@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { AutoOpsOffBanner } from '../../shared/AutoOpsOffBanner'
+import { useAutoOpsOff } from '../../shared/useAutoOpsOff'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { approvalsApi, configApi, ingestionApi, triageApi, type NeedsYouItem } from '../../services/api'
@@ -47,7 +49,7 @@ type Pickup = { share: number; launched: number; today: number }
 
 const SETUP_TIP = {
   source: 'Setup steps',
-  calculation: 'Fixed order; done steps and steps hidden with Not now are left out',
+  calculation: 'Fixed order; steps hidden with Not now are left out, done steps show a tick',
   limit: 'None',
 }
 
@@ -58,10 +60,11 @@ const NEEDS_TIP = {
 
 const FIRST_RUN_HEADLINE = 'Nothing is connected yet, so nothing needs you'
 
-function headline(count: number): string {
-  if (count === 0) return 'Board clear.'
-  if (count === 1) return '1 decision waits on you. Everything else is running.'
-  return `${count} decisions wait on you. Everything else is running.`
+function headline(count: number, autoOpsOff: boolean): string {
+  const rest = autoOpsOff ? 'AutoOps is off, so no alert is being worked.' : 'Everything else is running.'
+  if (count === 0) return autoOpsOff ? 'Board clear. AutoOps is off, so no alert is being worked.' : 'Board clear.'
+  if (count === 1) return `1 decision waits on you. ${rest}`
+  return `${count} decisions wait on you. ${rest}`
 }
 
 function waited(createdAt: string): string {
@@ -193,7 +196,8 @@ function DecisionCard({
   )
 }
 
-export default function HomeScreen({ openCase, startTour, fillCommand, onCommandHost }: ConsoleScreenProps) {
+export default function HomeScreen({ openCase, startTour, fillCommand, onCommandHost, goSettings }: ConsoleScreenProps) {
+  const autoOpsOff = useAutoOpsOff()
   const [items, setItems] = useState<NeedsYouItem[]>([])
   const [loaded, setLoaded] = useState(false)
   const [share, setShare] = useState<Pickup | null>(null)
@@ -341,6 +345,9 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
   const rest = shown.slice(visible.length)
   const moreWaiting = rest.length
   const openSteps = openSetupSteps(setup?.steps ?? [], hidden)
+  // Get more is a status board: every step not hidden with Not now, done ones included
+  const boardSteps = (setup?.steps ?? []).filter((step) => !hidden.includes(step.id))
+  const firstOpenId = boardSteps.find((step) => !step.done)?.id
   const noAlerts = setup !== null && setup.alerts_exist === 0
   const doneCount = (setup?.steps ?? []).filter((step) => step.done).length
   const stepCount = setup?.steps.length ?? 0
@@ -379,10 +386,11 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
   return (
     <div className="home-screen">
       <div className="home-page">
+        {autoOpsOff && <AutoOpsOffBanner goSettings={goSettings} />}
         {(shownCount !== null || share !== null || shownChips.length > 0 || onCommandHost) && (
           <div className="home-top">
             {shownCount !== null && (setup !== null || setupError !== null) && (
-              <p className="home-headline">{noAlerts ? FIRST_RUN_HEADLINE : headline(shownCount)}</p>
+              <p className="home-headline">{noAlerts ? FIRST_RUN_HEADLINE : headline(shownCount, autoOpsOff === true)}</p>
             )}
             {onCommandHost && <div ref={onCommandHost} className="home-command-host" />}
             {(share !== null || shownChips.length > 0) && (
@@ -427,26 +435,36 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
               <InfoTip label="How Get more from Vigil is calculated" align="start" {...SETUP_TIP} />,
               <div className="home-head-actions">
                 {anyHidden && showHiddenButton}
-                {openSteps.length > 0 && hideSetupButton}
+                {boardSteps.length > 0 && hideSetupButton}
                 <Link to="/settings?section=integrations">Browse integrations →</Link>
               </div>,
             )}
             {setupError && <p role="alert">{setupError}</p>}
-            {openSteps.length > 0 ? (
-              <ul className="home-steps" style={{ gridTemplateColumns: `repeat(${openSteps.length}, minmax(0, 1fr))` }}>
-                {openSteps.map((step, index) => (
+            {boardSteps.length > 0 ? (
+              <ul className="home-steps" style={{ gridTemplateColumns: `repeat(${boardSteps.length}, minmax(0, 1fr))` }}>
+                {boardSteps.map((step, index) => (
                   <li key={step.id} className="home-step">
-                    <span className={`home-step-no${index === 0 ? ' first' : ''}`} aria-hidden="true">
-                      {index + 1}
+                    <span
+                      className={`home-step-no${step.done ? ' done' : step.id === firstOpenId ? ' first' : ''}`}
+                      aria-hidden="true"
+                    >
+                      {step.done ? <Icon name="check" size={13} /> : index + 1}
                     </span>
-                    <h3>{step.title}</h3>
+                    <h3>
+                      {step.title}
+                      {step.done && <span className="sr-only"> (done)</span>}
+                    </h3>
                     <p title={step.state_line}>{step.state_line}</p>
                     <div className="home-step-foot">
-                      <button type="button" className="home-step-skip" onClick={() => dismiss(step.id)}>
-                        Not now
-                      </button>
+                      {step.done ? (
+                        <span />
+                      ) : (
+                        <button type="button" className="home-step-skip" onClick={() => dismiss(step.id)}>
+                          Not now
+                        </button>
+                      )}
                       <Link className="home-step-act" to={step.href}>
-                        {STEP_ACTION[step.id] ?? 'Open'}
+                        {step.done ? 'Edit' : (STEP_ACTION[step.id] ?? 'Open')}
                         <Icon name="arrowR" size={13} />
                       </Link>
                     </div>

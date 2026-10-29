@@ -66,7 +66,10 @@ LIVE = ("running", "pending")
 
 def _line(value: Any, limit: int = LINE_CHARS) -> str:
     """One bounded line of untrusted text, unable to close the data block."""
-    text = re.sub(r"</?case_data>", "", " ".join(str(value or "").split()))
+    text = " ".join(str(value or "").split())
+    # Until stable: one pass turns </case_</case_data>data> back into the tag.
+    while (stripped := re.sub(r"</?case_data>", "", text)) != text:
+        text = stripped
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 

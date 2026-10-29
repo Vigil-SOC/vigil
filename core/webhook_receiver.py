@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, Optional
 
 from fastapi import HTTPException, Request, status
 
+from core.ingestion.triage_signal import signal_new_findings
 from core.webhook_rejections import (
     BAD_SIGNATURE,
     MISSING_SIGNATURE,
@@ -109,6 +110,7 @@ def ingest(service: Any, finding: Optional[Dict], label: str) -> Dict[str, Any]:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Finding was not persisted",
         )
+    signal_new_findings([finding["finding_id"]])
     logger.info(
         "%s ingested: finding_id=%s data_source=%s",
         label,

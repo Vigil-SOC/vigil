@@ -189,7 +189,7 @@ describe('FindingPopup IP exclusions', () => {
     expect(within(scanner).getByText('excluded')).toBeInTheDocument()
     const note = screen.getByText(/Excluding hides this address/)
     expect(note).toHaveTextContent(/Vigil keeps ingesting and storing them/)
-    expect(note).toHaveTextContent(/removing the exclusion \(Dashboard → Excluded IPs\) brings them back unchanged/)
+    expect(note).toHaveTextContent(/removing the exclusion \(Findings → Excluded IPs\) brings them back unchanged/)
     expect(note).not.toHaveTextContent('LogLM')
     expect(within(scanner).queryByRole('button', { name: 'Exclude' })).not.toBeInTheDocument()
     expect(screen.queryByText('not-an-ip')).not.toBeInTheDocument()

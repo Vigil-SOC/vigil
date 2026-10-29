@@ -233,7 +233,7 @@ if [[ $MODE == backend ]]; then
   say "the real backend polls Medic through the gateway with the chart's key"
   $K -n "$NS" rollout status "deploy/$FN-backend" --timeout=600s || fail "backend not Ready"
   STATUS='from core.storage.connection import init_database
-init_database(create_tables=False)
+init_database()
 from core.platform.medic_last_seen import current_status
 print(current_status().value)'
   status() { $K -n "$NS" exec "deploy/$FN-backend" -- python -c "$STATUS" 2>/dev/null | tail -1; }

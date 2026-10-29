@@ -68,6 +68,7 @@ NOT_SETTINGS = ENV_CREDENTIAL_NAMES | {
     "BIFROST_IMAGE_TAG",
     "BIND_HOST",
     "GRAFANA_PASSWORD",
+    "VIGIL_ALLOWED_HOSTS",
     "VITE_EXTENSION_ORIGIN_ALLOWLIST",
     # Read by the TypeScript agent processes themselves, not by Settings.
     "AGENT_HEALTH_PORT",
