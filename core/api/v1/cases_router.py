@@ -271,7 +271,8 @@ def get_cases(
     workflow has it); both compose with the other filters. ``working=true``
     keeps open cases that do not need you, ``closed_by=agent|person`` keeps
     closed cases by who closed them, and ``alerts_from=today|all`` keeps cases
-    holding an alert created that UTC day (or any alert); the strip ignores them.
+    holding an alert created that UTC day (or any alert). The strip follows
+    ``alerts_from`` and ignores the other filters.
     """
     # Demo cases live in memory. The database being down is a different empty.
     if data_service.is_demo_mode():
@@ -308,6 +309,11 @@ def get_cases(
         if kind
         else None
     )
+    alerts_span = (
+        None
+        if alerts_from is None
+        else utc_day_bounds() if alerts_from == "today" else (None, None)
+    )
     with unit_of_work() as session:
         repo = CaseRepository(session)
         rows, total = repo.queue(
@@ -328,13 +334,11 @@ def get_cases(
             working=working,
             closed_by=closed_by,
             person_channels=PERSON_CHANNELS,
-            alerts_span=(
-                None
-                if alerts_from is None
-                else utc_day_bounds() if alerts_from == "today" else (None, None)
-            ),
+            alerts_span=alerts_span,
         )
-        strip = repo.strip(now=now, needs_you_ids=needs_you_ids)
+        strip = repo.strip(
+            now=now, needs_you_ids=needs_you_ids, alerts_span=alerts_span
+        )
     return {
         "cases": [
             asdict(queue_item(row, now, needs_you=row.case_id in needs_you_ids))
