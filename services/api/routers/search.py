@@ -34,9 +34,6 @@ MIN_SEARCH_CHARS = 3
 # Hits per kind; the bar asked each of its reads for five.
 LIMIT = 5
 
-case_search = CaseSearchService()
-data_service = DatabaseDataService()
-
 
 class SearchHit(BaseModel):
     id: str
@@ -79,6 +76,7 @@ def _alert(row: Optional[dict]) -> Optional[SearchHit]:
 
 def _cases(q: str) -> List[SearchHit]:
     """Title, description, comment and evidence matches, then IOC matches; each case once."""
+    case_search = CaseSearchService()
     text = case_search.search_full_text(q, limit=LIMIT)
     rows = text["cases"] + text["comments"] + text["evidence"]
     hits, seen = [], set()
@@ -114,6 +112,7 @@ def search(
             if missing_permission(user.user_id, permission, session) is None
         }
     results = SearchResults()
+    data_service = DatabaseDataService()
     if "cases.read" in allowed:
         case = data_service.get_case(q)
         if case:
