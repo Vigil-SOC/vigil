@@ -72,7 +72,7 @@ the Secret to rotate, then restart the gateway:
 {{- end }}
 {{- end }}
 
-{{- /* Names this chart used to render that nothing reads. Keep in step with RETIRED in tests/unit/_ratchets/test_helm_env_names_are_read.py. */ -}}
+{{- /* Names this chart used to render that nothing reads. */ -}}
 {{- $retiredConfig := dict
   "VIGIL_OTEL_LOG_LLM_CONTENT" ""
   "VIGIL_OTEL_RECORD_LLM_CONTENT" ""

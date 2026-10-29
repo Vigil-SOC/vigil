@@ -119,9 +119,9 @@ _CASE_TIERS: Dict[str, SourceTier] = {
 # label outside its own playbook's list never arrives here under that name —
 # `attributeSource` collapses it to `undeclared` first.
 _HUNT_TIERS: Dict[str, SourceTier] = {
-    # The data_domains the shipped hunt definitions declare (#2287), held to
-    # them by a ratchet: a hunt records under exactly these, and a domain
-    # missing here graded CrowdStrike process evidence a feed.
+    # The data_domains the shipped hunt definitions declare (#2287): a hunt
+    # records under exactly these, and a domain missing here graded
+    # CrowdStrike process evidence a feed.
     "net_flow": SourceTier.TELEMETRY,
     "dns": SourceTier.TELEMETRY,
     "http": SourceTier.TELEMETRY,

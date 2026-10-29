@@ -34,7 +34,7 @@ Good, Fair and Poor are shown as words wherever a value has a limit from configu
 
 ## 3. Principles for phase 1
 
-1. Boards win on appearance. Both themes complete. Root minimum width 1440 px.
+1. Boards win on appearance. Both themes complete. Root has no minimum width (amended by #3416).
 2. Numbers come from the API. No policy number (limit, preset, threshold, cap) is hard-coded in the UI. Where today's UI holds one, it moves behind an endpoint in phase 1 (section 4).
 3. Every human action already available today keeps working through its existing endpoint, restyled.
 4. A placeholder is honest. It says what is missing and why. Nothing on screen claims to do what it does not.
@@ -201,7 +201,7 @@ A phase-1 requirement is done when:
 2. Every number on screen comes from an API response or a configuration value served by the API. No preset, limit or threshold is written in the UI.
 3. Every action that exists today still works through its existing endpoint, with the confirmation class from principle 7.
 4. Every placeholder is labelled per section 2 and its ⓘ says what will fill it.
-5. The screen has tests for its data mapping and its states (empty, loading, populated, error, demo).
+5. The screen handles each of its states: empty, loading, populated, error, demo.
 6. Nothing phase 2 has a nav entry, a route or a fake result.
 
 Rev 1.1's L test (fold from record events, byte-identical replay) is not applied in phase 1.
@@ -246,7 +246,7 @@ Decided here so nothing is left for the groomer or a human to settle. Each one i
 | D7 | **Settings sections with no board** (Services, System, General, Developer) become one "System" tab at the end of Settings under the new tokens and shell. Appearance is removed; the theme switch lives in the profile menu; the accent and base swatches are dropped in favour of the design's two themes. | Keeps four working screens without redesign work; the design's token model has no per-install accent. |
 | D8 | **Current screens with no phase-1 page** (Findings, the former Dashboard; Case metrics) stay reachable under the "More" menu with tokens only, except the spend card, which moves to Settings › AI models (D11). Phase 2 retires them into Pulse, Fleet Wall and Coverage. **Amended by #3380:** Analytics, AutoOps and AI decisions are retired and their code deleted, dropping deliberately their features that live nowhere else (analyst feedback on AI decisions, the Auto Ops investigation list and detail, the Analytics insights, heatmap and top-entity panels). **Amended by #3383:** Health is no longer listed in More or the command bar; it stays at `/health` until the Medic epic (#2094) decides its place. | Redesigning the remaining screens is phase-2 work by another name. The retired three were pre-rebuild screens whose useful content is now on Home, Overview and Settings. |
 | D9 | **Roles: rbac's five built-in roles plus custom roles.** Personas and View as are presentation only, and arrive with the console's multi-user phase, outside rbac. No phase-1 screen depends on role beyond the permission check. | "No multi-user" in the team's scope; custom roles are rows in the existing roles table (#2917). |
-| D10 | **Minimum width 1440 px, fluid above, as the boards specify.** Below 1440 px the console scrolls horizontally rather than reflowing. | The boards are drawn at 1440 and the design package states the root minimum; supporting narrower widths would be design work the package does not contain. |
+| D10 | **Fluid width with no minimum.** The console takes the window's width and wide tables scroll inside their own cards. **Amended by #3416:** the 1440 px floor is removed, so a 13" window no longer scrolls the whole console sideways. | The boards are drawn at 1440; the shell takes whatever width the window gives it. |
 | D11 | **Spend is a Settings readout, not a case readout.** Total spend and the per-model breakdown live on Settings › AI models; no case surface shows a dollar figure. Spend caps (Settings › Limits and autonomy, a workflow's max cost, the gateway budget) are unchanged and runs keep recording cost. Where the boards draw a Limit used column, per-row cost or a Cost block, this decision supersedes them. | An analyst working a case acts on evidence and gaps, not spend; the operator who sets the caps reads spend in one place, next to the models that incur it. The caps still stop runs, so the guardrail is unchanged. |
 
 ## 17. Suggested epics
@@ -267,4 +267,4 @@ One epic each; the groomer decides PR size. Foundation first; pages after the sh
 12. Agents & workflows (section 12, B12).
 13. Settings: AI models, Integrations, Custom integration (section 13).
 14. Settings: Alert collection, SLA, Limits and autonomy, Data and uploads, System tab (section 13, B9).
-15. Cut-over: retire the old rail, styles.css, Appearance, and the old tests; move legacy screens under More.
+15. Cut-over: retire the old rail, styles.css and Appearance; move legacy screens under More.

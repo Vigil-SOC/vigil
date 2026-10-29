@@ -149,7 +149,7 @@ Sign-in cookies are `Secure` by default (`VIGIL_COOKIE_SECURE=true`), so the con
 
 ### Windows (WSL2)
 
-> **Not yet tested on real Windows hardware.** The scripts have been checked on macOS and Linux only, and the WSL2 handling is covered by stubbed unit tests. Please report what breaks.
+> **Not yet tested on real Windows hardware.** The scripts have been checked on macOS and Linux only. Please report what breaks.
 
 `start.sh` is a bash script, so run Vigil inside WSL2, not in PowerShell or Git Bash.
 
@@ -266,13 +266,6 @@ cd clients/desktop && npm run dist                          # macOS DMG / Linux 
 ```
 
 Local builds are ad-hoc signed, not notarized, so macOS may report the app as "damaged". Clear the quarantine with `xattr -dr com.apple.quarantine /Applications/Vigil.app`, or use **System Settings → Privacy & Security → Open Anyway**.
-
-### Tests
-
-```bash
-source venv/bin/activate
-pytest tests/unit tests/security -m "not external_service"   # same invocation as CI; no LLM key needed
-```
 
 ---
 

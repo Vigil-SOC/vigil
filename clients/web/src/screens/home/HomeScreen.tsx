@@ -20,6 +20,9 @@ import {
   readSetupHidden,
 } from './setupHidden'
 import { errorText } from '../../shared/errorText'
+import { useAuth } from '../../contexts/AuthContext'
+import { CloseCaseDialog } from '../cases/ClosureFields'
+import { closesOnCase } from '../../shared/closesOnCase'
 import './home.css'
 
 const POLL_MS = 20_000
@@ -36,6 +39,7 @@ const STEP_ACTION: Record<string, string> = {
 const KIND_LABEL: Record<NeedsYouItem['kind'], string> = {
   approval: 'Approval',
   checkpoint: 'Checkpoint',
+  recommendation: 'Recommended action',
   parked: 'Stopped at a limit',
   open_case: 'Case',
 }
@@ -109,12 +113,15 @@ function DecisionCard({
   onApprove,
   onReject,
   onOpenCase,
+  onCloseCase,
 }: {
   item: NeedsYouItem
   busy: boolean
   onApprove: (item: NeedsYouItem, fused: boolean) => void
   onReject: (item: NeedsYouItem, reason: string) => void
   onOpenCase: (id: string) => void
+  /** Set when Close case answers this card. */
+  onCloseCase?: (id: string) => void
 }) {
   const [rejecting, setRejecting] = useState(false)
   const [reason, setReason] = useState('')
@@ -124,6 +131,11 @@ function DecisionCard({
     .filter(Boolean)
     .join(' · ')
   const ask = cardAsk(item)
+  const advice = item.kind === 'recommendation'
+  // Nothing executes a recommendation: no Approve, and Reject only clears one with no case to close.
+  const approvable = !answersOnCase(item) && !advice
+  const rejectable = approvable || (advice && !caseId)
+  const linkClass = answersOnCase(item) || (advice && !onCloseCase) ? 'home-btn primary' : 'home-btn ghost'
 
   return (
     <article className="home-card">
@@ -139,14 +151,19 @@ function DecisionCard({
       )}
       <div className="home-actions">
         {/* A hunt stopped at a limit is answered with Keep going on its case, not approved here. */}
-        {answersOnCase(item) ? null : item.reversibility === 'reversible' ? (
+        {caseId && onCloseCase && (
+          <button type="button" className="home-btn primary" aria-label={`Close case for ${ask.text}`} disabled={busy} onClick={() => onCloseCase(caseId)}>
+            Close case
+          </button>
+        )}
+        {!approvable ? null : item.reversibility === 'reversible' ? (
           <button type="button" className="home-btn primary" disabled={busy} onClick={() => onApprove(item, true)}>
             Approve
           </button>
         ) : (
           <HoldButton label="Approve" disabled={busy} onConfirm={() => onApprove(item, false)} />
         )}
-        {answersOnCase(item) ? null : rejecting ? (
+        {!rejectable ? null : rejecting ? (
           <form
             className="home-reject"
             onSubmit={(event) => {
@@ -175,7 +192,7 @@ function DecisionCard({
         )}
         {caseId && (
           <Link
-            className={answersOnCase(item) ? 'home-btn primary' : 'home-btn ghost'}
+            className={linkClass}
             to={`/cases?case=${encodeURIComponent(caseId)}`}
             onClick={(event) => {
               if (event.metaKey || event.ctrlKey || event.shiftKey) return // new tab or window
@@ -183,17 +200,17 @@ function DecisionCard({
               onOpenCase(caseId)
             }}
           >
-            Open case
+            View case
           </Link>
         )}
         {!caseId && item.finding_id && (
-          <Link className="home-btn ghost" to={`/overview?alert=${encodeURIComponent(item.finding_id)}`}>
+          <Link className={linkClass} to={`/overview?alert=${encodeURIComponent(item.finding_id)}`}>
             Open alert
           </Link>
         )}
         {!caseId && !item.finding_id && item.run_id && (
           <Link
-            className={answersOnCase(item) ? 'home-btn primary' : 'home-btn ghost'}
+            className={linkClass}
             to={`/workflows?run=${encodeURIComponent(item.run_id)}`}
           >
             Open run
@@ -220,6 +237,8 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
   const busyRef = useRef<string | null>(null)
   const loadTicket = useRef(0)
   const { notify, pending, settled } = useToast()
+  const canClose = useAuth().hasPermission('cases.write')
+  const [closing, setClosing] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     const ticket = ++loadTicket.current
@@ -601,6 +620,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
                   onApprove={approve}
                   onReject={fused.reject}
                   onOpenCase={openCase}
+                  onCloseCase={canClose && closesOnCase(item, items) ? setClosing : undefined}
                 />
               ))}
               {moreWaiting > 0 && (
@@ -628,6 +648,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
           )}
         </section>
       </div>
+      <CloseCaseDialog open={closing !== null} id={closing ?? ''} onClose={() => setClosing(null)} onClosed={() => void load()} />
     </div>
   )
 }

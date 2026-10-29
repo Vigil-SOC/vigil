@@ -226,6 +226,9 @@
 .case-needs .needs-row-title { flex: 1 1 200px; min-width: 0; color: var(--tx0); overflow-wrap: anywhere; }
 .case-needs .needs-row-rev { color: var(--tx2); font-size: 12px; }
 .case-needs .needs-row-rev.irreversible { color: var(--poor); }
+.case-needs .needs-note,
+.case-needs .needs-row-reason { margin: 0; font-size: 12.5px; color: var(--tx1); overflow-wrap: anywhere; }
+.case-needs .needs-row-reason { color: var(--tx2); }
 
 /* Row buttons are shorter than the block's; the hold button keeps its width so Reject doesn't shift. */
 .case-needs .needs-row .needs-actions .btn,

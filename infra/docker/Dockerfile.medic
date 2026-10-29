@@ -52,7 +52,7 @@ RUN groupadd -g 10001 medic \
 COPY --from=deps /opt/medic/venv /opt/medic/venv
 
 # Code stays root-owned: Medic can read it, not change it. .dockerignore keeps
-# Medic's tests, fixtures and generator tools out.
+# Medic's fixtures and generator tools out.
 WORKDIR /app
 COPY services/medic/ ./services/medic/
 COPY VERSION ./VERSION

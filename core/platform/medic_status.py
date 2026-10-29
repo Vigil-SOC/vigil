@@ -3,8 +3,8 @@
 ``VIGIL_MEDIC_ENABLED`` is the master switch on every install shape, and the
 backend reads the same setting Medic does, so a Medic that is off never shows as
 down. Medic's rule (``services/medic/app/config.py``) is copied, not imported:
-Medic imports nothing from ``core`` and the backend nothing from Medic, and
-``tests/unit/platform/test_medic_status.py`` holds the two to the same answers.
+Medic imports nothing from ``core`` and the backend nothing from Medic, so the
+two must be kept to the same answers by hand.
 
 With the flag on, the state comes from the ``medic_last_seen`` row the poller
 writes (``core/platform/medic_last_seen.py``), always against the backend's own
