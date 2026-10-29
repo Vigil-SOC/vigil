@@ -126,11 +126,13 @@ export default function CasesScreen({ setViewFull, viewFull, openCase, caseSeed,
   // ?state=closed, ?needs_you=1 and ?working=1 open the list on that chip, and ?closed_by and
   // ?alerts_from narrow it, so an Overview count opens the cases behind it
   const [filters, setFilters] = useState<CaseFilters>(() => {
-    const closedBy = searchParams.get('closed_by')
+    const closed = searchParams.get('state') === 'closed'
+    // who closed a case narrows closed cases only
+    const closedBy = closed ? searchParams.get('closed_by') : null
     const alertsFrom = searchParams.get('alerts_from')
     return {
       ...INITIAL_CASE_FILTERS,
-      state: searchParams.get('state') === 'closed' ? 'closed' : '',
+      state: closed ? 'closed' : '',
       needsYou: searchParams.get('needs_you') === '1',
       working: searchParams.get('working') === '1',
       closedBy: closedBy === 'agent' || closedBy === 'person' ? closedBy : '',

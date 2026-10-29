@@ -642,7 +642,7 @@ class CaseRepository:
         investigation ran one of those workflows (an empty set returns none).
 
         ``working`` keeps open cases not in ``needs_you_ids``. ``closed_by``
-        (``agent``/``person``) keeps closed cases by who closed them, a person
+        (``agent``/``person``) keeps closed cases not in ``needs_you_ids`` by who closed them, a person
         being a close through one of ``person_channels`` (``closure.PERSON_CHANNELS``;
         this layer does not import the cases domain).
         ``alerts_in`` keeps cases holding an alert created in ``[start, end)``,
@@ -740,6 +740,9 @@ class CaseRepository:
             stmt = stmt.where(
                 Case.status == "closed", person if closed_by == "person" else ~person
             )
+            # Overview files a case that needs you under Needs you, closed or not
+            if needs_you_ids:
+                stmt = stmt.where(Case.case_id.notin_(sorted(needs_you_ids)))
         if alerts_in is not None:
             stmt = stmt.where(_alerts_in_exists(*alerts_in))
         total = self.session.execute(

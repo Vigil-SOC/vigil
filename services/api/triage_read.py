@@ -1,11 +1,12 @@
 """One read of the intake queue for the Triage screen.
 
 One row per alert: its latest ``intake_triggers`` row, or a ``not_picked_up`` row
-when it never got one and is on no case; Ask and schedule rows are all kept. An
-alert on no case whose latest row is not queued is ``not_picked_up`` too, as on
-Overview. ``counts`` cover all of them, as SQL aggregates. Kind, source, and state narrow only the returned rows,
-in SQL before the cap; only the rows returned are loaded and presented. Ranking
-is ``rank_intake_row``; this module does not keep a second sort key.
+when it never got one and is on no case (or is noise-marked); Ask and schedule rows
+are all kept. An alert on no case whose latest row is not queued is
+``not_picked_up`` too, as on Overview. ``counts`` cover all of them, as SQL
+aggregates. Kind, source, and state narrow only the returned rows, in SQL before
+the cap; only the rows returned are loaded and presented. Ranking is
+``rank_intake_row``; this module does not keep a second sort key.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from sqlalchemy import (
     func,
     literal,
     null,
+    or_,
 )
 from sqlalchemy.orm import aliased
 
@@ -283,7 +285,11 @@ def _rows(session, day: Optional[date]):
         Finding.created_at,
     ).filter(
         ~exists().where(IntakeTrigger.finding_id == Finding.finding_id),
-        ~exists().where(case_findings.c.finding_id == Finding.finding_id),
+        # a noise-marked alert is listed under Dismissed even when it is on a case
+        or_(
+            ~exists().where(case_findings.c.finding_id == Finding.finding_id),
+            Finding.noise_marked_at.isnot(None),
+        ),
     )
     rows = intake.union_all(never_queued).subquery("all_triage_rows")
     query = session.query(rows)
