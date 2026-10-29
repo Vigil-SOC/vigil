@@ -28,7 +28,7 @@ def _patch_data_service(monkeypatch, *, case, update=None):
 
     captured = {}
 
-    def _update(case_id, **updates):
+    def _update(case_id, *, session=None, **updates):
         if isinstance(updates.get("notes"), str):
             raise ValueError(
                 "Attribute 'notes' does not accept objects of type <class 'str'>"

@@ -563,7 +563,7 @@ class TestPrincipal:
             def get_case(self, case_id):
                 return {"case_id": case_id, "status": "investigating", "notes": []}
 
-            def update_case(self, case_id, **updates):
+            def update_case(self, case_id, *, session=None, **updates):
                 return True
 
         @contextmanager

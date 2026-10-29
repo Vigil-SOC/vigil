@@ -94,7 +94,7 @@ async def test_closing_a_case_through_the_backend_records_a_closure(monkeypatch)
         def get_case(self, case_id):
             return {"case_id": case_id, "status": "investigating", "notes": []}
 
-        def update_case(self, case_id, **updates):
+        def update_case(self, case_id, *, session=None, **updates):
             assert updates["status"] == "closed"
             return True
 
@@ -138,7 +138,7 @@ async def test_a_status_outside_the_vocabulary_is_refused(
         def create_case(self, **kwargs):
             raise AssertionError("refused status was stored")
 
-        def update_case(self, case_id, **updates):
+        def update_case(self, case_id, *, session=None, **updates):
             raise AssertionError("refused status was stored")
 
     monkeypatch.setattr(tool_registry, "_data", lambda: _Cases())
@@ -157,7 +157,7 @@ async def test_a_note_is_stored_where_the_timeline_reads_it(monkeypatch):
         def get_case(self, case_id):
             return {"case_id": case_id, "status": "open", "notes": []}
 
-        def update_case(self, case_id, **updates):
+        def update_case(self, case_id, *, session=None, **updates):
             captured.update(updates)
             return True
 
