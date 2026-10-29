@@ -1938,14 +1938,17 @@ describe('case page', () => {
     expect(document.querySelector('.case-reason')?.textContent).toBe('2 recommended actions')
     // Closing this case leaves the shared one up for the other.
     expect(within(recs).queryByRole('button', { name: 'Close case for Block 5.6.7.8' })).not.toBeInTheDocument()
-    fireEvent.click(within(recs).getByRole('button', { name: 'Close case for Isolate WS-1' }))
-    const dialog = await screen.findByRole('dialog')
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Close case' }))
-    await waitFor(() => expect(casesApi.closeCase).toHaveBeenCalledWith('case-dec', expect.anything()))
-
     fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
     expect(screen.getByRole('button', { name: 'Review on Summary' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Decide on Summary' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: /^Summary/ }))
+    fireEvent.click(within(screen.getByRole('list', { name: 'Recommended actions' })).getByRole('button', { name: 'Close case for Isolate WS-1' }))
+    const dialog = await screen.findByRole('dialog')
+    // Once the case closes, the server no longer lists its recommendations.
+    queue()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close case' }))
+    await waitFor(() => expect(casesApi.closeCase).toHaveBeenCalledWith('case-dec', expect.anything()))
+    await waitFor(() => expect(screen.queryByRole('list', { name: 'Recommended actions' })).not.toBeInTheDocument())
   })
 
   it('shows the error and renders nothing without items', async () => {
