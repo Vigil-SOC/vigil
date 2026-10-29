@@ -1456,7 +1456,8 @@ export interface paths {
          *     workflow has it); both compose with the other filters. ``working=true``
          *     keeps open cases that do not need you, ``closed_by=agent|person`` keeps
          *     closed cases by who closed them, and ``alerts_from=today|all`` keeps cases
-         *     holding an alert created that UTC day (or any alert); the strip ignores them.
+         *     holding an alert created that UTC day (or any alert). The strip follows
+         *     ``alerts_from`` and ignores the other filters.
          */
         get: operations["get_api_cases"];
         put?: never;
@@ -5790,7 +5791,8 @@ export interface paths {
          *     workflow has it); both compose with the other filters. ``working=true``
          *     keeps open cases that do not need you, ``closed_by=agent|person`` keeps
          *     closed cases by who closed them, and ``alerts_from=today|all`` keeps cases
-         *     holding an alert created that UTC day (or any alert); the strip ignores them.
+         *     holding an alert created that UTC day (or any alert). The strip follows
+         *     ``alerts_from`` and ignores the other filters.
          */
         get: operations["get_api_v1_cases"];
         put?: never;

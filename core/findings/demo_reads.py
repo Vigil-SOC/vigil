@@ -355,7 +355,10 @@ def case_queue(
     closed_by: Optional[str] = None,
     alerts_from: Optional[str] = None,
 ) -> dict:
-    """One page of demo cases, in the queue's shape. The strip ignores the filters."""
+    """One page of demo cases, in the queue's shape.
+
+    The strip follows ``alerts_from`` and ignores the other filters.
+    """
     needs = open_case_ids(cases)
     findings_by_id = {
         finding["finding_id"]: finding
@@ -446,6 +449,10 @@ def case_queue(
     for case in cases:
         status = (case.get("status") or "").strip()
         if not status or status == _CLOSED:
+            continue
+        if alerts_from_ids is not None and not alerts_from_ids.intersection(
+            _ids(case.get("finding_ids"))
+        ):
             continue
         by_state[status] = by_state.get(status, 0) + 1
     return {
