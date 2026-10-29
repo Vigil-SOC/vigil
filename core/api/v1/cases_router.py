@@ -17,7 +17,7 @@ contract); the console router does not use them.
 import logging
 from dataclasses import asdict
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -251,6 +251,9 @@ def get_cases(
     closed: Optional[bool] = None,
     query: Optional[str] = None,
     needs_you_only: bool = Query(default=False, alias="needs_you"),
+    working: bool = False,
+    closed_by: Optional[Literal["agent", "person"]] = None,
+    alerts_from: Optional[Literal["today", "all"]] = None,
     kind: Optional[str] = None,
     limit: int = Query(default=PAGE_LIMIT, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
@@ -264,7 +267,10 @@ def get_cases(
     ``needs_you`` on each row. Page size defaults to the repository limit.
     ``needs_you=true`` keeps just those cases, and ``kind`` keeps cases whose
     latest investigation ran a workflow of that ``run_kind`` (none when no
-    workflow has it); both compose with the other filters.
+    workflow has it); both compose with the other filters. ``working=true``
+    keeps open cases that do not need you, ``closed_by=agent|person`` keeps
+    closed cases by who closed them, and ``alerts_from=today|all`` keeps cases
+    holding an alert created that UTC day (or any alert); the strip ignores them.
     """
     # Demo cases live in memory. The database being down is a different empty.
     if data_service.is_demo_mode():
@@ -284,6 +290,9 @@ def get_cases(
             closed=closed,
             sla_at_risk=sla_at_risk,
             needs_you_only=needs_you_only,
+            working=working,
+            closed_by=closed_by,
+            alerts_from=alerts_from,
             workflow_constrained=bool(_blank(workflow) or _blank(kind)),
             data_source=_blank(data_source),
         )
@@ -315,6 +324,9 @@ def get_cases(
             needs_you_ids=needs_you_ids,
             needs_you_only=needs_you_only,
             workflow_ids=workflow_ids,
+            working=working,
+            closed_by=closed_by,
+            alerts_from=alerts_from,
         )
         strip = repo.strip(now=now, needs_you_ids=needs_you_ids)
     return {

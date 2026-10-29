@@ -61,6 +61,12 @@ export interface CaseFilters {
   query: string
   state: string
   needsYou: boolean
+  // open cases that do not need you
+  working: boolean
+  // with state 'closed': who closed it
+  closedBy: '' | 'agent' | 'person'
+  // cases holding an alert created in that span
+  alertsFrom: '' | 'today' | 'all'
   kind: string
   priority: string
   sla: '' | 'risk'
@@ -75,6 +81,9 @@ export const INITIAL_CASE_FILTERS: CaseFilters = {
   query: '',
   state: '',
   needsYou: false,
+  working: false,
+  closedBy: '',
+  alertsFrom: '',
   kind: '',
   priority: 'any',
   sla: '',
@@ -109,6 +118,9 @@ function toParams(f: CaseFilters) {
   if (f.state === 'closed') params.closed = true
   else if (f.state) params.state = f.state
   if (f.needsYou) params.needs_you = true
+  if (f.working) params.working = true
+  if (f.closedBy) params.closed_by = f.closedBy
+  if (f.alertsFrom) params.alerts_from = f.alertsFrom
   if (f.kind) params.kind = f.kind
   if (f.priority && f.priority !== 'any') params.priority = f.priority
   if (f.sla === 'risk') params.sla_at_risk = true

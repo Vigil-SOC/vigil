@@ -225,6 +225,9 @@ export const casesApi = {
     closed?: boolean
     query?: string
     needs_you?: boolean
+    working?: boolean
+    closed_by?: 'agent' | 'person'
+    alerts_from?: 'today' | 'all'
     kind?: string
     limit?: number
     offset?: number
@@ -1327,6 +1330,8 @@ export interface OverviewOutcome {
   state: string
   label: string
   count: number | null
+  // cases the alerts of a case node are in; null for the other nodes
+  case_count: number | null
   info: string | null
   unmeasured_text: string | null
 }

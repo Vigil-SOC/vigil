@@ -43,7 +43,6 @@ ARRIVAL_SOURCE = {
 RUNNING_SOURCE = "Runs still in history whose status is running or paused."
 STEP_SOURCE = "The open phase on the newest live run, or that run's status when it has no phase row."
 UNMEASURED_TEXT = "Not measured yet"
-NEEDS_YOU_INFO = "This count is alerts, not decisions."
 
 # Ticket, paused, stuck, and incidents stay outside the sum.
 _UNMEASURED = (
@@ -87,8 +86,20 @@ def completion_level(sample: int, completed: int) -> Optional[str]:
     return "poor"
 
 
+# These nodes open Cases, which lists cases; the node says how many its alerts are in.
+_CASE_STATES = frozenset({"needs_you", "working", "resolved_auto", "resolved_person"})
+
+
 def _outcome_nodes(states: list[dict]) -> list[dict]:
     counts = Counter(row["terminal_state"] for row in states)
+    cases = {
+        state: {
+            row["case_id"]
+            for row in states
+            if row["terminal_state"] == state and row.get("case_id")
+        }
+        for state in _CASE_STATES
+    }
     nodes = []
     for state in _LIVE_ORDER:
         nodes.append(
@@ -96,7 +107,8 @@ def _outcome_nodes(states: list[dict]) -> list[dict]:
                 "state": state,
                 "label": _NODE_LABELS[state],
                 "count": counts.get(state, 0),
-                "info": NEEDS_YOU_INFO if state == "needs_you" else None,
+                "case_count": len(cases[state]) if state in _CASE_STATES else None,
+                "info": None,
                 "unmeasured_text": None,
             }
         )
@@ -106,6 +118,7 @@ def _outcome_nodes(states: list[dict]) -> list[dict]:
                 "state": state,
                 "label": label,
                 "count": None,
+                "case_count": None,
                 "info": info,
                 "unmeasured_text": UNMEASURED_TEXT,
             }

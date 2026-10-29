@@ -123,12 +123,20 @@ export default function CasesScreen({ setViewFull, viewFull, openCase, caseSeed,
   // the full page is a ?case=<id> param, so it is deep-linkable; rows open the drawer instead
   const [searchParams, setSearchParams] = useSearchParams()
   const selected = searchParams.get('case')
-  // ?state=closed and ?needs_you=1 open the list on that chip, so an Overview count can link to it
-  const [filters, setFilters] = useState<CaseFilters>(() => ({
-    ...INITIAL_CASE_FILTERS,
-    state: searchParams.get('state') === 'closed' ? 'closed' : '',
-    needsYou: searchParams.get('needs_you') === '1',
-  }))
+  // ?state=closed, ?needs_you=1 and ?working=1 open the list on that chip, and ?closed_by and
+  // ?alerts_from narrow it, so an Overview count can link to the cases its alerts are in
+  const [filters, setFilters] = useState<CaseFilters>(() => {
+    const closedBy = searchParams.get('closed_by')
+    const alertsFrom = searchParams.get('alerts_from')
+    return {
+      ...INITIAL_CASE_FILTERS,
+      state: searchParams.get('state') === 'closed' || closedBy === 'agent' || closedBy === 'person' ? 'closed' : '',
+      needsYou: searchParams.get('needs_you') === '1',
+      working: searchParams.get('working') === '1',
+      closedBy: closedBy === 'agent' || closedBy === 'person' ? closedBy : '',
+      alertsFrom: alertsFrom === 'today' || alertsFrom === 'all' ? alertsFrom : '',
+    }
+  })
   const backToList = useCallback(() => setSearchParams({}), [setSearchParams])
   // Expand from the drawer leaves the page it was open on in the entry's state; a link or new tab has none
   const navigate = useNavigate()
@@ -201,7 +209,14 @@ function CasesTable({
     (filters.workflow.trim() ? 1 : 0) +
     (filters.dataSource.trim() ? 1 : 0)
   const activeFilters =
-    panelFilters + (filters.state ? 1 : 0) + (filters.needsYou ? 1 : 0) + (filters.kind ? 1 : 0) + (filters.sla ? 1 : 0)
+    panelFilters +
+    (filters.state ? 1 : 0) +
+    (filters.needsYou ? 1 : 0) +
+    (filters.working ? 1 : 0) +
+    (filters.closedBy ? 1 : 0) +
+    (filters.alertsFrom ? 1 : 0) +
+    (filters.kind ? 1 : 0) +
+    (filters.sla ? 1 : 0)
   const showingSearch = results !== null
   const display = showingSearch ? results : rows
   const openCount = Object.values(strip.by_state).reduce((sum, n) => sum + n, 0)
@@ -240,6 +255,9 @@ function CasesTable({
                 onClearAll={() => setFilters({
                   state: '',
                   needsYou: false,
+                  working: false,
+                  closedBy: '',
+                  alertsFrom: '',
                   kind: '',
                   priority: 'any',
                   sla: '',
@@ -277,8 +295,9 @@ function CasesTable({
         />
         <div className="cases-chips">
           <div className="chip-group" role="group" aria-label="State">
-            <FilterChip list dot="var(--tx2)" label="All open" count={openCount} active={!filters.needsYou && !filters.state} onClick={() => setFilters({ state: '', needsYou: false })} />
-            <FilterChip list dot={TONE_DOT.needs} label="Needs you" count={strip.needs_you} active={filters.needsYou} onClick={() => setFilters({ needsYou: true, state: '' })} />
+            <FilterChip list dot="var(--tx2)" label="All open" count={openCount} active={!filters.needsYou && !filters.working && !filters.state} onClick={() => setFilters({ state: '', needsYou: false, working: false, closedBy: '' })} />
+            <FilterChip list dot={TONE_DOT.needs} label="Needs you" count={strip.needs_you} active={filters.needsYou} onClick={() => setFilters({ needsYou: true, state: '', working: false, closedBy: '' })} />
+            <FilterChip list dot="var(--ac)" label="Still working" count={Math.max(0, openCount - strip.needs_you)} active={filters.working} onClick={() => setFilters({ working: true, needsYou: false, state: '', closedBy: '' })} />
             {stateKeys.map((key) => (
               <FilterChip
                 key={key}
@@ -286,8 +305,8 @@ function CasesTable({
                 dot={TONE_DOT[statePill(key).tone]}
                 label={STATE_WORDS.find((o) => o.value === key)?.label ?? cap(key.replace(/_/g, ' '))}
                 count={strip.by_state[key] ?? 0}
-                active={!filters.needsYou && filters.state === key}
-                onClick={() => setFilters({ state: key, needsYou: false })}
+                active={!filters.needsYou && !filters.working && filters.state === key}
+                onClick={() => setFilters({ state: key, needsYou: false, working: false, closedBy: '' })}
               />
             ))}
             <FilterChip
@@ -295,8 +314,29 @@ function CasesTable({
               label="Closed today"
               count={`${strip.closed_today} · ${agentShare} by an agent alone`}
               active={filters.state === 'closed'}
-              onClick={() => setFilters({ state: filters.state === 'closed' ? '' : 'closed', needsYou: false })}
+              onClick={() => setFilters({ state: filters.state === 'closed' ? '' : 'closed', needsYou: false, working: false, closedBy: '' })}
             />
+            {/* set by an Overview link; shown, and removable, so the list never looks wrong for no reason */}
+            {filters.closedBy && (
+              <FilterChip
+                list
+                active
+                label={`Closed by ${filters.closedBy === 'agent' ? 'an agent' : 'a person'}`}
+                count={<Icon name="close" size={11} />}
+                title="Remove this filter"
+                onClick={() => setFilters({ closedBy: '' })}
+              />
+            )}
+            {filters.alertsFrom && (
+              <FilterChip
+                list
+                active
+                label={filters.alertsFrom === 'today' ? 'Holds alerts from today' : 'Holds alerts from any day'}
+                count={<Icon name="close" size={11} />}
+                title="Remove this filter"
+                onClick={() => setFilters({ alertsFrom: '' })}
+              />
+            )}
           </div>
           {kinds.length > 0 && (
             <div className="chip-group" role="group" aria-label="Kind">
