@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { caseSearchApi, casesApi, workflowApi } from '../../services/api'
 import { mapQueueCase } from '../../data/mappers'
@@ -32,6 +32,7 @@ import { CasePage } from './CasePage'
 import { errorDetail } from './caseFormat'
 import { ClosureFields, closurePayload, closureProblem, type ClosureCategory } from './ClosureFields'
 import { LATER_RELEASE } from '../../shared/later'
+import { holdCase } from '../../shell/heldCase'
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1)
 
@@ -113,6 +114,11 @@ function useWorkflowCatalog(): { kinds: string[]; names: Record<string, string> 
   return catalog
 }
 
+function originOf(state: unknown): { pathname: string; search: string } | null {
+  const o = (state as { origin?: { pathname?: unknown; search?: unknown } } | null)?.origin
+  return typeof o?.pathname === 'string' ? { pathname: o.pathname, search: typeof o.search === 'string' ? o.search : '' } : null
+}
+
 export default function CasesScreen({ setViewFull, viewFull, openCase, caseSeed, onCaseSeedConsumed }: ConsoleScreenProps) {
   // the full page is a ?case=<id> param, so it is deep-linkable; rows open the drawer instead
   const [searchParams, setSearchParams] = useSearchParams()
@@ -124,6 +130,15 @@ export default function CasesScreen({ setViewFull, viewFull, openCase, caseSeed,
     needsYou: searchParams.get('needs_you') === '1',
   }))
   const backToList = useCallback(() => setSearchParams({}), [setSearchParams])
+  // Expand from the drawer leaves the page it was open on in the entry's state; a link or new tab has none
+  const navigate = useNavigate()
+  const { state } = useLocation()
+  const origin = originOf(state)
+  const leave = useCallback(() => (origin ? navigate(origin) : backToList()), [origin, navigate, backToList])
+  const collapse = useCallback(
+    () => navigate(origin ?? { pathname: '/cases', search: '' }, { state: holdCase(null, selected) }),
+    [origin, navigate, selected],
+  )
 
   useEffect(() => {
     // the list fills the view and scrolls inside its card; the full page is full-bleed too, which
@@ -133,7 +148,7 @@ export default function CasesScreen({ setViewFull, viewFull, openCase, caseSeed,
   }, [setViewFull, viewFull])
 
   return selected ? (
-    <CasesDetail id={selected} onBack={backToList} pageKey="cases" seed={caseSeed} onSeedConsumed={onCaseSeedConsumed} />
+    <CasesDetail id={selected} onBack={backToList} onClose={leave} onCollapse={collapse} pageKey="cases" seed={caseSeed} onSeedConsumed={onCaseSeedConsumed} />
   ) : (
     <CasesTable filters={filters} onFilters={setFilters} onSelect={openCase} />
   )
@@ -872,6 +887,8 @@ export function CasesDetail({
   id,
   onBack,
   onExpand,
+  onClose,
+  onCollapse,
   pageKey,
   seed,
   onSeedConsumed,
@@ -881,6 +898,10 @@ export function CasesDetail({
   onBack: () => void
   /** Set only in the drawer. */
   onExpand?: () => void
+  /** Full page only: × and Esc, back to the page the case was expanded from. Defaults to onBack. */
+  onClose?: () => void
+  /** Full page only: hand the case back to the side panel. */
+  onCollapse?: () => void
   pageKey: string
   /** Command-bar text for this case's composer. */
   seed?: string | null
@@ -912,6 +933,8 @@ export function CasesDetail({
         onSeedConsumed={onSeedConsumed}
         onBack={onBack}
         onExpand={onExpand}
+        onClose={onClose}
+        onCollapse={onCollapse}
         onEdit={() => setAction('edit')}
         onMerge={() => setAction('merge')}
         onDelete={() => setAction('delete')}

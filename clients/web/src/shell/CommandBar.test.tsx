@@ -678,7 +678,7 @@ describe('CommandBar', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
     fireEvent.click(await screen.findByRole('button', { name: 'Run' }))
     await screen.findByRole('dialog', { name: 'Case' })
-    fireEvent.click(screen.getByRole('button', { name: 'Expand' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open as full page' }))
     expect(screen.getByTestId('where')).toHaveTextContent('/cases?case=case-9')
     expect(screen.queryByRole('dialog', { name: 'Case' })).not.toBeInTheDocument()
   })
