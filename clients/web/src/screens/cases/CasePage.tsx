@@ -2131,9 +2131,38 @@ function ClosedRows({ fold, phase }: { fold: RunFold | null; phase: Phase }) {
   )
 }
 
-/** Two lines, then an ellipsis; the full text is on hover. */
-function Clamped({ text }: { text: string }) {
-  return <span className="clamp2" title={text}>{text}</span>
+/** One finding: two lines then an ellipsis, the full text on hover and when the row is opened. */
+function FindingRow({ lead, text, trail }: { lead: ReactNode; text: string; trail?: ReactNode }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <li>
+      <div className={`case-finding${open ? ' open' : ''}`} role="button" tabIndex={0} aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setOpen((v) => !v) } }}>
+        {lead}
+        <span className="case-finding-text clamp2" title={text}>{text}</span>
+        {trail}
+      </div>
+    </li>
+  )
+}
+
+const FINDINGS_SHOWN = 6
+
+/** Past the first few rows: the rest behind a count, never cut silently. */
+function ShowAll({ total, children }: { total: number; children: (shown: number) => ReactNode }) {
+  const [all, setAll] = useState(false)
+  const more = total - FINDINGS_SHOWN
+  return (
+    <>
+      {children(all ? total : FINDINGS_SHOWN)}
+      {!all && more > 0 && (
+        <li>
+          <button type="button" className="case-findings-more" onClick={() => setAll(true)}>Show all ({more} more)</button>
+        </li>
+      )}
+    </>
+  )
 }
 
 /** Findings so far as rows, never as raw list markup: a hunt's explanations by their word, a lead's answers as one plain line each. */
@@ -2148,27 +2177,24 @@ function FindingList({ fold }: { fold: RunFold | null }) {
   return (
     <ul className="case-findings">
       {held && (
-        <li>
-          <span className="case-expl-pill poor">Held</span>
-          <Clamped text={`${heldLine(held)}: ${held.reason}`} />
-        </li>
+        <FindingRow lead={<span className="case-expl-pill poor">Held</span>} text={`${heldLine(held)}: ${held.reason}`} />
       )}
-      {answers.slice(0, 6).map((row, i) => (
-        <li key={i}>
-          <span className="case-findings-who">{row.agent_id}</span>
-          <Clamped text={plainLine(row.answer) || '—'} />
-        </li>
-      ))}
-      {ranked.slice(0, 6).map((row) => {
-        const word = explanationWord(row.status, row.supports, row.weakens)
-        return (
-          <li key={row.hypothesis_id}>
-            <span className={`case-expl-pill ${EXPLANATION_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>
-            <Clamped text={row.statement || row.hypothesis_id} />
-            {row.status === 'handed_off' && <span className="case-findings-next">handed off</span>}
-          </li>
-        )
-      })}
+      <ShowAll total={answers.length}>
+        {(shown) => answers.slice(0, shown).map((row, i) => (
+          <FindingRow key={i} lead={<span className="case-findings-who">{row.agent_id}</span>} text={plainLine(row.answer) || '—'} />
+        ))}
+      </ShowAll>
+      <ShowAll total={ranked.length}>
+        {(shown) => ranked.slice(0, shown).map((row) => {
+          const word = explanationWord(row.status, row.supports, row.weakens)
+          return (
+            <FindingRow key={row.hypothesis_id}
+              lead={<span className={`case-expl-pill ${EXPLANATION_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>}
+              text={row.statement || row.hypothesis_id}
+              trail={row.status === 'handed_off' ? <span className="case-findings-next">handed off</span> : undefined} />
+          )
+        })}
+      </ShowAll>
     </ul>
   )
 }
