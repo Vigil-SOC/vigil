@@ -6,6 +6,7 @@ import { useSourceBadge } from '../../shared/useSourceBadge'
 import { VigilMark } from '../../shared/VigilLogo'
 import type { OverviewOutcome, OverviewPayload } from '../../services/api'
 import './overview.css'
+import { layoutOutcomes } from './outcomeLayout'
 
 const CONNECT_DATA = '/settings?section=data'
 const EMPTY_TEXT =
@@ -17,7 +18,6 @@ const SRC_NODE_W = 196
 const SLOT_W = 236
 const SLOT_DOT_X = 246
 const ENGINE_R = 52
-const BAND_TOTAL = 150
 
 // The three served states that carry a sub-line, and the colour token of each outcome.
 const OUTCOME_SUB: Record<string, string> = {
@@ -165,7 +165,6 @@ export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
   const total = data.arrivals.reduce((n, a) => n + a.count, 0)
   const measured = data.outcomes.filter((o): o is OverviewOutcome & { count: number } => o.count !== null)
   const unmeasured = data.outcomes.filter((o) => o.count === null)
-  const outTotal = measured.reduce((n, o) => n + o.count, 0)
 
   // Source strands: each source gets 1..12 strands, spread 1.4px apart where they meet the engine.
   const maxCount = Math.max(1, ...sources.map((s) => s.count))
@@ -181,11 +180,12 @@ export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
     return { ya, paths }
   })
 
-  // Outcome bands: stacked at the engine's right edge, landing on five evenly spaced rows.
-  let top = cy - BAND_TOTAL / 2
+  // Outcome bands: stacked at the engine's right edge, each landing on a row tall enough to hold it.
+  const lay = layoutOutcomes(measured.map((o) => o.count), H)
+  let top = cy - lay.th.reduce((n, t) => n + t, 0) / 2
   const bands = measured.map((o, j) => {
-    const th = o.count === 0 ? 0 : Math.max(2.5, (BAND_TOTAL * o.count) / (outTotal || 1))
-    const y = rowY(j, measured.length, H, 52, cy)
+    const th = lay.th[j]
+    const y = lay.ys[j]
     const t0 = top
     top += th
     const dx = x2 - xr
