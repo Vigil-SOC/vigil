@@ -233,10 +233,6 @@ def client(maker, monkeypatch):
 
     monkeypatch.setattr(current_user_module, "DEV_MODE", False)
     monkeypatch.setattr(current_user_module, "is_token_revoked", _not_revoked)
-    # The seeded grants include 0008, so the matrix checks the declared names.
-    monkeypatch.setattr(
-        "core.auth.permissions.catalog_revision_applied", lambda session: True
-    )
     # check_permission opens its own session through the unit of work.
     monkeypatch.setattr("core.storage.unit_of_work.get_db_session", maker)
     backend_main.app.dependency_overrides[request_unit_of_work] = _session
@@ -347,3 +343,41 @@ def test_check_permission_matches_the_seeded_grant(client, maker):
 def test_a_gated_route_refuses_an_unauthenticated_caller(client):
     method, path, _ = ROUTES[0]
     assert client.request(method, _filled(path)).status_code == 401
+
+
+def test_no_route_gates_on_settings():
+    """settings.read and settings.write gate nothing; a later revision removes them."""
+    named = {p for _, _, gates in ROUTES for p, _ in gates}
+    assert not named & {"settings.read", "settings.write"}
+
+
+def test_senior_analyst_disables_the_orchestrator_and_cannot_enable_it(
+    client, maker, monkeypatch
+):
+    from services.api.routers import orchestrator
+
+    monkeypatch.setattr(orchestrator, "_persist_orchestrator_enabled", lambda *_a: None)
+    headers = _bearer(maker, "role-senior-analyst")
+
+    assert client.post("/api/orchestrator/disable", headers=headers).status_code == 200
+    enable = client.post("/api/orchestrator/enable", headers=headers)
+    assert enable.status_code == 403
+    assert enable.json()["detail"] == "Permission denied: ai_autonomy.write required"
+    manager = _bearer(maker, "role-manager")
+    assert client.post("/api/orchestrator/enable", headers=manager).status_code == 200
+
+
+def test_viewer_reads_the_theme_and_cannot_set_it(client, maker, monkeypatch):
+    from services.api.routers import config
+
+    monkeypatch.setattr(
+        config,
+        "get_config_service",
+        lambda: type("C", (), {"read_system_config": lambda self, key: None})(),
+    )
+    headers = _bearer(maker, "role-viewer")
+
+    assert client.get("/api/config/theme", headers=headers).status_code == 200
+    denied = client.post("/api/config/theme", json={"theme": "dark"}, headers=headers)
+    assert denied.status_code == 403
+    assert denied.json()["detail"] == "Permission denied: platform.write required"

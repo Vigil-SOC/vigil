@@ -246,7 +246,7 @@ async def delete_custom_workflow(
 
 @router.post(
     "/workflows/generate",
-    dependencies=[permission_gate("automation.write", introduced=True)],
+    dependencies=[permission_gate("automation.write")],
 )
 async def generate_workflow(
     payload: WorkflowGenerateRequest,
@@ -790,7 +790,7 @@ async def _restate_summary(run_id: str, run_service: WorkflowRunService) -> None
 
 @router.delete(
     "/workflows/runs/{run_id}",
-    dependencies=[permission_gate("automation.write", introduced=True)],
+    dependencies=[permission_gate("automation.write")],
 )
 async def delete_workflow_run(
     run_id: str,

@@ -68,7 +68,7 @@ from core.storage.models import (  # noqa: F401
     User,
     UserPreference,
 )
-from core.upgrade.command import script_directory
+from core.upgrade.command import LEGACY_AUDIT_TABLES, script_directory
 from core.version import __version__
 
 logger = logging.getLogger(__name__)
@@ -704,7 +704,9 @@ class DatabaseManager:
                 "not_null_columns": {},
             }
 
-        expected = set(Base.metadata.tables)
+        # The old audit stores are dropped per install once they have earned
+        # it (python -m core.upgrade, #3310); their models stay for old writers.
+        expected = set(Base.metadata.tables) - (set(LEGACY_AUDIT_TABLES) - present)
         missing_tables = sorted(expected - present)
         missing_columns: Dict[str, list] = {}
         not_null_columns: Dict[str, list] = {}
@@ -836,6 +838,18 @@ class DatabaseManager:
 
 # Global database manager instance
 _db_manager: Optional[DatabaseManager] = None
+
+
+def table_present(session: Session, name: str) -> bool:
+    """Whether ``public.<name>`` exists; for tables an upgrade may drop."""
+    if session.get_bind().dialect.name == "postgresql":
+        return (
+            session.execute(
+                text("SELECT to_regclass(:t)"), {"t": f"public.{name}"}
+            ).scalar()
+            is not None
+        )
+    return inspect(session.get_bind()).has_table(name)
 
 
 def get_db_manager() -> DatabaseManager:

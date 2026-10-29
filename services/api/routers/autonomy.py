@@ -38,10 +38,8 @@ ROUTER_META = RouterMeta(
     auth=Auth.REQUIRED,
 )
 
-# These names are already the live checks. The catalog records them as splits
-# of settings.*, which would open the read and rewrite the write until 0008.
-_READ = [permission_gate("ai_autonomy.read", before_revision="ai_autonomy.read")]
-_WRITE = [permission_gate("ai_autonomy.write", before_revision="ai_autonomy.write")]
+_READ = [permission_gate("ai_autonomy.read")]
+_WRITE = [permission_gate("ai_autonomy.write")]
 
 
 class CeilingBody(BaseModel):
@@ -118,7 +116,7 @@ def put_ceiling(
         and body.four_eyes in (None, current.four_eyes)
     )
     perm = "ai_autonomy.stop" if lowers else "ai_autonomy.write"
-    deny_unless(current_user.user_id, perm, session, before_revision=perm)
+    deny_unless(current_user.user_id, perm, session)
     edit = body.model_dump()
     if lowers:
         # A restated "on" is dropped, so a flag switched off since the read
@@ -239,12 +237,7 @@ def put_tool_class(
     if after == before:
         return _entry(row)
     if loosens(before, after):
-        deny_unless(
-            current_user.user_id,
-            "ai_autonomy.write",
-            session,
-            before_revision="ai_autonomy.write",
-        )
+        deny_unless(current_user.user_id, "ai_autonomy.write", session)
         if _is_service_account(current_user):
             raise HTTPException(
                 status_code=403,
@@ -259,11 +252,6 @@ def put_tool_class(
         if stopped:
             raise HTTPException(status_code=409, detail="Stopped: resume first")
     else:
-        deny_unless(
-            current_user.user_id,
-            "ai_autonomy.stop",
-            session,
-            before_revision="ai_autonomy.stop",
-        )
+        deny_unless(current_user.user_id, "ai_autonomy.stop", session)
     store_tool_class(session, name, before, after, current_user.principal_id)
     return _entry(session.get(ToolEffectClass, name))

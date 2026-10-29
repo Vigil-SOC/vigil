@@ -33,8 +33,8 @@ GATED_ROUTES = [
     ("POST", "/api/autonomy/resume", None, "ai_autonomy.write"),
     ("POST", "/api/config/integrations", {"integrations": {}}, "integrations.write"),
     ("POST", "/api/config/darktrace", {}, "integrations.write"),
-    ("POST", "/api/orchestrator/enable", None, "settings.write"),
-    ("POST", "/api/orchestrator/disable", None, "settings.write"),
+    ("POST", "/api/orchestrator/enable", None, "ai_autonomy.write"),
+    ("POST", "/api/orchestrator/disable", None, "ai_autonomy.stop"),
     ("POST", "/api/orchestrator/kill", None, "ai_autonomy.stop"),
     ("POST", "/api/orchestrator/investigations/purge", None, "platform.write"),
     ("DELETE", "/api/findings/all", None, "findings.delete"),
@@ -172,10 +172,6 @@ def test_a_route_refuses_a_user_who_lacks_its_permission(
         return perm != permission
 
     monkeypatch.setattr("core.auth.auth_service.AuthService.check_permission", _check)
-    # The catalog revision is applied, so the route's declared name is the check.
-    monkeypatch.setattr(
-        "core.auth.permissions.catalog_revision_applied", lambda session: True
-    )
     app = backend_main.app
     app.dependency_overrides[auth_module.get_current_active_user] = lambda: viewer
     app.dependency_overrides[auth_module.get_current_user] = lambda: viewer
@@ -216,7 +212,7 @@ AUTH_ONLY_ROUTES = Path(__file__).with_name("auth_only_write_routes.txt")
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 # Calls a handler makes when it checks the role itself rather than via Depends.
 _INLINE_GUARDS = (
-    "require_settings_admin",
+    "_require_settings_admin",  # bifrost_config's own; it checks platform.write
     "require_integrations_admin",
     "_require_permission",
     "check_permission",

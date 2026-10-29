@@ -7,6 +7,7 @@ import { SETUP_HIDDEN_CHANGED } from './setupHidden'
 import { ToastProvider } from '../../shell/toast'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { approvalsApi, configApi, ingestionApi, triageApi, type NeedsYouItem } from '../../services/api'
+import type { ApiMock } from '../../test/apiMock'
 
 vi.mock('../../services/api', () => ({
   approvalsApi: {
@@ -17,6 +18,7 @@ vi.mock('../../services/api', () => ({
   configApi: {
     getSetupSteps: vi.fn(),
     setDemoMode: vi.fn(),
+    getOrchestrator: vi.fn(() => Promise.resolve({ data: { enabled: true } })),
   },
   ingestionApi: {
     loadSampleAlerts: vi.fn(),
@@ -24,7 +26,7 @@ vi.mock('../../services/api', () => ({
   triageApi: {
     get: vi.fn(),
   },
-}))
+}) satisfies ApiMock)
 
 const props = {
   openChat: vi.fn(),
@@ -147,6 +149,20 @@ describe('Home', () => {
     expect(await screen.findByText('Board clear.')).toBeInTheDocument()
     expect(screen.queryByText(/picked up automatically today/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'How the pickup share is calculated' })).not.toBeInTheDocument()
+  })
+
+  it('does not say everything is running while AutoOps is off', async () => {
+    vi.mocked(configApi.getOrchestrator).mockResolvedValueOnce({ data: { enabled: false } } as never)
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 1, items: [item()] } } as never)
+    vi.mocked(triageApi.get).mockRejectedValue(new Error('triage down'))
+    const goSettings = vi.fn()
+    renderHome({ goSettings })
+    expect(
+      await screen.findByText('1 decision waits on you. AutoOps is off, so no alert is being worked.'),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/Everything else is running/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Open Limits & autonomy →' }))
+    expect(goSettings).toHaveBeenCalledWith('autoinvestigate')
   })
 
   it('omits the pickup line when the triage read fails', async () => {

@@ -1,6 +1,6 @@
 // A finding's terminal state (core.findings.alert_outcomes) in the board's five
 // words: New, Waiting for triage, Case NNNN, Resolved, Dropped. Both finding popups and the
-// Dashboard table read it from here.
+// Findings table read it from here.
 export type TerminalState =
   | 'waiting'
   | 'scoring'

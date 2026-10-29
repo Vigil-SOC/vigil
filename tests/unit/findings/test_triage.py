@@ -74,6 +74,7 @@ def _finding(finding_id: str, severity: str, **kw) -> None:
                 title=kw.get("title"),
                 description=kw.get("description"),
                 entity_context=kw.get("entity_context"),
+                ai_enrichment=kw.get("ai_enrichment"),
                 created_at=kw.get("created_at", NOW),
             )
         )
@@ -493,3 +494,65 @@ def test_route_returns_the_arrival_info(client):
     assert body["arrival_info"] == (
         "Arrivals count every finding stored today. The list is the intake rows."
     )
+
+
+def test_each_alert_shows_the_verdict_triage_saved_and_nothing_it_did_not():
+    _finding(
+        "tr-v-done",
+        "critical",
+        ai_enrichment={
+            "ai_triage": {
+                "timestamp": "2099-07-01T11:59:00",
+                "result": {
+                    "severity": "critical",
+                    "category": "intrusion",
+                    "confidence": 0.95,
+                    "reasoning": "Hidden encoded PowerShell from a UAC bypass.",
+                    "recommended_action": "isolate",
+                },
+            },
+            "triage_confidence": 0.95,
+        },
+    )
+    _finding(
+        "tr-v-partial",
+        "low",
+        ai_enrichment={"ai_triage": {"result": {"category": "other", "confidence": 7}}},
+    )
+    _finding(
+        "tr-v-failed",
+        "high",
+        ai_enrichment={"ai_triage_error": "timed out after 60s"},
+    )
+    _finding("tr-v-none", "medium")
+    ids = {
+        name: _trigger(state="queued", finding_id=f"tr-v-{name}")
+        for name in ("done", "partial", "failed", "none")
+    }
+    ask = _trigger(kind="human_ask", state="queued", payload={"question": "?"})
+
+    rows = _by_id(triage_payload(now=NOW, day=DAY))
+
+    assert rows[ids["done"]]["triage"] == {
+        "state": "done",
+        "severity": "critical",
+        "category": "intrusion",
+        "confidence": 0.95,
+        "reasoning": "Hidden encoded PowerShell from a UAC bypass.",
+        "triaged_at": "2099-07-01T11:59:00",
+    }
+    # A confidence out of range and a missing severity stay null, not defaulted.
+    assert rows[ids["partial"]]["triage"] == {
+        "state": "done",
+        "severity": None,
+        "category": "other",
+        "confidence": None,
+        "reasoning": None,
+        "triaged_at": None,
+    }
+    assert rows[ids["failed"]]["triage"] == {
+        "state": "failed",
+        "error": "timed out after 60s",
+    }
+    assert rows[ids["none"]]["triage"] == {"state": "none"}
+    assert rows[ask]["triage"] is None

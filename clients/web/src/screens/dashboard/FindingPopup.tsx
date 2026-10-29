@@ -434,7 +434,7 @@ export default function FindingPopup({
               {excludeError && <div className="field-hint err" role="alert">{excludeError}</div>}
               <p className="fp-ip-note muted">
                 Excluding hides this address’s findings from every analyst’s queue. Vigil keeps ingesting and storing them,
-                and removing the exclusion (Dashboard → Excluded IPs) brings them back unchanged.
+                and removing the exclusion (Findings → Excluded IPs) brings them back unchanged.
               </p>
             </div>
           )}

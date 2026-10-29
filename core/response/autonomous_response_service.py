@@ -166,7 +166,8 @@ class AutonomousResponseService:
         """
         # Key on the IP when known; an IP-less finding (ip_address == "unknown")
         # keys on hostname instead, so distinct IP-less hosts get distinct rows
-        # rather than colliding on the literal string "unknown".
+        # rather than colliding on the literal string "unknown". same_host finds
+        # the host's isolation under the other name, or a run's proposal of it.
         target_key = (
             ip_address if ip_address and ip_address != "unknown" else f"host:{hostname}"
         )
@@ -185,6 +186,7 @@ class AutonomousResponseService:
                 created_by=AgentId.AUTO_RESPONDER.value,
                 parameters={"hostname": hostname, "correlation": correlation_data},
                 idempotency_key=f"{ActionType.ISOLATE_HOST.value}:{target_key}",
+                same_host=(ip_address, hostname),
             )
 
             if not inserted:

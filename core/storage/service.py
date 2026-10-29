@@ -731,6 +731,7 @@ class DatabaseService:
         limit: int = 100,
         max_age_hours: Optional[int] = None,
         exclusions: str = "include",
+        finding_ids: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Findings the daemon never triaged — ai_enrichment NULL, or holding
         only an on-demand analysis (none of ai_triage, ai_triage_error,
@@ -742,7 +743,8 @@ class DatabaseService:
         so replayed or undated findings still get triaged (#2320) while
         un-enrichable ones aren't retried forever. ``exclusions`` is an
         :data:`EXCLUSION_VIEWS` value; ``hide`` still returns known-answer
-        probes (#923), which are triaged whatever addresses they name."""
+        probes (#923), which are triaged whatever addresses they name.
+        ``finding_ids`` narrows the result to those rows."""
         with self.db_manager.session_scope() as session:
             query = (
                 select(Finding)
@@ -760,6 +762,8 @@ class DatabaseService:
                     )
                 )
             )
+            if finding_ids is not None:
+                query = query.where(Finding.finding_id.in_(finding_ids))
             if max_age_hours:
                 cutoff = utcnow() - timedelta(hours=max_age_hours)
                 query = query.where(Finding.created_at >= cutoff)

@@ -1,0 +1,52 @@
+rule: ingest.source-polls-failing
+defaults:
+  sensors:
+    - {id: http.federation, covers: [federation_sources], interval: 60s, service: backend, states: [[+0s, ok]]}
+  types:
+    federation_sources: {global.enabled: bool, sources.enabled: bool, sources.consecutive_errors: gauge}
+cases:
+  - kind: fires
+    id: v01-fires-while-every-poll-fails
+    title: Splunk's credential expires at +2m and is replaced at +30m
+    end: +45m
+    series:
+      - {signal: federation_sources, key: global.enabled, steps: [[+0s, true]]}
+      - {signal: federation_sources, key: sources.enabled, labels: {source: splunk}, steps: [[+0s, true]]}
+      - {signal: federation_sources, key: sources.consecutive_errors, labels: {source: splunk},
+         steps: [[+0m, 0], [+2m, 1], [+4m, 2], [+6m, 3], [+12m, 5], [+30m, 0]]}
+    expect:
+      - {at: +6m, rule: ingest.source-polls-failing, group: {source: splunk}, eval: true, state: pending}
+      - {at: +16m, rule: ingest.source-polls-failing, group: {source: splunk}, eval: true, state: firing, incident: A}
+      - {at: +30m, rule: ingest.source-polls-failing, group: {source: splunk}, eval: false, state: resolving, incident: A}
+      - {at: +40m, rule: ingest.source-polls-failing, group: {source: splunk}, eval: false, state: inactive}
+    incidents:
+      A: {rule: ingest.source-polls-failing, group: {source: splunk}, active_since: +6m, opened_at: +16m,
+          resolving_since: +30m, resolved_at: +40m, reason: cleared, routed_at: +16m}
+  - kind: silent
+    id: v02-silent-on-transient-errors-or-a-disabled-source
+    title: Two failures then a success, and a disabled source with stale errors, stay quiet
+    end: +20m
+    series:
+      - {signal: federation_sources, key: global.enabled, steps: [[+0s, true]]}
+      - {signal: federation_sources, key: sources.enabled, labels: {source: elastic}, steps: [[+0s, true]]}
+      - {signal: federation_sources, key: sources.consecutive_errors, labels: {source: elastic},
+         steps: [[+0m, 0], [+3m, 1], [+6m, 2], [+9m, 0]]}
+      - {signal: federation_sources, key: sources.enabled, labels: {source: crowdstrike}, steps: [[+0s, false]]}
+      - {signal: federation_sources, key: sources.consecutive_errors, labels: {source: crowdstrike}, steps: [[+0s, 9]]}
+    expect:
+      - {at: +7m, rule: ingest.source-polls-failing, group: {source: elastic}, eval: false, state: inactive}
+      - {at: +15m, rule: ingest.source-polls-failing, group: {source: elastic}, eval: false, state: inactive}
+      - {at: +15m, rule: ingest.source-polls-failing, group: {source: crowdstrike}, eval: false, state: inactive}
+    incidents: {}
+  - kind: silent
+    id: v03-silent-when-federation-is-off-globally
+    title: Federation switched off globally leaves a row's old error count frozen; the legacy poller owns the source
+    end: +25m
+    series:
+      - {signal: federation_sources, key: global.enabled, steps: [[+0s, false]]}
+      - {signal: federation_sources, key: sources.enabled, labels: {source: splunk}, steps: [[+0s, true]]}
+      - {signal: federation_sources, key: sources.consecutive_errors, labels: {source: splunk}, steps: [[+0s, 6]]}
+    expect:
+      - {at: +5m, rule: ingest.source-polls-failing, group: {source: splunk}, eval: false, state: inactive}
+      - {at: +20m, rule: ingest.source-polls-failing, group: {source: splunk}, eval: false, state: inactive}
+    incidents: {}
