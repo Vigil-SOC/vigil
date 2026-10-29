@@ -46,8 +46,7 @@ SUCCESSORS = {
 WIDENING = {"role-senior-analyst": ("ai_autonomy.stop",)}
 _WIDENING_PARENT = {"ai_autonomy.stop": "settings.write"}
 
-# Frozen at this revision. tests/unit/auth/test_permission_catalog.py checks
-# it against the live catalog.
+# Frozen at this revision.
 BUILTINS = {
     "role-admin": {
         "ai_autonomy.read": True,

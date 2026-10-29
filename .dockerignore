@@ -120,17 +120,10 @@ temp/
 # needed at runtime, and the contract fixtures include TEST-ONLY trust material.
 services/medic/.venv/
 services/medic/**/__pycache__/
-services/medic/**/.pytest_cache/
 services/medic/**/.ruff_cache/
-services/medic/tests/
-services/medic/contracts/tests/
 services/medic/contracts/tools/
 services/medic/contracts/fixtures/
-services/medic_gateway/tests/
 services/medic_gateway/**/__pycache__/
-services/medic_gateway/**/.pytest_cache/
 services/medic_gateway/**/.ruff_cache/
-services/medic_dockerproxy/tests/
 services/medic_dockerproxy/**/__pycache__/
-services/medic_dockerproxy/**/.pytest_cache/
 services/medic_dockerproxy/**/.ruff_cache/

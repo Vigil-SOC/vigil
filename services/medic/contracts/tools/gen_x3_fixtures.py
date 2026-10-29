@@ -3,8 +3,8 @@
 uv run python tools/gen_x3_fixtures.py
 
 valid/*.json    exact report bytes, as the admin would send them
-invalid/*.json  {"$comment": why, "expect": error code, "report": the report}; the test writes
-                "report" canonically and runs evidence_report_check.check on it
+invalid/*.json  {"$comment": why, "expect": error code, "report": the report}; written
+                canonically, "report" fails evidence_report_check.check with "expect"
 """
 
 from __future__ import annotations

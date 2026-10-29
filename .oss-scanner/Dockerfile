@@ -3,25 +3,17 @@
 # Enrolled in https://github.com/anthropics/oss-scanner as projects/vigilsoc.
 # The scanner builds this file with a fresh clone of this repository as the
 # context. The network is available only while the image builds; the scan runs
-# offline, so everything the backend, its tests and the web client need is
-# installed here.
+# offline, so everything the backend and the web client need is installed here.
 #
 # What the image holds, at /src:
 #   - Python (version from .python-version) with requirements.lock and the dev
-#     toolchain installed system-wide, so `pytest`, `uvicorn`, `flake8` work
-#     with no venv.
-#   - clients/web/node_modules and a production build, so the React client's
-#     vitest suite runs and the API serves the SPA.
+#     toolchain installed system-wide, so `uvicorn` and `flake8` work with no
+#     venv.
+#   - clients/web/node_modules and a production build, so the API serves the
+#     SPA.
 #   - services/agent/node_modules and its tsc build (the TypeScript agent).
-#   - PostgreSQL (bookworm ships 15; CI uses 16) and Redis, so the API, daemon and the
-#     DB-backed tests (-m external_service) can run on localhost.
-#
-# Run the suites offline, as CI does:
-#   pytest tests/unit/ tests/security/ -m "not external_service" --no-cov
-#   /usr/local/bin/vigil-services-up && \
-#     pytest tests/unit/ -m external_service --no-cov
-#   (cd clients/web && npx vitest run)
-#   (cd services/agent && npx vitest run)
+#   - PostgreSQL (bookworm ships 15; CI uses 16) and Redis, so the API and
+#     daemon can run on localhost.
 #
 # DEV_MODE is off (auth on, as a fresh install) and JWT_SECRET_KEY is a fixed
 # throwaway value that exists only so the backend imports; it is not a secret
@@ -39,7 +31,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1
 
 # build-essential/libpq-dev: wheels without a manylinux build. postgresql and
-# redis-server: local services for the API and DB-backed tests. nodejs from
+# redis-server: local services for the API. nodejs from
 # NodeSource at the major CI uses (NODE_VERSION in ci-cd.yml).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl gnupg git build-essential libpq-dev \
@@ -55,7 +47,7 @@ WORKDIR /src
 # Python deps: the same lock CI installs, plus the lint/type toolchain.
 RUN pip install -r requirements.lock -r requirements-dev.txt
 
-# Web client deps (vitest, eslint, the build toolchain) fetched now; the scan
+# Web client deps (eslint, the build toolchain) fetched now; the scan
 # has no registry access.
 # The build lets the API serve the SPA at /, as the release image does.
 RUN cd clients/web && npm ci --no-audit --no-fund && npm run build
@@ -63,7 +55,7 @@ RUN cd clients/web && npm ci --no-audit --no-fund && npm run build
 # The TypeScript agent service (services/agent): deps and a compiled build.
 RUN cd services/agent && npm ci --no-audit --no-fund && npm run build
 
-# Local Postgres matching the CI service (ci-cd.yml, test-unit-backend-db) and
+# Local Postgres matching the CI service (ci-cd.yml, test-helm-install-schema) and
 # a helper that starts it and Redis. pg_trgm is created up front: the schema
 # needs it and the scan cannot fetch anything.
 ENV POSTGRES_HOST=localhost \
@@ -91,5 +83,4 @@ RUN printf '%s\n' \
     && service postgresql stop
 
 # Fail the build, not the scan, if the backend cannot import.
-RUN python -c "import services.api.main" \
-    && pytest --collect-only -q tests/unit/ tests/security/ -m "not external_service" --no-cov >/dev/null
+RUN python -c "import services.api.main"

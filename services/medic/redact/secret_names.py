@@ -1,7 +1,7 @@
 """Secret env-var names, from scripts/vigil-support/secret-names.txt.
 
 A copy, because the Medic image ships only `services/medic/` (and `.dockerignore`
-excludes `*.txt`); tests/redact/test_redactor.py pins it to the original.
+excludes `*.txt`); keep it in step with the original.
 """
 
 NAMES = (

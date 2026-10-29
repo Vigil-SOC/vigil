@@ -108,8 +108,7 @@ def install_log_redaction(redactor: Redactor | None = None) -> LogRedaction:
     A record factory rather than a handler filter, so a handler configured later
     can't bypass it. The message is rendered, redacted and frozen (`args` cleared);
     a traceback or stack is formatted, redacted and kept as text. `extra` fields
-    are set after the factory runs, so Medic code doesn't pass data in `extra`
-    (tests/redact/test_log_redaction.py enforces it).
+    are set after the factory runs, so Medic code doesn't pass data in `extra`.
     """
     redactor = redactor or Redactor()
     previous = logging.getLogRecordFactory()

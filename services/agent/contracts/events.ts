@@ -340,7 +340,7 @@ export interface ChildPayload {
 
 // handed_off is terminal for a hunt's belief but not an ending of it: the claim now
 // belongs to incident response. Restated in core/cases/case_record.py and the console's
-// caseFold.ts, which tests/unit/_ratchets/test_recall_contract_agrees.py holds to this.
+// caseFold.ts, which must match this.
 export const HYPOTHESIS_STATUSES = ["active", "proven", "disproven", "inconclusive", "parked", "handed_off"] as const;
 export type HypothesisStatus = (typeof HYPOTHESIS_STATUSES)[number];
 

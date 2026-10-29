@@ -7,10 +7,9 @@ frozen). It is a subset of the app's OpenAPI document — never the whole spec,
 which still carries console wiring (``/api/config``, ``/api/orchestrator``, …)
 that must stay free to change.
 
-``tests/unit/api/test_api_v1_contract.py`` rebuilds this and fails if it drifts
-from the committed file, so a change to a frozen shape is a red build, not a
-silent edit. To intentionally change the contract, run this script and commit
-the diff — a deliberate, reviewable act.
+A change to a frozen shape is a change to this committed file, not a silent
+edit. To intentionally change the contract, run this script and commit the
+diff — a deliberate, reviewable act.
 
     python scripts/generate_api_v1_contract.py
 """
@@ -72,8 +71,8 @@ def build_contract(app: Any) -> dict:
 
     Reads the app without altering it: ``app.openapi()`` hands back the cached
     schema object itself, so rewriting ids on it would leave every later caller
-    in the process — the served ``/openapi.json``, another test — looking at
-    ids this function invented.
+    in the process — the served ``/openapi.json`` among them — looking at ids
+    this function invented.
     """
     spec = copy.deepcopy(app.openapi())
     _stable_operation_ids(spec)
@@ -90,8 +89,8 @@ def build_contract(app: Any) -> dict:
                 if op.get(BETA_FLAG) is True:
                     continue  # versioned but not frozen
                 # Drop the handler docstring: it is prose, not contract, and
-                # pinning it turns a docstring typo into a red "contract drifted"
-                # build. Paths, params and shapes are the promise, not wording.
+                # pinning it turns a docstring typo into a contract change.
+                # Paths, params and shapes are the promise, not wording.
                 kept[method] = {k: v for k, v in op.items() if k != "description"}
             elif method.lower() not in HTTP_METHODS:
                 kept[method] = op  # parameters/summary at the path level

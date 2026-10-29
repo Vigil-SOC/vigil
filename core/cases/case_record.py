@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional, Sequence
 
@@ -553,6 +554,25 @@ def _legacy_id(entry: Mapping[str, Any]) -> Optional[str]:
     return None
 
 
+# A case activity that notes an action the trail also has (merge_cases, the
+# MCP task and link tools), by the ids both carry. Shown once, as the entry.
+_NOTED = {
+    "case.merge": ("case_merged", ("source_case_id",)),
+    "case.task.update": ("task_update", ("task_id",)),
+    "case.link": ("case_linked", ("related_case_id", "relationship_type")),
+}
+
+
+def _noted_key(kind: Any, fields: Any) -> Optional[tuple]:
+    # A task note is only in the activity, so that activity stays.
+    if not isinstance(fields, Mapping) or fields.get("notes"):
+        return None
+    for activity_type, ids in _NOTED.values():
+        if activity_type == kind:
+            return (kind, *(str(fields.get(i)) for i in ids))
+    return None
+
+
 def unread_row(run_id: str, at: Any, reason: str) -> dict:
     """One row standing in for a run whose ledger could not be read."""
     return {
@@ -584,7 +604,8 @@ def merge_record(
     ``case_id`` is the case read, which a hunt hand-off key in any row resolves to.
     ``trail`` is this case's audit trail entries (``trail.read``). They are on the
     trail's own chain, not a run's ledger, so they are not ``chained`` here. A
-    case-audit row an entry carries as ``legacy`` is shown once, as that entry.
+    case-audit row an entry carries as ``legacy`` is shown once, as that entry,
+    and so is an activity noting a merge, task update or link the trail has.
     """
     rows: list[dict] = [{**row, "_seq": 0} for row in unread]
     # An activity (a run's report) names no run's ids of its own: it reads against all.
@@ -626,7 +647,11 @@ def merge_record(
                 }
             )
     copied: set[str] = set()
+    noted: Counter = Counter()
     for entry in trail:
+        payload = entry.get("payload") or {}
+        if payload.get("action") in _NOTED:
+            noted[_noted_key(_NOTED[payload["action"]][0], payload)] += 1
         legacy = _legacy_id(entry)
         if legacy is not None:
             copied.add(legacy)
@@ -669,6 +694,10 @@ def merge_record(
         if at is None:
             continue
         kind = str(activity.get("activity_type") or "")
+        key = _noted_key(kind, activity.get("details"))
+        if noted[key] > 0:
+            noted[key] -= 1
+            continue
         rows.append(
             {
                 "id": f"activity:{index}",

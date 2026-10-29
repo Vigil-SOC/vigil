@@ -42,7 +42,7 @@ const OUTCOME_LINK: Record<string, [string, string]> = {
   working: ['/cases', 'Opens open cases.'],
   needs_you: ['/cases?needs_you=1', 'Opens the cases that need you.'],
   dismissed: ['/triage?state=dismissed', 'Opens the Triage queue at alerts dismissed as noise.'],
-  scoring: ['/triage?state=queued', 'Opens the Triage queue at alerts waiting for a slot.'],
+  scoring: ['/triage?state=queued', 'Opens the Triage queue at alerts waiting for triage.'],
   waiting: ['/triage?state=expired', 'Opens the Triage queue at alerts whose wait expired.'],
 }
 const SLOTS: { label: string; sub: string; icon: IconName }[] = [
