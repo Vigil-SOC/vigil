@@ -180,6 +180,27 @@ describe('a hunt, as of the selected step', () => {
     }
   })
 
+  it('reads Wall time off the agent\'s figure at the newest step, full when the run parked on it', async () => {
+    const parked = hunt({
+      status: 'parked', reason: 'wall_exhausted', iteration: 3, wall_used_ms: 61 * 60_000,
+      budgets: { max_iterations: 8, max_cost_usd: 15, max_wall_ms: 60 * 60_000 },
+    })
+    render(<WatchRun d={parked} onBack={vi.fn()} />)
+    const width = (label: string) => ((screen.getByText(label).parentElement?.nextElementSibling?.firstElementChild as HTMLElement).style.width)
+    expect(limit('Wall time')).toBe('Wall time61 of 60 min')
+    expect(width('Wall time')).toBe('100%')
+    expect(width('Steps')).not.toBe('100%')
+    // an earlier step has no figure of its own, and the browser does not work one out
+    step(1)
+    expect(await screen.findByText('Step 1 of 3 · Expand')).toBeInTheDocument()
+    expect(limit('Wall time')).toBe('Wall timeNot recorded for this step.')
+  })
+
+  it('has no Wall time row for a run whose grant carries no wall limit', () => {
+    render(<WatchRun d={hunt({ wall_used_ms: 60_000 })} onBack={vi.fn()} />)
+    expect(screen.queryByText('Wall time')).not.toBeInTheDocument()
+  })
+
   it('shows a blind spot from the step it was recorded in, not before, by the record\'s own time', async () => {
     // A kernel hunt stamps a turn's first record with the turn before: by time, this gap came during step 3.
     const stamped = hunt({

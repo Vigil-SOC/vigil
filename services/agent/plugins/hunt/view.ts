@@ -12,6 +12,7 @@ import type { CallPayload } from "../../contracts/events.js";
 import type { HuntEvent } from "./ledger.js";
 import { huntProjection, MOVES_SHOWN, type HuntProjection, type MoveView, type ProjectionOptions } from "./projection.js";
 import { HUNT_AGENT, parsedArgs, toolWords, turnWords } from "./words.js";
+import { seedFrom } from "../../core/budget.js";
 
 // A kernel hunt writes the controller's record, so the projection folds it unchanged. It
 // has no decision events, so its moves are read off the agent's calls: one move per model
@@ -31,7 +32,7 @@ export function huntView(
   runId: string,
   events: readonly Envelope[],
   options: ProjectionOptions = {},
-): HuntProjection & { held: Held | null; engine: "plugin"; kernel: AgentProjection } {
+): HuntProjection & { held: Held | null; engine: "plugin"; kernel: AgentProjection; wall_used_ms?: number } {
   const base = huntProjection(runId, events as readonly HuntEvent[], options);
   const moves = turnsOf(events)
     .map(moveOf)
@@ -67,7 +68,27 @@ export function huntView(
   );
   const kernel = agentProjection(runId, events);
   // The word the conclusion said, held as the reviewer guard left it, and what it was held from.
-  return { ...base, disposition: dispositionOf(kernel), held: heldOf(kernel), moves, calls, engine: "plugin", kernel };
+  const wall = wallUsed(events, base.status === "terminal", options.now ?? Date.now());
+  return {
+    ...base,
+    disposition: dispositionOf(kernel),
+    held: heldOf(kernel),
+    moves,
+    calls,
+    engine: "plugin",
+    kernel,
+    ...(wall === null ? {} : { wall_used_ms: wall }),
+  };
+}
+
+// Wall time used as the budget counts it against max_wall_ms: waits on a person excused. A
+// finished run reads to its last event, so the figure stops when the run did. Null before
+// the ledger has a run event to count from.
+function wallUsed(events: readonly Envelope[], terminal: boolean, now: number): number | null {
+  const last = Date.parse(events.at(-1)?.ts ?? "");
+  const end = terminal && Number.isFinite(last) ? last : now;
+  const { started } = seedFrom(events, end);
+  return started === 0 ? null : Math.max(0, end - started);
 }
 
 // A kernel hunt's replay in the controller's shape, one decision per model turn, each
