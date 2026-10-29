@@ -287,10 +287,16 @@ _SLA_REFUSALS = {
 
 
 @router.post("/{case_id}/sla", dependencies=_CASES_WRITE, response_model=CaseSLASchema)
-async def assign_sla(case_id: str, data: SLAAssign):
-    """Assign SLA policy to case."""
+async def assign_sla(
+    case_id: str,
+    data: SLAAssign,
+    current_user: User = Depends(get_current_user),
+):
+    """Assign SLA policy to case. Who assigned it is the signed-in user."""
     sla_service = CaseSLAService()
-    assignment = sla_service.assign_sla_to_case(case_id, data.sla_policy_id)
+    assignment = sla_service.assign_sla_to_case(
+        case_id, data.sla_policy_id, record=True, signed_in=current_user.username
+    )
 
     refusal = _SLA_REFUSALS.get(assignment.outcome)
     if refusal is not None:
@@ -317,10 +323,10 @@ async def get_case_sla(case_id: str):
     dependencies=_CASES_WRITE,
     response_model=CaseSuccessResponse,
 )
-async def pause_sla(case_id: str):
-    """Pause SLA timer."""
+async def pause_sla(case_id: str, current_user: User = Depends(get_current_user)):
+    """Pause SLA timer. Who paused it is the signed-in user."""
     sla_service = CaseSLAService()
-    success = sla_service.pause_sla(case_id)
+    success = sla_service.pause_sla(case_id, signed_in=current_user.username)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to pause SLA")
     return {"success": True}
@@ -331,10 +337,10 @@ async def pause_sla(case_id: str):
     dependencies=_CASES_WRITE,
     response_model=CaseSuccessResponse,
 )
-async def resume_sla(case_id: str):
-    """Resume SLA timer."""
+async def resume_sla(case_id: str, current_user: User = Depends(get_current_user)):
+    """Resume SLA timer. Who resumed it is the signed-in user."""
     sla_service = CaseSLAService()
-    success = sla_service.resume_sla(case_id)
+    success = sla_service.resume_sla(case_id, signed_in=current_user.username)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to resume SLA")
     return {"success": True}
@@ -538,8 +544,13 @@ class TaskAdd(BaseModel):
 @router.post(
     "/{case_id}/tasks", dependencies=_CASES_WRITE, response_model=CaseTaskSchema
 )
-async def add_task(case_id: str, data: TaskAdd, session: UnitOfWorkSession):
-    """Add task to case."""
+async def add_task(
+    case_id: str,
+    data: TaskAdd,
+    session: UnitOfWorkSession,
+    current_user: User = Depends(get_current_user),
+):
+    """Add task to case. Who added it is the signed-in user."""
 
     task = case_records_service.add_task(
         session,
@@ -550,6 +561,7 @@ async def add_task(case_id: str, data: TaskAdd, session: UnitOfWorkSession):
         priority=data.priority,
         due_date=data.due_date,
         checklist_items=data.checklist_items,
+        signed_in=current_user.username,
     )
     return CaseTaskSchema.dump(task)
 
@@ -580,12 +592,19 @@ class TaskUpdate(BaseModel):
     response_model=CaseTaskSchema,
 )
 def update_task(
-    case_id: str, task_id: int, data: TaskUpdate, session: UnitOfWorkSession
+    case_id: str,
+    task_id: int,
+    data: TaskUpdate,
+    session: UnitOfWorkSession,
+    current_user: User = Depends(get_current_user),
 ):
-    """Update task."""
+    """Update task. Who updated it is the signed-in user."""
 
     task = case_records_service.update_task(
-        session, task_id, data.model_dump(exclude={"assignee"})
+        session,
+        task_id,
+        data.model_dump(exclude={"assignee"}),
+        signed_in=current_user.username,
     )
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")

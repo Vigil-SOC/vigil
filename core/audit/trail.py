@@ -734,11 +734,13 @@ def where_clause(query: TrailQuery) -> tuple[str, dict[str, Any]]:
         )
         params["person"] = query.person
     if query.object_ref is not None:
-        # A case's own entries name it as case_id (case_trail, agent_closure).
+        # A case's own entries name it as case_id (case_trail, agent_closure);
+        # a merge, on the target, names the case it absorbed as source_case_id.
         parts.append(
             f"(t.payload->>'{OBJECT}' = :object_ref"
             f" OR t.payload #>> '{{{OBJECT},id}}' = :object_ref"
-            " OR t.payload->>'case_id' = :object_ref)"
+            " OR t.payload->>'case_id' = :object_ref"
+            " OR t.payload->>'source_case_id' = :object_ref)"
         )
         params["object_ref"] = query.object_ref
     if query.outcome == OUTCOME_RECORDED_LATE:
