@@ -41,7 +41,7 @@
 
 ## 3. Signals
 
-A signal is one input stream, read from D3 observations whose `signal` is a **D1 signal ID** (`signal_ids.json`, 60 IDs).
+A signal is one input stream, read from D3 observations whose `signal` is a **D1 signal ID** (`signal_ids.json`, 62 IDs).
 
 - **`sample: {signal, key, by?, labels?}`** reads `values[].key` from sample observations. `labels` keeps only the values with those labels. `by` names the labels that become group keys.
 - **`log: {signal, logger?, level?, template?, fingerprint?, exc_type?, message?, args?, trusted_only?, keys?}`** reads log observations of a D1 **log** signal.
