@@ -30,11 +30,6 @@ brand has a square symbol, the file is the symbol, not the wordmark.
 | `microsoft-defender.svg` | Microsoft Defender | https://commons.wikimedia.org/wiki/File:Microsoft_Defender_Icon_Logo_2025_English.svg (Microsoft's 2025 icon) | Public domain on Commons; Microsoft trademark |
 | `microsoft-teams.svg` | Microsoft Teams | https://commons.wikimedia.org/wiki/File:Microsoft_Office_Teams_(2025%E2%80%93present).svg | Public domain on Commons; Microsoft trademark |
 | `microsoft-entra-id.svg` | Microsoft Entra ID (Azure Active Directory) | https://commons.wikimedia.org/wiki/File:Microsoft_Entra_ID_color_icon.svg | Public domain on Commons; Microsoft trademark |
-| `microsoft-sentinel.svg` | Microsoft Sentinel | Azure Architecture Icons V24 (`10248-icon-service-Azure-Sentinel.svg`), https://learn.microsoft.com/azure/architecture/icons/ | Microsoft's icon terms: shown unmodified, with the product name beside it, only for that product. The terms name diagrams, training and documentation as the permitted uses |
-| `aws-security-hub.svg` | AWS Security Hub | AWS Architecture Icons, 2026-07-31 package (`Arch_AWS-Security-Hub_64.svg`), https://aws.amazon.com/architecture/icons/ | AWS Architecture Icons terms (made for architecture diagrams) |
-| `crowdstrike.svg` | CrowdStrike | The falcon from crowdstrike.com (`CS_Logo_Falcon.svg`, under `/content/dam/crowdstrike/marketing/en-us/images/graphics-and-illustrations/marketplace/`) | CrowdStrike trademark; CrowdStrike's own file |
-| `cribl.svg` | Cribl | cribl.io site logo (`cribl-logo.svg` on images.ctfassets.net), symbol only (the wordmark path removed) | Cribl trademark; Cribl's own file |
-| `elastic.svg` | Elastic | https://www.elastic.co/favicon.svg (the full-colour cluster symbol) | Elastic trademark; Elastic's own file |
 
 The DeepTempo shield for LogLM is `../deeptempo-shield.svg`, as the Overview
 board draws it.
@@ -45,5 +40,14 @@ Hybrid Analysis, Joe Sandbox, ANY.RUN, CAPE, Firecrawl, CloudCurrent VStrike
 and Atomic Red Team. The VMware wordmark is unreadable at 18 px. These vendors
 show the category icon until a mark is added.
 
-To add a vendor: add its official mark here, add a row to this table, and set
-`logo` on its catalog entry.
+CrowdStrike, Cribl, Elastic, Microsoft Sentinel and AWS Security Hub also show
+the category icon. Their marks are available only as files copied from the
+vendor's own site, with no licence to redistribute them, or under icon terms
+written for architecture diagrams and documentation, not a product's UI.
+`cloudtrail.svg` stays here for the boards but does not ship into the console
+for the same reason.
+
+To add a vendor: add its official mark here from a source whose licence allows
+redistributing it (CC0 icon data such as Simple Icons, or a file Commons
+records as public domain), add a row to this table, and set `logo` on its
+catalog entry.

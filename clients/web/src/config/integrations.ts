@@ -1,18 +1,13 @@
 import { IntegrationMetadata } from './integrationSchema'
 import { basePath } from './basePath'
-import awsSecurityHubLogo from '../assets/vendors/aws-security-hub.svg'
 import cloudflareLogo from '../assets/vendors/cloudflare.svg'
-import criblLogo from '../assets/vendors/cribl.svg'
-import crowdstrikeLogo from '../assets/vendors/crowdstrike.svg'
 import deeptempoShieldLogo from '../assets/vendors/deeptempo-shield.svg'
-import elasticLogo from '../assets/vendors/elastic.svg'
 import githubLogo from '../assets/vendors/github.svg'
 import googleLogo from '../assets/vendors/google.svg'
 import googleSecopsLogo from '../assets/vendors/google-secops.svg'
 import jiraLogo from '../assets/vendors/jira.svg'
 import microsoftDefenderLogo from '../assets/vendors/microsoft-defender.svg'
 import microsoftEntraIdLogo from '../assets/vendors/microsoft-entra-id.svg'
-import microsoftSentinelLogo from '../assets/vendors/microsoft-sentinel.svg'
 import microsoftTeamsLogo from '../assets/vendors/microsoft-teams.svg'
 import oktaLogo from '../assets/vendors/okta.svg'
 import opensearchLogo from '../assets/vendors/opensearch.svg'
@@ -217,7 +212,6 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'crowdstrike',
     name: 'CrowdStrike Falcon',
-    logo: crowdstrikeLogo,
     category: 'EDR/XDR',
     description: 'Connect to CrowdStrike Falcon for endpoint detection and response with threat intelligence.',
     functionality_type: 'Detection & Response',
@@ -439,7 +433,6 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'cribl-stream',
     name: 'Cribl Stream',
-    logo: criblLogo,
     category: 'Data Pipeline',
     description: 'Observability pipeline for collecting, processing, enriching, and routing security data. Normalize logs, reduce volume, and optimize data flow before AI analysis.',
     functionality_type: 'Data Pipeline & Enrichment',
@@ -488,7 +481,6 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'elastic-siem',
     name: 'Elastic Security',
-    logo: elasticLogo,
     category: 'SIEM',
     description: 'Elastic Security SIEM with advanced analytics, threat hunting, and incident response capabilities. Also hunts over an OpenSearch-based Wazuh indexer.',
     functionality_type: 'Log Analysis & SIEM',
@@ -632,7 +624,6 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'azure-sentinel',
     name: 'Microsoft Sentinel',
-    logo: microsoftSentinelLogo,
     category: 'SIEM',
     description: 'Microsoft Azure Sentinel cloud-native SIEM with AI-powered threat detection and response.',
     functionality_type: 'Log Analysis & SIEM',
@@ -715,7 +706,6 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'aws-security-hub',
     name: 'AWS Security Hub',
-    logo: awsSecurityHubLogo,
     category: 'Cloud Security',
     description: 'Integrate with AWS Security Hub for centralized security findings across AWS accounts.',
     functionality_type: 'Cloud Security Posture',
