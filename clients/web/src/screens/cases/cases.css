@@ -30,7 +30,12 @@
   min-width: 168px;
 }
 
+.case-page .case-title-row { display: flex; align-items: flex-start; gap: 12px; }
+.case-page .case-title-row .btn { flex: none; margin-left: auto; }
+
 .case-page .detail-head h2 {
+  flex: 1;
+  min-width: 0;
   margin: 2px 0 0;
   font-size: 20px;
   font-weight: 700;
