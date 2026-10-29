@@ -88,7 +88,7 @@ def _state_label(
 ) -> tuple[str, Optional[str]]:
     """Display word and the case door, when the id is still a case."""
     if state == "queued":
-        return "Waiting for a slot", None
+        return "Waiting for triage", None
     if state == "launched":
         if case_id:
             return "Started a case", case_id

@@ -221,7 +221,7 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
 
     payload = triage_payload(now=NOW, day=DAY)
     rows = _by_id(payload)
-    assert rows[waiting]["state_label"] == "Waiting for a slot"
+    assert rows[waiting]["state_label"] == "Waiting for triage"
     assert rows[waiting]["case_door"] is None
     assert rows[waiting]["pickup_seconds"] is None
     assert rows[waiting]["source"] == "splunk"
