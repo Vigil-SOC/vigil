@@ -277,6 +277,16 @@ describe('TriageScreen', () => {
     expect(screen.queryByRole('button', { name: 'Clear' })).not.toBeInTheDocument()
   })
 
+  it('opens on the alerts dismissed as noise from ?state=dismissed, the Overview link', async () => {
+    const base = payload()
+    vi.mocked(triageApi.get).mockResolvedValue({ data: { ...base, counts: { ...base.counts, state: { ...base.counts.state, dismissed: 6 } } } } as never)
+    renderScreen('/triage?state=dismissed')
+    await screen.findByLabelText('Intake strip')
+    expect(triageApi.get).toHaveBeenCalledWith({ state: 'dismissed' })
+    const filters = within(screen.getByRole('group', { name: 'Filters' }))
+    expect(filters.getByRole('button', { name: 'Dismissed as noise 6' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
   it('shows a stored source name as its label in the row', async () => {
     const base = payload()
     vi.mocked(triageApi.get).mockResolvedValue({ data: { ...base, rows: [{ ...base.rows[0], source: 'microsoft_defender' }] } } as never)

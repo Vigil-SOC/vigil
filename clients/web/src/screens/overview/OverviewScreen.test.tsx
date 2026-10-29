@@ -213,6 +213,17 @@ describe('OverviewScreen', () => {
     expect(screen.getByText(/Good means it finishes 90% or more of its runs; Fair 70 to 90%; Poor under 70%\./)).toBeInTheDocument()
   })
 
+  it('agent cards: each opens its workflow on Agents & workflows', async () => {
+    vi.mocked(overviewApi.get).mockResolvedValue({
+      data: payload({ agents: [agent({ workflow_id: 'phish triage', name: 'Phish triage', sample_size: 4, rate: 1, level: 'good' })] }),
+    } as never)
+    renderScreen()
+    const [card] = within(await screen.findByRole('list')).getAllByRole('listitem')
+    expect(within(card).getByRole('link', { name: 'Phish triage' })).toHaveAttribute('href', '/workflows?workflow=phish%20triage')
+    // the rate keeps its tooltip over the card's link
+    expect(within(card).getByTitle('100.0% of 4 runs completed, last 30 days')).toBeInTheDocument()
+  })
+
   it('agent cards: goes to workflows, and a connected install with no runs gets the panel without Connect data', async () => {
     vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ agents: [agent({ running: 0, current_step: null })] }) } as never)
     const { go } = renderScreen()
@@ -240,8 +251,10 @@ describe('OverviewScreen', () => {
     for (const [label, count] of Object.entries(counts)) {
       const node = within(flow).getByLabelText(label)
       expect(node).toHaveTextContent(count)
-      expect(node.querySelector('a')).toBeNull()
+      // only a populated count is a link
+      if (count === '0') expect(node.querySelector('a')).toBeNull()
     }
+    expect(within(within(flow).getByLabelText('Not picked up')).getByRole('link')).toHaveAttribute('href', '/triage?state=expired')
     expect(within(flow).getByRole('button', { name: 'This count is alerts, not decisions.' })).toBeInTheDocument()
     const line = within(flow).getByText(/Not measured yet:/)
     expect(line).toHaveTextContent('Not measured yet: Ticket created · Paused · Stuck · Incidents')
@@ -255,6 +268,31 @@ describe('OverviewScreen', () => {
     expect(screen.getByRole('button', { name: 'ServiceNow' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'ServiceNow' }).parentElement).toHaveAttribute('title', 'Coming in a later release')
     expect(screen.getByText(/records omitted from this list/)).toBeInTheDocument()
+  })
+
+  it('opens each populated outcome on Cases or the Triage queue, filtered (OV-P1)', async () => {
+    const populated = OUTCOMES.map((o) => (o.count === null ? o : { ...o, count: 3 }))
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ outcomes: populated }) } as never)
+    renderScreen()
+    const flow = await screen.findByRole('region', { name: 'How alerts flow through Vigil' })
+    const opens = {
+      'Resolved automatically': ['/cases?state=closed', 'Opens closed cases.'],
+      'Closed by a person': ['/cases?state=closed', 'Opens closed cases.'],
+      'Still working': ['/cases', 'Opens open cases.'],
+      'Needs you': ['/cases?needs_you=1', 'Opens the cases that need you.'],
+      'Dismissed as noise': ['/triage?state=dismissed', 'Opens the Triage queue at alerts dismissed as noise.'],
+      'Waiting for triage': ['/triage?state=queued', 'Opens the Triage queue at alerts waiting for a slot.'],
+      'Not picked up': ['/triage?state=expired', 'Opens the Triage queue at alerts whose wait expired.'],
+    }
+    for (const [label, [href, says]] of Object.entries(opens)) {
+      const link = within(within(flow).getByLabelText(label)).getByRole('link', { name: `3 ${label}` })
+      expect(link).toHaveAttribute('href', href)
+      expect(link).toHaveAttribute('title', `${label}: 3 alerts today. ${says}`)
+    }
+    // the ⓘ stays outside the link
+    expect(within(flow).getByRole('button', { name: 'This count is alerts, not decisions.' }).closest('a')).toBeNull()
+    fireEvent.click(within(flow).getByRole('link', { name: '3 Dismissed as noise' }))
+    expect(where()).toBe('?state=dismissed')
   })
 
   it('totals every arrival, and folds sources past the sixth into "+N more sources"', async () => {
