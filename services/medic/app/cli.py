@@ -46,7 +46,7 @@ from services.medic.sensors.gateway import address as gateway_address
 from services.medic.sensors.gateway import gateway_session
 from services.medic.sensors.http_ready import agent_serve_ready, agent_worker_ready
 from services.medic.sensors.kube import agent_worker_pods, kube_pods
-from services.medic.sensors.logtail import compose_log_sensors
+from services.medic.sensors.logtail import compose_log_sensors, helm_log_sensors
 from services.medic.sensors.providers import llm_providers
 from services.medic.sensors.work import work_sensors
 from services.medic.store import StoreError, open_writer
@@ -203,7 +203,8 @@ def run(
 def sensors_for(env: Mapping[str, str], shape: str) -> list[Sensor]:
     """The sensors this shape runs; raises ConfigError on an unusable address.
 
-    Helm reads each agent-worker pod. Compose and host-native read one address.
+    Helm reads each agent-worker pod and follows pod logs. Compose and
+    host-native read one address.
     """
     if shape == "helm":
         sensors: list[Sensor] = [agent_worker_pods()]
@@ -221,6 +222,7 @@ def sensors_for(env: Mapping[str, str], shape: str) -> list[Sensor]:
             sensors.extend(compose_log_sensors(proxy[0], proxy[1]))
     if shape == "helm":
         sensors.append(kube_pods())
+        sensors.extend(helm_log_sensors())
     daemon = config.daemon_addr(env, shape)
     if daemon is not None:
         sensors.extend(daemon_sensors(host=daemon[0], port=daemon[1]))
