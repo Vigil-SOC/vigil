@@ -42,7 +42,7 @@ Tokens in `tokens/`. Two themes, neutral grays, one accent. Summary:
 
 ## 7. Layout
 
-- Root min-width 1440px; fluid above. Header 52px (logo · command bar ⌘K · autonomy chip · avatar; the Needs you island is phase 2) + nav 46px.
+- Root is fluid with no minimum width; a table wider than its space scrolls inside its own card. Header 52px (logo · command bar ⌘K · autonomy chip · avatar; the Needs you island is phase 2) + nav 46px.
 - Case drawer 75% width over a scrim; expand toggles to 100% (icons `expand`/`shrink`). Side panel 280px. Drawer z 28: above page, below header (30) and menus (60).
 - Chat dock 400px when off a case.
 
