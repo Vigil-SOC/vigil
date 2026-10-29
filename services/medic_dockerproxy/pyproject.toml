@@ -20,13 +20,6 @@ dev = [
 [tool.uv]
 package = false
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-# The repo root, so `services.medic_dockerproxy` imports the way it does at runtime.
-pythonpath = ["../.."]
-addopts = ["--import-mode=importlib"]
-markers = ["docker: needs a live Docker Engine (skipped when there is none)"]
-
 [tool.ruff]
 target-version = "py312"
 

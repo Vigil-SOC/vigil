@@ -119,10 +119,8 @@ path is unambiguous.
 ## Reports and patches
 
 - Include the endpoint or entry point, the role/auth state required, and a
-  reproducer: a pytest test under `tests/security/` or `tests/unit/` is ideal
-  (the suite runs offline with
-  `pytest tests/unit/ tests/security/ -m "not external_service" --no-cov`).
+  reproducer.
 - Patches should be minimal, follow the existing layering (`lint-imports`,
   `.importlinter`), read config through `core.config` / `core.secrets` rather
-  than `os.getenv` (a ratchet test enforces this), and pass `flake8`, `black`
-  and `isort` on `services/` and `core/`.
+  than `os.getenv`, and pass `flake8`, `black` and `isort` on `services/` and
+  `core/`.

@@ -994,8 +994,8 @@ async def execute_backend_tool(
     registry: Optional["MCPRegistry"] = None,
 ) -> Tuple[Any, bool]:
     args = dict(tool_input or {})
-    # permission_refusal reads the permissions-module binding, which is what
-    # the tool tests stub. A caller bound to nothing is refused.
+    # permission_refusal reads the permissions-module binding. A caller bound to
+    # nothing is refused.
     permission = TOOL_PERMISSIONS.get(tool_name)
     if permission and (refusal := permission_refusal(permission)):
         return refusal, True

@@ -5,8 +5,7 @@ The list is every env-var name in ``INTEGRATION_SECRET_FIELDS``,
 ``ENV_CREDENTIAL_NAMES`` and ``SETTINGS_SECRET_NAMES``, one per line, sorted.
 It is committed so the filter runs on a host with no Vigil Python environment.
 
-``tests/unit/_ratchets/test_support_secret_names.py`` rebuilds this and fails if
-it drifts from the committed file. After adding a secret field, run:
+After adding a secret field, run:
 
     python scripts/generate_support_secret_names.py
 

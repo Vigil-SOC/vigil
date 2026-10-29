@@ -73,13 +73,10 @@ slowapi>=0.1.10
 # dep; listed explicitly so pip show it and it doesn't quietly disappear).
 itsdangerous>=2.2.0
 
-# Testing Dependencies
+# The live connector suite (tests/live, connectors-live.yml)
 pytest>=9.1.1
 pytest-asyncio>=0.23.0
 pytest-cov>=7.1.0
-pytest-mock>=3.12.0
-faker>=40.43.0
-respx>=0.21.0  # httpx mocking — required by tests/unit/test_elastic_service.py
 
 # Job Queue (ARQ + Redis)
 arq>=0.28.0
@@ -94,12 +91,6 @@ aiokafka>=0.14.0
 
 # TAXII threat-intel feed ingestion for the Cloudforce One integration.
 taxii2-client>=2.3.0
-
-# Builds the PDF fixture in tests/unit/documents/test_documents.py.
-reportlab>=5.1.0
-# Transitive via reportlab. 12.3.0 has fixable criticals CVE-2026-112393 and
-# CVE-2026-112900; the image scan fails closed on those.
-pillow>=13.0.0
 
 # Monitoring & Observability
 sentry-sdk>=2.72.0

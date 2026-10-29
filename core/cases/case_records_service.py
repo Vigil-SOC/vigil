@@ -145,7 +145,9 @@ def add_task(
     priority: str,
     due_date: Optional[datetime],
     checklist_items: Optional[List[Dict]],
+    signed_in: Optional[str],
 ) -> CaseTask:
+    """Add a task and its trail entry. ``signed_in`` is who added it."""
     task = CaseTask(
         case_id=case_id,
         title=title,
@@ -158,7 +160,27 @@ def add_task(
     )
     session.add(task)
     session.flush()
+    _task_entry(session, case_trail.TASK, task, signed_in, description)
     return task
+
+
+def _task_entry(
+    session: Session,
+    action: str,
+    task: CaseTask,
+    signed_in: Optional[str],
+    description: Optional[str],
+) -> None:
+    # Ids and the status are hashed; the title and description are free text.
+    text = "\n\n".join(part for part in (task.title, description) if part)
+    case_trail.append_or_legacy(
+        session,
+        action=action,
+        signed_in=signed_in,
+        case_id=task.case_id,
+        operator_text=text or None,
+        ids=lambda: {"task_id": task.task_id, "status": task.status},
+    )
 
 
 def tasks_on_case(session: Session, case_id: str) -> List[CaseTask]:
@@ -182,7 +204,11 @@ def list_tasks(case_id: str) -> List[CaseTask]:
 
 
 def update_task(
-    session: Session, task_id: int, updates: Dict[str, Any]
+    session: Session,
+    task_id: int,
+    updates: Dict[str, Any],
+    *,
+    signed_in: Optional[str],
 ) -> Optional[CaseTask]:
     """Apply non-None ``updates`` to a task. Returns None if it doesn't exist.
 
@@ -197,6 +223,13 @@ def update_task(
         if value is not None and hasattr(task, field):
             setattr(task, field, value)
     session.flush()
+    _task_entry(
+        session,
+        case_trail.TASK_UPDATE,
+        task,
+        signed_in,
+        updates.get("description"),
+    )
     return task
 
 
@@ -209,6 +242,7 @@ def add_relationship(
     created_by: str,
     notes: Optional[str] = None,
 ) -> CaseRelationship:
+    """One link and its entry on this case's trail; ``created_by`` is the actor."""
     rel = CaseRelationship(
         case_id=case_id,
         related_case_id=related_case_id,
@@ -218,6 +252,18 @@ def add_relationship(
     )
     session.add(rel)
     session.flush()
+    case_trail.append_or_legacy(
+        session,
+        action=case_trail.LINK,
+        signed_in=created_by,
+        case_id=case_id,
+        operator_text=notes,
+        ids=lambda: {
+            "relationship_id": rel.relationship_id,
+            "related_case_id": related_case_id,
+            "relationship_type": relationship_type,
+        },
+    )
     return rel
 
 
@@ -233,7 +279,7 @@ def link_cases(
     """Link two cases both ways, skipping a direction that already has the link.
 
     A case's relationships are read by its own case_id only, so one row would
-    show the link on one side.
+    show the link on one side. Each row added is an entry on its own case.
     """
     for case_id, related in ((case_a, case_b), (case_b, case_a)):
         exists = (

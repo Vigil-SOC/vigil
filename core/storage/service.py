@@ -1336,7 +1336,7 @@ class DatabaseService:
                 session.flush()
                 if writer := case_trail_hook.writer(session):
                     writer.append_case(
-                        session, writer.LINK, case_id, linked=[finding_id]
+                        session, writer.FINDINGS_LINK, case_id, linked=[finding_id]
                     )
                 logger.info(f"Added finding {finding_id} to case {case_id}")
 

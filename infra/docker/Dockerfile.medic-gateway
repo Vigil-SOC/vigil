@@ -26,7 +26,7 @@ LABEL org.opencontainers.image.version="${VIGIL_VERSION}"
 RUN groupadd -g 10002 medicgw \
     && useradd -u 10002 -g 10002 -M -d /nonexistent -s /usr/sbin/nologin medicgw
 
-# Code stays root-owned. Only the modules: the tests stay out of the image.
+# Code stays root-owned. Only the modules.
 WORKDIR /app
 COPY services/medic_gateway/*.py ./services/medic_gateway/
 COPY VERSION ./VERSION

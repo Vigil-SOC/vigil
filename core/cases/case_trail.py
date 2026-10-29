@@ -10,6 +10,8 @@ too, from ``core/storage/service.py`` through ``case_trail_hook`` (#3403).
 
 from __future__ import annotations
 
+import functools
+import logging
 import sys
 from typing import Any, Callable, Mapping, Optional, Sequence
 
@@ -23,6 +25,13 @@ COMMENT_UPDATE = "case.comment.update"
 COMMENT_DELETE = "case.comment.delete"
 EVIDENCE = "case.evidence"
 ESCALATE = "case.escalate"
+TASK = "case.task"
+TASK_UPDATE = "case.task.update"
+LINK = "case.link"
+MERGE = "case.merge"
+SLA_ASSIGN = "case.sla.assign"
+SLA_PAUSE = "case.sla.pause"
+SLA_RESUME = "case.sla.resume"
 APPROVE = "approval.approve"
 REJECT = "approval.reject"
 # The case row and its journal (#3403)
@@ -31,7 +40,7 @@ STATUS = "case.status"
 PRIORITY = "case.priority"
 ASSIGN = "case.assign"
 EDIT = "case.edit"
-LINK = "case.findings.link"
+FINDINGS_LINK = "case.findings.link"
 UNLINK = "case.findings.unlink"
 JOURNAL = "case.journal"
 STEP = "case.resolution_step"
@@ -48,6 +57,29 @@ _ALONE = {
 }
 # Free text: beside the hash, never in it.
 _TEXT = ("title", "description")
+
+
+def on_error(default: Any):
+    """``default_on_error`` that lets the trail's own failures through.
+
+    A ``TrailWriteError`` answers 500 with nothing committed, and
+    ``trail.Paused`` a 503 with Retry-After; anything else is ``default``.
+    """
+
+    def decorate(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except (TrailWriteError, trail.Paused):
+                raise
+            except Exception:
+                logging.getLogger(fn.__module__).exception("%s failed", fn.__qualname__)
+                return default
+
+        return wrapper
+
+    return decorate
 
 
 def _payload(action: str, principal: Optional[str], **fields: Any) -> dict[str, Any]:
@@ -188,7 +220,7 @@ def append_update(
         else:
             fields["unassigned"] = True
     if changed == ["findings"]:
-        action = LINK if not unlinked else UNLINK if not linked else EDIT
+        action = FINDINGS_LINK if not unlinked else UNLINK if not linked else EDIT
     else:
         action = _ALONE.get(changed[0], EDIT) if len(changed) == 1 else EDIT
     if linked:

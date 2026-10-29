@@ -1384,6 +1384,8 @@ export interface TriageRow {
   kind_label: string
   state: string
   state_label: string
+  /** the alert's noise mark is the word shown */
+  dismissed: boolean
   source: string
   severity_band: string
   age_seconds: number

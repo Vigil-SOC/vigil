@@ -15,6 +15,6 @@ Rules for anything added here:
   router whose routes already carry the resource in their path, like approvals,
   uses ``prefix=/api/v1``) and lists its pre-version path
   in ``legacy_prefixes`` so existing callers keep working during the port.
-* Request/response shapes here are what the committed OpenAPI snapshot and the
-  contract test guard. Changing one is a breaking change, not a refactor.
+* Request/response shapes here are what the committed OpenAPI snapshot
+  records. Changing one is a breaking change, not a refactor.
 """

@@ -5,16 +5,14 @@ The snapshot is the promise: for each name in ``tools.mcp.vigil.FROZEN_TOOLS``,
 the input schema a caller reads from ``tools/list``. Descriptions are left out
 for the reason ``build_contract`` drops them: wording is not the promise.
 
-``tests/unit/api/test_mcp_frozen_tools.py`` rebuilds this and fails if it drifts
-from the committed file. To intentionally change a frozen tool, run this script
-and commit the diff:
+To intentionally change a frozen tool, run this script and commit the diff:
 
     python scripts/generate_mcp_frozen_tools.py
 
-Imports only ``tools.mcp.vigil``, never the FastAPI app, under the environment
-``tests/conftest.py`` pins for the drift test (``DEV_MODE=false``, a placeholder
-``JWT_SECRET_KEY`` if none is set, ``VIGIL_DISABLE_DOTENV=1``) so it runs on a
-fresh checkout and writes what the test rebuilds.
+Imports only ``tools.mcp.vigil``, never the FastAPI app, under a pinned
+environment (``DEV_MODE=false``, a placeholder ``JWT_SECRET_KEY`` if none is
+set, ``VIGIL_DISABLE_DOTENV=1``) so it runs on a fresh checkout and writes the
+same snapshot on every machine.
 """
 
 from __future__ import annotations
@@ -31,11 +29,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 # Importing tools.mcp.vigil loads core.auth.auth_service, which refuses to import
-# without JWT_SECRET_KEY unless DEV_MODE is on. Pin the same environment
-# tests/conftest.py gives the drift test, so this writes exactly what
-# test_mcp_frozen_tools.py rebuilds:
+# without JWT_SECRET_KEY unless DEV_MODE is on. Pin the environment, so this
+# writes the same snapshot on every machine:
 #
-#   DEV_MODE — assigned "false", not defaulted: the test builds with it off.
+#   DEV_MODE — assigned "false", not defaulted: the snapshot is built with it off.
 #   JWT_SECRET_KEY — `or`, not setdefault: a shell that sourced env.example
 #     exports "". The placeholder only satisfies the import; nothing is signed.
 #   VIGIL_DISABLE_DOTENV — a developer's .env must not leak into the snapshot.

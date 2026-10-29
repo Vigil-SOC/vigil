@@ -1,8 +1,8 @@
 """Reading the default-row seed, ``05_case_management_extended.sql``.
 
 The file holds the default SLA policies and case templates. Every install gets
-those rows from the upgrade baseline; adoption, the Helm row-count check and
-the seed-column ratchet read the file through these helpers.
+those rows from the upgrade baseline; adoption and the Helm row-count check
+read the file through these helpers.
 """
 
 import re

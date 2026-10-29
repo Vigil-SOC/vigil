@@ -53,33 +53,10 @@ from services.api.middleware.security_headers import SecurityHeadersMiddleware
 # Single source of truth for the "require an authenticated active user"
 # dependency. Applied to every non-public /api/* router below so that any
 # new endpoint added under a protected router inherits auth by default.
-# Endpoints that must stay public (auth, inbound webhooks, health) are
-# either left off the dependency or listed in ``PUBLIC_API_PATHS`` so the
-# route-inventory test in ``tests/security/test_route_auth_coverage.py``
-# still passes.
+# Endpoints that must stay public (auth, inbound webhooks, health) are left
+# off the dependency.
 AUTH_DEPENDENCY = [Depends(get_current_active_user)]
 
-
-# Intentionally-public routes. The route-inventory test asserts every
-# /api/* route either inherits AUTH_DEPENDENCY or is listed here.
-# Patterns ending in '/*' match any sub-path.
-PUBLIC_API_PATHS: frozenset[str] = frozenset(
-    {
-        "/api/auth/login",
-        "/api/auth/refresh",
-        "/api/auth/logout",
-        "/api/auth/password-reset/request",
-        "/api/auth/password-reset/confirm",
-        # First-run account creation — unauthenticated by necessity; only ever
-        # live on an empty instance (see services/api/routers/auth.py bootstrap).
-        "/api/auth/bootstrap",
-        # Health check — used by load balancers and Docker.
-        "/api/health",
-        "/api/health/ready",
-        # VStrike inbound receiver uses its own bearer API-key dependency.
-        "/api/integrations/vstrike/findings",
-    }
-)
 
 # Initialize telemetry before creating the FastAPI app so instrumentation
 # is registered before the first request handler is defined.
