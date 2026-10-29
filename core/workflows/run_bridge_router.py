@@ -762,25 +762,15 @@ def _case_exists(data: Any, case_id: str) -> bool:
         return False
 
 
-# A title cut on a whole word, so a long hypothesis does not end mid-token.
-def _case_title(title: str, limit: int = 200) -> str:
-    title = " ".join(title.split())
-    if len(title) <= limit:
-        return title
-    head = title[: limit + 1]
-    # The character past the limit is a space when the limit lands on a word end.
-    return (head.rsplit(" ", 1)[0] if " " in head else title[:limit]).rstrip(" ,;:.-")
-
-
-# A hunt with no case of its own (scheduled hunts) opens the one that receives its
-# handoff. The agent layer holds no case table, so the document travels and this
+# A hunt with no case of its own (one that started before every run got a case) opens
+# the one that receives its handoff. The agent layer holds no case table, so the document travels and this
 # side files it.
 #
 # Idempotent per handoff, and on its own account rather than the root-cause run's: a
 # handoff that tees up no backward run still arrives twice, and the second arrival
 # must find the case the first opened.
 def _open_case(run_id: str, handoff: TerminalHandoff) -> Optional[str]:
-    from core.cases.case_sla_service import open_case
+    from core.cases.case_sla_service import case_title, open_case
     from core.storage.database_data_service import DatabaseDataService
 
     case_id = _handoff_case_id(run_id, handoff)
@@ -791,7 +781,7 @@ def _open_case(run_id: str, handoff: TerminalHandoff) -> Optional[str]:
     try:
         opened = open_case(
             data,
-            title=_case_title(handoff.title),
+            title=case_title(handoff.title),
             finding_ids=[],
             priority="high",
             description=f"{handoff.markdown}\n\n_Handed off by run {run_id}._\n",

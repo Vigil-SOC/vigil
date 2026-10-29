@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+from core.cases.case_sla_service import case_title
 from core.workflows import run_bridge_router as rbr
 from core.workflows.run_bridge_router import (
     TerminalHandoff,
@@ -274,11 +275,11 @@ class TestAHuntWithNoCaseOpensOne:
 
 class TestTheTitleIsCutOnAWholeWord:
     def test_leaves_a_short_title_alone(self):
-        assert rbr._case_title("rare  beacon") == "rare beacon"
+        assert case_title("rare  beacon") == "rare beacon"
 
     def test_never_ends_mid_word(self):
-        title = rbr._case_title("alpha beta gamma delta", limit=12)
+        title = case_title("alpha beta gamma delta", limit=12)
         assert title == "alpha beta"
 
     def test_a_single_long_word_is_cut_at_the_limit(self):
-        assert rbr._case_title("x" * 50, limit=20) == "x" * 20
+        assert case_title("x" * 50, limit=20) == "x" * 20

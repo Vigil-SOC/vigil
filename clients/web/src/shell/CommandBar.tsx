@@ -346,7 +346,11 @@ export default function CommandBar({
           } catch {
             finding = false
           }
-          await workflowApi.execute(workflowId, finding ? { finding_id: arg } : { context: arg })
+          // The server opens the case, or reuses the open one holding the alert.
+          const started = await workflowApi.execute(workflowId, finding ? { finding_id: arg } : { context: arg })
+          const caseId = started.data.case_id
+          if (!caseId) throw new Error('The run started without a case')
+          onOpenCase(caseId)
           notify('ok', `Started ${command?.runs}`)
           break
         }
@@ -354,36 +358,19 @@ export default function CommandBar({
           // What was typed, else what the attached document proposed.
           const hypothesis = huntHypothesis(arg, attachment)
           const document = attachment?.status === 'ready' ? attachment : null
-          // The run goes on a case of its own, so the drawer has something to open on.
+          // The server puts the run on a case, so the drawer has something to open on.
           const title = huntTitle(hypothesis)
-          const created = await casesApi.create({
-            title,
-            description: hypothesis,
-            finding_ids: [],
-            priority: 'medium',
-            status: 'open',
+          const started = await workflowApi.execute(workflowId, {
+            hypothesis,
+            ...(document && { document: document.text }),
+            // The proposal's own subjects and approval ride with it, unedited.
+            ...(!arg && document?.proposal?.status === 'proposed' && {
+              hypothesis_subjects: document.proposal.subjects,
+              approve_hypotheses: document.proposal.approve,
+            }),
           })
-          const caseId = created.data.case_id
-          if (!caseId) throw new Error('The case was created without an id')
-          try {
-            await workflowApi.execute(workflowId, {
-              hypothesis,
-              case_id: caseId,
-              ...(document && { document: document.text }),
-              // The proposal's own subjects and approval ride with it, unedited.
-              ...(!arg && document?.proposal?.status === 'proposed' && {
-                hypothesis_subjects: document.proposal.subjects,
-                approve_hypotheses: document.proposal.approve,
-              }),
-            })
-          } catch (error) {
-            // A refusal (disabled workflow, not a claim) leaves no case behind. With
-            // no response the run may have been queued, and its case stays.
-            if ((error as { response?: unknown })?.response) {
-              await casesApi.delete(caseId).catch(() => undefined)
-            }
-            throw error
-          }
+          const caseId = started.data.case_id
+          if (!caseId) throw new Error('The hunt started without a case')
           // After the run is queued, so a refused hunt leaves no original behind.
           if (document) {
             await casesApi

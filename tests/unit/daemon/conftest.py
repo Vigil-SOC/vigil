@@ -12,7 +12,7 @@ def _no_open_case_lookup(request, monkeypatch):
     if request.node.get_closest_marker("external_service"):
         return
     monkeypatch.setattr(
-        "services.daemon.orchestrator._open_case_holding", lambda _fid: None
+        "services.daemon.orchestrator.open_case_holding", lambda _fid: None
     )
     monkeypatch.setattr(
         "services.daemon.orchestrator._matching_cases", lambda _f, *, open: []
