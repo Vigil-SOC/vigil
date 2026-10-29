@@ -205,10 +205,24 @@ function SocConsoleInner() {
   // the open case: the drawer wins over the full page's ?case= param
   const pageCase = current === 'cases' && allowed ? new URLSearchParams(location.search).get('case') : null
   const openCaseId = drawerCase ?? pageCase
-  // with a case open the text goes to its own composer, not the dock
+  // opening a case closes the dock, during render so the two never share a frame;
+  // closing the case leaves it closed. The dock stays mounted, so its conversation survives.
+  const [shownCase, setShownCase] = useState(openCaseId)
+  if (shownCase !== openCaseId) {
+    setShownCase(openCaseId)
+    if (openCaseId) setChatOpen(false)
+  }
+  // with a case open, asking goes to its own composer, not the dock
   const askVigil = useCallback((text?: string) => {
-    if (openCaseId && text) setCaseSeed(text)
-    else openChat(text)
+    if (!openCaseId) openChat(text)
+    else if (text) setCaseSeed(text)
+    else {
+      // the drawer sits over a full case page, so its composer wins
+      const composer =
+        document.querySelector<HTMLElement>('.vg-case-drawer section.case-composer textarea') ??
+        document.querySelector<HTMLElement>('section.case-composer textarea')
+      composer?.focus()
+    }
   }, [openCaseId, openChat])
   const clearCaseSeed = useCallback(() => setCaseSeed(null), [])
 
