@@ -644,3 +644,53 @@ def test_an_unlinked_copied_row_keeps_the_human_chip():
     )
     (row,) = merge_record([], [], trail=[copy])
     assert row["kind"] == "human"
+
+
+def test_an_activity_noting_a_trail_action_shows_once():
+    merge = _entry(
+        2,
+        "2026-01-01T10:00:00+00:00",
+        "person",
+        "Ada",
+        "Merged c-9 into case-1",
+        action="case.merge",
+        source_case_id="c-9",
+    )
+    activities = [
+        {
+            "timestamp": "2026-01-01T10:00:00Z",
+            "activity_type": "case_merged",
+            "description": "Merged case c-9 into this case",
+            "details": {"source_case_id": "c-9"},
+        },
+        # An older merge with no entry of its own still shows.
+        {
+            "timestamp": "2025-01-01T10:00:00Z",
+            "activity_type": "case_merged",
+            "description": "Merged case c-8 into this case",
+            "details": {"source_case_id": "c-8"},
+        },
+    ]
+    rows = merge_record([], [], activities=activities, trail=[merge])
+    assert [r["source"] for r in rows] == ["audit_trail", "case_activities"]
+    assert rows[1]["text"] == "Merged case c-8 into this case"
+
+
+def test_a_task_note_activity_stays_beside_its_entry():
+    update = _entry(
+        2,
+        "2026-01-01T10:00:00+00:00",
+        "person",
+        "Ada",
+        "Updated a task",
+        action="case.task.update",
+        task_id=5,
+    )
+    note = {
+        "timestamp": "2026-01-01T10:00:01Z",
+        "activity_type": "task_update",
+        "description": "Task 'Analyze' note added",
+        "details": {"task_id": 5, "notes": "ransomware"},
+    }
+    rows = merge_record([], [], activities=[note], trail=[update])
+    assert [r["source"] for r in rows] == ["case_activities", "audit_trail"]

@@ -7,6 +7,8 @@ Record tab reads both: these entries by ``case_id``, and ``case_audit_logs``.
 
 from __future__ import annotations
 
+import functools
+import logging
 from typing import Any, Callable, Optional
 
 from core.audit import trail
@@ -17,12 +19,42 @@ COMMENT_UPDATE = "case.comment.update"
 COMMENT_DELETE = "case.comment.delete"
 EVIDENCE = "case.evidence"
 ESCALATE = "case.escalate"
+TASK = "case.task"
+TASK_UPDATE = "case.task.update"
+LINK = "case.link"
+MERGE = "case.merge"
+SLA_ASSIGN = "case.sla.assign"
+SLA_PAUSE = "case.sla.pause"
+SLA_RESUME = "case.sla.resume"
 APPROVE = "approval.approve"
 REJECT = "approval.reject"
 
 
 class TrailWriteError(Exception):
     """A trail append failed. A joined caller must not commit past it."""
+
+
+def on_error(default: Any):
+    """``default_on_error`` that lets the trail's own failures through.
+
+    A ``TrailWriteError`` answers 500 with nothing committed, and
+    ``trail.Paused`` a 503 with Retry-After; anything else is ``default``.
+    """
+
+    def decorate(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except (TrailWriteError, trail.Paused):
+                raise
+            except Exception:
+                logging.getLogger(fn.__module__).exception("%s failed", fn.__qualname__)
+                return default
+
+        return wrapper
+
+    return decorate
 
 
 def _payload(action: str, principal: Optional[str], **fields: Any) -> dict[str, Any]:
