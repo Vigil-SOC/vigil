@@ -23,6 +23,7 @@ import { decisionRows, type DecisionRow, type V3Move, type V3Query } from './dec
 import { openSections, shortLabel, type OpenItem, type V3OpenRef, type V3Question } from './openQuestions'
 import { explanationColor, explanationWord } from '../cases/caseFold'
 import { HypothesisWord, KeepGoing, OpenCheckpoint, bearings, liveGap, provenanceTag, type Bearing } from './huntParts'
+import { pickId } from './runTarget'
 import {
   IN_FLIGHT, callLine, errMsg, fmtDuration, investigationOf, runStatusColor, useInvestigateReplay, useRunDetail, verdictOf,
   type HuntCheckpoint, type HuntEvidence, type HuntGap, type HuntHandoff, type HuntMove,
@@ -906,10 +907,36 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
       setError(`Not an entity key: ${malformed.join(', ')}. Each subject is type:value — host:dev-830, ip:45.77.53.176.`)
       return
     }
+    // The fields invite a title, host or user; the run needs an id. The server takes any
+    // id without checking, so a typed title would send the run after an alert that is not there.
+    const fid = pickId(findingId, findingOpts)
+    const cid = pickId(caseId, caseOpts)
+    const notOne = (what: string, typed: string) => `“${typed.trim()}” is not one ${what}. Pick it from the list, or paste its ID.`
+    if (fid === null || cid === null) {
+      setError(fid === null ? notOne('alert', findingId) : notOne('case', caseId))
+      return
+    }
+    const ids = { ...(fid && { finding_id: fid }), ...(cid && { case_id: cid }) }
     setStarting(true)
     setError(null)
     try {
-      const res = await workflowApi.execute(wf.id, withTurns)
+      // Text the list did not load is asked for by id: an older alert is there, a title or host is not.
+      const missing = (e: unknown) => (e as { response?: { status?: number } })?.response?.status === 404
+      const absent = async (id: string, opts: { id: string }[], get: (id: string) => Promise<unknown>) =>
+        Boolean(id) && !opts.some((o) => o.id === id) && get(encodeURIComponent(id)).then(() => false, (e) => {
+          if (missing(e)) return true
+          throw e
+        })
+      const [noFinding, noCase] = await Promise.all([
+        absent(fid, findingOpts, findingsApi.getById),
+        absent(cid, caseOpts, casesApi.getById),
+      ])
+      if (noFinding || noCase) {
+        setError(noFinding ? notOne('alert', findingId) : notOne('case', caseId))
+        setStarting(false)
+        return
+      }
+      const res = await workflowApi.execute(wf.id, { ...withTurns, ...ids })
       const started = (res.data as { run_id?: string })?.run_id ?? null
       setStarting(false)
       if (started === null) onStarted() // nothing to confirm or link to

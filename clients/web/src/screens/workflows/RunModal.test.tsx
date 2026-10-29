@@ -5,12 +5,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { RunModal } from './WorkflowsScreen'
+import { pickId } from './runTarget'
 
 const execute = vi.fn(() => Promise.resolve({ data: { run_id: 'run-abc12345' } }))
 const preflight = vi.fn()
 const getRun = vi.fn(() => Promise.resolve({ data: { run_id: 'run-abc12345', status: 'running' } }))
 const steer = vi.fn(() => Promise.resolve({ data: {} }))
 const checkCoverage = vi.fn()
+const getFinding = vi.fn((id: string) =>
+  id === 'f-3b5c585e' ? Promise.resolve({ data: { finding_id: id } }) : Promise.reject({ response: { status: 404 } }))
 
 vi.mock('../../services/api', () => ({
   workflowApi: {
@@ -22,8 +25,14 @@ vi.mock('../../services/api', () => ({
     cancelRun: vi.fn(() => Promise.resolve({ data: {} })),
   },
   agentsApi: { listAgents: vi.fn(() => Promise.resolve({ data: { agents: [] } })) },
-  findingsApi: { getAll: vi.fn(() => Promise.resolve({ data: { findings: [] } })) },
-  casesApi: { getAll: vi.fn(() => Promise.resolve({ data: { cases: [] } })) },
+  findingsApi: {
+    getAll: vi.fn(() => Promise.resolve({ data: { findings: [] } })),
+    getById: (...a: unknown[]) => getFinding(...(a as [string])),
+  },
+  casesApi: {
+    getAll: vi.fn(() => Promise.resolve({ data: { cases: [] } })),
+    getById: vi.fn(() => Promise.reject({ response: { status: 404 } })),
+  },
 }))
 vi.mock('../../services/skillsApi', () => ({
   skillsApi: { list: vi.fn(() => Promise.resolve([])) },
@@ -455,5 +464,31 @@ describe('checking a report against what is already hunted', () => {
     open('compose')
     await waitFor(() => expect(preflight).toHaveBeenCalled())
     expect(screen.queryByLabelText(/^Report/)).toBeNull()
+  })
+})
+
+describe('what the Run fields send', () => {
+  const opts = [{ id: 'f-1', label: 'high · Okta sign-in from new country' }, { id: 'f-2', label: 'high · Okta MFA push spam' }]
+  it('takes an id or the one row a title matches, refuses several, and leaves the rest to be looked up', () => {
+    expect(pickId(' f-2 ', opts)).toBe('f-2')
+    expect(pickId('new country', opts)).toBe('f-1')
+    expect(pickId('', opts)).toBe('')
+    expect(pickId('okta', opts)).toBeNull()
+    expect(pickId('f-2', [...opts, { id: 'f-20', label: 'low · x' }])).toBe('f-2')
+    expect(pickId('splunk-8f2a', opts)).toBe('splunk-8f2a')
+  })
+
+  it('sends an alert the list did not load, and starts nothing for text that is no alert', async () => {
+    execute.mockClear()
+    preflight.mockResolvedValue(limits([]))
+    open('investigate')
+    fireEvent.change(await screen.findByLabelText('Finding ID'), { target: { value: 'dev-830' } })
+    fireEvent.click(screen.getByRole('button', { name: /Run workflow/ }))
+    expect(await screen.findByText(/“dev-830” is not one alert/)).toBeInTheDocument()
+    expect(execute).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText('Finding ID'), { target: { value: 'f-3b5c585e' } })
+    fireEvent.click(screen.getByRole('button', { name: /Run workflow/ }))
+    await waitFor(() => expect(execute).toHaveBeenCalledWith('threat-hunt', { finding_id: 'f-3b5c585e' }))
   })
 })
