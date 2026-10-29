@@ -3700,8 +3700,9 @@
 
    .int-name {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
-      gap: 6px;
+      gap: 2px 6px;
       font-size: 13px;
       font-weight: 650;
       color: var(--tx0);
@@ -7186,7 +7187,7 @@
       line-height: 1.45;
       color: var(--tx2);
    }
-   .int-card-cta { margin-top: 4px; }
+   .int-card-foot { display: flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 4px; }
 
 /* FindingDetails: what a finding is about, under its source evidence */
 .fd { display: grid; gap: 12px; margin-top: 10px; }

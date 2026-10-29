@@ -565,6 +565,9 @@ describe('Integrations: Add integration tab', () => {
   it('marks a connector never run against a live instance as experimental', async () => {
     await open()
     expect(within(card('CrowdStrike Falcon')).getByText('Experimental')).toBeInTheDocument()
+    // by the action, not the head, so the name keeps its width beside the logo
+    expect(card('CrowdStrike Falcon').querySelector('.int-card-head .int-exp')).toBeNull()
+    expect(card('CrowdStrike Falcon').querySelector('.int-card-foot .int-exp')).not.toBeNull()
     expect(within(card('Okta')).queryByText('Experimental')).not.toBeInTheDocument()
   })
 
