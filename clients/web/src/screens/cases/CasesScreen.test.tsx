@@ -567,6 +567,19 @@ describe('chip rows', () => {
     expect(lastParams()).not.toHaveProperty('needs_you')
   })
 
+  it('opens on the chip the address names, as the Overview counts link', async () => {
+    const { unmount } = renderCases('/cases?state=closed')
+    await screen.findByText(CASE.title)
+    expect(chip(/^Closed today/)).toHaveAttribute('aria-pressed', 'true')
+    expect(lastParams()).toMatchObject({ closed: true })
+    unmount()
+
+    renderCases('/cases?needs_you=1')
+    await screen.findByText(CASE.title)
+    expect(chip('Needs you 2')).toHaveAttribute('aria-pressed', 'true')
+    expect(lastParams()).toMatchObject({ needs_you: true })
+  })
+
   it('Closed today toggles the closed filter', async () => {
     renderCases()
     await screen.findByText(CASE.title)

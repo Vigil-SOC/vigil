@@ -3,6 +3,8 @@ export interface SourceBadge {
   label: string
   color: string
   icon: string
+  /** logo image URL; only a connector's manifest badge carries one */
+  logo?: string
 }
 
 // Keyed by the data_source string ingestion stores, not the integration catalog id.

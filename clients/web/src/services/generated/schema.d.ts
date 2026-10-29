@@ -1382,8 +1382,8 @@ export interface paths {
          * Recheck Key
          * @description Run the express probe again for one key, ignoring the cached verdict.
          *
-         *     The following routability read hits that fresh cache entry, so the page
-         *     does not call the model a second time.
+         *     The express probe is cached on the key, so the following routability read
+         *     rebuilds the shared snapshot without calling the model a second time.
          */
         post: operations["post_api_bifrost_routability_recheck_key_id"];
         delete?: never;
@@ -4765,6 +4765,26 @@ export interface paths {
          * @description Full detail for a single interaction (thinking, tools, messages).
          */
         get: operations["get_api_reasoning_session_id_interactions_interaction_id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search
+         * @description Cases, alerts, workflows, agents and skills matching ``q``, for the command bar.
+         */
+        get: operations["get_api_search"];
         put?: never;
         post?: never;
         delete?: never;
@@ -10390,6 +10410,25 @@ export interface components {
              */
             severities: unknown[];
         };
+        /** SearchHit */
+        SearchHit: {
+            /** Data Source */
+            data_source?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Id */
+            id: string;
+            /** Match Type */
+            match_type?: ("case" | "comment" | "evidence" | "alert") | null;
+            /** Priority */
+            priority?: string | null;
+            /** Severity */
+            severity?: string | null;
+            /** Status */
+            status?: string | null;
+            /** Title */
+            title: string;
+        };
         /**
          * SearchRequest
          * @description Advanced search request.
@@ -10421,6 +10460,21 @@ export interface components {
             status?: string[] | null;
             /** Tags */
             tags?: string[] | null;
+        };
+        /** SearchResults */
+        SearchResults: {
+            /** Agents */
+            agents?: components["schemas"]["SearchHit"][];
+            /** Alerts */
+            alerts?: components["schemas"]["SearchHit"][];
+            case_exact?: components["schemas"]["SearchHit"] | null;
+            /** Cases */
+            cases?: components["schemas"]["SearchHit"][];
+            finding_exact?: components["schemas"]["SearchHit"] | null;
+            /** Skills */
+            skills?: components["schemas"]["SearchHit"][];
+            /** Workflows */
+            workflows?: components["schemas"]["SearchHit"][];
         };
         /**
          * ServerEnabledRequest
@@ -19828,6 +19882,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_search: {
+        parameters: {
+            query: {
+                q: string;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchResults"];
                 };
             };
             /** @description Validation Error */

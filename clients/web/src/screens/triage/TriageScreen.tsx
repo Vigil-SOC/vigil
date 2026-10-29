@@ -37,10 +37,12 @@ const KINDS = [
 
 // dot colours are tokens; the state's pill tone lives in styles.css
 const STATES = [
-  { value: 'queued', label: 'Waiting for a slot', dot: 'tx1' },
+  { value: 'queued', label: 'Waiting for triage', dot: 'tx1' },
   { value: 'launched', label: 'Picked up or started a case', dot: 'good' },
   { value: 'merged', label: 'Added to a case', dot: 'ac' },
   { value: 'expired', label: 'Expired', dot: 'tx2' },
+  // not an intake state: rows whose alert was marked as noise, in whichever state above
+  { value: 'dismissed', label: 'Dismissed as noise', dot: 'tx3' },
 ]
 const QUEUED_OFF = 'AutoOps is off'
 
@@ -207,7 +209,7 @@ function Filters({
         <InfoTip label={data.arrival_info} text={data.arrival_info} align="start" />,
       )}
       <span className="tq-rule" />
-      {group('state', state, 'What happened', autoOpsOff ? STATES.map((s) => (s.value === 'queued' ? { ...s, label: `Not picked up: ${QUEUED_OFF}` } : s)) : STATES)}
+      {group('state', state, 'What happened', autoOpsOff ? STATES.map((s) => (s.value === 'queued' ? { ...s, label: `Waiting for triage: ${QUEUED_OFF}` } : s)) : STATES)}
       {filtered ? (
         <span className="tq-summary">
           Showing {data.rows.length} of {data.matched} ·{' '}

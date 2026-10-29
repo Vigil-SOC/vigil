@@ -8,6 +8,7 @@ import { CONSOLE_TOUR_SEEN_KEY } from './consoleTourSeen'
 import { SETUP_HIDDEN_KEY } from '../screens/home/setupHidden'
 import { NAV } from '../data/data'
 import { notifyAutonomyChanged } from '../screens/settings/useSettings'
+import { ROUTABILITY_CHANGED } from '../screens/settings/routabilityChanged'
 // these resolve to the mocked implementations (vi.mock below is hoisted)
 import { streamFetch, approvalsApi, autonomyApi, workflowApi, casesApi, configApi, consoleApi, overviewApi, timelineApi } from '../services/api'
 
@@ -824,7 +825,7 @@ describe('SocConsole', () => {
     const drawer = await screen.findByRole('dialog', { name: 'Case' })
     expect(within(drawer).getByRole('tab', { name: /Summary/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'New case' })).toBeInTheDocument()
-    fireEvent.click(within(drawer).getByRole('button', { name: 'Expand' }))
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Open as full page' }))
     expect(screen.queryByRole('dialog', { name: 'Case' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'New case' })).not.toBeInTheDocument()
     expect(await screen.findByRole('tab', { name: /Summary/ })).toBeInTheDocument()
@@ -882,6 +883,53 @@ describe('SocConsole', () => {
         expect(view.style.overflowY).toBe('hidden')
         expect((view.querySelector('.screen') as HTMLElement).style.height).toBe('100%')
         expect(view.querySelector('.case-page > .case-composer')).not.toBeNull()
+      })
+    })
+
+    describe('the full page and the side panel it was expanded from', () => {
+      const expandFromDashboard = async () => {
+        renderWithHistory()
+        act(() => navigate('/dashboard', { state: { drawerCase: 'case-2026-0142' } }))
+        const drawer = await screen.findByRole('dialog', { name: 'Case' })
+        fireEvent.click(within(drawer).getByRole('button', { name: 'Open as full page' }))
+        await screen.findByRole('button', { name: 'Back to side panel' })
+        expect(screen.queryByRole('dialog', { name: 'Case' })).not.toBeInTheDocument()
+      }
+      const at = () => screen.getByTestId('console-location')
+
+      it('Collapse returns to the page it came from with the case in the side panel', async () => {
+        await expandFromDashboard()
+        fireEvent.click(screen.getByRole('button', { name: 'Back to side panel' }))
+        expect(await screen.findByRole('dialog', { name: 'Case' })).toBeInTheDocument()
+        expect(at()).toHaveAttribute('data-path', '/dashboard')
+      })
+
+      it('× and Esc return to that page with no panel', async () => {
+        await expandFromDashboard()
+        fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+        await waitFor(() => expect(screen.queryByRole('button', { name: 'Back to side panel' })).not.toBeInTheDocument())
+        expect(at()).toHaveAttribute('data-path', '/dashboard')
+        expect(screen.queryByRole('dialog', { name: 'Case' })).not.toBeInTheDocument()
+
+        act(() => navigate(-1))
+        await screen.findByRole('button', { name: 'Back to side panel' })
+        fireEvent.keyDown(document.body, { key: 'Escape' })
+        await waitFor(() => expect(at()).toHaveAttribute('data-path', '/dashboard'))
+        expect(screen.queryByRole('dialog', { name: 'Case' })).not.toBeInTheDocument()
+      })
+
+      it('a full page opened directly collapses to the Cases list with the case in the panel, and × goes to the list', async () => {
+        renderWithHistory()
+        act(() => navigate('/cases?case=case-2026-0142'))
+        fireEvent.click(await screen.findByRole('button', { name: 'Back to side panel' }))
+        expect(await screen.findByRole('dialog', { name: 'Case' })).toBeInTheDocument()
+        expect(at()).toHaveAttribute('data-path', '/cases')
+        expect(at()).toHaveAttribute('data-search', '')
+
+        act(() => navigate('/cases?case=case-2026-0142'))
+        fireEvent.click(await screen.findByRole('button', { name: 'Close' }))
+        expect(await screen.findByRole('button', { name: 'New case' })).toBeInTheDocument()
+        expect(screen.queryByRole('dialog', { name: 'Case' })).not.toBeInTheDocument()
       })
     })
 
@@ -1342,6 +1390,19 @@ describe('SocConsole', () => {
     const line = await screen.findByRole('status', { name: 'System status' })
     expect(line).toHaveAttribute('data-level', 'good')
     expect(line).not.toHaveTextContent('No routable provider.')
+  })
+
+  it('clears No routable provider as soon as a key write says routability changed', async () => {
+    vi.mocked(consoleApi.getRoutability).mockResolvedValue({ data: { providers: { anthropic: false } } } as never)
+    renderConsole()
+    const line = await screen.findByRole('status', { name: 'System status' })
+    expect(line).toHaveTextContent('No routable provider.')
+    vi.mocked(consoleApi.getRoutability).mockResolvedValue({ data: { providers: { anthropic: true } } } as never)
+    act(() => {
+      window.dispatchEvent(new Event(ROUTABILITY_CHANGED))
+    })
+    await waitFor(() => expect(line).not.toHaveTextContent('No routable provider.'))
+    expect(line).toHaveTextContent('No problems reported.')
   })
 
   it('shows No routable provider when platform.write is denied and nothing can route', async () => {

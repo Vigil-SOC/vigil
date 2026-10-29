@@ -4,6 +4,7 @@ import { FilterChip } from '../../shared/FilterChip'
 import { EmptyState, TextInput } from '../../shared/ui'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
 import { categoryLabels, type CatalogEntry } from './integrationCatalog'
+import IntegrationMark from './IntegrationMark'
 import { EXPERIMENTAL_NOTE } from './integrationsData'
 
 interface Props {
@@ -63,20 +64,26 @@ export default function AddIntegrationTab({ entries, busy, onConnect, onTurnOn, 
           {shown.map((e) => (
             <div key={e.key} className="int-card">
               <div className="int-card-head">
+                <IntegrationMark logo={e.logo} category={e.category} />
                 <span className="int-card-name" title={e.name}>{e.name}</span>
-                {e.experimental && <span className="chip int-exp" title={EXPERIMENTAL_NOTE}>Experimental</span>}
                 <span className={`int-card-state${e.connected ? ' on' : ''}`}>{e.connected ? 'Connected' : 'Available'}</span>
               </div>
               <p className="int-card-line" title={`${e.category} · ${e.description}`}>{e.category} · {e.description}</p>
-              {!e.connected && (
-                <button
-                  className="btn int-act int-card-cta"
-                  disabled={busy === e.server}
-                  aria-label={`${e.integration ? 'Connect' : 'Turn on'} ${e.name}`}
-                  onClick={() => (e.integration ? onConnect(e.integration) : onTurnOn(e.server))}
-                >
-                  {e.integration ? 'Connect' : 'Turn on'}
-                </button>
+              {/* the chip sits by the action, so the name keeps the head's width */}
+              {(!e.connected || e.experimental) && (
+                <div className="int-card-foot">
+                  {!e.connected && (
+                    <button
+                      className="btn int-act"
+                      disabled={busy === e.server}
+                      aria-label={`${e.integration ? 'Connect' : 'Turn on'} ${e.name}`}
+                      onClick={() => (e.integration ? onConnect(e.integration) : onTurnOn(e.server))}
+                    >
+                      {e.integration ? 'Connect' : 'Turn on'}
+                    </button>
+                  )}
+                  {e.experimental && <span className="chip int-exp" title={EXPERIMENTAL_NOTE}>Experimental</span>}
+                </div>
               )}
             </div>
           ))}

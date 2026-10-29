@@ -13,6 +13,11 @@
   color: var(--tx0);
 }
 .aim-banner > svg { flex: 0 0 auto; margin-top: 1px; color: var(--ac); }
+.aim-prompt { flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.aim-prompt > span { flex: 1 1 240px; min-width: 0; }
+.aim-prompt > .btn { flex: 0 0 auto; }
+button.aim-model-chip { font-family: inherit; cursor: pointer; }
+button.aim-model-chip:hover { border-color: var(--ac); color: var(--tx0); }
 
 .aim-cards {
   max-width: 1280px;

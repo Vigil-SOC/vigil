@@ -43,7 +43,13 @@ _reading: Optional[asyncio.Task[Snapshot]] = None
 
 
 def reset() -> None:
-    """Drop the snapshot. Tests call this so one case does not answer the next."""
+    """Drop the snapshot.
+
+    Tests call this so one case does not answer the next. A key or provider
+    write calls it too: the console polls this snapshot on the same 30s
+    window, and the next read has to see the write rather than the copy
+    from before it.
+    """
     global _answer, _reading
     task = _reading
     _answer = None

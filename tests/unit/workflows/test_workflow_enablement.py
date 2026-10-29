@@ -104,8 +104,42 @@ def service(monkeypatch):
     return svc
 
 
+class _Cases:
+    """Stands in for the case store behind ``/execute``: what it opened and deleted."""
+
+    def __init__(self):
+        self.holding: dict = {}
+        self.opened: list = []
+        self.deleted: list = []
+
+    def open_case(self, data, **kwargs):
+        case = {"case_id": f"case-{len(self.opened) + 1}", **kwargs}
+        self.opened.append(case)
+        return case
+
+    def get_finding(self, finding_id):
+        return {"description": "Beacon to rare host"}
+
+    def delete_case(self, case_id):
+        self.deleted.append(case_id)
+        return True
+
+
 @pytest.fixture
-def client(authenticate_app, session, service):
+def cases(monkeypatch):
+    store = _Cases()
+    monkeypatch.setattr("core.cases.case_sla_service.open_case", store.open_case)
+    monkeypatch.setattr(
+        "core.cases.case_sla_service.open_case_holding", store.holding.get
+    )
+    monkeypatch.setattr(
+        "core.storage.database_data_service.DatabaseDataService", lambda: store
+    )
+    return store
+
+
+@pytest.fixture
+def client(authenticate_app, session, service, cases):
     app = FastAPI()
     app.include_router(workflows_router.router, prefix="/api")
     app.state.workflows = service
@@ -262,6 +296,62 @@ def test_execute_accepts_an_enabled_workflow(client, service):
     assert r.status_code == 200
 
 
+def _capture_start(monkeypatch, result):
+    captured = {}
+
+    async def _execute(self, workflow_id, parameters, **kwargs):
+        captured.update(parameters)
+        return result
+
+    monkeypatch.setattr(WorkflowsService, "execute_workflow", _execute)
+    return captured
+
+
+def test_execute_opens_a_case_for_a_start_with_none(client, cases, monkeypatch):
+    captured = _capture_start(monkeypatch, {"success": True, "run_id": "r1"})
+    response = client.post(
+        f"/api/workflows/{SCHEDULED_WORKFLOW}/execute",
+        json={"hypothesis": "alpha " * 30, "finding_id": "f-1"},
+    )
+    assert response.status_code == 200
+    assert response.json()["case_id"] == captured["case_id"] == "case-1"
+    [case] = cases.opened
+    assert case["finding_ids"] == ["f-1"] and case["priority"] == "medium"
+    assert case["title"].startswith("alpha alpha") and len(case["title"]) <= 60
+    assert case["title"].endswith("alpha")
+    assert cases.deleted == []
+
+
+def test_execute_reuses_the_open_case_holding_the_alert(client, cases, monkeypatch):
+    captured = _capture_start(monkeypatch, {"success": True, "run_id": "r1"})
+    cases.holding["f-1"] = "case-held"
+    response = client.post(
+        f"/api/workflows/{SCHEDULED_WORKFLOW}/execute", json={"finding_id": "f-1"}
+    )
+    assert response.json()["case_id"] == captured["case_id"] == "case-held"
+    assert cases.opened == [] and cases.deleted == []
+
+
+def test_a_refused_start_leaves_no_case(client, cases, monkeypatch):
+    _capture_start(monkeypatch, {"success": False, "error": "not a claim"})
+    response = client.post(
+        f"/api/workflows/{SCHEDULED_WORKFLOW}/execute", json={"hypothesis": "x"}
+    )
+    assert response.status_code == 500
+    assert cases.deleted == ["case-1"]
+
+
+def test_a_failed_run_keeps_its_case(client, cases, monkeypatch):
+    _capture_start(
+        monkeypatch, {"success": False, "run_id": "r1", "error": "the run failed"}
+    )
+    response = client.post(
+        f"/api/workflows/{SCHEDULED_WORKFLOW}/execute", json={"hypothesis": "x"}
+    )
+    assert response.status_code == 500
+    assert cases.deleted == []
+
+
 def test_execute_signs_the_signed_in_user_onto_the_run(client, monkeypatch):
     captured = {}
 
@@ -306,9 +396,7 @@ async def test_v1_start_refuses_a_disabled_workflow_and_accepts_an_enabled_one(s
         patch.object(agent_runs_router, "_begin_run_row"),
         patch.object(agent_runs_router, "enqueue_run", AsyncMock(side_effect=_enqueue)),
     ):
-        res = await agent_runs_router.start_run(
-            _start(f"workflow:{CUSTOM}"), user=user
-        )
+        res = await agent_runs_router.start_run(_start(f"workflow:{CUSTOM}"), user=user)
     assert res.job_id == "j"
     assert captured["job"]["enqueued_by"] == "nestor"
     assert tool_principal.verify(captured["job"]["principal"]) == "nestor"
@@ -322,7 +410,7 @@ async def test_triage_routes_a_disabled_workflow_to_the_fallback(session, monkey
     from services.daemon.orchestrator import Orchestrator
 
     monkeypatch.setattr(
-        "services.daemon.orchestrator._open_case_holding", lambda _fid: None
+        "services.daemon.orchestrator.open_case_holding", lambda _fid: None
     )
     monkeypatch.setattr(
         "services.daemon.orchestrator._matching_cases", lambda _f, *, open: []

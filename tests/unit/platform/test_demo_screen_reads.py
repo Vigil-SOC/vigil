@@ -227,13 +227,29 @@ def test_triage_rows_are_demo_findings_not_stored_intake(demo_service, monkeypat
     waiting = [row for row in body["rows"] if row["state"] == "queued"]
     assert launched and waiting
     assert all(row["state_label"] == "Started a case" and row["case_door"] for row in launched)
-    assert all(row["state_label"] == "Waiting for a slot" and row["case_door"] is None for row in waiting)
+    assert all(row["state_label"] == "Waiting for triage" and row["case_door"] is None for row in waiting)
     source = body["rows"][0]["source"]
     narrowed = triage_payload(now=NOW, source=source)
     assert narrowed["matched"] == body["counts"]["source"][source]
     assert all(row["source"] == source for row in narrowed["rows"])
     assert {row["data_source"] for row in body["sources"]} <= set(body["counts"]["source"])
     assert body["strip"]["waiting"] == len(waiting)
+
+
+def test_triage_dismissed_lists_the_demo_findings_marked_as_noise(
+    demo_service, monkeypatch
+):
+    from services.api.triage_read import triage_payload
+
+    _forbid_database(monkeypatch)
+    monkeypatch.setattr("core.config.is_demo_mode", lambda: True)
+    marked = demo_service.get_findings()[0]
+    marked["noise_marked_at"] = "2026-10-27T00:00:00+00:00"
+
+    body = triage_payload(now=NOW, state="dismissed")
+    assert body["counts"]["state"]["dismissed"] == 1
+    assert body["matched"] == 1
+    assert [row["finding_id"] for row in body["rows"]] == [marked["finding_id"]]
 
 
 def test_needs_you_lists_open_demo_cases(demo_service, monkeypatch):

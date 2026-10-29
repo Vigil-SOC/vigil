@@ -22,6 +22,7 @@ from sqlalchemy import func
 
 from core.agents.builtins import ORCHESTRATION_DECISION_ID, ORCHESTRATOR_ACTOR
 from core.auth.principals import agent_principal_id
+from core.cases.case_sla_service import case_title, open_case_holding
 from core.config import get_settings
 from core.time import utcnow
 from services.daemon.config import OrchestratorConfig
@@ -484,7 +485,7 @@ def _human_ask_case_title(
 ) -> str:
     """Title for a Case minted from a Human Ask: hypothesis first, else the finding."""
     if hypothesis and str(hypothesis).strip():
-        return str(hypothesis).strip()[:200]
+        return case_title(str(hypothesis), 200)
     if findings:
         return _infer_title(findings[0], workflow_id)[:200]
     return _infer_title({}, workflow_id)[:200]
@@ -580,22 +581,6 @@ def _load_finding(finding_id: str) -> Optional[Dict]:
         logger.error("Failed to read finding %s: %s", finding_id, e)
         return None
     return FindingSchema.dump(finding) if finding else None
-
-
-def _open_case_holding(finding_id: str) -> Optional[str]:
-    """The newest not-closed Case already linked to this finding, or None. Raises on a failed read."""
-    from sqlalchemy import select
-
-    from core.storage.models import Case, case_findings
-
-    with get_db_manager().session_scope() as session:
-        return session.execute(
-            select(Case.case_id)
-            .join(case_findings, case_findings.c.case_id == Case.case_id)
-            .where(case_findings.c.finding_id == finding_id, Case.status != "closed")
-            .order_by(Case.created_at.desc())
-            .limit(1)
-        ).scalar_one_or_none()
 
 
 def _matching_cases(finding: Dict, *, open: bool) -> List[CaseMatch]:
@@ -964,7 +949,7 @@ class Orchestrator:
         """
         finding_id = finding.get("finding_id", "unknown")
         try:
-            holding = _open_case_holding(finding_id)
+            holding = open_case_holding(finding_id)
         except Exception as e:
             logger.error(
                 "Failed to read open cases for finding %s; leaving queued: %s",
@@ -1130,7 +1115,7 @@ class Orchestrator:
         findings = [f for f in map(_load_finding, finding_ids) if f]
 
         mint = None
-        if not case_id and finding_ids:
+        if not case_id:
             mint = CaseSpec(
                 title=_human_ask_case_title(hypothesis, findings, workflow_id),
                 finding_ids=list(finding_ids),

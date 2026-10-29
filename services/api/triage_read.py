@@ -27,6 +27,9 @@ from services.daemon.orchestrator import _link_note, intake_rank_inputs, rank_in
 ROW_CAP = 200
 ARRIVAL_INFO = "Arrivals count every finding stored today. The list is the intake rows."
 _PICKUP_STATES = ("launched", "merged")
+# Not an intake state: rows whose alert was marked as noise, whatever their intake
+# state, so the Overview's "Dismissed as noise" count can open the queue at them.
+NOISE_STATE = "dismissed"
 
 # The ⓘ copy for each strip figure, worded from what _strip counts.
 STRIP_INFO = {
@@ -85,7 +88,7 @@ def _state_label(
 ) -> tuple[str, Optional[str]]:
     """Display word and the case door, when the id is still a case."""
     if state == "queued":
-        return "Waiting for a slot", None
+        return "Waiting for triage", None
     if state == "launched":
         if case_id:
             return "Started a case", case_id
@@ -174,7 +177,9 @@ def _joined(session, *columns):
 def _filtered(query, kind: Optional[str], source: Optional[str], state: Optional[str]):
     if kind:
         query = query.filter(IntakeTrigger.kind == kind)
-    if state:
+    if state == NOISE_STATE:
+        query = query.filter(Finding.noise_marked_at.isnot(None))
+    elif state:
         query = query.filter(IntakeTrigger.state == state)
     if source:
         query = query.filter(_source_column() == source)
@@ -458,7 +463,10 @@ def _present(
 
 
 def _counts(session) -> dict:
-    """Every intake row by kind, source, and state, before filters and the cap."""
+    """Every intake row by kind, source, and state, before filters and the cap.
+
+    The intake states partition the rows; ``NOISE_STATE`` counts across them.
+    """
     kinds: dict[str, int] = {}
     sources: dict[str, int] = {}
     states: dict[str, int] = {}
@@ -472,6 +480,13 @@ def _counts(session) -> dict:
         states[state] = states.get(state, 0) + n
         if name:
             sources[name] = sources.get(name, 0) + n
+    noise = (
+        _joined(session, func.count(IntakeTrigger.id))
+        .filter(Finding.noise_marked_at.isnot(None))
+        .scalar()
+    )
+    if noise:
+        states[NOISE_STATE] = noise
     return {"total": total, "kind": kinds, "source": sources, "state": states}
 
 
@@ -537,7 +552,13 @@ def _demo_triage(
     now: datetime,
 ) -> dict:
     """One detection row per demo finding. A linked case counts as launched."""
-    from core.findings.demo_reads import _ord, _when, best_case_by_finding, parse_utc
+    from core.findings.demo_reads import (
+        _noise,
+        _ord,
+        _when,
+        best_case_by_finding,
+        parse_utc,
+    )
     from services.daemon.orchestrator import rank_intake_row
 
     linked = best_case_by_finding(cases)
@@ -588,6 +609,10 @@ def _demo_triage(
         counts_state[row_state] = counts_state.get(row_state, 0) + 1
         if row_source:
             counts_source[row_source] = counts_source.get(row_source, 0) + 1
+    noise = {f.get("finding_id") for f in findings if _noise(f)}
+    noise_rows = sum(1 for row in built if row["finding_id"] in noise)
+    if noise_rows:
+        counts_state[NOISE_STATE] = noise_rows
 
     def _at(row: dict, field: str) -> Optional[datetime]:
         value = row.get(field)
@@ -617,7 +642,11 @@ def _demo_triage(
         row
         for row in built
         if (not kind or row["kind"] == kind)
-        and (not state or row["state"] == state)
+        and (
+            row["finding_id"] in noise
+            if state == NOISE_STATE
+            else not state or row["state"] == state
+        )
         and (not source or row["source"] == source)
     ]
     queued = [row for row in selected if row["state"] == "queued"]

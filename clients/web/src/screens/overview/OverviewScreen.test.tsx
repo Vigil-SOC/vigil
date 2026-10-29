@@ -214,6 +214,17 @@ describe('OverviewScreen', () => {
     expect(screen.getByText(/Good means it finishes 90% or more of its runs; Fair 70 to 90%; Poor under 70%\./)).toBeInTheDocument()
   })
 
+  it('agent cards: each opens its workflow on Agents & workflows', async () => {
+    vi.mocked(overviewApi.get).mockResolvedValue({
+      data: payload({ agents: [agent({ workflow_id: 'phish triage', name: 'Phish triage', sample_size: 4, rate: 1, level: 'good' })] }),
+    } as never)
+    renderScreen()
+    const [card] = within(await screen.findByRole('list')).getAllByRole('listitem')
+    expect(within(card).getByRole('link', { name: 'Phish triage' })).toHaveAttribute('href', '/workflows?workflow=phish%20triage')
+    // the rate keeps its tooltip over the card's link
+    expect(within(card).getByTitle('100.0% of 4 runs completed, last 30 days')).toBeInTheDocument()
+  })
+
   it('agent cards: goes to workflows, and a connected install with no runs gets the panel without Connect data', async () => {
     vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ agents: [agent({ running: 0, current_step: null })] }) } as never)
     const { go } = renderScreen()
@@ -241,8 +252,10 @@ describe('OverviewScreen', () => {
     for (const [label, count] of Object.entries(counts)) {
       const node = within(flow).getByLabelText(label)
       expect(node).toHaveTextContent(count)
-      expect(node.querySelector('a')).toBeNull()
+      // only a populated count is a link
+      if (count === '0') expect(node.querySelector('a')).toBeNull()
     }
+    expect(within(within(flow).getByLabelText('Not picked up')).getByRole('link')).toHaveAttribute('href', '/triage?state=expired')
     expect(within(flow).getByRole('button', { name: 'This count is alerts, not decisions.' })).toBeInTheDocument()
     const line = within(flow).getByText(/Not measured yet:/)
     expect(line).toHaveTextContent('Not measured yet: Ticket created · Paused · Stuck · Incidents')
@@ -256,6 +269,31 @@ describe('OverviewScreen', () => {
     expect(screen.getByRole('button', { name: 'ServiceNow' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'ServiceNow' }).parentElement).toHaveAttribute('title', 'Coming in a later release')
     expect(screen.getByText(/records omitted from this list/)).toBeInTheDocument()
+  })
+
+  it('opens each populated outcome on Cases or the Triage queue, filtered (OV-P1)', async () => {
+    const populated = OUTCOMES.map((o) => (o.count === null ? o : { ...o, count: 3 }))
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ outcomes: populated }) } as never)
+    renderScreen()
+    const flow = await screen.findByRole('region', { name: 'How alerts flow through Vigil' })
+    const opens = {
+      'Resolved automatically': ['/cases?state=closed', 'Opens closed cases.'],
+      'Closed by a person': ['/cases?state=closed', 'Opens closed cases.'],
+      'Still working': ['/cases', 'Opens open cases.'],
+      'Needs you': ['/cases?needs_you=1', 'Opens the cases that need you.'],
+      'Dismissed as noise': ['/triage?state=dismissed', 'Opens the Triage queue at alerts dismissed as noise.'],
+      'Waiting for triage': ['/triage?state=queued', 'Opens the Triage queue at alerts waiting for a slot.'],
+      'Not picked up': ['/triage?state=expired', 'Opens the Triage queue at alerts whose wait expired.'],
+    }
+    for (const [label, [href, says]] of Object.entries(opens)) {
+      const link = within(within(flow).getByLabelText(label)).getByRole('link', { name: `3 ${label}` })
+      expect(link).toHaveAttribute('href', href)
+      expect(link).toHaveAttribute('title', `${label}: 3 alerts today. ${says}`)
+    }
+    // the ⓘ stays outside the link
+    expect(within(flow).getByRole('button', { name: 'This count is alerts, not decisions.' }).closest('a')).toBeNull()
+    fireEvent.click(within(flow).getByRole('link', { name: '3 Dismissed as noise' }))
+    expect(where()).toBe('?state=dismissed')
   })
 
   it('totals every arrival, and folds sources past the sixth into "+N more sources"', async () => {
@@ -601,11 +639,11 @@ describe('OverviewScreen', () => {
 })
 
 describe('FlowDiagram outcome bands', () => {
-  // A band's thickness where it lands on its row, read from the path's "L x2 y-th/2 → x2 y+th/2" edge.
+  // Where each band lands on its row, read from the path's "L x2 y-th/2 → x2 y+th/2" edge.
   const ends = (container: HTMLElement) =>
     [...container.querySelectorAll<SVGPathElement>('.ov-band path:not(.ov-zero)')].map((p) => {
       const m = p.getAttribute('d')!.match(/, (\S+) (\S+) L \S+ (\S+)/)!
-      return Number(m[3]) - Number(m[2])
+      return [Number(m[2]), Number(m[3])] as const
     })
   const draw = (counts: number[], wall: boolean) => {
     const outcomes = OUTCOMES.map((o, i) => (o.count === null ? o : { ...o, count: counts[i] }))
@@ -614,21 +652,26 @@ describe('FlowDiagram outcome bands', () => {
         <FlowDiagram data={payload({ outcomes })} wall={wall} onToggleWall={vi.fn()} />
       </MemoryRouter>,
     )
-    const th = ends(container)
+    const edges = ends(container)
     unmount()
-    return th
+    return edges
   }
 
   it.each([false, true])('a dominant outcome stays inside its row (wall=%s)', (wall) => {
-    const gap = ((wall ? 600 : 400) - 104) / 6
-    const th = draw([0, 0, 0, 0, 0, 0, 3], wall)
-    expect(th).toHaveLength(1)
-    expect(th[0]).toBeCloseTo(gap - 10)
-    for (const t of draw([1, 1, 1, 1, 1, 1, 14], wall)) expect(t).toBeLessThanOrEqual(gap - 10 + 1e-9)
+    const H = wall ? 600 : 400
+    for (const counts of [[0, 0, 0, 0, 0, 0, 3], [1, 1, 1, 1, 1, 1, 14]]) {
+      const edges = draw(counts, wall)
+      expect(edges).toHaveLength(counts.filter((c) => c > 0).length)
+      edges.forEach(([top, bottom], i) => {
+        expect(top).toBeGreaterThanOrEqual(0)
+        expect(bottom).toBeLessThanOrEqual(H)
+        if (i > 0) expect(top).toBeGreaterThan(edges[i - 1][1])
+      })
+    }
   })
 
   it.each([false, true])('a spread-out day keeps the full 150px total (wall=%s)', (wall) => {
-    const th = draw([5, 5, 4, 4, 4, 4, 4], wall)
-    expect(th.reduce((n, t) => n + t, 0)).toBeCloseTo(150)
+    const edges = draw([5, 5, 4, 4, 4, 4, 4], wall)
+    expect(edges.reduce((n, [top, bottom]) => n + bottom - top, 0)).toBeCloseTo(150)
   })
 })

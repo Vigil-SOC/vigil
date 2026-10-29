@@ -85,11 +85,8 @@ describe('/hunt preview with an attachment', () => {
 describe('buildRows alert hits', () => {
   it('puts entity-matched alerts after the cases and does not repeat the exact id', () => {
     const rows = buildRows('fin-ws-114', {
-      caseExact: null,
-      findingExact: null,
-      textCases: [],
-      iocCases: [{ id: 'case-7', title: 'Finance hunt', matchType: 'alert' }],
-      alertHits: [{ id: 'f-7', title: 'Beacon' }, { id: 'f-8', title: 'Logon' }],
+      cases: [{ id: 'case-7', title: 'Finance hunt', match_type: 'alert' }],
+      alerts: [{ id: 'f-7', title: 'Beacon' }, { id: 'f-8', title: 'Logon' }],
     }, [], [])
     expect(rows.map((row) => [row.section, row.hint])).toEqual([
       ['Cases', 'case-7'],
@@ -100,12 +97,27 @@ describe('buildRows alert hits', () => {
     expect(rows[0].desc).toBe('Matched an alert')
 
     const exact = buildRows('f-7', {
-      caseExact: null,
-      findingExact: { id: 'f-7', title: 'Beacon' },
-      textCases: [],
-      iocCases: [],
-      alertHits: [{ id: 'f-7', title: 'Beacon' }],
+      finding_exact: { id: 'f-7', title: 'Beacon' },
+      alerts: [{ id: 'f-7', title: 'Beacon' }],
     }, [], [])
     expect(exact.filter((row) => row.findingId === 'f-7')).toHaveLength(1)
+  })
+})
+
+describe('buildRows workflows, agents and skills', () => {
+  it('lists them after the pages, each opening its place in Agents & workflows', () => {
+    const rows = buildRows('phishing', {
+      workflows: [{ id: 'phishing-response', title: 'Phishing response', description: 'Contain a reported lure' }],
+      agents: [{ id: 'custom-mail cop', title: 'Mail cop' }],
+      skills: [{ id: 'phishing-triage', title: 'phishing-triage', description: 'Give a reported email a verdict' }],
+    }, [], [{ key: 'triage', label: 'Phishing queue', icon: 'grid', desc: 'Queue' }])
+    expect(rows.map((row) => [row.section, row.label, row.desc, row.page, row.search])).toEqual([
+      ['Pages', 'Phishing queue', 'Queue', 'triage', undefined],
+      ['Agents & workflows', 'Phishing response', 'Workflow · Contain a reported lure', 'workflows', '?workflow=phishing-response'],
+      ['Agents & workflows', 'Mail cop', 'Agent', 'workflows', '?tab=agents&agent=custom-mail%20cop'],
+      ['Agents & workflows', 'phishing-triage', 'Skill · Give a reported email a verdict', 'workflows', '?tab=skills&skill=phishing-triage'],
+      ['Ask Vigil', 'Ask Vigil: “phishing”', 'Opens chat with your question', undefined, undefined],
+    ])
+    expect(rows.slice(1, 4).map((row) => row.dest)).toEqual(['Page', 'Page', 'Page'])
   })
 })

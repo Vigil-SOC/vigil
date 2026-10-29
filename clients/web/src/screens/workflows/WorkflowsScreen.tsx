@@ -54,13 +54,28 @@ export interface Feed<T> {
 
 const [PAGE_TITLE, PAGE_DESC] = TITLES.workflows
 
+const tabFrom = (wanted: string | null): WfTab =>
+  wanted === 'agents' || wanted === 'skills' || wanted === 'commands' ? wanted : 'workflows'
+
+/** The item a tab has open, named in the address: `?workflow=<id>`, `?tab=agents&agent=<id>`
+ *  or `?tab=skills&skill=<name>`, so search and the Overview can link to one. Opening or
+ *  closing one replaces the entry rather than adding a step for Back. */
+function useOpenItem(key: 'workflow' | 'agent' | 'skill', tab: WfTab): [string | null, (id: string | null) => void] {
+  const [params, setParams] = useSearchParams()
+  const set = useCallback((id: string | null) => {
+    const next = new URLSearchParams(tab === 'workflows' ? undefined : { tab })
+    if (id) next.set(key, id)
+    setParams(next, { replace: true })
+  }, [key, tab, setParams])
+  return [params.get(key), set]
+}
+
 export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
   // ?tab= picks the opening tab, e.g. Home's "Add a custom skill" step
   const [searchParams, setSearchParams] = useSearchParams()
-  const [tab, setTab] = useState<WfTab>(() => {
-    const wanted = searchParams.get('tab')
-    return wanted === 'agents' || wanted === 'skills' || wanted === 'commands' ? wanted : 'workflows'
-  })
+  const [tab, setTab] = useState<WfTab>(() => tabFrom(searchParams.get('tab')))
+  // a link followed while the screen is open names its tab again
+  useEffect(() => setTab(tabFrom(searchParams.get('tab'))), [searchParams])
   // lifted so the header's "New workflow" opens the same dialog from any tab
   const [describing, setDescribing] = useState(false)
   const [draft, setDraft] = useState<GeneratedDraft | null>(null)
@@ -273,7 +288,7 @@ function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>;
   const { rows, phase, error, reload } = feed
   const [modal, setModal] = useState<WfModal | null>(null)
   // the pane replaces the table; read from the rows so an edit or a delete shows in it
-  const [openId, setOpenId] = useState<string | null>(null)
+  const [openId, setOpenId] = useOpenItem('workflow', 'workflows')
   const open = rows.find((w) => w.id === openId)
   // bumped by a save, so the pane reads the edited definition again
   const [saves, setSaves] = useState(0)
@@ -3771,7 +3786,7 @@ const ASSIGNMENT_NOTE = 'Workflow runs use the investigation assignment in Setti
 function AgentsTab({ feed, skillCount, onToggled }: { feed: Feed<AgentTemplate>; skillCount: number | null; onToggled: () => void }) {
   const { rows, phase, error, reload } = feed
   const [busy, setBusy] = useState<string | null>(null)
-  const [editId, setEditId] = useState<string | null>(null)
+  const [editId, setEditId] = useOpenItem('agent', 'agents')
   const [creating, setCreating] = useState<false | 'blank' | 'describe'>(false)
   const [deleteAgent, setDeleteAgent] = useState<AgentTemplate | null>(null)
   // optimistic On switches, dropped when the list reloads
@@ -3973,7 +3988,7 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
   const { rows, phase, error, reload } = feed
   // Saving, importing and deleting answer 403 without it.
   const canWrite = useAuth().hasPermission('automation.write')
-  const [editName, setEditName] = useState<string | null>(null)
+  const [editName, setEditName] = useOpenItem('skill', 'skills')
   const [building, setBuilding] = useState(false)
   const [deleteSkill, setDeleteSkill] = useState<Skill | null>(null)
   const [importing, setImporting] = useState(false)
@@ -4047,6 +4062,7 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
       )}
       {(editName || building) && (
         <SkillDrawer
+          key={editName ?? 'new'} // a link to another skill opens a fresh drawer
           name={editName}
           existingNames={rows.map((r) => r.name)}
           onClose={() => { setEditName(null); setBuilding(false) }}

@@ -205,7 +205,7 @@ async def test_finding_ask_with_a_document_passes_it_to_claim(load):
 
 
 @pytest.mark.asyncio
-async def test_human_ask_hypothesis_only_is_caseless():
+async def test_human_ask_hypothesis_only_mints_a_case():
     orch = _orchestrator()
 
     await orch._create_manual_investigation(
@@ -219,7 +219,9 @@ async def test_human_ask_hypothesis_only_is_caseless():
 
     kwargs = orch._create_investigation.await_args.kwargs
     assert kwargs["case_id"] is None
-    assert kwargs["mint_case"] is None
+    assert kwargs["mint_case"].finding_ids == []
+    assert kwargs["mint_case"].title == "T1071 on FYODOR-L"
+    assert kwargs["mint_case"].priority == "low"
     assert kwargs["findings"] == []
 
 
@@ -240,11 +242,11 @@ async def test_hypothesis_only_ask_keeps_the_document_on_the_payload():
     kwargs = orch._create_investigation.await_args.kwargs
     assert kwargs["document"] == "doc-9"
     assert kwargs["case_id"] is None
-    assert kwargs["mint_case"] is None
+    assert kwargs["mint_case"].finding_ids == []
 
 
 @pytest.mark.asyncio
-async def test_schedule_row_is_caseless():
+async def test_schedule_row_mints_a_case():
     orch = _orchestrator()
 
     await orch._process_intake_row(
@@ -259,7 +261,7 @@ async def test_schedule_row_is_caseless():
 
     kwargs = orch._create_investigation.await_args.kwargs
     assert kwargs["case_id"] is None
-    assert kwargs["mint_case"] is None
+    assert kwargs["mint_case"].finding_ids == []
     assert kwargs["trigger_type"] == "scheduled"
 
 
@@ -311,7 +313,7 @@ async def test_finding_run_records_the_document_and_puts_it_in_the_brief(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_a_hunt_keeps_no_case_and_still_gets_the_document(tmp_path):
+async def test_a_hunt_opens_a_case_and_still_gets_the_document(tmp_path):
     orch = _launching_orchestrator(tmp_path)
 
     await orch._create_investigation(
@@ -321,11 +323,12 @@ async def test_a_hunt_keeps_no_case_and_still_gets_the_document(tmp_path):
         priority="low",
         hypothesis="T1071 on FYODOR-L",
         document="the CISA advisory, pasted",
+        mint_case=CaseSpec(title="T1071 on FYODOR-L", finding_ids=[], priority="low"),
     )
 
     record = orch._save_investigation.call_args[0][0]
     brief = orch.workdir.read_file(record["investigation_id"], "context.md")
-    assert record["case_id"] is None
+    assert record["case_id"].startswith("case-")
     assert "the CISA advisory, pasted" in brief
 
 

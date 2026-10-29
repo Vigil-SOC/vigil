@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { configApi } from '../services/api'
+import type { Schema } from '../services/apiTypes'
 import type { IconName } from '../shared/icons'
 
 export type LiveCommandId = 'investigate' | 'hunt' | 'replay' | 'ask' | 'ticket'
@@ -44,6 +45,7 @@ export type Section =
   | 'Cases'
   | 'Alerts'
   | 'Pages'
+  | 'Agents & workflows'
   | 'Ask Vigil'
 
 export interface BoardLink {
@@ -53,27 +55,10 @@ export interface BoardLink {
   desc: string
 }
 
-export type MatchType = 'case' | 'comment' | 'evidence' | 'alert'
-
-export interface Hit {
-  id: string
-  title: string
-  /** Whatever the read that found it carried; each may be missing. */
-  priority?: string
-  status?: string
-  dataSource?: string
-  severity?: string
-  matchType?: MatchType
-}
-
-export interface SearchHits {
-  caseExact: Hit | null
-  findingExact: Hit | null
-  textCases: Hit[]
-  iocCases: Hit[]
-  /** Alerts whose id, description or entities (host, user, IP...) match. */
-  alertHits: Hit[]
-}
+/** What GET /search answers; a kind the role may not read comes back empty. */
+export type SearchHits = Schema<'SearchResults'>
+type Hit = Schema<'SearchHit'>
+type MatchType = NonNullable<Hit['match_type']>
 
 export interface PaletteRow {
   key: string
@@ -88,6 +73,8 @@ export interface PaletteRow {
   caseId?: string
   findingId?: string
   page?: string
+  /** The query string a Page row opens its page with. */
+  search?: string
   recent?: string
 }
 
@@ -255,15 +242,15 @@ const MATCH_DESC: Record<MatchType, string> = {
   alert: 'Matched an alert',
 }
 
-function joinParts(parts: (string | undefined)[]): string {
+function joinParts(parts: (string | null | undefined)[]): string {
   return parts.filter((part) => part).join(' · ')
 }
 
 function caseDesc(hit: Hit): string {
   // A title that does not name the query needs its reason: it matched an alert.
-  if (hit.matchType === 'alert') return joinParts([hit.priority, hit.status, MATCH_DESC.alert])
+  if (hit.match_type === 'alert') return joinParts([hit.priority, hit.status, MATCH_DESC.alert])
   const state = joinParts([hit.priority, hit.status])
-  return state || (hit.matchType ? MATCH_DESC[hit.matchType] : '')
+  return state || (hit.match_type ? MATCH_DESC[hit.match_type] : '')
 }
 
 export function isLiveCommand(id: CommandId): id is LiveCommandId {
@@ -441,6 +428,12 @@ function pushCase(rows: PaletteRow[], seen: Set<string>, hit: Hit): void {
   })
 }
 
+const AUTOMATION: { kind: 'workflows' | 'agents' | 'skills'; noun: string; icon: IconName; search: (id: string) => string }[] = [
+  { kind: 'workflows', noun: 'Workflow', icon: 'flow', search: (id) => `?workflow=${id}` },
+  { kind: 'agents', noun: 'Agent', icon: 'bot', search: (id) => `?tab=agents&agent=${id}` },
+  { kind: 'skills', noun: 'Skill', icon: 'doc', search: (id) => `?tab=skills&skill=${id}` },
+]
+
 export function buildRows(
   query: string,
   hits: SearchHits | null,
@@ -456,10 +449,10 @@ export function buildRows(
 
   const cases: PaletteRow[] = []
   const seen = new Set<string>()
-  if (hits?.caseExact) pushCase(cases, seen, hits.caseExact)
+  if (hits?.case_exact) pushCase(cases, seen, hits.case_exact)
   const alerts: PaletteRow[] = []
   const seenAlerts = new Set<string>()
-  for (const hit of [hits?.findingExact, ...(hits?.alertHits ?? [])]) {
+  for (const hit of [hits?.finding_exact, ...(hits?.alerts ?? [])]) {
     if (!hit?.id || seenAlerts.has(hit.id)) continue
     seenAlerts.add(hit.id)
     alerts.push({
@@ -469,13 +462,12 @@ export function buildRows(
       dest: 'Alert',
       section: 'Alerts',
       icon: 'alert',
-      desc: joinParts([hit.dataSource, hit.severity]),
+      desc: joinParts([hit.data_source, hit.severity]),
       disabled: false,
       findingId: hit.id,
     })
   }
-  for (const hit of hits?.textCases ?? []) pushCase(cases, seen, hit)
-  for (const hit of hits?.iocCases ?? []) pushCase(cases, seen, hit)
+  for (const hit of hits?.cases ?? []) pushCase(cases, seen, hit)
   const pages: PaletteRow[] = boards
     .filter((board) => board.label.toLowerCase().includes(ql))
     .map((board) => ({
@@ -489,13 +481,29 @@ export function buildRows(
       disabled: false,
       page: board.key,
     }))
+  // Deep links into Agents & workflows: the workflow, or the agent or skill on its tab.
+  const automation: PaletteRow[] = AUTOMATION.flatMap(({ kind, noun, icon, search }) =>
+    (hits?.[kind] ?? []).map((hit) => ({
+      key: `${kind}:${hit.id}`,
+      label: hit.title,
+      hint: '',
+      dest: 'Page' as const,
+      section: 'Agents & workflows' as const,
+      icon,
+      desc: joinParts([noun, hit.description]),
+      disabled: false,
+      page: 'workflows',
+      search: search(encodeURIComponent(hit.id)),
+    })),
+  )
   const commands = commandsFor(q).map(commandRow)
   const recent = recents.filter((text) => text.toLowerCase().includes(ql)).map(recentRow)
   // An exact finding id with no exact case id puts Alerts first.
-  const alertsFirst = Boolean(hits?.findingExact?.id) && !hits?.caseExact
+  const alertsFirst = Boolean(hits?.finding_exact?.id) && !hits?.case_exact
   return [
     ...(alertsFirst ? [...alerts, ...cases] : [...cases, ...alerts]),
     ...pages,
+    ...automation,
     ...commands,
     ...recent,
     askRow(q),

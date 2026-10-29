@@ -6,6 +6,7 @@ import { useSourceBadge } from '../../shared/useSourceBadge'
 import { VigilMark } from '../../shared/VigilLogo'
 import type { OverviewOutcome, OverviewPayload } from '../../services/api'
 import './overview.css'
+import { layoutOutcomes } from './outcomeLayout'
 
 const CONNECT_DATA = '/settings?section=data'
 const EMPTY_TEXT =
@@ -17,7 +18,6 @@ const SRC_NODE_W = 196
 const SLOT_W = 236
 const SLOT_DOT_X = 246
 const ENGINE_R = 52
-const BAND_TOTAL = 150
 
 // The three served states that carry a sub-line, and the colour token of each outcome.
 const OUTCOME_SUB: Record<string, string> = {
@@ -33,6 +33,17 @@ const OUTCOME_COLOR: Record<string, string> = {
   dismissed: 'var(--tx3)',
   scoring: 'var(--fair)',
   waiting: 'var(--tx3)',
+}
+// OV-P1: where a populated outcome's count opens, and what it opens. Outcomes in a case open
+// Cases on the matching chip; the others open the Triage queue on the matching state.
+const OUTCOME_LINK: Record<string, [string, string]> = {
+  resolved_auto: ['/cases?state=closed', 'Opens closed cases.'],
+  resolved_person: ['/cases?state=closed', 'Opens closed cases.'],
+  working: ['/cases', 'Opens open cases.'],
+  needs_you: ['/cases?needs_you=1', 'Opens the cases that need you.'],
+  dismissed: ['/triage?state=dismissed', 'Opens the Triage queue at alerts dismissed as noise.'],
+  scoring: ['/triage?state=queued', 'Opens the Triage queue at alerts waiting for a slot.'],
+  waiting: ['/triage?state=expired', 'Opens the Triage queue at alerts whose wait expired.'],
 }
 const SLOTS: { label: string; sub: string; icon: IconName }[] = [
   { label: 'Connect a SIEM', sub: 'Splunk, Sentinel or Elastic', icon: 'search' },
@@ -154,7 +165,6 @@ export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
   const total = data.arrivals.reduce((n, a) => n + a.count, 0)
   const measured = data.outcomes.filter((o): o is OverviewOutcome & { count: number } => o.count !== null)
   const unmeasured = data.outcomes.filter((o) => o.count === null)
-  const outTotal = measured.reduce((n, o) => n + o.count, 0)
 
   // Source strands: each source gets 1..12 strands, spread 1.4px apart where they meet the engine.
   const maxCount = Math.max(1, ...sources.map((s) => s.count))
@@ -170,15 +180,12 @@ export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
     return { ya, paths }
   })
 
-  // Outcome bands: stacked at the engine's right edge, landing on evenly spaced rows.
-  // Shrink the total so the biggest band fits its row with 10px to spare (rows spaced as rowY does).
-  const rowGap = measured.length <= 1 ? H / 2 : (H - 2 * 52) / (measured.length - 1)
-  const maxShare = outTotal ? Math.max(...measured.map((o) => o.count)) / outTotal : 0
-  const bandTotal = maxShare ? Math.min(BAND_TOTAL, (rowGap - 10) / maxShare) : BAND_TOTAL
-  let top = cy - bandTotal / 2
+  // Outcome bands: stacked at the engine's right edge, each landing on a row tall enough to hold it.
+  const lay = layoutOutcomes(measured.map((o) => o.count), H)
+  let top = cy - lay.th.reduce((n, t) => n + t, 0) / 2
   const bands = measured.map((o, j) => {
-    const th = o.count === 0 ? 0 : Math.max(2.5, (bandTotal * o.count) / (outTotal || 1))
-    const y = rowY(j, measured.length, H, 52, cy)
+    const th = lay.th[j]
+    const y = lay.ys[j]
     const t0 = top
     top += th
     const dx = x2 - xr
@@ -388,31 +395,44 @@ export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
                     {o.label}
                   </div>
                 ))
-            : bands.map((b) => (
-                <div
-                  key={b.o.state}
-                  className="ov-out"
-                  role="group"
-                  tabIndex={0}
-                  aria-label={b.o.label}
-                  style={{ left: x2 + 14, top: b.y - 19, opacity: outDim(b.o.state) }}
-                  onMouseEnter={() => setHover({ kind: 'out', key: b.o.state })}
-                  onMouseLeave={leave}
-                  onFocus={() => setHover({ kind: 'out', key: b.o.state })}
-                  onBlur={leave}
-                >
-                  <span className="ov-out-l">
+            : bands.map((b) => {
+                const link = b.o.count > 0 ? OUTCOME_LINK[b.o.state] : undefined
+                const head = (
+                  <>
                     <b style={{ color: b.color }}>{fmt(b.o.count)}</b>
                     <span>{b.o.label}</span>
-                  </span>
-                  {(OUTCOME_SUB[b.o.state] || b.o.info) && (
-                    <span className="ov-out-s">
-                      {OUTCOME_SUB[b.o.state]}
-                      {b.o.info && <InfoTip label={b.o.info} text={b.o.info} />}
-                    </span>
-                  )}
-                </div>
-              ))}
+                  </>
+                )
+                return (
+                  <div
+                    key={b.o.state}
+                    className="ov-out"
+                    role="group"
+                    // a linked count takes the focus itself
+                    tabIndex={link ? undefined : 0}
+                    aria-label={b.o.label}
+                    style={{ left: x2 + 14, top: b.y - 19, opacity: outDim(b.o.state) }}
+                    onMouseEnter={() => setHover({ kind: 'out', key: b.o.state })}
+                    onMouseLeave={leave}
+                    onFocus={() => setHover({ kind: 'out', key: b.o.state })}
+                    onBlur={leave}
+                  >
+                    {link ? (
+                      <Link to={link[0]} className="ov-out-l" title={`${b.o.label}: ${alerts(b.o.count)} today. ${link[1]}`}>
+                        {head}
+                      </Link>
+                    ) : (
+                      <span className="ov-out-l">{head}</span>
+                    )}
+                    {(OUTCOME_SUB[b.o.state] || b.o.info) && (
+                      <span className="ov-out-s">
+                        {OUTCOME_SUB[b.o.state]}
+                        {b.o.info && <InfoTip label={b.o.info} text={b.o.info} />}
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
         </div>
       </div>
 

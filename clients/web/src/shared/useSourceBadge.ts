@@ -19,6 +19,7 @@ export function useSourceBadge(): (source?: string | null) => SourceBadge {
           label: badge.label ?? ext!.manifest.name ?? (source || '—'),
           color: badge.color ?? NEUTRAL_COLOR,
           icon: badge.icon ?? NEUTRAL_ICON,
+          logo: badge.logo,
         }
       : sourceBadge(source)
   }

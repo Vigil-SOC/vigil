@@ -204,6 +204,16 @@ describe('Home', () => {
     expect(within(card).getByRole('link', { name: 'Open case' })).toHaveClass('primary')
   })
 
+  it('links a hunt stopped with no case and no alert to its run', async () => {
+    mockQueue([item({ kind: 'parked', source_id: 'run-9', run_id: 'run-9', case_id: null, title: 'Keep the hunt going?', reason: 'Ran out of turns', created_at: '' })])
+    renderHome()
+    const card = (await screen.findByRole('heading', { name: 'Keep the hunt going?' })).closest('article') as HTMLElement
+    expect(within(card).queryByRole('link', { name: 'Open case' })).not.toBeInTheDocument()
+    const link = within(card).getByRole('link', { name: 'Open run' })
+    expect(link).toHaveAttribute('href', '/workflows?run=run-9')
+    expect(link).toHaveClass('primary')
+  })
+
   it('says the board is clear when nothing is waiting, once', async () => {
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
     renderHome()

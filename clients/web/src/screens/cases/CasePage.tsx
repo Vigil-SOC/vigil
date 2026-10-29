@@ -945,6 +945,8 @@ export function CasePage({
   onSeedConsumed,
   onBack,
   onExpand,
+  onClose,
+  onCollapse,
   onEdit,
   onMerge,
   onDelete,
@@ -971,6 +973,10 @@ export function CasePage({
   onBack: () => void
   /** Set only in the drawer: shows the Expand and Close icons. */
   onExpand?: () => void
+  /** Full page: × and Esc. Defaults to onBack. */
+  onClose?: () => void
+  /** Full page: back to the side panel; shows the Collapse icon. */
+  onCollapse?: () => void
   onEdit: () => void
   onMerge: () => void
   onDelete: () => void
@@ -1434,11 +1440,11 @@ export function CasePage({
         (el) => !el.closest('[aria-hidden="true"], [hidden]'),
       )
       if (showing) return
-      onBack()
+      ;(onClose ?? onBack)()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onExpand, onBack])
+  }, [onExpand, onClose, onBack])
 
   const watch = <WatchLink runId={runId} />
   const doors = <Doors counts={tabCounts} lines={doorLines(runs.length > 1 ? runs.map((one) => one.fold) : [fold], foldPhase, runId !== null, rows, recordPhase)} onOpen={setTab} />
@@ -1491,11 +1497,16 @@ export function CasePage({
           <div className="dh-crumb-end">
             {c && <CaseMenu onEdit={onEdit} onMerge={onMerge} onDelete={canDelete ? onDelete : undefined} />}
             {onExpand && (
-              <button type="button" className="btn ghost icon" aria-label="Expand" title="Expand" onClick={onExpand}>
+              <button type="button" className="btn ghost icon" aria-label="Open as full page" title="Open as full page" onClick={onExpand}>
                 <Icon name="fit" size={15} />
               </button>
             )}
-            <button type="button" className="btn ghost icon" aria-label="Close" title="Close" onClick={onBack}>
+            {onCollapse && (
+              <button type="button" className="btn ghost icon" aria-label="Back to side panel" title="Back to side panel" onClick={onCollapse}>
+                <Icon name="shrink" size={15} />
+              </button>
+            )}
+            <button type="button" className="btn ghost icon" aria-label="Close" title="Close" onClick={onClose ?? onBack}>
               <Icon name="close" size={15} />
             </button>
           </div>

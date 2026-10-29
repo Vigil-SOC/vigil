@@ -383,6 +383,12 @@ export const caseSearchApi = {
     api.post<Schema<'CaseSearchResponse'>>('/cases/search', data),
 }
 
+/** The command bar's one search: exact ids, cases, alerts, workflows, agents and skills. */
+export const searchApi = {
+  query: (q: string, signal?: AbortSignal) =>
+    api.get<Schema<'SearchResults'>>('/search', { params: { q }, signal }),
+}
+
 export interface ReloadServersResponse {
   /** false when any server in `failed` could not be reconnected or disconnected */
   success: boolean
@@ -941,7 +947,7 @@ export const workflowApi = {
     hypothesis_subjects?: Record<string, string[]>
     iterations?: number
     approve_hypotheses?: boolean
-  }) => api.post(`/workflows/${id}/execute`, params, { timeout: LLM_TIMEOUT }),
+  }) => api.post<{ run_id?: string; case_id?: string }>(`/workflows/${id}/execute`, params, { timeout: LLM_TIMEOUT }),
   /** Reads an attached file on the server and keeps nothing. Over 64 KB it is condensed, and says so on line one. */
   readHuntDocument: (file: File) => {
     const form = new FormData()

@@ -1,8 +1,8 @@
 import { useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { CasesDetail } from '../screens/cases/CasesScreen'
 
-/** The case page under the header. Expand opens it full page at /cases?case=. */
+/** The case page under the header. Expand opens it full page at /cases?case=, noting where it came from. */
 export default function CaseDrawer({
   caseId,
   onClose,
@@ -18,6 +18,7 @@ export default function CaseDrawer({
   onSeedConsumed?: () => void
 }) {
   const navigate = useNavigate()
+  const location = useLocation()
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -38,7 +39,13 @@ export default function CaseDrawer({
         <CasesDetail
           id={caseId}
           onBack={onClose}
-          onExpand={() => navigate({ pathname: '/cases', search: `?case=${encodeURIComponent(caseId)}` })}
+          onExpand={() =>
+            // remember the page the panel was open on, so the full page can hand the case back to it
+            navigate(
+              { pathname: '/cases', search: `?case=${encodeURIComponent(caseId)}` },
+              { state: { origin: { pathname: location.pathname, search: location.search } } },
+            )
+          }
           pageKey={pageKey}
           seed={seed}
           onSeedConsumed={onSeedConsumed}

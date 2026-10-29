@@ -191,6 +191,14 @@ function DecisionCard({
             Open alert
           </Link>
         )}
+        {!caseId && !item.finding_id && item.run_id && (
+          <Link
+            className={answersOnCase(item) ? 'home-btn primary' : 'home-btn ghost'}
+            to={`/workflows?run=${encodeURIComponent(item.run_id)}`}
+          >
+            Open run
+          </Link>
+        )}
       </div>
     </article>
   )

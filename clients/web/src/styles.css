@@ -232,6 +232,12 @@
    .source-chip svg {
       flex: none;
    }
+   .source-chip-logo {
+      flex: none;
+      width: 12px;
+      height: 12px;
+      object-fit: contain;
+   }
 
    /* ---------- 404 / not found ---------- */
    .notfound {
@@ -3694,8 +3700,9 @@
 
    .int-name {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
-      gap: 6px;
+      gap: 2px 6px;
       font-size: 13px;
       font-weight: 650;
       color: var(--tx0);
@@ -3709,6 +3716,24 @@
       font-size: 11px;
       color: var(--tx2);
    }
+
+   /* vendor logo or category icon beside a name (PRD D6); logos sit on white
+      in both themes, as the Overview board draws source logos */
+   .int-ident { display: flex; align-items: center; gap: 10px; min-width: 0; }
+   .int-mark {
+      flex-shrink: 0;
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      background: var(--bg3);
+      color: var(--tx1);
+   }
+   .int-mark.logo { background: #fff; box-shadow: inset 0 0 0 1px var(--ln0); }
+   .int-mark img { width: 18px; height: 18px; object-fit: contain; }
 
    /* setup drawer: reuses the vg-side-panel shell; board SettingsIntegrations.dc.html */
    .int-drawer-head { display: flex; align-items: flex-start; gap: 12px; }
@@ -7162,7 +7187,7 @@
       line-height: 1.45;
       color: var(--tx2);
    }
-   .int-card-cta { margin-top: 4px; }
+   .int-card-foot { display: flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 4px; }
 
 /* FindingDetails: what a finding is about, under its source evidence */
 .fd { display: grid; gap: 12px; margin-top: 10px; }
