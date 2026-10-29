@@ -282,7 +282,7 @@ describe('OverviewScreen', () => {
       'Still working': ['/cases', 'Opens open cases.'],
       'Needs you': ['/cases?needs_you=1', 'Opens the cases that need you.'],
       'Dismissed as noise': ['/triage?state=dismissed', 'Opens the Triage queue at alerts dismissed as noise.'],
-      'Waiting for triage': ['/triage?state=queued', 'Opens the Triage queue at alerts waiting for a slot.'],
+      'Waiting for triage': ['/triage?state=queued', 'Opens the Triage queue at alerts waiting for triage.'],
       'Not picked up': ['/triage?state=expired', 'Opens the Triage queue at alerts whose wait expired.'],
     }
     for (const [label, [href, says]] of Object.entries(opens)) {

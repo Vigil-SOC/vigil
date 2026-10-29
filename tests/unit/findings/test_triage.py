@@ -583,3 +583,65 @@ def test_dismissed_lists_the_rows_whose_alert_was_marked_as_noise(client):
     # and it narrows with the other filters
     both = triage_payload(now=NOW, day=DAY, state="dismissed", source="tr-noise-src")
     assert [row["id"] for row in both["rows"]] == [noise]
+
+
+def test_a_finding_with_no_intake_row_and_no_case_is_listed_not_picked_up():
+    from core.storage.models import case_findings
+
+    before = triage_payload(now=NOW, day=DAY)
+    src = "tr-loose-src"
+    _finding("tr-loose", "high", data_source=src, title="Never queued", created_at=NOW - timedelta(hours=1))
+    _finding("tr-loose-noise", "low", data_source=src, created_at=NOW, noise_marked_at=NOW)
+    _finding("tr-blank", "low", data_source="")
+    _finding("tr-cased", "low", data_source=src)
+    _case("tr-case-loose")
+    with unit_of_work() as session:
+        session.execute(case_findings.insert().values(case_id="tr-case-loose", finding_id="tr-cased", added_at=NOW))
+    _finding("tr-q", "low", data_source=src)
+    _finding("tr-q-noise", "low", data_source=src, noise_marked_at=NOW)
+    _finding("tr-exp", "low", data_source=src)
+    queued = _trigger(state="queued", finding_id="tr-q")
+    queued_noise = _trigger(state="queued", finding_id="tr-q-noise")
+    expired = _trigger(state="expired", finding_id="tr-exp", decided_at=NOW - timedelta(minutes=30))
+
+    payload = triage_payload(now=NOW, day=DAY)
+    counts = payload["counts"]
+    added = _added(before["counts"], counts)
+    # the case-linked finding is not a row; the noise marks count across states
+    assert added["state"] == {"not_picked_up": 3, "queued": 2, "expired": 1, "dismissed": 2}
+    assert added["source"] == {src: 5, "Unknown": 1}
+    assert added["kind"] == {"detection": 6}
+    # every alert has a source, Unknown included, so the source chips add up to Alert
+    assert sum(n for name, n in counts["source"].items() if name not in ("Schedule", "Ask")) == counts["kind"]["detection"]
+    assert payload["matched"] == counts["total"]
+    # "waiting" is still the intake queue
+    assert payload["strip"]["waiting"] - before["strip"]["waiting"] == 2
+
+    narrowed = triage_payload(now=NOW, day=DAY, source=src)
+    order = [row["finding_id"] for row in narrowed["rows"]]
+    # queued first, then newest first: a never-queued row by its arrival
+    assert set(order[:2]) == {"tr-q", "tr-q-noise"}
+    assert order[2:] == ["tr-loose-noise", "tr-exp", "tr-loose"]
+    rows = {row["finding_id"]: row for row in narrowed["rows"]}
+    loose = rows["tr-loose"]
+    assert loose["id"] < 0 and loose["id"] != rows["tr-loose-noise"]["id"]
+    assert (loose["kind"], loose["state"], loose["state_label"]) == ("detection", "not_picked_up", "Not picked up")
+    assert loose["title"] == "Never queued" and loose["dismissed"] is False
+    assert loose["id"] == triage_payload(now=NOW, day=DAY, source=src)["rows"][-1]["id"]
+    # a noise mark is the word on a waiting or never-queued row, not on a decided one
+    assert rows["tr-loose-noise"]["state_label"] == "Dismissed as noise"
+    assert rows["tr-loose-noise"]["dismissed"] is True
+    assert rows["tr-q-noise"]["state"] == "queued"
+    assert rows["tr-q-noise"]["state_label"] == "Dismissed as noise"
+    assert rows["tr-q"]["state_label"] == "Waiting for triage"
+    assert rows["tr-exp"]["state_label"] == "Expired"
+    assert {queued, queued_noise, expired} <= {row["id"] for row in narrowed["rows"]}
+
+    never = triage_payload(now=NOW, day=DAY, source=src, state="not_picked_up")
+    assert never["matched"] == 2
+    assert {row["finding_id"] for row in never["rows"]} == {"tr-loose", "tr-loose-noise"}
+    noise = triage_payload(now=NOW, day=DAY, source=src, state="dismissed")
+    assert {row["finding_id"] for row in noise["rows"]} == {"tr-loose-noise", "tr-q-noise"}
+    unknown = triage_payload(now=NOW, day=DAY, source="Unknown")
+    assert "tr-blank" in {row["finding_id"] for row in unknown["rows"]}
+    assert unknown["matched"] == counts["source"]["Unknown"]

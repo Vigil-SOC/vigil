@@ -19,6 +19,7 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
         kind_label: 'Alert',
         state: 'launched',
         state_label: 'Started a case',
+        dismissed: false,
         source: 'splunk',
         severity_band: 'critical',
         age_seconds: 12,
@@ -51,6 +52,7 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
         kind_label: 'Ask',
         state: 'merged',
         state_label: 'Added to a case',
+        dismissed: false,
         source: 'Ask',
         severity_band: 'medium',
         age_seconds: 30,
@@ -126,9 +128,34 @@ describe('TriageScreen', () => {
     expect(await screen.findByText('AutoOps is off', { selector: '.tq-pill' })).toBeInTheDocument()
     expect(screen.queryByText('Waiting for triage', { selector: '.tq-pill' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^Waiting for triage: AutoOps is off/ })).toBeInTheDocument()
-    expect(document.body).not.toHaveTextContent('Not picked up')
+    expect(document.body).not.toHaveTextContent('Not picked up: AutoOps')
     fireEvent.click(within(banner).getByRole('button', { name: 'Open Limits & autonomy →' }))
     expect(goSettings).toHaveBeenCalledWith('autoinvestigate')
+    cleanup()
+  })
+
+  it('lists alerts that never entered the queue, under Not picked up and an Unknown source', async () => {
+    vi.mocked(configApi.getOrchestrator).mockResolvedValueOnce({ data: { enabled: false } } as never)
+    const base = payload().rows[0]
+    const never = { ...base, id: -41, state: 'not_picked_up', state_label: 'Not picked up', source: 'Unknown', case_door: null, decided_at: null, pickup_seconds: null }
+    const noise = { ...base, id: 7, state: 'queued', state_label: 'Dismissed as noise', dismissed: true, case_door: null, decided_at: null }
+    vi.mocked(triageApi.get).mockResolvedValue({
+      data: payload({
+        rows: [noise, never],
+        counts: { total: 9, kind: { detection: 9 }, source: { splunk: 7, Unknown: 2 }, state: { queued: 3, not_picked_up: 6, dismissed: 1 } },
+      }),
+    } as never)
+    renderScreen()
+
+    const filters = await screen.findByRole('group', { name: 'Filters' })
+    expect(within(filters).getByRole('button', { name: /^Not picked up\D*6/ })).toBeInTheDocument()
+    expect(within(filters).getByRole('button', { name: /^Unknown\D*2/ })).toBeInTheDocument()
+    expect(screen.getByText('Not picked up', { selector: '.tq-pill.not_picked_up' })).toBeInTheDocument()
+    // a noise mark is the word, even on a queued row while AutoOps is off
+    expect(screen.getByText('Dismissed as noise', { selector: '.tq-pill.dismissed' })).toBeInTheDocument()
+    expect(screen.queryByText('AutoOps is off', { selector: '.tq-pill' })).not.toBeInTheDocument()
+    fireEvent.click(within(filters).getByRole('button', { name: /^Not picked up/ }))
+    await waitFor(() => expect(triageApi.get).toHaveBeenLastCalledWith(expect.objectContaining({ state: 'not_picked_up' })))
     cleanup()
   })
 

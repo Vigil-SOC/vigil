@@ -224,16 +224,19 @@ def test_triage_rows_are_demo_findings_not_stored_intake(demo_service, monkeypat
     assert {row["finding_id"] for row in body["rows"]} == {row["finding_id"] for row in findings}
     assert body["counts"]["kind"] == {"detection": 25}
     launched = [row for row in body["rows"] if row["state"] == "launched"]
-    waiting = [row for row in body["rows"] if row["state"] == "queued"]
-    assert launched and waiting
+    # demo has no intake queue: a finding with no case is Overview's "Not picked up"
+    loose = [row for row in body["rows"] if row["state"] == "not_picked_up"]
+    assert launched and loose
+    assert len(launched) + len(loose) == 25
     assert all(row["state_label"] == "Started a case" and row["case_door"] for row in launched)
-    assert all(row["state_label"] == "Waiting for triage" and row["case_door"] is None for row in waiting)
+    assert all(row["state_label"] == "Not picked up" and row["case_door"] is None for row in loose)
     source = body["rows"][0]["source"]
     narrowed = triage_payload(now=NOW, source=source)
     assert narrowed["matched"] == body["counts"]["source"][source]
     assert all(row["source"] == source for row in narrowed["rows"])
     assert {row["data_source"] for row in body["sources"]} <= set(body["counts"]["source"])
-    assert body["strip"]["waiting"] == len(waiting)
+    assert body["strip"]["waiting"] == 0
+    assert sum(body["counts"]["source"].values()) == body["counts"]["kind"]["detection"]
 
 
 def test_triage_dismissed_lists_the_demo_findings_marked_as_noise(
@@ -243,13 +246,35 @@ def test_triage_dismissed_lists_the_demo_findings_marked_as_noise(
 
     _forbid_database(monkeypatch)
     monkeypatch.setattr("core.config.is_demo_mode", lambda: True)
-    marked = demo_service.get_findings()[0]
+    from core.findings.demo_reads import best_case_by_finding
+
+    linked = best_case_by_finding(demo_service.get_cases())
+    # a finding on no case, so the noise mark is the word its row shows
+    marked = next(f for f in demo_service.get_findings() if f["finding_id"] not in linked)
     marked["noise_marked_at"] = "2026-10-27T00:00:00+00:00"
 
     body = triage_payload(now=NOW, state="dismissed")
     assert body["counts"]["state"]["dismissed"] == 1
     assert body["matched"] == 1
     assert [row["finding_id"] for row in body["rows"]] == [marked["finding_id"]]
+    assert body["rows"][0]["state"] == "not_picked_up"
+    assert body["rows"][0]["state_label"] == "Dismissed as noise"
+    assert body["rows"][0]["dismissed"] is True
+
+
+def test_triage_counts_a_demo_finding_with_no_source_as_unknown(demo_service, monkeypatch):
+    from services.api.triage_read import triage_payload
+
+    _forbid_database(monkeypatch)
+    monkeypatch.setattr("core.config.is_demo_mode", lambda: True)
+    blank = demo_service.get_findings()[0]
+    blank["data_source"] = ""
+
+    body = triage_payload(now=NOW)
+    assert body["counts"]["source"]["Unknown"] == 1
+    assert sum(body["counts"]["source"].values()) == body["counts"]["total"]
+    narrowed = triage_payload(now=NOW, source="Unknown")
+    assert [row["finding_id"] for row in narrowed["rows"]] == [blank["finding_id"]]
 
 
 def test_needs_you_lists_open_demo_cases(demo_service, monkeypatch):
