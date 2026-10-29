@@ -1019,10 +1019,8 @@ medic:
   apiKey:
     existingSecret: ""
     key: api_key
-  # Where Medic reads the agent worker's /readyz. Empty → a Service this chart
-  # renders for it (<fullname>-medic-agent-worker:6990). Needs
-  # agentWorker.enabled: the egress policy allows only the chart's agent worker.
-  agentWorkerAddr: ""
+  # Helm lists agent-worker pods and reads /readyz on each pod IP, port 6990.
+  # Compose and host-native use VIGIL_MEDIC_AGENT_WORKER_ADDR instead.
   # The Kubernetes API server's address(es), as CIDRs, for Medic's egress policy
   # and, with networkPolicies.enabled, the upgrade Jobs' (TCP `ports` only). Filled at install by looking up the `kubernetes`
   # endpoints; set by hand where lookup can't run (`helm template`, Argo CD,

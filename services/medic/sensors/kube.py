@@ -25,6 +25,7 @@ import httpx
 
 from services.medic.contracts.fingerprint_ref import SERVICES
 from services.medic.sensors.base import ReadError, Reading, SensorContext, Value
+from services.medic.sensors.http_ready import ReadyHit, read_ready, ready_reading
 
 _SA = Path("/var/run/secrets/kubernetes.io/serviceaccount")
 _TOKEN_PATH = _SA / "token"
@@ -280,6 +281,95 @@ async def _stat(path: Path) -> ReadError | None:
     return None
 
 
+def _worker_targets(pods: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """Agent-worker pods that have an IP: (name, podIP), by name.
+
+    No IP means the pod is not ready to answer, and absent is not `ready=false`.
+    """
+    found: list[tuple[str, str]] = []
+    for pod in pods:
+        if _labels(pod).get(_COMPONENT) != "agent-worker":
+            continue
+        name = _name(pod)
+        status = pod.get("status")
+        ip = status.get("podIP") if isinstance(status, dict) else None
+        if name is None or not isinstance(ip, str) or not ip:
+            continue
+        found.append((name, ip))
+    return sorted(found)
+
+
+def _ready_url(ip: str, port: int) -> str:
+    host = f"[{ip}]" if ":" in ip else ip
+    return f"http://{host}:{port}/readyz"
+
+
+async def _kube_get(
+    client: httpx.AsyncClient,
+    url: str,
+    params: dict[str, str] | None,
+    token: str | None,
+    deadline: float,
+) -> tuple[Any, ReadError | None]:
+    left = deadline - time.monotonic()
+    if token is None:
+        return None, ReadError("other", detail="token")
+    if left <= 0:
+        return None, ReadError("timeout", detail="timed out")
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    try:
+        async with client.stream(
+            "GET",
+            url,
+            params=params,
+            headers=headers,
+            timeout=httpx.Timeout(left),
+        ) as response:
+            return await _decode(response)
+    except httpx.ConnectTimeout:
+        return None, ReadError("timeout", detail="connect timed out")
+    except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout):
+        return None, ReadError("timeout", detail="timed out")
+    except httpx.ConnectError as exc:
+        if _cause(exc, ConnectionRefusedError):
+            return None, ReadError("refused")
+        if _cause(exc, socket.gaierror):
+            return None, ReadError("dns")
+        if _cause(exc, ssl.SSLError):
+            return None, ReadError("tls")
+        return None, ReadError("other", detail=type(exc).__name__)
+    except httpx.HTTPError as exc:
+        # Type only: the message can quote a response body or the token.
+        return None, ReadError("other", detail=type(exc).__name__)
+
+
+async def _kube_list(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    token_path: Path,
+    deadline: float,
+) -> list[dict[str, Any]] | ReadError:
+    """GET list, following `continue`. The token is read on every page."""
+    items: list[dict[str, Any]] = []
+    params: dict[str, str] | None = None
+    for _ in range(_MAX_PAGES):
+        token, error = await _read_token(token_path)
+        if error is not None:
+            return error
+        body, error = await _kube_get(client, url, params, token, deadline)
+        if error is not None:
+            return error
+        page, cont, error = _page(body)
+        if error is not None:
+            return error
+        items.extend(page)
+        if cont is None:
+            return items
+        params = {"continue": cont}
+    return ReadError("other", detail="page cap")
+
+
 async def _decode(response: httpx.Response) -> tuple[Any, ReadError | None]:
     status = response.status_code
     try:
@@ -366,64 +456,96 @@ class KubePods:
     async def _list(
         self, client: httpx.AsyncClient, path: str, deadline: float
     ) -> list[dict[str, Any]] | ReadError:
-        items: list[dict[str, Any]] = []
-        params: dict[str, str] | None = None
-        for _ in range(_MAX_PAGES):
-            token, error = await _read_token(self.token_path)
-            if error is not None:
-                return error
-            body, error = await self._get(client, path, params, token, deadline)
-            if error is not None:
-                return error
-            page, cont, error = _page(body)
-            if error is not None:
-                return error
-            items.extend(page)
-            if cont is None:
-                return items
-            params = {"continue": cont}
-        return ReadError("other", detail="page cap")
-
-    async def _get(
-        self,
-        client: httpx.AsyncClient,
-        path: str,
-        params: dict[str, str] | None,
-        token: str | None,
-        deadline: float,
-    ) -> tuple[Any, ReadError | None]:
-        left = deadline - time.monotonic()
-        if token is None:
-            return None, ReadError("other", detail="token")
-        if left <= 0:
-            return None, ReadError("timeout", detail="timed out")
         url = f"{self.scheme}://{self.host}:{self.port}{path}"
-        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-        try:
-            async with client.stream(
-                "GET",
-                url,
-                params=params,
-                headers=headers,
-                timeout=httpx.Timeout(left),
-            ) as response:
-                return await _decode(response)
-        except httpx.ConnectTimeout:
-            return None, ReadError("timeout", detail="connect timed out")
-        except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout):
-            return None, ReadError("timeout", detail="timed out")
-        except httpx.ConnectError as exc:
-            if _cause(exc, ConnectionRefusedError):
-                return None, ReadError("refused")
-            if _cause(exc, socket.gaierror):
-                return None, ReadError("dns")
-            if _cause(exc, ssl.SSLError):
-                return None, ReadError("tls")
-            return None, ReadError("other", detail=type(exc).__name__)
-        except httpx.HTTPError as exc:
-            # Type only: the message can quote a response body or the token.
-            return None, ReadError("other", detail=type(exc).__name__)
+        return await _kube_list(
+            client, url, token_path=self.token_path, deadline=deadline
+        )
 
 
 def kube_pods() -> KubePods:
     return KubePods()
+
+
+# The agent worker's /readyz (services/agent). Helm has no Service for it:
+# each pod is its own series. Same port the chart's egress rule allows.
+_WORKER_PORT = 6990
+
+
+@dataclass
+class AgentWorkerPods:
+    """Helm: one `agent_worker_readyz` series per agent-worker pod that has an IP."""
+
+    id: str = "http_ready.agent_worker"
+    service: str = "agent-worker"
+    interval_s: int = 30  # C7 §3, same as the Service-based sensor
+    timeout_s: float = 20.0
+    covers: tuple[str, ...] = ("agent_worker_readyz",)
+    uses_vigil_api: bool = False
+    host: str = "kubernetes.default.svc"
+    port: int = 443
+    scheme: str = "https"
+    ready_port: int = _WORKER_PORT
+    token_path: Path = field(default=_TOKEN_PATH)
+    ca_path: Path = field(default=_CA_PATH)
+    namespace_path: Path = field(default=_NAMESPACE_PATH)
+    transport: httpx.AsyncBaseTransport | None = field(default=None, repr=False)
+    ready_transport: httpx.AsyncBaseTransport | None = field(default=None, repr=False)
+
+    def _down(self, error: ReadError) -> list[Reading]:
+        """The list did not finish: an error, not `ready=false` for pods we never saw."""
+        return [Reading("agent_worker_readyz", self.service, error=error)]
+
+    async def collect(self, ctx: SensorContext) -> Sequence[Reading]:
+        deadline = time.monotonic() + self.timeout_s * 0.8
+        namespace, error = await _read_namespace(self.namespace_path)
+        if error is not None or namespace is None:
+            return self._down(error or ReadError("parse", detail="namespace"))
+        if self.scheme == "https":
+            missing = await _stat(self.ca_path)
+            if missing is not None:
+                return self._down(missing)
+        verify: bool | str = str(self.ca_path) if self.scheme == "https" else False
+        url = f"{self.scheme}://{self.host}:{self.port}/api/v1/namespaces/{namespace}/pods"
+        try:
+            client = httpx.AsyncClient(
+                transport=self.transport,
+                timeout=httpx.Timeout(self.timeout_s * 0.8),
+                trust_env=False,
+                follow_redirects=False,
+                verify=verify,
+            )
+        except ssl.SSLError:
+            return self._down(ReadError("tls"))
+        async with client:
+            pods = await _kube_list(
+                client, url, token_path=self.token_path, deadline=deadline
+            )
+        if isinstance(pods, ReadError):
+            return self._down(pods)
+        targets = _worker_targets(pods)
+
+        async def one(name: str, ip: str) -> Reading:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                hit = ReadyHit(error=ReadError("timeout", detail="timed out"))
+            else:
+                # /readyz itself is bounded to 2 s; read_ready stops httpx at 80%.
+                hit = await read_ready(
+                    _ready_url(ip, self.ready_port),
+                    timeout_s=min(2.5, left / 0.8),
+                    transport=self.ready_transport,
+                )
+            return ready_reading(
+                "agent_worker_readyz", self.service, name, hit, {"pod": name}
+            )
+
+        results = list(await asyncio.gather(*(one(name, ip) for name, ip in targets)))
+        ok = [reading for reading in results if reading.error is None]
+        # A failed read is stored on the signal, not the pod. One pod's connect
+        # timeout would make every other pod's latest() unknown, so keep the
+        # errors only when no probe succeeded.
+        return ok or results
+
+
+def agent_worker_pods() -> AgentWorkerPods:
+    return AgentWorkerPods()

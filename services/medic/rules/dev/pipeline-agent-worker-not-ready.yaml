@@ -4,6 +4,9 @@
 # (services/agent/worker.ts:645-650), so runs queue and nothing picks them up:
 # mode P-1. Which P-1 cause can't be told from /readyz alone, and the Redis lane
 # depends on who runs Redis (P-1.f "1/2 by ownership"), so: lane 3 (S4-1).
+# Compose and host-native publish one series and no pod label, so this file does
+# not group. On Helm, rules_for_shape groups the same rule by pod: several series
+# would otherwise be ambiguous_series and this rule would never fire.
 apiVersion: medic.rules/v1
 kind: Rule
 id: pipeline.agent-worker-not-ready
