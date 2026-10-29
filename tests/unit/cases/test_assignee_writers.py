@@ -137,7 +137,7 @@ def agent_tools(monkeypatch):
 
     data = SimpleNamespace(
         get_case=lambda case_id: stored,
-        update_case=lambda case_id, **kw: updates.append(kw) or True,
+        update_case=lambda case_id, *, session=None, **kw: updates.append(kw) or True,
     )
     monkeypatch.setattr(agent_closure, "service_session", session)
     monkeypatch.setattr(tool_registry, "permission_refusal", lambda *a: None)

@@ -501,8 +501,9 @@ def update_case(
         (data_service.get_case(case_id) or {}).get("status"), case_data.status
     )
 
-    # A refused trail append raises (500, nothing written); Paused is a 503.
-    if not data_service.update_case(case_id, **updates):
+    # The write and a close share this session: a refused trail append raises
+    # (500, nothing written); Paused is a 503.
+    if not data_service.update_case(case_id, session=session, **updates):
         if not data_service.get_case(case_id):
             raise HTTPException(status_code=404, detail="Case not found")
         raise HTTPException(status_code=500, detail="Failed to update case")

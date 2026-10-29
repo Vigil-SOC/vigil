@@ -23,7 +23,7 @@ def _patch(monkeypatch, stored=None):
 
     captured = {}
 
-    def _update(case_id, **updates):
+    def _update(case_id, *, session=None, **updates):
         captured["updates"] = updates
         return True
 

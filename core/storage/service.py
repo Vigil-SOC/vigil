@@ -6,6 +6,7 @@ Provides high-level database operations for cases, findings, and related entitie
 
 import logging
 import re
+from contextlib import nullcontext
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -1235,18 +1236,25 @@ class DatabaseService:
             }
 
     @default_on_error(False, passthrough=case_trail_hook.RAISED)
-    def update_case(self, case_id: str, **updates) -> bool:
+    def update_case(self, case_id: str, *, session=None, **updates) -> bool:
         """
         Update a case.
 
         Args:
             case_id: Case ID
+            session: The caller's session, so the write and its follow-on work
+                (a close) commit or roll back together; None owns one here.
             **updates: Fields to update
 
         Returns:
             True if successful, False otherwise
         """
-        with self.db_manager.session_scope() as session:
+        scope = (
+            nullcontext(session)
+            if session is not None
+            else self.db_manager.session_scope()
+        )
+        with scope as session:
             case = session.get(Case, case_id)
             if not case:
                 logger.warning(f"Case not found: {case_id}")

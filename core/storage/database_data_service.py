@@ -494,12 +494,12 @@ class DatabaseDataService:
                 return None
         return None
 
-    def update_case(self, case_id: str, **updates) -> bool:
+    def update_case(self, case_id: str, *, session=None, **updates) -> bool:
         if self._demo_mode and self._demo_service:
             return self._demo_service.update_case(case_id, **updates)
         if self._db_available:
             try:
-                return self._db_service.update_case(case_id, **updates)
+                return self._db_service.update_case(case_id, session=session, **updates)
             except case_trail_hook.RAISED:
                 raise
             except Exception as e:

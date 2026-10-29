@@ -648,6 +648,80 @@ def test_a_paused_trail_answers_503_and_leaves_the_case(db, monkeypatch):
 
 
 @pytest.mark.usefixtures("ada")
+def test_a_close_from_the_route_is_the_close_entry_alone(db, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from core.api.v1 import cases_router
+    from services.api import main as backend_main
+    from services.api.middleware import auth as auth_module
+
+    monkeypatch.setattr(cases_router, "data_service", _data(monkeypatch))
+    monkeypatch.setattr(
+        "core.auth.auth_service.AuthService.check_permission",
+        lambda *args, **kwargs: True,
+    )
+    app = backend_main.app
+    with sessionmaker(bind=db)() as session:
+        user = session.query(auth_module.User).filter_by(username="ada").one()
+    app.dependency_overrides[auth_module.get_current_user] = lambda: user
+    try:
+        response = TestClient(app).patch("/api/v1/cases/c-1", json={"status": "closed"})
+    finally:
+        app.dependency_overrides.pop(auth_module.get_current_user, None)
+
+    assert response.status_code == 200
+    assert _case(db, "status") == "closed"
+    (payload, _, _), *more = _payloads(db)
+    assert more == []
+    assert (payload["action"], payload["case_id"]) == ("case.close", "c-1")
+    assert _verified(db)
+
+
+@pytest.mark.usefixtures("ada")
+def test_a_refused_close_from_the_route_leaves_the_case_open(db, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from core.api.v1 import cases_router
+    from services.api import main as backend_main
+    from services.api.middleware import auth as auth_module
+
+    monkeypatch.setattr(cases_router, "data_service", _data(monkeypatch))
+    monkeypatch.setattr(
+        "core.auth.auth_service.AuthService.check_permission",
+        lambda *args, **kwargs: True,
+    )
+    _fail(monkeypatch)
+    app = backend_main.app
+    with sessionmaker(bind=db)() as session:
+        user = session.query(auth_module.User).filter_by(username="ada").one()
+    app.dependency_overrides[auth_module.get_current_user] = lambda: user
+    try:
+        response = TestClient(app, raise_server_exceptions=False).patch(
+            "/api/v1/cases/c-1", json={"status": "closed"}
+        )
+    finally:
+        app.dependency_overrides.pop(auth_module.get_current_user, None)
+
+    assert response.status_code == 500
+    assert _case(db, "status") == "open"
+    assert _count(db, "audit_trail") == 0
+
+
+@pytest.mark.usefixtures("ada")
+def test_a_refused_close_from_an_agent_tool_leaves_the_case_open(db, monkeypatch):
+    from core.agents import tool_registry
+
+    monkeypatch.setattr(tool_registry, "permission_refusal", lambda *_a: None)
+    monkeypatch.setattr(tool_registry, "_data", lambda: _data(monkeypatch))
+    _fail(monkeypatch)
+
+    with pytest.raises(OperationalError):
+        tool_registry.update_case(case_id="c-1", status="closed")
+    assert _case(db, "status") == "open"
+    assert _count(db, "audit_trail") == 0
+
+
+@pytest.mark.usefixtures("ada")
 def test_a_findings_link_is_one_entry_from_either_path(db, monkeypatch):
     with db.begin() as conn:
         conn.execute(

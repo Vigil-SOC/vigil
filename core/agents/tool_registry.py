@@ -552,10 +552,12 @@ def update_case(
         updates["notes"] = notes
 
     change = status_change(case.get("status"), status)
-    if not data.update_case(case_id, **updates):
-        return {"error": "Failed to update case"}
-    if change:
-        with service_session() as session:
+    # The write and a close share one session, so a refused close leaves the
+    # case as it was.
+    with service_session() as session:
+        if not data.update_case(case_id, session=session, **updates):
+            return {"error": "Failed to update case"}
+        if change:
             record_status_change(
                 session,
                 case_id,
