@@ -33,8 +33,10 @@ export interface Workflow {
   updatedAt?: string
   /** Whether the workflow is on. Off means nothing starts it, not even a person. */
   enabled: boolean
-  /** False for the workflow alerts fall back to: it cannot be turned off. */
+  /** False for a workflow that is always on (the alert fallback, the hunt). */
   canDisable: boolean
+  /** Why it cannot be turned off; null when it can. Worded by the backend. */
+  alwaysOnReason: string | null
 }
 
 // AGENT_META was mirrored here until #482 moved it to GET /agents, so built-in
