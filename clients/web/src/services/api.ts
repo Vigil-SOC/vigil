@@ -1355,8 +1355,12 @@ export interface OverviewFeedItem {
   noise_marked: boolean
 }
 
+/** The span Overview and Triage count over: the UTC day, or every row. */
+export type CountRange = 'today' | 'all'
+
 export interface OverviewPayload {
   day: string
+  range: CountRange
   empty: boolean
   arrivals: OverviewArrival[]
   outcomes: OverviewOutcome[]
@@ -1373,7 +1377,8 @@ export interface OverviewPayload {
 }
 
 export const overviewApi = {
-  get: () => api.get<OverviewPayload>('/overview'),
+  get: (range: CountRange = 'today') =>
+    api.get<OverviewPayload>('/overview', { params: { range } }),
   alert: (findingId: string) =>
     api.get<OverviewFeedItem>(`/overview/alerts/${encodeURIComponent(findingId)}`),
 }
@@ -1453,6 +1458,7 @@ export interface TriagePayload {
     state: Record<string, number>
   }
   sources: TriageSource[]
+  range: CountRange
   arrival_info: string
   strip_info: {
     picked_up: TriageInfo
@@ -1467,6 +1473,7 @@ export interface TriageQuery {
   kind?: string
   source?: string
   state?: string
+  range?: CountRange
 }
 
 export const triageApi = {

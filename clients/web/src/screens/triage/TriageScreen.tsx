@@ -12,11 +12,13 @@ import { utcClock } from '../../shared/utc'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { parseSourceEvidence } from '../../data/sourceEvidence'
 import { SourceEvidenceSection } from '../dashboard/SourceEvidenceSection'
-import { triageApi, type TriagePayload, type TriageRow, type TriageSource, type TriageVerdict } from '../../services/api'
+import { triageApi, type TriagePayload, type TriageQuery, type TriageRow, type TriageSource, type TriageVerdict } from '../../services/api'
 import { SeverityMark } from '../../shared/SeverityMark'
 import FindingDetails from '../../shared/FindingDetails'
 import { AutoOpsOffBanner } from '../../shared/AutoOpsOffBanner'
 import { useAutoOpsOff } from '../../shared/useAutoOpsOff'
+import { RangeToggle } from '../../shared/RangeToggle'
+import { useCountRange } from '../../shared/countRange'
 
 const POLL_MS = 10_000
 const ROW_CAP = 200 // the server stops at this many rows
@@ -128,16 +130,17 @@ function Tile({ label, info, children }: { label: string; info?: ReactNode; chil
 function Tiles({ data }: { data: TriagePayload }) {
   const picked = data.strip.picked_up
   const info = data.strip_info
+  const today = data.range !== 'all'
   const floor = info.trust_floor
   return (
     <div className="tq-tiles" aria-label="Intake strip">
       <Tile label="Picked up automatically" info={<InfoTip label="How picked up automatically is worked out" align="start" {...info.picked_up} />}>
         <div className={`tq-tile-val${picked.share === null ? ' unmeasured' : ''}`}>{fmtShare(picked.share)}</div>
         {picked.created_today > 0 && (
-          <div className="tq-tile-sub">{picked.launched_or_merged} of {picked.created_today} today</div>
+          <div className="tq-tile-sub">{picked.launched_or_merged} of {picked.created_today}{today ? ' today' : ''}</div>
         )}
       </Tile>
-      <Tile label="Cases created today" info={<InfoTip label="How cases created today is worked out" {...info.cases_created_today} />}>
+      <Tile label={today ? 'Cases created today' : 'Cases created'} info={<InfoTip label={`How cases created${today ? ' today' : ''} is worked out`} {...info.cases_created_today} />}>
         <div className="tq-tile-val">{data.strip.cases_created_today}</div>
       </Tile>
       <Tile label="Waiting for triage" info={<InfoTip label="How waiting for triage is worked out" {...info.waiting} />}>
@@ -205,7 +208,7 @@ function Filters({
           return {
             value: name,
             label: badge(name).label,
-            title: row ? [`${row.arrivals} arrived today`, lagNote(row)].filter(Boolean).join(' · ') : undefined,
+            title: row ? [`${row.arrivals} arrived${data.range === 'all' ? '' : ' today'}`, lagNote(row)].filter(Boolean).join(' · ') : undefined,
           }
         }),
         <InfoTip label={data.arrival_info} text={data.arrival_info} align="start" />,
@@ -330,10 +333,11 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
   const kind = searchParams.get('kind') ?? ''
   const source = searchParams.get('source') ?? ''
   const state = searchParams.get('state') ?? ''
+  const [range, setRange] = useCountRange()
   const [phase, setPhase] = useState<Phase>('loading')
   const [data, setData] = useState<TriagePayload | null>(null)
   usePageSnapshot('triage', phase === 'ready' && data ? [
-    `Triage queue: ${data.matched} items. Picked up automatically ${data.strip.picked_up.launched_or_merged} of ${data.strip.picked_up.created_today} today; cases created today ${data.strip.cases_created_today}; waiting in line ${data.strip.waiting}.`,
+    `Triage queue, ${data.range === 'all' ? 'all time' : 'today (UTC)'}: ${data.matched} items. Picked up automatically ${data.strip.picked_up.launched_or_merged} of ${data.strip.picked_up.created_today}; cases created ${data.strip.cases_created_today}; waiting in line ${data.strip.waiting}.`,
     'Rows (arrived | kind | source | alert | severity | triage verdict | what happened | picked up in | grouped into | finding):',
     ...data.rows.slice(0, 60).map((r) => [r.created_at ?? '-', r.kind_label, r.source || '-', r.title || r.description || r.document || '-', r.severity_band, verdictText(r.triage), r.state_label, r.pickup_seconds ?? '-', r.case_door || r.workflow_id || '-', r.finding_id ?? '-'].join(' | ')),
   ].join('\n') : '')
@@ -350,13 +354,14 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
 
   const load = useCallback(() => {
     // only a filter change supersedes an in-flight request; a poll must not starve a slow one
-    const filter = [kind, source, state].join('|')
+    const filter = [kind, source, state, range].join('|')
     if (filter !== loadedFilter.current) {
       loadedFilter.current = filter
       loadTicket.current++
     }
     const ticket = loadTicket.current
-    const params: { kind?: string; source?: string; state?: string } = {}
+    const params: TriageQuery = {}
+    if (range === 'all') params.range = range
     if (kind) params.kind = kind
     if (source) params.source = source
     if (state) params.state = state
@@ -371,7 +376,7 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
         if (ticket !== loadTicket.current) return
         setPhase('error')
       })
-  }, [kind, source, state])
+  }, [kind, source, state, range])
 
   useEffect(() => {
     load()
@@ -478,9 +483,12 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
           <h1 style={{ fontWeight: 700, letterSpacing: '-0.2px' }}>Triage queue</h1>
           <p>{autoOpsOff ? PAGE_DESC_OFF : PAGE_DESC}</p>
         </div>
-        <button type="button" className="btn ghost icon" title="Refresh" aria-label="Refresh" onClick={load}>
-          <Icon name="refresh" />
-        </button>
+        <div className="tq-head-r">
+          <RangeToggle range={range} onChange={setRange} />
+          <button type="button" className="btn ghost icon" title="Refresh" aria-label="Refresh" onClick={load}>
+            <Icon name="refresh" />
+          </button>
+        </div>
       </div>
 
       {autoOpsOff && <AutoOpsOffBanner goSettings={goSettings} />}
@@ -497,7 +505,8 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
             source={source}
             state={state}
             setFilter={setFilter}
-            clear={() => setSearchParams({}, { replace: true })}
+            // clearing the filters keeps the range
+            clear={() => setSearchParams(range === 'all' ? { range } : {}, { replace: true })}
             autoOpsOff={autoOpsOff}
           />
           <div className="tq-card" data-testid="triage-scroll">

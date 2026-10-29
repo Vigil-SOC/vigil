@@ -4,7 +4,9 @@ import { Icon, type IconName } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
 import { useSourceBadge } from '../../shared/useSourceBadge'
 import { VigilMark } from '../../shared/VigilLogo'
-import type { OverviewOutcome, OverviewPayload } from '../../services/api'
+import { RangeToggle } from '../../shared/RangeToggle'
+import { withRange } from '../../shared/countRange'
+import type { CountRange, OverviewOutcome, OverviewPayload } from '../../services/api'
 import './overview.css'
 import { layoutOutcomes } from './outcomeLayout'
 
@@ -12,6 +14,8 @@ const CONNECT_DATA = '/settings?section=data'
 const EMPTY_TEXT =
   'Nothing is connected yet. Connect a source on the left and its alerts flow through the Vigil engine to the outcomes on the right.'
 const MAX_SOURCES = 7
+// Triage files an alert with no data source under this chip
+const UNKNOWN_SOURCE = 'Unknown'
 const MIN_W = 640
 const SRC_DOT_X = 206
 const SRC_NODE_W = 196
@@ -127,9 +131,11 @@ interface Props {
   data: OverviewPayload
   wall: boolean
   onToggleWall: () => void
+  range: CountRange
+  onRange: (next: CountRange) => void
 }
 
-export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
+export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }: Props) {
   const badgeOf = useSourceBadge()
   const uid = useId().replace(/:/g, '')
   const [ref, W] = useWidth()
@@ -141,6 +147,9 @@ export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
   const x1 = cx - ENGINE_R // strands end here
   const xr = cx + ENGINE_R // bands start here
   const x2 = W - 198
+  // labels follow the range the payload counted; links carry the one selected
+  const all = data.range === 'all'
+  const when = all ? 'in total' : 'today'
 
   const sources = ((): SrcNode[] => {
     const sorted = [...data.arrivals].sort((a, b) => b.count - a.count || a.data_source.localeCompare(b.data_source))
@@ -151,7 +160,7 @@ export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
         label: b.label,
         icon: b.icon as IconName,
         count: a.count,
-        href: `/triage?source=${encodeURIComponent(a.data_source)}`,
+        href: withRange(`/triage?source=${encodeURIComponent(a.data_source || UNKNOWN_SOURCE)}`, range),
       }
     }
     if (sorted.length <= MAX_SOURCES) return sorted.map(one)
@@ -213,21 +222,26 @@ export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
             align="start"
             label="About this diagram"
             source={data.arrivals[0]?.source_text}
-            calculation="Line thickness is the number of alerts. Each alert is counted once, at the outcome it reached today (UTC)"
+            calculation={`Line thickness is the number of alerts. Each alert is counted once, at the outcome it reached${all ? '' : ' today (UTC)'}. Not picked up is Triage's Not picked up plus Expired`}
             limit="Hover a source or an outcome to follow it"
           />
         )}
-        {wall && (
-          <button type="button" className="ov-btn ml-auto" aria-pressed="true" onClick={onToggleWall}>
-            <Icon name="fit" size={13} />
-            Exit full screen
-          </button>
+        {(!empty || wall) && (
+          <span className="ov-flow-ctl">
+            {!empty && <RangeToggle range={range} onChange={onRange} />}
+            {wall && (
+              <button type="button" className="ov-btn" aria-pressed="true" onClick={onToggleWall}>
+                <Icon name="fit" size={13} />
+                Exit full screen
+              </button>
+            )}
+          </span>
         )}
       </div>
       <p className="ov-flow-sub">
         {empty
           ? EMPTY_TEXT
-          : 'Today (UTC). Thicker lines carry more alerts; each alert is counted once, at the outcome it reached. Hover a source or an outcome to follow it.'}
+          : `${all ? 'All time' : 'Today (UTC)'}. Thicker lines carry more alerts; each alert is counted once, at the outcome it reached. Hover a source or an outcome to follow it.`}
       </p>
 
       <div ref={ref} className="ov-canvas-wrap">
@@ -358,7 +372,7 @@ export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
                   </>
                 )
                 const style: CSSProperties = { left: 0, top: strands[i].ya - 19, width: SRC_NODE_W, opacity: srcDim(s.key) }
-                const title = `${s.label}: ${alerts(s.count)} today.${s.href ? ' Opens the Triage queue for this source.' : ''}`
+                const title = `${s.label}: ${alerts(s.count)} ${when}.${s.href ? ' Opens the Triage queue for this source.' : ''}`
                 return s.href ? (
                   <Link
                     key={s.key}
@@ -418,7 +432,7 @@ export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
                     onBlur={leave}
                   >
                     {link ? (
-                      <Link to={link[0]} className="ov-out-l" title={`${b.o.label}: ${alerts(b.o.count)} today. ${link[1]}`}>
+                      <Link to={link[0].startsWith('/triage') ? withRange(link[0], range) : link[0]} className="ov-out-l" title={`${b.o.label}: ${alerts(b.o.count)} ${when}. ${link[1]}`}>
                         {head}
                       </Link>
                     ) : (

@@ -5,7 +5,8 @@ import { InfoTip } from '../../shared/InfoTip'
 import { clock } from './clock'
 import { stateWord } from '../../shared/findingState'
 import { useSourceBadge } from '../../shared/useSourceBadge'
-import type { OverviewFeedItem, OverviewPayload } from '../../services/api'
+import type { CountRange, OverviewFeedItem, OverviewPayload } from '../../services/api'
+import { withRange } from '../../shared/countRange'
 
 const CONNECT_DATA = '/settings?section=data'
 
@@ -110,6 +111,7 @@ function Row({ item, onOpen, openCase }: { item: OverviewFeedItem; onOpen: (id: 
 
 interface Props {
   data: OverviewPayload
+  range: CountRange
   paused: boolean
   onTogglePause: () => void
   onOpen: (id: string) => void
@@ -117,10 +119,10 @@ interface Props {
 }
 
 /** "Incoming alerts": the live feed, newest first, as a right rail. */
-export default function AlertRail({ data, paused, onTogglePause, onOpen, openCase }: Props) {
+export default function AlertRail({ data, range, paused, onTogglePause, onOpen, openCase }: Props) {
   const [tab, setTab] = useState<(typeof TABS)[number]['key']>('all')
   const rows = tab === 'all' ? data.feed : data.feed.filter((r) => sevKey(r.severity) === tab)
-  const today = data.arrivals.reduce((n, a) => n + a.count, 0)
+  const arrived = data.arrivals.reduce((n, a) => n + a.count, 0)
   const empty = data.empty && data.feed.length === 0 // rows win over the empty panel
   const tabLabel = TABS.find((t) => t.key === tab)!.label
   return (
@@ -152,7 +154,7 @@ export default function AlertRail({ data, paused, onTogglePause, onOpen, openCas
             </button>
           </span>
         </div>
-        <p>{empty ? 'Alerts show here as they arrive, newest first' : `${today} today · newest first · status is what triage did`}</p>
+        <p>{empty ? 'Alerts show here as they arrive, newest first' : `${arrived} ${data.range === 'all' ? 'in total' : 'today'} · newest first · status is what triage did`}</p>
         {!empty && (
           <div className="ov-tabs" role="tablist" aria-label="Severity">
             {TABS.map((t) => (
@@ -182,7 +184,7 @@ export default function AlertRail({ data, paused, onTogglePause, onOpen, openCas
       {!empty && (
         <div className="ov-rail-f">
           <span>Click an alert to send it to triage or open its case</span>
-          <Link to="/triage">Triage queue →</Link>
+          <Link to={withRange('/triage', range)}>Triage queue →</Link>
         </div>
       )}
     </aside>
