@@ -76,17 +76,19 @@ describe('TwoStepDialog', () => {
     expect(auth.refreshUser).not.toHaveBeenCalled()
   })
 
-  it('on: regenerates recovery codes after confirming', async () => {
+  it('on: regenerating recovery codes asks for a current code first', async () => {
     auth.user.mfa_enabled = true
     mfa.regenerateRecoveryCodes.mockResolvedValue({ data: { recovery_codes: CODES } })
     renderDialog()
 
     expect(screen.getByText('Two-step sign-in is on.')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Regenerate recovery codes' }))
-    expect(mfa.regenerateRecoveryCodes).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Regenerate' })).toBeDisabled()
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '123456' } })
     fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
 
     expect(await screen.findByLabelText('Your recovery codes')).toHaveTextContent('BBBB2222')
+    expect(mfa.regenerateRecoveryCodes).toHaveBeenCalledWith('123456')
   })
 
   it('on: turning off sends the code and refreshes the user; a bad code is refused inline', async () => {

@@ -1100,7 +1100,8 @@ export interface paths {
         /**
          * Regenerate Recovery Codes
          * @description Generate a fresh set of one-time MFA recovery codes, invalidating any
-         *     previous codes. Requires MFA to already be set up.
+         *     previous codes. Requires MFA to be enabled and a current TOTP or
+         *     recovery code.
          *
          *     Returns:
          *         The new plaintext recovery codes, shown only once.
@@ -13302,7 +13303,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MFAVerifyRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

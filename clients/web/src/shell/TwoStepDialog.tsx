@@ -3,9 +3,9 @@ import QRCode from 'qrcode'
 import { useAuth } from '../contexts/AuthContext'
 import { mfaApi } from '../services/api'
 import { Icon } from '../shared/icons'
-import { ConfirmDialog, Field, Popup, TextInput } from '../shared/ui'
+import { Field, Popup, TextInput } from '../shared/ui'
 
-type View = 'main' | 'enrol' | 'codes' | 'disable'
+type View = 'main' | 'enrol' | 'codes' | 'regenerate' | 'disable'
 
 function errText(e: unknown, fallback: string): string {
   const err = e as { response?: { status?: number; data?: { detail?: unknown } }; message?: string }
@@ -65,7 +65,6 @@ export default function TwoStepDialog({ open, onClose }: { open: boolean; onClos
   const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [confirmRegen, setConfirmRegen] = useState(false)
 
   useEffect(() => {
     if (!open) {
@@ -75,7 +74,6 @@ export default function TwoStepDialog({ open, onClose }: { open: boolean; onClos
       setCodes([])
       setCode('')
       setError(null)
-      setConfirmRegen(false)
     }
   }, [open])
 
@@ -118,9 +116,9 @@ export default function TwoStepDialog({ open, onClose }: { open: boolean; onClos
     await refreshUser()
   }
 
-  const regenerate = async () => {
-    setConfirmRegen(false)
-    const res = await run(() => mfaApi.regenerateRecoveryCodes(), 'Could not regenerate recovery codes.')
+  const regenerate = async (e: FormEvent) => {
+    e.preventDefault()
+    const res = await run(() => mfaApi.regenerateRecoveryCodes(code.trim()), 'Invalid MFA code')
     if (!res) return
     setCodes(res.data.recovery_codes)
     go('codes')
@@ -145,141 +143,139 @@ export default function TwoStepDialog({ open, onClose }: { open: boolean; onClos
       ? 'Set up two-step sign-in'
       : view === 'codes'
         ? 'Recovery codes'
-        : view === 'disable'
-          ? 'Turn off two-step sign-in'
-          : 'Two-step sign-in'
+        : view === 'regenerate'
+          ? 'Regenerate recovery codes'
+          : view === 'disable'
+            ? 'Turn off two-step sign-in'
+            : 'Two-step sign-in'
 
   return (
-    <>
-      <Popup open={open} onClose={onClose} title={title} width={460}>
-        <div className="flex flex-col gap-3.5">
-          {banner}
+    <Popup open={open} onClose={onClose} title={title} width={460}>
+      <div className="flex flex-col gap-3.5">
+        {banner}
 
-          {view === 'main' && !enabled && (
-            <>
-              <p className="m-0 text-sm text-tx-2 leading-relaxed">
-                Add a second step to signing in: a 6-digit code from an authenticator app, in addition to
-                your password.
-              </p>
-              <div className="flex justify-end">
-                <button className="btn primary" onClick={startSetup} disabled={busy}>
-                  {busy ? 'Working…' : 'Set up'}
-                </button>
-              </div>
-            </>
-          )}
+        {view === 'main' && !enabled && (
+          <>
+            <p className="m-0 text-sm text-tx-2 leading-relaxed">
+              Add a second step to signing in: a 6-digit code from an authenticator app, in addition to
+              your password.
+            </p>
+            <div className="flex justify-end">
+              <button className="btn primary" onClick={startSetup} disabled={busy}>
+                {busy ? 'Working…' : 'Set up'}
+              </button>
+            </div>
+          </>
+        )}
 
-          {view === 'main' && enabled && (
-            <>
-              <div className="settings-banner ok">
-                <Icon name="shield" size={14} /> Two-step sign-in is on.
-              </div>
-              <p className="m-0 text-sm text-tx-2 leading-relaxed">
-                If you lose your authenticator, a recovery code lets you sign in once. Regenerating makes
-                the old codes stop working.
-              </p>
-              <div className="flex justify-end gap-2.5">
-                <button className="btn ghost" onClick={() => setConfirmRegen(true)} disabled={busy}>
-                  Regenerate recovery codes
-                </button>
-                <button className="btn danger" onClick={() => go('disable')} disabled={busy}>
-                  Turn off
-                </button>
-              </div>
-            </>
-          )}
+        {view === 'main' && enabled && (
+          <>
+            <div className="settings-banner ok">
+              <Icon name="shield" size={14} /> Two-step sign-in is on.
+            </div>
+            <p className="m-0 text-sm text-tx-2 leading-relaxed">
+              If you lose your authenticator, a recovery code lets you sign in once. Regenerating makes
+              the old codes stop working.
+            </p>
+            <div className="flex justify-end gap-2.5">
+              <button className="btn ghost" onClick={() => go('regenerate')} disabled={busy}>
+                Regenerate recovery codes
+              </button>
+              <button className="btn danger" onClick={() => go('disable')} disabled={busy}>
+                Turn off
+              </button>
+            </div>
+          </>
+        )}
 
-          {view === 'enrol' && (
-            <form className="flex flex-col gap-3.5" onSubmit={verify}>
-              <p className="m-0 text-sm text-tx-2 leading-relaxed">
-                Scan this with an authenticator app, or type the key in by hand. Then enter the 6-digit code
-                it shows.
-              </p>
-              <div className="flex flex-col items-center gap-2.5">
-                {qr && (
-                  <img
-                    src={qr}
-                    width={176}
-                    height={176}
-                    alt="QR code for your authenticator app"
-                    className="rounded-sm bg-white"
-                  />
-                )}
-                <code
-                  className="font-mono text-[13px] text-tx tracking-wider break-all text-center select-all"
-                  aria-label="Setup key"
-                >
-                  {secret}
-                </code>
-              </div>
-              <Field label="Authentication code">
-                <TextInput
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={6}
-                  autoFocus
+        {view === 'enrol' && (
+          <form className="flex flex-col gap-3.5" onSubmit={verify}>
+            <p className="m-0 text-sm text-tx-2 leading-relaxed">
+              Scan this with an authenticator app, or type the key in by hand. Then enter the 6-digit code
+              it shows.
+            </p>
+            <div className="flex flex-col items-center gap-2.5">
+              {qr && (
+                <img
+                  src={qr}
+                  width={176}
+                  height={176}
+                  alt="QR code for your authenticator app"
+                  className="rounded-sm bg-white"
                 />
-              </Field>
-              <div className="flex justify-end gap-2.5">
-                <button type="button" className="btn ghost" onClick={onClose} disabled={busy}>
-                  Cancel
-                </button>
-                <button type="submit" className="btn primary" disabled={busy || code.trim().length < 6}>
-                  {busy ? 'Verifying…' : 'Turn on'}
-                </button>
-              </div>
-            </form>
-          )}
-
-          {view === 'codes' && (
-            <>
-              <RecoveryCodes codes={codes} />
-              <div className="flex justify-end">
-                <button className="btn primary" onClick={onClose}>
-                  Done
-                </button>
-              </div>
-            </>
-          )}
-
-          {view === 'disable' && (
-            <form className="flex flex-col gap-3.5" onSubmit={disable}>
-              <Field
-                label="Authentication or recovery code"
-                hint="Enter a current code from your authenticator app, or an unused recovery code."
+              )}
+              <code
+                className="font-mono text-[13px] text-tx tracking-wider break-all text-center select-all"
+                aria-label="Setup key"
               >
-                <TextInput
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  autoComplete="one-time-code"
-                  autoFocus
-                />
-              </Field>
-              <div className="flex justify-end gap-2.5">
-                <button type="button" className="btn ghost" onClick={() => go('main')} disabled={busy}>
-                  Back
-                </button>
-                <button type="submit" className="btn danger" disabled={busy || !code.trim()}>
-                  {busy ? 'Working…' : 'Turn off'}
-                </button>
-              </div>
-            </form>
-          )}
-        </div>
-      </Popup>
+                {secret}
+              </code>
+            </div>
+            <Field label="Authentication code">
+              <TextInput
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                autoFocus
+              />
+            </Field>
+            <div className="flex justify-end gap-2.5">
+              <button type="button" className="btn ghost" onClick={onClose} disabled={busy}>
+                Cancel
+              </button>
+              <button type="submit" className="btn primary" disabled={busy || code.trim().length < 6}>
+                {busy ? 'Verifying…' : 'Turn on'}
+              </button>
+            </div>
+          </form>
+        )}
 
-      <ConfirmDialog
-        open={open && confirmRegen}
-        title="Regenerate recovery codes?"
-        body="Your current recovery codes will stop working. New codes are shown once."
-        confirmLabel="Regenerate"
-        danger={false}
-        busy={busy}
-        onConfirm={regenerate}
-        onClose={() => setConfirmRegen(false)}
-      />
-    </>
+        {view === 'codes' && (
+          <>
+            <RecoveryCodes codes={codes} />
+            <div className="flex justify-end">
+              <button className="btn primary" onClick={onClose}>
+                Done
+              </button>
+            </div>
+          </>
+        )}
+
+        {(view === 'regenerate' || view === 'disable') && (
+          <form className="flex flex-col gap-3.5" onSubmit={view === 'regenerate' ? regenerate : disable}>
+            {view === 'regenerate' && (
+              <p className="m-0 text-sm text-tx-2 leading-relaxed">
+                Your current recovery codes will stop working. New codes are shown once.
+              </p>
+            )}
+            <Field
+              label="Authentication or recovery code"
+              hint="Enter a current code from your authenticator app, or an unused recovery code."
+            >
+              <TextInput
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                autoComplete="one-time-code"
+                autoFocus
+              />
+            </Field>
+            <div className="flex justify-end gap-2.5">
+              <button type="button" className="btn ghost" onClick={() => go('main')} disabled={busy}>
+                Back
+              </button>
+              <button
+                type="submit"
+                className={view === 'regenerate' ? 'btn primary' : 'btn danger'}
+                disabled={busy || !code.trim()}
+              >
+                {busy ? 'Working…' : view === 'regenerate' ? 'Regenerate' : 'Turn off'}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </Popup>
   )
 }

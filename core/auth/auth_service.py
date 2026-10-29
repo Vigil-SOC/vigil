@@ -484,16 +484,19 @@ class AuthService:
     @staticmethod
     @default_on_error(None)
     def get_mfa_recovery_codes(
-        user_id: str, session: Optional[Session] = None
+        user_id: str, code: str, session: Optional[Session] = None
     ) -> Optional[List[str]]:
-        """Generate fresh recovery codes for a user (re-setup).
+        """Replace a user's recovery codes after proving possession of a TOTP
+        or recovery code, so a session alone cannot mint codes.
 
-        Returns plaintext codes. Caller must display them once; they cannot
-        be retrieved again.
+        Returns plaintext codes (caller displays them once), or None if MFA
+        is not enabled or the code is wrong.
         """
         with unit_of_work(session) as session:
             user = session.query(User).filter(User.user_id == user_id).first()
-            if not user or not user.mfa_secret:
+            if not user or not user.mfa_enabled:
+                return None
+            if not AuthService.verify_mfa_code(user_id, code, session):
                 return None
 
             codes, user.mfa_recovery_codes = AuthService._generate_recovery_codes()
