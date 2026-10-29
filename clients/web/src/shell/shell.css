@@ -15,8 +15,9 @@
   src: url('./fonts/roboto-mono.woff2') format('woff2');
 }
 
-/* The console root is position:fixed to the viewport. The shell inside it is
-   at least 1440px wide, so a narrower window scrolls this root sideways. */
+/* The console root is position:fixed to the viewport. The shell takes the
+   window's width and wide tables scroll inside their own cards; overflow-x
+   only kicks in here if a screen overflows anyway. */
 .soc-console.vg-dark,
 .soc-console.vg-light {
   overflow-x: auto;
@@ -25,7 +26,6 @@
 
 .soc-console .vg-shell {
   flex-direction: column;
-  min-width: 1440px;
   height: 100%;
   /* clip, not .shell's hidden: hidden would make the shell the scroll
      container, and the sticky header and nav below would never stick. */
