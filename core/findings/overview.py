@@ -352,10 +352,15 @@ def overview_payload(
             .filter(FederationSource.enabled.is_(True))
             .count()
         )
+        # Any finding at all, so Today with nothing yet still shows the diagram and its range control.
+        any_finding = (
+            arrival_total > 0
+            or session.query(Finding.finding_id).limit(1).first() is not None
+        )
     return {
         "day": day.isoformat(),
         "range": range,
-        "empty": enabled_count == 0 and arrival_total == 0,
+        "empty": enabled_count == 0 and not any_finding,
         "arrivals": arrivals,
         "outcomes": _outcome_nodes(states),
         "running_source": RUNNING_SOURCE,

@@ -86,6 +86,10 @@ export default function OverviewScreen({ go, goSettings, openCase, setViewFull, 
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<OverviewPayload | null>(null)
   const [range, setRange] = useCountRange()
+  // the range the screen asked for last; a reply for another range is dropped
+  const wanted = useRef(range)
+  wanted.current = range
+  const loadedRange = useRef(range)
   usePageSnapshot('overview', phase === 'ready' && data ? [
     `Overview, ${data.range === 'all' ? 'all time' : 'today (UTC)'}. Alerts in by source: ` + (data.arrivals.map((x) => `${x.data_source} ${x.count}`).join(', ') || 'none') + '.',
     'Outcomes: ' + data.outcomes.map((o) => `${o.label} ${o.count ?? 'not measured'}`).join(', ') + '.',
@@ -135,6 +139,7 @@ export default function OverviewScreen({ go, goSettings, openCase, setViewFull, 
     overviewApi
       .get(range)
       .then((res) => {
+        if (res.data.range !== wanted.current) return
         setData(res.data)
         setPhase('ready')
         setError(null)
@@ -146,12 +151,18 @@ export default function OverviewScreen({ go, goSettings, openCase, setViewFull, 
   }, [range])
 
   // Pausing clears the interval; resuming loads at once and starts a fresh one.
+  // A range change loads once even while paused.
   useEffect(() => {
-    if (paused) return
+    const rangeChanged = loadedRange.current !== range
+    loadedRange.current = range
+    if (paused) {
+      if (rangeChanged) load()
+      return
+    }
     load()
     const id = setInterval(load, POLL_MS)
     return () => clearInterval(id)
-  }, [load, paused])
+  }, [load, paused, range])
 
   // The rail scrolls on its own, so the screen takes the full-height view.
   useEffect(() => {
