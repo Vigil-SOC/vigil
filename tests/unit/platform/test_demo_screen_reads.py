@@ -227,7 +227,7 @@ def test_triage_rows_are_demo_findings_not_stored_intake(demo_service, monkeypat
     waiting = [row for row in body["rows"] if row["state"] == "queued"]
     assert launched and waiting
     assert all(row["state_label"] == "Started a case" and row["case_door"] for row in launched)
-    assert all(row["state_label"] == "Waiting for a slot" and row["case_door"] is None for row in waiting)
+    assert all(row["state_label"] == "Waiting for triage" and row["case_door"] is None for row in waiting)
     source = body["rows"][0]["source"]
     narrowed = triage_payload(now=NOW, source=source)
     assert narrowed["matched"] == body["counts"]["source"][source]

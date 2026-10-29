@@ -115,7 +115,7 @@ function renderScreen(path = '/triage', goSettings = vi.fn()) {
 describe('TriageScreen', () => {
   it('says AutoOps is off where the queue would read as waiting its turn', async () => {
     vi.mocked(configApi.getOrchestrator).mockResolvedValueOnce({ data: { enabled: false } } as never)
-    const queued = { ...payload().rows[0], state: 'queued', state_label: 'Waiting for a slot', decided_at: null }
+    const queued = { ...payload().rows[0], state: 'queued', state_label: 'Waiting for triage', decided_at: null }
     vi.mocked(triageApi.get).mockResolvedValue({ data: payload({ rows: [queued] }) } as never)
     const goSettings = vi.fn()
     renderScreen('/triage', goSettings)
@@ -124,18 +124,20 @@ describe('TriageScreen', () => {
     expect(banner).toHaveTextContent('no agent picks them up until it is on')
     expect(screen.getByText(/pick alerts up only while AutoOps is on/)).toBeInTheDocument()
     expect(await screen.findByText('AutoOps is off', { selector: '.tq-pill' })).toBeInTheDocument()
-    expect(screen.queryByText('Waiting for a slot', { selector: '.tq-pill' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Waiting for triage', { selector: '.tq-pill' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Waiting for triage: AutoOps is off/ })).toBeInTheDocument()
+    expect(document.body).not.toHaveTextContent('Not picked up')
     fireEvent.click(within(banner).getByRole('button', { name: 'Open Limits & autonomy →' }))
     expect(goSettings).toHaveBeenCalledWith('autoinvestigate')
     cleanup()
   })
 
   it('says nothing about AutoOps while it is on', async () => {
-    const queued = { ...payload().rows[0], state: 'queued', state_label: 'Waiting for a slot', decided_at: null }
+    const queued = { ...payload().rows[0], state: 'queued', state_label: 'Waiting for triage', decided_at: null }
     vi.mocked(triageApi.get).mockResolvedValue({ data: payload({ rows: [queued] }) } as never)
     renderScreen()
 
-    expect(await screen.findByText('Waiting for a slot', { selector: '.tq-pill' })).toBeInTheDocument()
+    expect(await screen.findByText('Waiting for triage', { selector: '.tq-pill' })).toBeInTheDocument()
     expect(screen.queryByText(/AutoOps is off/)).not.toBeInTheDocument()
     cleanup()
   })
@@ -195,7 +197,7 @@ describe('TriageScreen', () => {
     expect(filters.getByRole('button', { name: 'Alert 7' })).toBeInTheDocument()
     expect(filters.getAllByRole('button', { name: 'Ask 2' })).toHaveLength(2) // the Kind chip and the Source chip
     expect(filters.getByRole('button', { name: 'Splunk 7' })).toHaveAttribute('title', '2 arrived today · Quiet')
-    expect(filters.getByRole('button', { name: 'Waiting for a slot 3' })).toBeInTheDocument()
+    expect(filters.getByRole('button', { name: 'Waiting for triage 3' })).toBeInTheDocument()
     expect(filters.getByRole('button', { name: 'Picked up or started a case 5' })).toBeInTheDocument()
     expect(filters.getByRole('button', { name: 'Added to a case 4' })).toBeInTheDocument()
     expect(filters.getByRole('button', { name: 'Expired 0' })).toBeInTheDocument()
@@ -216,9 +218,9 @@ describe('TriageScreen', () => {
     await waitFor(() => expect(triageApi.get).toHaveBeenLastCalledWith({ source: 'splunk' }))
     fireEvent.click(filters.getAllByRole('button', { name: 'All 12' })[1])
     await waitFor(() => expect(triageApi.get).toHaveBeenLastCalledWith({}))
-    fireEvent.click(filters.getByRole('button', { name: 'Waiting for a slot 3' }))
+    fireEvent.click(filters.getByRole('button', { name: 'Waiting for triage 3' }))
     await waitFor(() => expect(triageApi.get).toHaveBeenLastCalledWith({ state: 'queued' }))
-    expect(filters.getByRole('button', { name: 'Waiting for a slot 3' })).toHaveAttribute('aria-pressed', 'true')
+    expect(filters.getByRole('button', { name: 'Waiting for triage 3' })).toHaveAttribute('aria-pressed', 'true')
     fireEvent.click(filters.getByRole('button', { name: 'Alert 7' }))
     await waitFor(() => expect(triageApi.get).toHaveBeenLastCalledWith({ kind: 'detection', state: 'queued' }))
     // the summary counts the rows shown against every row stored
