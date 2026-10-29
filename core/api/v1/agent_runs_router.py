@@ -406,6 +406,12 @@ def queue_directive(
     session: UnitOfWorkSession,
     current_user: User = Depends(get_current_user),
 ) -> DirectiveResponse:
+    # Canonical before any check: workflow_runs and approvals key on the text, while
+    # the queue casts to uuid, so an upper-case id would skip four-eyes.
+    try:
+        run_id = str(uuid.UUID(run_id))
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"not a run id: {run_id}") from None
     principal = getattr(current_user, "principal_id", None) or getattr(
         current_user, "user_id", None
     )
