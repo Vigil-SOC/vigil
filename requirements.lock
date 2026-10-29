@@ -41,9 +41,9 @@ bcrypt==5.0.0
     # via
     #   -r requirements.txt
     #   paramiko
-boto3==1.43.80
+boto3==1.43.121
     # via -r requirements.txt
-botocore==1.43.80
+botocore==1.43.121
     # via
     #   boto3
     #   s3transfer
@@ -198,7 +198,7 @@ opentelemetry-exporter-otlp-proto-grpc==1.45.1
     # via -r requirements.txt
 opentelemetry-exporter-otlp-proto-http==1.45.1
     # via -r requirements.txt
-opentelemetry-exporter-prometheus==0.66b0
+opentelemetry-exporter-prometheus==0.66b1
     # via -r requirements.txt
 opentelemetry-instrumentation==0.66b1
     # via
@@ -288,7 +288,7 @@ pydantic==2.13.4
     #   pydantic-settings
 pydantic-core==2.46.4
     # via pydantic
-pydantic-settings==2.15.0
+pydantic-settings==2.16.2
     # via -r requirements.txt
 pygments==2.21.0
     # via pytest
@@ -408,6 +408,7 @@ typing-extensions==4.16.0
     #   opentelemetry-semantic-conventions
     #   pydantic
     #   pydantic-core
+    #   pydantic-settings
     #   pytest-asyncio
     #   referencing
     #   sqlalchemy
@@ -425,7 +426,7 @@ urllib3==2.8.0
     #   botocore
     #   requests
     #   sentry-sdk
-uv==0.13.4
+uv==0.13.6
     # via -r requirements.txt
 uvicorn==0.54.0
     # via
