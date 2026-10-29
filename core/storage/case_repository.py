@@ -792,10 +792,13 @@ class CaseRepository:
         *,
         now: Optional[datetime] = None,
         needs_you_ids: Optional[set[str]] = None,
+        alerts_span: Optional[AlertSpan] = None,
     ) -> CaseQueueStrip:
         """Open cases by combined state, SLA at risk, closures today.
 
         ``needs_you`` counts the open (not closed) cases in ``needs_you_ids``.
+        ``alerts_span``, when set, narrows those three counts to cases holding
+        an alert in it, as the queue's filter does; ``None`` counts every case.
 
         At risk is the same SQL predicate as the queue filter, over cases
         that are not closed. Today's closures are ``case_closure_info`` rows
@@ -805,11 +808,12 @@ class CaseRepository:
         now = now or utcnow()
         live = _live_investigations()
         combined = _combined_sql(live)
+        in_span = [] if alerts_span is None else [_alerts_in_span_exists(alerts_span)]
         grouped = self.session.execute(
             select(combined.label("state"), func.count())
             .select_from(Case)
             .outerjoin(live, live.c.live_case_id == Case.case_id)
-            .where(Case.status != "closed")
+            .where(Case.status != "closed", *in_span)
             .group_by(combined)
         ).all()
         by_state = {state: int(count) for state, count in grouped if state}
@@ -819,7 +823,7 @@ class CaseRepository:
             select(func.count())
             .select_from(Case)
             .outerjoin(sla, sla.c.sla_case_id == Case.case_id)
-            .where(Case.status != "closed", _sla_at_risk(sla, now))
+            .where(Case.status != "closed", _sla_at_risk(sla, now), *in_span)
         ).scalar_one()
 
         waiting = 0
@@ -830,6 +834,7 @@ class CaseRepository:
                 .where(
                     Case.status != "closed",
                     Case.case_id.in_(sorted(needs_you_ids)),
+                    *in_span,
                 )
             ).scalar_one()
 
