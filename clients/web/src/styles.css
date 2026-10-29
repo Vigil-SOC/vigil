@@ -232,10 +232,15 @@
    .source-chip svg {
       flex: none;
    }
+   /* white tile in both themes so brand colours stay legible on the tinted chip */
    .source-chip-logo {
       flex: none;
-      width: 12px;
-      height: 12px;
+      box-sizing: border-box;
+      width: 14px;
+      height: 14px;
+      padding: 1px;
+      border-radius: 3px;
+      background: #fff;
       object-fit: contain;
    }
 

@@ -57,7 +57,7 @@ const SLOTS: { label: string; sub: string; icon: IconName }[] = [
 ]
 
 type Hover = { kind: 'src' | 'out'; key: string } | null
-interface SrcNode { key: string; label: string; icon: IconName; count: number; href: string | null }
+interface SrcNode { key: string; label: string; icon: IconName; logo?: string; count: number; href: string | null }
 
 const fmt = (n: number) => n.toLocaleString('en-US')
 const alerts = (n: number) => `${fmt(n)} alert${n === 1 ? '' : 's'}`
@@ -159,6 +159,7 @@ export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }
         key: a.data_source,
         label: b.label,
         icon: b.icon as IconName,
+        logo: b.logo,
         count: a.count,
         href: withRange(`/triage?source=${encodeURIComponent(a.data_source || UNKNOWN_SOURCE)}`, range),
       }
@@ -364,7 +365,9 @@ export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }
             : sources.map((s, i) => {
                 const body = (
                   <>
-                    <span className="ov-tile"><Icon name={s.icon} size={15} /></span>
+                    <span className={`ov-tile${s.logo ? ' logo' : ''}`}>
+                      {s.logo ? <img src={s.logo} alt="" /> : <Icon name={s.icon} size={15} />}
+                    </span>
                     <span className="ov-txt">
                       <b>{s.label}</b>
                       <span>{alerts(s.count)}</span>
