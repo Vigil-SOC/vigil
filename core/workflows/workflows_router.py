@@ -489,7 +489,12 @@ def _drop_case(case_id: Optional[str]) -> None:
         return
     from core.storage.database_data_service import DatabaseDataService
 
-    if not DatabaseDataService().delete_case(case_id):
+    # A refused or paused trail append raises; the caller's own error stands.
+    try:
+        dropped = DatabaseDataService().delete_case(case_id)
+    except Exception:  # noqa: BLE001
+        dropped = False
+    if not dropped:
         logger.error("could not delete case %s opened for a refused start", case_id)
 
 
