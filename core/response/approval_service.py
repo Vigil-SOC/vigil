@@ -192,7 +192,9 @@ def four_eyes_refuses(
     """Whether four-eyes refuses ``principal_id`` an approval of the run's checkpoint.
 
     The run's directive inbox answers the same pending row the Approvals screen
-    does, so it is held to approve_action's rule.
+    does, so it is held to approve_action's rule. With no such row (not written
+    yet, withdrawn, or a hunt's own checkpoint) the run's person still proposed
+    it, so they are refused as they would be on the row.
     """
     from core.response.ceiling import read_ceiling
 
@@ -207,7 +209,12 @@ def four_eyes_refuses(
         params = row.parameters if isinstance(row.parameters, dict) else {}
         if params.get("checkpoint_id") == checkpoint_id:
             return principal_id in _proposers(session, row)
-    return False
+    started_by = session.execute(
+        select(WorkflowRun.triggered_by_principal_id).where(
+            WorkflowRun.run_id == run_id
+        )
+    ).scalar_one_or_none()
+    return started_by == principal_id
 
 
 def _row_to_pending(row: ApprovalActionRow) -> PendingAction:
