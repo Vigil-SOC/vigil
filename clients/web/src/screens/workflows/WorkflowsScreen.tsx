@@ -911,15 +911,31 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
     // id without checking, so a typed title would send the run after an alert that is not there.
     const fid = pickId(findingId, findingOpts)
     const cid = pickId(caseId, caseOpts)
+    const notOne = (what: string, typed: string) => `“${typed.trim()}” is not one ${what}. Pick it from the list, or paste its ID.`
     if (fid === null || cid === null) {
-      const [what, typed] = fid === null ? ['alert', findingId] : ['case', caseId]
-      setError(`“${typed.trim()}” is not one ${what}. Pick it from the list, or paste its ID.`)
+      setError(fid === null ? notOne('alert', findingId) : notOne('case', caseId))
       return
     }
     const ids = { ...(fid && { finding_id: fid }), ...(cid && { case_id: cid }) }
     setStarting(true)
     setError(null)
     try {
+      // Text the list did not load is asked for by id: an older alert is there, a title or host is not.
+      const missing = (e: unknown) => (e as { response?: { status?: number } })?.response?.status === 404
+      const absent = async (id: string, opts: { id: string }[], get: (id: string) => Promise<unknown>) =>
+        Boolean(id) && !opts.some((o) => o.id === id) && get(encodeURIComponent(id)).then(() => false, (e) => {
+          if (missing(e)) return true
+          throw e
+        })
+      const [noFinding, noCase] = await Promise.all([
+        absent(fid, findingOpts, findingsApi.getById),
+        absent(cid, caseOpts, casesApi.getById),
+      ])
+      if (noFinding || noCase) {
+        setError(noFinding ? notOne('alert', findingId) : notOne('case', caseId))
+        setStarting(false)
+        return
+      }
       const res = await workflowApi.execute(wf.id, { ...withTurns, ...ids })
       const started = (res.data as { run_id?: string })?.run_id ?? null
       setStarting(false)
