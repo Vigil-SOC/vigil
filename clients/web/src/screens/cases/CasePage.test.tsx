@@ -10,6 +10,7 @@ import heldProjection from '../workflows/__fixtures__/kernel-investigate-held-pr
 
 const testState = vi.hoisted(() => ({
   canDelete: true,
+  canWrite: true,
   canReadAudit: true,
   cases: [] as Array<Record<string, unknown>>,
   getByIdError: false,
@@ -21,7 +22,7 @@ const testState = vi.hoisted(() => ({
 
 vi.mock('../../contexts/AuthContext', () => ({
   useAuth: () => ({
-    hasPermission: (p: string) => (p === 'cases.delete' ? testState.canDelete : p === 'audit.read' ? testState.canReadAudit : true),
+    hasPermission: (p: string) => (p === 'cases.delete' ? testState.canDelete : p === 'cases.write' ? testState.canWrite : p === 'audit.read' ? testState.canReadAudit : true),
   }),
 }))
 
@@ -33,6 +34,7 @@ vi.mock('../../services/api', () => ({
     ),
     delete: vi.fn(),
     update: vi.fn(() => Promise.resolve({ data: { success: true } })),
+    closeCase: vi.fn(() => Promise.resolve({ data: { success: true } })),
     getSLA: vi.fn(() => Promise.resolve({ data: { resolution_due: '2026-06-20T12:00:00Z', health_status: 'warning' } })),
     getRecord: vi.fn(() => {
       if (testState.recordError) return Promise.reject({ response: { data: { detail: testState.recordError } } })
@@ -198,6 +200,7 @@ function openCase(id: string) {
 
 beforeEach(() => {
   testState.canDelete = true
+  testState.canWrite = true
   testState.canReadAudit = true
   testState.getByIdError = false
   testState.cases = []
@@ -1019,6 +1022,77 @@ describe('case page', () => {
     expect(screen.getByText('Coming in a later release')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Reopen' }))
     await waitFor(() => expect(casesApi.update).toHaveBeenCalledWith('case-closed', { status: 'open' }))
+  })
+
+  it('hides Reopen from a user without cases.write', async () => {
+    testState.canWrite = false
+    closedCase(CLOSURE)
+    testState.runs['run-closed'] = { projection: { iterations: 1, decisions: [], findings: [], calls: [], gaps: [], recall: null } }
+    await renderCase('case-closed')
+
+    expect(await screen.findByRole('heading', { name: 'the scanner' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reopen' })).not.toBeInTheDocument()
+  })
+
+  describe('closing an open case from its Summary', () => {
+    const openCase = async () => {
+      vi.mocked(casesApi.update).mockClear()
+      vi.mocked(casesApi.closeCase).mockClear()
+      testState.cases = [{
+        case_id: 'case-open',
+        title: 'Open case',
+        status: 'open',
+        priority: 'high',
+        finding_ids: [],
+        created_at: '2026-06-15T09:14:00Z',
+        combined_state: 'open',
+        investigations: [],
+      }]
+      await renderCase('case-open')
+      await screen.findByRole('heading', { name: 'Open case' })
+    }
+    const dialog = () => within(screen.getByRole('dialog', { name: 'Close case' }))
+
+    it('shows Close case only to a user with cases.write', async () => {
+      testState.canWrite = false
+      await openCase()
+      expect(screen.queryByRole('button', { name: 'Close case' })).not.toBeInTheDocument()
+    })
+
+    it('closes through closeCase alone, never a status update', async () => {
+      await openCase()
+      fireEvent.click(screen.getByRole('button', { name: 'Close case' }))
+      fireEvent.click(dialog().getByRole('button', { name: 'Close case' }))
+
+      await waitFor(() => expect(casesApi.closeCase).toHaveBeenCalledWith('case-open', { closure_category: 'resolved', closure_notes: undefined }))
+      expect(casesApi.update).not.toHaveBeenCalled()
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Close case' })).not.toBeInTheDocument())
+    })
+
+    it('blocks a false positive with no reason, then sends the reason as its own field', async () => {
+      await openCase()
+      fireEvent.click(screen.getByRole('button', { name: 'Close case' }))
+      fireEvent.click(dialog().getByLabelText('What it turned out to be'))
+      fireEvent.click(await screen.findByRole('option', { name: 'False positive' }))
+      fireEvent.click(dialog().getByRole('button', { name: 'Close case' }))
+
+      expect(dialog().getByText(/Say why this is a false positive/)).toBeInTheDocument()
+      expect(casesApi.closeCase).not.toHaveBeenCalled()
+
+      fireEvent.change(dialog().getByRole('textbox'), { target: { value: ' scanner ' } })
+      fireEvent.click(dialog().getByRole('button', { name: 'Close case' }))
+      await waitFor(() => expect(casesApi.closeCase).toHaveBeenCalledWith('case-open', { closure_category: 'false_positive', false_positive_reason: 'scanner' }))
+      expect(casesApi.update).not.toHaveBeenCalled()
+    })
+
+    it('shows a failed close inside the dialog and keeps it open', async () => {
+      vi.mocked(casesApi.closeCase).mockRejectedValueOnce({ response: { data: { detail: 'No database' } } })
+      await openCase()
+      fireEvent.click(screen.getByRole('button', { name: 'Close case' }))
+      fireEvent.click(dialog().getByRole('button', { name: 'Close case' }))
+
+      expect(await dialog().findByText('No database')).toBeInTheDocument()
+    })
   })
 
   it('drops a missing category and closer kind from the Closed line without stray separators', async () => {
