@@ -2,8 +2,8 @@
 
 The daemon's triage and the AI-insights refresh call through here; the
 llm-worker drains the queue under a shared cap on calls in flight, with ARQ's
-job persistence and retries. A job whose caller has stopped waiting is dropped
-by the worker, not run late: ``submit`` sets the job's expiry to its timeout.
+job persistence and retries. A job no worker has started within its timeout is
+dropped by the worker, not run late: ``submit`` sets the job's expiry to it.
 """
 
 import asyncio
@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
-from arq.jobs import DeserializationError
+from arq.jobs import DeserializationError, JobStatus
 
 from core.llm.defaults import DEFAULT_MODEL
 from core.redis_client import arq_redis_settings
@@ -20,6 +20,8 @@ from core.redis_client import arq_redis_settings
 logger = logging.getLogger(__name__)
 
 QUEUE_NAME = "arq:llm"
+# The llm-worker's limit on one call once it has started it.
+JOB_TIMEOUT = 180
 
 
 def redis_settings() -> RedisSettings:
@@ -97,10 +99,10 @@ class LLMGateway:
 
         The job expires after ``timeout`` seconds. A worker that picks it up
         later skips it without a model call, so a caller that gave up leaves
-        no stale work behind. The expiry is set at enqueue time because the
-        daemon wraps the whole call in ``asyncio.wait_for`` with the same
-        timeout and usually cancels this coroutine before a ``TimeoutError``
-        handler here could run.
+        no stale work behind. A job a worker has already started runs to the
+        end whether anyone waits or not, so its result is waited for, up to
+        ``JOB_TIMEOUT``, instead of being thrown away. A local model can spend
+        most of ``timeout`` loading before it answers.
         """
         job = await self._pool.enqueue_job(
             "llm_call",
@@ -114,7 +116,15 @@ class LLMGateway:
             _expires=timeout,
         )
         try:
-            return await job.result(timeout=timeout)
+            try:
+                return await job.result(timeout=timeout)
+            except asyncio.TimeoutError:
+                if await job.status() not in (
+                    JobStatus.in_progress,
+                    JobStatus.complete,
+                ):
+                    raise
+                return await job.result(timeout=JOB_TIMEOUT)
         except DeserializationError as exc:
             logger.error(
                 "arq job result deserialization failed (stale or incompatible "
