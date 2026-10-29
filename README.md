@@ -360,7 +360,7 @@ Guides live at **[vigilsoc.org/docs](https://vigilsoc.org/docs/)**:
 
 ## Contributing
 
-Contributions are welcome: bug fixes, integrations, agent prompts, workflows, or new agents. Join the community on [Discord](https://discord.gg/Kw68sPJU).
+Contributions are welcome: bug fixes, integrations, agent prompts, workflows, or new agents. Join the community on [Discord](https://discord.gg/nVprk5uHGq).
 
 1. Fork the repo and create a feature branch.
 2. Make your changes and test them.
