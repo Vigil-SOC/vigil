@@ -1,7 +1,10 @@
 """One read of the intake queue for the Triage screen.
 
-The rows are every ``intake_triggers`` row plus one ``not_picked_up`` row per
-finding that never got an intake row and is on no case. ``counts`` cover all of
+One row per alert: its latest ``intake_triggers`` row, plus one ``not_picked_up``
+row per finding that never got an intake row and is on no case (or is marked as
+noise). An alert whose latest row is not queued and that is on no case is also
+``not_picked_up``, as on Overview. Ask and schedule rows have no alert and are all
+kept. An alert marked as noise is only ``dismissed``. ``counts`` cover all of
 them, as SQL aggregates. Kind, source, and state narrow only the returned rows,
 in SQL before the cap; only the rows returned are loaded and presented. Ranking
 is ``rank_intake_row``; this module does not keep a second sort key.
@@ -16,6 +19,7 @@ from typing import Optional
 from sqlalchemy import (
     Integer,
     String,
+    and_,
     case,
     cast,
     distinct,
@@ -23,7 +27,9 @@ from sqlalchemy import (
     func,
     literal,
     null,
+    or_,
 )
+from sqlalchemy.orm import aliased
 
 from core.federation.lag import source_collection_lag
 from core.findings.arrival_counts import arrivals_today_by_source, utc_day_bounds
@@ -43,20 +49,20 @@ from services.daemon.config import OrchestratorConfig
 from services.daemon.orchestrator import _link_note, intake_rank_inputs, rank_intake_row
 
 ROW_CAP = 200
-ARRIVAL_INFO = "Arrivals count every finding stored today. The list is the intake rows."
+ARRIVAL_INFO = (
+    "Arrivals count every finding stored today. The list is one row per alert."
+)
 _PICKUP_STATES = ("launched", "merged")
-# Not an intake state: rows whose alert was marked as noise, whatever their intake
-# state, so the Overview's "Dismissed as noise" count can open the queue at them.
+# Not an intake state: an alert marked as noise is only this, whatever its intake
+# state, so the Overview's "Dismissed as noise" count opens the queue at them.
 NOISE_STATE = "dismissed"
-# A finding with no intake row and no case: Overview's "Not picked up".
+# An alert on no case and not waiting, whatever its old rows say: Overview's "Not picked up".
 NOT_PICKED_UP = "not_picked_up"
 # An alert whose finding has no data_source counts and filters under this name.
 UNKNOWN_SOURCE = "Unknown"
 NOISE_LABEL = "Dismissed as noise"
-# A noise mark wins over "no case" (alert_outcomes._state); a decided row keeps its word.
-_NOISE_LABEL_STATES = ("queued", NOT_PICKED_UP)
 
-ARRIVAL_INFO_ALL = "Arrivals count every finding stored. The list is the intake rows."
+ARRIVAL_INFO_ALL = "Arrivals count every finding stored. The list is one row per alert."
 _TRUST_FLOOR_INFO = {
     "source": "Not recorded yet: Vigil keeps no per-source trust score.",
     "calculation": "The lowest score a finding needs before it is picked up automatically.",
@@ -69,8 +75,8 @@ STRIP_INFO = {
         "calculation": "Rows that launched a workflow or merged into a case, divided by rows created today.",
     },
     "waiting": {
-        "source": "Rows in the list that arrived today (UTC day) and are still queued.",
-        "calculation": "A count of rows in the Waiting state right now.",
+        "source": "Alerts in the list that arrived today (UTC day) and are still queued.",
+        "calculation": "A count of alerts in the Waiting state right now, noise-marked ones excluded.",
     },
     "cases_created_today": {
         "source": "Intake rows launched today (UTC day) that opened a case.",
@@ -84,8 +90,8 @@ STRIP_INFO_ALL = {
         "calculation": "Rows that launched a workflow or merged into a case, divided by all rows.",
     },
     "waiting": {
-        "source": "Intake rows still queued, from any day.",
-        "calculation": "A count of rows in the Waiting state right now.",
+        "source": "Alerts still queued, from any day.",
+        "calculation": "A count of alerts in the Waiting state right now, noise-marked ones excluded.",
     },
     "cases_created_today": {
         "source": "Intake rows from any day that launched and opened a case.",
@@ -216,17 +222,32 @@ def _source_column():
 
 
 def _rows(session, day: Optional[date]):
-    """Intake rows and never-queued findings as one table, ``intake_id`` null for the latter.
+    """Each alert's latest intake row and never-queued findings as one table, ``intake_id`` null for the latter.
 
     ``arrived_at`` is when the row's alert arrived (an Ask or schedule row's own
     creation); with ``day`` set only rows that arrived that UTC day are kept.
     """
+    newer = aliased(IntakeTrigger)
     intake = (
         session.query(
             IntakeTrigger.id.label("intake_id"),
             IntakeTrigger.finding_id.label("finding_id"),
             IntakeTrigger.kind.label("kind"),
-            IntakeTrigger.state.label("state"),
+            # Not waiting and on no case reads as Overview's Not picked up.
+            case(
+                (
+                    and_(
+                        # a purged alert has no Finding row and keeps its old word
+                        Finding.finding_id.isnot(None),
+                        IntakeTrigger.state != "queued",
+                        ~exists().where(
+                            case_findings.c.finding_id == IntakeTrigger.finding_id
+                        ),
+                    ),
+                    literal(NOT_PICKED_UP),
+                ),
+                else_=IntakeTrigger.state,
+            ).label("state"),
             _source_column().label("source"),
             Finding.noise_marked_at.label("noise_marked_at"),
             IntakeTrigger.priority.label("priority"),
@@ -244,6 +265,13 @@ def _rows(session, day: Optional[date]):
         )
         .select_from(IntakeTrigger)
         .outerjoin(Finding, Finding.finding_id == IntakeTrigger.finding_id)
+        # An alert's older rows stay in the table, not in the list.
+        .filter(
+            ~exists().where(
+                newer.finding_id == IntakeTrigger.finding_id,
+                newer.id > IntakeTrigger.id,
+            )
+        )
     )
     never_queued = session.query(
         cast(null(), Integer),
@@ -259,7 +287,11 @@ def _rows(session, day: Optional[date]):
         Finding.created_at,
     ).filter(
         ~exists().where(IntakeTrigger.finding_id == Finding.finding_id),
-        ~exists().where(case_findings.c.finding_id == Finding.finding_id),
+        # A noise mark wins over a case: Overview counts it as dismissed.
+        or_(
+            ~exists().where(case_findings.c.finding_id == Finding.finding_id),
+            Finding.noise_marked_at.isnot(None),
+        ),
     )
     rows = intake.union_all(never_queued).subquery("all_triage_rows")
     query = session.query(rows)
@@ -277,7 +309,7 @@ def _filtered(
     if state == NOISE_STATE:
         query = query.filter(rows.c.noise_marked_at.isnot(None))
     elif state:
-        query = query.filter(rows.c.state == state)
+        query = query.filter(rows.c.state == state, rows.c.noise_marked_at.is_(None))
     if source:
         query = query.filter(rows.c.source == source)
     return query
@@ -404,6 +436,15 @@ def _load(
                 "noise_marked_at": finding.noise_marked_at,
                 "created_at": finding.created_at,
             }
+    # Same rule as _rows: an alert not waiting and on no case reads as not picked up.
+    on_case: set[str] = set()
+    if finding_ids:
+        on_case = {
+            fid
+            for (fid,) in session.query(case_findings.c.finding_id).filter(
+                case_findings.c.finding_id.in_(finding_ids)
+            )
+        }
     inv_ids = {row.investigation_id for row in triggers if row.investigation_id}
     workflows: dict[str, str] = {}
     if inv_ids:
@@ -441,7 +482,13 @@ def _load(
             {
                 "id": row.id,
                 "kind": row.kind,
-                "state": row.state,
+                "state": (
+                    NOT_PICKED_UP
+                    if row.finding_id in findings
+                    and row.state != "queued"
+                    and row.finding_id not in on_case
+                    else row.state
+                ),
                 "source": sources[row.id],
                 "priority": row.priority,
                 "finding_id": row.finding_id,
@@ -576,11 +623,7 @@ def _present(
     label, door = _state_label(
         row["state"], row.get("case_id"), row.get("merged_into"), case_ids
     )
-    dismissed = bool(
-        finding
-        and finding.get("noise_marked_at")
-        and row["state"] in _NOISE_LABEL_STATES
-    )
+    dismissed = bool(finding and finding.get("noise_marked_at"))
     if dismissed:
         label = NOISE_LABEL
     ranking = _ranking(row, now, config)
@@ -627,27 +670,22 @@ def _present(
 def _counts(session, rows) -> dict:
     """Every row by kind, source, and state, before filters and the cap.
 
-    The states partition the rows; ``NOISE_STATE`` counts across them.
+    The states, with ``NOISE_STATE`` as one of them, split the rows with no
+    overlap: a noise-marked row counts only under ``NOISE_STATE``.
     """
     kinds: dict[str, int] = {}
     sources: dict[str, int] = {}
     states: dict[str, int] = {}
     total = 0
-    for kind, state, name, n in session.query(
-        rows.c.kind, rows.c.state, rows.c.source, func.count()
-    ).group_by(rows.c.kind, rows.c.state, rows.c.source):
+    noisy = rows.c.noise_marked_at.isnot(None)
+    for kind, state, name, is_noise, n in session.query(
+        rows.c.kind, rows.c.state, rows.c.source, noisy, func.count()
+    ).group_by(rows.c.kind, rows.c.state, rows.c.source, noisy):
         total += n
         kinds[kind] = kinds.get(kind, 0) + n
+        state = NOISE_STATE if is_noise else state
         states[state] = states.get(state, 0) + n
         sources[name] = sources.get(name, 0) + n
-    noise = (
-        session.query(func.count())
-        .select_from(rows)
-        .filter(rows.c.noise_marked_at.isnot(None))
-        .scalar()
-    )
-    if noise:
-        states[NOISE_STATE] = noise
     return {"total": total, "kind": kinds, "source": sources, "state": states}
 
 
@@ -766,16 +804,14 @@ def _demo_triage(
     counts_kind: dict[str, int] = {}
     counts_source: dict[str, int] = {}
     counts_state: dict[str, int] = {}
+    noise = {f.get("finding_id") for f in findings if _noise(f)}
     for row in built:
         row_kind = str(row["kind"])
-        row_state = str(row["state"])
+        # A noise-marked alert counts only as dismissed.
+        row_state = NOISE_STATE if row["finding_id"] in noise else str(row["state"])
         counts_kind[row_kind] = counts_kind.get(row_kind, 0) + 1
         counts_state[row_state] = counts_state.get(row_state, 0) + 1
         counts_source[row["source"]] = counts_source.get(row["source"], 0) + 1
-    noise = {f.get("finding_id") for f in findings if _noise(f)}
-    noise_rows = sum(1 for row in built if row["finding_id"] in noise)
-    if noise_rows:
-        counts_state[NOISE_STATE] = noise_rows
 
     def _at(row: dict, field: str) -> Optional[datetime]:
         value = row.get(field)
@@ -802,9 +838,12 @@ def _demo_triage(
         for row in built
         if (not kind or row["kind"] == kind)
         and (
-            row["finding_id"] in noise
-            if state == NOISE_STATE
-            else not state or row["state"] == state
+            not state
+            or (
+                row["finding_id"] in noise
+                if state == NOISE_STATE
+                else row["finding_id"] not in noise and row["state"] == state
+            )
         )
         and (not source or row["source"] == source)
     ]

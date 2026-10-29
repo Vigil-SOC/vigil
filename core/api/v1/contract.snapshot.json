@@ -4548,6 +4548,56 @@
           },
           {
             "in": "query",
+            "name": "working",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Working",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "closed_by",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "agent",
+                    "person"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Closed By"
+            }
+          },
+          {
+            "in": "query",
+            "name": "alerts_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "today",
+                    "all"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Alerts From"
+            }
+          },
+          {
+            "in": "query",
             "name": "kind",
             "required": false,
             "schema": {
