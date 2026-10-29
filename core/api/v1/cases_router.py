@@ -32,7 +32,7 @@ from core.cases.case_ioc_service import CaseIOCService
 from core.cases.case_sla_service import open_case
 from core.cases.case_state import detail_fields
 from core.cases.case_status import CaseStatus, record_status_change, status_change
-from core.cases.closure import ClosureCategory
+from core.cases.closure import PERSON_CHANNELS, ClosureCategory
 from core.cases.combined_state import queue_item
 from core.cases.linked_entities import (
     LINKED_SOURCE,
@@ -40,6 +40,7 @@ from core.cases.linked_entities import (
     linked_iocs,
 )
 from core.deps import provide_workflows
+from core.findings.arrival_counts import utc_day_bounds
 from core.findings.source_link import resolve_source_link
 from core.integrations.elastic.ingestion import ElasticIngestion
 from core.response.approval_service import needs_you_case_ids
@@ -326,7 +327,12 @@ def get_cases(
             workflow_ids=workflow_ids,
             working=working,
             closed_by=closed_by,
-            alerts_from=alerts_from,
+            person_channels=PERSON_CHANNELS,
+            alerts_span=(
+                None
+                if alerts_from is None
+                else utc_day_bounds() if alerts_from == "today" else (None, None)
+            ),
         )
         strip = repo.strip(now=now, needs_you_ids=needs_you_ids)
     return {

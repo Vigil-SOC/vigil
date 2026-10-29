@@ -25,7 +25,6 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Session
 
-from core.cases.closure import PERSON_CHANNELS
 from core.storage.models import (
     Case,
     CaseClosureInfo,
@@ -46,6 +45,9 @@ from core.time import utcnow
 
 # status / priority / assignee accept either a single value or a list.
 Filterable = Optional[Union[str, Sequence[str]]]
+
+# ``(start, end)`` of when an alert was created; ``None`` leaves that side open.
+AlertSpan = Tuple[Optional[datetime], Optional[datetime]]
 
 # Default page size for ``search`` and the case queue.
 PAGE_LIMIT = 100
@@ -287,18 +289,18 @@ def _finding_source_exists(data_source: str):
     )
 
 
-def _closed_by_person_exists():
+def _closed_by_person_exists(person_channels: Sequence[str]):
     """A closure row whose channel reads as a person; no row reads as an agent."""
     return exists(
         select(CaseClosureInfo.case_id).where(
             CaseClosureInfo.case_id == Case.case_id,
-            CaseClosureInfo.close_channel.in_(PERSON_CHANNELS),
+            CaseClosureInfo.close_channel.in_(list(person_channels)),
         )
     )
 
 
-def _alerts_from_exists(alerts_from: str):
-    """Cases holding an alert created today (UTC), or any alert for ``all``.
+def _alerts_in_span_exists(span: AlertSpan):
+    """Cases holding an alert created in ``span`` (``None`` bounds are open).
 
     A noise-marked alert is the Overview's Dismissed, never in a case node, so it
     does not make its case hold alerts here.
@@ -312,12 +314,11 @@ def _alerts_from_exists(alerts_from: str):
             Finding.noise_marked_at.is_(None),
         )
     )
-    if alerts_from == "today":
-        # Lazy: arrival_counts imports core.storage, which imports this module.
-        from core.findings.arrival_counts import utc_day_bounds
-
-        start, end = utc_day_bounds()
-        held = held.where(Finding.created_at >= start, Finding.created_at < end)
+    start, end = span
+    if start is not None:
+        held = held.where(Finding.created_at >= start)
+    if end is not None:
+        held = held.where(Finding.created_at < end)
     return exists(held)
 
 
@@ -615,7 +616,8 @@ class CaseRepository:
         workflow_ids: Optional[set[str]] = None,
         working: bool = False,
         closed_by: Optional[str] = None,
-        alerts_from: Optional[str] = None,
+        person_channels: Sequence[str] = (),
+        alerts_span: Optional[AlertSpan] = None,
     ) -> Tuple[List[CaseQueueRow], int]:
         """One page of the queue.
 
@@ -631,9 +633,10 @@ class CaseRepository:
         investigation ran one of those workflows (an empty set returns none).
 
         ``working`` keeps open cases outside ``needs_you_ids``. ``closed_by``
-        (``agent`` or ``person``) keeps closed cases by the Trust rule.
-        ``alerts_from`` (``today`` or ``all``) keeps cases holding an alert
-        created in that span.
+        (``agent`` or ``person``) keeps closed cases; ``person_channels`` are the
+        close channels that read as a person, and no closure row reads as an agent.
+        ``alerts_span`` keeps cases holding an alert created in ``(start, end)``,
+        either bound open.
         """
         now = now or utcnow()
         if closed_by:
@@ -725,10 +728,10 @@ class CaseRepository:
             if needs_you_ids:
                 stmt = stmt.where(Case.case_id.notin_(sorted(needs_you_ids)))
         if closed_by:
-            person = _closed_by_person_exists()
+            person = _closed_by_person_exists(person_channels)
             stmt = stmt.where(person if closed_by == "person" else ~person)
-        if alerts_from:
-            stmt = stmt.where(_alerts_from_exists(alerts_from))
+        if alerts_span is not None:
+            stmt = stmt.where(_alerts_in_span_exists(alerts_span))
         total = self.session.execute(
             select(func.count()).select_from(stmt.subquery())
         ).scalar_one()
