@@ -1668,16 +1668,32 @@
   gap: 8px;
 }
 
-.case-page .case-findings li {
+.case-page .case-findings li { min-width: 0; font-size: 13.5px; line-height: 1.45; }
+
+.case-page .case-finding {
   display: flex;
   align-items: baseline;
   gap: 10px;
   min-width: 0;
-  font-size: 13.5px;
-  line-height: 1.45;
+  cursor: pointer;
 }
 
-.case-page .case-findings li > .case-expl-pill,
+.case-page .case-finding-text { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.case-page .case-finding.open .case-finding-text { display: block; -webkit-line-clamp: unset; }
+
+.case-page .case-findings-more {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ac);
+  cursor: pointer;
+}
+
+.case-page .case-findings-more:hover { text-decoration: underline; }
+
+.case-page .case-findings .case-expl-pill,
 .case-page .case-findings .case-findings-who,
 .case-page .case-findings .case-findings-next {
   flex-shrink: 0;
