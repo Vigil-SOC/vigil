@@ -16,6 +16,11 @@ COMMENT = "case.comment"
 COMMENT_UPDATE = "case.comment.update"
 COMMENT_DELETE = "case.comment.delete"
 EVIDENCE = "case.evidence"
+CUSTODY = "case.evidence.custody"
+IOC = "case.ioc"
+IOC_BULK = "case.ioc.bulk"
+WATCHER_ADD = "case.watcher.add"
+WATCHER_REMOVE = "case.watcher.remove"
 ESCALATE = "case.escalate"
 APPROVE = "approval.approve"
 REJECT = "approval.reject"
@@ -23,6 +28,18 @@ REJECT = "approval.reject"
 
 class TrailWriteError(Exception):
     """A trail append failed. A joined caller must not commit past it."""
+
+
+def propagates(exc: Exception, joined: bool) -> bool:
+    """Whether a write's catch-all must re-raise ``exc``.
+
+    A pause is a 503 for every caller. A joined caller must not commit past a
+    failed append; an owned session has rolled back and returns its old falsy
+    answer, which a route turns into a 500.
+    """
+    return isinstance(exc, trail.Paused) or (
+        joined and isinstance(exc, TrailWriteError)
+    )
 
 
 def _payload(action: str, principal: Optional[str], **fields: Any) -> dict[str, Any]:

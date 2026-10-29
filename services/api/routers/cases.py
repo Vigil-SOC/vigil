@@ -452,13 +452,22 @@ class WatcherAdd(BaseModel):
 @router.post(
     "/{case_id}/watchers", dependencies=_CASES_WRITE, response_model=CaseWatcherSchema
 )
-async def add_watcher(case_id: str, data: WatcherAdd):
+async def add_watcher(
+    case_id: str,
+    data: WatcherAdd,
+    current_user: User = Depends(get_current_user),
+):
     """Add watcher to case."""
     collab_service = CaseCollaborationService()
     watcher = collab_service.add_watcher(
-        case_id, data.user_id, data.notification_preferences
+        case_id,
+        data.user_id,
+        data.notification_preferences,
+        added_by=current_user.username,
     )
     if not watcher:
+        if not data_service.get_case(case_id):
+            raise HTTPException(status_code=404, detail="Case not found")
         raise HTTPException(status_code=500, detail="Failed to add watcher")
     return CaseWatcherSchema.dump(watcher)
 
@@ -468,11 +477,19 @@ async def add_watcher(case_id: str, data: WatcherAdd):
     dependencies=_CASES_WRITE,
     response_model=CaseSuccessResponse,
 )
-async def remove_watcher(case_id: str, user_id: str):
+async def remove_watcher(
+    case_id: str,
+    user_id: str,
+    current_user: User = Depends(get_current_user),
+):
     """Remove watcher from case."""
     collab_service = CaseCollaborationService()
-    success = collab_service.remove_watcher(case_id, user_id)
+    success = collab_service.remove_watcher(
+        case_id, user_id, removed_by=current_user.username
+    )
     if not success:
+        if not data_service.get_case(case_id):
+            raise HTTPException(status_code=404, detail="Case not found")
         raise HTTPException(status_code=500, detail="Failed to remove watcher")
     return {"success": True}
 
