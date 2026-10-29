@@ -2,14 +2,15 @@
 
 Every workflow is on unless its id is listed, except those in ``DEFAULT_DISABLED``
 while no row exists. Once the row exists, even as an empty list, it replaces the
-default. Unknown ids in the list are harmless: nothing looks them up.
+default. Unknown ids in the list are harmless: nothing looks them up. A workflow
+that cannot be disabled is on even if a row written before it was locked lists it.
 """
 
 import logging
 from typing import Set
 
 from core.storage.config_service import get_config_service
-from core.workflows.routing import SHADOW_WORKFLOW_ID, can_disable
+from core.workflows.routing import SHADOW_WORKFLOW_ID, always_on_reason, can_disable
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,8 @@ def disabled_workflow_ids() -> Set[str]:
 
 
 def is_enabled(workflow_id: str) -> bool:
+    if not can_disable(workflow_id):
+        return True
     return workflow_id not in disabled_workflow_ids()
 
 
@@ -38,8 +41,7 @@ def set_workflow_enabled(workflow_id: str, enabled: bool, user_id: str) -> bool:
     """
     if not enabled and not can_disable(workflow_id):
         raise ValueError(
-            f"{workflow_id} is where alerts land when nothing else fits, "
-            "so it cannot be turned off"
+            f"{workflow_id} cannot be turned off: {always_on_reason(workflow_id)}"
         )
     disabled = disabled_workflow_ids()
     if (workflow_id not in disabled) == enabled:

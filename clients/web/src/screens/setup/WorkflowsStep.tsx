@@ -15,6 +15,7 @@ interface WorkflowRow {
   description: string
   enabled: boolean
   canDisable: boolean
+  alwaysOnReason: string | null
 }
 
 type Phase = 'loading' | 'ready' | 'error'
@@ -39,6 +40,7 @@ export default function WorkflowsStep() {
           description?: string
           enabled?: boolean
           can_disable?: boolean
+          always_on_reason?: string | null
         }[]
         setRows(
           list.map((workflow) => ({
@@ -47,6 +49,7 @@ export default function WorkflowsStep() {
             description: workflow.description || '',
             enabled: workflow.enabled !== false,
             canDisable: workflow.can_disable !== false,
+            alwaysOnReason: workflow.always_on_reason ?? null,
           })),
         )
         setPhase('ready')
@@ -139,10 +142,10 @@ export default function WorkflowsStep() {
           <div className="toggle-row-text">
             <span className="toggle-row-label flex items-center gap-1.5 font-medium">
               {workflow.name}
-              {!workflow.canDisable && (
+              {!workflow.canDisable && workflow.alwaysOnReason && (
                 <InfoTip
                   label={`Why ${workflow.name} is always on`}
-                  text="Where alerts land when nothing else fits"
+                  text={workflow.alwaysOnReason}
                   align="start"
                 />
               )}
