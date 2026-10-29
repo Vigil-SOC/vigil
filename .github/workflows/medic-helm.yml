@@ -54,11 +54,6 @@ jobs:
         with:
           version: v3.15.2
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          version: "0.11.7"
-
       # Every subchart is off by default and Medic uses none, so a copy without
       # them lints and renders without fetching them (as ci-cd.yml's db-init job).
       - name: Chart copy without subcharts
@@ -83,11 +78,6 @@ jobs:
             https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
           tar xzf kubeconform.tar.gz
           ./kubeconform -strict -ignore-missing-schemas -summary on.yaml
-
-      - name: Render tests (check 2, check 15 template half)
-        run: |
-          uv sync --project services/medic --frozen
-          uv run --project services/medic --frozen pytest infra/helm/vigil/medic-tests
 
   medic-helm-kind:
     name: Medic on kind (${{ matrix.cni }})

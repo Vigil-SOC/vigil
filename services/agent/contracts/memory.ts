@@ -12,11 +12,9 @@
 // that it was never asked.
 //
 // A mismatch between the halves fails as "no history", indistinguishable from an
-// entity nobody has looked at. The Python half is core/memory/recall_contract.py
-// and tests/unit/_ratchets/test_recall_contract_agrees.py fails when they
-// disagree. It is a static check because neither side runs the other's code:
-// Python answers the read and never journals it, the harness journals it and
-// never runs the query.
+// entity nobody has looked at. The Python half is core/memory/recall_contract.py,
+// and the two must agree. Neither side runs the other's code: Python answers the
+// read and never journals it, the harness journals it and never runs the query.
 
 import type { ToolResult } from "./tool.js";
 

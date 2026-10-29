@@ -60,9 +60,7 @@ cffi==2.1.1 ; platform_python_implementation != 'PyPy'
     #   cryptography
     #   pynacl
 charset-normalizer==3.5.1
-    # via
-    #   reportlab
-    #   requests
+    # via requests
 click==8.4.2
     # via
     #   arq
@@ -85,8 +83,6 @@ dnspython==2.8.0
 docstring-parser==0.18.0
     # via anthropic
 email-validator==2.3.0
-    # via -r requirements.txt
-faker==40.43.0
     # via -r requirements.txt
 fastapi==0.141.1
     # via -r requirements.txt
@@ -114,9 +110,7 @@ httpcore2==2.12.0 ; sys_platform != 'emscripten'
 httptools==0.8.0
     # via uvicorn
 httpx==0.28.1
-    # via
-    #   -r requirements.txt
-    #   respx
+    # via -r requirements.txt
 httpx2==2.12.0
     # via
     #   anthropic
@@ -261,10 +255,6 @@ packaging==26.3
     #   pytest
 paramiko==5.0.0
     # via sshtunnel
-pillow==13.0.0
-    # via
-    #   -r requirements.txt
-    #   reportlab
 pluggy==1.6.0
     # via
     #   pytest
@@ -318,12 +308,9 @@ pytest==9.1.1
     #   -r requirements.txt
     #   pytest-asyncio
     #   pytest-cov
-    #   pytest-mock
 pytest-asyncio==1.4.0
     # via -r requirements.txt
 pytest-cov==7.1.0
-    # via -r requirements.txt
-pytest-mock==3.15.1
     # via -r requirements.txt
 python-dateutil==2.9.0.post0
     # via botocore
@@ -352,16 +339,12 @@ referencing==0.37.0
     # via
     #   jsonschema
     #   jsonschema-specifications
-reportlab==5.1.0
-    # via -r requirements.txt
 requests==2.34.2
     # via
     #   -r requirements.txt
     #   opentelemetry-exporter-http-transport
     #   opentelemetry-exporter-otlp-proto-http
     #   taxii2-client
-respx==0.23.1
-    # via -r requirements.txt
 rpds-py==2026.6.3
     # via
     #   jsonschema
@@ -436,8 +419,6 @@ typing-inspection==0.4.4
     #   mcp
     #   pydantic
     #   pydantic-settings
-tzdata==2026.3 ; sys_platform == 'win32'
-    # via faker
 urllib3==2.8.0
     # via
     #   -r requirements.txt

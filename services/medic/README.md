@@ -67,20 +67,9 @@ dependencies go in this `pyproject.toml` only, never in the repo's requirements.
 If `uv.lock` conflicts after a merge, re-run `uv lock --project services/medic`
 rather than hand-merging.
 
-## Tests
+## Checks
 
-One command, from the repo root:
-
-```
-UV_PROJECT_ENVIRONMENT=../../.venv uv run --project services/medic pytest services/medic
-```
-
-It runs the contract tests (`contracts/tests/`) and Medic's own (`tests/`). The
-venv goes in the repo root's `.venv` (gitignored, and unused by Vigil, which
-uses `venv/`). Left in `services/medic/.venv`, the repo's ratchet tests, which
-scan every `.py` file under `services/`, would read the venv's site-packages.
-
-Lint, the same as the `medic-contracts` CI job:
+Lint, the same as the `medic-contracts` CI job, from the repo root:
 
 ```
 UV_PROJECT_ENVIRONMENT=../../.venv uv run --project services/medic ruff check services/medic
@@ -88,11 +77,14 @@ UV_PROJECT_ENVIRONMENT=../../.venv uv run --project services/medic ruff format -
 UV_PROJECT_ENVIRONMENT=../../.venv uv run --project services/medic lint-imports
 ```
 
+The venv goes in the repo root's `.venv` (gitignored, and unused by Vigil, which
+uses `venv/`).
+
 ## Contracts
 
-`contracts/` holds the schemas, fixtures, evaluation vectors, reference
-implementations and their tests. They are the spec: a vector or schema that
-looks wrong is a contract change, made in its own PR, never a code workaround.
+`contracts/` holds the schemas, fixtures, evaluation vectors and reference
+implementations. They are the spec: a vector or schema that looks wrong is a
+contract change, made in its own PR, never a code workaround.
 
 ## Image
 

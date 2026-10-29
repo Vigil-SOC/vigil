@@ -1,5 +1,5 @@
 // Emit config, used only by the image build. tsconfig.json stays noEmit so
-// `npm run typecheck` and vitest are untouched.
+// `npm run typecheck` is untouched.
 //
 // NodeNext rather than the base config's "bundler": bundler resolution cannot
 // emit for node. The sources already carry .js extensions on relative imports,
@@ -22,5 +22,5 @@
     "declaration": false
   },
   "include": ["**/*.ts"],
-  "exclude": ["node_modules", "dist", "tests", "scripts", "vitest.config.ts"]
+  "exclude": ["node_modules", "dist", "tests", "scripts"]
 }
