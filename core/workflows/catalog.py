@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Set
 from sqlalchemy import func
 
 from core.agents.enablement import disabled_agent_ids
-from core.findings.overview import completion_level
+from core.findings.overview import RATED_STATUS, completion_level
 from core.llm import target
 from core.llm.providers.registry import get_registry, model_display_name
 from core.storage.connection import get_db_manager
@@ -57,7 +57,8 @@ def _week_run_stats(now: datetime) -> Dict[str, Dict[str, Any]]:
     ``started_at`` is naive UTC, so the bound is too: an aware datetime
     TypeErrors against the column. ``runs_7d`` counts every run in the window,
     running ones included. ``success_rate`` is completed over those that ended
-    (completed, failed, cancelled), null while none has. ``mean_cost_usd`` is the
+    (completed, failed, cancelled), null while none has; a run a person stopped
+    by rejecting a step is a run but not in the rate. ``mean_cost_usd`` is the
     mean over runs with ``finished_at`` set; a finished run that cost nothing is
     a real zero, null is only "nothing finished". Deleted rows stay out of all.
     """
@@ -67,11 +68,11 @@ def _week_run_stats(now: datetime) -> Dict[str, Dict[str, Any]]:
         counts = (
             session.query(
                 WorkflowRun.workflow_id,
-                WorkflowRun.status,
+                RATED_STATUS,
                 func.count(WorkflowRun.run_id),
             )
             .filter(WorkflowRun.started_at >= since, WorkflowRun.deleted_at.is_(None))
-            .group_by(WorkflowRun.workflow_id, WorkflowRun.status)
+            .group_by(WorkflowRun.workflow_id, RATED_STATUS)
             .all()
         )
         costs = (

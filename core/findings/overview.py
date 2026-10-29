@@ -7,6 +7,8 @@ from collections import Counter
 from datetime import date, datetime, timedelta
 from typing import Optional
 
+from sqlalchemy import and_, case, exists
+
 from core.findings.alert_outcomes import (
     TERMINAL_LABELS,
     finding_states,
@@ -34,7 +36,8 @@ RATE_INFO = (
     "below that. A sample of zero has no level. Rows hidden from history "
     "still count. A run that stopped at its budget, or answered without "
     "being able to look at its data, counts as completed, because that is "
-    "how the row is stored."
+    "how the row is stored. A run a person stopped by rejecting a step "
+    "is not counted."
 )
 ARRIVAL_SOURCE = {
     "today": "Findings created today (UTC) with this data source.",
@@ -73,6 +76,25 @@ _LIVE_ORDER = (
 _NODE_LABELS = {**TERMINAL_LABELS, "dismissed": "Dismissed as noise"}
 _TERMINAL_STATUSES = ("completed", "failed", "cancelled")
 _OPEN_PHASE = ("running", "pending_approval")
+
+
+# A run a person stopped by rejecting a step is stored failed, but that is the review
+# working, not the workflow failing. Rates read it as "rejected", so it is a run but
+# not in the rate, as a rejected step is for its agent (core/agents/run_stats.py).
+RATED_STATUS = case(
+    (
+        and_(
+            WorkflowRun.status == "failed",
+            exists().where(
+                WorkflowRunPhase.run_id == WorkflowRun.run_id,
+                WorkflowRunPhase.status == "failed",
+                WorkflowRunPhase.approval_state == "rejected",
+            ),
+        ),
+        "rejected",
+    ),
+    else_=WorkflowRun.status,
+)
 
 
 def completion_level(sample: int, completed: int) -> Optional[str]:
@@ -132,7 +154,7 @@ def _agent_rows(now: datetime) -> list[dict]:
     db = get_db_manager()
     with db.session_scope() as session:
         grouped = (
-            session.query(WorkflowRun.workflow_id, WorkflowRun.status)
+            session.query(WorkflowRun.workflow_id, RATED_STATUS)
             .filter(
                 WorkflowRun.started_at >= since,
                 WorkflowRun.status.in_(_TERMINAL_STATUSES),
