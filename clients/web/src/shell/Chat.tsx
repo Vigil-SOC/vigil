@@ -753,6 +753,24 @@ export default function Chat({
     }
   }
 
+  // A row clicked while Vigil is answering stops that answer, as Stop does (the server keeps what
+  // it said), then opens. The answer's own conversation goes back to it instead.
+  const openFromHistory = (id: string) => {
+    if (loading && id === sessionRef.current) {
+      setHistoryOpen(false)
+      return
+    }
+    if (loading) {
+      turnGen.current += 1
+      abortRef.current?.abort()
+      abortRef.current = null
+      setLoading(false)
+      setStreamText('')
+      setIsProcessingTools(false)
+    }
+    void openConversation(id, null, true)
+  }
+
   // the seed prompt is deterministic per finding/case, so it doubles as the
   // dedup key for reusing an existing thread
   const openInvestigation = async (prompt: string) => {
@@ -1200,7 +1218,7 @@ export default function Chat({
                       onBlur={() => commitRename(c.id)}
                     />
                   ) : (
-                    <button className="chist-main" onClick={() => openConversation(c.id)}>
+                    <button className="chist-main" onClick={() => openFromHistory(c.id)}>
                       <span className="chist-title">{c.title}</span>
                       <span className="chist-meta">
                         <span className="chist-ctx">{c.context}</span>
