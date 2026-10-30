@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent,
   type KeyboardEvent,
 } from 'react'
 import { format } from 'date-fns'
@@ -19,6 +20,7 @@ import api, {
   conversationsApi,
   reasoningApi,
   streamFetch,
+  workflowApi,
   type ConversationDetail,
 } from '../services/api'
 import { notificationService } from '../services/notifications'
@@ -35,6 +37,8 @@ import {
 } from './chatCache'
 import { Popup } from '../shared/ui'
 import { LATER_RELEASE } from '../shared/later'
+import { errorText } from '../shared/errorText'
+import { attachRefusal } from './commandBarModel'
 
 type Role = 'user' | 'vigil' | 'error'
 interface ChatMsg {
@@ -150,6 +154,12 @@ async function refusalOf(res: Response): Promise<string | null> {
   }
   return null
 }
+
+/** A file dropped on the dock: being read, refused with a reason, or read. A read file rides on every turn, as the case does. */
+type ChatFile =
+  | { status: 'reading'; name: string }
+  | { status: 'refused'; name: string; reason: string }
+  | { status: 'ready'; name: string; text: string; pages: number; condensed: boolean; named: boolean }
 
 interface CaseHit {
   id: string
@@ -341,6 +351,9 @@ export default function Chat({
   const [mentionHits, setMentionHits] = useState<CaseHit[] | null>(null)
   // the token mentionHits answers, so "No matching cases" is never shown for a search still in flight
   const [mentionFor, setMentionFor] = useState<string | null>(null)
+  const [file, setFile] = useState<ChatFile | null>(null)
+  const [dragging, setDragging] = useState(false)
+  const fileSeq = useRef(0)
   const [traceOpen, setTraceOpen] = useState(false)
   const [traceLoading, setTraceLoading] = useState(false)
   const [traceItems, setTraceItems] = useState<TraceItem[]>([])
@@ -387,6 +400,7 @@ export default function Chat({
       persistedRef.current = false
       setSessionSummary(null)
       setHistoryOpen(false)
+      dropFile()
     }
     if (!userId) {
       if (switched) setHistory([])
@@ -516,6 +530,35 @@ export default function Chat({
     }
   }
 
+  // The hunt's attachment reading: the types, size cap and condensing are the server's.
+  const attachFile = async (picked: File) => {
+    const seq = ++fileSeq.current
+    const refusal = attachRefusal(picked)
+    if (refusal) {
+      setFile({ status: 'refused', name: picked.name, reason: refusal })
+      return
+    }
+    setFile({ status: 'reading', name: picked.name })
+    try {
+      const { data } = await workflowApi.readHuntDocument(picked)
+      if (fileSeq.current === seq) setFile({ status: 'ready', name: picked.name, text: data.text, pages: data.pages, condensed: data.condensed, named: false })
+    } catch (error) {
+      if (fileSeq.current === seq) setFile({ status: 'refused', name: picked.name, reason: errorText(error, `${picked.name} could not be read`) })
+    }
+  }
+
+  function dropFile() {
+    fileSeq.current += 1
+    setFile(null)
+  }
+
+  const onDropFile = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    setDragging(false)
+    const picked = event.dataTransfer.files?.[0]
+    if (picked) void attachFile(picked)
+  }
+
   const attachCase = (hit: CaseHit) => {
     applyCase(hit.id)
     setDraft((current) => current.replace(/(^|\s)@\S*$/, '$1').trim())
@@ -531,7 +574,8 @@ export default function Chat({
       setDraft('')
       return
     }
-    if (loading) return
+    // a fresh seed leaves the file behind, so a file still being read does not hold it
+    if (loading || (file?.status === 'reading' && !opts?.fresh)) return
     setHistoryOpen(false)
     const gen = turnGen.current
     localTurn.current = true
@@ -542,7 +586,11 @@ export default function Chat({
     }
     // `fresh` keeps a new investigation's seed off an unrelated conversation
     const base = opts?.fresh ? [] : messagesRef.current
-    const next: ChatMsg[] = [...base, { role: 'user', text }]
+    // the turn a file first rides on names it, so the question reads right in history
+    const sentFile = file?.status === 'ready' && !opts?.fresh ? file : null
+    const asked = sentFile && !sentFile.named ? `${text}\n\nAttached: ${sentFile.name}` : text
+    if (sentFile && !sentFile.named) setFile({ ...sentFile, named: true })
+    const next: ChatMsg[] = [...base, { role: 'user', text: asked }]
     putMessages(next)
     setDraft('')
     setLoading(true)
@@ -564,6 +612,7 @@ export default function Chat({
         page_context?: string
         page_snapshot?: string
         case_id?: string
+        document?: { name: string; text: string }
       } = {
         messages: askedOf(next).map((m) => ({ role: m.role === 'vigil' ? 'assistant' : 'user', content: m.text })),
         session_id: sessionRef.current,
@@ -572,6 +621,7 @@ export default function Chat({
       const snapshot = getPageSnapshot(pageKey)
       if (snapshot) payload.page_snapshot = snapshot
       if (sentCase !== null) payload.case_id = sentCase
+      if (sentFile) payload.document = { name: sentFile.name, text: sentFile.text }
       const res = await streamFetch('/claude/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
@@ -704,6 +754,7 @@ export default function Chat({
     currentKeyRef.current = null
     persistedRef.current = false
     rememberCase(null)
+    dropFile()
     setSessionSummary(null)
     reloadHistory()
   }
@@ -726,6 +777,7 @@ export default function Chat({
       currentKeyRef.current = key ?? null
       persistedRef.current = true
       rememberCase(lockedCaseId ?? detail.case_id ?? null)
+      dropFile()
       setSessionSummary(null)
       return true
     } catch (error) {
@@ -740,6 +792,7 @@ export default function Chat({
         currentKeyRef.current = cached.key || key || null
         persistedRef.current = false
         rememberCase(lockedCaseId ?? null)
+        dropFile()
         setSessionSummary(null)
         return true
       }
@@ -763,6 +816,7 @@ export default function Chat({
     currentKeyRef.current = prompt
     persistedRef.current = false
     rememberCase(null)
+    dropFile()
     setKeymapEntry(userId, prompt, sessionRef.current) // so re-opening this finding restores it
     setSessionSummary(null)
     send(prompt, { fresh: true })
@@ -818,6 +872,7 @@ export default function Chat({
       persistedRef.current = false
       setSessionSummary(null)
       if (!lockedCaseId) rememberCase(null)
+      dropFile()
     }
   }
 
@@ -1011,7 +1066,12 @@ export default function Chat({
 
   const foot = (
     <div className="chat-foot">
-      <div className="chat-input">
+      <div
+        className={`chat-input${dragging ? ' dragging' : ''}`}
+        onDragOver={pinned ? undefined : (event) => { event.preventDefault(); setDragging(true) }}
+        onDragLeave={pinned ? undefined : () => setDragging(false)}
+        onDrop={pinned ? undefined : onDropFile}
+      >
         {mentionOpen && (
           <div className="chat-mention" role="listbox" aria-label="Matching cases">
             <span className="cm-head">Mention</span>
@@ -1038,6 +1098,19 @@ export default function Chat({
             </button>
           </span>
         ) : null}
+        {!pinned && file ? (
+          <span className="chat-case chat-file" data-testid="attached-file" title={file.status === 'refused' ? file.reason : file.name} role={file.status === 'refused' ? 'alert' : undefined}>
+            <span>
+              {file.name}
+              {file.status === 'reading' && ' · reading…'}
+              {file.status === 'ready' && ` · ${file.pages} page${file.pages === 1 ? '' : 's'}${file.condensed ? ' · condensed' : ''}`}
+              {file.status === 'refused' && ` · ${file.reason}`}
+            </span>
+            <button type="button" aria-label={`Remove ${file.name}`} onClick={dropFile}>
+              <Icon name="x2" size={12} />
+            </button>
+          </span>
+        ) : null}
         <textarea
           ref={taRef}
           rows={1}
@@ -1046,6 +1119,12 @@ export default function Chat({
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKeyDown}
+          onPaste={pinned ? undefined : (e) => {
+            const pasted = e.clipboardData.files?.[0]
+            if (!pasted) return
+            e.preventDefault()
+            void attachFile(pasted)
+          }}
         />
         <div className="ci-row">
           {/* the case composer shows no chip; the dock's chip sits above the textarea */}
@@ -1059,11 +1138,11 @@ export default function Chat({
               {pinned ? <Icon name="x2" size={15} /> : <span className="ci-stop" />}
             </button>
           ) : (
-            <button className="ci-send" title="Send" onClick={() => send()} disabled={!draft.trim()}><Icon name="send" /></button>
+            <button className="ci-send" title="Send" onClick={() => send()} disabled={!draft.trim() || file?.status === 'reading'}><Icon name="send" /></button>
           )}
         </div>
       </div>
-      {!pinned && <div className="chat-hint">Saved privately to your history · @ attaches · Enter sends</div>}
+      {!pinned && <div className="chat-hint">Saved privately to your history · @ attaches · drop a file · Enter sends</div>}
     </div>
   )
 
