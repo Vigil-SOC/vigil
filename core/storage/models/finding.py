@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy import (
+    Computed,
     DateTime,
     Float,
     ForeignKey,
@@ -13,7 +14,7 @@ from sqlalchemy import (
     literal_column,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import (
     Mapped,
     mapped_column,
@@ -47,6 +48,12 @@ class Finding(Base):
 
     # Entity context (optional fields)
     entity_context: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+
+    # Each address under FINDING_IP_KEYS, filled by Postgres (revision 0019);
+    # the IP-exclusion filter reads it.
+    ip_addresses: Mapped[Optional[List[str]]] = mapped_column(
+        ARRAY(Text), Computed("finding_ips(entity_context)", persisted=True)
+    )
 
     # Evidence links
     evidence_links: Mapped[Optional[List[dict]]] = mapped_column(JSONB, nullable=True)
@@ -125,6 +132,7 @@ class Finding(Base):
             postgresql_ops={"(entity_context::text)": "gin_trgm_ops"},
             postgresql_using="gin",
         ),
+        Index("idx_finding_ip_addresses", "ip_addresses", postgresql_using="gin"),
         Index(
             "uniq_findings_source_extid",
             "data_source",
