@@ -360,6 +360,11 @@
   border-color: var(--ac-ln);
 }
 
+.chat .chat-input.dragging {
+  border-color: var(--ac);
+  border-style: dashed;
+}
+
 .chat .chat-input textarea {
   font-size: 13px;
   line-height: 1.45;
@@ -397,6 +402,18 @@
 
 .chat .chat-case button:hover {
   background: var(--ac-ln);
+}
+
+/* A refused file wraps, so its reason is read in full. */
+.chat .chat-file[role='alert'] {
+  height: auto;
+  padding: 4px 4px 4px 9px;
+  border-radius: 12px;
+  color: var(--crit);
+}
+
+.chat .chat-file[role='alert'] > span {
+  white-space: normal;
 }
 
 .chat .ci-at {
