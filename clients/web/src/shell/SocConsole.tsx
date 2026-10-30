@@ -16,6 +16,7 @@ import { useColorScheme } from '../contexts/ColorSchemeContext'
 import CaseDrawer from './CaseDrawer'
 import { heldCase, holdCase } from './heldCase'
 import Chat from './Chat'
+import { DOCK_MIN, DOCK_WIDTH, useDockWidth } from './useDockWidth'
 import CommandBar from './CommandBar'
 import DevModeWarning from './DevModeWarning'
 import UserMenu from './UserMenu'
@@ -82,7 +83,8 @@ const SCREEN_PERMS: Partial<Record<ConsoleScreenKey, string>> = {
   home: HOME_PERM,
 }
 
-const CHAT_WIDTH = 400
+/** What a widened dock leaves of the page beside it. */
+const PAGE_MIN = 320
 
 const setupTip = (left: number) =>
   `Finish setting up Vigil: ${left === 1 ? '1 step is' : `${left} steps are`} left. Opens the setup steps on Home.`
@@ -144,6 +146,8 @@ function SocConsoleInner() {
 
   const { scheme } = useColorScheme()
   const [chatOpen, setChatOpen] = useState(false)
+  const dock = useDockWidth()
+  const [dockFull, setDockFull] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const [assist, setAssist] = useState<boolean | null>(null)
   const [status, setStatus] = useState<StatusFold | null>(null)
@@ -201,7 +205,10 @@ function SocConsoleInner() {
     setChatOpen(true)
     if (prompt) setChatSeed(prompt)
   }, [])
-  const closeChat = useCallback(() => setChatOpen(false), [])
+  const closeChat = useCallback(() => {
+    setChatOpen(false)
+    setDockFull(false)
+  }, [])
   // the open case: the drawer wins over the full page's ?case= param
   const pageCase = current === 'cases' && allowed ? new URLSearchParams(location.search).get('case') : null
   const openCaseId = drawerCase ?? pageCase
@@ -242,8 +249,8 @@ function SocConsoleInner() {
     const stop = tourStops[Math.min(index, Math.max(tourStops.length - 1, 0))]
     if (stop === 'attention') go('home')
     if (stop === 'nav' || stop === 'ask') setWallMode(false)
-    if (stop === 'ask') setChatOpen(false)
-  }, [tourStops, go])
+    if (stop === 'ask') closeChat()
+  }, [tourStops, go, closeChat])
 
   const showStop = useCallback((index: number) => {
     if (index < 0 || index >= tourStops.length) return
@@ -252,12 +259,12 @@ function SocConsoleInner() {
   }, [prepareStop, tourStops])
 
   const startTour = useCallback(() => {
-    setChatOpen(false)
+    closeChat()
     setViewFull(false)
     setWallMode(false)
     setTourIndex(0)
     setTourOn(true)
-  }, [])
+  }, [closeChat])
 
   const dismissTour = useCallback(() => {
     markConsoleTourSeen()
@@ -509,13 +516,19 @@ function SocConsoleInner() {
     'soc-console',
     scheme === 'light' ? 'vg-light' : 'vg-dark',
     chatOpen ? 'chat-active' : '',
+    dock.dragging ? 'chat-resizing' : '',
   ].filter(Boolean).join(' ')
 
   // these draw their own heading; Home's headline is its heading
   const ownsHeading = ['home', 'overview', 'triage', 'cases', 'workflows', 'settings'].includes(current)
   const showHeading = valid && allowed && !ownsHeading && !wallMode && !viewFull
-  const mainClass = ['main', chatOpen ? 'chat-open' : ''].filter(Boolean).join(' ')
-  const effectiveChatWidth = viewportWidth <= 600 ? viewportWidth : CHAT_WIDTH
+  // full screen covers the page rather than squeezing it to nothing
+  const mainClass = ['main', chatOpen && !dockFull ? 'chat-open' : ''].filter(Boolean).join(' ')
+  const dockMax = Math.max(DOCK_MIN, viewportWidth - PAGE_MIN)
+  const dockResizable = viewportWidth > 600 && !dockFull
+  const effectiveChatWidth = dockResizable
+    ? Math.min(dockMax, Math.max(DOCK_MIN, dock.width ?? DOCK_WIDTH))
+    : viewportWidth
   const consoleStyle = { '--chat-w': `${effectiveChatWidth}px` } as CSSProperties
   const commandBoards = [...primary.filter((item) => !foldedKeys.has(item[2])), ...more].map((item) => {
     const key = item[2]
@@ -689,6 +702,17 @@ function SocConsoleInner() {
           pageKey={current}
           pageTitle={title}
           onSeedConsumed={() => setChatSeed(null)}
+          // at 600px and under the dock already fills the screen: nothing to widen or expand
+          size={viewportWidth > 600 ? {
+            width: effectiveChatWidth,
+            min: DOCK_MIN,
+            max: dockMax,
+            resizable: dockResizable,
+            full: dockFull,
+            onFull: setDockFull,
+            preview: dock.preview,
+            commit: dock.commit,
+          } : undefined}
         />
         {drawerCase && (
           <CaseDrawer

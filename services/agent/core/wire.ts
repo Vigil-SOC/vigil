@@ -1,7 +1,7 @@
 import { SpanKind } from "@opentelemetry/api";
 import OpenAI from "openai";
 import { ZERO_TOKENS, type TokenCounts } from "../contracts/budget.js";
-import { estimateTokens, Limiter, statusOf } from "./limiter.js";
+import { AnswerBroken, estimateTokens, Limiter, statusOf } from "./limiter.js";
 import {
   ProviderError,
   type Message,
@@ -33,6 +33,9 @@ const log = logger("agent.wire");
 export const EMIT_TOOL = "emit";
 
 type Body = Omit<OpenAI.Chat.ChatCompletionCreateParams, "stream" | "stream_options">;
+
+// Takes each piece of the answer's text as it arrives.
+type Heard = (text: string) => void;
 
 // Not every provider honours response_format, so a 400 downgrades once to a tool
 // whose parameters are the schema. Keyed by model and schema together, because the
@@ -229,20 +232,48 @@ class OpenAiSurface implements Provider {
     };
   }
 
-  // Assembled before the events are emitted, so usage precedes the tool calls. The
-  // deltas are not re-emitted: nothing downstream renders a partial turn.
+  // Text is passed on as the model writes it when someone is reading, so they see the
+  // answer form. An emission is JSON and arrives whole, and a run nobody reads keeps
+  // the retry a broken answer would lose. Usage still precedes the tool calls.
   async *stream(request: TurnRequest): AsyncGenerator<ProviderEvent> {
-    const turn = request.emit === undefined ? await this.ask(request) : await this.emit(request, request.emit);
-    if (turn.content !== "") yield { type: "text_delta", text: turn.content };
+    if (request.emit !== undefined || request.live !== true) {
+      const turn = request.emit === undefined ? await this.ask(request) : await this.emit(request, request.emit);
+      if (turn.content !== "") yield { type: "text_delta", text: turn.content };
+      yield* this.ended(turn);
+      return;
+    }
+    const heard: string[] = [];
+    let wake = (): void => {};
+    let over = false;
+    const asked = this.ask(request, (text) => {
+      heard.push(text);
+      wake();
+    }).finally(() => {
+      over = true;
+      wake();
+    });
+    // Rejections surface at the await below, after the text that preceded them.
+    asked.catch(() => {});
+    for (;;) {
+      while (heard.length > 0) yield { type: "text_delta", text: heard.shift() as string };
+      if (over) break;
+      await new Promise<void>((resolve) => {
+        wake = resolve;
+      });
+    }
+    yield* this.ended(await asked);
+  }
+
+  private *ended(turn: Turn): Generator<ProviderEvent> {
     yield { type: "usage", tokens: turn.tokens };
     for (const call of turn.tool_calls) yield { type: "tool_call", call };
   }
 
-  private async ask(request: TurnRequest): Promise<Turn> {
+  private async ask(request: TurnRequest, heard?: Heard): Promise<Turn> {
     const body = (tools: readonly ToolSchema[]) => ({ model: this.wire_model, messages: wire(request.messages), ...(tools.length === 0 ? {} : { tools: wireTools(tools) }) });
-    if (request.answer === true) return await this.answer(request, body);
+    if (request.answer === true) return await this.answer(request, body, heard);
     const forced = request.tools.find((tool) => tool.id === request.force);
-    if (forced === undefined) return turnOf(await this.call(body(request.tools), request.signal));
+    if (forced === undefined) return turnOf(await this.call(body(request.tools), request.signal, heard));
     // Remembered per model like emitModes: "tool" means the gateway refuses a forced choice,
     // "prompt" that it refuses tools at all. Each is remembered once the next rung has gone
     // through: a 400 about something else is not a refusal.
@@ -252,7 +283,7 @@ class OpenAiSurface implements Provider {
     if (known === undefined) {
       try {
         const tool_choice = { type: "function" as const, function: { name: forced.id } };
-        return turnOf(await this.call({ ...body(request.tools), tool_choice }, request.signal));
+        return turnOf(await this.call({ ...body(request.tools), tool_choice }, request.signal, heard));
       } catch (error) {
         if (!refusal(error)) throw error;
       }
@@ -260,7 +291,7 @@ class OpenAiSurface implements Provider {
     // Where the choice cannot be forced, offering only the named tool is the next best thing to it.
     if (known !== "prompt") {
       try {
-        const turn = turnOf(await this.call(body([forced]), request.signal));
+        const turn = turnOf(await this.call(body([forced]), request.signal, heard));
         rememberMode(mode, "tool");
         return turn;
       } catch (error) {
@@ -276,16 +307,16 @@ class OpenAiSurface implements Provider {
 
   // Text only, over the same tools the earlier rounds declared (Anthropic refuses tool blocks in a
   // transcript that declares none). Remembered per model, like a forced choice, once the fallback has gone through.
-  private async answer(request: TurnRequest, body: (tools: readonly ToolSchema[]) => Body): Promise<Turn> {
+  private async answer(request: TurnRequest, body: (tools: readonly ToolSchema[]) => Body, heard?: Heard): Promise<Turn> {
     const mode = `answer\n${this.model}`;
     if (emitModes.get(mode) === undefined) {
       try {
-        return textOnly(turnOf(await this.call({ ...body(request.tools), tool_choice: "none" }, request.signal)), this.wire_model);
+        return textOnly(turnOf(await this.call({ ...body(request.tools), tool_choice: "none" }, request.signal, heard)), this.wire_model);
       } catch (error) {
         if (request.signal?.aborted === true || !REFUSED.has(statusOf(error) ?? 0)) throw error;
       }
     }
-    const turn = textOnly(turnOf(await this.call(body(request.tools), request.signal)), this.wire_model);
+    const turn = textOnly(turnOf(await this.call(body(request.tools), request.signal, heard)), this.wire_model);
     rememberMode(mode, "tool");
     return turn;
   }
@@ -380,23 +411,23 @@ class OpenAiSurface implements Provider {
 
   // Streamed, and not for the deltas: a buffered completion is subject to the gateway's
   // non-streaming ceiling -- 30 seconds in Bifrost, returned as a 504.
-  private async call(body: Body, signal?: AbortSignal): Promise<OpenAI.Chat.ChatCompletion> {
+  private async call(body: Body, signal?: AbortSignal, heard?: Heard): Promise<OpenAI.Chat.ChatCompletion> {
     // Before the limiter, not only inside the request: a call still queued behind
     // a rate limit is the cheapest one to give up on.
     signal?.throwIfAborted();
     if (takesCacheMarker(this.provider_type, this.model)) body = { ...body, messages: cacheable(body.messages) };
     const cap = outputCaps.get(this.model) ?? "max_tokens";
     try {
-      return await this.send(body, cap, signal);
+      return await this.send(body, cap, signal, heard);
     } catch (error) {
       const other = renamed(error, cap);
       if (other === null) throw error;
       outputCaps.set(this.model, other);
-      return await this.send(body, other, signal);
+      return await this.send(body, other, signal, heard);
     }
   }
 
-  private async send(body: Body, cap: OutputCap, signal?: AbortSignal): Promise<OpenAI.Chat.ChatCompletion> {
+  private async send(body: Body, cap: OutputCap, signal?: AbortSignal, heard?: Heard): Promise<OpenAI.Chat.ChatCompletion> {
     let wasted: TokenCounts = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
     // A cancel mid-retry still owes what the empty replies before it burned.
     const cancelled = (error: unknown): unknown => {
@@ -406,7 +437,7 @@ class OpenAiSurface implements Provider {
       return new ProviderError(error instanceof Error ? error.message : String(error), tokens);
     };
     for (let attempt = 0; ; attempt += 1) {
-      const { response, reported } = await this.sendOnce(body, cap, signal).catch((error: unknown) => {
+      const { response, reported } = await this.sendOnce(body, cap, signal, heard).catch((error: unknown) => {
         throw cancelled(error);
       });
       if (response.choices[0]?.finish_reason === "length" && !said(response)) {
@@ -433,7 +464,7 @@ class OpenAiSurface implements Provider {
 
   // One request. `reported` says the gateway sent usage: a guessed usage cannot tell
   // an empty reply from one the stream lost.
-  private async sendOnce(body: Body, cap: OutputCap, signal?: AbortSignal): Promise<{ response: OpenAI.Chat.ChatCompletion; reported: boolean }> {
+  private async sendOnce(body: Body, cap: OutputCap, signal?: AbortSignal, heard?: Heard): Promise<{ response: OpenAI.Chat.ChatCompletion; reported: boolean }> {
     let reported = false;
     const ceiling = maxOutputTokens();
     const limit = cap === "max_tokens" ? { max_tokens: ceiling } : { max_completion_tokens: ceiling };
@@ -463,7 +494,21 @@ class OpenAiSurface implements Provider {
         if (!(Symbol.asyncIterator in stream)) {
           throw new ProviderError("the gateway answered a stream request with a whole completion");
         }
-        const response = await assemble(stream);
+        let spoken = "";
+        const response = await assemble(
+          stream,
+          heard &&
+            ((text) => {
+              spoken += text;
+              heard(text);
+            }),
+        ).catch((error: unknown) => {
+          if (spoken === "" || signal?.aborted === true) throw error;
+          // Asked again, the second answer would follow the first on the reader's screen.
+          // The gateway never reported usage, so what it burned is guessed.
+          const tokens = { ...ZERO_TOKENS, input: estimate, output: estimateTokens(spoken) };
+          throw new AnswerBroken(error instanceof Error ? error.message : String(error), tokens);
+        });
         reported = response.usage !== undefined;
         const usage = response.usage ?? guessed(estimate, response);
         // The SDK ends a stream aborted mid-body as if it had finished. A cut-off answer
@@ -525,7 +570,7 @@ function honours(content: string, schema: Record<string, unknown>): boolean {
 
 // One completion out of its chunks. A tool call arrives split across them, so held ids
 // and names are kept rather than overwritten by the nulls that follow.
-async function assemble(stream: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>): Promise<OpenAI.Chat.ChatCompletion> {
+async function assemble(stream: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>, heard?: Heard): Promise<OpenAI.Chat.ChatCompletion> {
   const calls = new Map<number, OpenAI.Chat.ChatCompletionMessageFunctionToolCall>();
   let content = "";
   let usage: OpenAI.CompletionUsage | undefined;
@@ -539,7 +584,9 @@ async function assemble(stream: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>):
     const choice = chunk.choices[0];
     if (choice === undefined) continue;
     if (choice.finish_reason) finish = choice.finish_reason;
-    content += textOf(choice.delta.content);
+    const text = textOf(choice.delta.content);
+    content += text;
+    if (text !== "") heard?.(text);
     for (const delta of choice.delta.tool_calls ?? []) {
       const held = calls.get(delta.index);
       calls.set(delta.index, {

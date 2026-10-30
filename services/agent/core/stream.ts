@@ -560,7 +560,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
     };
 
     try {
-      for await (const event of this.harness.provider.stream({ ...request, ...signal })) {
+      for await (const event of this.harness.provider.stream({ ...request, ...(this.cfg.live === true ? { live: true } : {}), ...signal })) {
         if (event.type === "tool_call") tool_calls.push(event.call);
         else if (event.type === "text_delta") {
           content += event.text;
