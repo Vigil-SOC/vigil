@@ -55,7 +55,8 @@ load_env() {
     # Same rule as start.sh: a JWT the caller exported wins; one in .env must not
     # be turned into an exported variable that outranks secrets.enc.
     local caller_jwt="${JWT_SECRET_KEY:-}"
-    if [ -f "$ENV_FILE" ]; then set -a; source "$ENV_FILE"; set +a; fi
+    # tr: a .env saved by a Windows editor has CRLF line endings.
+    if [ -f "$ENV_FILE" ]; then set -a; eval "$(tr -d '\r' < "$ENV_FILE")"; set +a; fi
     if [ -n "$caller_jwt" ]; then export JWT_SECRET_KEY="$caller_jwt"; else unset JWT_SECRET_KEY; fi
 }
 detect_project() {

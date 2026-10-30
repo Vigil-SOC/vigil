@@ -58,12 +58,7 @@ prepare_backup_run() {
     # Compose operators pass JWT_SECRET_KEY from their shell. It outranks .env,
     # and the .env sourced below must not turn into one.
     local caller_jwt="${JWT_SECRET_KEY:-}"
-    if [ -f "$REPO_ROOT/.env" ]; then
-        set -a
-        # shellcheck disable=SC1091
-        source "$REPO_ROOT/.env"
-        set +a
-    fi
+    if [ -f "$REPO_ROOT/.env" ]; then source_env_file "$REPO_ROOT/.env"; fi
     if [ -n "$caller_jwt" ]; then
         export JWT_SECRET_KEY="$caller_jwt"
     else

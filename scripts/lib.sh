@@ -356,14 +356,27 @@ deps_source() {
     fi
 }
 
+# Export every assignment in an env file. A Windows editor saves .env with CRLF,
+# and bash would run each "\r" as a command and end every value with one, so the
+# copy bash reads drops them. The file itself is left as written. eval, not
+# `source <(...)`: macOS's /bin/bash 3.2 sources nothing from a process
+# substitution.
+source_env_file() {
+    local _env_body
+    _env_body="$(tr -d '\r' < "$1")"
+    set -a
+    eval "$_env_body"
+    set +a
+}
+
 # --- Load .env (preserves caller-supplied vars) ---
 load_env() {
     if [ -f "$REPO_ROOT/.env" ]; then
-        set -a; source "$REPO_ROOT/.env"; set +a
+        source_env_file "$REPO_ROOT/.env"
     elif [ -f "$REPO_ROOT/env.example" ]; then
         # Owner-only: it comes to hold the agent layer's token (ensure_agent_token).
         (umask 077; cp "$REPO_ROOT/env.example" "$REPO_ROOT/.env")
-        set -a; source "$REPO_ROOT/.env"; set +a
+        source_env_file "$REPO_ROOT/.env"
     fi
 }
 
