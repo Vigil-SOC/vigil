@@ -128,7 +128,9 @@ def _case_runs():
             "last_activity_at"
         ),
     ).where(
-        run_case_id.isnot(None),
+        # Only cases that still exist: a deleted case leaves its runs behind, and
+        # they would otherwise be ranked on every read.
+        run_case_id.in_(select(Case.case_id)),
         WorkflowRun.deleted_at.is_(None),
         ~exists().where(
             Investigation.investigation_id
