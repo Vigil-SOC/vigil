@@ -4256,6 +4256,7 @@
  "index idx_user_role_id": "CREATE INDEX idx_user_role_id ON public.users USING btree (role_id)",
  "index idx_user_username": "CREATE INDEX idx_user_username ON public.users USING btree (username)",
  "index idx_workflow_run_phases_run_id": "CREATE INDEX idx_workflow_run_phases_run_id ON public.workflow_run_phases USING btree (run_id, phase_order)",
+ "index idx_workflow_runs_case_id": "CREATE INDEX idx_workflow_runs_case_id ON public.workflow_runs USING btree (((trigger_context ->> 'case_id'::text))) WHERE (deleted_at IS NULL)",
  "index idx_workflow_runs_live": "CREATE INDEX idx_workflow_runs_live ON public.workflow_runs USING btree (workflow_id, started_at DESC) WHERE (deleted_at IS NULL)",
  "index idx_workflow_runs_started_at": "CREATE INDEX idx_workflow_runs_started_at ON public.workflow_runs USING btree (started_at DESC)",
  "index idx_workflow_runs_status": "CREATE INDEX idx_workflow_runs_status ON public.workflow_runs USING btree (status) WHERE ((status)::text = ANY ((ARRAY['running'::character varying, 'failed'::character varying])::text[]))",
