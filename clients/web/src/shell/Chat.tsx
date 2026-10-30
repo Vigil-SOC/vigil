@@ -16,6 +16,7 @@ import { VigilMark } from '../shared/VigilLogo'
 import { TITLES } from '../data/data'
 import { Cost } from '../shared/cost'
 import api, {
+  casesApi,
   conversationsApi,
   reasoningApi,
   streamFetch,
@@ -341,6 +342,7 @@ export default function Chat({
   const [mentionHits, setMentionHits] = useState<CaseHit[] | null>(null)
   // the token mentionHits answers, so "No matching cases" is never shown for a search still in flight
   const [mentionFor, setMentionFor] = useState<string | null>(null)
+  const [mentionActive, setMentionActive] = useState(0)
   const [traceOpen, setTraceOpen] = useState(false)
   const [traceLoading, setTraceLoading] = useState(false)
   const [traceItems, setTraceItems] = useState<TraceItem[]>([])
@@ -477,15 +479,19 @@ export default function Chat({
 
   const token = lockedCaseId ? null : mentionToken(draft)
   useEffect(() => {
-    if (token == null || !token.trim()) {
-      setMentionHits(token == null ? null : [])
+    setMentionActive(0)
+    if (token == null) {
+      setMentionHits(null)
       setMentionFor(null)
       return
     }
     let live = true
     const timer = setTimeout(() => {
-      api
-        .get('/cases/search/full-text', { params: { query: token } })
+      // A bare @ offers the open cases, first those that need you; a token searches every case.
+      const read = token.trim()
+        ? api.get('/cases/search/full-text', { params: { query: token } })
+        : casesApi.getAll({ limit: 5 })
+      read
         .then((res) => {
           if (!live) return
           setMentionHits(caseHits(res.data))
@@ -933,6 +939,27 @@ export default function Chat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, seed, lockedCaseId, loading])
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // An open mention list takes the arrows, and Enter or Tab attaches the highlighted case, as in the command bar.
+    // Only a list that answers what is typed: until then the keys wait rather than pick an older hit or send.
+    const hits = token != null && mentionFor === token ? mentionHits : null
+    const pick = (e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab'
+    if (token != null && mentionFor !== token && pick) {
+      e.preventDefault()
+      return
+    }
+    if (hits && hits.length > 0) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        const step = e.key === 'ArrowDown' ? 1 : -1
+        setMentionActive((i) => (i + step + hits.length) % hits.length)
+        return
+      }
+      if (pick) {
+        e.preventDefault()
+        attachCase(hits[Math.min(mentionActive, hits.length - 1)])
+        return
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       send()
@@ -1018,8 +1045,16 @@ export default function Chat({
             {mentionHits.length === 0 ? (
               <div className="cm-empty">{!token?.trim() ? 'Type a case id or title' : mentionFor === token ? 'No matching cases' : 'Searching…'}</div>
             ) : (
-              mentionHits.map((hit) => (
-                <button key={hit.id} type="button" role="option" onMouseDown={(e) => e.preventDefault()} onClick={() => attachCase(hit)}>
+              mentionHits.map((hit, i) => (
+                <button
+                  key={hit.id}
+                  type="button"
+                  role="option"
+                  aria-selected={i === mentionActive}
+                  className={i === mentionActive ? 'on' : undefined}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => attachCase(hit)}
+                >
                   <span className="cm-tile"><Icon name="cases" size={14} /></span>
                   <span className="cm-text">
                     <span className="cm-title">{hit.title}</span>
