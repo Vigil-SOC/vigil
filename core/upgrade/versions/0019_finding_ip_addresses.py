@@ -4,7 +4,7 @@ filter (#3494)."""
 from core.upgrade.revision import run_sql
 
 revision = "0019_finding_ip_addresses"
-down_revision = "0018_legacy_audit_copy"
+down_revision = "0019_workflow_runs_case_id_index"
 
 
 def upgrade() -> None:
