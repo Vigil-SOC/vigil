@@ -10,6 +10,7 @@ import { format } from 'date-fns'
 import { Markdown, type MarkdownCite } from '../shared/Markdown'
 import { citePattern, type Citation } from './citations'
 import { ThreadGrip } from './ThreadGrip'
+import { DockGrip } from './DockGrip'
 import { useThreadHeight } from './useThreadHeight'
 import { Icon } from '../shared/icons'
 import { VigilMark } from '../shared/VigilLogo'
@@ -292,6 +293,7 @@ export default function Chat({
   onCite,
   onTurnDone,
   collapseKey,
+  size,
 }: {
   open: boolean
   onClose: () => void
@@ -311,6 +313,17 @@ export default function Chat({
   onTurnDone?: () => void
   /** When this changes (the case tab), a pinned thread folds to its last exchange. */
   collapseKey?: string
+  /** The dock's width and full-screen state, owned by the console so the page reflows beside it. */
+  size?: {
+    width: number
+    min: number
+    max: number
+    resizable: boolean
+    full: boolean
+    onFull: (full: boolean) => void
+    preview: (width: number) => void
+    commit: (width: number | null) => void
+  }
 }) {
   const userId = useAuth().user?.user_id ?? null
   const [messages, setMessages] = useState<ChatMsg[]>([])
@@ -424,21 +437,28 @@ export default function Chat({
 
   // the trace dialog owns its Esc + focus handling
   const anyPopupOpen = traceOpen
+  const full = size?.full ?? false
+  const onFull = size?.onFull
 
   // never while the trace Popup is open: it handles its own Esc, and closing
   // the dock too would dismiss both at once. Esc steps back one layer: rename
-  // field, mention list, history view, then the dock.
+  // field, mention list, history view, full screen, then the dock.
   useEffect(() => {
     if (!open || pinned) return
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key !== 'Escape' || anyPopupOpen || renamingId) return
       if (historyOpen) setHistoryOpen(false)
       else if (mentionHits) setMentionHits(null)
+      else if (full) {
+        // so a case drawer under the dock stays open
+        e.preventDefault()
+        onFull?.(false)
+      }
       else onClose()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [open, pinned, mentionHits, onClose, anyPopupOpen, historyOpen, renamingId])
+  }, [open, pinned, mentionHits, onClose, anyPopupOpen, historyOpen, renamingId, full, onFull])
 
   // unless a Popup is up, which traps focus itself
   const onPanelKeyDown = (e: KeyboardEvent<HTMLElement>) => {
@@ -1238,12 +1258,15 @@ export default function Chat({
     ) : (
     <aside
       ref={panelRef}
-      className={`chat${open ? ' open' : ''}`}
+      className={`chat${open ? ' open' : ''}${full ? ' full' : ''}`}
       role="dialog"
       aria-label="Ask Vigil"
       aria-hidden={!open}
       onKeyDown={onPanelKeyDown}
     >
+      {size?.resizable && open && (
+        <DockGrip width={size.width} min={size.min} max={size.max} preview={size.preview} commit={size.commit} />
+      )}
       <div className="chat-head">
         <span className="ch-ico"><VigilMark /></span>
         <h3 className="ch-title">Ask Vigil</h3>
@@ -1273,6 +1296,16 @@ export default function Chat({
           >
             <Icon name="plus" />
           </button>
+          {size && (
+            <button
+              type="button"
+              title={full ? 'Back to side panel' : 'Full screen'}
+              aria-label={full ? 'Back to side panel' : 'Full screen'}
+              onClick={() => size.onFull(!full)}
+            >
+              <Icon name={full ? 'shrink' : 'fit'} />
+            </button>
+          )}
           <button type="button" title="Close Ask Vigil" aria-label="Close Ask Vigil" onClick={onClose}><Icon name="close" /></button>
         </div>
       </div>
