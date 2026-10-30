@@ -232,11 +232,12 @@ class OpenAiSurface implements Provider {
     };
   }
 
-  // Text is passed on as the model writes it, so a reader sees the answer form. An
-  // emission is JSON and arrives whole. Usage still precedes the tool calls.
+  // Text is passed on as the model writes it when someone is reading, so they see the
+  // answer form. An emission is JSON and arrives whole, and a run nobody reads keeps
+  // the retry a broken answer would lose. Usage still precedes the tool calls.
   async *stream(request: TurnRequest): AsyncGenerator<ProviderEvent> {
-    if (request.emit !== undefined) {
-      const turn = await this.emit(request, request.emit);
+    if (request.emit !== undefined || request.live !== true) {
+      const turn = request.emit === undefined ? await this.ask(request) : await this.emit(request, request.emit);
       if (turn.content !== "") yield { type: "text_delta", text: turn.content };
       yield* this.ended(turn);
       return;
@@ -268,7 +269,7 @@ class OpenAiSurface implements Provider {
     for (const call of turn.tool_calls) yield { type: "tool_call", call };
   }
 
-  private async ask(request: TurnRequest, heard: Heard): Promise<Turn> {
+  private async ask(request: TurnRequest, heard?: Heard): Promise<Turn> {
     const body = (tools: readonly ToolSchema[]) => ({ model: this.wire_model, messages: wire(request.messages), ...(tools.length === 0 ? {} : { tools: wireTools(tools) }) });
     if (request.answer === true) return await this.answer(request, body, heard);
     const forced = request.tools.find((tool) => tool.id === request.force);
@@ -306,7 +307,7 @@ class OpenAiSurface implements Provider {
 
   // Text only, over the same tools the earlier rounds declared (Anthropic refuses tool blocks in a
   // transcript that declares none). Remembered per model, like a forced choice, once the fallback has gone through.
-  private async answer(request: TurnRequest, body: (tools: readonly ToolSchema[]) => Body, heard: Heard): Promise<Turn> {
+  private async answer(request: TurnRequest, body: (tools: readonly ToolSchema[]) => Body, heard?: Heard): Promise<Turn> {
     const mode = `answer\n${this.model}`;
     if (emitModes.get(mode) === undefined) {
       try {
@@ -493,17 +494,20 @@ class OpenAiSurface implements Provider {
         if (!(Symbol.asyncIterator in stream)) {
           throw new ProviderError("the gateway answered a stream request with a whole completion");
         }
-        let spoke = false;
+        let spoken = "";
         const response = await assemble(
           stream,
           heard &&
             ((text) => {
-              spoke = true;
+              spoken += text;
               heard(text);
             }),
         ).catch((error: unknown) => {
+          if (spoken === "" || signal?.aborted === true) throw error;
           // Asked again, the second answer would follow the first on the reader's screen.
-          throw spoke && signal?.aborted !== true ? new AnswerBroken(error instanceof Error ? error.message : String(error)) : error;
+          // The gateway never reported usage, so what it burned is guessed.
+          const tokens = { ...ZERO_TOKENS, input: estimate, output: estimateTokens(spoken) };
+          throw new AnswerBroken(error instanceof Error ? error.message : String(error), tokens);
         });
         reported = response.usage !== undefined;
         const usage = response.usage ?? guessed(estimate, response);

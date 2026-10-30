@@ -1,5 +1,6 @@
 import pLimit from "p-limit";
 import { errorFields, logger } from "./log.js";
+import { ProviderError } from "./provider.js";
 
 export interface RateLimit {
   rpm: number;
@@ -11,8 +12,8 @@ export interface RateLimit {
 export class GatewayExhausted extends Error {}
 
 // A call whose answer had begun reaching the reader when it failed. Not retried:
-// a second answer would follow the first.
-export class AnswerBroken extends Error {}
+// a second answer would follow the first. Carries what the cut-off answer burned.
+export class AnswerBroken extends ProviderError {}
 
 const log = logger("agent.limiter");
 

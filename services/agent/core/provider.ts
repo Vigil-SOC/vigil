@@ -33,6 +33,9 @@ export interface TurnRequest {
   // prefix still matches, with tool_choice "none". A gateway that refuses that is sent the tools
   // offered, and any call in the reply is dropped.
   answer?: boolean;
+  // Pass the answer's text on as the model writes it: a person is reading. A call that
+  // breaks after its first words is then not retried, so only a conversation sets it.
+  live?: boolean;
   signal?: AbortSignal;
 }
 
