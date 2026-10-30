@@ -8280,6 +8280,16 @@ export interface components {
             new_password: string;
         };
         /**
+         * ChatDocument
+         * @description A file attached in the dock, already read by POST /workflows/threat-hunt/document.
+         */
+        ChatDocument: {
+            /** Name */
+            name: string;
+            /** Text */
+            text: string;
+        };
+        /**
          * ChatMessage
          * @description Chat message model.
          */
@@ -8298,6 +8308,7 @@ export interface components {
             agent_id?: string | null;
             /** Case Id */
             case_id?: string | null;
+            document?: components["schemas"]["ChatDocument"] | null;
             /** Messages */
             messages: components["schemas"]["ChatMessage"][];
             /** Page Context */
