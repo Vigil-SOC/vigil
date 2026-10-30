@@ -2,8 +2,8 @@
 
 One row per alert, built from ``Finding``. Which group an alert is in is
 ``alert_outcomes.alert_group``, the rule Overview reads: ``dismissed``, ``on_case``
-(``launched`` when its latest intake row launched, else ``merged``), ``queued``
-or ``not_picked_up``. The latest intake row only adds detail. Ask and schedule
+(``launched`` when its latest intake row launched, else ``merged``), ``excluded``,
+``queued`` or ``not_picked_up``. The latest intake row only adds detail. Ask and schedule
 rows have no alert and are all kept, with their own intake state. ``counts``
 cover all of them, as SQL aggregates. Kind, source, and state narrow only the returned rows,
 in SQL before the cap; only the rows returned are loaded and presented. Ranking
@@ -54,6 +54,7 @@ _PICKUP_STATES = ("launched", "merged")
 # Alert states: Overview's groups spoken in Triage's words (see _rows). Not intake states.
 NOISE_STATE = "dismissed"
 NOT_PICKED_UP = "not_picked_up"
+EXCLUDED_STATE = "excluded"
 # An alert whose finding has no data_source counts and filters under this name.
 UNKNOWN_SOURCE = "Unknown"
 NOISE_LABEL = "Dismissed as noise"
@@ -72,7 +73,7 @@ STRIP_INFO = {
     },
     "waiting": {
         "source": "Alerts that arrived today (UTC day) and are waiting for triage.",
-        "calculation": "A count of alerts in the Waiting state right now, as Overview counts them. Noise-marked alerts and alerts on a case are excluded; queued schedule and ask rows are not alerts.",
+        "calculation": "A count of alerts in the Waiting state right now, as Overview counts them. Noise-marked alerts, alerts on a case and alerts naming an excluded IP are left out; queued schedule and ask rows are not alerts.",
     },
     "cases_created_today": {
         "source": "Intake rows launched today (UTC day) that opened a case.",
@@ -87,7 +88,7 @@ STRIP_INFO_ALL = {
     },
     "waiting": {
         "source": "Alerts waiting for triage, from any day.",
-        "calculation": "A count of alerts in the Waiting state right now, as Overview counts them. Noise-marked alerts and alerts on a case are excluded; queued schedule and ask rows are not alerts.",
+        "calculation": "A count of alerts in the Waiting state right now, as Overview counts them. Noise-marked alerts, alerts on a case and alerts naming an excluded IP are left out; queued schedule and ask rows are not alerts.",
     },
     "cases_created_today": {
         "source": "Intake rows from any day that launched and opened a case.",
@@ -146,6 +147,8 @@ def _state_label(
         return "Not picked up", None
     if state == NOISE_STATE:
         return NOISE_LABEL, None
+    if state == EXCLUDED_STATE:
+        return "Excluded", None
     return state, None
 
 
@@ -239,7 +242,9 @@ def _rows(session, day: Optional[date]):
     if day is not None:
         start, end = utc_day_bounds(day)
         alert = alert.filter(Finding.created_at >= start, Finding.created_at < end)
-    alert = alert.subquery("alerts")
+    # OFFSET 0 keeps Postgres from inlining ``grp`` into each CASE and filter that
+    # reads it, so the group (and its exclusion scan) is computed once per alert.
+    alert = alert.offset(0).subquery("alerts")
     alerts = (
         session.query(
             IntakeTrigger.id.label("intake_id"),
@@ -255,6 +260,7 @@ def _rows(session, day: Optional[date]):
                             else_=literal("merged"),
                         ),
                     ),
+                    (alert.c.grp == "excluded", literal(EXCLUDED_STATE)),
                     (alert.c.grp == "scoring", literal("queued")),
                     else_=literal(NOT_PICKED_UP),
                 ),

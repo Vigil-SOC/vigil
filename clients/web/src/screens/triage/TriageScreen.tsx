@@ -47,6 +47,8 @@ const STATES = [
   { value: 'not_picked_up', label: 'Not picked up', dot: 'tx3' },
   // an alert marked as noise: Overview's Dismissed as noise
   { value: 'dismissed', label: 'Dismissed as noise', dot: 'tx3' },
+  // an alert naming an excluded IP: the daemon skips its triage on purpose
+  { value: 'excluded', label: 'Excluded', dot: 'tx3' },
 ]
 const QUEUED_OFF = 'AutoOps is off'
 
