@@ -161,8 +161,8 @@ export default function CommandBar({
               (res.data.cases ?? []).map((c) => ({ id: c.case_id, title: c.title, priority: c.priority })),
             )
           : findingsApi.getAll({ limit: 5 }, round.signal).then((res) =>
-              ((res.data as { findings?: { finding_id: string; title?: string | null; data_source?: string | null; severity?: string | null }[] }).findings ?? [])
-                .map((f) => ({ id: f.finding_id, title: f.title || f.finding_id, data_source: f.data_source, severity: f.severity })),
+              ((res.data as { findings?: { finding_id: string; title?: string | null; description?: string | null; data_source?: string | null; severity?: string | null }[] }).findings ?? [])
+                .map((f) => ({ id: f.finding_id, title: f.title || f.description || f.finding_id, data_source: f.data_source, severity: f.severity })),
             )
       found.then((list) => {
         if (live) setArgs({ kind: argKind, rows: argumentRows(argKind, list) })
