@@ -182,7 +182,7 @@ NODE_PROBLEM=""
 if ! command -v node &>/dev/null; then
     NODE_PROBLEM="Node.js not found"
 elif ! node -e "process.exit(parseInt(process.version.slice(1))>=20?0:1)" 2>/dev/null; then
-    NODE_PROBLEM="Node.js 20+ required, found $(node --version)"
+    NODE_PROBLEM="Node.js 20+ required, found $(node --version 2>/dev/null || echo "a node that does not run")"
 fi
 if [ -n "$NODE_PROBLEM" ]; then
     echo "$NODE_PROBLEM. Frontend + agent layer will not start."; SKIP_FRONTEND=1; SKIP_AGENT=1
