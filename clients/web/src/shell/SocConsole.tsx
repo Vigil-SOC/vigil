@@ -5,7 +5,7 @@ import '../../../../docs/design/console/tokens/tokens.css'
 import '../styles.css'
 import './shell.css'
 import { useAuth } from '../contexts/AuthContext'
-import { approvalsApi, autonomyApi, configApi, consoleApi, federationApi, mcpApi } from '../services/api'
+import { approvalsApi, autonomyApi, casesApi, configApi, consoleApi, federationApi, mcpApi } from '../services/api'
 import { Icon, type IconName } from '../shared/icons'
 import { InfoTip } from '../shared/InfoTip'
 import { PageHead } from '../shared/PageHead'
@@ -196,6 +196,7 @@ function SocConsoleInner() {
 
   useDesktopNotifications()
   const [needsYou, setNeedsYou] = useState(0)
+  const [openCases, setOpenCases] = useState(0)
 
   const openChat = useCallback((prompt?: string) => {
     setChatOpen(true)
@@ -285,6 +286,15 @@ function SocConsoleInner() {
         .needsYou()
         .then((res) => {
           if (live) setNeedsYou(res.data.count)
+        })
+        .catch(() => {
+          /* keep the previous count */
+        })
+      // the Cases badge counts open cases, the same rule as the Cases screen's "All open" chip
+      casesApi
+        .getSummary()
+        .then((res) => {
+          if (live) setOpenCases(res.data.total - (res.data.by_status.closed ?? 0))
         })
         .catch(() => {
           /* keep the previous count */
@@ -479,7 +489,7 @@ function SocConsoleInner() {
 
   const navButton = (item: NavItem) => {
     const [icon, label, key] = item
-    const count = key === 'home' || key === 'cases' ? needsYou : 0
+    const count = key === 'home' ? needsYou : key === 'cases' ? openCases : 0
     const active = valid && key === current
     return (
       <button
@@ -487,7 +497,7 @@ function SocConsoleInner() {
         type="button"
         className={`vg-nav-btn${active ? ' active' : ''}`}
         aria-current={active ? 'page' : undefined}
-        aria-label={count ? `${label} (${count} waiting)` : label}
+        aria-label={count ? `${label} (${count} ${key === 'cases' ? 'open' : 'waiting'})` : label}
         onClick={() => {
           setMoreOpen(false)
           go(key)
