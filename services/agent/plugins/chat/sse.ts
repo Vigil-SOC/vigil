@@ -4,6 +4,7 @@ import type { StreamEvent } from "../../core/stream.js";
 // not know, so adding one is safe and dropping one degrades to silence.
 export type ChatEvent =
   | { type: "text"; content: string }
+  | { type: "reasoning"; content: string }
   | { type: "tool_processing" }
   | { type: "approval_required"; checkpoint_id: string; tool: string | null; args: string | null }
   | { error: string };
@@ -14,6 +15,8 @@ export function chatEvents(event: StreamEvent<string>): ChatEvent[] {
   switch (event.type) {
     case "text_delta":
       return [{ type: "text", content: event.text }];
+    case "reasoning_delta":
+      return [{ type: "reasoning", content: event.text }];
     case "tool_call":
       return [{ type: "tool_processing" }];
     case "approval_required":
