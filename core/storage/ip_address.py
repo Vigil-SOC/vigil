@@ -4,7 +4,8 @@ import ipaddress
 from typing import Any, Optional
 
 # Top-level entity_context keys ingest writes addresses under. Each holds a
-# string or a list of strings.
+# string or a list of strings. finding_ips() (revision 0019) lists the same
+# keys to fill findings.ip_addresses; change both together.
 FINDING_IP_KEYS = (
     "src_ip",
     "src_ips",

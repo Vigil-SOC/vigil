@@ -2434,6 +2434,11 @@
   "nullable": false,
   "type": "character varying(50)"
  },
+ "column findings.ip_addresses": {
+  "default": "finding_ips(entity_context)",
+  "nullable": true,
+  "type": "text[]"
+ },
  "column findings.noise_marked_at": {
   "default": null,
   "nullable": true,
@@ -4000,6 +4005,14 @@
   "definition": "CREATE OR REPLACE FUNCTION public.audit_trail_hash(prev_hash text, seq bigint, occurred_at timestamp with time zone, late boolean, payload jsonb)\n RETURNS text\n LANGUAGE sql\n STABLE\n SET search_path TO 'pg_catalog', 'public', 'pg_temp'\nAS $function$\n  SELECT public.agent_event_hash(prev_hash, payload || jsonb_build_object(\n    'seq', seq,\n    'late', late,\n    -- UTC text, so the hash does not depend on the session's TimeZone.\n    'occurred_at',\n    to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')\n  ));\n$function$\n",
   "owner": "owner"
  },
+ "function finding_ips(jsonb)": {
+  "acl": [
+   "PUBLIC:EXECUTE",
+   "owner:EXECUTE"
+  ],
+  "definition": "CREATE OR REPLACE FUNCTION public.finding_ips(entity_context jsonb)\n RETURNS text[]\n LANGUAGE sql\n IMMUTABLE PARALLEL SAFE\n SET search_path TO 'pg_catalog', 'public', 'pg_temp'\nAS $function$\n  SELECT coalesce(array_agg(DISTINCT ip.value ORDER BY ip.value), '{}')\n  FROM unnest(ARRAY[\n    'src_ip', 'src_ips', 'source_ip', 'source_ips', 'srcip',\n    'dst_ip', 'dst_ips', 'dest_ip', 'dest_ips', 'destination_ip',\n    'destination_ips', 'dstip', 'ip', 'ips', 'ip_address',\n    'ip_addresses', 'local_ip', 'remote_ip', 'client_ip'\n  ]) AS k(key)\n  CROSS JOIN LATERAL (\n    SELECT entity_context ->> k.key\n    WHERE jsonb_typeof(entity_context -> k.key) = 'string'\n    UNION ALL\n    SELECT e #>> '{}'\n    FROM jsonb_array_elements(\n      CASE WHEN jsonb_typeof(entity_context -> k.key) = 'array'\n        THEN entity_context -> k.key END\n    ) AS e\n    WHERE jsonb_typeof(e) = 'string'\n  ) AS ip(value);\n$function$\n",
+  "owner": "owner"
+ },
  "function update_ai_model_configs_timestamp()": {
   "acl": [
    "PUBLIC:EXECUTE",
@@ -4208,6 +4221,7 @@
  "index idx_finding_description": "CREATE INDEX idx_finding_description ON public.findings USING gin (description gin_trgm_ops)",
  "index idx_finding_entity_context_trgm": "CREATE INDEX idx_finding_entity_context_trgm ON public.findings USING gin (((entity_context)::text) gin_trgm_ops)",
  "index idx_finding_finding_id_trgm": "CREATE INDEX idx_finding_finding_id_trgm ON public.findings USING gin (finding_id gin_trgm_ops)",
+ "index idx_finding_ip_addresses": "CREATE INDEX idx_finding_ip_addresses ON public.findings USING gin (ip_addresses)",
  "index idx_finding_mitre_predictions_technique_confidence": "CREATE INDEX idx_finding_mitre_predictions_technique_confidence ON public.finding_mitre_predictions USING btree (technique_id, confidence DESC)",
  "index idx_finding_severity": "CREATE INDEX idx_finding_severity ON public.findings USING btree (severity)",
  "index idx_finding_timestamp": "CREATE INDEX idx_finding_timestamp ON public.findings USING btree (\"timestamp\")",
