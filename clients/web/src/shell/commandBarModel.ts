@@ -36,7 +36,7 @@ export const COMMANDS: CommandDef[] = [
 
 export const LIVE_COMMANDS = COMMANDS.filter((c) => !c.later)
 
-type DestTag = 'Case' | 'Alert' | 'Page' | 'Command' | 'Recent' | 'Ask'
+type DestTag = 'Case' | 'Alert' | 'Page' | 'Command' | 'Recent' | 'Ask' | 'Argument'
 
 export type Section =
   | 'Recent searches'
@@ -57,7 +57,7 @@ export interface BoardLink {
 
 /** What GET /search answers; a kind the role may not read comes back empty. */
 export type SearchHits = Schema<'SearchResults'>
-type Hit = Schema<'SearchHit'>
+export type Hit = Schema<'SearchHit'>
 type MatchType = NonNullable<Hit['match_type']>
 
 export interface PaletteRow {
@@ -76,6 +76,8 @@ export interface PaletteRow {
   /** The query string a Page row opens its page with. */
   search?: string
   recent?: string
+  /** The id an argument row puts after the command. */
+  fill?: string
 }
 
 interface JiraConfigRead {
@@ -232,6 +234,8 @@ export function tagText(row: PaletteRow): string {
       return 'Opens Ask Vigil'
     case 'Command':
       return row.disabled ? 'Later' : 'Command'
+    case 'Argument':
+      return 'Use'
   }
 }
 
@@ -338,7 +342,7 @@ export function commandPreview(
           ? { line: proposal.reason, disabled: true }
           : { line: 'Checking what the document covers…', disabled: true }
       }
-      return { line: 'Add a hypothesis', disabled: true }
+      return { line: 'Type a hypothesis, or attach intelligence to have one proposed', disabled: true }
     }
     case 'replay':
       return a
@@ -515,6 +519,38 @@ export function buildRows(
     ...recent,
     askRow(q),
   ]
+}
+
+/** What a command's argument names: a case for /replay and /ticket, an alert for /investigate. */
+export function argumentKind(id: LiveCommandId): 'case' | 'alert' | null {
+  if (id === 'replay' || id === 'ticket') return 'case'
+  return id === 'investigate' ? 'alert' : null
+}
+
+/** The cases or alerts a command's argument can be, as rows that fill it in. */
+export function argumentRows(kind: 'case' | 'alert', hits: Hit[]): PaletteRow[] {
+  const seen = new Set<string>()
+  return hits.flatMap((hit) => {
+    if (!hit.id || seen.has(hit.id)) return []
+    seen.add(hit.id)
+    return [{
+      key: `arg:${hit.id}`,
+      label: hit.title || hit.id,
+      hint: hit.id,
+      dest: 'Argument' as const,
+      section: kind === 'case' ? 'Cases' as const : 'Alerts' as const,
+      icon: kind === 'case' ? 'folder' as const : 'alert' as const,
+      desc: kind === 'case' ? caseDesc(hit) : joinParts([hit.data_source, hit.severity]),
+      disabled: false,
+      fill: hit.id,
+    }]
+  })
+}
+
+/** The argument rows a search answer holds, the exact id first. */
+export function argumentHits(kind: 'case' | 'alert', hits: SearchHits): Hit[] {
+  const found = kind === 'case' ? [hits.case_exact, ...(hits.cases ?? [])] : [hits.finding_exact, ...(hits.alerts ?? [])]
+  return found.filter((hit): hit is Hit => Boolean(hit))
 }
 
 export function firstEnabled(rows: PaletteRow[]): number {
