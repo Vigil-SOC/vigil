@@ -178,10 +178,14 @@ ensure_docker || exit 1
 SKIP_FRONTEND=0
 # Opt out explicitly (e.g. to run scripts/agent_up.sh by hand) with SKIP_AGENT=1.
 SKIP_AGENT="${SKIP_AGENT:-0}"
+NODE_PROBLEM=""
 if ! command -v node &>/dev/null; then
-    echo "Node.js not found. Frontend + agent layer will not start."; SKIP_FRONTEND=1; SKIP_AGENT=1
+    NODE_PROBLEM="Node.js not found"
 elif ! node -e "process.exit(parseInt(process.version.slice(1))>=20?0:1)" 2>/dev/null; then
-    echo "Node.js 20+ required. Frontend + agent layer will not start."; SKIP_FRONTEND=1; SKIP_AGENT=1
+    NODE_PROBLEM="Node.js 20+ required, found $(node --version)"
+fi
+if [ -n "$NODE_PROBLEM" ]; then
+    echo "$NODE_PROBLEM. Frontend + agent layer will not start."; SKIP_FRONTEND=1; SKIP_AGENT=1
 fi
 
 # --- Python environment ---
@@ -238,10 +242,17 @@ print_ready() {
     echo "Vigil SOC v$VERSION - Ready"
     echo "=========================================="
     echo "Backend:  http://localhost:6987"
-    echo "Frontend: http://localhost:6988"
+    if [ "$SKIP_FRONTEND" -eq 0 ]; then
+        echo "Frontend: http://localhost:6988"
+    else
+        echo "Frontend: not started ($NODE_PROBLEM), and neither is the agent layer"
+    fi
     echo "Docs:     http://localhost:6987/docs"
     echo ""
-    if [ "${DEV_MODE:-}" = "true" ]; then
+    if [ "$SKIP_FRONTEND" -eq 1 ]; then
+        echo "Install Node.js 20 or later (Ubuntu's apt package is older; nvm works:"
+        echo "https://github.com/nvm-sh/nvm), then run ./start.sh again for the console."
+    elif [ "${DEV_MODE:-}" = "true" ]; then
         echo "DEV_MODE active - auth bypassed (session auth, vstrike inbound)"
     else
         echo "First run: create your admin account at http://localhost:6988"
