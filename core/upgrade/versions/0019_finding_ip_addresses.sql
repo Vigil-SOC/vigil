@@ -1,7 +1,7 @@
 -- Each string under a FINDING_IP_KEYS key, and each string in a list there:
 -- exactly what ``entity_context[key] ?| ips`` matched. The key list must match
 -- FINDING_IP_KEYS in core/storage/ip_address.py.
-CREATE FUNCTION public.finding_ips(entity_context jsonb) RETURNS text[]
+CREATE OR REPLACE FUNCTION public.finding_ips(entity_context jsonb) RETURNS text[]
 LANGUAGE sql IMMUTABLE PARALLEL SAFE
 SET search_path = pg_catalog, public, pg_temp
 AS $$
@@ -24,6 +24,8 @@ AS $$
     WHERE jsonb_typeof(e) = 'string'
   ) AS ip(value);
 $$;
+
+-- create_all runs everything above this line (core/storage/models/finding.py).
 
 -- Stored: Postgres fills it for every existing row now and keeps it current
 -- on every write. EXECUTE stays with PUBLIC, so vigil_app can call it.
