@@ -1,17 +1,20 @@
 """Compose log tail (D6-1): Vigil's seven containers' log lines as `log` observations.
 
 Background tasks follow `GET /containers/{id}/logs` through medic-dockerproxy and
-push finished lines onto their own 10,000-line `Bus`. One `LogStream` sensor per
-service reports the streams' state each 30 s, so the scheduler gives it
-`sensor_health`, `blind` after 3 failed cycles, and "a quiet stream is not an error".
+push admitted lines onto their own 15,000-line `Bus` (one 15 s tick at the admit
+rate). One `LogStream` sensor per service reports the streams' state each 30 s,
+so the scheduler gives it `sensor_health`, `blind` after 3 failed cycles, and
+"a quiet stream is not an error".
 
-A line takes this path and no other: cap 16 KiB, redact, fingerprint (fp1), draft.
-A raw line is never logged, stored or put in a `ReadError`.
+An admitted line takes this path and no other: cap 16 KiB, redact, fingerprint
+(fp1), draft. Over 1,000 lines/s on the shared tail, or 500 on one stream, the
+line is counted and never redacted or fingerprinted. A raw line is never logged,
+stored or put in a `ReadError`.
 
-Cursors live in memory: `{last_ts_ns, hashes of the lines at that ns}` per container.
-They dedupe Docker's inclusive `since` when a stream reattaches after a container
-restarts. After Medic itself restarts a stream follows from now; the gap is the
-gap mechanism's (`app/gap.py`).
+Cursors live in memory: `{last_ts_ns, hashes of the raw lines at that ns}` per
+container. They dedupe Docker's inclusive `since` when a stream reattaches,
+including a line that was only counted. After Medic itself restarts a stream
+follows from now; the gap is the gap mechanism's (`app/gap.py`).
 """
 
 from __future__ import annotations
@@ -35,10 +38,12 @@ from services.medic.contracts.fingerprint_ref import (
     SERVICES,
     LogLine,
     fingerprint,
+    map_level,
     parse_text,
+    template_trust,
 )
 from services.medic.redact import Redactor
-from services.medic.sensors.base import Clock, ReadError, Reading, SensorContext
+from services.medic.sensors.base import Clock, ReadError, Reading, SensorContext, Value
 from services.medic.sensors.bus import Bus
 from services.medic.sensors.containers import (
     _ID,
@@ -55,7 +60,12 @@ LOG_SERVICES = SERVICES[:7]  # backend … backup: the containers Vigil ships
 SIGNAL = {s: "log_" + s.replace("-", "_") for s in LOG_SERVICES}
 ERRORS_AS_SUCCESS = "llm_worker_errors_as_success"
 JOBS_LOGGER = "services.worker.jobs"
-LOG_CAPACITY = 10_000  # C7 §5: its own buffer, not the 1,024-observation bus
+LOG_CAPACITY = 15_000  # one 15 s tick of lines the rate rule admitted
+ADMIT_PER_S = 1_000  # the shared tail; the rate rule, not the buffer, bounds load
+ADMIT_STREAM_PER_S = 500
+OVERFLOW_SIGNAL = "log_overflow"  # sample, not a log signal: counts, no line text
+OVERFLOW_EPOCH = "log-overflow"  # in-memory counters; a stable epoch across collects
+_WARNING_UP = frozenset({"WARNING", "ERROR", "CRITICAL"})
 REDISCOVER_S = 10  # shared by the seven sensors: one container list per cycle
 BACKOFF_MAX_S = 30.0
 MAX_FRAME = 1 << 20  # a Docker log frame is one message, 16 KiB plus a timestamp
@@ -81,6 +91,22 @@ class Line:
 # -- the line path ----------------------------------------------------------
 
 
+def _json_kind(text: str) -> tuple[str, dict[str, Any] | None]:
+    """python_json, agent_json, or text. The same gate `line_drafts` uses."""
+    if text.startswith("{"):
+        try:
+            doc = json.loads(text)
+        except ValueError:
+            doc = None
+        if isinstance(doc, dict) and (
+            "msg_template" in doc or ("message" in doc and "logger" in doc)
+        ):
+            return "python_json", doc
+        if isinstance(doc, dict) and isinstance(doc.get("msg"), str):
+            return "agent_json", doc
+    return "text", None
+
+
 def _parse(
     service: str, text: str, redacted: str, redactor: Redactor
 ) -> tuple[LogLine, str | None]:
@@ -95,43 +121,85 @@ def _parse(
         # JSON can carry a lone surrogate (\ud83d); fp1 couldn't hash it.
         return redactor.redact(value.encode("utf-8", "replace").decode())[0]
 
-    if text.startswith("{"):
-        try:
-            doc = json.loads(text)
-        except ValueError:
-            doc = None
-        if isinstance(doc, dict) and (
-            "msg_template" in doc or ("message" in doc and "logger" in doc)
-        ):
-            trace = doc.get("trace_id")
-            return (
-                LogLine(
-                    service,
-                    "python_json",
-                    field(doc, "level"),
-                    field(doc, "logger"),
-                    field(doc, "msg_template") or None,
-                    field(doc, "message") or "",
-                    field(doc, "exc_type"),
-                    field(doc, "exception"),
-                ),
-                trace if isinstance(trace, str) and _TRACE.fullmatch(trace) else None,
-            )
-        if isinstance(doc, dict) and isinstance(doc.get("msg"), str):
-            msg = field(doc, "msg")
-            return (
-                LogLine(
-                    service,
-                    "agent_json",
-                    field(doc, "level"),
-                    field(doc, "logger"),
-                    msg,
-                    msg,
-                    field(doc, "error_type"),
-                ),
-                None,
-            )
+    kind, doc = _json_kind(text)
+    if kind == "python_json" and doc is not None:
+        trace = doc.get("trace_id")
+        return (
+            LogLine(
+                service,
+                "python_json",
+                field(doc, "level"),
+                field(doc, "logger"),
+                field(doc, "msg_template") or None,
+                field(doc, "message") or "",
+                field(doc, "exc_type"),
+                field(doc, "exception"),
+            ),
+            trace if isinstance(trace, str) and _TRACE.fullmatch(trace) else None,
+        )
+    if kind == "agent_json" and doc is not None:
+        msg = field(doc, "msg")
+        return (
+            LogLine(
+                service,
+                "agent_json",
+                field(doc, "level"),
+                field(doc, "logger"),
+                msg,
+                msg,
+                field(doc, "error_type"),
+            ),
+            None,
+        )
     return LogLine(service, "text", raw=redacted), None
+
+
+def _template_hash(logger: str, template: str) -> str:
+    """Hash of (logger, template) only. The line's text is not an input."""
+    return hashlib.sha256(f"{logger}\x1f{template}".encode()).hexdigest()[:16]
+
+
+def _overflow_bucket(
+    service: str, raw: bytes, catalog: Collection[tuple[str, str]]
+) -> tuple[str, str | None]:
+    """Classify one overflow line without redacting or fingerprinting it.
+
+    Returns ('template', hash), ('level', LEVEL) or ('dropped', None). The
+    message lives only for `template_trust`'s f-string check, then is dropped.
+    """
+    text = raw[:MAX_LINE].decode("utf-8", "replace")
+    kind, doc = _json_kind(text)
+    if kind == "python_json" and doc is not None:
+        logger = doc.get("logger")
+        template = doc.get("msg_template")
+        message = doc.get("message")
+        logger = logger if isinstance(logger, str) else None
+        template = template if isinstance(template, str) and template else None
+        message = message if isinstance(message, str) else ""
+        if logger is not None and not _LOGGER.fullmatch(logger):
+            logger = None
+        raw_level = doc.get("level")
+        level = map_level(raw_level if isinstance(raw_level, str) else None)
+        trusted = (
+            template_trust(
+                LogLine(service, "python_json", level, logger, template, message),
+                set(catalog),
+            )
+            == "catalog"
+        )
+        if trusted and template is not None:
+            return "template", _template_hash(logger or "", template)
+        if level in _WARNING_UP:
+            return "level", level
+        return "dropped", None
+    if kind == "agent_json" and doc is not None:
+        raw_level = doc.get("level")
+        level = map_level(raw_level if isinstance(raw_level, str) else None)
+    else:
+        level = map_level(parse_text(LogLine(service, "text", raw=text)).level)
+    if level in _WARNING_UP:
+        return "level", level
+    return "dropped", None
 
 
 def line_drafts(
@@ -318,9 +386,18 @@ class _Stream:
     name: str | None
     service: str
     last_ns: int  # the cursor: newest timestamp seen …
-    hashes: set[str] = field(default_factory=set)  # … and the lines at exactly it
+    hashes: set[str] = field(default_factory=set)  # … raw-line hashes at that ns
     error: ReadError | None = None
     task: asyncio.Task[None] | None = None
+
+
+@dataclass
+class _Counts:
+    """Overflow totals for one service. No line text: a template hash, or a level."""
+
+    by_template: dict[str, int] = field(default_factory=dict)
+    by_level: dict[str, int] = field(default_factory=dict)
+    dropped: int = 0
 
 
 @dataclass
@@ -362,6 +439,10 @@ class LogTail:
         self._clock: Clock | None = None
         self._shape = "compose"
         self._start_ns = 0
+        self._counts: dict[str, _Counts] = {}
+        self._rate_s: int | None = None
+        self._rate_n = 0
+        self._rate_stream: dict[str, int] = {}
 
     def bind(self, bus: Bus, clock: Clock) -> None:
         """The log buffer and the clock; Medic's wiring calls this once."""
@@ -480,16 +561,32 @@ class LogTail:
     def _deliver(
         self, stream: _Stream, line: Line, base_ns: int, base_hashes: set[str]
     ) -> bool:
-        """Queue one line; False if it was a replay of one already delivered."""
+        """Queue one line; False if it was a replay of one already delivered.
+
+        The cursor moves for an overflow line too. Dedupe stores a hash of the
+        raw line, so a replay of one that was never fingerprinted is still skipped.
+        The observation's `line_hash` stays the redacted one from `line_drafts`.
+        """
         assert self._bus is not None and self._clock is not None
         ts = line.ts_ns
         # Docker's `since` is inclusive: a reattach replays the cursor line, and
         # nothing older than the cursor is new.
         if ts is not None and ts < base_ns:
             return False
+        raw_hash = hashlib.sha256(line.raw).hexdigest()[:16]
+        if ts is not None:
+            if ts == base_ns and raw_hash in base_hashes:
+                return False
+            if ts > stream.last_ns:
+                stream.last_ns, stream.hashes = ts, {raw_hash}
+            elif ts == stream.last_ns:
+                stream.hashes.add(raw_hash)
+        if self._over_rate(stream):
+            self._count_overflow(stream, line)
+            return True
         failed: str | None = None
         try:
-            drafts, line_hash = line_drafts(
+            drafts, _line_hash = line_drafts(
                 line,
                 service=stream.service,
                 instance=stream.name,
@@ -501,14 +598,7 @@ class LogTail:
         # Fail closed: a line that can't be processed is dropped and counted,
         # and the cursor still moves past it so a reattach doesn't replay it.
         except Exception as exc:  # noqa: BLE001
-            drafts, line_hash, failed = [], "", type(exc).__name__
-        if ts is not None:
-            if ts == base_ns and line_hash in base_hashes:
-                return False
-            if ts > stream.last_ns:
-                stream.last_ns, stream.hashes = ts, {line_hash}
-            elif ts == stream.last_ns:
-                stream.hashes.add(line_hash)
+            drafts, failed = [], type(exc).__name__
         if failed is not None:
             self._bus.stats[f"docker.logs.{stream.service}"].redactor_failures += 1
             log.warning(
@@ -518,9 +608,66 @@ class LogTail:
             self._enqueue(draft)
         return True
 
+    def _over_rate(self, stream: _Stream) -> bool:
+        """True when this line is past 1,000/s on the tail or 500/s on the stream."""
+        assert self._clock is not None
+        second = int(self._clock.monotonic())
+        if second != self._rate_s:
+            self._rate_s = second
+            self._rate_n = 0
+            self._rate_stream.clear()
+        n = self._rate_stream.get(stream.id, 0)
+        if self._rate_n >= ADMIT_PER_S or n >= ADMIT_STREAM_PER_S:
+            return True
+        self._rate_stream[stream.id] = n + 1
+        self._rate_n += 1
+        return False
+
+    def _count_overflow(self, stream: _Stream, line: Line) -> None:
+        """Count the line. Every overflow increments the sensor's `dropped`."""
+        assert self._bus is not None
+        try:
+            bucket, key = _overflow_bucket(stream.service, line.raw, self.catalog)
+        except Exception:  # noqa: BLE001 — the line stays out of the log
+            bucket, key = "dropped", None
+        counts = self._counts.setdefault(stream.service, _Counts())
+        if bucket == "template" and key is not None:
+            counts.by_template[key] = counts.by_template.get(key, 0) + 1
+        elif bucket == "level" and key is not None:
+            counts.by_level[key] = counts.by_level.get(key, 0) + 1
+        else:
+            counts.dropped += 1
+        self._bus.stats[f"docker.logs.{stream.service}"].dropped += 1
+
+    def overflow_reading(self, service: str) -> Reading:
+        """Cumulative overflow counters for one stream. No line text."""
+        counts = self._counts.get(service)
+        labels = {"stream": service}
+        values = [
+            Value.counter("dropped", 0 if counts is None else counts.dropped, labels)
+        ]
+        if counts is not None:
+            for level in sorted(counts.by_level):
+                values.append(
+                    Value.counter(
+                        "by_level",
+                        counts.by_level[level],
+                        {"stream": service, "level": level},
+                    )
+                )
+            for digest in sorted(counts.by_template):
+                values.append(
+                    Value.counter(
+                        "by_template",
+                        counts.by_template[digest],
+                        {"stream": service, "template": digest},
+                    )
+                )
+        return Reading(OVERFLOW_SIGNAL, service, values=values, epoch=OVERFLOW_EPOCH)
+
     def _enqueue(self, draft: dict[str, Any]) -> None:
-        """The over-capacity seam. Today the oldest line goes and is counted
-        against its sensor (`Bus.put`); a separate child decides the real policy."""
+        """Backstop for a late drain: the oldest line goes and is counted.
+        `_deliver` is what refuses a line before it is redacted."""
         assert self._bus is not None
         self._bus.put(draft)
 
@@ -542,7 +689,7 @@ class LogStream:
 
     def __post_init__(self) -> None:
         self.id = f"docker.logs.{self.service}"
-        self.covers = (SIGNAL[self.service],) + (
+        self.covers = (SIGNAL[self.service], OVERFLOW_SIGNAL) + (
             (ERRORS_AS_SUCCESS,) if self.service == "llm-worker" else ()
         )
 
@@ -556,7 +703,9 @@ class LogStream:
         errors = [s.error for s in streams]
         if all(e is not None for e in errors):
             return self._errors(errors[0], streams[0].name)
-        return []  # following, or quiet: both are fine
+        # One ok reading beside the errors would keep a failed cycle from
+        # counting as failed (the scheduler fails only when every reading is).
+        return [self.tail.overflow_reading(self.service)]
 
     def _errors(self, error: ReadError | None, instance: str | None = None):
         return [

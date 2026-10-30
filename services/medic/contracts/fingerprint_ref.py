@@ -182,6 +182,11 @@ def parse_text(line: LogLine) -> LogLine:
     return LogLine(line.service, "text", line.level or "INFO", None, None, raw)
 
 
+def map_level(level: str | None) -> str:
+    """fp1's level table. Missing or unknown reads as INFO."""
+    return _LEVELS.get((level or "info").lower(), "INFO")
+
+
 def fingerprint(
     line: LogLine, catalog: set[tuple[str, str]] | None = None
 ) -> Fingerprint:
@@ -199,7 +204,7 @@ def fingerprint(
     frames_sig = (
         hashlib.sha256("|".join(frames).encode()).hexdigest()[:16] if frames else ""
     )
-    level = _LEVELS.get((line.level or "info").lower(), "INFO")
+    level = map_level(line.level)
     logger = line.logger or ""
     # basis is hashed so an untrusted line can never share a trusted line's fingerprint.
     parts = [
