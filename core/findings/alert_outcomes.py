@@ -12,12 +12,13 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Optional, Sequence
 
-from sqlalchemy import case, exists, literal
+from sqlalchemy import and_, case, exists, literal
 
 from core.cases.closure import closed_by_person
 from core.findings.arrival_counts import utc_day_bounds
 from core.response.approval_service import needs_you_case_ids
 from core.storage.connection import get_db_manager
+from core.storage.ip_exclusion_repository import exclusion_view_filter
 from core.storage.models import (
     Case,
     CaseClosureInfo,
@@ -28,6 +29,7 @@ from core.storage.models import (
 
 TERMINAL_LABELS = {
     "dismissed": "Dropped",
+    "excluded": "Excluded",
     "needs_you": "Needs you",
     "resolved_auto": "Resolved automatically",
     "resolved_person": "Closed by a person",
@@ -46,17 +48,27 @@ class _LinkedCase:
 
 
 def alert_group():
-    """SQL: which of four groups each ``Finding`` is in, in Overview's order.
+    """SQL: which of five groups each ``Finding`` is in, in Overview's order.
 
     ``dismissed`` (marked as noise), ``on_case`` (a ``case_findings`` row),
+    ``excluded`` (names an actively excluded IP, so the daemon skips triage),
     ``scoring`` (a queued intake row), else ``waiting``. A dismissal is the
-    finding's own terminal state, ahead of any case.
+    finding's own terminal state, ahead of any case; a case wins over an exclusion.
     """
     return case(
         (Finding.noise_marked_at.isnot(None), literal("dismissed")),
         (
             exists().where(case_findings.c.finding_id == Finding.finding_id),
             literal("on_case"),
+        ),
+        (
+            # probes are triaged despite exclusions (services/daemon/processor.py);
+            # "probe" is services.daemon.probes.PROBE_DATA_SOURCE, which core can't import
+            and_(
+                Finding.data_source.is_distinct_from("probe"),
+                exclusion_view_filter("only"),
+            ),
+            literal("excluded"),
         ),
         (
             exists().where(

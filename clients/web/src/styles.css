@@ -6260,7 +6260,8 @@
    .tq-pill.merged { background: var(--ac-bg); color: var(--ac); }
    .tq-pill.expired { color: var(--tx2); }
    .tq-pill.not_picked_up,
-   .tq-pill.dismissed { color: var(--tx3); }
+   .tq-pill.dismissed,
+   .tq-pill.excluded { color: var(--tx3); }
 
    .tq-why {
       display: block;

@@ -18,6 +18,7 @@ from core.findings.arrival_counts import arrivals_today_by_source
 from core.findings.source_evidence import project_finding_source_evidence_for_list
 from core.findings.source_link import resolve_source_link
 from core.storage.connection import get_db_manager
+from core.storage.ip_exclusion_repository import exclusion_view_filter
 from core.storage.models import FederationSource, Finding, WorkflowRun, WorkflowRunPhase
 from core.time import utcnow
 from core.workflows.workflow_run_service import IN_FLIGHT_STATUSES
@@ -68,6 +69,7 @@ _LIVE_ORDER = (
     "working",
     "needs_you",
     "dismissed",
+    "excluded",
     "scoring",
     "waiting",
 )
@@ -282,9 +284,10 @@ def _feed_items(load) -> list[dict]:
 
 
 def _feed() -> list[dict]:
+    # excluded findings are hidden, as the findings queue hides them
     return _feed_items(
         lambda session: session.query(Finding)
-        .filter(Finding.noise_marked_at.is_(None))
+        .filter(Finding.noise_marked_at.is_(None), exclusion_view_filter("hide"))
         .order_by(Finding.created_at.desc(), Finding.finding_id.desc())
         .limit(FEED_LIMIT)
         .all()

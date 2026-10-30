@@ -32,6 +32,7 @@ const OUTCOME_COLOR: Record<string, string> = {
   working: 'var(--ac)',
   needs_you: 'var(--poor)',
   dismissed: 'var(--tx3)',
+  excluded: 'var(--tx3)',
   scoring: 'var(--fair)',
   waiting: 'var(--tx3)',
 }
@@ -43,6 +44,7 @@ const OUTCOME_LINK: Record<string, [string, string]> = {
   working: ['/cases?working=1', 'Opens the open cases that do not need you'],
   needs_you: ['/cases?needs_you=1', 'Opens the cases that need you'],
   dismissed: ['/triage?state=dismissed', 'Opens the Triage queue at alerts dismissed as noise'],
+  excluded: ['/triage?state=excluded', 'Opens the Triage queue at alerts naming an excluded IP'],
   scoring: ['/triage?state=queued&kind=detection', 'Opens the Triage queue at alerts waiting for triage'],
   waiting: ['/triage?state=not_picked_up', 'Opens the Triage queue at alerts no one picked up'],
 }
@@ -224,7 +226,7 @@ export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }
             align="start"
             label="About this diagram"
             source={data.arrivals[0]?.source_text}
-            calculation={`Line thickness is the number of alerts. Each alert is counted once, at the outcome it reached${all ? '' : ' today (UTC)'}. Not picked up is Triage's Not picked up plus Expired`}
+            calculation={`Line thickness is the number of alerts. Each alert is counted once, at the outcome it reached${all ? '' : ' today (UTC)'}. Excluded is alerts naming an excluded IP, which are not triaged and not in the feed. Not picked up is Triage's Not picked up plus Expired`}
             limit="Hover a source or an outcome to follow it"
           />
         )}
