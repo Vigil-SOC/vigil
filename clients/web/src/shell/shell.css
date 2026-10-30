@@ -63,6 +63,36 @@
   top: 98px;
   /* Above the case drawer scrim, so Open in Vigil and /ask stay reachable. */
   z-index: 46;
+  transition: transform .26s cubic-bezier(.4, 0, .2, 1), width .26s cubic-bezier(.4, 0, .2, 1);
+}
+
+.soc-console .chat.full {
+  width: 100vw;
+}
+
+/* A drag follows the pointer; the slide and the page's margin would trail it. */
+.soc-console.chat-resizing .chat,
+.soc-console.chat-resizing .main {
+  transition: none;
+}
+
+/* The dock's left edge, dragged to widen it. */
+.chat .chat-grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+  z-index: 1;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.chat .chat-grip:hover,
+.chat .chat-grip:focus-visible {
+  outline: none;
+  background: var(--ac);
+  opacity: .5;
 }
 
 /* Ask Vigil dock (PulseChat / ChatHistory boards). Everything is scoped under
