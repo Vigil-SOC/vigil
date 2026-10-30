@@ -173,32 +173,41 @@ save_project_container_logs() {
 docker_daemon_ready() { docker info &>/dev/null; }
 
 ensure_docker() {
-    if ! command -v docker &>/dev/null; then
+    if command -v docker &>/dev/null; then
+        docker_daemon_ready && return 0
+        echo "Docker daemon not reachable - starting Docker..."
+        case "$(uname -s)" in
+            Darwin) open -a Docker &>/dev/null || open -a "Docker Desktop" &>/dev/null || true ;;
+            Linux)
+                if is_wsl && ! systemctl cat docker.service &>/dev/null; then
+                    # No docker.service in this distro: Docker is Docker Desktop on
+                    # Windows, which this script cannot start. It is polled below.
+                    echo "On WSL2, start Docker Desktop on Windows and enable WSL integration" >&2
+                    echo "for this distro (Settings > Resources > WSL integration). Waiting..." >&2
+                else
+                    (systemctl start docker || sudo systemctl start docker) &>/dev/null || true
+                fi
+                ;;
+        esac
+    elif is_wsl; then
+        # Docker Desktop links its docker command into the distro only while it
+        # runs, so no command here may just mean it has not been started yet.
+        echo "No docker command in this distro. Start Docker Desktop on Windows, with" >&2
+        echo "Settings > Resources > WSL integration on for this distro. Waiting..." >&2
+    else
         echo "Docker is required but not installed." >&2
-        is_wsl && echo "On WSL2, install Docker Desktop for Windows and turn on Settings > Resources > WSL integration for this distro." >&2
         return 1
     fi
-    docker_daemon_ready && return 0
-    echo "Docker daemon not reachable - starting Docker..."
-    case "$(uname -s)" in
-        Darwin) open -a Docker &>/dev/null || open -a "Docker Desktop" &>/dev/null || true ;;
-        Linux)
-            if is_wsl && ! systemctl cat docker.service &>/dev/null; then
-                # No docker.service in this distro: Docker is Docker Desktop on
-                # Windows, which this script cannot start. It is polled below.
-                echo "On WSL2, start Docker Desktop on Windows and enable WSL integration" >&2
-                echo "for this distro (Settings > Resources > WSL integration). Waiting..." >&2
-            else
-                (systemctl start docker || sudo systemctl start docker) &>/dev/null || true
-            fi
-            ;;
-    esac
     local i=0
     while [ $i -lt 90 ]; do
         docker_daemon_ready && { echo "Docker daemon ready."; return 0; }
         sleep 2; i=$((i + 1))
     done
-    echo "Docker daemon did not become ready after 180s. Start Docker and retry." >&2
+    if ! command -v docker &>/dev/null; then
+        echo "Still no docker command after 180s. Install Docker Desktop for Windows and turn on WSL integration for this distro." >&2
+    else
+        echo "Docker daemon did not become ready after 180s. Start Docker and retry." >&2
+    fi
     return 1
 }
 
