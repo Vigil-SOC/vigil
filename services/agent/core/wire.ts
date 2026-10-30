@@ -34,8 +34,8 @@ export const EMIT_TOOL = "emit";
 
 type Body = Omit<OpenAI.Chat.ChatCompletionCreateParams, "stream" | "stream_options">;
 
-// Takes each piece of the answer's text as it arrives.
-type Heard = (text: string) => void;
+// Takes each piece of the answer's text, and of the reasoning before it, as it arrives.
+type Heard = (piece: Extract<ProviderEvent, { type: "text_delta" | "reasoning_delta" }>) => void;
 
 // Not every provider honours response_format, so a 400 downgrades once to a tool
 // whose parameters are the schema. Keyed by model and schema together, because the
@@ -241,11 +241,11 @@ class OpenAiSurface implements Provider {
       yield* this.ended(turn);
       return;
     }
-    const heard: string[] = [];
+    const heard: ProviderEvent[] = [];
     let wake = (): void => {};
     let over = false;
-    const asked = this.ask(request, (text) => {
-      heard.push(text);
+    const asked = this.ask(request, (piece) => {
+      heard.push(piece);
       wake();
     }).finally(() => {
       over = true;
@@ -254,7 +254,7 @@ class OpenAiSurface implements Provider {
     // Rejections surface at the await below, after the text that preceded them.
     asked.catch(() => {});
     for (;;) {
-      while (heard.length > 0) yield { type: "text_delta", text: heard.shift() as string };
+      while (heard.length > 0) yield heard.shift() as ProviderEvent;
       if (over) break;
       await new Promise<void>((resolve) => {
         wake = resolve;
@@ -497,9 +497,9 @@ class OpenAiSurface implements Provider {
         const response = await assemble(
           stream,
           heard &&
-            ((text) => {
-              spoke = true;
-              heard(text);
+            ((piece) => {
+              if (piece.type === "text_delta") spoke = true;
+              heard(piece);
             }),
         ).catch((error: unknown) => {
           // Asked again, the second answer would follow the first on the reader's screen.
@@ -582,7 +582,9 @@ async function assemble(stream: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>, 
     if (choice.finish_reason) finish = choice.finish_reason;
     const text = textOf(choice.delta.content);
     content += text;
-    if (text !== "") heard?.(text);
+    if (text !== "") heard?.({ type: "text_delta", text });
+    const thought = reasoningOf(choice.delta);
+    if (thought !== "") heard?.({ type: "reasoning_delta", text: thought });
     for (const delta of choice.delta.tool_calls ?? []) {
       const held = calls.get(delta.index);
       calls.set(delta.index, {
@@ -645,6 +647,13 @@ function callsOf(calls: OpenAI.Chat.ChatCompletionMessageToolCall[] | undefined)
   return (calls ?? []).flatMap((call) =>
     call.type === "function" ? [{ id: call.id, tool: call.function.name, args: call.function.arguments }] : [],
   );
+}
+
+// Not in the OpenAI schema: gateways put a reasoning model's thinking under one of these.
+function reasoningOf(delta: OpenAI.Chat.ChatCompletionChunk.Choice.Delta): string {
+  const held = delta as { reasoning?: unknown; reasoning_content?: unknown };
+  const text = held.reasoning ?? held.reasoning_content;
+  return typeof text === "string" ? text : "";
 }
 
 // Some providers reply with a content-block list. Handing an array to JSON.parse

@@ -40,6 +40,8 @@ type Role = 'user' | 'vigil' | 'error'
 interface ChatMsg {
   role: Role
   text: string
+  /** What the model thought before answering, when it says. Kept for this session only. */
+  reasoning?: string
 }
 
 interface SessionSummary {
@@ -244,13 +246,25 @@ function AnswerText({ text, citations, onCite }: { text: string; citations?: rea
   return <div className="body"><Markdown cite={cite}>{text}</Markdown></div>
 }
 
+/** The model's reasoning, folded above its answer. */
+function Thinking({ text, live = false }: { text: string; live?: boolean }) {
+  return (
+    <details className="msg-think">
+      <summary>{live ? 'Thinking…' : 'Thinking'}</summary>
+      <div className="msg-think-body">{text}</div>
+    </details>
+  )
+}
+
 function VigilMessage({
   text,
+  reasoning,
   citations,
   onCite,
   onTrace,
 }: {
   text: string
+  reasoning?: string
   citations?: readonly Citation[]
   onCite?: (cite: Citation) => void
   onTrace?: () => void
@@ -260,6 +274,7 @@ function VigilMessage({
   )
   const content = (
     <>
+      {reasoning && <Thinking text={reasoning} />}
       <AnswerText text={text} citations={citations} onCite={onCite} />
       <div className="msg-actions">
         {copy}
@@ -317,6 +332,7 @@ export default function Chat({
   const [draft, setDraft] = useState('')
   const [loading, setLoading] = useState(false)
   const [streamText, setStreamText] = useState('')
+  const [streamReasoning, setStreamReasoning] = useState('')
   // true between a `tool_processing` event and the next `text` chunk
   const [isProcessingTools, setIsProcessingTools] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -547,6 +563,7 @@ export default function Chat({
     setDraft('')
     setLoading(true)
     setStreamText('')
+    setStreamReasoning('')
     setIsProcessingTools(false)
 
     const ac = new AbortController()
@@ -588,6 +605,7 @@ export default function Chat({
       const reader = res.body?.getReader()
       const decoder = new TextDecoder()
       let curText = ''
+      let curReasoning = ''
       let buf = ''
       if (reader) {
         for (;;) {
@@ -619,13 +637,16 @@ export default function Chat({
               setIsProcessingTools(false)
               curText += ev.content || ''
               setStreamText(curText)
+            } else if (ev.type === 'reasoning') {
+              curReasoning += ev.content || ''
+              setStreamReasoning(curReasoning)
             }
           }
         }
       }
       if (gen === turnGen.current) {
         setMessages((m) => {
-          const vigil: ChatMsg = { role: 'vigil', text: curText || '_(no response)_' }
+          const vigil: ChatMsg = { role: 'vigil', text: curText || '_(no response)_', ...(curReasoning && { reasoning: curReasoning }) }
           const next = [...m, vigil]
           messagesRef.current = next
           return next
@@ -669,6 +690,7 @@ export default function Chat({
         }
         setLoading(false)
         setStreamText('')
+        setStreamReasoning('')
         setIsProcessingTools(false)
         abortRef.current = null
         if (accepted) onTurnDone?.()
@@ -685,7 +707,8 @@ export default function Chat({
       id: sessionRef.current,
       title: (firstUser?.text || 'Conversation').replace(/\s+/g, ' ').trim().slice(0, 70) || 'Conversation',
       ts: Date.now(),
-      messages,
+      // the cache keeps what the server keeps: no reasoning
+      messages: messages.map(({ role, text }) => ({ role, text })),
       key: currentKeyRef.current || undefined,
     }
     setHistory((h) => {
@@ -976,7 +999,7 @@ export default function Chat({
             )}
           </div>
         ) : (
-          <VigilMessage key={i} text={m.text} citations={citations} onCite={onCite} onTrace={pinned ? undefined : openReasoningTrace} />
+          <VigilMessage key={i} text={m.text} reasoning={m.reasoning} citations={citations} onCite={onCite} onTrace={pinned ? undefined : openReasoningTrace} />
         )
       )}
       {loading && (
@@ -992,10 +1015,11 @@ export default function Chat({
                 <Icon name="sparkle" size={14} className="vs-spark" />
               )}
               <span className="vs-label">
-                {isProcessingTools ? 'Vigil is running tools' : streamText ? 'Vigil is responding' : 'Vigil is working on it'}
+                {isProcessingTools ? 'Vigil is running tools' : streamText ? 'Vigil is responding' : streamReasoning ? 'Vigil is thinking' : 'Vigil is working on it'}
                 …
               </span>
             </div>
+            {streamReasoning && <Thinking text={streamReasoning} live />}
             {streamText && <AnswerText text={streamText} citations={citations} onCite={onCite} />}
           </div>
         </div>

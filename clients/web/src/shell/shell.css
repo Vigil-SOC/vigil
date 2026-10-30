@@ -308,6 +308,29 @@
   color: var(--tx0);
 }
 
+/* The model's reasoning, folded above the answer (dock and case composer). */
+.msg-think {
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--tx2);
+}
+
+.msg-think summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.msg-think-body {
+  max-height: 220px;
+  overflow-y: auto;
+  margin-top: 4px;
+  padding-left: 10px;
+  border-left: 2px solid var(--ln1);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .chat .msg.vigil .vigil-status {
   display: flex;
   align-items: center;

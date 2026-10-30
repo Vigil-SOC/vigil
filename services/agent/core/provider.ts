@@ -48,6 +48,8 @@ export interface Turn {
 // reported what it spent. Tool calls come last, once the model has asked for them.
 export type ProviderEvent =
   | { type: "text_delta"; text: string }
+  // What a reasoning model thinks before it answers. Shown to the reader, never sent back.
+  | { type: "reasoning_delta"; text: string }
   | { type: "usage"; tokens: TokenCounts }
   | { type: "tool_call"; call: ToolCall };
 
