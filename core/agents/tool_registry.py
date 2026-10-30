@@ -6,6 +6,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+from contextlib import nullcontext
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
@@ -552,10 +553,12 @@ def update_case(
         updates["notes"] = notes
 
     change = status_change(case.get("status"), status)
-    if not data.update_case(case_id, **updates):
-        return {"error": "Failed to update case"}
-    if change:
-        with service_session() as session:
+    # The write and a close share one session, so a refused close leaves the
+    # case as it was. A write with no close owns its own session.
+    with (service_session() if change else nullcontext()) as session:
+        if not data.update_case(case_id, session=session, **updates):
+            return {"error": "Failed to update case"}
+        if change:
             record_status_change(
                 session,
                 case_id,

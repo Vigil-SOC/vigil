@@ -1201,6 +1201,18 @@ export function CasePage({
     setRecordKey((k) => k + 1)
   }, [id, otherRuns, phase])
 
+  // An edit to the case writes its trail rows; re-read the record in place so they show without a reload.
+  const editStamp = c ? [c.status, c.prio, c.owner, c.title, c.desc ?? ''].join('\u0000') : ''
+  const seenEdit = useRef<{ id: string; stamp: string } | null>(null)
+  useEffect(() => {
+    if (!c) return // a reload blanks the row first; compare against the last row that was shown
+    const prev = seenEdit.current
+    seenEdit.current = { id, stamp: editStamp }
+    if (!prev || prev.id !== id || prev.stamp === editStamp) return
+    quietRecord.current = true
+    setRecordKey((k) => k + 1)
+  }, [id, editStamp, c])
+
   // Each run is named once, on its tag, the filter, the cost lines and the Record's rows.
   const runLabels = useMemo(() => Object.fromEntries(investigations.map((item) => [item.run_id, runLabel(item, workflowNames)])), [investigations, workflowNames])
 

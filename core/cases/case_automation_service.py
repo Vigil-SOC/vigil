@@ -4,6 +4,7 @@ import logging
 from typing import Dict, List
 
 from core.cases.case_sla_service import open_case
+from core.storage import case_trail_hook
 
 logger = logging.getLogger(__name__)
 
@@ -82,14 +83,19 @@ def cluster_findings_by_attack_path(finding_ids: List[str]) -> List[str]:
         )
         title = f"VStrike: {segment} via {initial_asset}"
 
-        case = open_case(
-            data_service,
-            title=title,
-            finding_ids=ids,
-            priority=priority,
-            description=description,
-            status="open",
-        )
+        try:
+            case = open_case(
+                data_service,
+                title=title,
+                finding_ids=ids,
+                priority=priority,
+                description=description,
+                status="open",
+            )
+        except case_trail_hook.RAISED:
+            # A refused append opens no case; the clusters before it still count.
+            logger.exception("VStrike cluster case not opened: %s", title)
+            continue
         if case and case.get("case_id"):
             created_case_ids.append(case["case_id"])
             logger.info(

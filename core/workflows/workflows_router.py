@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from core.agents.projections import read_call, read_projection, read_replay, read_verify
 from core.agents.run_limits import MAX_COST_USD, MAX_ITERATIONS
+from core.audit import trail
 from core.auth import tool_principal
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
@@ -470,6 +471,8 @@ def _case_for_start(
             priority="medium",
             description=parameters.get("hypothesis") or parameters.get("context") or "",
         )
+    except trail.Paused:
+        raise  # a 503 with Retry-After, as a comment is
     except Exception:
         logger.exception("could not open a case for a %s start", workflow_id)
         opened = None
@@ -486,7 +489,12 @@ def _drop_case(case_id: Optional[str]) -> None:
         return
     from core.storage.database_data_service import DatabaseDataService
 
-    if not DatabaseDataService().delete_case(case_id):
+    # A refused or paused trail append raises; the caller's own error stands.
+    try:
+        dropped = DatabaseDataService().delete_case(case_id)
+    except Exception:  # noqa: BLE001
+        dropped = False
+    if not dropped:
         logger.error("could not delete case %s opened for a refused start", case_id)
 
 
