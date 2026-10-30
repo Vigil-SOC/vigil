@@ -62,6 +62,31 @@
 * **desktop:** Bifrost's runtime settings (provider keys, virtual keys, budgets, rate limits) now persist in a `bifrost_data` named volume, so they survive quitting the app ([#1452](https://github.com/Vigil-SOC/vigil/issues/1452)). Earlier versions kept them in an anonymous volume that every quit orphaned; those are not migrated, so re-enter any Bifrost settings made in its UI once. Providers seeded from environment variables come back on their own. Reclaim the orphaned volumes with `docker volume prune`.
 * **compose:** Bifrost's request log (`logs.db`) now lives in the `bifrost_data` volume, so gateway log history, cost time series and `recalculate-cost` survive a container recreate ([#1454](https://github.com/Vigil-SOC/vigil/issues/1454)). It was written to `/app/logs.db` in the container's writable layer. Applies to the server and desktop standalone stacks. The config store is untouched, so no volume reset is needed. History already in `/app/logs.db` is not migrated: the first recreate drops it, as every recreate did before. Snapshots still leave `logs.db` out, and a restore moves the live one aside into `.pre-restore-<stamp>` in the Bifrost data directory rather than restoring it.
 
+## 1.0.1 (2026-10-30)
+
+## What's Changed
+* Build release notes from merged PRs, not conventional commit types by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3490
+* Case queue ranks only runs of cases that still exist, and indexes a run's case id by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3497
+* Store each finding's addresses in an indexed column for the IP-exclusion filter by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3498
+* Overview and Triage: excluded findings get their own outcome by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3499
+* chore(scripts): add experimental vigil-compose/backup/upgrade scripts, remove deploy_to_vm.sh by @johnvanlowe in https://github.com/Vigil-SOC/vigil/pull/3501
+* fix(upgrade): chain the two 0019 migrations into a single Alembic head by @johnvanlowe in https://github.com/Vigil-SOC/vigil/pull/3504
+* Keep the nav and its More menu above Ask Vigil and the case drawer by @ShmalexM in https://github.com/Vigil-SOC/vigil/pull/3515
+* Find a case by its id from @ in Ask Vigil, and pick it with the keyboard by @ShmalexM in https://github.com/Vigil-SOC/vigil/pull/3517
+* Open a past conversation from Ask Vigil's history while an answer is coming by @ShmalexM in https://github.com/Vigil-SOC/vigil/pull/3518
+* 1.X: Widen Ask Vigil by dragging its edge, or open it full screen (review fixes for #3516) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3523
+* Stream Ask Vigil's answer as the model writes it (review fixes for #3514) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3524
+* 1.X: Drop a file on Ask Vigil to ask about it (review fixes for #3519) by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/3525
+* List the cases and alerts a command can take, so nobody has to know the id (review fixes for #3520) by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/3527
+* Show what the model thinks before it answers in Ask Vigil by @ShmalexM in https://github.com/Vigil-SOC/vigil/pull/3521
+* fix(console): the Cases nav badge counts open cases, not decisions by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3526
+* Wait for Docker Desktop under WSL2 instead of reporting Docker missing by @ShmalexM in https://github.com/Vigil-SOC/vigil/pull/3529
+* Load a .env saved with CRLF line endings by @ShmalexM in https://github.com/Vigil-SOC/vigil/pull/3528
+* Say in the ready banner when the console did not start (review fixes for #3530) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3531
+
+
+**Full Changelog**: https://github.com/Vigil-SOC/vigil/compare/v1.0.0...v1.0.1
+
 ## [1.0.0](https://github.com/Vigil-SOC/vigil/compare/v0.10.3...v1.0.0) (2026-10-29)
 
 
