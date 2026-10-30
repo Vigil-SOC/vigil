@@ -1225,7 +1225,7 @@
 
 .vg-drawer-scrim {
   position: fixed;
-  top: 52px;
+  top: 98px; /* below the header and nav, as the dock and the side drawers are */
   right: 0;
   bottom: 0;
   left: 0;
@@ -1839,7 +1839,8 @@ select.vg-side-input {
   border-bottom: 1px solid var(--ln0);
   font-family: var(--font-ui);
   position: relative;
-  z-index: 40;
+  /* Above the dock (46) and the drawer scrims (45), so the More menu opens over them. */
+  z-index: 47;
 }
 
 .vg-nav-btn {
