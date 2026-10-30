@@ -128,6 +128,7 @@ class CaseSearchService:
                     or_(
                         Case.title.ilike(search_pattern),
                         Case.description.ilike(search_pattern),
+                        Case.case_id.ilike(search_pattern),
                     )
                 )
                 .limit(limit)

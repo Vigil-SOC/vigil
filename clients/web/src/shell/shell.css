@@ -489,7 +489,8 @@
   cursor: pointer;
 }
 
-.chat .chat-mention button:hover {
+.chat .chat-mention button:hover,
+.chat .chat-mention button.on {
   background: var(--bg3);
 }
 
