@@ -578,7 +578,11 @@ export default function Chat({
     setFile(null)
   }
 
+  // only a dragged file is taken; dragged text still drops into the textarea
+  const carriesFile = (event: DragEvent<HTMLDivElement>) => event.dataTransfer.types.includes('Files')
+
   const onDropFile = (event: DragEvent<HTMLDivElement>) => {
+    if (!carriesFile(event)) return
     event.preventDefault()
     setDragging(false)
     const picked = event.dataTransfer.files?.[0]
@@ -1133,7 +1137,11 @@ export default function Chat({
     <div className="chat-foot">
       <div
         className={`chat-input${dragging ? ' dragging' : ''}`}
-        onDragOver={pinned ? undefined : (event) => { event.preventDefault(); setDragging(true) }}
+        onDragOver={pinned ? undefined : (event) => {
+          if (!carriesFile(event)) return
+          event.preventDefault()
+          setDragging(true)
+        }}
         onDragLeave={pinned ? undefined : () => setDragging(false)}
         onDrop={pinned ? undefined : onDropFile}
       >
@@ -1193,8 +1201,9 @@ export default function Chat({
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKeyDown}
           onPaste={pinned ? undefined : (e) => {
+            // Office and browsers put a picture beside copied text; text pasted is text
             const pasted = e.clipboardData.files?.[0]
-            if (!pasted) return
+            if (!pasted || e.clipboardData.types.includes('text/plain')) return
             e.preventDefault()
             void attachFile(pasted)
           }}
