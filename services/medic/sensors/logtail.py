@@ -1,17 +1,23 @@
-"""Compose log tail (D6-1): Vigil's seven containers' log lines as `log` observations.
+"""Log tail: Compose containers and Helm pods as `log` observations.
 
-Background tasks follow `GET /containers/{id}/logs` through medic-dockerproxy and
-push finished lines onto their own 10,000-line `Bus`. One `LogStream` sensor per
-service reports the streams' state each 30 s, so the scheduler gives it
-`sensor_health`, `blind` after 3 failed cycles, and "a quiet stream is not an error".
+Compose follows `GET /containers/{id}/logs` through medic-dockerproxy. Helm
+follows the pod log API (`follow=true&timestamps=true&sinceTime=`), one stream
+per pod. `sinceTime` is whole seconds; the cursor's hashes drop the replayed
+part of that second. A container restart is drained once with `previous=true`,
+then followed. Neither path sends `limitBytes`.
+
+Background tasks push finished lines onto their own 10,000-line `Bus`. One
+`LogStream` sensor per service reports the streams' state each 30 s, so the
+scheduler gives it `sensor_health`, `blind` after 3 failed cycles, and "a quiet
+stream is not an error".
 
 A line takes this path and no other: cap 16 KiB, redact, fingerprint (fp1), draft.
 A raw line is never logged, stored or put in a `ReadError`.
 
-Cursors live in memory: `{last_ts_ns, hashes of the lines at that ns}` per container.
-They dedupe Docker's inclusive `since` when a stream reattaches after a container
-restarts. After Medic itself restarts a stream follows from now; the gap is the
-gap mechanism's (`app/gap.py`).
+Cursors live in memory: `{last_ts_ns, hashes of the lines at that ns}` per
+container or pod. They dedupe an inclusive resume (Docker's `since`, the
+kubelet's truncated `sinceTime`) when a stream reattaches. After Medic itself
+restarts a stream follows from now; the gap is the gap mechanism's (`app/gap.py`).
 """
 
 from __future__ import annotations
@@ -24,9 +30,12 @@ import logging
 import re
 import socket
 import ssl
+import time
 from collections.abc import Awaitable, Callable, Collection, Iterator, Sequence
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -47,11 +56,25 @@ from services.medic.sensors.containers import (
     _decode,
     _instance,
 )
+from services.medic.sensors.kube import (
+    _CA_PATH,
+    _NAMESPACE_PATH,
+    _TOKEN_PATH,
+    _kube_list,
+    _labels,
+    _meta,
+    _name,
+    _read_namespace,
+    _read_token,
+    _service,
+    _stat,
+)
 from services.medic.sensors.scheduler import iso
 
 log = logging.getLogger("services.medic.sensors")
 
 LOG_SERVICES = SERVICES[:7]  # backend … backup: the containers Vigil ships
+HELM_LOG_SERVICES = SERVICES[:5]  # backend … agent-serve; no bifrost, no backup
 SIGNAL = {s: "log_" + s.replace("-", "_") for s in LOG_SERVICES}
 ERRORS_AS_SUCCESS = "llm_worker_errors_as_success"
 JOBS_LOGGER = "services.worker.jobs"
@@ -69,6 +92,8 @@ _EXC_TYPE = re.compile(r"[A-Za-z0-9_.]{1,200}")
 _FRAME = re.compile(r"[A-Za-z0-9_./-]{1,200}:[A-Za-z0-9_<>.]{1,100}")
 _TRACE = re.compile(r"[0-9a-f]{16,32}")
 _TS = re.compile(rb"(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)(?:\.(\d{1,9}))?Z ")
+# A pod name goes in the log URL path. DNS-1123 subdomain, no slashes.
+_POD = re.compile(r"[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?")
 
 
 @dataclass(frozen=True)
@@ -143,9 +168,10 @@ def line_drafts(
     catalog: Collection[tuple[str, str]],
     redactor: Redactor,
     observed_at: float,
+    sensor_id: str | None = None,
 ) -> tuple[list[dict[str, Any]], str]:
     """The drafts for one line (two for an llm-worker jobs ERROR) and its `line_hash`."""
-    sensor = f"docker.logs.{service}"
+    sensor = sensor_id or f"docker.logs.{service}"
     text = line.raw[:MAX_LINE].decode("utf-8", "replace")
     redacted = redactor.redact(text)[0]  # what `line_hash` covers; text lines parse it
     source_ts = iso(line.ts_ns / 1e9) if line.ts_ns is not None else None
@@ -286,6 +312,70 @@ def _since(ts_ns: int) -> str:
     return f"{ts_ns // 1_000_000_000}.{ts_ns % 1_000_000_000:09d}"
 
 
+def _since_time(ts_ns: int) -> str:
+    """RFC3339 whole seconds. The kubelet truncates `sinceTime` to that."""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts_ns // 1_000_000_000))
+
+
+def _container_name(service: str) -> str:
+    """Chart container: `daemon` for soc-daemon, otherwise the component name."""
+    return "daemon" if service == "soc-daemon" else service
+
+
+def _app_container_id(pod: dict[str, Any], container: str) -> str | None:
+    status = pod.get("status")
+    statuses = status.get("containerStatuses") if isinstance(status, dict) else None
+    if not isinstance(statuses, list):
+        return None
+    for item in statuses:
+        if not isinstance(item, dict) or item.get("name") != container:
+            continue
+        cid = item.get("containerID")
+        if isinstance(cid, str) and cid:
+            return cid
+    return None
+
+
+def _http_error(status: int) -> ReadError:
+    """Status only. A body can echo a pod or the token, so it is not read."""
+    if status in (401, 403):
+        return ReadError("auth", http_status=status)
+    return ReadError("http_status", http_status=status)
+
+
+class _TextReader:
+    """Newline-delimited pod logs (`timestamps=true`), not Docker frames."""
+
+    def __init__(self) -> None:
+        self._buf = bytearray()
+
+    def feed(self, chunk: bytes) -> Iterator[Line]:
+        self._buf += chunk
+        while True:
+            nl = self._buf.find(b"\n")
+            if nl < 0:
+                break
+            seg = bytes(self._buf[:nl])
+            del self._buf[: nl + 1]
+            yield self._line(seg)
+        if len(self._buf) > MAX_FRAME:
+            raise ProtocolError
+
+    def finish(self) -> Iterator[Line]:
+        """A finite body (`previous=true`) may end without a newline."""
+        if not self._buf:
+            return
+        seg = bytes(self._buf)
+        self._buf.clear()
+        yield self._line(seg)
+
+    def _line(self, seg: bytes) -> Line:
+        if seg.endswith(b"\r"):
+            seg = seg[:-1]
+        ts_ns, text = _split_ts(seg)
+        return Line(ts_ns, text[:MAX_LINE], len(text) > MAX_LINE)
+
+
 def classify(exc: BaseException) -> ReadError:
     """The same classes `containers` uses. Type only: a message can quote bytes."""
     if isinstance(exc, httpx.ConnectTimeout):
@@ -321,6 +411,13 @@ class _Stream:
     hashes: set[str] = field(default_factory=set)  # … and the lines at exactly it
     error: ReadError | None = None
     task: asyncio.Task[None] | None = None
+    # Helm only. `container_id` is the app container; a change is a restart.
+    container: str = ""
+    container_id: str | None = None
+    pod_uid: str = ""
+    need_previous: bool = False
+    attached: bool = False  # a follow has started; the next one must re-list
+    live: httpx.Response | None = None
 
 
 @dataclass
@@ -361,6 +458,7 @@ class LogTail:
         self._bus: Bus | None = None
         self._clock: Clock | None = None
         self._shape = "compose"
+        self._id_prefix = "docker.logs"
         self._start_ns = 0
 
     def bind(self, bus: Bus, clock: Clock) -> None:
@@ -487,6 +585,7 @@ class LogTail:
         # nothing older than the cursor is new.
         if ts is not None and ts < base_ns:
             return False
+        sensor_id = f"{self._id_prefix}.{stream.service}"
         failed: str | None = None
         try:
             drafts, line_hash = line_drafts(
@@ -497,6 +596,7 @@ class LogTail:
                 catalog=self.catalog,
                 redactor=self._redactor,
                 observed_at=self._clock.wall(),
+                sensor_id=sensor_id,
             )
         # Fail closed: a line that can't be processed is dropped and counted,
         # and the cursor still moves past it so a reattach doesn't replay it.
@@ -510,12 +610,13 @@ class LogTail:
             elif ts == stream.last_ns:
                 stream.hashes.add(line_hash)
         if failed is not None:
-            self._bus.stats[f"docker.logs.{stream.service}"].redactor_failures += 1
+            self._bus.stats[sensor_id].redactor_failures += 1
             log.warning(
                 "Dropped a %s log line: processing failed (%s)", stream.service, failed
             )
         for draft in drafts:
-            self._enqueue(draft)
+            # Unbound: a Helm tail has no `_enqueue` of its own.
+            LogTail._enqueue(self, draft)
         return True
 
     def _enqueue(self, draft: dict[str, Any]) -> None:
@@ -525,6 +626,295 @@ class LogTail:
         self._bus.put(draft)
 
 
+# -- Helm pods --------------------------------------------------------------
+
+
+class KubeLogTail:
+    """Follows Helm pod logs. One cursor per pod, from Medic's start.
+
+    Discovery is the pod list, on the same rediscover interval as Compose.
+    A new app-container `containerID` while attached is a restart: drain
+    `previous=true` once (finite, no `follow`), then follow the new container.
+    No `limitBytes` and no kubelet-retention backfill.
+    """
+
+    def __init__(
+        self,
+        *,
+        host: str = "kubernetes.default.svc",
+        port: int = 443,
+        scheme: str = "https",
+        token_path: Path = _TOKEN_PATH,
+        ca_path: Path = _CA_PATH,
+        namespace_path: Path = _NAMESPACE_PATH,
+        catalog: Collection[tuple[str, str]] = frozenset(),
+        transport: httpx.AsyncBaseTransport | None = None,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
+        redactor: Redactor | None = None,
+    ) -> None:
+        self.host, self.port, self.scheme = host, port, scheme
+        self.token_path, self.ca_path = token_path, ca_path
+        self.namespace_path = namespace_path
+        self.catalog = catalog
+        self._transport = transport
+        # Opened on the first list. `verify=<ca path>` raises if the mount is
+        # not there yet, and `sensors_for` must not do that at registration.
+        self._client: httpx.AsyncClient | None = None
+        self._redactor = redactor or Redactor()
+        self._sleep = sleep
+        self._streams: dict[str, _Stream] = {}
+        self._lock = asyncio.Lock()
+        self._snap: _Snapshot | None = None
+        self._snap_at = float("-inf")
+        self._dropped: list[_Stream] = []
+        self._bus: Bus | None = None
+        self._clock: Clock | None = None
+        self._shape = "helm"
+        self._id_prefix = "kube.logs"
+        self._start_ns = 0
+
+    def bind(self, bus: Bus, clock: Clock) -> None:
+        self._bus, self._clock = bus, clock
+        self._start_ns = int(clock.wall() * 1e9)
+
+    async def aclose(self) -> None:
+        tasks = [s.task for s in self._streams.values() if s.task]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._streams.clear()
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+    async def _open(self) -> httpx.AsyncClient | ReadError:
+        if self._client is not None:
+            return self._client
+        if self.scheme == "https":
+            missing = await _stat(self.ca_path)
+            if missing is not None:
+                return missing
+        verify: bool | str = str(self.ca_path) if self.scheme == "https" else False
+        try:
+            self._client = httpx.AsyncClient(
+                transport=self._transport,
+                timeout=_STREAM_TIMEOUT,
+                trust_env=False,
+                follow_redirects=False,
+                verify=verify,
+            )
+        except (OSError, ssl.SSLError):
+            return ReadError("tls")
+        return self._client
+
+    async def refresh(self, shape: str) -> _Snapshot:
+        """The pods now, at most once per REDISCOVER_S however many ask."""
+        assert self._clock is not None, "KubeLogTail.bind() was not called"
+        return await self._reload(force=False, shape=shape)
+
+    async def _reload(self, *, force: bool, shape: str | None = None) -> _Snapshot:
+        assert self._clock is not None
+        async with self._lock:
+            if shape is not None:
+                self._shape = shape
+            now = self._clock.monotonic()
+            if force or self._snap is None or now - self._snap_at >= REDISCOVER_S:
+                self._snap = await self._discover()
+                self._snap_at = self._clock.monotonic()
+                dropped, self._dropped = self._dropped, []
+            else:
+                dropped = []
+            snap = self._snap
+        # Outside the lock: closing the socket unblocks that follow task, which
+        # then drains `previous` itself. A list from inside `_attach` has no
+        # live response of its own.
+        for stream in dropped:
+            await self._drop_follow(stream)
+        assert snap is not None
+        return snap
+
+    async def _discover(self) -> _Snapshot:
+        client = await self._open()
+        if isinstance(client, ReadError):
+            return _Snapshot(client)
+        namespace, error = await _read_namespace(self.namespace_path)
+        if error is not None or namespace is None:
+            return _Snapshot(error or ReadError("parse", detail="namespace"))
+        url = f"{self.scheme}://{self.host}:{self.port}/api/v1/namespaces/{namespace}/pods"
+        listed = await _kube_list(
+            client,
+            url,
+            token_path=self.token_path,
+            deadline=time.monotonic() + 8,
+        )
+        if isinstance(listed, ReadError):
+            return _Snapshot(listed)
+        seen: dict[str, _Stream] = {}
+        for pod in listed:
+            service = _service(_labels(pod))
+            pod_name = _name(pod)
+            if service not in HELM_LOG_SERVICES or pod_name is None:
+                continue
+            if not _POD.fullmatch(pod_name):
+                continue
+            uid = _meta(pod).get("uid")
+            pod_uid = uid if isinstance(uid, str) and uid else pod_name
+            container = _container_name(service)
+            cid = _app_container_id(pod, container)
+            stream = self._streams.get(pod_name)
+            if stream is None or stream.pod_uid != pod_uid:
+                if stream is not None and stream.task:
+                    stream.task.cancel()
+                stream = _Stream(
+                    pod_name,
+                    pod_name,
+                    service,
+                    self._start_ns,
+                    container=container,
+                    container_id=cid,
+                    pod_uid=pod_uid,
+                )
+                stream.task = asyncio.get_running_loop().create_task(
+                    self._run(stream), name=f"medic.kube.logs.{service}"
+                )
+            elif cid and stream.container_id and cid != stream.container_id:
+                stream.need_previous = True
+                stream.container_id = cid
+                self._dropped.append(stream)
+            elif cid:
+                stream.container_id = cid
+            seen[pod_name] = stream
+        for pod_name in self._streams.keys() - seen.keys():
+            if task := self._streams[pod_name].task:
+                task.cancel()
+        self._streams = seen
+        snap = _Snapshot()
+        for stream in seen.values():
+            snap.streams.setdefault(stream.service, []).append(stream)
+        return snap
+
+    async def _drop_follow(self, stream: _Stream) -> None:
+        live = stream.live
+        if live is None:
+            return
+        try:
+            await live.aclose()
+        except Exception as exc:  # noqa: BLE001 — the follow task sees the close
+            log.debug("pod log follow close failed (%s)", type(exc).__name__)
+
+    async def _run(self, stream: _Stream) -> None:
+        delay = 1.0
+        sleep = self._sleep or self._clock.sleep  # type: ignore[union-attr]
+        while True:
+            got = False
+            try:
+                got = await self._attach(stream)
+            except asyncio.CancelledError:
+                raise
+            except _Failed as failed:
+                stream.error = failed.error
+            except Exception as exc:  # noqa: BLE001
+                stream.error = classify(exc)
+            if stream.need_previous:
+                continue  # the container changed: drain, don't back off
+            delay = 1.0 if got else min(delay * 2, BACKOFF_MAX_S)
+            await sleep(delay)
+
+    async def _attach(self, stream: _Stream) -> bool:
+        # A follow that ended (the kubelet closes it when the container dies)
+        # must see the new containerID before it reads again. Otherwise the
+        # new container's lines move the cursor and `previous=true` skips what
+        # the old container still had. The open follow itself stays on the
+        # shared rediscover interval.
+        if stream.attached:
+            snap = await self._reload(force=True)
+            # A failed list must not be followed by a read: the container may
+            # have restarted, and the new container's lines would move the
+            # cursor past the old container's tail.
+            if snap.error is not None and not stream.need_previous:
+                stream.error = snap.error
+                return False
+        stream.attached = True
+        # One restart, one finite read of the container we were following.
+        # A further change while that read is open sets the flag again.
+        while stream.need_previous:
+            stream.need_previous = False
+            try:
+                await self._read_log(stream, follow=False, previous=True)
+            except _Failed as failed:
+                stream.error = failed.error
+            except Exception as exc:  # noqa: BLE001
+                stream.error = classify(exc)
+        return await self._read_log(stream, follow=True, previous=False)
+
+    async def _read_log(self, stream: _Stream, *, follow: bool, previous: bool) -> bool:
+        token, error = await _read_token(self.token_path)
+        if error is not None or token is None:
+            raise _Failed(error or ReadError("other", detail="token"))
+        namespace, error = await _read_namespace(self.namespace_path)
+        if error is not None or namespace is None:
+            raise _Failed(error or ReadError("parse", detail="namespace"))
+        # Never `limitBytes`: it would resume mid-line and skip the rest.
+        params = {
+            "container": stream.container,
+            "timestamps": "true",
+            "sinceTime": _since_time(stream.last_ns),
+        }
+        if follow:
+            params["follow"] = "true"
+        if previous:
+            params["previous"] = "true"
+        url = (
+            f"{self.scheme}://{self.host}:{self.port}"
+            f"/api/v1/namespaces/{namespace}/pods/{quote(stream.id, safe='')}/log"
+        )
+        headers = {"Authorization": f"Bearer {token}", "Accept": "text/plain"}
+        base_ns, base_hashes = stream.last_ns, set(stream.hashes)
+        reader, got = _TextReader(), False
+        client = self._client
+        if client is None:
+            opened = await self._open()
+            if isinstance(opened, ReadError):
+                raise _Failed(opened)
+            client = opened
+        async with client.stream(
+            "GET", url, params=params, headers=headers
+        ) as response:
+            if response.status_code != 200:
+                raise _Failed(_http_error(response.status_code))
+            stream.error = None
+            if follow:
+                stream.live = response
+            try:
+                async for chunk in response.aiter_raw():
+                    for line in reader.feed(chunk):
+                        got = (
+                            LogTail._deliver(self, stream, line, base_ns, base_hashes)
+                            or got
+                        )
+                    if follow and stream.need_previous:
+                        return got
+                if not follow:
+                    for line in reader.finish():
+                        got = (
+                            LogTail._deliver(self, stream, line, base_ns, base_hashes)
+                            or got
+                        )
+            except asyncio.CancelledError:
+                raise
+            except httpx.HTTPError:
+                if not follow:
+                    raise  # a short body that died is a failed drain; reattach follows
+            except Exception:
+                # Closing the follow socket on restart is not an HTTP error.
+                if not follow or not stream.need_previous:
+                    raise
+            finally:
+                if stream.live is response:
+                    stream.live = None
+        return got
+
+
 # -- the sensors ------------------------------------------------------------
 
 
@@ -532,16 +922,17 @@ class LogTail:
 class LogStream:
     """One service's log signal. Reads nothing itself: it reports its streams."""
 
-    tail: LogTail
+    tail: LogTail | KubeLogTail
     service: str
     interval_s: int = 30  # C7 §3
     timeout_s: float = 10.0
     uses_vigil_api: bool = False
+    id_prefix: str = "docker.logs"
     id: str = field(init=False)
     covers: tuple[str, ...] = field(init=False)
 
     def __post_init__(self) -> None:
-        self.id = f"docker.logs.{self.service}"
+        self.id = f"{self.id_prefix}.{self.service}"
         self.covers = (SIGNAL[self.service],) + (
             (ERRORS_AS_SUCCESS,) if self.service == "llm-worker" else ()
         )
@@ -570,6 +961,33 @@ def compose_log_sensors(
 ) -> list[LogStream]:
     tail = LogTail(host, port, catalog=catalog)
     return [LogStream(tail, service) for service in LOG_SERVICES]
+
+
+def helm_log_sensors(
+    *,
+    catalog: Collection[tuple[str, str]] = frozenset(),
+    host: str = "kubernetes.default.svc",
+    port: int = 443,
+    scheme: str = "https",
+    token_path: Path = _TOKEN_PATH,
+    ca_path: Path = _CA_PATH,
+    namespace_path: Path = _NAMESPACE_PATH,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> list[LogStream]:
+    """The five Helm log streams. `catalog` is the argument Compose already takes."""
+    tail = KubeLogTail(
+        host=host,
+        port=port,
+        scheme=scheme,
+        token_path=token_path,
+        ca_path=ca_path,
+        namespace_path=namespace_path,
+        catalog=catalog,
+        transport=transport,
+    )
+    return [
+        LogStream(tail, service, id_prefix="kube.logs") for service in HELM_LOG_SERVICES
+    ]
 
 
 def bind_log_tails(sensors: Sequence[Any], bus: Bus, clock: Clock) -> None:
