@@ -149,13 +149,13 @@ Sign-in cookies are `Secure` by default (`VIGIL_COOKIE_SECURE=true`), so the con
 
 ### Windows (WSL2)
 
-> **Not yet tested on real Windows hardware.** The scripts have been checked on macOS and Linux only. Please report what breaks.
+> **Not yet tested inside WSL2 on a Windows machine.** `start.sh` runs end to end on Ubuntu 24.04, the distro `wsl --install` sets up, with its WSL2 branches switched on; Docker Desktop's integration and the Windows side are unverified. Please report what breaks.
 
 `start.sh` is a bash script, so run Vigil inside WSL2, not in PowerShell or Git Bash.
 
 - **WSL2 with Ubuntu** (`wsl --install -d Ubuntu` in an administrator PowerShell, then reboot). Inside Ubuntu: `sudo apt update && sudo apt install -y git curl`.
 - **Docker Desktop for Windows**, running, with **Settings → Resources → WSL integration** turned on for your Ubuntu distro. `docker ps` must work inside Ubuntu before you start.
-- **Node.js 20+ inside Ubuntu**, for example with [nvm](https://github.com/nvm-sh/nvm). A Windows Node install is not visible to the scripts.
+- **Node.js 20+ inside Ubuntu**, for example with [nvm](https://github.com/nvm-sh/nvm). Ubuntu's own `nodejs` package is older than 20, and a Windows Node install is not visible to the scripts. Without it, `start.sh` still starts the API but not the console or the agent layer, and its ready banner says so.
 - **Clone into the Linux home** (`~/vigil`), not under `/mnt/c`. On the Windows drive, auto-reload, file permissions and Docker mounts are slow or unreliable; `start.sh` warns if it finds itself there. The repo's `.gitattributes` keeps shell scripts on LF line endings even if Git for Windows made the checkout. That only applies to files checked out after it: if `start.sh` fails with `$'\r': command not found`, the clone predates it. Clone again inside Ubuntu, or run `git rm -r --cached -q . && git reset --hard` in the checkout (this discards uncommitted changes).
 - **Memory.** WSL2 takes up to half of the machine's RAM by default, and Docker Desktop runs inside it. On an 8 GB laptop, put this in `%UserProfile%\.wslconfig` and run `wsl --shutdown` in PowerShell:
 
@@ -168,6 +168,8 @@ Sign-in cookies are `Secure` by default (`VIGIL_COOKIE_SECURE=true`), so the con
 - **Ollama** is optional. Ollama for Windows listens on Windows' localhost, which WSL2 does not share in its default networking, so `start.sh` will report it as not found (the containers may still reach it through Docker Desktop; the model list on the host side will not). Either install Ollama inside Ubuntu, or turn on `networkingMode=mirrored` under `[wsl2]` (Windows 11 22H2 or later). Neither setup is verified. `scripts/local_model.sh` stops with an explanation under Docker Desktop.
 
 Open http://localhost:6988 in your Windows browser; `start.sh` tries `wslview`, then `explorer.exe`, and the URL is in the ready banner either way.
+
+On Windows, use `start.sh` and `shutdown_all.sh`. The desktop app has no Windows build, and `scripts/vigil-upgrade.sh` and `scripts/vigil-backup.sh` are for a Linux server running Vigil under systemd.
 
 ### Run
 
