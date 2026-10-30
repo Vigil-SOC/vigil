@@ -699,7 +699,8 @@ function SocConsoleInner() {
           pageKey={current}
           pageTitle={title}
           onSeedConsumed={() => setChatSeed(null)}
-          size={{
+          // at 600px and under the dock already fills the screen: nothing to widen or expand
+          size={viewportWidth > 600 ? {
             width: effectiveChatWidth,
             min: DOCK_MIN,
             max: dockMax,
@@ -708,7 +709,7 @@ function SocConsoleInner() {
             onFull: setDockFull,
             preview: dock.preview,
             commit: dock.commit,
-          }}
+          } : undefined}
         />
         {drawerCase && (
           <CaseDrawer
