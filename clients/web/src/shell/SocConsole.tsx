@@ -408,14 +408,17 @@ function SocConsoleInner() {
     const onDoc = (e: MouseEvent) => {
       if (!moreRef.current?.contains(e.target as Node)) setMoreOpen(false)
     }
+    // Captured and stopped, so this Esc closes only the menu and not the dock or the case drawer too.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMoreOpen(false)
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      setMoreOpen(false)
     }
     document.addEventListener('mousedown', onDoc)
-    document.addEventListener('keydown', onKey)
+    document.addEventListener('keydown', onKey, true)
     return () => {
       document.removeEventListener('mousedown', onDoc)
-      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('keydown', onKey, true)
     }
   }, [moreOpen])
 
