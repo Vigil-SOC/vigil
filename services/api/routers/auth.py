@@ -302,6 +302,22 @@ def _open_sign_in(session: Session, sid: str, user: User) -> Optional[SignIn]:
     return row
 
 
+def _continue_sign_in(
+    session: Session, sid: Optional[str], user: User, expires_at: Optional[datetime]
+) -> Optional[dict]:
+    """Extend the sign-in a refresh continues and build the user payload.
+
+    None if the sign-in has ended. A token minted before sign-ins existed
+    carries no sid and starts none. Synchronous end to end: see the caller.
+    """
+    if sid:
+        sign_in = _open_sign_in(session, sid, user)
+        if sign_in is None:
+            return None
+        sign_in.expires_at = expires_at
+    return _user_payload(user, session)
+
+
 def _user_payload(user: User, session: Session) -> dict:
     """User dict plus resolved permissions — the shape the SPA gates on.
     Login/refresh must include it, not just /me: the client stores the user
@@ -733,17 +749,6 @@ async def refresh_token(
         clear_auth_cookies(refused)
         return refused
 
-    # A token minted before sign-ins existed carries no sid and starts none.
-    sid = payload.get("sid")
-    sign_in = None
-    if sid:
-        sign_in = await asyncio.to_thread(_open_sign_in, session, sid, user)
-        if sign_in is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Sign-in has ended",
-            )
-
     # Refresh tokens rotate: each one mints a single successor.
     if not payload.get("jti") or not await consume_refresh_jti(
         payload["jti"], _exp_datetime(payload.get("exp"))
@@ -754,6 +759,7 @@ async def refresh_token(
         )
 
     # Generate new tokens: the same sign-in, new jtis.
+    sid = payload.get("sid")
     _ua = request.headers.get("user-agent")
     access_token = AuthService.generate_jwt_token(
         user, "access", user_agent=_ua, sid=sid
@@ -761,17 +767,33 @@ async def refresh_token(
     refresh_token = AuthService.generate_jwt_token(
         user, "refresh", user_agent=_ua, sid=sid
     )
-
     refresh_payload = AuthService.verify_jwt_token(refresh_token) or {}
-    if sign_in is not None:
-        sign_in.expires_at = _exp_datetime(refresh_payload.get("exp"))
+
+    # Everything that touches the sign-in row runs in one thread hop. The row
+    # lock is held until the request commits, so no await may sit between
+    # taking it and returning: a concurrent refresh of the same sign-in parks a
+    # worker thread on that lock, and a holder that has to wait for a free
+    # thread while they all wait on it never releases it.
+    user_payload = await asyncio.to_thread(
+        _continue_sign_in,
+        session,
+        sid,
+        user,
+        _exp_datetime(refresh_payload.get("exp")),
+    )
+    if user_payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sign-in has ended",
+        )
+
     if not service_account:
         _set_cookies_for(response, access_token, refresh_token)
 
     return LoginResponse(
         access_token=access_token,
         refresh_token=refresh_token,
-        user=await asyncio.to_thread(_user_payload, user, session),
+        user=user_payload,
     )
 
 

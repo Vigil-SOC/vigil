@@ -173,32 +173,41 @@ save_project_container_logs() {
 docker_daemon_ready() { docker info &>/dev/null; }
 
 ensure_docker() {
-    if ! command -v docker &>/dev/null; then
+    if command -v docker &>/dev/null; then
+        docker_daemon_ready && return 0
+        echo "Docker daemon not reachable - starting Docker..."
+        case "$(uname -s)" in
+            Darwin) open -a Docker &>/dev/null || open -a "Docker Desktop" &>/dev/null || true ;;
+            Linux)
+                if is_wsl && ! systemctl cat docker.service &>/dev/null; then
+                    # No docker.service in this distro: Docker is Docker Desktop on
+                    # Windows, which this script cannot start. It is polled below.
+                    echo "On WSL2, start Docker Desktop on Windows and enable WSL integration" >&2
+                    echo "for this distro (Settings > Resources > WSL integration). Waiting..." >&2
+                else
+                    (systemctl start docker || sudo systemctl start docker) &>/dev/null || true
+                fi
+                ;;
+        esac
+    elif is_wsl; then
+        # Docker Desktop links its docker command into the distro only while it
+        # runs, so no command here may just mean it has not been started yet.
+        echo "No docker command in this distro. Start Docker Desktop on Windows, with" >&2
+        echo "Settings > Resources > WSL integration on for this distro. Waiting..." >&2
+    else
         echo "Docker is required but not installed." >&2
-        is_wsl && echo "On WSL2, install Docker Desktop for Windows and turn on Settings > Resources > WSL integration for this distro." >&2
         return 1
     fi
-    docker_daemon_ready && return 0
-    echo "Docker daemon not reachable - starting Docker..."
-    case "$(uname -s)" in
-        Darwin) open -a Docker &>/dev/null || open -a "Docker Desktop" &>/dev/null || true ;;
-        Linux)
-            if is_wsl && ! systemctl cat docker.service &>/dev/null; then
-                # No docker.service in this distro: Docker is Docker Desktop on
-                # Windows, which this script cannot start. It is polled below.
-                echo "On WSL2, start Docker Desktop on Windows and enable WSL integration" >&2
-                echo "for this distro (Settings > Resources > WSL integration). Waiting..." >&2
-            else
-                (systemctl start docker || sudo systemctl start docker) &>/dev/null || true
-            fi
-            ;;
-    esac
     local i=0
     while [ $i -lt 90 ]; do
         docker_daemon_ready && { echo "Docker daemon ready."; return 0; }
         sleep 2; i=$((i + 1))
     done
-    echo "Docker daemon did not become ready after 180s. Start Docker and retry." >&2
+    if ! command -v docker &>/dev/null; then
+        echo "Still no docker command after 180s. Install Docker Desktop for Windows and turn on WSL integration for this distro." >&2
+    else
+        echo "Docker daemon did not become ready after 180s. Start Docker and retry." >&2
+    fi
     return 1
 }
 
@@ -356,14 +365,27 @@ deps_source() {
     fi
 }
 
+# Export every assignment in an env file. A Windows editor saves .env with CRLF,
+# and bash would run each "\r" as a command and end every value with one, so the
+# copy bash reads drops them. The file itself is left as written. eval, not
+# `source <(...)`: macOS's /bin/bash 3.2 sources nothing from a process
+# substitution.
+source_env_file() {
+    local _env_body
+    _env_body="$(tr -d '\r' < "$1")"
+    set -a
+    eval "$_env_body"
+    set +a
+}
+
 # --- Load .env (preserves caller-supplied vars) ---
 load_env() {
     if [ -f "$REPO_ROOT/.env" ]; then
-        set -a; source "$REPO_ROOT/.env"; set +a
+        source_env_file "$REPO_ROOT/.env"
     elif [ -f "$REPO_ROOT/env.example" ]; then
         # Owner-only: it comes to hold the agent layer's token (ensure_agent_token).
         (umask 077; cp "$REPO_ROOT/env.example" "$REPO_ROOT/.env")
-        set -a; source "$REPO_ROOT/.env"; set +a
+        source_env_file "$REPO_ROOT/.env"
     fi
 }
 

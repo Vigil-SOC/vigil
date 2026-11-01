@@ -7,6 +7,8 @@ from collections import Counter
 from datetime import date, datetime, timedelta
 from typing import Optional
 
+from sqlalchemy import and_, case, exists
+
 from core.findings.alert_outcomes import (
     TERMINAL_LABELS,
     finding_states,
@@ -16,6 +18,7 @@ from core.findings.arrival_counts import arrivals_today_by_source
 from core.findings.source_evidence import project_finding_source_evidence_for_list
 from core.findings.source_link import resolve_source_link
 from core.storage.connection import get_db_manager
+from core.storage.ip_exclusion_repository import exclusion_view_filter
 from core.storage.models import FederationSource, Finding, WorkflowRun, WorkflowRunPhase
 from core.time import utcnow
 from core.workflows.workflow_run_service import IN_FLIGHT_STATUSES
@@ -34,7 +37,8 @@ RATE_INFO = (
     "below that. A sample of zero has no level. Rows hidden from history "
     "still count. A run that stopped at its budget, or answered without "
     "being able to look at its data, counts as completed, because that is "
-    "how the row is stored."
+    "how the row is stored. A run a person stopped by rejecting a step "
+    "is not counted."
 )
 ARRIVAL_SOURCE = {
     "today": "Findings created today (UTC) with this data source.",
@@ -43,7 +47,6 @@ ARRIVAL_SOURCE = {
 RUNNING_SOURCE = "Runs still in history whose status is running or paused."
 STEP_SOURCE = "The open phase on the newest live run, or that run's status when it has no phase row."
 UNMEASURED_TEXT = "Not measured yet"
-NEEDS_YOU_INFO = "This count is alerts, not decisions."
 
 # Ticket, paused, stuck, and incidents stay outside the sum.
 _UNMEASURED = (
@@ -66,6 +69,7 @@ _LIVE_ORDER = (
     "working",
     "needs_you",
     "dismissed",
+    "excluded",
     "scoring",
     "waiting",
 )
@@ -74,6 +78,25 @@ _LIVE_ORDER = (
 _NODE_LABELS = {**TERMINAL_LABELS, "dismissed": "Dismissed as noise"}
 _TERMINAL_STATUSES = ("completed", "failed", "cancelled")
 _OPEN_PHASE = ("running", "pending_approval")
+
+
+# A run a person stopped by rejecting a step is stored failed, but that is the review
+# working, not the workflow failing. Rates read it as "rejected", so it is a run but
+# not in the rate, as a rejected step is for its agent (core/agents/run_stats.py).
+RATED_STATUS = case(
+    (
+        and_(
+            WorkflowRun.status == "failed",
+            exists().where(
+                WorkflowRunPhase.run_id == WorkflowRun.run_id,
+                WorkflowRunPhase.status == "failed",
+                WorkflowRunPhase.approval_state == "rejected",
+            ),
+        ),
+        "rejected",
+    ),
+    else_=WorkflowRun.status,
+)
 
 
 def completion_level(sample: int, completed: int) -> Optional[str]:
@@ -87,8 +110,20 @@ def completion_level(sample: int, completed: int) -> Optional[str]:
     return "poor"
 
 
+# These nodes open Cases, which lists cases; the node says how many its alerts are in.
+_CASE_STATES = frozenset({"needs_you", "working", "resolved_auto", "resolved_person"})
+
+
 def _outcome_nodes(states: list[dict]) -> list[dict]:
     counts = Counter(row["terminal_state"] for row in states)
+    cases = {
+        state: {
+            row["case_id"]
+            for row in states
+            if row["terminal_state"] == state and row.get("case_id")
+        }
+        for state in _CASE_STATES
+    }
     nodes = []
     for state in _LIVE_ORDER:
         nodes.append(
@@ -96,7 +131,8 @@ def _outcome_nodes(states: list[dict]) -> list[dict]:
                 "state": state,
                 "label": _NODE_LABELS[state],
                 "count": counts.get(state, 0),
-                "info": NEEDS_YOU_INFO if state == "needs_you" else None,
+                "case_count": len(cases[state]) if state in _CASE_STATES else None,
+                "info": None,
                 "unmeasured_text": None,
             }
         )
@@ -106,6 +142,7 @@ def _outcome_nodes(states: list[dict]) -> list[dict]:
                 "state": state,
                 "label": label,
                 "count": None,
+                "case_count": None,
                 "info": info,
                 "unmeasured_text": UNMEASURED_TEXT,
             }
@@ -119,7 +156,7 @@ def _agent_rows(now: datetime) -> list[dict]:
     db = get_db_manager()
     with db.session_scope() as session:
         grouped = (
-            session.query(WorkflowRun.workflow_id, WorkflowRun.status)
+            session.query(WorkflowRun.workflow_id, RATED_STATUS)
             .filter(
                 WorkflowRun.started_at >= since,
                 WorkflowRun.status.in_(_TERMINAL_STATUSES),
@@ -247,9 +284,10 @@ def _feed_items(load) -> list[dict]:
 
 
 def _feed() -> list[dict]:
+    # excluded findings are hidden, as the findings queue hides them
     return _feed_items(
         lambda session: session.query(Finding)
-        .filter(Finding.noise_marked_at.is_(None))
+        .filter(Finding.noise_marked_at.is_(None), exclusion_view_filter("hide"))
         .order_by(Finding.created_at.desc(), Finding.finding_id.desc())
         .limit(FEED_LIMIT)
         .all()

@@ -942,6 +942,15 @@ def reject_action(*, action_id: str, reason: str) -> Args:
     if refusal := permission_refusal(APPROVE_PERMISSION):
         return refusal
     claims = current_claims()
+    # A run no person started holds no role, so it may withdraw only what its own
+    # run raised, never a decision that is waiting on someone else.
+    if claims is not None and not claims.username:
+        action = _approvals().get_action(action_id)
+        if action is None:
+            return {"error": f"Action {action_id} was not found"}
+        origin = action.workflow_run_id or (action.parameters or {}).get("run_id")
+        if not origin or origin != claims.run_id:
+            return {"error": f"Action {action_id} was not raised by this run"}
     principal = None if claims is None else (claims.person_id or claims.agent_id)
     try:
         action = _approvals().reject_action(

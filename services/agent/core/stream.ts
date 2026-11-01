@@ -36,6 +36,7 @@ export const SUBMIT_TOOL = "submit_answer";
 // the rest are the harness's, and a run ends on exactly one of the last three.
 export type StreamEvent<T = unknown> =
   | { type: "text_delta"; text: string }
+  | { type: "reasoning_delta"; text: string }
   | { type: "usage"; payload: SpendPayload }
   | { type: "tool_call"; call: ToolCall }
   | { type: "tool_result"; call: ToolCall; attempt: Attempt; ref?: string }
@@ -560,12 +561,13 @@ class Run<T, Kinds extends Record<string, unknown>> {
     };
 
     try {
-      for await (const event of this.harness.provider.stream({ ...request, ...signal })) {
+      for await (const event of this.harness.provider.stream({ ...request, ...(this.cfg.live === true ? { live: true } : {}), ...signal })) {
         if (event.type === "tool_call") tool_calls.push(event.call);
         else if (event.type === "text_delta") {
           content += event.text;
           yield event;
-        } else {
+        } else if (event.type === "reasoning_delta") yield event;
+        else {
           billed = true;
           yield { type: "usage", payload: await settle(event.tokens) };
         }

@@ -5,6 +5,9 @@ import { Icon } from '../shared/icons'
 import { useToast } from './toast'
 import type { ConsoleScreenGoOptions } from '../shared/types'
 import {
+  argumentHits,
+  argumentKind,
+  argumentRows,
   ATTACH_TYPES,
   attachRefusal,
   buildRows,
@@ -15,7 +18,7 @@ import {
   huntHypothesis,
   huntTitle,
   isLiveCommand,
-  LIVE_COMMANDS,
+  liveCommandIn,
   moveEnabled,
   PASTED_NAME,
   proposalFrom,
@@ -26,6 +29,7 @@ import {
   tagText,
   writeRecent,
   type BoardLink,
+  type Hit,
   type HuntAttachment,
   type LiveCommandId,
   type PaletteRow,
@@ -54,7 +58,7 @@ export default function CommandBar({
   onGo: (screen: string, options?: ConsoleScreenGoOptions) => void
   /** A case is open, so asking goes to its composer instead of the dock. */
   caseOpen?: boolean
-  /** A new `seq` puts `text` in the bar and opens it. Nothing runs; the person still presses Run. */
+  /** A new `seq` puts `text` in the bar and opens it. Nothing runs; the person still presses Enter or Run. */
   fill?: { text: string; seq: number } | null
   /** Home draws the bar full width under the headline. Everywhere else it stays in the header. */
   placement?: 'header' | 'hero'
@@ -64,12 +68,12 @@ export default function CommandBar({
   const userId = user?.user_id
   const slotRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const runRef = useRef<HTMLButtonElement>(null)
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(0)
   const [recents, setRecents] = useState<string[]>([])
   const [hits, setHits] = useState<SearchHits | null>(null)
+  const [args, setArgs] = useState<{ kind: 'case' | 'alert'; rows: PaletteRow[] } | null>(null)
   const jira = useJiraReadiness()
   const [preview, setPreview] = useState<{ id: LiveCommandId; arg: string } | null>(null)
   const [running, setRunning] = useState(false)
@@ -99,12 +103,10 @@ export default function CommandBar({
   useEffect(() => {
     if (!fill || fill.seq === seenFill.current) return // a remount must not replay an old fill
     seenFill.current = fill.seq
-    const lower = fill.text.toLowerCase()
-    const command = LIVE_COMMANDS.find((c) => lower.startsWith(`${c.name} `))
     setQuery(fill.text)
     setHits(null)
     setActive(0)
-    setPreview(command ? { id: command.id as LiveCommandId, arg: commandRemainder(fill.text, command.name) } : null)
+    setPreview(liveCommandIn(fill.text))
     setOpen(true)
     inputRef.current?.focus()
   }, [fill?.seq]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -140,11 +142,49 @@ export default function CommandBar({
     }
   }, [open, query])
 
-  const rows = useMemo(() => buildRows(query, hits, recents, boards), [query, hits, recents, boards])
+  // The cases or alerts a command's argument can name, so nobody has to know the id.
+  const argKind = open && preview ? argumentKind(preview.id) : null
+  const argText = preview?.arg.trim() ?? ''
+  useEffect(() => {
+    if (!argKind) {
+      setArgs(null)
+      return
+    }
+    let live = true
+    const round = new AbortController()
+    const timer = setTimeout(() => {
+      // Nothing typed yet: the first few the Cases list or the alert feed shows.
+      const found: Promise<Hit[]> = argText
+        ? searchApi.query(argText, round.signal).then((res) => argumentHits(argKind, res.data))
+        : argKind === 'case'
+          ? casesApi.getAll({ limit: 5 }).then((res) =>
+              (res.data.cases ?? []).map((c) => ({ id: c.case_id, title: c.title, priority: c.priority })),
+            )
+          : findingsApi.getAll({ limit: 5 }, round.signal).then((res) =>
+              ((res.data as { findings?: { finding_id: string; title?: string | null; description?: string | null; data_source?: string | null; severity?: string | null }[] }).findings ?? [])
+                .map((f) => ({ id: f.finding_id, title: f.title || f.description || f.finding_id, data_source: f.data_source, severity: f.severity })),
+            )
+      found.then((list) => {
+        if (live) setArgs({ kind: argKind, rows: argumentRows(argKind, list) })
+      }).catch(() => {
+        if (live) setArgs(null)
+      })
+    }, 150)
+    return () => {
+      live = false
+      round.abort()
+      clearTimeout(timer)
+    }
+  }, [argKind, argText])
+
+  // Rows from another command's kind are never offered: a case id must not land after /investigate.
+  const argRows = args && args.kind === argKind ? args.rows : null
+  const rows = useMemo(() => [...buildRows(query, hits, recents, boards), ...(argRows ?? [])], [query, hits, recents, boards, argRows])
   const highlighted = rows[active] && !rows[active].disabled ? active : firstEnabled(rows)
   const previewView = preview ? commandPreview(preview.id, preview.arg, jira, attachment) : null
-  const previewKey = preview ? `${preview.id}:${preview.arg}` : ''
-  const previewDisabled = previewView?.disabled ?? true
+  const canRun = !!previewView && !previewView.disabled && !running
+  // Enter on an argument row the person moved to fills it in; the next Enter runs.
+  const picking = rows[highlighted]?.fill !== undefined
   const alreadyRunning = preview?.id === 'hunt' && !preview.arg.trim() ? runningHunt(attachment) : null
 
   const highlightedKey = open ? rows[highlighted]?.key : undefined
@@ -152,9 +192,14 @@ export default function CommandBar({
     if (highlightedKey) document.getElementById(highlightedKey)?.scrollIntoView?.({ block: 'nearest' })
   }, [highlightedKey])
 
+  // A command row click hands focus back to the input, caret at the end, once the new query has rendered.
+  const [refocus, setRefocus] = useState(0)
   useEffect(() => {
-    if (previewKey && !previewDisabled) runRef.current?.focus()
-  }, [previewKey, previewDisabled])
+    const input = inputRef.current
+    if (!refocus || !input) return
+    input.focus()
+    input.setSelectionRange(input.value.length, input.value.length)
+  }, [refocus])
 
   // With no hypothesis typed, the coverage check proposes one from the document.
   const huntNoArg = preview?.id === 'hunt' && !preview.arg.trim()
@@ -236,7 +281,7 @@ export default function CommandBar({
   const follow = useCallback((row: PaletteRow) => {
     if (row.dest === 'Recent' && row.recent) {
       setQuery(row.recent)
-      setPreview(null)
+      setPreview(liveCommandIn(row.recent))
       setOpen(true)
       setActive(0)
       return
@@ -262,15 +307,24 @@ export default function CommandBar({
 
   const choose = useCallback((row: PaletteRow) => {
     if (row.disabled) return
+    if (row.fill !== undefined && preview) {
+      const name = COMMANDS.find((c) => c.id === preview.id)?.name ?? ''
+      setQuery(`${name} ${row.fill}`)
+      setPreview({ id: preview.id, arg: row.fill })
+      setActive(0)
+      setRefocus((n) => n + 1)
+      return
+    }
     if (row.commandId && isLiveCommand(row.commandId)) {
       const arg = commandRemainder(query, row.label)
       setQuery(arg ? `${row.label} ${arg}` : `${row.label} `)
       setPreview({ id: row.commandId, arg })
       setOpen(true)
+      setRefocus((n) => n + 1)
       return
     }
     follow(row)
-  }, [follow, query])
+  }, [follow, preview, query])
 
   const run = useCallback(async () => {
     if (!preview || commandPreview(preview.id, preview.arg, jira, attachment).disabled) return
@@ -378,6 +432,11 @@ export default function CommandBar({
     }
     if (event.key === 'Enter') {
       event.preventDefault()
+      // A command with its argument runs on this press; otherwise Enter completes or opens the row.
+      if (canRun && !picking) {
+        void run()
+        return
+      }
       const row = rows[highlighted]
       if (row) choose(row)
     }
@@ -423,7 +482,7 @@ export default function CommandBar({
             setQuery(event.target.value)
             if (!/^\/hunt(\s|$)/i.test(event.target.value.trim())) removeAttachment()
             setHits(null)
-            setPreview(null)
+            setPreview(liveCommandIn(event.target.value))
             setOpen(true)
             setActive(0)
           }}
@@ -517,7 +576,6 @@ export default function CommandBar({
             >
               <p>{previewView.line}</p>
               <button
-                ref={runRef}
                 type="button"
                 className="btn primary"
                 disabled={previewView.disabled || running}
@@ -594,7 +652,7 @@ export default function CommandBar({
           )}
           <div className="vg-command-foot">
             <span><kbd>↑↓</kbd> move</span>
-            <span><kbd>Enter</kbd> open</span>
+            <span><kbd>Enter</kbd> {canRun && !picking ? 'run' : picking ? 'use' : 'open'}</span>
             <span><kbd>Tab</kbd> {caseOpen ? 'ask on this case' : 'ask Vigil'}</span>
             <span><kbd>/</kbd> commands</span>
           </div>

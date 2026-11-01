@@ -278,6 +278,7 @@ export interface ApiWorkflow {
   enabled?: boolean
   updated_at?: string
   can_disable?: boolean
+  always_on_reason?: string | null
 }
 
 /** the backend carries no presentation icon, so derive one from the name */
@@ -318,6 +319,7 @@ export function mapApiWorkflow(w: ApiWorkflow): Workflow {
     meanCostUsd: typeof w.mean_cost_usd === 'number' ? w.mean_cost_usd : null,
     updatedAt: w.updated_at,
     canDisable: w.can_disable ?? true,
+    alwaysOnReason: w.always_on_reason ?? null,
   }
 }
 

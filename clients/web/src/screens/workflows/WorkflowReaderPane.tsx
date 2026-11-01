@@ -69,7 +69,6 @@ type ReaderProps = ({ wf: Workflow } & ReaderActions) | { draft: DraftDefinition
 
 const DRAFT_MISSING = 'Shown once the workflow is saved.'
 const NOT_LOADED = 'Couldn’t load this.'
-const ALWAYS_ON = 'Alerts land here when nothing else fits, so it stays on.'
 
 function errMsg(e: unknown): string {
   const r = e as { response?: { data?: { detail?: unknown } }; message?: string }
@@ -523,14 +522,14 @@ function Header({ name, wf, actions, definition, onSave }: { name: string; wf: W
               checked={enabled}
               label={`${name} on`}
               disabled={!wf.canDisable}
-              title={wf.canDisable ? undefined : ALWAYS_ON}
+              title={wf.canDisable ? undefined : wf.alwaysOnReason ?? undefined}
               onChange={toggle}
             />
           )}
         </div>
         {definition.description && <p className="m-0 text-[12px] leading-[1.45] text-tx-3">{definition.description}</p>}
         <p className="m-0 text-[12px] leading-[1.45] text-tx-3">{edited}</p>
-        {wf && !wf.canDisable && <p className="m-0 text-[12px] leading-[1.45] text-tx-3">{ALWAYS_ON}</p>}
+        {wf && !wf.canDisable && wf.alwaysOnReason && <p className="m-0 text-[12px] leading-[1.45] text-tx-3">{wf.alwaysOnReason}</p>}
         {err && <p role="alert" className="m-0 text-[12px] leading-[1.45] text-[var(--poor)]">{err}</p>}
       </div>
       {!wf && onSave && (

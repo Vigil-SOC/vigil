@@ -43,10 +43,12 @@ const STATES = [
   { value: 'launched', label: 'Picked up or started a case', dot: 'good' },
   { value: 'merged', label: 'Added to a case', dot: 'ac' },
   { value: 'expired', label: 'Expired', dot: 'tx2' },
-  // an alert that never got an intake row and is on no case
+  // an alert's states below are Overview's groups, not intake words: not picked up is on no case and not waiting
   { value: 'not_picked_up', label: 'Not picked up', dot: 'tx3' },
-  // not an intake state: rows whose alert was marked as noise, in whichever state above
+  // an alert marked as noise: Overview's Dismissed as noise
   { value: 'dismissed', label: 'Dismissed as noise', dot: 'tx3' },
+  // an alert naming an excluded IP: the daemon skips its triage on purpose
+  { value: 'excluded', label: 'Excluded', dot: 'tx3' },
 ]
 const QUEUED_OFF = 'AutoOps is off'
 
@@ -145,6 +147,7 @@ function Tiles({ data }: { data: TriagePayload }) {
       </Tile>
       <Tile label="Waiting for triage" info={<InfoTip label="How waiting for triage is worked out" {...info.waiting} />}>
         <div className="tq-tile-val">{data.strip.waiting}</div>
+        {data.strip.waiting_other > 0 && <div className="tq-tile-sub">+{data.strip.waiting_other} hunt or ask</div>}
       </Tile>
       <Tile label="Trust floor">
         <NotMeasured className="tq-tile-val unmeasured" align="end" tip={`${floor.source} ${floor.calculation} ${floor.limit}`} />

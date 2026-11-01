@@ -208,10 +208,7 @@ VIGIL_MEDIC_VIEWER_USER=$viewer_user"
 dotenv="${VIGIL_MEDIC_DOTENV:-$REPO_ROOT/.env}"
 if [ -f "$dotenv" ]; then
     caller="$(export -p)"
-    set -a
-    # shellcheck source=/dev/null
-    source "$dotenv"
-    set +a
+    source_env_file "$dotenv"
     eval "$caller"
 fi
 set -a

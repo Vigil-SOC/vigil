@@ -1,7 +1,7 @@
 {
   "name": "vigil-desktop",
   "productName": "Vigil",
-  "version": "0.10.1",
+  "version": "1.0.0",
   "description": "Vigil SOC desktop shell — native launcher and window over the local stack.",
   "license": "Apache-2.0",
   "main": "dist/main.js",
@@ -11,8 +11,8 @@
     "dist": "npm run build && node scripts/prepare-standalone.js && electron-builder --config electron-builder.yml"
   },
   "devDependencies": {
-    "@types/node": "^26.6.5",
-    "electron": "^45.0.0",
+    "@types/node": "^26.6.6",
+    "electron": "^45.1.0",
     "electron-builder": "^26.18.0",
     "typescript": "^7.0.2"
   },

@@ -16,7 +16,7 @@ from typing import Any
 
 # PROVISIONAL (S3-2). Non-log observations only: at C7's intervals the whole v1
 # sensor set produces well under 100 per 15 s tick, so this is minutes of backlog.
-# Log lines get their own 10,000-line buffer (sensors/logtail.py, C7 §5).
+# Log lines get their own 15,000-line buffer (sensors/logtail.py, one 15 s tick).
 DEFAULT_CAPACITY = 1024
 
 

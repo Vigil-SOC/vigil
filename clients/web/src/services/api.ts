@@ -146,10 +146,12 @@ export const findingsApi = {
     api.get('/findings/stats/summary', { params }),
   
   getEnrichment: (id: string, force_regenerate: boolean = false) =>
-    // may restart the Bifrost gateway, then wait on the configured model
+    // May restart the Bifrost gateway, then wait on the configured model. A local
+    // model can take minutes and the server bounds the call, so wait for its answer:
+    // giving up first reports a summary it goes on to write and cache as failed.
     api.post(`/findings/${id}/enrich`, null, {
       params: { force_regenerate },
-      timeout: LLM_TIMEOUT,
+      timeout: 0,
     }),
 
   deleteAll: () => api.delete('/findings/all'),
@@ -225,6 +227,9 @@ export const casesApi = {
     closed?: boolean
     query?: string
     needs_you?: boolean
+    working?: boolean
+    closed_by?: 'agent' | 'person'
+    alerts_from?: 'today' | 'all'
     kind?: string
     limit?: number
     offset?: number
@@ -1327,6 +1332,8 @@ export interface OverviewOutcome {
   state: string
   label: string
   count: number | null
+  // cases the alerts of a case node are in; null for the other nodes
+  case_count: number | null
   info: string | null
   unmeasured_text: string | null
 }
@@ -1445,7 +1452,10 @@ export interface TriagePayload {
       created_today: number
       share: number | null
     }
+    /** alerts only, as Overview counts them */
     waiting: number
+    /** queued schedule and ask rows, which are not alerts */
+    waiting_other: number
     cases_created_today: number
   }
   /** rows that pass the filters, before the row cap */

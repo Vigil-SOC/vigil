@@ -68,7 +68,7 @@ def _alert(row: Optional[dict]) -> Optional[SearchHit]:
         return None
     return SearchHit(
         id=row["finding_id"],
-        title=row.get("title") or row["finding_id"],
+        title=row.get("title") or row.get("description") or row["finding_id"],
         data_source=row.get("data_source"),
         severity=row.get("severity"),
     )

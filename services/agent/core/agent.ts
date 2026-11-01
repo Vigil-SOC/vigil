@@ -648,6 +648,8 @@ function turnFor(
     // Only a conversation sizes its fold to the model's window (#2125): it only lowers
     // Ask's ceiling, and every other kind keeps the flat one.
     ...(options.conversation === undefined || spec.context_window === undefined ? {} : { context_window: spec.context_window }),
+    // Only a conversation has a reader waiting on the words.
+    ...(options.conversation === undefined ? {} : { live: true }),
     // A conversation stops whenever the person's question is answered.
     ...(plugin.min_results === undefined || options.conversation !== undefined ? {} : { persist: { min_results: plugin.min_results } }),
     // Numbered only when the answer can cite them.

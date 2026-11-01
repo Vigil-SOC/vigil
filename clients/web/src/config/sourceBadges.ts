@@ -3,7 +3,7 @@ export interface SourceBadge {
   label: string
   color: string
   icon: string
-  /** logo image URL; only a connector's manifest badge carries one */
+  /** logo image URL: the connector's manifest badge, else the catalog entry's (see useSourceBadge) */
   logo?: string
 }
 

@@ -33,6 +33,9 @@ export interface TurnRequest {
   // prefix still matches, with tool_choice "none". A gateway that refuses that is sent the tools
   // offered, and any call in the reply is dropped.
   answer?: boolean;
+  // Pass the answer's text on as the model writes it: a person is reading. A call that
+  // breaks after its first words is then not retried, so only a conversation sets it.
+  live?: boolean;
   signal?: AbortSignal;
 }
 
@@ -48,6 +51,8 @@ export interface Turn {
 // reported what it spent. Tool calls come last, once the model has asked for them.
 export type ProviderEvent =
   | { type: "text_delta"; text: string }
+  // What a reasoning model thinks before it answers. Shown to the reader, never sent back.
+  | { type: "reasoning_delta"; text: string }
   | { type: "usage"; tokens: TokenCounts }
   | { type: "tool_call"; call: ToolCall };
 

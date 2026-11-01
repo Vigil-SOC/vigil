@@ -1,7 +1,9 @@
 """One terminal state per finding that arrived on a UTC day.
 
 The live states partition those arrivals, so their counts sum to the
-inflow. #1319 does not call this: Triage speaks in intake states.
+inflow. ``alert_group`` is the one rule for which group an alert is in; Overview
+reads it here and Triage reads it in SQL, so the two pages cannot disagree.
+Triage keeps intake words only where they add detail.
 """
 
 from __future__ import annotations
@@ -10,10 +12,13 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Optional, Sequence
 
-from core.cases.closure import trust_word
+from sqlalchemy import and_, case, exists, literal
+
+from core.cases.closure import closed_by_person
 from core.findings.arrival_counts import utc_day_bounds
 from core.response.approval_service import needs_you_case_ids
 from core.storage.connection import get_db_manager
+from core.storage.ip_exclusion_repository import exclusion_view_filter
 from core.storage.models import (
     Case,
     CaseClosureInfo,
@@ -24,6 +29,7 @@ from core.storage.models import (
 
 TERMINAL_LABELS = {
     "dismissed": "Dropped",
+    "excluded": "Excluded",
     "needs_you": "Needs you",
     "resolved_auto": "Resolved automatically",
     "resolved_person": "Closed by a person",
@@ -41,23 +47,50 @@ class _LinkedCase:
     close_channel: Optional[str]
 
 
-def _state(
-    case: Optional[_LinkedCase],
-    needs_you_ids: set[str],
-    *,
-    dismissed: bool = False,
-    scoring: bool = False,
-) -> str:
-    # A dismissal is the finding's own terminal state, ahead of any case.
-    if dismissed:
-        return "dismissed"
-    if case is None:
-        return "scoring" if scoring else "waiting"
-    if case.case_id in needs_you_ids:
+def alert_group():
+    """SQL: which of five groups each ``Finding`` is in, in Overview's order.
+
+    ``dismissed`` (marked as noise), ``on_case`` (a ``case_findings`` row),
+    ``excluded`` (names an actively excluded IP, so the daemon skips triage),
+    ``scoring`` (a queued intake row), else ``waiting``. A dismissal is the
+    finding's own terminal state, ahead of any case; a case wins over an exclusion.
+    """
+    return case(
+        (Finding.noise_marked_at.isnot(None), literal("dismissed")),
+        (
+            exists().where(case_findings.c.finding_id == Finding.finding_id),
+            literal("on_case"),
+        ),
+        (
+            # probes are triaged despite exclusions (services/daemon/processor.py);
+            # "probe" is services.daemon.probes.PROBE_DATA_SOURCE, which core can't import
+            and_(
+                Finding.data_source.is_distinct_from("probe"),
+                exclusion_view_filter("only"),
+            ),
+            literal("excluded"),
+        ),
+        (
+            exists().where(
+                IntakeTrigger.finding_id == Finding.finding_id,
+                IntakeTrigger.state == "queued",
+            ),
+            literal("scoring"),
+        ),
+        else_=literal("waiting"),
+    )
+
+
+def _state(group: str, linked: Optional[_LinkedCase], needs_you_ids: set[str]) -> str:
+    """Overview's state: the group, with ``on_case`` split by what the case needs."""
+    if group != "on_case":
+        return group
+    if linked is None:  # the case went between the two reads
+        return "waiting"
+    if linked.case_id in needs_you_ids:
         return "needs_you"
-    if case.status == "closed":
-        # No closure row counts as an agent close.
-        if trust_word(case.close_channel) == "analyst":
+    if linked.status == "closed":
+        if closed_by_person(linked.close_channel):
             return "resolved_person"
         return "resolved_auto"
     return "working"
@@ -91,11 +124,6 @@ def _cases_for(session, finding_ids: Sequence[str]) -> dict[str, _LinkedCase]:
     return best
 
 
-def terminal_states_for(finding_ids: Sequence[str]) -> dict[str, str]:
-    """The same partition ``terminal_states_today`` uses, for these findings."""
-    return {fid: state for fid, (state, _case) in finding_states(finding_ids).items()}
-
-
 def stored_finding_states(data, finding_ids: Sequence[str]) -> dict:
     """``finding_states`` for findings ``data`` read, or {} when it reads no database (demo mode)."""
     info = getattr(data, "get_backend_info", None)
@@ -115,33 +143,22 @@ def finding_states(finding_ids: Sequence[str]) -> dict[str, tuple[str, Optional[
         return {}
     needs_you_ids = needs_you_case_ids()
     cases: dict[str, _LinkedCase] = {}
-    dismissed: set[str] = set()
-    scoring: set[str] = set()
+    groups: dict[str, str] = {}
     db = get_db_manager()
     with db.session_scope() as session:
         for at in range(0, len(ids), _ID_CHUNK):
             chunk = ids[at : at + _ID_CHUNK]
             cases.update(_cases_for(session, chunk))
-            dismissed.update(
-                row[0]
-                for row in session.query(Finding.finding_id).filter(
-                    Finding.finding_id.in_(chunk), Finding.noise_marked_at.isnot(None)
-                )
-            )
-            scoring.update(
-                row[0]
-                for row in session.query(IntakeTrigger.finding_id).filter(
-                    IntakeTrigger.finding_id.in_(chunk),
-                    IntakeTrigger.state == "queued",
+            groups.update(
+                session.query(Finding.finding_id, alert_group()).filter(
+                    Finding.finding_id.in_(chunk)
                 )
             )
     return {
         finding_id: (
+            # an id with no finding row is in no group
             _state(
-                cases.get(finding_id),
-                needs_you_ids,
-                dismissed=finding_id in dismissed,
-                scoring=finding_id in scoring,
+                groups.get(finding_id, "waiting"), cases.get(finding_id), needs_you_ids
             ),
             cases[finding_id].case_id if finding_id in cases else None,
         )
@@ -152,7 +169,7 @@ def finding_states(finding_ids: Sequence[str]) -> dict[str, tuple[str, Optional[
 def terminal_states_today(
     day: Optional[date] = None, *, all_time: bool = False
 ) -> list[dict]:
-    """One row per finding created that day, or ever with ``all_time``: id, source, and one state."""
+    """One row per finding created that day, or ever with ``all_time``: id, source, one state, and the case it reads."""
     db = get_db_manager()
     with db.session_scope() as session:
         query = session.query(Finding.finding_id, Finding.data_source)
@@ -160,12 +177,13 @@ def terminal_states_today(
             start, end = utc_day_bounds(day)
             query = query.filter(Finding.created_at >= start, Finding.created_at < end)
         rows = query.all()
-    states = terminal_states_for([finding_id for finding_id, _source in rows])
+    states = finding_states([finding_id for finding_id, _source in rows])
     return [
         {
             "finding_id": finding_id,
             "data_source": source,
-            "terminal_state": states[finding_id],
+            "terminal_state": states[finding_id][0],
+            "case_id": states[finding_id][1],
         }
         for finding_id, source in rows
     ]

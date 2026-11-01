@@ -23,31 +23,30 @@ const SLOT_W = 236
 const SLOT_DOT_X = 246
 const ENGINE_R = 52
 
-// The three served states that carry a sub-line, and the colour token of each outcome.
-const OUTCOME_SUB: Record<string, string> = {
-  resolved_auto: 'closed without a person',
-  working: 'cases in progress',
-  needs_you: 'alerts waiting on a person',
-}
+// The nodes that open Cases: Overview counts alerts there, Cases lists cases, so the sub-line says how many.
+const CASE_NODES = new Set(['resolved_auto', 'resolved_person', 'working', 'needs_you'])
+const cases = (n: number) => `in ${n.toLocaleString('en-US')} case${n === 1 ? '' : 's'}`
 const OUTCOME_COLOR: Record<string, string> = {
   resolved_auto: 'var(--good)',
   resolved_person: 'var(--vio)',
   working: 'var(--ac)',
   needs_you: 'var(--poor)',
   dismissed: 'var(--tx3)',
+  excluded: 'var(--tx3)',
   scoring: 'var(--fair)',
   waiting: 'var(--tx3)',
 }
 // OV-P1: where a populated outcome's count opens, and what it opens. Outcomes in a case open
 // Cases on the matching chip; the others open the Triage queue on the matching state.
 const OUTCOME_LINK: Record<string, [string, string]> = {
-  resolved_auto: ['/cases?state=closed', 'Opens closed cases.'],
-  resolved_person: ['/cases?state=closed', 'Opens closed cases.'],
-  working: ['/cases', 'Opens open cases.'],
-  needs_you: ['/cases?needs_you=1', 'Opens the cases that need you.'],
-  dismissed: ['/triage?state=dismissed', 'Opens the Triage queue at alerts dismissed as noise.'],
-  scoring: ['/triage?state=queued', 'Opens the Triage queue at alerts waiting for triage.'],
-  waiting: ['/triage?state=expired', 'Opens the Triage queue at alerts whose wait expired.'],
+  resolved_auto: ['/cases?state=closed&closed_by=agent', 'Opens the cases closed without a person'],
+  resolved_person: ['/cases?state=closed&closed_by=person', 'Opens the cases a person closed'],
+  working: ['/cases?working=1', 'Opens the open cases that do not need you'],
+  needs_you: ['/cases?needs_you=1', 'Opens the cases that need you'],
+  dismissed: ['/triage?state=dismissed', 'Opens the Triage queue at alerts dismissed as noise'],
+  excluded: ['/triage?state=excluded', 'Opens the Triage queue at alerts naming an excluded IP'],
+  scoring: ['/triage?state=queued&kind=detection', 'Opens the Triage queue at alerts waiting for triage'],
+  waiting: ['/triage?state=not_picked_up', 'Opens the Triage queue at alerts no one picked up'],
 }
 const SLOTS: { label: string; sub: string; icon: IconName }[] = [
   { label: 'Connect a SIEM', sub: 'Splunk, Sentinel or Elastic', icon: 'search' },
@@ -57,7 +56,7 @@ const SLOTS: { label: string; sub: string; icon: IconName }[] = [
 ]
 
 type Hover = { kind: 'src' | 'out'; key: string } | null
-interface SrcNode { key: string; label: string; icon: IconName; count: number; href: string | null }
+interface SrcNode { key: string; label: string; icon: IconName; logo?: string; count: number; href: string | null }
 
 const fmt = (n: number) => n.toLocaleString('en-US')
 const alerts = (n: number) => `${fmt(n)} alert${n === 1 ? '' : 's'}`
@@ -150,6 +149,10 @@ export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }
   // labels follow the range the payload counted; links carry the one selected
   const all = data.range === 'all'
   const when = all ? 'in total' : 'today'
+  // Cases always gets alerts_from, Today included: without it Cases means any day. Triage keeps withRange.
+  const linkTo = (href: string) => (href.startsWith('/cases') ? `${href}&alerts_from=${range}` : withRange(href, range))
+  const linkTitle = (href: string, text: string) =>
+    href.startsWith('/cases') ? `${text}, holding alerts from ${all ? 'any day' : 'today'}.` : `${text}.`
 
   const sources = ((): SrcNode[] => {
     const sorted = [...data.arrivals].sort((a, b) => b.count - a.count || a.data_source.localeCompare(b.data_source))
@@ -159,6 +162,7 @@ export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }
         key: a.data_source,
         label: b.label,
         icon: b.icon as IconName,
+        logo: b.logo,
         count: a.count,
         href: withRange(`/triage?source=${encodeURIComponent(a.data_source || UNKNOWN_SOURCE)}`, range),
       }
@@ -222,7 +226,7 @@ export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }
             align="start"
             label="About this diagram"
             source={data.arrivals[0]?.source_text}
-            calculation={`Line thickness is the number of alerts. Each alert is counted once, at the outcome it reached${all ? '' : ' today (UTC)'}. Not picked up is Triage's Not picked up plus Expired`}
+            calculation={`Line thickness is the number of alerts. Each alert is counted once, at the outcome it reached${all ? '' : ' today (UTC)'}. Excluded is alerts naming an excluded IP, which are not triaged and not in the feed. Not picked up is Triage's Not picked up plus Expired`}
             limit="Hover a source or an outcome to follow it"
           />
         )}
@@ -364,7 +368,9 @@ export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }
             : sources.map((s, i) => {
                 const body = (
                   <>
-                    <span className="ov-tile"><Icon name={s.icon} size={15} /></span>
+                    <span className={`ov-tile${s.logo ? ' logo' : ''}`}>
+                      {s.logo ? <img src={s.logo} alt="" /> : <Icon name={s.icon} size={15} />}
+                    </span>
                     <span className="ov-txt">
                       <b>{s.label}</b>
                       <span>{alerts(s.count)}</span>
@@ -411,6 +417,7 @@ export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }
                 ))
             : bands.map((b) => {
                 const link = b.o.count > 0 ? OUTCOME_LINK[b.o.state] : undefined
+                const sub = CASE_NODES.has(b.o.state) && b.o.case_count !== null ? cases(b.o.case_count) : undefined
                 const head = (
                   <>
                     <b style={{ color: b.color }}>{fmt(b.o.count)}</b>
@@ -432,15 +439,15 @@ export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }
                     onBlur={leave}
                   >
                     {link ? (
-                      <Link to={link[0].startsWith('/triage') ? withRange(link[0], range) : link[0]} className="ov-out-l" title={`${b.o.label}: ${alerts(b.o.count)} ${when}. ${link[1]}`}>
+                      <Link to={linkTo(link[0])} className="ov-out-l" title={`${b.o.label}: ${alerts(b.o.count)} ${when}. ${linkTitle(link[0], link[1])}`}>
                         {head}
                       </Link>
                     ) : (
                       <span className="ov-out-l">{head}</span>
                     )}
-                    {(OUTCOME_SUB[b.o.state] || b.o.info) && (
+                    {(sub || b.o.info) && (
                       <span className="ov-out-s">
-                        {OUTCOME_SUB[b.o.state]}
+                        {sub}
                         {b.o.info && <InfoTip label={b.o.info} text={b.o.info} />}
                       </span>
                     )}

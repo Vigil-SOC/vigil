@@ -20,7 +20,8 @@ def agent_run_stats() -> Dict[str, dict]:
     """``{agent_id: {runs_7d, success_rate, success_level}}`` for agents with runs.
 
     A run is a finished (completed or failed) workflow phase started in the
-    window, or an assistant chat turn created in it. ``success_rate`` is a
+    window, or one that never started and finished in it (a step a person
+    rejected), or an assistant chat turn created in it. ``success_rate`` is a
     fraction 0..1, None when there are no runs. One grouped query per source.
     """
     since = utcnow() - WINDOW
@@ -39,7 +40,9 @@ def agent_run_stats() -> Dict[str, dict]:
             )
             .filter(
                 WorkflowRunPhase.status.in_(("completed", "failed")),
-                WorkflowRunPhase.started_at >= since,
+                # a rejected step never ran, so it has no start, only its finish
+                func.coalesce(WorkflowRunPhase.started_at, WorkflowRunPhase.finished_at)
+                >= since,
             )
             .group_by(
                 WorkflowRunPhase.agent_id,
