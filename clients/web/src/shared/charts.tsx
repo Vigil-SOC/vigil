@@ -1,4 +1,24 @@
-import { useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
+
+// Measured wrapper width, so a chart draws in CSS pixels (1 SVG unit = 1px)
+// and its text and strokes stay the page's size at any width. 0 until known.
+function useWidth() {
+  const ref = useRef<HTMLDivElement>(null)
+  const [w, setW] = useState(0)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    setW(el.clientWidth)
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(() => setW(el.clientWidth))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return [ref, w] as const
+}
+
+// out of flow, so the drawn width never holds a shrinking grid column open
+const SVG_STYLE = { position: 'absolute', top: 0, left: 0, display: 'block' } as const
 
 interface DonutSeg {
   v: number // fraction 0..1
@@ -45,7 +65,6 @@ export function Trend({
   labels,
   pointLabels,
   names = ['Series A', 'Series B'],
-  w = 760,
   h = 220,
 }: {
   seriesA: number[]
@@ -53,15 +72,15 @@ export function Trend({
   labels: string[]
   pointLabels?: string[]
   names?: [string, string]
-  w?: number
   h?: number
 }) {
+  const [wrapRef, w] = useWidth()
   const svgRef = useRef<SVGSVGElement>(null)
   const [hover, setHover] = useState<number | null>(null)
   const n = seriesA.length
-  const padB = 24
-  const padL = 28 // gutter so the y-axis labels sit beside, not under, the area
-  const padR = 6
+  const padB = 26
+  const padL = 34 // gutter so the y-axis labels sit beside, not under, the area
+  const padR = 26 // room for half the last x label
   const top = 12
   const all = [...seriesA, ...seriesB]
   const max = Math.ceil(Math.max(...all) / 10) * 10 || 10
@@ -132,7 +151,7 @@ export function Trend({
     grid.push(
       <g key={`g${i}`}>
         <line x1={padL} y1={gy} x2={w - padR} y2={gy} stroke="var(--line-soft)" strokeWidth={1} strokeDasharray="2 5" />
-        <text x={padL - 6} y={gy + 3} textAnchor="end" fontSize={6.5} fill="var(--tx-faint)" fontFamily="var(--mono)">{val}</text>
+        <text x={padL - 8} y={gy + 4} textAnchor="end" fontSize={11} fill="var(--tx-faint)" fontFamily="var(--mono)">{val}</text>
       </g>
     )
   }
@@ -141,7 +160,7 @@ export function Trend({
   const xlab = labels.map((l, i) => {
     if (!l) return null
     return (
-      <text key={`x${i}`} x={X(i)} y={h - 6} textAnchor="middle" fontSize={6.5} fill="var(--tx-faint)">{l}</text>
+      <text key={`x${i}`} x={X(i)} y={h - 7} textAnchor="middle" fontSize={12} fill="var(--tx-faint)">{l}</text>
     )
   })
 
@@ -161,12 +180,13 @@ export function Trend({
   const tipShift = frac > 0.7 ? '-100%' : frac < 0.3 ? '0%' : '-50%'
 
   return (
-    <div className="trend-wrap" style={{ position: 'relative' }}>
-      <svg
+    <div ref={wrapRef} className="trend-wrap" style={{ position: 'relative', height: h }}>
+      {w > 0 && <svg
         ref={svgRef}
-        width="100%"
+        width={w}
+        height={h}
         viewBox={`0 0 ${w} ${h}`}
-        preserveAspectRatio="xMidYMid meet"
+        style={SVG_STYLE}
         onPointerMove={onMove}
         onPointerLeave={() => setHover(null)}
       >
@@ -194,8 +214,8 @@ export function Trend({
             <circle cx={hx} cy={Y(seriesA[hover])} r={3.2} fill="var(--panel)" stroke="var(--accent)" strokeWidth={2} />
           </g>
         )}
-      </svg>
-      {hover != null && (
+      </svg>}
+      {hover != null && w > 0 && (
         <div
           className="trend-tip"
           style={{ left: `${(frac * 100).toFixed(2)}%`, transform: `translateX(${tipShift})` }}
@@ -217,20 +237,19 @@ interface GroupRow {
 
 export function GroupedBars({
   rows,
-  w = 760,
   h = 240,
   colorA = 'var(--accent)',
   colorB = 'var(--ok)',
 }: {
   rows: GroupRow[]
-  w?: number
   h?: number
   colorA?: string
   colorB?: string
 }) {
-  const padB = 26
-  const padL = 26
-  const top = 18
+  const [wrapRef, w] = useWidth()
+  const padB = 28
+  const padL = 34
+  const top = 20
   const vals = rows.flatMap((r) => [r.a, r.b])
   const max = Math.max(1, ...vals)
   const niceMax = max <= 4 ? max : Math.ceil(max / 5) * 5
@@ -248,7 +267,7 @@ export function GroupedBars({
     gridLines.push(
       <g key={`g${i}`}>
         <line x1={padL} y1={gy} x2={w - 8} y2={gy} stroke="var(--line-soft)" strokeWidth={1} strokeDasharray={i ? '2 5' : undefined} />
-        <text x={padL - 6} y={gy + 3} textAnchor="end" fontSize={8.5} fill="var(--tx-faint)" fontFamily="var(--mono)">{val}</text>
+        <text x={padL - 8} y={gy + 4} textAnchor="end" fontSize={11} fill="var(--tx-faint)" fontFamily="var(--mono)">{val}</text>
       </g>
     )
   }
@@ -260,14 +279,15 @@ export function GroupedBars({
       <g key={key}>
         <rect x={cx} y={y} width={barW} height={Math.max(bh, 0)} rx={3} style={{ fill: color }} opacity={0.9} />
         {v > 0 && (
-          <text x={cx + barW / 2} y={y - 4} textAnchor="middle" fontSize={9.5} fontWeight={600} fill="var(--tx-2)" fontFamily="var(--mono)">{v}</text>
+          <text x={cx + barW / 2} y={y - 5} textAnchor="middle" fontSize={12} fontWeight={600} fill="var(--tx-2)" fontFamily="var(--mono)">{v}</text>
         )}
       </g>
     )
   }
 
   return (
-    <svg width="100%" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="xMidYMid meet">
+    <div ref={wrapRef} style={{ position: 'relative', height: h }}>
+      {w > 0 && <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={SVG_STYLE}>
       {gridLines}
       {rows.map((r, i) => {
         const center = padL + slot * i + slot / 2
@@ -277,11 +297,12 @@ export function GroupedBars({
           <g key={i}>
             {bar(aX, r.a, colorA, `a${i}`)}
             {bar(bX, r.b, colorB, `b${i}`)}
-            <text x={center} y={h - 8} textAnchor="middle" fontSize={10} fill="var(--tx-3)">{r.label}</text>
+            <text x={center} y={h - 8} textAnchor="middle" fontSize={12} fill="var(--tx-3)">{r.label}</text>
           </g>
         )
       })}
-    </svg>
+      </svg>}
+    </div>
   )
 }
 
