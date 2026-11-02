@@ -13,6 +13,7 @@ export function errMsg(e: unknown): string {
 }
 
 export interface WfRun {
+  workflow_id?: string | null
   run_id: string
   status: string
   triggered_by?: string

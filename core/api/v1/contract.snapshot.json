@@ -1011,6 +1011,17 @@
           "workflow_id": {
             "title": "Workflow Id",
             "type": "string"
+          },
+          "workflow_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Name"
           }
         },
         "required": [

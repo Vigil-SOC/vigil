@@ -199,9 +199,13 @@ def _agent_rows(now: datetime) -> list[dict]:
                     phases[phase.run_id] = phase
         # Detach the bits we need before the session closes.
         steps = {}
+        listed = {workflow["id"] for workflow in workflows}
         for workflow_id, run in newest.items():
             phase = phases.get(run.run_id)
             steps[workflow_id] = phase.phase_id if phase is not None else run.status
+            # One agent run alone has no workflow to list under; it shows while it runs.
+            if workflow_id not in listed:
+                workflows.append({"id": workflow_id, "name": run.workflow_name})
 
     by_status: dict[str, Counter[str]] = {}
     for workflow_id, status in grouped:

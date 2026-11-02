@@ -7725,6 +7725,8 @@ export interface components {
             status: string;
             /** Workflow Id */
             workflow_id: string;
+            /** Workflow Name */
+            workflow_name?: string | null;
         };
         /**
          * CaseLinkedFinding

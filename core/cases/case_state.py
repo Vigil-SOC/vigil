@@ -122,6 +122,7 @@ def run_ref(run: WorkflowRun, steps: int = 0) -> dict:
         "investigation_id": None,
         "status": run.status,
         "workflow_id": run.workflow_id,
+        "workflow_name": run.workflow_name,
         "run_id": run.run_id,
         "live": state is not None,
         "cost_usd": cost,

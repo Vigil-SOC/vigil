@@ -12,6 +12,7 @@ export interface CaseInvestigationRef {
   investigation_id: string | null
   status: string
   workflow_id: string
+  workflow_name?: string | null
   run_id: string
   live: boolean
   cost_usd: number
@@ -191,6 +192,7 @@ function asInvestigations(raw: unknown): CaseInvestigationRef[] {
       investigation_id: typeof o.investigation_id === 'string' ? o.investigation_id : null,
       status: typeof o.status === 'string' ? o.status : '',
       workflow_id: typeof o.workflow_id === 'string' ? o.workflow_id : '',
+      workflow_name: typeof o.workflow_name === 'string' ? o.workflow_name : null,
       run_id: o.run_id,
       live: o.live === true,
       cost_usd: typeof o.cost_usd === 'number' ? o.cost_usd : 0,

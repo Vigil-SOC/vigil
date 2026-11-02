@@ -1,5 +1,5 @@
 import { Fragment, createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
 import { LevelBadge } from '../../shared/LevelBadge'
@@ -836,7 +836,14 @@ function CoveragePanel({ entityKeys, onError, onProposal }: {
 
 /** Run a workflow — collects a target, starts it on the agent layer, then hands
     off to History, which reports phases, beliefs and anything the run waits on. */
-export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: () => void; onClose: () => void }) {
+export function RunModal({ wf, agent = false, onStarted, onWatch, onClose }: {
+  wf: Pick<Workflow, 'id' | 'name' | 'huntLike' | 'runKind'>
+  /** One agent on its own: there is no claim to test, and the run opens straight in Watch it run. */
+  agent?: boolean
+  onStarted: () => void
+  onWatch?: (runId: string) => void
+  onClose: () => void
+}) {
   const [findingId, setFindingId] = useState('')
   const [caseId, setCaseId] = useState('')
   const [context, setContext] = useState('')
@@ -954,7 +961,8 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
       const res = await workflowApi.execute(wf.id, { ...withTurns, ...ids })
       const started = (res.data as { run_id?: string })?.run_id ?? null
       setStarting(false)
-      if (started === null) onStarted() // nothing to confirm or link to
+      if (started !== null && onWatch) onWatch(started)
+      else if (started === null) onStarted() // nothing to confirm or link to
       else setStartedId(started)
     } catch (e) {
       setError(errMsg(e))
@@ -973,7 +981,9 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
   return (
     <Popup open onClose={onClose} title={`Run · ${wf.name}`}>
       <div className="flex flex-col gap-3.5">
-        <p className="text-[12.5px] text-tx-3 leading-[1.5]">Provide at least one target, then start the run — the agents work it on the server and History reports where it got to. A finding or case gives the run something to work from, and the report comes back onto the case you pick. A run that tests beliefs takes what you state: each line of Hypothesis goes on the board as its own, and the benign explanation goes up beside them as the claim to beat.</p>
+        <p className="text-[12.5px] text-tx-3 leading-[1.5]">{agent
+          ? `Pick an alert or a case for ${wf.name} to work on, with its own tools. Anything that would change something outside Vigil still asks a person first.`
+          : 'Provide at least one target, then start the run — the agents work it on the server and History reports where it got to. A finding or case gives the run something to work from, and the report comes back onto the case you pick. A run that tests beliefs takes what you state: each line of Hypothesis goes on the board as its own, and the benign explanation goes up beside them as the claim to beat.'}</p>
         {error && <div className="text-[12.5px] leading-[1.5]" style={{ color: 'var(--crit)' }}>{error}</div>}
         {isHuntLike && limits?.roles_note && (
           <div className="text-[12.5px] leading-[1.5]" style={{ color: 'var(--high)' }}>{limits.roles_note}</div>
@@ -988,7 +998,7 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
         {isHuntLike && (
           <CoveragePanel entityKeys={Object.values(asked).flat()} onError={setError} onProposal={takeProposal} />
         )}
-        <Field
+        {!agent && <Field
           label="Hypothesis"
           value={hypothesis}
           onChange={setHypothesis}
@@ -997,7 +1007,7 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
           hint={isHuntLike
             ? 'One belief per line, each a claim the run can argue against. The benign account is added for you as the claim to beat. Say what each one is about below, so its verdict can be found again by that host or address.'
             : undefined}
-        />
+        />}
         {isHuntLike && (
           <HypothesisPreview
             text={hypothesis}
@@ -1038,7 +1048,7 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
         <div className="flex justify-end gap-2.5 pt-1">
           <button className="btn ghost" onClick={onClose}>Cancel</button>
           <button className="btn primary" disabled={!canRun} onClick={run}>
-            <Icon name="play" /> {starting ? 'Starting…' : 'Run workflow'}
+            <Icon name="play" /> {starting ? 'Starting…' : agent ? 'Run agent' : 'Run workflow'}
           </button>
         </div>
       </div>
@@ -3789,6 +3799,8 @@ function AgentsTab({ feed, skillCount, onToggled }: { feed: Feed<AgentTemplate>;
   const [editId, setEditId] = useOpenItem('agent', 'agents')
   const [creating, setCreating] = useState<false | 'blank' | 'describe'>(false)
   const [deleteAgent, setDeleteAgent] = useState<AgentTemplate | null>(null)
+  const [runAgent, setRunAgent] = useState<AgentTemplate | null>(null)
+  const navigate = useNavigate()
   // optimistic On switches, dropped when the list reloads
   const [enabledNow, setEnabledNow] = useState<Record<string, boolean>>({})
   const [toggleErr, setToggleErr] = useState<string | null>(null)
@@ -3844,12 +3856,14 @@ function AgentsTab({ feed, skillCount, onToggled }: { feed: Feed<AgentTemplate>;
             onToggle={setEnabled}
             renderActions={(a) => a.custom ? (
               <span className="row-act">
+                <RunAgentButton agent={a} onRun={setRunAgent} />
                 <button title="Edit" aria-label={`Edit ${a.name}`} onClick={() => setEditId(a.handle)}><Icon name="edit" /></button>
                 <button title="Fork into a new copy" aria-label={`Fork ${a.name}`} disabled={busy !== null} onClick={() => fork(a.handle)}><Icon name={busy === a.handle ? 'refresh' : 'copy'} /></button>
                 <button title="Delete" aria-label={`Delete ${a.name}`} onClick={() => setDeleteAgent(a)}><Icon name="trash" /></button>
               </span>
             ) : (
               <span className="row-act">
+                <RunAgentButton agent={a} onRun={setRunAgent} />
                 <button title={`Open ${a.name}`} aria-label={`Open ${a.name}`} onClick={() => setEditId(a.handle)}><Icon name="fork" /></button>
               </span>
             )}
@@ -3875,7 +3889,29 @@ function AgentsTab({ feed, skillCount, onToggled }: { feed: Feed<AgentTemplate>;
         />
       )}
       {deleteAgent && <AgentDeleteModal agent={deleteAgent} onClose={() => setDeleteAgent(null)} onDeleted={() => { setDeleteAgent(null); reload() }} />}
+      {runAgent && (
+        <RunModal
+          wf={{ id: `agent-run-${runAgent.handle}`, name: runAgent.name, huntLike: false, runKind: 'compose' }}
+          agent
+          onClose={() => setRunAgent(null)}
+          onStarted={() => setRunAgent(null)}
+          onWatch={(runId) => { setRunAgent(null); navigate(`/workflows?run=${encodeURIComponent(runId)}`) }}
+        />
+      )}
     </div>
+  )
+}
+
+function RunAgentButton({ agent, onRun }: { agent: AgentTemplate; onRun: (agent: AgentTemplate) => void }) {
+  return (
+    <button
+      title={agent.enabled ? `Run ${agent.name} on an alert or case` : `${agent.name} is off`}
+      aria-label={`Run ${agent.name}`}
+      disabled={!agent.enabled}
+      onClick={() => onRun(agent)}
+    >
+      <Icon name="play" />
+    </button>
   )
 }
 
