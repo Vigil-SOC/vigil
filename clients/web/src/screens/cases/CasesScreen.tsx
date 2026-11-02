@@ -910,7 +910,7 @@ function EditCaseForm({ c, onClose, onSaved, onStale }: {
                 {CONFLICT_NAME[conflict.field]} changed from {conflictValue(conflict.field, conflict.expected ?? '')} to{' '}
                 {conflictValue(conflict.field, conflict.current ?? '')}. Yours is {conflictValue(conflict.field, values[conflict.field])}.
               </p>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <button className="btn ghost" onClick={() => answer(conflict, 'current')} disabled={busy}>Use the current value</button>
                 <button className="btn" onClick={() => answer(conflict, 'mine')} disabled={busy}>Save mine anyway</button>
               </div>
