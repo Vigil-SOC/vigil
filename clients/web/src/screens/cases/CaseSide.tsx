@@ -1,9 +1,13 @@
 import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { Link } from 'react-router-dom'
-import { casesApi } from '../../services/api'
+import { useAuth } from '../../contexts/AuthContext'
+import { casesApi, knownActivityApi } from '../../services/api'
+import { KnownActivityForm } from '../../shared/KnownActivityForm'
+import '../../shared/knownActivity.css'
 import { slaLevel } from '../../shared/LevelBadge'
 import { StatePill } from '../../shared/StatePill'
 import { useNoSideways } from '../../shared/useNoSideways'
+import { utcDay } from '../../shared/utc'
 import { commentCount, CommentsView, SectionCard, TasksView, useComments, useResource, useTasks, type Resource } from './CaseSections'
 import { timeLeft, when } from './caseFormat'
 import { entityShown, type RunFold } from './caseFold'
@@ -189,7 +193,12 @@ function Prose({ text }: { text: string }) {
   return <p className="muted side-clamp" title={text}>{text}</p>
 }
 
-function Known({ fold, hasRun }: { fold: RunFold | null; hasRun: boolean }) {
+function Known({ caseId, fold, hasRun, onWritten }: { caseId: string; fold: RunFold | null; hasRun: boolean; onWritten?: () => void }) {
+  const canRecord = useAuth().hasPermission('findings.write')
+  const context = useResource(caseId, () => knownActivityApi.forCase(caseId).then((res) => res.data))
+  const [recording, setRecording] = useState(false)
+  const rules = context.data?.known_activity ?? []
+  const entities = context.data?.entities ?? []
   const recall = fold?.recall
   const cards = recall && !recall.unavailable
     ? [
@@ -203,9 +212,20 @@ function Known({ fold, hasRun }: { fold: RunFold | null; hasRun: boolean }) {
     : []
   return (
     <Block title="Known about these entities">
-      {!recall && <p className="muted">{hasRun ? 'The run did not journal a recall.' : 'Nothing has looked at these entities yet.'}</p>}
+      {rules.length > 0 && (
+        <div className="side-cards">
+          {rules.map((rule) => (
+            <div key={rule.known_activity_id} className="side-card">
+              <div className="side-clamp" title={`${rule.entity_value}: ${rule.reason}`}>{rule.entity_value}: {rule.reason}</div>
+              <div className="side-meta">Known activity · {rule.created_by} · until {utcDay(rule.expires_at)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {context.phase === 'error' && <Prose text={`Couldn’t load known activity: ${context.error}`} />}
+      {!recall && rules.length === 0 && <p className="muted">{hasRun ? 'The run did not journal a recall.' : 'Nothing has looked at these entities yet.'}</p>}
       {recall?.unavailable && <Prose text={`Recall did not happen: ${recall.unavailable}`} />}
-      {recall && !recall.unavailable && cards.length === 0 && (
+      {recall && !recall.unavailable && cards.length === 0 && rules.length === 0 && (
         <Prose text={`Nothing recorded about ${recall.keys.map(entityShown).join(', ') || 'these entities'}.`} />
       )}
       {cards.length > 0 && (
@@ -217,6 +237,23 @@ function Known({ fold, hasRun }: { fold: RunFold | null; hasRun: boolean }) {
             </div>
           ))}
         </div>
+      )}
+      {canRecord && entities.length > 0 && !recording && (
+        <button type="button" className="ka-add" onClick={() => setRecording(true)}>+ Record known activity</button>
+      )}
+      {recording && context.data && (
+        <KnownActivityForm
+          entities={entities}
+          defaultExpiresAt={context.data.default_expires_at}
+          origin="case"
+          originRef={caseId}
+          onCancel={() => setRecording(false)}
+          onSaved={() => {
+            setRecording(false)
+            context.reload()
+            onWritten?.()
+          }}
+        />
       )}
     </Block>
   )
@@ -313,7 +350,7 @@ export function CaseSide({ caseId, linked, owner, latest, workflowNames, sla, cl
       <Details anchor={anchor} linked={linked} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} />
       <Alerts items={linked} />
       <RelatedCases caseId={caseId} />
-      <Known fold={fold} hasRun={latest !== null} />
+      <Known caseId={caseId} fold={fold} hasRun={latest !== null} onWritten={onWritten} />
       <People caseId={caseId} owner={owner} onWritten={onWritten} />
     </>
   )

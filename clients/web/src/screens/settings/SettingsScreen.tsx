@@ -19,6 +19,7 @@ import { IntegrationsStateProvider, useIntegrationsState } from './IntegrationsS
 import SlaPoliciesSection, { SLA_DESC } from './SlaPoliciesSection'
 import DataUploadsSection from './DataUploadsSection'
 import AuditSection, { AUDIT_DESC } from './AuditSection'
+import KnownActivitySection, { KNOWN_ACTIVITY_DESC } from './KnownActivitySection'
 import { useAuth } from '../../contexts/AuthContext'
 import type { SectionProps } from './types'
 
@@ -31,6 +32,7 @@ type NavKey =
   | 'sla'
   | 'autoinvestigate'
   | 'data'
+  | 'known-activity'
   | 'audit'
   | 'system'
 
@@ -99,6 +101,7 @@ const NAV: NavDef[] = [
   { key: 'sla', label: 'SLA policies', desc: SLA_DESC, icon: 'clock', Component: SlaPoliciesSection, ownsHead: true, perm: 'platform.read' },
   { key: 'autoinvestigate', label: 'Limits & autonomy', desc: 'How much Vigil may do without you: whether agents start on their own, how many run at once, what they may spend, and which tools may act alone.', icon: 'bolt', Component: AutoInvestigateSection, perm: 'ai_autonomy.read' },
   { key: 'data', label: 'Data & uploads', desc: 'Bring data in without a live connector, and manage the detection rules applied to it.', icon: 'upload', Component: DataUploadsSection, perm: 'platform.read' },
+  { key: 'known-activity', label: 'Known activity', desc: KNOWN_ACTIVITY_DESC, icon: 'note', Component: KnownActivitySection, ownsHead: true, perm: 'findings.read' },
   { key: 'audit', label: 'Audit', desc: AUDIT_DESC, icon: 'shield', Component: AuditSection, ownsHead: true, perm: 'audit.read' },
   { key: 'system', label: 'System', desc: 'Service health, system information, general options and users.', icon: 'wrench', Component: SystemTabs, perm: 'platform.read' },
 ]

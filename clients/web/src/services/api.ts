@@ -199,6 +199,57 @@ export const exclusionsApi = {
     api.post<IpExclusion>(`/exclusions/${encodeURIComponent(id)}/remove`, { reason: reason || null }),
 }
 
+export type KnownActivityOrigin = 'ad_hoc' | 'finding' | 'case' | 'run'
+
+export interface KnownActivity {
+  known_activity_id: string
+  entity_kind: string
+  entity_value: string
+  reason: string
+  expires_at: string
+  created_by: string
+  created_at: string
+  removed_at?: string | null
+  removed_by?: string | null
+  removal_reason?: string | null
+  origin: KnownActivityOrigin
+  origin_ref?: string | null
+  state: 'active' | 'expired' | 'removed'
+}
+
+export interface NamedEntity {
+  entity_kind: string
+  entity_value: string
+}
+
+export interface KnownActivityList {
+  known_activity: KnownActivity[]
+  total: number
+  /** when a new rule ends if nobody picks a date; set by the server */
+  default_expires_at: string
+  entity_kinds: string[]
+}
+
+export interface CaseKnownActivity {
+  known_activity: KnownActivity[]
+  /** what the case's linked alerts name */
+  entities: NamedEntity[]
+  default_expires_at: string
+}
+
+export const knownActivityApi = {
+  list: (includeEnded = false) =>
+    api.get<KnownActivityList>('/known-activity', { params: { include_ended: includeEnded } }),
+  forFinding: (findingId: string) =>
+    api.get<{ known_activity: KnownActivity[] }>(`/known-activity/for-finding/${encodeURIComponent(findingId)}`),
+  forCase: (caseId: string) =>
+    api.get<CaseKnownActivity>(`/known-activity/for-case/${encodeURIComponent(caseId)}`),
+  create: (body: NamedEntity & { reason: string; expires_at: string; origin: KnownActivityOrigin; origin_ref?: string }) =>
+    api.post<KnownActivity>('/known-activity', body),
+  remove: (id: string, reason?: string) =>
+    api.post<KnownActivity>(`/known-activity/${encodeURIComponent(id)}/remove`, { reason: reason || null }),
+}
+
 export interface CaseRecordRow {
   id: string
   at: string

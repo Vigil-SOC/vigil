@@ -2,11 +2,13 @@
 // ATT&CK techniques, and the entities and indicators it names. Everything here
 // is read from the finding itself.
 import { useEffect, useState } from 'react'
-import { findingsApi } from '../services/api'
+import { findingsApi, knownActivityApi, type KnownActivity } from '../services/api'
 import { NO_CONFIDENCE } from '../data/data'
 import { rankTechniques } from '../data/mappers'
 import { techniqueName } from '../data/mitre'
 import { useFindingEnrichment, type EnrichError, type Enrichment } from './useFindingEnrichment'
+import { utcDay } from './utc'
+import './knownActivity.css'
 
 interface FullFinding {
   finding_id: string
@@ -57,13 +59,36 @@ const entityRows = (ctx: Record<string, unknown> | null | undefined, prefix = ''
   return rows.slice(0, 16)
 }
 
+/** One line that says a rule matches, what it says, and that it changes nothing. */
+const KnownActivityNote = ({ rules }: { rules: KnownActivity[] }) => {
+  if (rules.length === 0) return null
+  const [first, ...rest] = rules
+  const more = rest.length ? ` and ${rest.length} more` : ''
+  const line = `Known activity on ${first.entity_value}${more} until ${utcDay(first.expires_at)}: ${first.reason}`
+  const all = rules.map((r) => `${r.entity_value}: ${r.reason} (${r.created_by}, until ${utcDay(r.expires_at)})`).join('\n')
+  return (
+    <p className="ka-note" role="note" title={all}>
+      <span className="ka-note-rule">{line}</span> This is context only. The alert is unchanged.
+    </p>
+  )
+}
+
 const FindingDetails = ({ findingId }: { findingId: string }) => {
   const [finding, setFinding] = useState<FullFinding | null>(null)
+  const [known, setKnown] = useState<KnownActivity[]>([])
   const { enrichment, phase, error, seed, load } = useFindingEnrichment(findingId)
 
   useEffect(() => {
     let cancelled = false
     setFinding(null)
+    setKnown([])
+    // Context, so a failed read only leaves the note out.
+    Promise.resolve()
+      .then(() => knownActivityApi.forFinding(findingId))
+      .then((r) => {
+        if (!cancelled && r?.data) setKnown(r.data.known_activity)
+      })
+      .catch(() => {})
     // Through a resolved promise, so an API without this call (an older server, a test double) only skips the panel.
     Promise.resolve()
       .then(() => findingsApi.getById(findingId))
@@ -86,6 +111,7 @@ const FindingDetails = ({ findingId }: { findingId: string }) => {
 
   return (
     <div className="fd">
+      <KnownActivityNote rules={known} />
       <section className="fd-sec">
         <h4>AI summary</h4>
         {ai ? (

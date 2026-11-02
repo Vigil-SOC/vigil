@@ -1,0 +1,35 @@
+/* Known activity: the note on an alert, and the form shared by the case panel and Settings. */
+.ka-note {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--ln0);
+  background: var(--bg2);
+  color: var(--tx-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.ka-note-rule { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.ka-add {
+  width: 100%;
+  height: 28px;
+  margin-top: 6px;
+  border-radius: 10px;
+  border: 1px dashed var(--ln2);
+  background: transparent;
+  color: var(--tx-2);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ka-add:hover { color: var(--tx); border-color: var(--ac-ln); }
+
+.ka-form { display: grid; gap: 10px; margin-top: 8px; }
+.ka-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; align-items: start; }
+.ka-form-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.ka-tbl td { vertical-align: top; }
+.ka-tbl .ka-reason { width: 100%; min-width: 220px; white-space: normal; overflow-wrap: anywhere; }
+.ka-ended td { color: var(--tx-3); }
