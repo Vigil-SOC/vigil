@@ -2,7 +2,7 @@
 
 # Core
 numpy>=2.5.3
-pyarrow>=15.0.0
+pyarrow>=26.0.0
 ijson>=3.5.1
 anthropic>=0.45.0
 # In-repo servers use the 2.x lowlevel Server(on_list_tools=..., on_call_tool=...)
