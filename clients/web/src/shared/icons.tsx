@@ -34,7 +34,7 @@ const ICON = {
   note: '<path d="M4 4h16v12l-4 4H4V4z"/><path d="M16 20v-4h4"/>',
   doc: '<path d="M6 2h8l4 4v16H6V2z"/><path d="M14 2v4h4"/>',
   reason: '<path d="M9 18h6M10 21h4M12 3a6 6 0 00-4 10.5c.6.6 1 1.3 1 2.5h6c0-1.2.4-1.9 1-2.5A6 6 0 0012 3z"/>',
-  paperclip: '<path d="M21 11l-9 9a5 5 0 01-7-7l9-9a3.5 3.5 0 015 5l-9 9a2 2 0 01-3-3l8-8"/>',
+  paperclip: '<path d="M21 12.5 12.6 21a5.4 5.4 0 0 1-7.6-7.6l9-9a3.6 3.6 0 0 1 5.1 5.1l-9 9a1.8 1.8 0 0 1-2.5-2.5l8.3-8.3"/>',
   flow: '<circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M8.4 6H13a2 2 0 012 2v1.6M8.4 18H13a2 2 0 002-2v-1.6"/>',
   bolt: '<path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/>',
   check2: '<path d="M20 6L9 17l-5-5"/>',

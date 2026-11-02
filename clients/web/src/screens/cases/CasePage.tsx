@@ -19,6 +19,7 @@ import { useFusedDecision } from '../../shell/useFusedDecision'
 import { EmptyState } from '../../shared/ui'
 import { useAuth } from '../../contexts/AuthContext'
 import type { CaseRow } from '../../data/data'
+import type { ChatSeed } from '../../shared/types'
 import Chat from '../../shell/Chat'
 import { EvidenceTrail, MergedEvidenceTrail } from './EvidenceTrail'
 import { RunNotes, RunTag } from './RunTag'
@@ -993,7 +994,7 @@ export function CasePage({
   /** Route key stored as page_context. Cases passes `cases`; the drawer passes SocConsole's current. */
   pageKey: string
   /** Text typed in the command bar; handed to the composer, then cleared. */
-  seed?: string | null
+  seed?: ChatSeed | null
   onSeedConsumed?: () => void
   /** The "Cases" crumb; in the drawer it also backs the Close icon. */
   onBack: () => void
@@ -1025,7 +1026,7 @@ export function CasePage({
   recordReady.current = recordPhase === 'ready'
   const [chip, setChip] = useState<RecordChip | 'all'>('all')
   const [runFilter, setRunFilter] = useState<string | null>(null)
-  const [askSeed, setAskSeed] = useState<{ id: string; text: string } | null>(null)
+  const [askSeed, setAskSeed] = useState<{ id: string; seed: ChatSeed } | null>(null)
   const [focusEvidence, setFocusEvidence] = useState<string | null>(null)
   const [note, setNote] = useState('') // Reopen's failure, on Summary
   // Verify chain / Export audit outcome, shown in the Record header; level null while in flight
@@ -1104,7 +1105,7 @@ export function CasePage({
   // the command bar's text rides the composer's own seed path
   useEffect(() => {
     if (!seed) return
-    setAskSeed({ id, text: seed })
+    setAskSeed({ id, seed })
     onSeedConsumed?.()
   }, [seed, id, onSeedConsumed])
 
@@ -1493,7 +1494,7 @@ export function CasePage({
   const startedCard = started && <HowStarted started={started} names={workflowNames} />
   const disagree = investigations.length > 1 && (
     <div className="case-disagree">
-      <button type="button" className="btn" onClick={() => setAskSeed({ id, text: DISAGREE_ASK })}>
+      <button type="button" className="btn" onClick={() => setAskSeed({ id, seed: { text: DISAGREE_ASK } })}>
         Where do the runs disagree?
       </button>
     </div>
@@ -1616,7 +1617,7 @@ export function CasePage({
                 {running && <NowCard fold={fold} phase={foldPhase} watch={watch} />}
                 {answeredHere && needsShown === 0 && <AnsweredCard answer={answer} watch={watch} />}
                 {stopped && <StoppedCard stopped={stopped} runId={runId} watch={watch} />}
-                {ended && <OutcomeCard ended={ended} watch={watch} onAsk={(text) => setAskSeed({ id, text })} />}
+                {ended && <OutcomeCard ended={ended} watch={watch} onAsk={(text) => setAskSeed({ id, seed: { text } })} />}
                 {rootCauseNotStarted && (
                   <section className="case-stopped" aria-label="Root cause">
                     <div className="stopped-line">
@@ -1753,7 +1754,7 @@ export function CasePage({
                           {row.text || row.kind}
                           {row.chained && <span className="rec-chained">chained</span>}
                         </span>
-                        <button type="button" className="rec-why" onClick={() => setAskSeed({ id, text: promptFor(row.text) })}>Why?</button>
+                        <button type="button" className="rec-why" onClick={() => setAskSeed({ id, seed: { text: promptFor(row.text) } })}>Why?</button>
                       </div>
                     )
                   })}
@@ -1785,7 +1786,7 @@ export function CasePage({
         pageKey={pageKey}
         lockedCaseId={id}
         collapseKey={tab}
-        seed={askSeed?.id === id ? askSeed.text : null}
+        seed={askSeed?.id === id ? askSeed.seed : null}
         onSeedConsumed={() => setAskSeed(null)}
         onTurnDone={refreshFold}
         citations={citations}
