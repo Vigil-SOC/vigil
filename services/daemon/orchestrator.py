@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import func
+from sqlalchemy.orm import Session
 
 from core.agents.builtins import ORCHESTRATION_DECISION_ID, ORCHESTRATOR_ACTOR
 from core.auth.principals import agent_principal_id
@@ -440,25 +441,36 @@ def insert_intake_trigger(
     priority: str = "medium",
     finding_id: Optional[str] = None,
     payload: Optional[Dict[str, Any]] = None,
+    session: Optional[Session] = None,
 ) -> Optional[int]:
-    """Insert a queued trigger. ``None`` when a queued row for this finding already exists."""
+    """Insert a queued trigger. ``None`` when a queued row for this finding already exists.
+
+    ``session`` is the caller's: the row commits with its other writes, and a
+    savepoint keeps a row already queued from aborting them.
+    """
     from sqlalchemy.exc import IntegrityError
 
     from core.storage.connection import get_db_manager
     from core.storage.models import IntakeTrigger
 
+    def insert(into: Session) -> int:
+        row = IntakeTrigger(
+            kind=kind,
+            state="queued",
+            finding_id=finding_id,
+            priority=priority or "medium",
+            payload=payload or {},
+        )
+        into.add(row)
+        into.flush()
+        return row.id
+
     try:
-        with get_db_manager().session_scope() as session:
-            row = IntakeTrigger(
-                kind=kind,
-                state="queued",
-                finding_id=finding_id,
-                priority=priority or "medium",
-                payload=payload or {},
-            )
-            session.add(row)
-            session.flush()
-            return row.id
+        if session is not None:
+            with session.begin_nested():
+                return insert(session)
+        with get_db_manager().session_scope() as owned:
+            return insert(owned)
     except IntegrityError:
         logger.info(
             "intake already has a queued row for finding %s", finding_id or "(none)"

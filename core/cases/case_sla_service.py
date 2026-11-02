@@ -15,7 +15,6 @@ from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from core.cases import case_trail
-from core.storage.connection import get_db_manager
 from core.storage.database_data_service import DatabaseDataService
 from core.storage.models import Case, CaseSLA, SLAPolicy, case_findings
 from core.storage.unit_of_work import unit_of_work
@@ -648,10 +647,12 @@ def open_case(
     description: str,
     status: str = "open",
     case_id: Optional[str] = None,
+    session: Optional[Session] = None,
 ) -> Optional[Dict[str, Any]]:
     """Create a case and give it the default SLA for its priority.
 
-    Returns the case even when no SLA could be assigned.
+    Returns the case even when no SLA could be assigned. ``session`` is the
+    caller's, so the case commits or rolls back with the caller's other writes.
     """
     case = data.create_case(
         title=title,
@@ -660,11 +661,14 @@ def open_case(
         description=description,
         status=status,
         case_id=case_id,
+        session=session,
     )
     if not case:
         return None
     try:
-        assignment = CaseSLAService().assign_sla_to_case(case["case_id"])
+        assignment = CaseSLAService().assign_sla_to_case(
+            case["case_id"], session=session
+        )
     except Exception:
         logger.exception("Could not assign an SLA to case %s", case["case_id"])
         return case
@@ -675,9 +679,11 @@ def open_case(
     return case
 
 
-def open_case_holding(finding_id: str) -> Optional[str]:
+def open_case_holding(
+    finding_id: str, session: Optional[Session] = None
+) -> Optional[str]:
     """The newest not-closed Case already linked to this finding, or None. Raises on a failed read."""
-    with get_db_manager().session_scope() as session:
+    with unit_of_work(session) as session:
         return session.execute(
             select(Case.case_id)
             .join(case_findings, case_findings.c.case_id == Case.case_id)

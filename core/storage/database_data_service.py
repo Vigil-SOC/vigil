@@ -461,6 +461,8 @@ class DatabaseDataService:
         description: str = "",
         status: str = "open",
         case_id: Optional[str] = None,
+        *,
+        session=None,
     ) -> Optional[Dict]:
         if self._demo_mode and self._demo_service:
             return self._demo_service.create_case(
@@ -485,6 +487,7 @@ class DatabaseDataService:
                     description=description,
                     status=status,
                     priority=priority,
+                    session=session,
                 )
                 return CaseSchema.dump(case) if case else None
             except case_trail_hook.RAISED:

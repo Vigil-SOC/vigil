@@ -1098,7 +1098,13 @@ class DatabaseService:
 
     @default_on_error(None, passthrough=case_trail_hook.RAISED)
     def create_case(
-        self, case_id: str, title: str, finding_ids: List[str], **kwargs
+        self,
+        case_id: str,
+        title: str,
+        finding_ids: List[str],
+        *,
+        session=None,
+        **kwargs,
     ) -> Optional[Case]:
         """
         Create a new case.
@@ -1107,12 +1113,19 @@ class DatabaseService:
             case_id: Unique case ID
             title: Case title
             finding_ids: List of finding IDs to link
+            session: The caller's session, so the case commits or rolls back with
+                its other writes; None owns one here.
             **kwargs: Additional fields (description, status, priority, assignee, tags, etc.)
 
         Returns:
             Created Case object or None if failed
         """
-        with self.db_manager.session_scope() as session:
+        scope = (
+            nullcontext(session)
+            if session is not None
+            else self.db_manager.session_scope()
+        )
+        with scope as session:
             # Create case
             now = utcnow()
             case = Case(
