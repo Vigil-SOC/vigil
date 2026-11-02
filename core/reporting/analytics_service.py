@@ -6,12 +6,14 @@ request-scoped ``Session``; nothing here commits — the unit of work owns that.
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from sqlalchemy import and_, func
+from sqlalchemy import and_, func, text
 from sqlalchemy.orm import Session
 
+from core.cases.closure import CLOSURE_OUTCOMES, ClosureCategory, closed_by_person
 from core.llm.providers.registry import get_registry, infer_provider_type
+from core.memory.recall_contract import VerdictOutcome
 from core.storage.models import (
     Case,
     CaseClosureInfo,
@@ -641,4 +643,114 @@ async def get_cost_breakdown(db: Session, time_range: str) -> Dict[str, Any]:
     return {
         "totals": _cost_totals(db, base_filter),
         "by_model": _cost_group_by_model(db, base_filter),
+    }
+
+
+# Agent agreement: the investigation's verdict scored against the closure.
+#
+# Each Case closed in the window, with the newest investigate-kind terminal of a
+# run started on it (trigger_context.case_id, not deleted) that carries a disposition and was
+# sealed at or before the close. ``closed_at`` is naive UTC and ``ts`` timestamptz,
+# so the close is cast rather than read in the server's zone. A run id that is not
+# a uuid has no ledger rows, and is cast to NULL rather than failing the query.
+_CLOSURE_VERDICTS = text("""
+    SELECT ci.case_id, ci.closure_category, ci.close_channel,
+           t.workflow_id, t.disposition, t.confidence
+    FROM case_closure_info ci
+    JOIN cases c ON c.case_id = ci.case_id AND c.status = 'closed'
+    JOIN LATERAL (
+        SELECT r.workflow_id,
+               e.payload->>'disposition' AS disposition,
+               e.payload->>'confidence' AS confidence
+        FROM workflow_runs r
+        JOIN agent_events e
+          ON e.run_id = CAST(substring(r.run_id FROM
+                 '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+             ) AS uuid)
+        WHERE r.trigger_context->>'case_id' = ci.case_id
+          AND r.deleted_at IS NULL
+          AND e.kind = 'terminal'
+          AND e.run_kind = 'investigate'
+          AND coalesce(e.payload->>'disposition', '') <> ''
+          AND e.ts <= (ci.closed_at AT TIME ZONE 'UTC')
+        ORDER BY e.ts DESC, e.seq DESC
+        LIMIT 1
+    ) t ON true
+    WHERE ci.closed_at >= :start AND ci.closed_at <= :end
+    """)
+
+_REAL = {"malicious", "suspicious"}
+_NOT_REAL = {"benign", "false_positive"}
+_CONFIDENCES = ("low", "medium", "high")
+
+
+def _agreement_tally() -> Dict[str, Any]:
+    return {
+        "agreed": 0,
+        "disagreed": 0,
+        "agreement_rate": None,
+        "abstained": 0,
+        "closed_without_determination": 0,
+        "closed_by_agent_alone": 0,
+        "by_confidence": {
+            level: {"agreed": 0, "disagreed": 0}
+            for level in (*_CONFIDENCES, "unstated")
+        },
+    }
+
+
+def _closure_says_real(category: Optional[str]) -> Optional[bool]:
+    """Real or not by the closure vocabulary; None when it determined neither."""
+    try:
+        outcome = CLOSURE_OUTCOMES.get(ClosureCategory(category))
+    except ValueError:
+        return None
+    if outcome is VerdictOutcome.PROVEN:
+        return True
+    if outcome is VerdictOutcome.FALSE_POSITIVE:
+        return False
+    return None
+
+
+async def get_agent_agreement(
+    db: Session, start_time: datetime, end_time: datetime
+) -> Dict[str, Any]:
+    """How often the investigation's verdict matched the closure, overall and per workflow.
+
+    Only closures of a Case with a dispositioned investigation count. A person's
+    closure is scored: agreed or disagreed when both sides took a side, abstained
+    when the agent said inconclusive or needs_review, closed without a
+    determination when the closure was neither resolved nor false_positive.
+    A closure by the agent's own channel is counted apart and never scored.
+    """
+    rows = db.execute(_CLOSURE_VERDICTS, {"start": start_time, "end": end_time})
+    overall = _agreement_tally()
+    by_workflow: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        tallies = (overall, by_workflow.setdefault(row.workflow_id, _agreement_tally()))
+        if not closed_by_person(row.close_channel):
+            key = "closed_by_agent_alone"
+        else:
+            disposition = (row.disposition or "").strip().lower()
+            closure = _closure_says_real(row.closure_category)
+            if closure is None:
+                key = "closed_without_determination"
+            elif disposition in _REAL or disposition in _NOT_REAL:
+                key = "agreed" if (disposition in _REAL) == closure else "disagreed"
+            else:
+                key = "abstained"
+        level = row.confidence if row.confidence in _CONFIDENCES else "unstated"
+        for tally in tallies:
+            tally[key] += 1
+            if key in ("agreed", "disagreed"):
+                tally["by_confidence"][level][key] += 1
+    for tally in (overall, *by_workflow.values()):
+        scored = tally["agreed"] + tally["disagreed"]
+        tally["agreement_rate"] = round(tally["agreed"] / scored, 4) if scored else None
+    return {
+        "overall": overall,
+        "by_workflow": [
+            {"workflow_id": workflow_id, **tally}
+            for workflow_id, tally in sorted(by_workflow.items())
+        ],
     }

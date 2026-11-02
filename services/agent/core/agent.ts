@@ -13,6 +13,7 @@ import type {
   RunKind,
   RunOutcome,
   RunPayload,
+  Confidence,
   Severity,
   TerminalHandoff,
   TerminalPayload,
@@ -33,7 +34,7 @@ import { unboundCapabilities, type RunSpec, type ToolSpec } from "./spec.js";
 import { hardStop, persistAsk, schemaErrors, streamTurn, type StreamEvent } from "./stream.js";
 import { childRunId, Framer } from "./frames.js";
 import { classify, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, SKILL_TOOL, starved, type RecordBackend } from "./record.js";
-import { SEVERITIES, type RunEventKind } from "../contracts/events.js";
+import { CONFIDENCES, SEVERITIES, type RunEventKind } from "../contracts/events.js";
 
 // The kernel: streamTurn's loop driven by a plugin, adding what every plugin needs: calls
 // journaled and resumed from, its answer shape, a second look, a stop honoured mid-call, one end.
@@ -362,6 +363,7 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
     severityOf(options.plugin, conclusion),
     proposalsOf(options.plugin, conclusion),
     dispositionOf(options.plugin, conclusion, review),
+    confidenceOf(options.plugin, conclusion),
   );
 }
 
@@ -1277,6 +1279,13 @@ export function severityOf(plugin: PluginManifest, conclusion: Pick<ConclusionPa
   return (SEVERITIES as readonly unknown[]).includes(rated) ? (rated as Severity) : undefined;
 }
 
+// How sure the answer said it was, when its plugin asks and it is one of CONFIDENCES.
+export function confidenceOf(plugin: PluginManifest, conclusion: Pick<ConclusionPayload, "value">): Confidence | undefined {
+  const field = isStructured(plugin.conclusion) ? plugin.conclusion.confidence_field : undefined;
+  const stated = field === undefined ? undefined : conclusion.value[field];
+  return (CONFIDENCES as readonly unknown[]).includes(stated) ? (stated as Confidence) : undefined;
+}
+
 // The disposition the answer gave, as the guard left it: a held benign goes out as its fallback.
 export function dispositionOf(plugin: PluginManifest, conclusion: ConclusionPayload, review: ReviewPayload): string | undefined {
   const field = isStructured(plugin.conclusion) ? plugin.conclusion.disposition_field : undefined;
@@ -1403,6 +1412,7 @@ async function end(
   severity?: Severity,
   proposed: readonly ProposedAction[] = [],
   disposition?: string,
+  confidence?: Confidence,
 ): Promise<AgentReport> {
   // Something outside the run may have ended it while a call was in flight. Its
   // terminal stands; a second would give the run two endings.
@@ -1427,6 +1437,7 @@ async function end(
     ...(proposed.length === 0 ? {} : { proposed_actions: [...proposed] }),
     ...(finished_at === undefined ? {} : { finished_at }),
     ...(disposition === undefined ? {} : { disposition }),
+    ...(confidence === undefined ? {} : { confidence }),
   };
   await ctx.harness.state.append(ctx.options.run_id, [event(ctx.options, "terminal", payload)]);
   await ctx.options.hooks?.ended?.(ctx, payload);

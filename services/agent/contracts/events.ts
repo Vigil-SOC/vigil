@@ -190,6 +190,9 @@ export interface TerminalPayload {
   // How bad the run rated what it found, in case priorities, for the case it was
   // started from. Only a completed run whose plugin names a severity_field sets it.
   severity?: Severity;
+  // How sure the run said it was of its verdict. Only a completed run whose plugin
+  // names a confidence_field sets it.
+  confidence?: Confidence;
   // The run's verdict, after the guard, for the case it was started from. Only a
   // completed run whose plugin names a disposition_field sets it.
   disposition?: string;
@@ -201,6 +204,10 @@ export interface TerminalPayload {
 // The ratings a run may conclude with: the case priorities, less unknown.
 export const SEVERITIES = ["low", "medium", "high", "critical"] as const;
 export type Severity = (typeof SEVERITIES)[number];
+
+// How sure a run may say it is of its verdict.
+export const CONFIDENCES = ["low", "medium", "high"] as const;
+export type Confidence = (typeof CONFIDENCES)[number];
 
 // Work the run finished by giving away, each carrying the document it hands over
 // rather than a pointer to one: the receiver has no access to this ledger.

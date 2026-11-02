@@ -5,7 +5,6 @@ hand-written ``to_dict()`` methods that previously defined it implicitly.
 """
 
 from core.storage.schemas.ai import (
-    AIDecisionLogSchema,
     AIModelConfigSchema,
     ChatMessageSchema,
     ConversationSchema,
@@ -64,7 +63,6 @@ from core.storage.schemas.workflow import (
 )
 
 __all__ = [
-    "AIDecisionLogSchema",
     "AIModelConfigSchema",
     "ApprovalActionSchema",
     "CaseAttachmentSchema",
