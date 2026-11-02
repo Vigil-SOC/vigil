@@ -10733,7 +10733,11 @@ export interface components {
              * @default hunt
              */
             run_kind: string;
-            /** Tenant Id */
+            /**
+             * Tenant Id
+             * @deprecated
+             * @description Accepted and ignored: Vigil has no tenant model.
+             */
             tenant_id?: string | null;
         };
         /** StartRunResponse */

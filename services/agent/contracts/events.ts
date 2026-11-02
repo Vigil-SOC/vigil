@@ -66,7 +66,8 @@ export interface RunPayload {
   spec: unknown;
   budgets: BudgetLimits;
   seed: string;
-  tenant_id: string | null;
+  // Never read. Older rows and the hunt plugin's opening row hold null.
+  tenant_id?: string | null;
   // The actor principal id when the start job named one. Older rows hold the
   // free-text enqueued_by this replaced.
   started_by: string;

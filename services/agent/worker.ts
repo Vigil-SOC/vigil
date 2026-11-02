@@ -597,7 +597,6 @@ export async function sweepOnce(leases: Leases, queue: Enqueue, limit = 50): Pro
       schema_version: JOB_SCHEMA_VERSION,
       run_id: claim.run_id,
       run_kind: claim.run_kind,
-      tenant_id: null,
       enqueued_at: new Date().toISOString(),
       enqueued_by: "system",
       reason: "resume",

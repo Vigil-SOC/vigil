@@ -76,7 +76,6 @@ export async function runRootCauseV3(harness: Harness<V3Kinds>, options: V3Optio
         spec: { ...spec, sections: { ...spec.sections, engine: ENGINE } },
         budgets: harness.budget.limits,
         seed: run_id,
-        tenant_id: null,
         started_by: options.started_by ?? "worker",
         ...(options.principal === undefined ? {} : { principal: options.principal }),
         ...(options.origin === undefined ? {} : { origin: options.origin }),

@@ -3495,6 +3495,8 @@
                 "type": "null"
               }
             ],
+            "deprecated": true,
+            "description": "Accepted and ignored: Vigil has no tenant model.",
             "title": "Tenant Id"
           }
         },
