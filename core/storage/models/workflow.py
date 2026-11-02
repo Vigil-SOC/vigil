@@ -23,9 +23,10 @@ from core.time import utcnow
 
 # The two senses of "not finished", kept together because they differ by one
 # status and drift apart when they do not share a home. LIVE is the record the
-# Case owns; IN_FLIGHT is the subset holding an agent slot, which a run parked
-# waiting on a person (``paused``) has already given back. A completed run no
-# longer waits in review (#2324).
+# Case owns; IN_FLIGHT drops ``paused``, a run that goes nowhere until a person
+# lets it. Neither is the slot rule: only an ``executing`` run holds an agent slot
+# (RUNNING_INVESTIGATION_STATUSES in the orchestrator). A completed run no longer
+# waits in review (#2324).
 LIVE_INVESTIGATION_STATUSES = (
     "assigned",
     "executing",

@@ -30,6 +30,7 @@ from core.storage.models import (
 )
 from core.time import utcnow
 from services.api.middleware.auth import get_current_active_user
+from services.daemon.config import OrchestratorConfig
 
 router = APIRouter()
 
@@ -154,6 +155,7 @@ def get_orchestrator_status():
         "queued": queued,
         "waiting_approval": parked.get("waiting_approval", 0),
         "paused": parked.get("paused", 0),
+        "parked_limit": max_agents * OrchestratorConfig.parked_runs_per_slot,
         "oldest_parked_age_seconds": (
             None if parked_since is None else (utcnow() - parked_since).total_seconds()
         ),

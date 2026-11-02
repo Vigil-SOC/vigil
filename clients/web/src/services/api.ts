@@ -1042,6 +1042,8 @@ export interface OrchestratorStatus {
   enabled?: boolean
   waiting_approval: number
   paused: number
+  // no new alert is picked up once approvals and paused runs together reach this
+  parked_limit: number
   oldest_parked_age_seconds: number | null
   // Absent when the API has no orchestrator to ask; a banner then claims nothing.
   cost: { hourly_paused?: boolean; hourly_cost_usd?: number; hourly_limit_usd?: number }

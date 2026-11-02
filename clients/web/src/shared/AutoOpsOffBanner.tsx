@@ -68,11 +68,13 @@ function ParkedBanner({ status }: { status: OrchestratorStatus }) {
       <Icon name="clock" size={14} />
       <span>
         <b>{total} run{total === 1 ? '' : 's'} waiting on a person.</b> {parts}
-        {age !== null && `, the oldest for ${fmtAge(age)}`}.{' '}
+        {age !== null && `, the oldest for ${fmtAge(age)}`}.
+        {total >= status.parked_limit && ' No new alert is picked up until one of them moves.'}{' '}
         <InfoTip
           label="How runs waiting on a person are counted"
           source="Runs whose status is waiting approval or paused."
           calculation="A count of each, and the time since the oldest one's last activity."
+          limit={`Agents hold no slot while they wait. New alerts stop being picked up at ${status.parked_limit}; an answer always resumes its run.`}
         />
       </span>
       <Link className="btn ghost no-underline" to="/cases">Open cases →</Link>

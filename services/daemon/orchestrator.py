@@ -91,6 +91,7 @@ from core.storage.connection import get_db_manager
 from core.storage.models import (
     FINISHED_INVESTIGATION_STATUSES,
     IN_FLIGHT_INVESTIGATION_STATUSES,
+    PARKED_INVESTIGATION_STATUSES,
     IntakeTrigger,
     Investigation,
 )
@@ -146,8 +147,11 @@ def _count_investigations_in_flight() -> int:
 
 # Rows actually running. An `assigned` row is stranded or transient, never
 # enqueued and waiting, so it must not count against the slot it needs freed:
-# counting it deadlocks pickup once `assigned` rows fill the cap (#1874).
-RUNNING_INVESTIGATION_STATUSES = ("executing", "waiting_approval")
+# counting it deadlocks pickup once `assigned` rows fill the cap (#1874). A parked
+# row has released its lease and calls no model, so unanswered approvals do not
+# stop new alerts being looked at. An answer resumes the run whatever this count
+# says: a step a person approved does not queue behind unrelated alerts.
+RUNNING_INVESTIGATION_STATUSES = ("executing",)
 
 
 def _count_investigations_running() -> int:
@@ -155,6 +159,15 @@ def _count_investigations_running() -> int:
         return (
             session.query(Investigation)
             .filter(Investigation.status.in_(RUNNING_INVESTIGATION_STATUSES))
+            .count()
+        )
+
+
+def _count_investigations_parked() -> int:
+    with get_db_manager().session_scope() as session:
+        return (
+            session.query(Investigation)
+            .filter(Investigation.status.in_(PARKED_INVESTIGATION_STATUSES))
             .count()
         )
 
@@ -884,7 +897,7 @@ class Orchestrator:
         if not self._hourly_budget_exhausted():
             schedule_runs = self._schedule_runs_in_flight()
             for row in launchable:
-                if self._running() >= self.config.max_concurrent_agents:
+                if not self._room_to_launch():
                     break
                 is_schedule = row.get("kind") == "schedule"
                 # Skipped, not a break: rows behind it may be detections.
@@ -1327,7 +1340,7 @@ class Orchestrator:
             inv_id = inv.get("investigation_id")
             if not inv_id:
                 continue
-            if self._running() >= self.config.max_concurrent_agents:
+            if not self._room_to_launch():
                 return
 
             self._update_investigation_status(inv_id, "assigned")
@@ -1473,6 +1486,25 @@ class Orchestrator:
             # Unknown reads as full: a failed count must not lift the cap.
             logger.error("Failed to count running investigations: %s", e)
             return self.config.max_concurrent_agents
+
+    def _parked_full(self) -> bool:
+        """Parked runs hold no slot, so nothing else bounds how many pile up.
+
+        Paused counts too: a run the ceiling refused parks there within one
+        reconcile, so slots alone would let a flood of them launch without end.
+        """
+        try:
+            return _count_investigations_parked() >= self.config.parked_limit
+        except Exception as e:
+            # Unknown reads as full: a failed count must not lift the limit.
+            logger.error("Failed to count parked investigations: %s", e)
+            return True
+
+    def _room_to_launch(self) -> bool:
+        return (
+            self._running() < self.config.max_concurrent_agents
+            and not self._parked_full()
+        )
 
     # A run belongs to the worker, so nothing here stops one. The record is marked
     # and the run finishes or hits its ceiling; reaping a stalled worker is #633.

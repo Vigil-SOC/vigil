@@ -1425,7 +1425,7 @@ class OrchestratorSettingsConfig(BaseModel):
 
     The ``ge``/``le`` bounds are the one source: POST enforces them and GET
     serves them (with ``step``) as ``bounds``. 0 is not "unlimited" to the
-    daemon (``_in_flight() >= max_concurrent_agents``), it is the tightest cap.
+    daemon (``_running() >= max_concurrent_agents``), it is the tightest cap.
     """
 
     # Opt-in; also feeds ORCHESTRATOR_DEFAULTS. Matches GET /api/orchestrator/status,
