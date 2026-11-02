@@ -405,6 +405,19 @@ redis:
     limits:
       cpu: 500m
       memory: 768Mi
+  # Password of the in-chart Redis (redis.enabled=true, redis.bitnami.enabled=false).
+  # Always on: Redis holds the LLM queue, the agent run queue and the sessions.
+  # Left unset, the chart generates one on first install into <release>-redis-auth
+  # and reads it back with lookup on every upgrade, so it stays put. lookup sees
+  # nothing under `helm template` or a GitOps controller, which would draw a new
+  # one each render: set password (or existingSecret) there. Not used by Bitnami
+  # (redis.bitnami.auth) or by an external Redis.
+  auth:
+    password: ""
+    # A pre-created Secret holding the password under existingSecretKey; the
+    # chart then renders none.
+    existingSecret: ""
+    existingSecretKey: REDIS_PASSWORD
   external:
     # Full Redis URL (e.g. redis://:password@redis.example.com:6379/0).
     # If set, this wins over in-chart Redis.
