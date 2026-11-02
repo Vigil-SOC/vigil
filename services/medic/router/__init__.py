@@ -17,9 +17,8 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence
 from typing import Any
 
 from services.medic.engine import LoadedRule
-from services.medic.engine.core import BLIND
+from services.medic.engine.core import BUILTINS
 
-WATCHER_LANE = 3  # E3 §2 / R7: watcher.sensor-blind goes to DeepTempo Support
 ESCALATE_AFTER_FAILURES = 2  # Phase 1 1C5: two failed attempts escalate to lane 3
 
 
@@ -105,7 +104,9 @@ class Router:
         runbooks: Mapping[str, dict[str, Any]] | None = None,
     ) -> None:
         self._lanes = {r.id: lane_of(r) for r in rules}
-        self._lanes[BLIND] = {"value": WATCHER_LANE, "reason": "rule"}
+        self._lanes |= {
+            i: {"value": b.lane, "reason": "rule"} for i, b in BUILTINS.items()
+        }
         self._runbooks = dict(runbooks or {})  # rule id -> G4 descriptor; none ship
 
     def route(

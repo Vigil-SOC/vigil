@@ -54,6 +54,16 @@ So "no arrivals for 6 h" can't fire until the watcher has actually watched for 6
 - `for: 2m`, `keep_firing_for: 0s`, lane 3;
 - it is never a suppression child.
 
+**Built-in rules for Medic's own faults** share that path: never pack content, never a suppression child, `pack_id: medic-builtin`, `1.0`. Each has one group `{}` and is raised by a `sample` observation (`target.service: medic`) of one `bool` gauge. It is **true** while the newest ok read of the gauge is `true`, **false** once it is `false`, and **unknown** with no ok read or an absent value. The emitters are the store (#2078, #2080) and the Helm install (#2082); decision-record.md ("Built-in rules") has the lanes and the full table.
+
+| Rule | Signal · key | `true` means | `for` | `keep_firing_for` |
+|---|---|---|---|---|
+| `watcher.recording-stopped` (lane 2) | `medic_recording` · `stopped` | the store hit its cap and Medic stopped recording (#2078) | 0s | 0s |
+| `watcher.store-reset` (lane 3) | `medic_store` · `reset` | the store was found corrupt and reset (#2080) | 0s | 24h |
+| `watcher.policy-unenforced` (lane 2) | `medic_network_policy` · `unenforced` | the cluster doesn't enforce NetworkPolicy (#2082) | 0s | 0s |
+
+A reset is a one-time event that may never read `false`, so `watcher.store-reset` keeps firing for 24 h after it does, and can't resolve on the tick that opened it. Vectors v31–v33.
+
 ## 3. Groups
 
 - **Group key.** The values of `group_by`, taken from each signal's `by` labels or log `keys`. A rule without `group_by` has one group, `{}`.
