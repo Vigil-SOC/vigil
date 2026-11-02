@@ -1,26 +1,21 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { useAuth } from '../contexts/AuthContext'
-import { casesApi, findingsApi, searchApi, workflowApi } from '../services/api'
+import { searchApi, workflowApi } from '../services/api'
 import { Icon } from '../shared/icons'
 import { useToast } from './toast'
 import type { ConsoleScreenGoOptions, SeedDocument } from '../shared/types'
 import {
-  argumentHits,
-  argumentKind,
   argumentRows,
   attachBlockedBy,
   ATTACH_TYPES,
   attachRefusal,
+  bindLine,
   buildRows,
-  COMMANDS,
-  commandPreview,
-  commandRemainder,
-  firstEnabled,
-  huntHypothesis,
-  huntTitle,
-  isLiveCommand,
-  liveCommandIn,
+  fetchRefs,
+  keyAction,
+  lookupWanted,
   moveEnabled,
+  parseLine,
   PASTE_ATTACH_CHARS,
   PASTED_NAME,
   proposalFrom,
@@ -29,12 +24,13 @@ import {
   readRecents,
   removeRecent,
   tagText,
+  targetRow,
   writeRecent,
+  type BarView,
   type BoardLink,
-  type Hit,
   type HuntAttachment,
-  type LiveCommandId,
   type PaletteRow,
+  type RefLookup,
   type SearchHits,
   useJiraReadiness,
 } from './commandBarModel'
@@ -50,7 +46,7 @@ export default function CommandBar({
   onOpenChat,
   onOpenCase,
   onGo,
-  caseOpen = false,
+  openCaseId = null,
   fill,
   placement = 'header',
 }: {
@@ -58,8 +54,8 @@ export default function CommandBar({
   onOpenChat: (prompt?: string, document?: SeedDocument) => void
   onOpenCase: (caseId: string) => void
   onGo: (screen: string, options?: ConsoleScreenGoOptions) => void
-  /** A case is open, so asking goes to its composer instead of the dock. */
-  caseOpen?: boolean
+  /** The open case: asking goes to its composer instead of the dock, and a case command defaults to it. */
+  openCaseId?: string | null
   /** A new `seq` puts `text` in the bar and opens it. Nothing runs; the person still presses Enter or Run. */
   fill?: { text: string; seq: number } | null
   /** Home draws the bar full width under the headline. Everywhere else it stays in the header. */
@@ -72,12 +68,11 @@ export default function CommandBar({
   const inputRef = useRef<HTMLInputElement>(null)
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
-  const [active, setActive] = useState(0)
+  const [active, setActive] = useState<number | null>(null)
   const [recents, setRecents] = useState<string[]>([])
   const [hits, setHits] = useState<SearchHits | null>(null)
-  const [args, setArgs] = useState<{ kind: 'case' | 'alert'; rows: PaletteRow[] } | null>(null)
+  const [answer, setAnswer] = useState<RefLookup | null>(null)
   const jira = useJiraReadiness()
-  const [preview, setPreview] = useState<{ id: LiveCommandId; arg: string } | null>(null)
   const [running, setRunning] = useState(false)
   const [attachment, setAttachment] = useState<HuntAttachment | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -106,8 +101,7 @@ export default function CommandBar({
     seenFill.current = fill.seq
     setQuery(fill.text)
     setHits(null)
-    setActive(0)
-    setPreview(liveCommandIn(fill.text))
+    setActive(null)
     setOpen(true)
     inputRef.current?.focus()
   }, [fill?.seq]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -133,7 +127,7 @@ export default function CommandBar({
       void searchApi.query(q, round.signal).then((res) => {
         if (!live) return
         setHits(res.data)
-        setActive(0)
+        setActive(null)
       }).catch(() => {})
     }, 150)
     return () => {
@@ -143,50 +137,45 @@ export default function CommandBar({
     }
   }, [open, query])
 
+  const line = parseLine(query)
+  const commandLine = line?.kind === 'command' ? line : null
+  const want = lookupWanted(line)
+  const wantKind = want?.kind
+  const wantWord = want?.word
   // The cases or alerts a command's argument can name, so nobody has to know the id.
-  const argKind = open && preview ? argumentKind(preview.id) : null
-  const argText = preview?.arg.trim() ?? ''
   useEffect(() => {
-    if (!argKind) {
-      setArgs(null)
-      return
-    }
+    if (!wantKind || wantWord === undefined) return
     let live = true
     const round = new AbortController()
     const timer = setTimeout(() => {
-      // Nothing typed yet: the first few the Cases list or the alert feed shows.
-      const found: Promise<Hit[]> = argText
-        ? searchApi.query(argText, round.signal).then((res) => argumentHits(argKind, res.data))
-        : argKind === 'case'
-          ? casesApi.getAll({ limit: 5 }).then((res) =>
-              (res.data.cases ?? []).map((c) => ({ id: c.case_id, title: c.title, priority: c.priority })),
-            )
-          : findingsApi.getAll({ limit: 5 }, round.signal).then((res) =>
-              ((res.data as { findings?: { finding_id: string; title?: string | null; description?: string | null; data_source?: string | null; severity?: string | null }[] }).findings ?? [])
-                .map((f) => ({ id: f.finding_id, title: f.title || f.description || f.finding_id, data_source: f.data_source, severity: f.severity })),
-            )
-      found.then((list) => {
-        if (live) setArgs({ kind: argKind, rows: argumentRows(argKind, list) })
-      }).catch(() => {
-        if (live) setArgs(null)
-      })
+      fetchRefs(wantKind, wantWord, round.signal).then(
+        (found) => {
+          if (live) setAnswer({ kind: wantKind, word: wantWord, failed: false, ...found })
+        },
+        () => {
+          if (live) setAnswer({ kind: wantKind, word: wantWord, failed: true, exact: null, hits: [] })
+        },
+      )
     }, 150)
     return () => {
       live = false
       round.abort()
       clearTimeout(timer)
     }
-  }, [argKind, argText])
+  }, [wantKind, wantWord])
 
-  // Rows from another command's kind are never offered: a case id must not land after /investigate.
-  const argRows = args && args.kind === argKind ? args.rows : null
-  const rows = useMemo(() => [...buildRows(query, hits, recents, boards), ...(argRows ?? [])], [query, hits, recents, boards, argRows])
-  const highlighted = rows[active] && !rows[active].disabled ? active : firstEnabled(rows)
-  const previewView = preview ? commandPreview(preview.id, preview.arg, jira, attachment) : null
-  const canRun = !!previewView && !previewView.disabled && !running
-  // Enter on an argument row the person moved to fills it in; the next Enter runs.
-  const picking = rows[highlighted]?.fill !== undefined
-  const alreadyRunning = preview?.id === 'hunt' && !preview.arg.trim() ? runningHunt(attachment) : null
+  // Rows from another kind are never offered: a case id must not land after /investigate.
+  const shownAnswer = answer?.kind === wantKind ? answer : null
+  const lookup = shownAnswer?.word === wantWord ? shownAnswer : null
+  const env = { openCaseId, jira, attachment }
+  const binding = commandLine ? bindLine(commandLine, lookup, env) : null
+  const argRows = commandLine && binding ? argumentRows(commandLine, binding, shownAnswer) : []
+  const rows = [...buildRows(query, hits, recents, boards), ...argRows]
+  const view: BarView = { query, line, binding, rows, active, running }
+  const highlighted = targetRow(view)
+  const enterAction = keyAction('Enter', view)
+  const tabAction = keyAction('Tab', view)
+  const alreadyRunning = commandLine?.command.id === 'hunt' && !commandLine.word ? runningHunt(attachment) : null
 
   const highlightedKey = open ? rows[highlighted]?.key : undefined
   useEffect(() => {
@@ -203,7 +192,7 @@ export default function CommandBar({
   }, [refocus])
 
   // With no hypothesis typed, the coverage check proposes one from the document.
-  const huntNoArg = preview?.id === 'hunt' && !preview.arg.trim()
+  const huntNoArg = commandLine?.command.id === 'hunt' && !commandLine.word
   const needsProposal = attachment?.status === 'ready' && attachment.proposal === null
   useEffect(() => {
     if (!huntNoArg || !needsProposal) return
@@ -302,7 +291,6 @@ export default function CommandBar({
     else if (hunt.runId) onGo('workflows', { search: `?run=${encodeURIComponent(hunt.runId)}` })
     else return
     setOpen(false)
-    setPreview(null)
   }, [onGo, onOpenCase])
 
   const remember = useCallback((text: string) => {
@@ -318,19 +306,16 @@ export default function CommandBar({
   const follow = useCallback((row: PaletteRow) => {
     if (row.dest === 'Recent' && row.recent) {
       setQuery(row.recent)
-      setPreview(liveCommandIn(row.recent))
       setOpen(true)
-      setActive(0)
+      setActive(null)
       return
     }
     if (row.dest === 'Ask') {
       if (!ask(query.trim() || undefined)) return
       setOpen(false)
-      setPreview(null)
       return
     }
     setOpen(false)
-    setPreview(null)
     remember(query)
     if (row.dest === 'Case' && row.caseId) onOpenCase(row.caseId)
     else if (row.dest === 'Page' && row.page) {
@@ -346,155 +331,55 @@ export default function CommandBar({
 
   const choose = useCallback((row: PaletteRow) => {
     if (row.disabled) return
-    if (row.fill !== undefined && preview) {
-      const name = COMMANDS.find((c) => c.id === preview.id)?.name ?? ''
-      setQuery(`${name} ${row.fill}`)
-      setPreview({ id: preview.id, arg: row.fill })
-      setActive(0)
-      setRefocus((n) => n + 1)
-      return
-    }
-    if (row.commandId && isLiveCommand(row.commandId)) {
-      const arg = commandRemainder(query, row.label)
-      setQuery(arg ? `${row.label} ${arg}` : `${row.label} `)
-      setPreview({ id: row.commandId, arg })
+    if (row.fill !== undefined) {
+      setQuery(row.fill)
       setOpen(true)
+      setActive(null)
       setRefocus((n) => n + 1)
       return
     }
     follow(row)
-  }, [follow, preview, query])
+  }, [follow])
 
-  const run = useCallback(async () => {
-    if (!preview || commandPreview(preview.id, preview.arg, jira, attachment).disabled) return
-    const arg = preview.arg.trim()
-    // The workflow this command starts, from the command table.
-    const command = COMMANDS.find((c) => c.id === preview.id)
-    const workflowId = command?.workflowId ?? ''
+  const run = async () => {
+    if (binding?.state !== 'bound' || !commandLine || running) return
     setRunning(true)
     // A file attached while the run starts is not the one it sent, so it stays.
     const sentSeq = attachSeq.current
-    const dropSent = () => {
-      if (attachSeq.current === sentSeq) removeAttachment()
-    }
     try {
-      switch (preview.id) {
-        case 'investigate': {
-          const document = attachment?.status === 'ready' ? attachment : null
-          let finding = false
-          try {
-            await findingsApi.getById(arg)
-            finding = true
-          } catch {
-            finding = false
-          }
-          // The server opens the case, or reuses the open one holding the alert.
-          const started = await workflowApi.execute(workflowId, {
-            ...(finding ? { finding_id: arg } : { context: arg }),
-            ...(document && { document: document.text }),
-          })
-          const caseId = started.data.case_id
-          if (!caseId) throw new Error('The run started without a case')
-          // The original stays on the case, as a hunt's does.
-          if (document) {
-            await casesApi
-              .attachDocument(caseId, document.file, { name: document.pasted ? PASTED_NAME : undefined, pages: document.pages })
-              .catch((error: unknown) => notify('err', `The run started, but ${document.name} could not be kept on the case: ${errorText(error, 'upload failed')}`))
-          }
-          onOpenCase(caseId)
-          dropSent()
-          notify('ok', `Started ${command?.runs}`)
-          break
-        }
-        case 'hunt': {
-          // What was typed, else what the attached document proposed.
-          const hypothesis = huntHypothesis(arg, attachment)
-          const document = attachment?.status === 'ready' ? attachment : null
-          // The server puts the run on a case, so the drawer has something to open on.
-          const title = huntTitle(hypothesis)
-          const started = await workflowApi.execute(workflowId, {
-            hypothesis,
-            ...(document && { document: document.text }),
-            // The proposal's own subjects and approval ride with it, unedited.
-            ...(!arg && document?.proposal?.status === 'proposed' && {
-              hypothesis_subjects: document.proposal.subjects,
-              approve_hypotheses: document.proposal.approve,
-            }),
-          })
-          const caseId = started.data.case_id
-          if (!caseId) throw new Error('The hunt started without a case')
-          // After the run is queued, so a refused hunt leaves no original behind.
-          if (document) {
-            await casesApi
-              .attachDocument(caseId, document.file, { name: document.pasted ? PASTED_NAME : undefined, pages: document.pages })
-              .catch((error: unknown) => notify('err', `The hunt started, but ${document.name} could not be kept on the case: ${errorText(error, 'upload failed')}`))
-          }
-          onOpenCase(caseId)
-          dropSent()
-          notify('ok', `Hunt started on case "${title}"`)
-          break
-        }
-        case 'replay': {
-          // Investigations come newest first.
-          const runId = (await casesApi.getById(arg)).data.investigations?.[0]?.run_id
-          if (runId) onGo('workflows', { search: `?run=${encodeURIComponent(runId)}` })
-          else {
-            onOpenCase(arg)
-            notify('info', `Case ${arg} has no run to replay`)
-          }
-          break
-        }
-        case 'ask':
-          ask(arg)
-          break
-        case 'ticket':
-          notify('ok', await casesApi.exportJira(arg, jira.projectKey))
-          break
-        default: {
-          const exhaustive: never = preview.id
-          return exhaustive
-        }
-      }
+      await commandLine.command.run(binding.target, {
+        ...env,
+        notify,
+        onOpenCase,
+        onGo,
+        ask,
+        dropSent: () => {
+          if (attachSeq.current === sentSeq) removeAttachment()
+        },
+      })
       setQuery('')
       setOpen(false)
-      setPreview(null)
     } catch (error) {
       notify('err', errorText(error, 'Command failed'))
     } finally {
       setRunning(false)
     }
-  }, [ask, attachment, jira, notify, onGo, onOpenCase, preview, removeAttachment])
+  }
 
   const onInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'ArrowDown') {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
       setOpen(true)
-      setActive(moveEnabled(rows, highlighted, 1))
+      setActive(moveEnabled(rows, highlighted, event.key === 'ArrowDown' ? 1 : -1))
       return
     }
-    if (event.key === 'ArrowUp') {
-      event.preventDefault()
-      setOpen(true)
-      setActive(moveEnabled(rows, highlighted, -1))
-      return
-    }
-    if (event.key === 'Tab' && query.trim()) {
-      event.preventDefault()
-      if (!ask(query.trim())) return
-      setOpen(false)
-      setPreview(null)
-      return
-    }
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      // A command with its argument runs on this press; otherwise Enter completes or opens the row.
-      if (canRun && !picking) {
-        void run()
-        return
-      }
-      const row = rows[highlighted]
-      if (row) choose(row)
-    }
+    if (event.key !== 'Enter' && event.key !== 'Tab') return
+    const action = event.key === 'Enter' ? enterAction : tabAction
+    if (action.kind === 'default') return
+    event.preventDefault()
+    if (action.kind === 'run') void run()
+    else if (action.kind === 'row') choose(rows[action.index])
+    else if (action.kind === 'ask' && ask(query.trim())) setOpen(false)
   }
 
   const groups: { section: string; items: { row: PaletteRow; index: number }[] }[] = []
@@ -570,9 +455,8 @@ export default function CommandBar({
           onChange={(event) => {
             setQuery(event.target.value)
             setHits(null)
-            setPreview(liveCommandIn(event.target.value))
             setOpen(true)
-            setActive(0)
+            setActive(null)
           }}
           onFocus={() => setOpen(true)}
           onKeyDown={onInputKeyDown}
@@ -587,8 +471,7 @@ export default function CommandBar({
               setQuery('')
               removeAttachment()
               setHits(null)
-              setPreview(null)
-              setActive(0)
+              setActive(null)
               inputRef.current?.focus()
             }}
           >
@@ -600,9 +483,7 @@ export default function CommandBar({
           type="button"
           className="vg-command-ask"
           onClick={() => {
-            if (!ask()) return
-            setOpen(false)
-            setPreview(null)
+            if (ask()) setOpen(false)
           }}
         >
           <Icon name="sparkle" size={placement === 'hero' ? 15 : 13} />
@@ -632,7 +513,7 @@ export default function CommandBar({
             </div>
           )}
           <div className="vg-command-scroll" id="vg-command-results" role="listbox">
-            {rows.length === 0 && <div className="vg-command-empty">No matches</div>}
+            {rows.length === 0 && <div className="vg-command-empty">{line?.kind === 'unknown' ? `No command ${line.token}. Tab asks Vigil.` : 'No matches'}</div>}
             {groups.map((group) => (
               <div key={group.section} role="group" aria-label={group.section}>
                 <div className="vg-command-section" aria-hidden="true">{group.section}</div>
@@ -676,20 +557,20 @@ export default function CommandBar({
               </div>
             ))}
           </div>
-          {previewView && preview && (
+          {binding && (
             <div className="vg-command-preview">
-              <p>{previewView.line}</p>
+              <p>{binding.state === 'bound' ? binding.line : binding.reason}</p>
               <button
                 type="button"
                 className="btn primary"
-                disabled={previewView.disabled || running}
+                disabled={binding.state !== 'bound' || running}
                 onClick={() => void run()}
               >
                 Run
               </button>
-              {(previewView.note || alreadyRunning) && (
+              {((binding.state === 'bound' && binding.note) || alreadyRunning) && (
                 <div className="vg-command-attach">
-                  {previewView.note && <span className="vg-command-note">{previewView.note}</span>}
+                  {binding.state === 'bound' && binding.note && <span className="vg-command-note">{binding.note}</span>}
                   {alreadyRunning && (alreadyRunning.caseId || alreadyRunning.runId) && (
                     <button type="button" className="btn" onClick={() => openRunning(alreadyRunning)}>
                       Open its case
@@ -701,8 +582,12 @@ export default function CommandBar({
           )}
           <div className="vg-command-foot">
             <span><kbd>↑↓</kbd> move</span>
-            <span><kbd>Enter</kbd> {canRun && !picking ? 'run' : picking ? 'use' : 'open'}</span>
-            <span><kbd>Tab</kbd> {caseOpen ? 'ask on this case' : 'ask Vigil'}</span>
+            {(enterAction.kind === 'run' || enterAction.kind === 'row') && (
+              <span><kbd>Enter</kbd> {enterAction.kind === 'run' ? 'run' : enterAction.label}</span>
+            )}
+            {(tabAction.kind === 'ask' || tabAction.kind === 'row') && (
+              <span><kbd>Tab</kbd> {tabAction.kind === 'row' ? tabAction.label : openCaseId ? 'ask on this case' : 'ask Vigil'}</span>
+            )}
             <span><kbd>/</kbd> commands</span>
           </div>
         </div>
