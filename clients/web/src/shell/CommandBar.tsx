@@ -280,10 +280,14 @@ export default function CommandBar({
     }
   }
 
-  // Ask Vigil gets the read file with the question; one still being read holds it back.
+  // Ask Vigil gets the read file with the question; one still being read, or refused, holds it back.
   const ask = useCallback((text?: string): boolean => {
     if (attachment?.status === 'reading') {
       notify('info', `Still reading ${attachment.name}`)
+      return false
+    }
+    if (attachment?.status === 'refused') {
+      notify('err', `${attachment.reason} Remove ${attachment.name} to ask without it.`)
       return false
     }
     const ready = attachment?.status === 'ready' ? attachment : null
@@ -368,6 +372,11 @@ export default function CommandBar({
     const command = COMMANDS.find((c) => c.id === preview.id)
     const workflowId = command?.workflowId ?? ''
     setRunning(true)
+    // A file attached while the run starts is not the one it sent, so it stays.
+    const sentSeq = attachSeq.current
+    const dropSent = () => {
+      if (attachSeq.current === sentSeq) removeAttachment()
+    }
     try {
       switch (preview.id) {
         case 'investigate': {
@@ -393,7 +402,7 @@ export default function CommandBar({
               .catch((error: unknown) => notify('err', `The run started, but ${document.name} could not be kept on the case: ${errorText(error, 'upload failed')}`))
           }
           onOpenCase(caseId)
-          removeAttachment()
+          dropSent()
           notify('ok', `Started ${command?.runs}`)
           break
         }
@@ -421,7 +430,7 @@ export default function CommandBar({
               .catch((error: unknown) => notify('err', `The hunt started, but ${document.name} could not be kept on the case: ${errorText(error, 'upload failed')}`))
           }
           onOpenCase(caseId)
-          removeAttachment()
+          dropSent()
           notify('ok', `Hunt started on case "${title}"`)
           break
         }

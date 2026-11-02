@@ -175,7 +175,7 @@ export function attachBlockedBy(query: string): string | null {
 }
 
 /** Over this many characters, or on more than one line, a paste attaches as a file instead of landing in the input. */
-export const PASTE_ATTACH_CHARS = 200
+export const PASTE_ATTACH_CHARS = 500
 
 /** The hypothesis a run starts with: what was typed, else what the document proposed. */
 export function huntHypothesis(arg: string, attachment: HuntAttachment | null): string {
