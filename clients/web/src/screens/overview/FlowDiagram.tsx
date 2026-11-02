@@ -22,6 +22,7 @@ const SRC_NODE_W = 196
 const SLOT_W = 236
 const SLOT_DOT_X = 246
 const ENGINE_R = 52
+const ENGINE_MAX = 1.6 // the engine grows with the diagram's height, up to this scale
 
 // The nodes that open Cases: Overview counts alerts there, Cases lists cases, so the sub-line says how many.
 const CASE_NODES = new Set(['resolved_auto', 'resolved_person', 'working', 'needs_you'])
@@ -68,19 +69,21 @@ function strand(xa: number, ya: number, xb: number, yb: number) {
   return `M ${xa} ${ya} C ${xa + dx * 0.52} ${ya}, ${xb - dx * 0.46} ${yb}, ${xb} ${yb}`
 }
 
-function useWidth() {
+// The wrap's inner size, plus the height of its sideways scrollbar (0 when none shows)
+function useSize() {
   const ref = useRef<HTMLDivElement>(null)
-  const [w, setW] = useState(0)
+  const [size, setSize] = useState({ w: 0, h: 0, bar: 0 })
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
-    setW(el.clientWidth)
+    const measure = () => setSize({ w: el.clientWidth, h: el.clientHeight, bar: el.offsetHeight - el.clientHeight })
+    measure()
     if (typeof ResizeObserver === 'undefined') return
-    const ro = new ResizeObserver(() => setW(el.clientWidth))
+    const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
-  return [ref, Math.max(MIN_W, w)] as const
+  return [ref, Math.max(MIN_W, size.w), size.h, size.bar] as const
 }
 
 function Particle({ path, color, dur, delay }: { path: string; color: string; dur: number; delay: number }) {
@@ -94,10 +97,14 @@ function Particle({ path, color, dur, delay }: { path: string; color: string; du
   )
 }
 
-function Engine({ cx, cy, idle }: { cx: number; cy: number; idle: boolean }) {
+function Engine({ cx, cy, s, idle }: { cx: number; cy: number; s: number; idle: boolean }) {
   return (
-    <div className={`ov-engine${idle ? ' idle' : ''}`} style={{ left: cx - 92, top: cy - 92 }} aria-hidden="true">
-      <svg width="184" height="184" viewBox="-92 -92 184 184">
+    <div
+      className={`ov-engine${idle ? ' idle' : ''}`}
+      style={{ left: cx - 92 * s, top: cy - 92 * s, '--ov-s': s } as CSSProperties}
+      aria-hidden="true"
+    >
+      <svg width={184 * s} height={184 * s} viewBox="-92 -92 184 184">
         <defs>
           <radialGradient id="ov-glow">
             <stop offset="0" style={{ stopColor: 'var(--ac)', stopOpacity: idle ? 0.1 : 0.34 }} />
@@ -137,14 +144,17 @@ interface Props {
 export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }: Props) {
   const badgeOf = useSourceBadge()
   const uid = useId().replace(/:/g, '')
-  const [ref, W] = useWidth()
+  const [ref, W, measuredH, bar] = useSize()
   const [hover, setHover] = useState<Hover>(null)
-  const H = wall ? 600 : 400
+  // The diagram fills the height Overview leaves it, never below the floor; the engine scales with it.
+  const floor = wall ? 600 : 400
+  const H = Math.max(floor, measuredH)
+  const s = Math.min(ENGINE_MAX, H / floor)
   const cx = W / 2
   const cy = H / 2 - 4
   const empty = data.empty
-  const x1 = cx - ENGINE_R // strands end here
-  const xr = cx + ENGINE_R // bands start here
+  const x1 = cx - ENGINE_R * s // strands end here
+  const xr = cx + ENGINE_R * s // bands start here
   const x2 = W - 198
   // labels follow the range the payload counted; links carry the one selected
   const all = data.range === 'all'
@@ -248,7 +258,7 @@ export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }
           : `${all ? 'All time' : 'Today (UTC)'}. Thicker lines carry more alerts; each alert is counted once, at the outcome it reached. Hover a source or an outcome to follow it.`}
       </p>
 
-      <div ref={ref} className="ov-canvas-wrap">
+      <div ref={ref} className="ov-canvas-wrap" style={{ minHeight: floor + bar }}>
         <div className="ov-canvas" style={{ width: W, height: H }}>
           <svg className="ov-lines" width={W} height={H} aria-hidden="true">
             <defs>
@@ -273,7 +283,7 @@ export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }
               data.outcomes
                 .filter((o) => o.count !== null)
                 .map((o, j, all) => (
-                  <path key={o.state} className="ov-dotted" d={strand(cx + ENGINE_R, cy, x2, rowY(j, all.length, H, 52, cy))} />
+                  <path key={o.state} className="ov-dotted" d={strand(xr, cy, x2, rowY(j, all.length, H, 52, cy))} />
                 ))}
 
             {!empty &&
@@ -338,14 +348,14 @@ export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }
               )}
           </svg>
 
-          <Engine cx={cx} cy={cy} idle={empty} />
+          <Engine cx={cx} cy={cy} s={s} idle={empty} />
           {!empty && (
-            <div className="ov-total" style={{ left: cx - 270, top: cy - 96 }}>
+            <div className="ov-total" style={{ left: cx - 100 * s - 170, top: cy - 96 * s }}>
               <b>{fmt(total)}</b>
               <span>alerts in</span>
             </div>
           )}
-          <div className="ov-engine-label" style={{ left: cx - 92, top: cy + 96 }}>
+          <div className="ov-engine-label" style={{ left: cx - 92 * s, top: cy + 96 * s, width: 184 * s }}>
             <b>Vigil engine</b>
             {empty && <span>Waiting for data</span>}
           </div>

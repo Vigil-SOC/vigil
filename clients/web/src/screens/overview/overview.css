@@ -91,7 +91,16 @@
   color: var(--tx2);
 }
 
+/* the flow takes the height left in .ov-main; the wrap's own content never sizes it, so it can shrink back */
+.ov-flow {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
 .ov-canvas-wrap {
+  flex: 1 0 auto;
+  contain: size;
   margin-top: 6px;
   overflow-x: auto;
   overflow-y: hidden;
@@ -162,9 +171,10 @@
 
 /* engine ring */
 .ov-engine {
+  --ov-s: 1;
   position: absolute;
-  width: 184px;
-  height: 184px;
+  width: calc(184px * var(--ov-s));
+  height: calc(184px * var(--ov-s));
   pointer-events: none;
 }
 
@@ -207,10 +217,10 @@
 
 .ov-mark {
   position: absolute;
-  left: 62px;
-  top: 62px;
-  width: 60px;
-  height: 60px;
+  left: calc(62px * var(--ov-s));
+  top: calc(62px * var(--ov-s));
+  width: calc(60px * var(--ov-s));
+  height: calc(60px * var(--ov-s));
   color: var(--tx0);
 }
 
