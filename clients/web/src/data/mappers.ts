@@ -3,6 +3,7 @@ import {
   MISSING_FINDING_SCORE,
   MISSING_FINDING_SEVERITY,
   MISSING_FINDING_TIME,
+  type CaseRecord,
   type CaseRow,
   type Finding,
 } from './data'
@@ -77,11 +78,21 @@ function casePrio(p?: string): CaseRow['prio'] {
   return 'medium'
 }
 
-export function mapApiCase(c: ApiCase): CaseRow {
+export function mapApiCase(c: ApiCase): CaseRecord {
   // The record's own status. Combined state belongs on the queue row; writing
   // it back through Edit would store an investigation status on the case.
   const row = mapQueueCase(c)
-  return { ...row, status: c.status || 'open' }
+  return {
+    ...row,
+    status: c.status || 'open',
+    stored: {
+      title: c.title || '',
+      description: c.description || '',
+      status: c.status || 'open',
+      priority: c.priority || '',
+      assignee: c.assignee || '',
+    },
+  }
 }
 
 /** Queue row or a case record. Combined state is shown as given. */

@@ -2003,3 +2003,20 @@
   .case-page .how-rows li { grid-template-columns: minmax(0, 1fr) auto; }
   .case-page .how-event { grid-column: 1 / -1; }
 }
+
+/* Edit dialog: another edit landed first. Fair, not poor: nothing has failed and nothing is lost. */
+.case-edit-conflicts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--fair-ln);
+  border-radius: var(--radius-card-inner);
+  background: var(--fair-bg);
+  color: var(--tx0);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.case-edit-conflicts p { margin: 0; }
+.case-edit-conflict { display: flex; flex-direction: column; gap: 8px; overflow-wrap: anywhere; }
+.case-edit-conflict > p { max-height: 120px; overflow-y: auto; }
