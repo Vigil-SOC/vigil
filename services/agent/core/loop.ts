@@ -113,6 +113,8 @@ export interface Attempt {
   // Set by invoke. Absent when the attempt never ran: a refusal, a rejection,
   // or a result served from an earlier pass of the ledger.
   duration_ms?: number;
+  // Credentials masked out of result as it entered the run. Absent when there were none.
+  redacted?: number;
   // Experimental guards (core/guards.ts): what the model was shown in place
   // of wrapped.text, and the reader's findings it was rendered from.
   shown?: string;

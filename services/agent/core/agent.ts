@@ -531,6 +531,7 @@ async function* work(ctx: PluginContext, held: Ledger, clock: { turn: number }):
           // Verbatim, so a transcript rebuilt from the ledger is the bytes the model sent.
           ...(first && thought !== "" ? { thought } : {}),
           ...(seen.attempt.duration_ms === undefined ? {} : { duration_ms: seen.attempt.duration_ms }),
+          ...(seen.attempt.redacted === undefined ? {} : { redacted: seen.attempt.redacted }),
           ...(seen.attempt.shown === undefined ? {} : { shown: seen.attempt.shown, read: seen.attempt.read }),
           ...(options.conversation === undefined ? {} : { exchange: exchangeOf(options.conversation) }),
           ...actorOf(options.started_by),
@@ -898,6 +899,7 @@ export async function runSubturn<T>(ctx: PluginContext, sub: Subturn): Promise<O
       class: classify(seen.attempt.result),
       role: sub.role,
       ...(seen.attempt.duration_ms === undefined ? {} : { duration_ms: seen.attempt.duration_ms }),
+      ...(seen.attempt.redacted === undefined ? {} : { redacted: seen.attempt.redacted }),
       ...actorOf(options.started_by),
     };
     await harness.state.append(options.run_id, [event(options, "call", call)]);
@@ -975,6 +977,7 @@ export async function runChild<T>(ctx: ParentRun, key: string, turn: TurnConfig)
         ok: seen.attempt.result.ok,
         failure: seen.attempt.wrapped.failure?.kind ?? null,
         class: classify(seen.attempt.result),
+        ...(seen.attempt.redacted === undefined ? {} : { redacted: seen.attempt.redacted }),
       };
       await harness.state.append(child, [at("call", call)]);
       framer.note(call.ref);

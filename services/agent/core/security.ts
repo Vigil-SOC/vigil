@@ -17,6 +17,100 @@ export function scrub(text: string, cap: number): string {
   return clamp(stripped.replace(DELIMITER, "<vigil-"), cap);
 }
 
+const REDACTED = "[redacted credential]";
+
+// Whole names, normalised, so session_token and Session-Token and sessionToken are one
+// entry, and token_count, tokens or password_changed_at are none.
+const CREDENTIAL_FIELDS: ReadonlySet<string> = new Set([
+  "password",
+  "passwd",
+  "pwd",
+  "secret",
+  "clientsecret",
+  "apikey",
+  "xapikey",
+  "accesstoken",
+  "refreshtoken",
+  "idtoken",
+  "sessiontoken",
+  "awssessiontoken",
+  "securitytoken",
+  "xamzsecuritytoken",
+  "secretaccesskey",
+  "awssecretaccesskey",
+  "authorization",
+  "proxyauthorization",
+  "cookie",
+  "setcookie",
+  "privatekey",
+]);
+
+// pwd is also the working directory in sudo and audit records, and a path is evidence.
+const WORKING_DIRECTORY = /^["']?(?:[/~]|[A-Za-z]:\\)/;
+
+function holdsCredential(field: string, value: string): boolean {
+  const name = field.toLowerCase().replace(/[-_]/g, "");
+  if (!CREDENTIAL_FIELDS.has(name) || value === "" || value === REDACTED) return false;
+  return !(name === "pwd" && WORKING_DIRECTORY.test(value));
+}
+
+// The same names inside free text: embedded JSON or a Python dict, at the one level of
+// escaping a log wrapping a log adds, or name=value in a command line or a query string.
+const NAMES = [...CREDENTIAL_FIELDS].map((name) => [...name].join("[-_]?")).join("|");
+const FIELDS_IN_TEXT: readonly RegExp[] = [
+  new RegExp(String.raw`(?<head>(?<quote>\\?["'])(?<field>${NAMES})\k<quote>\s*:\s*\k<quote>)(?<value>[\s\S]*?)(?<tail>(?<!\\)\k<quote>)`, "gi"),
+  new RegExp(String.raw`(?<head>(?<![\w-])-*(?<field>${NAMES})=)(?!\[redacted )(?<value>"[^"]*"|'[^']*'|[^\s&;,"']+)`, "gi"),
+];
+
+// By shape, under any field. Group 1, where a shape has one, is context left for the
+// reader. The JWT's lookbehind keeps a long run of near misses from rescanning itself.
+const CREDENTIAL_SHAPES: readonly RegExp[] = [
+  /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----|$)/g,
+  /\b(Bearer\s+)(?=[\w.~+/-]*\d|[\w.~+/-]{20})[\w.~+/-]+=*/gi,
+  /\b((?:proxy-)?authorization:\s*(?:Basic|Bearer)\s+)[\w.~+/-]+=*/gi,
+  /(?<![\w-])((?:set-)?cookie:(?!\s*\[redacted )\s*)[^\r\n"']+/gi,
+  /(?<![\w-])((?:x-)?api-key:(?!\s*\[redacted )\s*)[^\s"']+/gi,
+  /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,})/g,
+  /\bxox[abeprs]-[A-Za-z0-9-]{10,}/g,
+  /(?<![\w-])eyJ[\w-]+\.[\w-]+\.[\w-]*/g,
+];
+
+const isPlain = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && [Object.prototype, null].includes(Object.getPrototypeOf(value));
+
+// Credentials out, and nothing else: an analyst still needs the addresses, accounts, hosts,
+// hashes, ARNs and event text, so this masks a value in place and is no anonymiser.
+export function redactCredentials<T>(value: T): { value: T; redacted: number } {
+  let redacted = 0;
+  const masked = (head = "", tail = ""): string => {
+    redacted += 1;
+    return `${head}${REDACTED}${tail}`;
+  };
+  const inText = (text: string): string => {
+    const named = FIELDS_IN_TEXT.reduce(
+      (out, pattern) =>
+        out.replace(pattern, (whole, ...rest) => {
+          const found = rest.at(-1) as { head: string; field: string; value: string; tail?: string };
+          return holdsCredential(found.field, found.value) ? masked(found.head, found.tail) : whole;
+        }),
+      text,
+    );
+    return CREDENTIAL_SHAPES.reduce(
+      (out, shape) => out.replace(shape, (_whole, kept: unknown) => masked(typeof kept === "string" ? kept : "")),
+      named,
+    );
+  };
+  // A list under a credential's name is the credential's: Set-Cookie arrives as one. An
+  // object is not, since a field called secret may describe one by name and arn.
+  const walk = (held: unknown, field?: string): unknown => {
+    if (typeof held === "string") return field !== undefined && holdsCredential(field, held) ? masked() : inText(held);
+    if (Array.isArray(held)) return held.map((one) => walk(one, field));
+    if (!isPlain(held)) return held;
+    return Object.fromEntries(Object.entries(held).map(([key, one]) => [inText(key), walk(one, key)]));
+  };
+  return { value: walk(value) as T, redacted };
+}
+
 export type Scanner = (text: string) => boolean;
 
 // ponytail: keyword heuristic, not a classifier; upgrade if paraphrase matters.

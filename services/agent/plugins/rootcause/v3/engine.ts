@@ -3,6 +3,7 @@ import type { RegisteredTool } from "../../../contracts/tool.js";
 import type { AgentKinds, StopSource } from "../../../core/agent.js";
 import { GatewayExhausted } from "../../../core/limiter.js";
 import type { Harness } from "../../../core/loop.js";
+import { redactCredentials } from "../../../core/security.js";
 import type { RunSpec } from "../../../core/spec.js";
 import { toolsFrom } from "../../../tools/remote.js";
 import { loadPlugin } from "../../index.js";
@@ -140,8 +141,8 @@ async function drive(
     throw error;
   }
 
-  // The source's own tool, through the agent's dispatch: bounded and attributed like any other call.
-  const invoke: Invoke = (args) => harness.dispatch.invoke(bound.tool, args, signal);
+  // The source's own tool, through the agent's dispatch: bounded, attributed and masked like any other call.
+  const invoke: Invoke = async (args) => redactCredentials(await harness.dispatch.invoke(bound.tool, args, signal)).value;
   const turns = new KernelTurns(harness as unknown as Harness<AgentKinds>, {
     run_id, run_kind: "root_cause", spec, plugin: loadPlugin("rootcause").manifest, tools, signal,
     ...(options.started_by === undefined ? {} : { started_by: options.started_by }),
