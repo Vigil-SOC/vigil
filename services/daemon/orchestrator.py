@@ -16,7 +16,7 @@ import logging
 import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from sqlalchemy import func
 
@@ -708,6 +708,8 @@ class Orchestrator:
         self.config = config
         self._enabled = config.enabled
         self._shutdown_event: Optional[asyncio.Event] = None
+        # Set by the daemon: watch(name, task, shutdown_event) for /status loops.
+        self.watch_loop: Optional[Callable[..., None]] = None
         self._approvals = approvals or ApprovalService()
         # Read for the run_kind a definition declares; the file cache needs no DB.
         self._workflows = workflows or WorkflowsService()
@@ -767,11 +769,17 @@ class Orchestrator:
                     "Completing legacy review rows failed: %s", e, exc_info=True
                 )
 
-            tasks = [
-                asyncio.create_task(self._intake_loop(shutdown_event)),
-                asyncio.create_task(self._supervision_loop(shutdown_event)),
-                asyncio.create_task(self._distil_loop(shutdown_event)),
-            ]
+            loops = {
+                "_intake_loop": self._intake_loop,
+                "_supervision_loop": self._supervision_loop,
+                "_distil_loop": self._distil_loop,
+            }
+            tasks = []
+            for name, loop in loops.items():
+                task = asyncio.create_task(loop(shutdown_event))
+                if self.watch_loop:
+                    self.watch_loop(name, task, shutdown_event)
+                tasks.append(task)
 
             while not shutdown_event.is_set() and self._enabled:
                 self._sync_enabled_from_db()
