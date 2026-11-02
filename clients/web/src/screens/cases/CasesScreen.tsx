@@ -903,7 +903,7 @@ function EditCaseForm({ c, onClose, onSaved, onStale }: {
       </label>
       {conflicts.length > 0 && (
         <div role="alert" className="case-edit-conflicts">
-          <p>This case changed while you were editing. Nothing is saved yet, and your edits are still here.</p>
+          <p>This case changed while you were editing. Your edits are still here.</p>
           {conflicts.map((conflict) => (
             <div key={conflict.field} className="case-edit-conflict">
               <p>
