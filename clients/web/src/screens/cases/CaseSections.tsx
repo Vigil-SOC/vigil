@@ -104,7 +104,7 @@ function AddBtn({ on, onClick }: { on: boolean; onClick: () => void }) {
 export const inputCls =
   'bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-hidden focus:border-accent-line w-full'
 
-export function EvidenceCard({ caseId, title = 'Evidence' }: { caseId: string; title?: string }) {
+export function EvidenceCard({ caseId, title = 'Evidence', onWritten }: { caseId: string; title?: string; onWritten?: () => void }) {
   const { data, phase, error, reload } = useResource<Schema<'CaseEvidenceSchema'>[]>(caseId, () =>
     casesApi.getEvidence(caseId).then((r) => r.data.evidence),
   )
@@ -130,6 +130,7 @@ export function EvidenceCard({ caseId, title = 'Evidence' }: { caseId: string; t
     setForm({ name: '', evidence_type: 'file', description: '', file_path: '' })
     setAdding(false)
     reload()
+    onWritten?.()
   }
 
   return (
@@ -181,7 +182,7 @@ type CaseTask = Schema<'CaseTaskSchema'>
 export function useTasks(caseId: string) {
   return useResource<CaseTask[]>(caseId, () => casesApi.getTasks(caseId).then((r) => r.data.tasks))
 }
-export function TasksView({ caseId, resource: { data, phase, error, reload } }: { caseId: string; resource: Resource<CaseTask[]> }) {
+export function TasksView({ caseId, resource: { data, phase, error, reload }, onWritten }: { caseId: string; resource: Resource<CaseTask[]>; onWritten?: () => void }) {
   const [adding, setAdding] = useState(false)
   const [form, setForm] = useState({ title: '', priority: 'medium', assignee: '', due_date: '' })
   const [writeError, setWriteError] = useState<string | null>(null)
@@ -208,6 +209,7 @@ export function TasksView({ caseId, resource: { data, phase, error, reload } }: 
       return
     }
     reload()
+    onWritten?.()
   }
   const submit = async () => {
     if (!form.title.trim()) return
@@ -226,6 +228,7 @@ export function TasksView({ caseId, resource: { data, phase, error, reload } }: 
     setForm({ title: '', priority: 'medium', assignee: '', due_date: '' })
     setAdding(false)
     reload()
+    onWritten?.()
   }
 
   return (
@@ -356,7 +359,7 @@ export function useComments(caseId: string) {
 }
 /** Comments shown for a case, replies included. */
 export const commentCount = (data: Comment[] | null) => flatten(data || []).length
-export function CommentsView({ caseId, resource: { data, phase, error, reload } }: { caseId: string; resource: Resource<Comment[]> }) {
+export function CommentsView({ caseId, resource: { data, phase, error, reload }, onWritten }: { caseId: string; resource: Resource<Comment[]>; onWritten?: () => void }) {
   const [text, setText] = useState('')
   const [replyTo, setReplyTo] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
@@ -380,6 +383,7 @@ export function CommentsView({ caseId, resource: { data, phase, error, reload } 
     setText('')
     setReplyTo(null)
     reload()
+    onWritten?.()
   }
 
   return (
@@ -430,7 +434,7 @@ function threatLevel(i: CaseIOC) {
   if (t === 'low') return { label: 'Low Risk', cls: 'sev low' }
   return { label: 'Unknown', cls: 'status open' }
 }
-export function IOCsCard({ caseId }: { caseId: string }) {
+export function IOCsCard({ caseId, onWritten }: { caseId: string; onWritten?: () => void }) {
   const { data, phase, error, reload } = useResource<CaseIOC[]>(caseId, () =>
     casesApi.getIOCs(caseId).then((r) => r.data.iocs),
   )
@@ -456,6 +460,7 @@ export function IOCsCard({ caseId }: { caseId: string }) {
     setForm({ ioc_type: 'ip', value: '', context: '', source: '' })
     setAdding(false)
     reload()
+    onWritten?.()
   }
 
   return (
