@@ -630,21 +630,36 @@ wait_for_url() {
     return 1
 }
 
+# --- Whole seconds on a clock that wall-clock corrections cannot step ---
+# A WSL2 guest's clock can jump by hours, and $SECONDS follows it. macOS has no
+# /proc/uptime.
+monotonic_seconds() {
+    local up
+    if [ -r /proc/uptime ]; then
+        read -r up _ </proc/uptime
+        echo "${up%%.*}"
+    else
+        echo "$SECONDS"
+    fi
+}
+
 # --- Wait for the daemon-mode backend to serve health ---
 # /api/health only answers once the lifespan has connected every enabled MCP
 # server, so a healthy start can take minutes (#2910). Polls URL while PID is
 # alive, saying so every 15s; fails as soon as PID exits, or after TIMEOUT.
 wait_for_backend() {
-    # Wall clock, not a loop count: curl can block 2s on a socket uvicorn accepted.
-    local url="$1" pid="$2" timeout="${3:-300}" start=$SECONDS next=15
-    while [ $((SECONDS - start)) -lt "$timeout" ]; do
+    # Elapsed time, not a loop count: curl can block 2s on a socket uvicorn accepted.
+    local url="$1" pid="$2" timeout="${3:-300}" start elapsed next=15
+    start=$(monotonic_seconds)
+    while [ $(($(monotonic_seconds) - start)) -lt "$timeout" ]; do
         if ! kill -0 "$pid" 2>/dev/null; then
             echo "Backend exited during startup." >&2
             return 1
         fi
         curl -sf --max-time 2 "$url" >/dev/null 2>&1 && return 0
-        if [ $((SECONDS - start)) -ge $next ]; then
-            echo "Backend startup still in progress ($((SECONDS - start))s, connecting MCP servers)..."
+        elapsed=$(($(monotonic_seconds) - start))
+        if [ "$elapsed" -ge "$next" ]; then
+            echo "Backend startup still in progress (${elapsed}s, connecting MCP servers)..."
             next=$((next + 15))
         fi
         sleep 1
