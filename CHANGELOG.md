@@ -2,6 +2,8 @@
 
 ## Upgrade notes (unreleased)
 
+* **upgrade:** revision `0020_runtime_role_no_create` revokes `CREATE` on the `public` schema from `vigil_app`, so only `python -m core.upgrade`, logged in as the owner, creates objects there. Vigil's own processes need nothing new. Anything of your own that creates objects as `vigil_app` needs its own role; see `docs/upgrading.md`.
+
 * **auth:** `POST /api/auth/mfa/recovery-codes` now takes `{"code": ...}`, a current authenticator code or an unused recovery code, and answers 400 without a valid one or when MFA is not on. A wrong code counts toward the sign-in lock, and a locked account gets 423. The console's Regenerate recovery codes step asks for the code.
 
 * **auth:** every gate now checks the permission it declares; the fallback for a database without `0008_permission_catalog` is gone, and a permission check that cannot open the database refuses the call. Demo mode, theme, general settings, setup steps and AI operations under `/api/config` need `platform.read` / `platform.write`; intent and orchestrator config need `ai_autonomy.read` / `ai_autonomy.write`. `POST /api/orchestrator/enable` needs `ai_autonomy.write` and `POST /api/orchestrator/disable` needs `ai_autonomy.stop` (both keep `automation.read`), so Senior Analyst can now disable the orchestrator but not enable it. No route checks `settings.read` or `settings.write` any more; the keys stay on roles until a later revision removes them ([#3324](https://github.com/Vigil-SOC/vigil/issues/3324)).

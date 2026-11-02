@@ -6210,7 +6210,6 @@
  "schema public": {
   "acl": [
    "PUBLIC:USAGE",
-   "app:CREATE",
    "app:USAGE",
    "pg_database_owner:CREATE",
    "pg_database_owner:USAGE"
