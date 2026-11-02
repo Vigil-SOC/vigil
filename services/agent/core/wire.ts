@@ -1,9 +1,11 @@
 import { SpanKind } from "@opentelemetry/api";
 import OpenAI from "openai";
 import { ZERO_TOKENS, type TokenCounts } from "../contracts/budget.js";
+import type { StopCause } from "../contracts/events.js";
 import { AnswerBroken, estimateTokens, Limiter, statusOf } from "./limiter.js";
 import {
   ProviderError,
+  stopCauseOfStatus,
   type Message,
   type Provider,
   type ProviderEvent,
@@ -76,11 +78,33 @@ export function setSilentPauses(pauses: readonly number[]): void {
   silentPauses = pauses;
 }
 
-export class ModelSilent extends ProviderError {}
+export class ModelSilent extends ProviderError {
+  constructor(message: string, tokens: TokenCounts) {
+    super(message, tokens, "model_unavailable");
+  }
+}
 
 // The output cap reached with nothing said: a reasoning model spent it all thinking.
 // Asking again over the same cap buys the same empty reply.
-export class OutputCapReached extends ProviderError {}
+export class OutputCapReached extends ProviderError {
+  constructor(message: string, tokens: TokenCounts) {
+    super(message, tokens, "output_truncated");
+  }
+}
+
+// Null when the failure is not a model call's: a defect here stays the defect it is.
+function causeOfCall(error: unknown): StopCause | null {
+  const status = statusOf(error);
+  return status === undefined && !(error instanceof OpenAI.APIConnectionError) ? null : stopCauseOfStatus(status);
+}
+
+// The one place a failed call gets its kind. Inside it the retries and fallbacks read the
+// SDK's status; nothing past it does.
+function named(error: unknown): unknown {
+  if (error instanceof ProviderError) return error;
+  const kind = causeOfCall(error);
+  return kind === null ? error : new ProviderError(error instanceof Error ? error.message : String(error), ZERO_TOKENS, kind);
+}
 
 // Ends the pause early when the run is aborted, rather than waiting out the 8 s.
 function pauseFor(ms: number, signal?: AbortSignal): Promise<void> {
@@ -236,6 +260,14 @@ class OpenAiSurface implements Provider {
   // answer form. An emission is JSON and arrives whole, and a run nobody reads keeps
   // the retry a broken answer would lose. Usage still precedes the tool calls.
   async *stream(request: TurnRequest): AsyncGenerator<ProviderEvent> {
+    try {
+      yield* this.answered(request);
+    } catch (error) {
+      throw named(error);
+    }
+  }
+
+  private async *answered(request: TurnRequest): AsyncGenerator<ProviderEvent> {
     if (request.emit !== undefined || request.live !== true) {
       const turn = request.emit === undefined ? await this.ask(request) : await this.emit(request, request.emit);
       if (turn.content !== "") yield { type: "text_delta", text: turn.content };
@@ -509,7 +541,7 @@ class OpenAiSurface implements Provider {
           // Asked again, the second answer would follow the first on the reader's screen.
           // The gateway never reported usage, so what it burned is guessed, reasoning included.
           const tokens = { ...ZERO_TOKENS, input: estimate, output: estimateTokens(thought + spoken) };
-          throw new AnswerBroken(error instanceof Error ? error.message : String(error), tokens);
+          throw new AnswerBroken(error instanceof Error ? error.message : String(error), tokens, causeOfCall(error) ?? "unknown");
         });
         reported = response.usage !== undefined;
         const usage = response.usage ?? guessed(estimate, response);
@@ -604,7 +636,7 @@ async function assemble(stream: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>, 
     }
   }
 
-  if (head === undefined) throw new ProviderError("the gateway closed the stream without sending anything");
+  if (head === undefined) throw new ProviderError("the gateway closed the stream without sending anything", ZERO_TOKENS, "model_unavailable");
   const tool_calls = [...calls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call);
   return {
     id: head.id,
