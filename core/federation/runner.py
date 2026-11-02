@@ -26,6 +26,7 @@ from typing import Any, Callable, Dict, Optional
 
 from core.federation import registry, store
 from core.federation.contract import FederationAdapter
+from core.federation.error_kind import classify_failure
 from core.federation.seed import seed_federation_sources
 from core.ingestion.ack import Pending, new_ack, stored_keys, wait_all
 from core.ingestion.dedup import RedisDedupSet
@@ -225,7 +226,7 @@ class FederationRunner:
                 )
             self.polls += 1
             self.errors += 1
-            store.record_failure(source_id, str(e))
+            store.record_failure(source_id, str(e), classify_failure(e))
             return
         self.polls += 1
 

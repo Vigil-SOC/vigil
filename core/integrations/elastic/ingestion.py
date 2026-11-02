@@ -201,7 +201,7 @@ class ElasticIngestion(SIEMIngestionService):
                 if result is None:
                     raise RuntimeError(
                         f"Elastic index search failed: {svc.index_pattern}"
-                    )
+                    ) from svc.last_search_error
                 hits = result.get("hits", {}).get("hits", [])
                 logger.info(f"Fetched {len(hits)} alerts from {svc.index_pattern}")
                 return hits
@@ -213,7 +213,9 @@ class ElasticIngestion(SIEMIngestionService):
             )
             if result is None:
                 # The client returns None on any request failure.
-                raise RuntimeError("Elastic detection alert search failed")
+                raise RuntimeError(
+                    "Elastic detection alert search failed"
+                ) from svc.last_search_error
 
             hits = result.get("hits", {}).get("hits", [])
             logger.info(f"Fetched {len(hits)} detection alerts from Elastic Security")

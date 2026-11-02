@@ -2339,6 +2339,11 @@
   "nullable": true,
   "type": "text"
  },
+ "column federation_sources.last_error_kind": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
  "column federation_sources.last_poll_at": {
   "default": null,
   "nullable": true,
@@ -3904,6 +3909,7 @@
  "constraint episodic_verdicts.episodic_verdicts_unique": "UNIQUE (investigation_kind, investigation_id, hypothesis_id)",
  "constraint episodic_verdicts.episodic_verdicts_window": "CHECK ((first_seen <= last_seen))",
  "constraint episodic_verdicts.episodic_verdicts_window_source_check": "CHECK ((window_source = ANY (ARRAY['observed'::text, 'asserted'::text])))",
+ "constraint federation_sources.federation_sources_last_error_kind_check": "CHECK ((last_error_kind = ANY (ARRAY['auth'::text, 'network'::text, 'config'::text, 'quota'::text, 'upstream'::text, 'unknown'::text])))",
  "constraint federation_sources.federation_sources_pkey": "PRIMARY KEY (source_id)",
  "constraint finding_mitre_predictions.finding_mitre_predictions_finding_id_fkey": "FOREIGN KEY (finding_id) REFERENCES findings(finding_id) ON DELETE CASCADE",
  "constraint finding_mitre_predictions.finding_mitre_predictions_pkey": "PRIMARY KEY (finding_id, technique_id)",
