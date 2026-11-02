@@ -811,8 +811,10 @@ services:
       # Loopback-only, for the same reason as postgres and redis above.
       # /api/* requires the minted password, so a sibling container can no
       # longer rewrite providers. Inference on this same port does not, so
-      # one can still place a model call; that stays a separate choice. The
-      # UI at http://localhost:8080 takes the same password.
+      # one can still place a model call; that stays a separate choice. An
+      # empty client.allowed_origins keeps web pages from reading its answers
+      # or sending it JSON; loopback origins always pass. The UI at
+      # http://localhost:8080 takes the same password.
       - "127.0.0.1:8080:8080"
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
