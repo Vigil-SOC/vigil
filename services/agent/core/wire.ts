@@ -95,7 +95,9 @@ export class OutputCapReached extends ProviderError {
 // Null when the failure is not a model call's: a defect here stays the defect it is.
 function causeOfCall(error: unknown): StopCause | null {
   const status = statusOf(error);
-  return status === undefined && !(error instanceof OpenAI.APIConnectionError) ? null : stopCauseOfStatus(status);
+  if (status !== undefined || error instanceof OpenAI.APIConnectionError) return stopCauseOfStatus(status);
+  // A 200 whose stream then carries an error: the provider refused, with no status to read.
+  return error instanceof OpenAI.APIError ? "unknown" : null;
 }
 
 // The one place a failed call gets its kind. Inside it the retries and fallbacks read the
