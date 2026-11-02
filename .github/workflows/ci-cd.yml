@@ -716,6 +716,13 @@ jobs:
               raise SystemExit(1)
           PY
 
+      - name: The runtime role cannot create schema objects
+        # Fresh, and upgraded from the previous head. Each test makes its own
+        # database on this job's Postgres.
+        env:
+          VIGIL_TEST_POSTGRES_DSN: postgresql+psycopg2://deeptempo:test@localhost:5432/deeptempo_soc
+        run: python -m pytest -o addopts= -p no:cacheprovider -rs tests/test_runtime_role_no_create.py
+
   # ============================================================================
   # Security Scanning
   # ============================================================================
