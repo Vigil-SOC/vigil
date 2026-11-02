@@ -10,6 +10,8 @@ import { LevelBadge, slaLevel, type Level } from '../../shared/LevelBadge'
 import { NotMeasured } from '../../shared/NotMeasured'
 import { LATER_RELEASE } from '../../shared/later'
 import { SeverityMark } from '../../shared/SeverityMark'
+import { STOP_CAUSES } from '../../shared/stopCause'
+import { StopAction } from '../../shared/StopLine'
 import { StatePill, statePill } from '../../shared/StatePill'
 import { TabStrip } from '../../shared/TabStrip'
 import { HoldButton } from '../../shared/HoldButton'
@@ -813,6 +815,11 @@ function StoppedCard({ stopped, runId, watch }: { stopped: StoppedRun; runId: st
         {watch}
       </div>
       {stopped.atLimit && runId && <KeepGoingRow runId={runId} />}
+      {stopped.cause && !stopped.atLimit && (
+        <div className="needs-actions needs-keep-going">
+          <StopAction cause={stopped.cause} className="btn neutral" />
+        </div>
+      )}
     </section>
   )
 }
@@ -845,6 +852,14 @@ function OutcomeCard({ ended, watch, onAsk }: { ended: EndedRun; watch: ReactNod
           {ended.raw && <InfoTip label="What the run reported" text={ended.raw} align="start" />}
           {watch}
         </div>
+        {ended.cause && (
+          <>
+            <span className="clamp2">{STOP_CAUSES[ended.cause].sentence}</span>
+            <div className="needs-actions needs-keep-going">
+              <StopAction cause={ended.cause} className="btn neutral" />
+            </div>
+          </>
+        )}
       </section>
       {ended.question && (
         <section className="case-needs" aria-label="Left open">

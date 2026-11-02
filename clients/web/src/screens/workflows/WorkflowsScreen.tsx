@@ -17,6 +17,8 @@ import { skillsApi } from '../../services/skillsApi'
 import { useAuth } from '../../contexts/AuthContext'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { Cost } from '../../shared/cost'
+import { STOP_CAUSES, stopCauseOf } from '../../shared/stopCause'
+import { StopLine } from '../../shared/StopLine'
 import { COMMANDS, LIVE_COMMANDS } from '../../shell/commandBarModel'
 import { WatchRun } from './WatchRun'
 import { decisionRows, type DecisionRow, type V3Move, type V3Query } from './decisionRows'
@@ -1055,8 +1057,9 @@ const OUTCOME_BADGE: Record<string, string> = {
   aborted: 'aborted',
 }
 
-function OutcomeBadge({ outcome, reason }: { outcome?: string | null; reason?: string | null }) {
-  const label = outcome ? OUTCOME_BADGE[outcome] : undefined
+function OutcomeBadge({ outcome, reason, cause }: { outcome?: string | null; reason?: string | null; cause?: string | null }) {
+  const named = stopCauseOf(cause)
+  const label = named ? STOP_CAUSES[named].badge : outcome ? OUTCOME_BADGE[outcome] : undefined
   if (!label) return null
   return (
     <span className="status ml-2" style={{ background: 'transparent', color: 'var(--tx-2)', border: '1px solid var(--line)' }} title={reason || undefined}>{label}</span>
@@ -1466,7 +1469,7 @@ function RunRow({ run, onRemoved, onWatch }: { run: WfRun; onRemoved: () => void
         <td style={{ width: 24 }}><span className="caret" style={{ transform: open ? 'rotate(90deg)' : 'none' }}><Icon name="chevR" size={13} /></span></td>
         <td>
           <span className="status" style={{ background: 'transparent', color: runStatusColor(run.status), border: `1px solid ${runStatusColor(run.status)}55` }}>{run.status}</span>
-          <OutcomeBadge outcome={run.outcome} reason={run.reason} />
+          <OutcomeBadge outcome={run.outcome} reason={run.reason} cause={run.stop_cause} />
           {run.error && <span className="ml-2" style={{ color: 'var(--crit)' }} title={run.error}>⚠</span>}
         </td>
         <td className="muted">{fmtStarted(run.started_at)}</td>
@@ -1588,6 +1591,7 @@ function RunBar({ d, hunt, trace, onSteered }: { d: WfRunDetail; hunt: HuntView 
     ? Math.min(100, (cost / ceiling) * 100)
     : null
   const verdict = verdictOf(d, trace?.reason ?? null)
+  const cause = stopCauseOf(d.stop_cause)
   return (
     <>
       <div className="run-bar">
@@ -1595,7 +1599,7 @@ function RunBar({ d, hunt, trace, onSteered }: { d: WfRunDetail; hunt: HuntView 
         {hunt?.outcome && !IN_FLIGHT.includes(d.status) && (
           <span className="muted text-[11.5px]" title={hunt.reason ?? undefined}>{hunt.outcome}</span>
         )}
-        {!hunt && <OutcomeBadge outcome={d.outcome} reason={d.reason} />}
+        {!hunt && <OutcomeBadge outcome={d.outcome} reason={d.reason} cause={d.stop_cause} />}
         <span className="mono text-[11.5px] text-tx-3">{d.run_id.slice(0, 13)}</span>
         <span className="flex-1" />
         <div className="meta">
@@ -1614,6 +1618,7 @@ function RunBar({ d, hunt, trace, onSteered }: { d: WfRunDetail; hunt: HuntView 
           </>
         )}
       </div>
+      {cause && <StopLine cause={cause} raw={d.error || d.reason} />}
       {(verdict.disposition || verdict.headline) && (
         <div className="flex items-center gap-2 min-w-0 pt-2 text-[12.5px]" aria-label="Verdict">
           {verdict.disposition && <span className="chip shrink-0">{verdict.disposition}</span>}

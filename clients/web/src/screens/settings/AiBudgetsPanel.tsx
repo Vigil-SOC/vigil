@@ -26,6 +26,8 @@ import { useVirtualKeys, bifrostError } from './useBifrost'
 import type { BifrostVirtualKey, BifrostVirtualKeyWrite } from '../../services/bifrostApi'
 import type { SectionProps } from './types'
 
+export const SPENDING_CARD_ID = 'ai-spending-limit'
+
 // Bifrost reads the long names back as short ones ("1mo"), so each period has aliases.
 const PERIODS = [
   { value: 'daily', label: 'Daily', noun: 'day', days: 1, aliases: ['daily', '1d', '24h'] },
@@ -116,6 +118,7 @@ export default function AiBudgetsPanel({ notify }: SectionProps) {
   return (
     <SettingsCard
       wide
+      id={SPENDING_CARD_ID}
       title={
         <>
           Spending limit{' '}

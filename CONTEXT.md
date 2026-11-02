@@ -384,6 +384,14 @@ something it never saw.
 _Avoid_: fold, re-run, regression test (a regression snapshot is the fixture; the
 Replay is the check)
 
+**Stop Cause**:
+Why the model path stopped a run, from a closed set, named once where the call
+failed (`ProviderError.kind`) and carried on the terminal beside the outcome. It
+never replaces the outcome: a gateway budget refusal is `budget_exhausted` with the
+cause `gateway_budget_refused`. A run a model call did not stop has none. The console
+words each cause and its next step in one table (`clients/web/src/shared/stopCause.ts`).
+_Avoid_: provider error, failure reason (the reason is the provider's own text)
+
 ### Console (web client)
 
 Vocabulary of `clients/web/src/` — TypeScript, outside `core/`, and here for the
