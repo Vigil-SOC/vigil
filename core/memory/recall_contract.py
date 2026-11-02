@@ -159,6 +159,8 @@ RECALL_IGNORED_ARGS: Tuple[str, ...] = ("limit",)
 
 # One mapping, not a list, so `tools_router._rows` does not slice the inner
 # lists into rows of their own and lose which list each came from.
+# ``known_activity`` is carried too and left out here: a run journaled before it
+# must still validate on the harness's side (``services/agent/contracts/memory.ts``).
 RECALL_RESULT_KEYS: Tuple[str, ...] = (
     "keys",
     "as_of",

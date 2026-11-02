@@ -127,6 +127,15 @@ export interface RecalledGap extends RecalledProvenance {
   readonly subject_entities: readonly string[];
 }
 
+// What an analyst recorded as expected of an entity, why, and until when. It concludes
+// nothing, so it carries no window or provenance and no ranking reads it.
+export interface RecalledKnownActivity {
+  readonly entity_key: string;
+  readonly reason: string;
+  readonly created_by: string;
+  readonly expires_at: string;
+}
+
 // Per reason, because the two mean different things to a caller: per_key_cap
 // means one entity had more history than its share, overall means the read was
 // broad. A total is the sum and is not restated.
@@ -177,6 +186,9 @@ export interface RecallResult {
   readonly sightings: readonly RecalledSighting[];
   readonly verdicts: readonly RecalledVerdict[];
   readonly gaps: readonly RecalledGap[];
+  // Absent on a run journaled before this field, and not in RECALL_RESULT_KEYS, so that
+  // run still validates and renders the bytes its prefix had.
+  readonly known_activity?: readonly RecalledKnownActivity[];
   readonly dropped: RecallDropped;
   readonly ranking: RecallRanking;
 }
@@ -277,6 +289,13 @@ const verdictNote = (verdict: RecalledVerdict): string => {
   return held.join(" — ");
 };
 
+const knownActivityNote = (rule: RecalledKnownActivity): string =>
+  [
+    `known activity on ${rule.entity_key}, context only and not grounds to close by itself: ${rule.reason}`,
+    `recorded by ${rule.created_by}`,
+    `until ${rule.expires_at}`,
+  ].join(" — ");
+
 const gapNote = (gap: RecalledGap): string =>
   [
     `unanswered: ${gap.statement}`,
@@ -316,6 +335,7 @@ const droppedNote = (result: RecallResult): string | null => {
 // presentation fold, not a parameter -- see the note at the top of this file.
 export function recalledNotes(result: RecallResult): readonly string[] {
   const notes = [
+    ...(result.known_activity ?? []).map(knownActivityNote),
     ...result.verdicts.map(verdictNote),
     ...result.gaps.map(gapNote),
     ...result.sightings.map(sightingNote),

@@ -7,6 +7,7 @@ module skips: no CI job here runs a database.
 
 import os
 import uuid
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -302,6 +303,41 @@ def test_a_service_account_cannot_record_a_rule(db, app):
     account = _client(app, _user(db, service_account=True))
     made = account.post("/api/known-activity", json=_rule_body(_new_host()))
     assert made.status_code == 403
+
+
+def test_recall_carries_rules_in_force_and_nothing_else(db, app):
+    from core.memory.recall import recall
+
+    host = _new_host()
+    key = f"host:{host}"
+    client = _client(app, _user(db))
+    assert recall([key])["known_activity"] == []
+    rule = client.post(
+        "/api/known-activity",
+        json=_rule_body(
+            host, expires_at=(_future(days=3)).isoformat(timespec="seconds") + "Z"
+        ),
+    ).json()
+
+    rows = recall([key])["known_activity"]
+    assert rows == [
+        {
+            "entity_key": key,
+            "reason": "Patch window",
+            "created_by": rule["created_by"],
+            "expires_at": rule["expires_at"],
+        }
+    ]
+    past_the_expiry = _future(days=4).isoformat(timespec="seconds") + "Z"
+    assert recall([key], as_of=past_the_expiry)["known_activity"] == []
+    client.post(f"/api/known-activity/{rule['known_activity_id']}/remove")
+    assert recall([key])["known_activity"] == []
+
+
+def _future(days):
+    from core.time import utcnow
+
+    return utcnow() + timedelta(days=days)
 
 
 def test_a_case_shows_what_its_alerts_name_and_the_rules_for_them(db, app):

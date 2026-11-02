@@ -57,6 +57,7 @@ from sqlalchemy.orm import Session
 from core.agents.attribution import column_present, current_claims
 from core.agents.mcp_tools import MCPFailure
 from core.memory.entity_keys import normalise_key, normalise_keys
+from core.memory.known_activity import recall_rows
 from core.memory.recall_contract import (
     DROPPED_KINDS,
     ENTITY_KEY_TYPES,
@@ -467,6 +468,7 @@ def recall(
         "sightings": [],
         "verdicts": [],
         "gaps": [],
+        "known_activity": [],
         "dropped": empty_dropped(),
         "ranking": recall_ranking(),
     }
@@ -489,6 +491,7 @@ def recall(
                 result["dropped"][kind]["overall_cap"] = spent[kind]
 
             attach_sources(db, {s.id: s.row for s in kept["verdicts"]})
+            result["known_activity"] = recall_rows(db, normalised, moment)
 
         _log(db, result, moment, caller_kind, caller_id, caller_principal_id)
 

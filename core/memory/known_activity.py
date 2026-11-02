@@ -91,6 +91,21 @@ def read_active(
     return active_for(keys, _naive_utc(now), rows)
 
 
+def recall_rows(
+    session: Session, entities: Iterable[str], now: datetime
+) -> List[Dict[str, str]]:
+    """What a Recall carries about these entities, in the contract's row shape."""
+    return [
+        {
+            "entity_key": _key(rule),
+            "reason": rule.reason,
+            "created_by": rule.created_by,
+            "expires_at": _iso_utc(rule.expires_at),
+        }
+        for rule in read_active(session, entities, now)
+    ]
+
+
 def serialize(rule: KnownActivity, now: datetime) -> Dict[str, Any]:
     return {
         "known_activity_id": rule.known_activity_id,

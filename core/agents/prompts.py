@@ -24,6 +24,9 @@ user:jdoe, host:web-01. The type must be one memory knows; a hash is `hash:`,
 never `sha256:` or `md5:`. Every read is logged, so pass your own caller_kind and
 caller_id.
 
+known_activity in the answer is what an analyst recorded as expected of an entity,
+why, and until when. It is context, and it is not grounds to close by itself.
+
 What comes back is what earlier runs concluded from the evidence they had, not a
 standing judgement about the entity. A prior verdict of benign is not a reason
 to look less hard: an adversary working inside a window three runs called routine
