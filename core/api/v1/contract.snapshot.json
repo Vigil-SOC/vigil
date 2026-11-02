@@ -295,6 +295,28 @@
         "title": "CaseClosureView",
         "type": "object"
       },
+      "CaseConflictResponse": {
+        "description": "A refused edit. Nothing was written.",
+        "properties": {
+          "conflicts": {
+            "items": {
+              "$ref": "#/components/schemas/CaseFieldConflict"
+            },
+            "title": "Conflicts",
+            "type": "array"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail",
+          "conflicts"
+        ],
+        "title": "CaseConflictResponse",
+        "type": "object"
+      },
       "CaseCreate": {
         "description": "Case creation request.",
         "properties": {
@@ -709,6 +731,112 @@
           }
         },
         "title": "CaseEvidenceSchema",
+        "type": "object"
+      },
+      "CaseExpected": {
+        "additionalProperties": false,
+        "description": "The values a caller last saw, for the fields it means to change.\n\nA field left out is not compared. Per field, not ``updated_at``: agents and\nruns touch a case throughout an investigation, so a whole-row version would\nrefuse every edit made during a run.",
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "CaseExpected",
+        "type": "object"
+      },
+      "CaseFieldConflict": {
+        "description": "One field whose stored value is not what the caller last saw.",
+        "properties": {
+          "current": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current"
+          },
+          "expected": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected"
+          },
+          "field": {
+            "enum": [
+              "title",
+              "description",
+              "status",
+              "priority",
+              "assignee"
+            ],
+            "title": "Field",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field"
+        ],
+        "title": "CaseFieldConflict",
         "type": "object"
       },
       "CaseIOCBulkResponse": {
@@ -1655,6 +1783,16 @@
               }
             ],
             "title": "Description"
+          },
+          "expected": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CaseExpected"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "notes": {
             "anyOf": [
@@ -5447,6 +5585,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseConflictResponse"
+                }
+              }
+            },
+            "description": "A field in `expected` no longer holds that value."
           },
           "422": {
             "content": {
