@@ -17,11 +17,11 @@ The decision log is **one append-only, hash-chained sequence of typed records pe
 | R4 | No rule claims it (`rule: null`) → **lane 3**, `unknown_signature`. E3 defines no catch-all in v1, so this is defensive |
 | R5 | E3 flapping damping reopens an incident (`reopened`, `reopen_count`). The lane doesn't change |
 | R6 | **Simulated escalation:** if L2 would have run a runbook and the incident is still open 2 × `verify_after_s` after routing, append `escalation_simulated` (2 failures). The lane doesn't change; it's a "would have" fact (⚑3) |
-| R7 | **Watcher incidents** (`subject: watcher`; E3's `watcher.sensor-blind`, lane 3) route like any other, but the gate leaves them out of lane accuracy and the lane-3 case rate |
+| R7 | **Watcher incidents** (`subject: watcher`; the built-in `watcher.*` rules below) route like any other, but the gate leaves them out of lane accuracy and the lane-3 case rate |
 | R8 | **Would have:** lane 2 → notify the admin (L1, L2). Lane 3 → prepare a support bundle. Lane 1 → L1 proposes the runbook, L2 runs it; no runbook → notify the admin; runtime-untrusted → L2 only proposes |
 | R9 | **Lane by install shape (C2):** when the same fault is lane 1 on one shape and lane 2 on another (Bifrost is bundled on Compose and host-native, external on Helm), the pack ships one rule per shape using E2's `shapes`. The router adds no shape logic. Placement *within* a shape (in-chart vs external Postgres or Redis on Helm) only matters for database faults, which are outside the v1 watch list; if a later class needs it, it's an E2 MINOR addition |
 
-**Vectors** (`lanes-01`…`10`): single rule · lane 1 with runbook, with and without simulated escalation · runtime-untrusted lane 1 · gate failure at routing · unknown signature · suppressed by an open parent · routing hold (parent fires second) · child with no parent routes after the hold · child outlives its parent, and a sibling that closes quietly · watcher sensor-blind.
+**Vectors** (`lanes-01`…`13`): single rule · lane 1 with runbook, with and without simulated escalation · runtime-untrusted lane 1 · gate failure at routing · unknown signature · suppressed by an open parent · routing hold (parent fires second) · child with no parent routes after the hold · child outlives its parent, and a sibling that closes quietly · watcher sensor-blind · watcher recording-stopped · watcher store-reset · watcher policy-unenforced.
 
 ## 3. Record (G2)
 
@@ -37,7 +37,16 @@ Envelope: `v`, `seq` (strictly increasing, no gaps), `at`, `type`, `prev`, `hash
 
 **Group values (X1 ⚑1a).** `group[].value` is always label-safe: the engine applies D3's label rule at extraction, so a free-text arg such as "Azure Sentinel" is stored as `h_` + 16 hex, and the raw text appears only in a redacted evidence excerpt.
 
-**Built-in rules (X1 #11).** `watcher.*` rules aren't pack content (`rule.schema.json` excludes them). Their records name `pack_id: medic-builtin` and `pack_version` = the engine API version that defines them (`1.0`).
+**Built-in rules (X1 #11).** `watcher.*` rules aren't pack content (`rule.schema.json` excludes them). Their records name `pack_id: medic-builtin` and `pack_version` = the engine API version that defines them (`1.0`). Built-ins don't bump the engine API: adding one changes no rule language, so the new rules below carry the same `1.0` stamp. The engine keeps one table of them (`engine/core.py` `BUILTINS`: lane, `for`, `keep_firing_for`), and the router reads its lanes from it.
+
+| Rule | Lane | `for` | `keep_firing_for` | Raised by (`sample`, `target.service: medic`, one `bool` gauge) | Emitted by |
+|---|---|---|---|---|---|
+| `watcher.sensor-blind` | 3 | 2m | 0s | a sensor's `sensor_health` heartbeat (E3 §2) | the sensor framework |
+| `watcher.recording-stopped` | 2 | 0s | 0s | `medic_recording` · `stopped`: `true` = the store hit its cap and Medic stopped recording; `false` = recording again | #2078 |
+| `watcher.store-reset` | 3 | 0s | 24h | `medic_store` · `reset`: `true` = the store was found corrupt and reset; `false` = the reset is no longer current | #2080 |
+| `watcher.policy-unenforced` | 2 | 0s | 0s | `medic_network_policy` · `unenforced`: `true` = on Helm, the cluster doesn't enforce NetworkPolicy; `false` = it does | #2082 |
+
+Lane 2 is for a fix that is the admin's (free disk or raise the cap; the cluster's network plugin is the customer's). Lane 3 is for a defect to report (a corrupt store). Each is `subject: watcher`, never a suppression child, and left out of lane accuracy (R7). The rule is true while the newest ok read of its gauge is `true`, false once it is `false`, and unknown with no ok read or an absent value (never resolves on unknown, §4). Each reads one group, `{}`. `for: 0s` lets a one-read event open. **`watcher.store-reset` keeps firing for 24 h** after its gauge reads `false`: a reset happens once and may never read "cleared", and a 24 h tail leaves the incident on the console for an admin to see; it can't resolve on the tick that opens it.
 
 **`eval` (X1 #8).** The engine's three values map to the strings `"true"`, `"false"` and `"unknown"`; vectors write the first two as YAML booleans.
 
