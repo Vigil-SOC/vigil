@@ -41,9 +41,9 @@ bcrypt==5.0.0
     # via
     #   -r requirements.txt
     #   paramiko
-boto3==1.43.121
+boto3==1.43.123
     # via -r requirements.txt
-botocore==1.43.121
+botocore==1.43.123
     # via
     #   boto3
     #   s3transfer
@@ -273,7 +273,7 @@ protobuf==7.36.0
     #   opentelemetry-proto
 psycopg2-binary==2.9.12
     # via -r requirements.txt
-pyarrow==25.0.1
+pyarrow==26.0.0
     # via -r requirements.txt
 pycparser==3.0 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'
     # via cffi
@@ -353,7 +353,7 @@ s3transfer==0.19.2
     # via boto3
 semver==2.13.0
     # via bullmq
-sentry-sdk==2.72.0
+sentry-sdk==2.73.0
     # via -r requirements.txt
 six==1.17.0
     # via
