@@ -24,6 +24,7 @@ from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from core.cases import case_trail
+from core.cases.case_status import CLOSED
 from core.response.ceiling import IRREVERSIBLE, REVERSIBLE, environment_locks_act
 from core.response.config import (
     ResponseConfig,
@@ -41,6 +42,10 @@ from core.time import utcnow
 logger = logging.getLogger(__name__)
 
 _pending_gauge: Any = None
+
+# Action types something executes once approved (AutonomousResponseService). A
+# pending row of any other type, outside a run or checkpoint, is a recommendation.
+EXECUTABLE_ACTION_TYPES = frozenset({"waf_block", "gateway_block", "access_revoke"})
 
 
 class AlreadyDecided(Exception):
@@ -886,8 +891,8 @@ def _case_ids_for_action(
 
 def case_ids_for(action: PendingAction) -> List[str]:
     """One action's cases, resolved as ``needs_you`` resolves them."""
-    runs, investigations, evidence_cases, _stored = _case_lookups([action])
-    return _case_ids_for_action(action, runs, investigations, evidence_cases)
+    lookups = _case_lookups([action])
+    return _case_ids_for_action(action, *lookups[:3])
 
 
 def _evidence_ids(action: PendingAction) -> List[str]:
@@ -896,23 +901,29 @@ def _evidence_ids(action: PendingAction) -> List[str]:
 
 def _case_lookups(
     actions: List[PendingAction],
-) -> tuple[Dict[str, Any], Dict[str, Optional[str]], Dict[str, str], set[str]]:
+) -> tuple[
+    Dict[str, Any], Dict[str, Optional[str]], Dict[str, str], set[str], Dict[str, str]
+]:
     """What those actions can name: run trigger contexts, investigation case ids,
-    the newest case of each stored alert in their evidence, and those alerts."""
+    the newest case of each stored alert in their evidence, those alerts, and the
+    status of every case any of them names."""
     run_ids = {action.workflow_run_id for action in actions if action.workflow_run_id}
     investigation_ids: set[str] = set()
+    case_ids: set[str] = set()
     for action in actions:
         params = action.parameters if isinstance(action.parameters, dict) else {}
         investigation_id = _text_id(params.get("investigation_id"))
         if investigation_id:
             investigation_ids.add(investigation_id)
+        case_ids.update(proposal_case_ids(params))
     evidence_ids = {one for action in actions for one in _evidence_ids(action)}
     runs: Dict[str, Any] = {}
     investigations: Dict[str, Optional[str]] = {}
     evidence_cases: Dict[str, str] = {}
     stored: set[str] = set()
-    if not run_ids and not investigation_ids and not evidence_ids:
-        return runs, investigations, evidence_cases, stored
+    statuses: Dict[str, str] = {}
+    if not run_ids and not investigation_ids and not evidence_ids and not case_ids:
+        return runs, investigations, evidence_cases, stored, statuses
     db = get_db_manager()
     with db.session_scope() as session:
         if run_ids:
@@ -920,12 +931,17 @@ def _case_lookups(
             for row in rows:
                 ctx = row.trigger_context
                 runs[row.run_id] = ctx if isinstance(ctx, dict) else {}
+                from_run = _text_id(runs[row.run_id].get("case_id"))
+                if from_run:
+                    case_ids.add(from_run)
         if investigation_ids:
             rows = session.query(Investigation).filter(
                 Investigation.investigation_id.in_(investigation_ids)
             )
             for row in rows:
                 investigations[row.investigation_id] = row.case_id
+                if _text_id(row.case_id):
+                    case_ids.add(_text_id(row.case_id))
         if evidence_ids:
             stored = {
                 fid
@@ -946,15 +962,27 @@ def _case_lookups(
                 if finding_id not in newest or key > newest[finding_id]:
                     newest[finding_id] = key
             evidence_cases = {fid: key[1] for fid, key in newest.items()}
-    return runs, investigations, evidence_cases, stored
+            case_ids.update(evidence_cases.values())
+        if case_ids:
+            statuses = dict(
+                session.query(Case.case_id, Case.status).filter(
+                    Case.case_id.in_(case_ids)
+                )
+            )
+    return runs, investigations, evidence_cases, stored, statuses
 
 
 def _kind_for_action(action: PendingAction) -> str:
     params = action.parameters if isinstance(action.parameters, dict) else {}
     checkpoint = params.get("checkpoint_id")
     if isinstance(checkpoint, str):
-        return "checkpoint" if checkpoint.strip() else "approval"
-    return "checkpoint" if checkpoint else "approval"
+        checkpoint = checkpoint.strip()
+    if checkpoint:
+        return "checkpoint"
+    # Nothing executes it once approved, so it is advice, not a decision.
+    if not action.workflow_run_id and action.action_type not in EXECUTABLE_ACTION_TYPES:
+        return "recommendation"
+    return "approval"
 
 
 def _checkpoint_fields(action: PendingAction) -> Dict[str, Any]:
@@ -1073,16 +1101,24 @@ def needs_you(case_id: Optional[str] = None) -> Dict[str, Any]:
         actions = [
             _row_to_pending(row) for row in session.execute(stmt).scalars().all()
         ]
-    runs, investigations, evidence_cases, stored = _case_lookups(actions)
+    runs, investigations, evidence_cases, stored, statuses = _case_lookups(actions)
     wanted = _text_id(case_id)
     items: List[Dict[str, Any]] = []
     for action in actions:
         resolved = _case_ids_for_action(action, runs, investigations, evidence_cases)
         if wanted is not None and wanted not in resolved:
             continue
+        kind = _kind_for_action(action)
+        # Closing its cases answers a recommendation; reopening one asks again.
+        if (
+            kind == "recommendation"
+            and resolved
+            and all(statuses.get(one) == CLOSED for one in resolved)
+        ):
+            continue
         items.append(
             {
-                "kind": _kind_for_action(action),
+                "kind": kind,
                 "source_id": action.action_id,
                 "title": action.title,
                 "reason": split_decision_rule(action.reason)[0],

@@ -197,17 +197,25 @@ function ExplanationRow({ row, rootCauseRunId, cites, onCite, tag }: { row: Hypo
 /** A paused run's question, or a hunt stopped at a limit: each gets the full block. */
 const blocks = (it: NeedsYouItem) => it.kind === 'checkpoint' || it.kind === 'parked'
 
-/** Paused runs first, then proposed approvals, each kind in the order served. */
+/** Advice nothing in Vigil executes: answered in the analyst's own tools, then by closing the case. */
+const advice = (it: NeedsYouItem) => it.kind === 'recommendation'
+
+/** Paused runs first, then proposed approvals, then recommendations, each kind in the order served. */
 function byWeight(items: NeedsYouItem[]): NeedsYouItem[] {
-  return [...items.filter(blocks), ...items.filter((it) => !blocks(it))]
+  return [...items.filter(blocks), ...items.filter((it) => !blocks(it) && !advice(it)), ...items.filter(advice)]
 }
 
-/** What's waiting, in a line: a paused run's ask, else the one proposal, else how many there are. */
+/** What's waiting, in a line: a paused run's ask, else the one proposal, else how many there are; recommendations only when nothing else waits. */
 function needsAsk(items: NeedsYouItem[]): string | undefined {
   const paused = items.find(blocks)
-  if (paused || items.length < 2) return (paused ?? items[0])?.title
-  return `${items.length} proposed actions`
+  const decisions = items.filter((it) => !advice(it))
+  const pool = decisions.length > 0 ? decisions : items
+  if (paused || pool.length < 2) return (paused ?? pool[0])?.title
+  return decisions.length > 0 ? `${pool.length} proposed actions` : `${pool.length} recommended actions`
 }
+
+/** Nothing waiting is a decision: only recommendations. */
+const onlyAdvice = (items: NeedsYouItem[]) => items.length > 0 && items.every(advice)
 
 /** Stands in for a run's checkpoint until the approvals queue serves it; answered through the queue. */
 const FROM_RUN = 'run-checkpoint:'
@@ -248,13 +256,13 @@ function approvedRows(item: NeedsYouItem, board: HypothesisRow[]): ApprovedRow[]
 }
 
 /** Under the tabs on every tab but Summary while a decision waits; the decision itself is on Summary. */
-function NeedsStrip({ ask, onDecide }: { ask?: string; onDecide: () => void }) {
+function NeedsStrip({ ask, advising, onDecide }: { ask?: string; advising: boolean; onDecide: () => void }) {
   return (
     <div className="case-needs-strip">
       <span className="strip-dot" aria-hidden="true" />
       <b>Needs you</b>
       {ask && <span className="strip-ask">{ask}</span>}
-      <button type="button" onClick={onDecide}>Decide on Summary</button>
+      <button type="button" onClick={onDecide}>{advising ? 'Review on Summary' : 'Decide on Summary'}</button>
     </div>
   )
 }
@@ -281,8 +289,10 @@ function CaseNeeds({
   const [showAll, setShowAll] = useState(false)
   if (items.length === 0) return null
   // Every paused run gets the full block; with none, the first proposal does. Other proposals wait without blocking, so they collapse.
-  const ordered = byWeight(items)
-  const full = Math.max(1, ordered.filter(blocks).length)
+  // A recommendation is never a decision, so it never takes the block.
+  const ordered = byWeight(items).filter((it) => !advice(it))
+  const recommended = items.filter(advice)
+  const full = ordered.length > 0 ? Math.max(1, ordered.filter(blocks).length) : 0
   const rows = ordered.slice(full)
   const visible = showAll ? rows : rows.slice(0, ROWS_SHOWN)
   return (
@@ -305,6 +315,22 @@ function CaseNeeds({
               <button type="button" className="btn neutral" onClick={() => setShowAll(true)}>Show all</button>
             </div>
           )}
+        </div>
+      )}
+      {recommended.length > 0 && (
+        <div className="needs-more">
+          <h3>Recommended actions · {recommended.length}</h3>
+          <p className="needs-note">{recommended.length === 1 ? 'Vigil has no executor for this. Do it' : 'Vigil has no executor for these. Do them'} in your own tools, then close the case.</p>
+          <ul aria-label="Recommended actions">
+            {recommended.map((item) => (
+              <li key={item.source_id}>
+                <div className="needs-row">
+                  <span className="needs-row-title">{item.title}</span>
+                </div>
+                {item.reason && <p className="needs-row-reason">{item.reason}</p>}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </section>
@@ -1515,7 +1541,10 @@ export function CasePage({
           <div className="muted" style={{ padding: '6px 0' }}>Couldn’t load this case: {error}</div>
         ) : c ? (
           <>
-            <h2>{c.title}</h2>
+            <div className="case-title-row">
+              <h2>{c.title}</h2>
+              {canWrite && !closed && <button type="button" className="btn primary" onClick={() => setClosing(true)}>Close case</button>}
+            </div>
             <div className="case-state-line">
               <SeverityMark level={c.prio} />
               <StatePill state={pillState} needs={needsShown > 0} />
@@ -1548,7 +1577,7 @@ export function CasePage({
         />
       </div>
 
-      {needsShown > 0 && tab !== 'Summary' && <NeedsStrip ask={needsAsk(shownNeeds)} onDecide={() => setTab('Summary')} />}
+      {needsShown > 0 && tab !== 'Summary' && <NeedsStrip ask={needsAsk(shownNeeds)} advising={onlyAdvice(shownNeeds)} onDecide={() => setTab('Summary')} />}
 
       <div className="case-stage">
         <div className="detail-body" key={tab}>
@@ -1582,11 +1611,6 @@ export function CasePage({
             ) : (
               <>
                 {needsBlock}
-                {canWrite && (
-                  <div className="case-actions">
-                    <button type="button" className="btn" onClick={() => setClosing(true)}>Close case</button>
-                  </div>
-                )}
                 {verdict && <VerdictBlock verdict={verdict} card />}
                 {startedCard}
                 {running && <NowCard fold={fold} phase={foldPhase} watch={watch} />}
@@ -1738,7 +1762,7 @@ export function CasePage({
             </section>
           )}
           {tab === 'Summary' && note && <p className="muted">{note}</p>}
-          <CloseCaseDialog open={closing} id={id} onClose={() => setClosing(false)} onClosed={onChanged} />
+          <CloseCaseDialog open={closing} id={id} onClose={() => setClosing(false)} onClosed={() => { void loadNeeds(); onChanged() }} />
         </div>
 
         <aside className="case-side" aria-label="Case details">
@@ -2093,9 +2117,38 @@ function ClosedRows({ fold, phase }: { fold: RunFold | null; phase: Phase }) {
   )
 }
 
-/** Two lines, then an ellipsis; the full text is on hover. */
-function Clamped({ text }: { text: string }) {
-  return <span className="clamp2" title={text}>{text}</span>
+/** One finding: two lines then an ellipsis, the full text on hover and when the row is opened. */
+function FindingRow({ lead, text, trail }: { lead: ReactNode; text: string; trail?: ReactNode }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <li>
+      <div className={`case-finding${open ? ' open' : ''}`} role="button" tabIndex={0} aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setOpen((v) => !v) } }}>
+        {lead}
+        <span className="case-finding-text clamp2" title={text}>{text}</span>
+        {trail}
+      </div>
+    </li>
+  )
+}
+
+const FINDINGS_SHOWN = 6
+
+/** Past the first few rows: the rest behind a count, never cut silently. */
+function ShowAll({ total, children }: { total: number; children: (shown: number) => ReactNode }) {
+  const [all, setAll] = useState(false)
+  const more = total - FINDINGS_SHOWN
+  return (
+    <>
+      {children(all ? total : FINDINGS_SHOWN)}
+      {!all && more > 0 && (
+        <li>
+          <button type="button" className="case-findings-more" onClick={() => setAll(true)}>Show all ({more} more)</button>
+        </li>
+      )}
+    </>
+  )
 }
 
 /** Findings so far as rows, never as raw list markup: a hunt's explanations by their word, a lead's answers as one plain line each. */
@@ -2110,27 +2163,24 @@ function FindingList({ fold }: { fold: RunFold | null }) {
   return (
     <ul className="case-findings">
       {held && (
-        <li>
-          <span className="case-expl-pill poor">Held</span>
-          <Clamped text={`${heldLine(held)}: ${held.reason}`} />
-        </li>
+        <FindingRow lead={<span className="case-expl-pill poor">Held</span>} text={`${heldLine(held)}: ${held.reason}`} />
       )}
-      {answers.slice(0, 6).map((row, i) => (
-        <li key={i}>
-          <span className="case-findings-who">{row.agent_id}</span>
-          <Clamped text={plainLine(row.answer) || '—'} />
-        </li>
-      ))}
-      {ranked.slice(0, 6).map((row) => {
-        const word = explanationWord(row.status, row.supports, row.weakens)
-        return (
-          <li key={row.hypothesis_id}>
-            <span className={`case-expl-pill ${EXPLANATION_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>
-            <Clamped text={row.statement || row.hypothesis_id} />
-            {row.status === 'handed_off' && <span className="case-findings-next">handed off</span>}
-          </li>
-        )
-      })}
+      <ShowAll total={answers.length}>
+        {(shown) => answers.slice(0, shown).map((row, i) => (
+          <FindingRow key={i} lead={<span className="case-findings-who">{row.agent_id}</span>} text={plainLine(row.answer) || '—'} />
+        ))}
+      </ShowAll>
+      <ShowAll total={ranked.length}>
+        {(shown) => ranked.slice(0, shown).map((row) => {
+          const word = explanationWord(row.status, row.supports, row.weakens)
+          return (
+            <FindingRow key={row.hypothesis_id}
+              lead={<span className={`case-expl-pill ${EXPLANATION_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>}
+              text={row.statement || row.hypothesis_id}
+              trail={row.status === 'handed_off' ? <span className="case-findings-next">handed off</span> : undefined} />
+          )
+        })}
+      </ShowAll>
     </ul>
   )
 }

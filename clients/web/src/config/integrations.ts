@@ -2,6 +2,7 @@ import { IntegrationMetadata } from './integrationSchema'
 import { basePath } from './basePath'
 import cloudflareLogo from '../assets/vendors/cloudflare.svg'
 import deeptempoShieldLogo from '../assets/vendors/deeptempo-shield.svg'
+import elasticLogo from '../assets/vendors/elastic.svg'
 import githubLogo from '../assets/vendors/github.svg'
 import googleLogo from '../assets/vendors/google.svg'
 import googleSecopsLogo from '../assets/vendors/google-secops.svg'
@@ -481,6 +482,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'elastic-siem',
     name: 'Elastic Security',
+    logo: elasticLogo,
     category: 'SIEM',
     description: 'Elastic Security SIEM with advanced analytics, threat hunting, and incident response capabilities. Also hunts over an OpenSearch-based Wazuh indexer.',
     functionality_type: 'Log Analysis & SIEM',

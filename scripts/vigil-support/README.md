@@ -293,12 +293,9 @@ or `shasum -a 256`), then the not-collected items and the never-included entries
 `VERSION` ships beside the script and follows the Vigil release (release-please
 bumps it). Its first word is the version; the rest of the line is ignored.
 
-## Tests
+## Overrides
 
-`tests/unit/test_support_bundle.py` drives the script with stub tools on
-`PATH`. It reads these overrides, which are not for normal use:
+The script reads these overrides, which are not for normal use:
 `VIGIL_SUPPORT_SOURCE_SECS`, `VIGIL_SUPPORT_LOG_SECS`, `VIGIL_SUPPORT_TOTAL_SECS`,
 `VIGIL_SUPPORT_SOURCE_MAX`, `VIGIL_SUPPORT_NOW` (the timestamp in the name) and
-`VIGIL_SUPPORT_FS_ROOT` (a prefix for `/etc` and `/var/log` paths). The Helm tests
-stub `kubectl` and `helm` and take pod, component and label names from a real
-`helm template` of `infra/helm/vigil` (skipped when `helm` is absent).
+`VIGIL_SUPPORT_FS_ROOT` (a prefix for `/etc` and `/var/log` paths).

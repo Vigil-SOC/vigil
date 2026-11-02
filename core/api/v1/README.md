@@ -10,7 +10,7 @@ changes are in [`VERSIONING.md`](../../../VERSIONING.md).
 ## Why a folder, not a decorator
 
 Membership is decided by **where the code lives**, so it is visible and
-guardable. The contract snapshot test pins exactly this package's routes and
+guardable. The contract snapshot records exactly this package's routes and
 shapes; a decorator buried in a mixed file is not a set anything can snapshot or
 review as a unit. Putting a route in the contract is then a deliberate act — you
 move a file into this folder — not one stray line in a PR about something else,
@@ -23,7 +23,7 @@ this document gives, because the other spelling is not a route: it falls
 through to the SPA fallback, which is GET-only, so a `POST` to it answers 405
 and a `GET` answers the fallback. Register a collection as `@router.get("")`,
 never `@router.get("/")` — the difference is one character and it moves the
-frozen path. `tests/unit/api/test_api_v1_reachable.py` holds the line.
+frozen path.
 
 ## How dual-mounting works
 
@@ -79,8 +79,8 @@ that could collide with a v1 route across the two mounts. (findings, approvals.)
 **Additive — when a `/{param}` route would shadow a retained literal.** A
 parameterised route (`GET /{workflow_id}`) and a literal (`GET /custom`) are
 only first-match-safe inside *one* router; splitting them across two routers
-under the same prefix makes resolution depend on mount order, which
-`test_no_cross_router_path_shadowing` forbids. So the v1 router is **not**
+under the same prefix makes resolution depend on mount order, which no two
+routers may do. So the v1 router is **not**
 legacy-mounted — it serves only `/api/v1/<resource>` and is the source of
 truth — and the console keeps its old routes as thin **delegators** that call
 the v1 functions, staying in-router with the literal siblings.
@@ -96,7 +96,7 @@ the v1 functions, staying in-router with the literal siblings.
    `core -> services` is a layering violation).
 5. Verify: discovery lists both `<resource>` and `v1_<resource>`; live OpenAPI
    shows the contract routes at `/api/v1/<resource>` and the full set still at
-   `/api/<resource>`; `tests/unit/api/test_router_discovery.py` is green.
+   `/api/<resource>`.
 
 ## Progress
 
@@ -115,18 +115,16 @@ the v1 functions, staying in-router with the literal siblings.
 Doc lists 7 frozen resources; we ship the 5 that exist and note verdicts +
 learning as a known gap.
 
-## Enforcement (the contract snapshot)
+## The contract snapshot
 
 `core/api/v1/contract.snapshot.json` is the committed promise: the paths,
 operations and referenced schema shapes of `/api/v1/**`, minus any operation
 carrying `x-vigil-beta`. `scripts/generate_api_v1_contract.py` builds it from
-the live app (deterministic: stable operation ids, transitive schema closure);
-`tests/unit/api/test_api_v1_contract.py` rebuilds it and fails if it differs
-from the committed file. A change to a frozen route or shape is therefore a red
-build, not a silent edit — to change the contract on purpose, run the generator
-and commit the diff. This is narrower than `schema.d.ts` (whole spec, must stay
-free to move for the console) and stricter than `test_openapi_spec_stability.py`
-(prefixes only).
+the live app (deterministic: stable operation ids, transitive schema closure).
+A change to a frozen route or shape is a change to that file, not a silent
+edit — to change the contract on purpose, run the generator and commit the
+diff. This is narrower than `schema.d.ts` (whole spec, must stay free to move
+for the console).
 
 To mark a versioned-but-not-frozen route, pass
 `openapi_extra={"x-vigil-beta": True}` on its decorator; it stays under

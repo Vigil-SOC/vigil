@@ -19,7 +19,7 @@ Opt-in (it builds Medic's three images and runs a stack for a few minutes):
 
 Running `./start.sh` itself isn't possible here: it starts the host-native app
 and its fixed `deeptempo-*` container names belong to the developer's own stack.
-Every Compose call it makes goes through `dc` (test_dc_overlay.py pins that).
+Every Compose call it makes goes through `dc`.
 
 Mutation check: VIGIL_MEDIC_START_PATH_LIB names another lib.sh for step 2
 (e.g. one whose `dc` drops the overlay); this test must then fail.

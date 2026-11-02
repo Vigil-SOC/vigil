@@ -113,12 +113,16 @@ class NeedsYouHypothesis(BaseModel):
 
 
 class NeedsYouItem(BaseModel):
-    kind: Literal["approval", "checkpoint", "parked", "open_case"] = Field(
-        description=(
-            "parked: a hunt stopped at a limit, answered with Keep going on its case; "
-            "its source_id is the run id. "
-            "open_case: a demo-mode case that is not closed, answered by opening the case; "
-            "its source_id is the case id."
+    kind: Literal["approval", "checkpoint", "recommendation", "parked", "open_case"] = (
+        Field(
+            description=(
+                "recommendation: a pending action nothing in Vigil executes, answered by "
+                "acting in your own tools and closing its case. "
+                "parked: a hunt stopped at a limit, answered with Keep going on its case; "
+                "its source_id is the run id. "
+                "open_case: a demo-mode case that is not closed, answered by opening the case; "
+                "its source_id is the case id."
+            )
         )
     )
     source_id: str

@@ -90,8 +90,8 @@ _SEEDED_PROVIDERS = ("anthropic", "openai", "gemini", "ollama", "vertex")
 
 # Public OpenAI cloud — Bifrost already points there. Custom OpenAI-compatible
 # hosts (OpenRouter, LiteLLM, vLLM, ...) are the ones we must push. Derived
-# from the SSRF allow-list so this file never names the stock host (one-egress
-# ratchet); ``.openai.com`` keeps Azure-style hosts from matching.
+# from the SSRF allow-list so this file never names the stock host;
+# ``.openai.com`` keeps Azure-style hosts from matching.
 _STOCK_OPENAI_HOSTS = frozenset(
     host for host in DEFAULT_ALLOWED_PROVIDER_HOSTS if host.endswith(".openai.com")
 )

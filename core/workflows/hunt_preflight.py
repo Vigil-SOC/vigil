@@ -76,15 +76,14 @@ def pricing() -> Dict[str, Any]:
 
 
 # What the lead of each engine holds besides its needs, as each plugin.yaml's roles
-# grant it (a ratchet reads them). Root cause's telemetry_search is a need, bound to a
-# deployment tool; its lead holds no tools of its own.
+# grant it. Root cause's telemetry_search is a need, bound to a deployment tool; its
+# lead holds no tools of its own.
 LEAD_TOOLS = {
     HUNT_RUN_KIND: ("expand",),
     ADJUDICATE_RUN_KIND: ("expand",),
     ROOT_CAUSE_RUN_KIND: ("telemetry_search",),
 }
-# The skills each hunt-like plugin.yaml declares, offered through its skill tool (a
-# ratchet reads them).
+# The skills each hunt-like plugin.yaml declares, offered through its skill tool.
 HUNT_SKILLS = (
     "hunt-method",
     "recording-evidence",

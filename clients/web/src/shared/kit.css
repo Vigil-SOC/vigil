@@ -479,3 +479,31 @@
 @media (prefers-reduced-motion: reduce) {
   .dp-fields.shake { animation: none; }
 }
+
+/* Today / All segmented control: Overview board's range tablist */
+.range-seg {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg2);
+  border: 1px solid var(--ln1);
+  border-radius: 10px;
+}
+.range-seg > button {
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--tx2);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.range-seg > button[aria-selected='true'] {
+  background: var(--bg1);
+  color: var(--tx0);
+  box-shadow: 0 1px 2px var(--shadow);
+}

@@ -4,21 +4,25 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent,
   type KeyboardEvent,
 } from 'react'
 import { format } from 'date-fns'
 import { Markdown, type MarkdownCite } from '../shared/Markdown'
 import { citePattern, type Citation } from './citations'
 import { ThreadGrip } from './ThreadGrip'
+import { DockGrip } from './DockGrip'
 import { useThreadHeight } from './useThreadHeight'
 import { Icon } from '../shared/icons'
 import { VigilMark } from '../shared/VigilLogo'
 import { TITLES } from '../data/data'
 import { Cost } from '../shared/cost'
 import api, {
+  casesApi,
   conversationsApi,
   reasoningApi,
   streamFetch,
+  workflowApi,
   type ConversationDetail,
 } from '../services/api'
 import { notificationService } from '../services/notifications'
@@ -35,11 +39,15 @@ import {
 } from './chatCache'
 import { Popup } from '../shared/ui'
 import { LATER_RELEASE } from '../shared/later'
+import { errorText } from '../shared/errorText'
+import { attachRefusal } from './commandBarModel'
 
 type Role = 'user' | 'vigil' | 'error'
 interface ChatMsg {
   role: Role
   text: string
+  /** What the model thought before answering, when it says. Kept for this session only. */
+  reasoning?: string
 }
 
 interface SessionSummary {
@@ -151,6 +159,12 @@ async function refusalOf(res: Response): Promise<string | null> {
   return null
 }
 
+/** A file dropped on the dock: being read, refused with a reason, or read. A read file rides on every turn, as the case does. */
+type ChatFile =
+  | { status: 'reading'; name: string }
+  | { status: 'refused'; name: string; reason: string }
+  | { status: 'ready'; name: string; text: string; pages: number; condensed: boolean; named: boolean }
+
 interface CaseHit {
   id: string
   title: string
@@ -244,13 +258,25 @@ function AnswerText({ text, citations, onCite }: { text: string; citations?: rea
   return <div className="body"><Markdown cite={cite}>{text}</Markdown></div>
 }
 
+/** The model's reasoning, folded above its answer. */
+function Thinking({ text, live = false }: { text: string; live?: boolean }) {
+  return (
+    <details className="msg-think">
+      <summary>{live ? 'Thinking…' : 'Thinking'}</summary>
+      <div className="msg-think-body">{text}</div>
+    </details>
+  )
+}
+
 function VigilMessage({
   text,
+  reasoning,
   citations,
   onCite,
   onTrace,
 }: {
   text: string
+  reasoning?: string
   citations?: readonly Citation[]
   onCite?: (cite: Citation) => void
   onTrace?: () => void
@@ -260,6 +286,7 @@ function VigilMessage({
   )
   const content = (
     <>
+      {reasoning && <Thinking text={reasoning} />}
       <AnswerText text={text} citations={citations} onCite={onCite} />
       <div className="msg-actions">
         {copy}
@@ -292,6 +319,7 @@ export default function Chat({
   onCite,
   onTurnDone,
   collapseKey,
+  size,
 }: {
   open: boolean
   onClose: () => void
@@ -311,12 +339,24 @@ export default function Chat({
   onTurnDone?: () => void
   /** When this changes (the case tab), a pinned thread folds to its last exchange. */
   collapseKey?: string
+  /** The dock's width and full-screen state, owned by the console so the page reflows beside it. */
+  size?: {
+    width: number
+    min: number
+    max: number
+    resizable: boolean
+    full: boolean
+    onFull: (full: boolean) => void
+    preview: (width: number) => void
+    commit: (width: number | null) => void
+  }
 }) {
   const userId = useAuth().user?.user_id ?? null
   const [messages, setMessages] = useState<ChatMsg[]>([])
   const [draft, setDraft] = useState('')
   const [loading, setLoading] = useState(false)
   const [streamText, setStreamText] = useState('')
+  const [streamReasoning, setStreamReasoning] = useState('')
   // true between a `tool_processing` event and the next `text` chunk
   const [isProcessingTools, setIsProcessingTools] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -341,6 +381,10 @@ export default function Chat({
   const [mentionHits, setMentionHits] = useState<CaseHit[] | null>(null)
   // the token mentionHits answers, so "No matching cases" is never shown for a search still in flight
   const [mentionFor, setMentionFor] = useState<string | null>(null)
+  const [mentionActive, setMentionActive] = useState(0)
+  const [file, setFile] = useState<ChatFile | null>(null)
+  const [dragging, setDragging] = useState(false)
+  const fileSeq = useRef(0)
   const [traceOpen, setTraceOpen] = useState(false)
   const [traceLoading, setTraceLoading] = useState(false)
   const [traceItems, setTraceItems] = useState<TraceItem[]>([])
@@ -387,6 +431,7 @@ export default function Chat({
       persistedRef.current = false
       setSessionSummary(null)
       setHistoryOpen(false)
+      dropFile()
     }
     if (!userId) {
       if (switched) setHistory([])
@@ -424,21 +469,28 @@ export default function Chat({
 
   // the trace dialog owns its Esc + focus handling
   const anyPopupOpen = traceOpen
+  const full = size?.full ?? false
+  const onFull = size?.onFull
 
   // never while the trace Popup is open: it handles its own Esc, and closing
   // the dock too would dismiss both at once. Esc steps back one layer: rename
-  // field, mention list, history view, then the dock.
+  // field, mention list, history view, full screen, then the dock.
   useEffect(() => {
     if (!open || pinned) return
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key !== 'Escape' || anyPopupOpen || renamingId) return
       if (historyOpen) setHistoryOpen(false)
       else if (mentionHits) setMentionHits(null)
+      else if (full) {
+        // so a case drawer under the dock stays open
+        e.preventDefault()
+        onFull?.(false)
+      }
       else onClose()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [open, pinned, mentionHits, onClose, anyPopupOpen, historyOpen, renamingId])
+  }, [open, pinned, mentionHits, onClose, anyPopupOpen, historyOpen, renamingId, full, onFull])
 
   // unless a Popup is up, which traps focus itself
   const onPanelKeyDown = (e: KeyboardEvent<HTMLElement>) => {
@@ -477,15 +529,19 @@ export default function Chat({
 
   const token = lockedCaseId ? null : mentionToken(draft)
   useEffect(() => {
-    if (token == null || !token.trim()) {
-      setMentionHits(token == null ? null : [])
+    setMentionActive(0)
+    if (token == null) {
+      setMentionHits(null)
       setMentionFor(null)
       return
     }
     let live = true
     const timer = setTimeout(() => {
-      api
-        .get('/cases/search/full-text', { params: { query: token } })
+      // A bare @ offers the open cases, first those that need you; a token searches every case.
+      const read = token.trim()
+        ? api.get('/cases/search/full-text', { params: { query: token } })
+        : casesApi.getAll({ limit: 5 })
+      read
         .then((res) => {
           if (!live) return
           setMentionHits(caseHits(res.data))
@@ -516,6 +572,39 @@ export default function Chat({
     }
   }
 
+  // The hunt's attachment reading: the types, size cap and condensing are the server's.
+  const attachFile = async (picked: File) => {
+    const seq = ++fileSeq.current
+    const refusal = attachRefusal(picked)
+    if (refusal) {
+      setFile({ status: 'refused', name: picked.name, reason: refusal })
+      return
+    }
+    setFile({ status: 'reading', name: picked.name })
+    try {
+      const { data } = await workflowApi.readHuntDocument(picked)
+      if (fileSeq.current === seq) setFile({ status: 'ready', name: picked.name, text: data.text, pages: data.pages, condensed: data.condensed, named: false })
+    } catch (error) {
+      if (fileSeq.current === seq) setFile({ status: 'refused', name: picked.name, reason: errorText(error, `${picked.name} could not be read`) })
+    }
+  }
+
+  function dropFile() {
+    fileSeq.current += 1
+    setFile(null)
+  }
+
+  // only a dragged file is taken; dragged text still drops into the textarea
+  const carriesFile = (event: DragEvent<HTMLDivElement>) => event.dataTransfer.types.includes('Files')
+
+  const onDropFile = (event: DragEvent<HTMLDivElement>) => {
+    if (!carriesFile(event)) return
+    event.preventDefault()
+    setDragging(false)
+    const picked = event.dataTransfer.files?.[0]
+    if (picked) void attachFile(picked)
+  }
+
   const attachCase = (hit: CaseHit) => {
     applyCase(hit.id)
     setDraft((current) => current.replace(/(^|\s)@\S*$/, '$1').trim())
@@ -531,7 +620,8 @@ export default function Chat({
       setDraft('')
       return
     }
-    if (loading) return
+    // a fresh seed leaves the file behind, so a file still being read does not hold it
+    if (loading || (file?.status === 'reading' && !opts?.fresh)) return
     setHistoryOpen(false)
     const gen = turnGen.current
     localTurn.current = true
@@ -542,11 +632,16 @@ export default function Chat({
     }
     // `fresh` keeps a new investigation's seed off an unrelated conversation
     const base = opts?.fresh ? [] : messagesRef.current
-    const next: ChatMsg[] = [...base, { role: 'user', text }]
+    // the turn a file first rides on names it, so the question reads right in history
+    const sentFile = file?.status === 'ready' && !opts?.fresh ? file : null
+    const asked = sentFile && !sentFile.named ? `${text}\n\nAttached: ${sentFile.name}` : text
+    if (sentFile && !sentFile.named) setFile({ ...sentFile, named: true })
+    const next: ChatMsg[] = [...base, { role: 'user', text: asked }]
     putMessages(next)
     setDraft('')
     setLoading(true)
     setStreamText('')
+    setStreamReasoning('')
     setIsProcessingTools(false)
 
     const ac = new AbortController()
@@ -564,6 +659,7 @@ export default function Chat({
         page_context?: string
         page_snapshot?: string
         case_id?: string
+        document?: { name: string; text: string }
       } = {
         messages: askedOf(next).map((m) => ({ role: m.role === 'vigil' ? 'assistant' : 'user', content: m.text })),
         session_id: sessionRef.current,
@@ -572,6 +668,7 @@ export default function Chat({
       const snapshot = getPageSnapshot(pageKey)
       if (snapshot) payload.page_snapshot = snapshot
       if (sentCase !== null) payload.case_id = sentCase
+      if (sentFile) payload.document = { name: sentFile.name, text: sentFile.text }
       const res = await streamFetch('/claude/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
@@ -588,6 +685,7 @@ export default function Chat({
       const reader = res.body?.getReader()
       const decoder = new TextDecoder()
       let curText = ''
+      let curReasoning = ''
       let buf = ''
       if (reader) {
         for (;;) {
@@ -619,13 +717,16 @@ export default function Chat({
               setIsProcessingTools(false)
               curText += ev.content || ''
               setStreamText(curText)
+            } else if (ev.type === 'reasoning') {
+              curReasoning += ev.content || ''
+              setStreamReasoning(curReasoning)
             }
           }
         }
       }
       if (gen === turnGen.current) {
         setMessages((m) => {
-          const vigil: ChatMsg = { role: 'vigil', text: curText || '_(no response)_' }
+          const vigil: ChatMsg = { role: 'vigil', text: curText || '_(no response)_', ...(curReasoning && { reasoning: curReasoning }) }
           const next = [...m, vigil]
           messagesRef.current = next
           return next
@@ -669,6 +770,7 @@ export default function Chat({
         }
         setLoading(false)
         setStreamText('')
+        setStreamReasoning('')
         setIsProcessingTools(false)
         abortRef.current = null
         if (accepted) onTurnDone?.()
@@ -685,7 +787,8 @@ export default function Chat({
       id: sessionRef.current,
       title: (firstUser?.text || 'Conversation').replace(/\s+/g, ' ').trim().slice(0, 70) || 'Conversation',
       ts: Date.now(),
-      messages,
+      // the cache keeps what the server keeps: no reasoning
+      messages: messages.map(({ role, text }) => ({ role, text })),
       key: currentKeyRef.current || undefined,
     }
     setHistory((h) => {
@@ -704,6 +807,7 @@ export default function Chat({
     currentKeyRef.current = null
     persistedRef.current = false
     rememberCase(null)
+    dropFile()
     setSessionSummary(null)
     reloadHistory()
   }
@@ -726,6 +830,7 @@ export default function Chat({
       currentKeyRef.current = key ?? null
       persistedRef.current = true
       rememberCase(lockedCaseId ?? detail.case_id ?? null)
+      dropFile()
       setSessionSummary(null)
       return true
     } catch (error) {
@@ -740,11 +845,30 @@ export default function Chat({
         currentKeyRef.current = cached.key || key || null
         persistedRef.current = false
         rememberCase(lockedCaseId ?? null)
+        dropFile()
         setSessionSummary(null)
         return true
       }
       return false
     }
+  }
+
+  // A row clicked while Vigil is answering stops that answer, as Stop does (the server keeps what
+  // it said), then opens. The answer's own conversation goes back to it instead.
+  const openFromHistory = (id: string) => {
+    if (loading && id === sessionRef.current) {
+      setHistoryOpen(false)
+      return
+    }
+    if (loading) {
+      turnGen.current += 1
+      abortRef.current?.abort()
+      abortRef.current = null
+      setLoading(false)
+      setStreamText('')
+      setIsProcessingTools(false)
+    }
+    void openConversation(id, null, true)
   }
 
   // the seed prompt is deterministic per finding/case, so it doubles as the
@@ -763,6 +887,7 @@ export default function Chat({
     currentKeyRef.current = prompt
     persistedRef.current = false
     rememberCase(null)
+    dropFile()
     setKeymapEntry(userId, prompt, sessionRef.current) // so re-opening this finding restores it
     setSessionSummary(null)
     send(prompt, { fresh: true })
@@ -818,6 +943,7 @@ export default function Chat({
       persistedRef.current = false
       setSessionSummary(null)
       if (!lockedCaseId) rememberCase(null)
+      dropFile()
     }
   }
 
@@ -933,6 +1059,27 @@ export default function Chat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, seed, lockedCaseId, loading])
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // An open mention list takes the arrows, and Enter or Tab attaches the highlighted case, as in the command bar.
+    // Only a list that answers what is typed: until then the keys wait rather than pick an older hit or send.
+    const hits = token != null && mentionFor === token ? mentionHits : null
+    const pick = (e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab'
+    if (token != null && mentionFor !== token && pick) {
+      e.preventDefault()
+      return
+    }
+    if (hits && hits.length > 0) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        const step = e.key === 'ArrowDown' ? 1 : -1
+        setMentionActive((i) => (i + step + hits.length) % hits.length)
+        return
+      }
+      if (pick) {
+        e.preventDefault()
+        attachCase(hits[Math.min(mentionActive, hits.length - 1)])
+        return
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       send()
@@ -976,7 +1123,7 @@ export default function Chat({
             )}
           </div>
         ) : (
-          <VigilMessage key={i} text={m.text} citations={citations} onCite={onCite} onTrace={pinned ? undefined : openReasoningTrace} />
+          <VigilMessage key={i} text={m.text} reasoning={m.reasoning} citations={citations} onCite={onCite} onTrace={pinned ? undefined : openReasoningTrace} />
         )
       )}
       {loading && (
@@ -992,10 +1139,11 @@ export default function Chat({
                 <Icon name="sparkle" size={14} className="vs-spark" />
               )}
               <span className="vs-label">
-                {isProcessingTools ? 'Vigil is running tools' : streamText ? 'Vigil is responding' : 'Vigil is working on it'}
+                {isProcessingTools ? 'Vigil is running tools' : streamText ? 'Vigil is responding' : streamReasoning ? 'Vigil is thinking' : 'Vigil is working on it'}
                 …
               </span>
             </div>
+            {streamReasoning && <Thinking text={streamReasoning} live />}
             {streamText && <AnswerText text={streamText} citations={citations} onCite={onCite} />}
           </div>
         </div>
@@ -1011,15 +1159,32 @@ export default function Chat({
 
   const foot = (
     <div className="chat-foot">
-      <div className="chat-input">
+      <div
+        className={`chat-input${dragging ? ' dragging' : ''}`}
+        onDragOver={pinned ? undefined : (event) => {
+          if (!carriesFile(event)) return
+          event.preventDefault()
+          setDragging(true)
+        }}
+        onDragLeave={pinned ? undefined : () => setDragging(false)}
+        onDrop={pinned ? undefined : onDropFile}
+      >
         {mentionOpen && (
           <div className="chat-mention" role="listbox" aria-label="Matching cases">
             <span className="cm-head">Mention</span>
             {mentionHits.length === 0 ? (
               <div className="cm-empty">{!token?.trim() ? 'Type a case id or title' : mentionFor === token ? 'No matching cases' : 'Searching…'}</div>
             ) : (
-              mentionHits.map((hit) => (
-                <button key={hit.id} type="button" role="option" onMouseDown={(e) => e.preventDefault()} onClick={() => attachCase(hit)}>
+              mentionHits.map((hit, i) => (
+                <button
+                  key={hit.id}
+                  type="button"
+                  role="option"
+                  aria-selected={i === mentionActive}
+                  className={i === mentionActive ? 'on' : undefined}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => attachCase(hit)}
+                >
                   <span className="cm-tile"><Icon name="cases" size={14} /></span>
                   <span className="cm-text">
                     <span className="cm-title">{hit.title}</span>
@@ -1038,6 +1203,19 @@ export default function Chat({
             </button>
           </span>
         ) : null}
+        {!pinned && file ? (
+          <span className="chat-case chat-file" data-testid="attached-file" title={file.status === 'refused' ? file.reason : file.name} role={file.status === 'refused' ? 'alert' : undefined}>
+            <span>
+              {file.name}
+              {file.status === 'reading' && ' · reading…'}
+              {file.status === 'ready' && ` · ${file.pages} page${file.pages === 1 ? '' : 's'}${file.condensed ? ' · condensed' : ''}`}
+              {file.status === 'refused' && ` · ${file.reason}`}
+            </span>
+            <button type="button" aria-label={`Remove ${file.name}`} onClick={dropFile}>
+              <Icon name="x2" size={12} />
+            </button>
+          </span>
+        ) : null}
         <textarea
           ref={taRef}
           rows={1}
@@ -1046,6 +1224,13 @@ export default function Chat({
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKeyDown}
+          onPaste={pinned ? undefined : (e) => {
+            // Office and browsers put a picture beside copied text; text pasted is text
+            const pasted = e.clipboardData.files?.[0]
+            if (!pasted || e.clipboardData.types.includes('text/plain')) return
+            e.preventDefault()
+            void attachFile(pasted)
+          }}
         />
         <div className="ci-row">
           {/* the case composer shows no chip; the dock's chip sits above the textarea */}
@@ -1059,11 +1244,11 @@ export default function Chat({
               {pinned ? <Icon name="x2" size={15} /> : <span className="ci-stop" />}
             </button>
           ) : (
-            <button className="ci-send" title="Send" onClick={() => send()} disabled={!draft.trim()}><Icon name="send" /></button>
+            <button className="ci-send" title="Send" onClick={() => send()} disabled={!draft.trim() || file?.status === 'reading'}><Icon name="send" /></button>
           )}
         </div>
       </div>
-      {!pinned && <div className="chat-hint">Saved privately to your history · @ attaches · Enter sends</div>}
+      {!pinned && <div className="chat-hint">Saved privately to your history · @ attaches · drop a file · Enter sends</div>}
     </div>
   )
 
@@ -1165,7 +1350,7 @@ export default function Chat({
                       onBlur={() => commitRename(c.id)}
                     />
                   ) : (
-                    <button className="chist-main" onClick={() => openConversation(c.id)}>
+                    <button className="chist-main" onClick={() => openFromHistory(c.id)}>
                       <span className="chist-title">{c.title}</span>
                       <span className="chist-meta">
                         <span className="chist-ctx">{c.context}</span>
@@ -1238,12 +1423,15 @@ export default function Chat({
     ) : (
     <aside
       ref={panelRef}
-      className={`chat${open ? ' open' : ''}`}
+      className={`chat${open ? ' open' : ''}${full ? ' full' : ''}`}
       role="dialog"
       aria-label="Ask Vigil"
       aria-hidden={!open}
       onKeyDown={onPanelKeyDown}
     >
+      {size?.resizable && open && (
+        <DockGrip width={size.width} min={size.min} max={size.max} preview={size.preview} commit={size.commit} />
+      )}
       <div className="chat-head">
         <span className="ch-ico"><VigilMark /></span>
         <h3 className="ch-title">Ask Vigil</h3>
@@ -1273,6 +1461,16 @@ export default function Chat({
           >
             <Icon name="plus" />
           </button>
+          {size && (
+            <button
+              type="button"
+              title={full ? 'Back to side panel' : 'Full screen'}
+              aria-label={full ? 'Back to side panel' : 'Full screen'}
+              onClick={() => size.onFull(!full)}
+            >
+              <Icon name={full ? 'shrink' : 'fit'} />
+            </button>
+          )}
           <button type="button" title="Close Ask Vigil" aria-label="Close Ask Vigil" onClick={onClose}><Icon name="close" /></button>
         </div>
       </div>

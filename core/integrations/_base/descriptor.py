@@ -80,8 +80,7 @@ class IntegrationDescriptor:
 
     ``fields`` is the *complete* field list, not just the secret ones: the
     config resolver keys its result off it, so a server can only read what its
-    descriptor declares, and the catalog-parity ratchet compares the two
-    statically instead of parsing server source.
+    descriptor declares.
 
     ``mcp_server_names`` is a tuple because one vendor can back several servers
     — Splunk has both an official server and the self-hosted one Vigil ships.

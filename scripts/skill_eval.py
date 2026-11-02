@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Live-model check a skill's author runs on the PR that adds or changes it.
 
-Paste the printed summary into that PR. There is no scheduled run; the
-deterministic gate is ``tests/unit/skills/test_library_gate.py``. For each
+Paste the printed summary into that PR. There is no scheduled run. For each
 skill the system prompt is ``render_base_prompt`` for a role, a note that no
 tool is callable, and the SKILL.md body inlined; each case's ``input`` is sent
 as one user turn through ``LLMRouter.dispatch`` (Bifrost, any provider) and

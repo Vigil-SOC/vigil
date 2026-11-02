@@ -91,7 +91,7 @@ Section 12 kept today's graph builder and deferred the board's loop to phase 2. 
 On top of `PRD-phase1.md` section 14, this document is done when:
 
 1. Every workflow, of every kind, opens in the reader with all four panels filled or explicitly labelled; none is blank.
-2. A run whose source is not connected shows that source under Blind spots hit, for an investigation as well as a hunt. A test proves no capability is dropped silently.
+2. A run whose source is not connected shows that source under Blind spots hit, for an investigation as well as a hunt. No capability is dropped silently.
 3. The built-in definitions name what helpers may use in one vocabulary, and a check fails the build if a definition mixes the two.
 4. Selecting each stage in How it runs changes the four panels to that stage.
 5. The graph builder and its saved layout are gone, and nothing else in the console referred to them.

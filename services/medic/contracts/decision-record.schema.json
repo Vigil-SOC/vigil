@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://deeptempo.ai/system-watcher/contracts/decision-record/v1",
   "title": "Medic decision record v1",
-  "description": "One record in the decision log (C4 S1 + S2): append-only and hash-chained per store. Every leaf field carries x-medic-type, one of enum, number, id, timestamp, hash, redacted_excerpt, pack_text (K1 T-04; tests/test_decision_record.py fails on an untagged leaf). Numbers are integers only, so the canonical JSON that is hashed is the same in every language. Incidents are E3's (one per rule x group). Lane and routing rules: contracts/decision-record.md section 2 and lane_ref.py. Chain rules: section 4 and decision_chain.py.",
+  "description": "One record in the decision log (C4 S1 + S2): append-only and hash-chained per store. Every leaf field carries x-medic-type, one of enum, number, id, timestamp, hash, redacted_excerpt, pack_text (K1 T-04). Numbers are integers only, so the canonical JSON that is hashed is the same in every language. Incidents are E3's (one per rule x group). Lane and routing rules: contracts/decision-record.md section 2 and lane_ref.py. Chain rules: section 4 and decision_chain.py.",
   "type": "object",
   "required": [
     "v",

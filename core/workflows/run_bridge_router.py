@@ -661,8 +661,7 @@ def _record_proposals(case_id: str, run_id: str, action_ids: List[str]) -> None:
         _add_activity(
             case_id,
             "actions_proposed",
-            f"Run {run_id} proposed {count} action{'' if count == 1 else 's'}"
-            " for approval",
+            f"Run {run_id} recommended {count} action{'' if count == 1 else 's'}",
             {"run_id": run_id, "action_ids": action_ids},
         )
     except Exception:  # noqa: BLE001 — the approvals are filed either way

@@ -38,9 +38,8 @@ data:
 
          Rendered into the shared ConfigMap rather than the agent Deployments
          because AGENT_URL above already establishes that seam addresses are
-         computed in one place. Python ignores them (Settings is extra="ignore",
-         and _ratchets/test_settings_env_example.py records them as belonging to
-         the TypeScript process). Override via extraConfig, which renders last. */ -}}
+         computed in one place. Python ignores them (Settings is
+         extra="ignore"). Override via extraConfig, which renders last. */ -}}
   {{- $backend := printf "http://%s:%v" (include "vigil.backend.fullname" .) .Values.backend.service.port }}
   {{- $_ := set $computed "VIGIL_PLAYBOOKS_URL" (printf "%s/internal/playbooks" $backend) }}
   {{- $_ := set $computed "VIGIL_PRICING_URL" (printf "%s/internal/pricing" $backend) }}

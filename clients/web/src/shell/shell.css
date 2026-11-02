@@ -15,8 +15,9 @@
   src: url('./fonts/roboto-mono.woff2') format('woff2');
 }
 
-/* The console root is position:fixed to the viewport. The shell inside it is
-   at least 1440px wide, so a narrower window scrolls this root sideways. */
+/* The console root is position:fixed to the viewport. The shell takes the
+   window's width and wide tables scroll inside their own cards; overflow-x
+   only kicks in here if a screen overflows anyway. */
 .soc-console.vg-dark,
 .soc-console.vg-light {
   overflow-x: auto;
@@ -25,7 +26,6 @@
 
 .soc-console .vg-shell {
   flex-direction: column;
-  min-width: 1440px;
   height: 100%;
   /* clip, not .shell's hidden: hidden would make the shell the scroll
      container, and the sticky header and nav below would never stick. */
@@ -63,6 +63,36 @@
   top: 98px;
   /* Above the case drawer scrim, so Open in Vigil and /ask stay reachable. */
   z-index: 46;
+  transition: transform .26s cubic-bezier(.4, 0, .2, 1), width .26s cubic-bezier(.4, 0, .2, 1);
+}
+
+.soc-console .chat.full {
+  width: 100vw;
+}
+
+/* A drag follows the pointer; the slide and the page's margin would trail it. */
+.soc-console.chat-resizing .chat,
+.soc-console.chat-resizing .main {
+  transition: none;
+}
+
+/* The dock's left edge, dragged to widen it. */
+.chat .chat-grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+  z-index: 1;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.chat .chat-grip:hover,
+.chat .chat-grip:focus-visible {
+  outline: none;
+  background: var(--ac);
+  opacity: .5;
 }
 
 /* Ask Vigil dock (PulseChat / ChatHistory boards). Everything is scoped under
@@ -308,6 +338,29 @@
   color: var(--tx0);
 }
 
+/* The model's reasoning, folded above the answer (dock and case composer). */
+.msg-think {
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--tx2);
+}
+
+.msg-think summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.msg-think-body {
+  max-height: 220px;
+  overflow-y: auto;
+  margin-top: 4px;
+  padding-left: 10px;
+  border-left: 2px solid var(--ln1);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .chat .msg.vigil .vigil-status {
   display: flex;
   align-items: center;
@@ -360,6 +413,11 @@
   border-color: var(--ac-ln);
 }
 
+.chat .chat-input.dragging {
+  border-color: var(--ac);
+  border-style: dashed;
+}
+
 .chat .chat-input textarea {
   font-size: 13px;
   line-height: 1.45;
@@ -397,6 +455,18 @@
 
 .chat .chat-case button:hover {
   background: var(--ac-ln);
+}
+
+/* A refused file wraps, so its reason is read in full. */
+.chat .chat-file[role='alert'] {
+  height: auto;
+  padding: 4px 4px 4px 9px;
+  border-radius: 12px;
+  color: var(--crit);
+}
+
+.chat .chat-file[role='alert'] > span {
+  white-space: normal;
 }
 
 .chat .ci-at {
@@ -489,7 +559,8 @@
   cursor: pointer;
 }
 
-.chat .chat-mention button:hover {
+.chat .chat-mention button:hover,
+.chat .chat-mention button.on {
   background: var(--bg3);
 }
 
@@ -1225,7 +1296,7 @@
 
 .vg-drawer-scrim {
   position: fixed;
-  top: 52px;
+  top: 98px; /* below the header and nav, as the dock and the side drawers are */
   right: 0;
   bottom: 0;
   left: 0;
@@ -1233,6 +1304,11 @@
   display: flex;
   justify-content: flex-end;
   background: color-mix(in srgb, var(--bg0) 35%, transparent);
+}
+
+/* With Ask Vigil open the case sits beside the dock, not under it. */
+.chat-active .vg-drawer-scrim {
+  right: var(--chat-w);
 }
 
 .vg-case-drawer {
@@ -1834,7 +1910,8 @@ select.vg-side-input {
   border-bottom: 1px solid var(--ln0);
   font-family: var(--font-ui);
   position: relative;
-  z-index: 40;
+  /* Above the dock (46) and the drawer scrims (45), so the More menu opens over them. */
+  z-index: 47;
 }
 
 .vg-nav-btn {

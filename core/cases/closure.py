@@ -47,13 +47,20 @@ class ClosedByKind(str, Enum):
 # ``close_channel`` values. Trust is derived; the client cannot send either.
 CHANNEL_COOKIE = "cookie"
 CHANNEL_AGENT = "agent"
+# The channels that read as a person; the SQL filters match this same set.
+PERSON_CHANNELS = (CHANNEL_COOKIE,)
 
 
 def trust_word(channel: str | None) -> str:
     """``analyst`` only when the close was a person's console cookie."""
-    if channel == CHANNEL_COOKIE:
+    if channel in PERSON_CHANNELS:
         return ClosedByKind.ANALYST.value
     return ClosedByKind.AGENT.value
+
+
+def closed_by_person(channel: str | None) -> bool:
+    """A person closed it; no closure row (``None``) counts as an agent close."""
+    return trust_word(channel) == ClosedByKind.ANALYST.value
 
 
 __all__: Sequence[str] = (
@@ -61,5 +68,7 @@ __all__: Sequence[str] = (
     "CHANNEL_COOKIE",
     "ClosedByKind",
     "ClosureCategory",
+    "PERSON_CHANNELS",
+    "closed_by_person",
     "trust_word",
 )

@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Set
 from sqlalchemy import func
 
 from core.agents.enablement import disabled_agent_ids
-from core.findings.overview import completion_level
+from core.findings.overview import RATED_STATUS, completion_level
 from core.llm import target
 from core.llm.providers.registry import get_registry, model_display_name
 from core.storage.connection import get_db_manager
@@ -27,7 +27,7 @@ from core.storage.models import WorkflowRun
 from core.time import utcnow
 from core.workflows.enablement import disabled_workflow_ids
 from core.workflows.playbook_resolver import disabled_phase_agents
-from core.workflows.routing import can_disable, triggers_for
+from core.workflows.routing import always_on_reason, can_disable, triggers_for
 from core.workflows.workflows_service import (
     ROOT_CAUSE_RUN_KIND,
     WorkflowsService,
@@ -57,7 +57,8 @@ def _week_run_stats(now: datetime) -> Dict[str, Dict[str, Any]]:
     ``started_at`` is naive UTC, so the bound is too: an aware datetime
     TypeErrors against the column. ``runs_7d`` counts every run in the window,
     running ones included. ``success_rate`` is completed over those that ended
-    (completed, failed, cancelled), null while none has. ``mean_cost_usd`` is the
+    (completed, failed, cancelled), null while none has; a run a person stopped
+    by rejecting a step is a run but not in the rate. ``mean_cost_usd`` is the
     mean over runs with ``finished_at`` set; a finished run that cost nothing is
     a real zero, null is only "nothing finished". Deleted rows stay out of all.
     """
@@ -67,11 +68,11 @@ def _week_run_stats(now: datetime) -> Dict[str, Dict[str, Any]]:
         counts = (
             session.query(
                 WorkflowRun.workflow_id,
-                WorkflowRun.status,
+                RATED_STATUS,
                 func.count(WorkflowRun.run_id),
             )
             .filter(WorkflowRun.started_at >= since, WorkflowRun.deleted_at.is_(None))
-            .group_by(WorkflowRun.workflow_id, WorkflowRun.status)
+            .group_by(WorkflowRun.workflow_id, RATED_STATUS)
             .all()
         )
         costs = (
@@ -139,8 +140,9 @@ def listing(service: WorkflowsService) -> Dict[str, Any]:
     fraction), ``success_level`` (good/fair/poor, as on the Agents tab) and the
     mean cost of the finished runs. All four keys are present when nothing
     matches (0 and nulls). ``triggers`` says what starts it, ``can_disable``
-    whether it may be turned off, and ``enabled`` whether it is on. ``blocked_by``
-    lists the turned-off agents the workflow needs (empty when it can run).
+    whether it may be turned off (``always_on_reason`` says why not), and
+    ``enabled`` whether it is on. ``blocked_by`` lists the turned-off agents the
+    workflow needs (empty when it can run).
     """
     workflows = service.list_workflows()
     stats = _week_run_stats(utcnow())
@@ -150,7 +152,8 @@ def listing(service: WorkflowsService) -> Dict[str, Any]:
         row.update(stats.get(row["id"], _NO_RUNS))
         row["triggers"] = triggers_for(row["id"])
         row["can_disable"] = can_disable(row["id"])
-        row["enabled"] = row["id"] not in disabled
+        row["always_on_reason"] = always_on_reason(row["id"])
+        row["enabled"] = not row["can_disable"] or row["id"] not in disabled
         row["blocked_by"] = _blocked_by(service, row["id"], off_agents)
     return {"workflows": workflows, "count": len(workflows)}
 

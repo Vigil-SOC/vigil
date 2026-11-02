@@ -5,7 +5,7 @@ import '../../../../docs/design/console/tokens/tokens.css'
 import '../styles.css'
 import './shell.css'
 import { useAuth } from '../contexts/AuthContext'
-import { approvalsApi, autonomyApi, configApi, consoleApi, federationApi, mcpApi } from '../services/api'
+import { approvalsApi, autonomyApi, casesApi, configApi, consoleApi, federationApi, mcpApi } from '../services/api'
 import { Icon, type IconName } from '../shared/icons'
 import { InfoTip } from '../shared/InfoTip'
 import { PageHead } from '../shared/PageHead'
@@ -16,6 +16,7 @@ import { useColorScheme } from '../contexts/ColorSchemeContext'
 import CaseDrawer from './CaseDrawer'
 import { heldCase, holdCase } from './heldCase'
 import Chat from './Chat'
+import { DOCK_MIN, DOCK_WIDTH, useDockWidth } from './useDockWidth'
 import CommandBar from './CommandBar'
 import DevModeWarning from './DevModeWarning'
 import UserMenu from './UserMenu'
@@ -82,7 +83,8 @@ const SCREEN_PERMS: Partial<Record<ConsoleScreenKey, string>> = {
   home: HOME_PERM,
 }
 
-const CHAT_WIDTH = 400
+/** What a widened dock leaves of the page beside it. */
+const PAGE_MIN = 320
 
 const setupTip = (left: number) =>
   `Finish setting up Vigil: ${left === 1 ? '1 step is' : `${left} steps are`} left. Opens the setup steps on Home.`
@@ -144,6 +146,8 @@ function SocConsoleInner() {
 
   const { scheme } = useColorScheme()
   const [chatOpen, setChatOpen] = useState(false)
+  const dock = useDockWidth()
+  const [dockFull, setDockFull] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const [assist, setAssist] = useState<boolean | null>(null)
   const [status, setStatus] = useState<StatusFold | null>(null)
@@ -196,12 +200,16 @@ function SocConsoleInner() {
 
   useDesktopNotifications()
   const [needsYou, setNeedsYou] = useState(0)
+  const [openCases, setOpenCases] = useState(0)
 
   const openChat = useCallback((prompt?: string) => {
     setChatOpen(true)
     if (prompt) setChatSeed(prompt)
   }, [])
-  const closeChat = useCallback(() => setChatOpen(false), [])
+  const closeChat = useCallback(() => {
+    setChatOpen(false)
+    setDockFull(false)
+  }, [])
   // the open case: the drawer wins over the full page's ?case= param
   const pageCase = current === 'cases' && allowed ? new URLSearchParams(location.search).get('case') : null
   const openCaseId = drawerCase ?? pageCase
@@ -242,8 +250,8 @@ function SocConsoleInner() {
     const stop = tourStops[Math.min(index, Math.max(tourStops.length - 1, 0))]
     if (stop === 'attention') go('home')
     if (stop === 'nav' || stop === 'ask') setWallMode(false)
-    if (stop === 'ask') setChatOpen(false)
-  }, [tourStops, go])
+    if (stop === 'ask') closeChat()
+  }, [tourStops, go, closeChat])
 
   const showStop = useCallback((index: number) => {
     if (index < 0 || index >= tourStops.length) return
@@ -252,12 +260,12 @@ function SocConsoleInner() {
   }, [prepareStop, tourStops])
 
   const startTour = useCallback(() => {
-    setChatOpen(false)
+    closeChat()
     setViewFull(false)
     setWallMode(false)
     setTourIndex(0)
     setTourOn(true)
-  }, [])
+  }, [closeChat])
 
   const dismissTour = useCallback(() => {
     markConsoleTourSeen()
@@ -285,6 +293,15 @@ function SocConsoleInner() {
         .needsYou()
         .then((res) => {
           if (live) setNeedsYou(res.data.count)
+        })
+        .catch(() => {
+          /* keep the previous count */
+        })
+      // the Cases badge counts open cases, the same rule as the Cases screen's "All open" chip
+      casesApi
+        .getSummary()
+        .then((res) => {
+          if (live) setOpenCases(res.data.total - (res.data.by_status.closed ?? 0))
         })
         .catch(() => {
           /* keep the previous count */
@@ -408,14 +425,17 @@ function SocConsoleInner() {
     const onDoc = (e: MouseEvent) => {
       if (!moreRef.current?.contains(e.target as Node)) setMoreOpen(false)
     }
+    // Captured and stopped, so this Esc closes only the menu and not the dock or the case drawer too.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMoreOpen(false)
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      setMoreOpen(false)
     }
     document.addEventListener('mousedown', onDoc)
-    document.addEventListener('keydown', onKey)
+    document.addEventListener('keydown', onKey, true)
     return () => {
       document.removeEventListener('mousedown', onDoc)
-      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('keydown', onKey, true)
     }
   }, [moreOpen])
 
@@ -479,7 +499,7 @@ function SocConsoleInner() {
 
   const navButton = (item: NavItem) => {
     const [icon, label, key] = item
-    const count = key === 'home' || key === 'cases' ? needsYou : 0
+    const count = key === 'home' ? needsYou : key === 'cases' ? openCases : 0
     const active = valid && key === current
     return (
       <button
@@ -487,7 +507,7 @@ function SocConsoleInner() {
         type="button"
         className={`vg-nav-btn${active ? ' active' : ''}`}
         aria-current={active ? 'page' : undefined}
-        aria-label={count ? `${label} (${count} waiting)` : label}
+        aria-label={count ? `${label} (${count} ${key === 'cases' ? 'open' : 'waiting'})` : label}
         onClick={() => {
           setMoreOpen(false)
           go(key)
@@ -506,13 +526,19 @@ function SocConsoleInner() {
     'soc-console',
     scheme === 'light' ? 'vg-light' : 'vg-dark',
     chatOpen ? 'chat-active' : '',
+    dock.dragging ? 'chat-resizing' : '',
   ].filter(Boolean).join(' ')
 
   // these draw their own heading; Home's headline is its heading
   const ownsHeading = ['home', 'overview', 'triage', 'cases', 'workflows', 'settings'].includes(current)
   const showHeading = valid && allowed && !ownsHeading && !wallMode && !viewFull
-  const mainClass = ['main', chatOpen ? 'chat-open' : ''].filter(Boolean).join(' ')
-  const effectiveChatWidth = viewportWidth <= 600 ? viewportWidth : CHAT_WIDTH
+  // full screen covers the page rather than squeezing it to nothing
+  const mainClass = ['main', chatOpen && !dockFull ? 'chat-open' : ''].filter(Boolean).join(' ')
+  const dockMax = Math.max(DOCK_MIN, viewportWidth - PAGE_MIN)
+  const dockResizable = viewportWidth > 600 && !dockFull
+  const effectiveChatWidth = dockResizable
+    ? Math.min(dockMax, Math.max(DOCK_MIN, dock.width ?? DOCK_WIDTH))
+    : viewportWidth
   const consoleStyle = { '--chat-w': `${effectiveChatWidth}px` } as CSSProperties
   const commandBoards = [...primary.filter((item) => !foldedKeys.has(item[2])), ...more].map((item) => {
     const key = item[2]
@@ -686,6 +712,17 @@ function SocConsoleInner() {
           pageKey={current}
           pageTitle={title}
           onSeedConsumed={() => setChatSeed(null)}
+          // at 600px and under the dock already fills the screen: nothing to widen or expand
+          size={viewportWidth > 600 ? {
+            width: effectiveChatWidth,
+            min: DOCK_MIN,
+            max: dockMax,
+            resizable: dockResizable,
+            full: dockFull,
+            onFull: setDockFull,
+            preview: dock.preview,
+            commit: dock.commit,
+          } : undefined}
         />
         {drawerCase && (
           <CaseDrawer

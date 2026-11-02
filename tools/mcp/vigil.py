@@ -962,6 +962,7 @@ def add_case_task(
                     else None
                 ),
                 checklist_items=None,
+                signed_in=actor(),
             )
             payload = CaseTaskSchema.dump(task)
 
@@ -1007,7 +1008,9 @@ def update_case_task(
             updates["completed_at"] = utcnow()
 
         with service_session() as session:
-            task = case_records_service.update_task(session, task_id, updates)
+            task = case_records_service.update_task(
+                session, task_id, updates, signed_in=actor()
+            )
             if task is None:
                 return jdump({"error": f"Task {task_id} not found"})
             if assignee is not None:

@@ -23,8 +23,7 @@ updates:
     ignore:
       # The Python and Node BullMQ libraries share a key layout and a set of Lua
       # scripts. Moving one without the other risks the cross-language seam, and
-      # only the walking-skeleton integration test would catch it, so this pair
-      # is bumped by hand and together.
+      # nothing would catch it, so this pair is bumped by hand and together.
       - dependency-name: bullmq
     labels:
       - "type:tech-debt"

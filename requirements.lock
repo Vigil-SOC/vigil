@@ -41,9 +41,9 @@ bcrypt==5.0.0
     # via
     #   -r requirements.txt
     #   paramiko
-boto3==1.43.80
+boto3==1.43.123
     # via -r requirements.txt
-botocore==1.43.80
+botocore==1.43.123
     # via
     #   boto3
     #   s3transfer
@@ -60,9 +60,7 @@ cffi==2.1.1 ; platform_python_implementation != 'PyPy'
     #   cryptography
     #   pynacl
 charset-normalizer==3.5.1
-    # via
-    #   reportlab
-    #   requests
+    # via requests
 click==8.4.2
     # via
     #   arq
@@ -85,8 +83,6 @@ dnspython==2.8.0
 docstring-parser==0.18.0
     # via anthropic
 email-validator==2.3.0
-    # via -r requirements.txt
-faker==40.43.0
     # via -r requirements.txt
 fastapi==0.141.1
     # via -r requirements.txt
@@ -114,9 +110,7 @@ httpcore2==2.12.0 ; sys_platform != 'emscripten'
 httptools==0.8.0
     # via uvicorn
 httpx==0.28.1
-    # via
-    #   -r requirements.txt
-    #   respx
+    # via -r requirements.txt
 httpx2==2.12.0
     # via
     #   anthropic
@@ -204,7 +198,7 @@ opentelemetry-exporter-otlp-proto-grpc==1.45.1
     # via -r requirements.txt
 opentelemetry-exporter-otlp-proto-http==1.45.1
     # via -r requirements.txt
-opentelemetry-exporter-prometheus==0.66b0
+opentelemetry-exporter-prometheus==0.66b1
     # via -r requirements.txt
 opentelemetry-instrumentation==0.66b1
     # via
@@ -261,10 +255,6 @@ packaging==26.3
     #   pytest
 paramiko==5.0.0
     # via sshtunnel
-pillow==13.0.0
-    # via
-    #   -r requirements.txt
-    #   reportlab
 pluggy==1.6.0
     # via
     #   pytest
@@ -283,7 +273,7 @@ protobuf==7.36.0
     #   opentelemetry-proto
 psycopg2-binary==2.9.12
     # via -r requirements.txt
-pyarrow==25.0.1
+pyarrow==26.0.0
     # via -r requirements.txt
 pycparser==3.0 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'
     # via cffi
@@ -298,7 +288,7 @@ pydantic==2.13.4
     #   pydantic-settings
 pydantic-core==2.46.4
     # via pydantic
-pydantic-settings==2.15.0
+pydantic-settings==2.16.2
     # via -r requirements.txt
 pygments==2.21.0
     # via pytest
@@ -318,12 +308,9 @@ pytest==9.1.1
     #   -r requirements.txt
     #   pytest-asyncio
     #   pytest-cov
-    #   pytest-mock
 pytest-asyncio==1.4.0
     # via -r requirements.txt
 pytest-cov==7.1.0
-    # via -r requirements.txt
-pytest-mock==3.15.1
     # via -r requirements.txt
 python-dateutil==2.9.0.post0
     # via botocore
@@ -352,16 +339,12 @@ referencing==0.37.0
     # via
     #   jsonschema
     #   jsonschema-specifications
-reportlab==5.1.0
-    # via -r requirements.txt
 requests==2.34.2
     # via
     #   -r requirements.txt
     #   opentelemetry-exporter-http-transport
     #   opentelemetry-exporter-otlp-proto-http
     #   taxii2-client
-respx==0.23.1
-    # via -r requirements.txt
 rpds-py==2026.6.3
     # via
     #   jsonschema
@@ -370,7 +353,7 @@ s3transfer==0.19.2
     # via boto3
 semver==2.13.0
     # via bullmq
-sentry-sdk==2.72.0
+sentry-sdk==2.73.0
     # via -r requirements.txt
 six==1.17.0
     # via
@@ -425,6 +408,7 @@ typing-extensions==4.16.0
     #   opentelemetry-semantic-conventions
     #   pydantic
     #   pydantic-core
+    #   pydantic-settings
     #   pytest-asyncio
     #   referencing
     #   sqlalchemy
@@ -436,15 +420,13 @@ typing-inspection==0.4.4
     #   mcp
     #   pydantic
     #   pydantic-settings
-tzdata==2026.3 ; sys_platform == 'win32'
-    # via faker
 urllib3==2.8.0
     # via
     #   -r requirements.txt
     #   botocore
     #   requests
     #   sentry-sdk
-uv==0.13.4
+uv==0.13.6
     # via -r requirements.txt
 uvicorn==0.54.0
     # via

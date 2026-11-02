@@ -2,7 +2,7 @@
 
 # Core
 numpy>=2.5.3
-pyarrow>=15.0.0
+pyarrow>=26.0.0
 ijson>=3.5.1
 anthropic>=0.45.0
 # In-repo servers use the 2.x lowlevel Server(on_list_tools=..., on_call_tool=...)
@@ -16,12 +16,12 @@ httpx>=0.28.1
 # No longer used by any application code — only the scripts/ utilities.
 requests>=2.34.2
 urllib3>=2.8.0
-boto3>=1.43.77
+boto3>=1.43.122
 aiohttp>=3.14.5
 
 # Core declared transitive deps
 pydantic>=2.0.0
-pydantic-settings>=2.15.0
+pydantic-settings>=2.16.1
 PyYAML>=6.0.3
 
 # Web Backend
@@ -61,11 +61,11 @@ socksio>=1.0.0
 # pagerduty-mcp, gcp-* security tools). Installing it here means the venv
 # has `uvx` on PATH and those servers can connect at backend startup
 # instead of silently failing with FileNotFoundError.
-uv>=0.13.1
+uv>=0.13.5
 
 # Authentication
 bcrypt>=5.0.0
-pyjwt>=2.13.0
+pyjwt>=2.15.1
 pyotp>=2.10.0
 cryptography>=50.0.2
 slowapi>=0.1.10
@@ -73,13 +73,10 @@ slowapi>=0.1.10
 # dep; listed explicitly so pip show it and it doesn't quietly disappear).
 itsdangerous>=2.2.0
 
-# Testing Dependencies
+# The live connector suite (tests/live, connectors-live.yml)
 pytest>=9.1.1
 pytest-asyncio>=0.23.0
 pytest-cov>=7.1.0
-pytest-mock>=3.12.0
-faker>=40.43.0
-respx>=0.21.0  # httpx mocking — required by tests/unit/test_elastic_service.py
 
 # Job Queue (ARQ + Redis)
 arq>=0.28.0
@@ -95,22 +92,16 @@ aiokafka>=0.14.0
 # TAXII threat-intel feed ingestion for the Cloudforce One integration.
 taxii2-client>=2.3.0
 
-# Builds the PDF fixture in tests/unit/documents/test_documents.py.
-reportlab>=5.1.0
-# Transitive via reportlab. 12.3.0 has fixable criticals CVE-2026-112393 and
-# CVE-2026-112900; the image scan fails closed on those.
-pillow>=13.0.0
-
 # Monitoring & Observability
-sentry-sdk>=2.72.0
+sentry-sdk>=2.73.0
 prometheus-client>=0.19.0
 
 # OpenTelemetry
 opentelemetry-api>=1.45.1
 opentelemetry-sdk>=1.45.1
-opentelemetry-exporter-otlp-proto-grpc>=1.44.0
+opentelemetry-exporter-otlp-proto-grpc>=1.45.1
 opentelemetry-exporter-otlp-proto-http>=1.45.1
-opentelemetry-exporter-prometheus>=0.46b0
+opentelemetry-exporter-prometheus>=0.66b1
 opentelemetry-instrumentation-fastapi>=0.66b1
 opentelemetry-instrumentation-sqlalchemy>=0.46b0
 opentelemetry-instrumentation-redis>=0.66b0

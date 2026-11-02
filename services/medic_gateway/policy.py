@@ -80,7 +80,7 @@ OUTBOUND = [
     Route("GET", "/api/webhooks/cloudflare/cloudy/health", auth=False),
 ]
 
-# Inbound: exactly the operations in medic-api.openapi.yaml (X2); a test pins it.
+# Inbound: exactly the operations in medic-api.openapi.yaml (X2).
 TS = r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?Z"
 INC = r"inc_[0-9A-Za-z]{8,32}"
 SEQ = r"0|[1-9][0-9]{0,18}"

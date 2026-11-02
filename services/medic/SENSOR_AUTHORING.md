@@ -45,28 +45,19 @@ States: `ok` · `degraded` (some reads failed, or drops) · `blind` (3 failed cy
 1. **`collect()` is async and never blocks.** Use `httpx.AsyncClient` (with `trust_env=False`); wrap any unavoidable blocking call in `asyncio.to_thread`. A blocking call stalls every sensor.
 2. **Read-only.** No write clients, no POST/PUT/DELETE, no Docker/K8s verbs beyond get/list/watch (C3).
 3. **Don't read bodies you don't need, and cap the ones you do.** `http_ready` never reads the body.
-4. **No secrets in logs, and no `extra=` on log calls.** Log through the message with `%`-style args. `install_log_redaction`'s record factory redacts the rendered message and any traceback, and `extra` fields would skip it (a test enforces this). Medic's entry points don't install that factory yet, so nothing redacts logs today.
+4. **No secrets in logs, and no `extra=` on log calls.** Log through the message with `%`-style args. `install_log_redaction`'s record factory redacts the rendered message and any traceback, and `extra` fields would skip it. Medic's entry points don't install that factory yet, so nothing redacts logs today.
 5. **Labels, enum values and `instance` are passed raw.** The choke point redacts them and then applies D3's label rule (`label_safe`) **once**. Don't call `label_safe` yourself: it isn't idempotent, and hashing before redaction would put a hash of a secret in the store.
 6. **Time comes from the framework.** Don't stamp `observed_at`; put the source's own time in `Reading.source_ts` if it gives one.
 
 ## 5. Redaction
 
-Every observation passes `redact.redact_observation` between the bus and the sink: key names (`*_PASSWORD=`, `"api_key":`, `secret-names.txt`), URL credentials, PEM blocks, token shapes (`Bearer`, JWT, `sk-…`, `ghp_…`, `AKIA…` …), `--secret-flag value`, and the contextual `token <value>`. Free text is redacted in full **before** it's capped. If the redactor raises, the observation is dropped and counted (`redactor_failures`). It is **pattern-only**: Medic holds no secret values. A log sensor that needs the redacted line itself (for `line_hash`) calls `Redactor().redact(line)` first; the choke point runs again, and already-redacted text is stable.
+Every observation passes `redact.redact_observation` between the bus and the sink: key names (`*_PASSWORD=`, `"api_key":`, `secret-names.txt`), URL credentials, PEM blocks, token shapes (`Bearer`, JWT, `sk-…`, `ghp_…`, `AKIA…` …), `--secret-flag value`, and the contextual `token <value>`. Free text is redacted in full **before** it's capped. If the redactor raises, the observation is dropped and counted (`redactor_failures`). It is **pattern-only**: Medic holds no secret values. A log sensor that needs the redacted line itself (for `line_hash`) calls `Redactor().redact(line)` first; the choke point runs again, and already-redacted text is stable. A new secret shape is a new `must_redact` case in `contracts/fixtures/redaction/cases.json` (a contract change: its own PR), never a sensor-local filter.
 
 ## 6. DEV_MODE (K1 T-37)
 
 On a Vigil install with `DEV_MODE` on, every request is an admin. Then sensors with `uses_vigil_api = True` are **off**, with reason `vigil_dev_mode` in `Scheduler.status()`. **What never changes in DEV_MODE:** redaction, the schema check, timeouts, bounded buffers, read-only clients, and the rule that crashes and hangs are reported.
 
-## 7. Tests every sensor PR ships
-
-- **Unit, against a local stub** (real sockets where you can, `httpx.MockTransport` for DNS/TLS/connect-timeout): one case per row of your outcome table.
-- **Through the framework:** `tests/sensors/harness.Rig([your_sensor])`, `await rig.tick()`, then `rig.assert_all_valid()`: every observation validates against `observation.schema.json` (log observations are checked only in tests, S3-1).
-- **Canary:** if the sensor emits free text (a log line, an error string), add a case that plants each `contracts/fixtures/redaction/cases.json` input and asserts the secret isn't in `rig.sink`.
-- **Fixtures:** a new secret shape is a new `must_redact` case in `contracts/fixtures/redaction/cases.json` (a contract change: its own PR), never a sensor-local filter.
-
-Async tests: `async def test_…` runs on a fresh loop via `tests/sensors/conftest.py`. Nothing sleeps: `Rig` drives a `FakeClock`, and `rig.tick(15)` advances one tick.
-
-## 8. Worked example: `http_ready`
+## 7. Worked example: `http_ready`
 
 `sensors/http_ready.py` reads agent `/readyz` (worker 6990, serve 6989). `/healthz` always says `ok`, so it proves nothing; `/readyz` checks the agent's dependencies. Its outcome table:
 
@@ -77,4 +68,4 @@ Async tests: `async def test_…` runs on a fresh loop via `tests/sensors/confte
 | refused · connected but silent · dropped | false | `refused` · `timeout` · `no_response` | ok |
 | 401/403 · 3xx/4xx · connect timeout · DNS · TLS | | | error `auth` · `http_status` · `timeout` · `dns` · `tls` |
 
-`status_code` and `latency_ms` are gauges, **absent** when nothing answered. `instance` is the target's `host:port`. Register it with `agent_worker_ready(host=…)` / `agent_serve_ready(host=…)`; the host differs per install shape. Its tests (`tests/sensors/test_http_ready.py`) are the template for yours.
+`status_code` and `latency_ms` are gauges, **absent** when nothing answered. `instance` is the target's `host:port`. Register it with `agent_worker_ready(host=…)` / `agent_serve_ready(host=…)`; the host differs per install shape.

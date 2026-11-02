@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Dump the FastAPI OpenAPI spec and generate frontend TypeScript types.
 
-Does not start a server: uses ``app.openapi()``, the same path as
-``tests/security/test_route_auth_coverage.py``. Output is committed under
+Does not start a server: uses ``app.openapi()``. Output is committed under
 ``clients/web/src/services/generated/`` — do not edit it by hand.
 """
 

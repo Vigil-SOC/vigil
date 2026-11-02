@@ -55,6 +55,7 @@
   "cert_expiry",
   "version",
   "gateway_session",
+  "log_overflow",
   "log_backend",
   "log_soc_daemon",
   "log_llm_worker",

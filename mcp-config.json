@@ -160,7 +160,7 @@
     },
     "firecrawl": {
       "command": "npx",
-      "args": ["-y", "firecrawl-mcp@3.34.1"],
+      "args": ["-y", "firecrawl-mcp@3.36.0"],
       "env": {
         "FIRECRAWL_API_KEY": "${FIRECRAWL_API_KEY}"
       }

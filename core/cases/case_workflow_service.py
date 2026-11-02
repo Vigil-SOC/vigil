@@ -487,6 +487,7 @@ class CaseWorkflowService:
         executive_summary: Optional[str] = None,
         false_positive_reason: Optional[str] = None,
         closure_notes: Optional[str] = None,
+        on_trail: bool = True,
     ):
         """Mark a case closed and record its closure metadata.
 
@@ -589,13 +590,15 @@ class CaseWorkflowService:
         CaseSLAService().mark_resolution_complete(case_id, session)
         session.flush()
         index_case_iocs_on_close(session, case_id)
-        record_close(
-            session,
-            principal_id=principal,
-            case_id=case_id,
-            actor_text=actor_text,
-            credential_id=current_credential_id(),
-        )
+        # A merge's close is part of the merge's one entry.
+        if on_trail:
+            record_close(
+                session,
+                principal_id=principal,
+                case_id=case_id,
+                actor_text=actor_text,
+                credential_id=current_credential_id(),
+            )
         return closure
 
     def reopen_case(self, session: Session, case_id: str) -> None:
@@ -627,7 +630,8 @@ class CaseWorkflowService:
         relationship. Returns the number of findings moved, and raises
         ``NotFoundError`` naming whichever case is missing.
 
-        Runs in its own transaction — the whole merge must land or none of it.
+        Runs in its own transaction — the whole merge must land or none of it,
+        its trail entry included.
         """
         from core.storage.models import (
             CaseClosureInfo,
@@ -734,10 +738,23 @@ class CaseWorkflowService:
                     closure_category=ClosureCategory.DUPLICATE,
                     closed_by=merged_by,
                     closure_notes=f"Merged into {target_case_id}",
+                    on_trail=False,
                 )
 
             source.description = (source.description or "") + (
                 f"\n\n[MERGED] This case was merged into {target_case_id} "
                 f"by {merged_by} on {now.isoformat()}Z"
+            )
+            # One entry, on the target. The trail's case filter also matches
+            # source_case_id, so the source's record finds it too.
+            case_trail.append_or_legacy(
+                session,
+                action=case_trail.MERGE,
+                signed_in=merged_by,
+                case_id=target_case_id,
+                ids=lambda: {
+                    "source_case_id": source_case_id,
+                    "findings_moved": moved_findings,
+                },
             )
             return moved_findings

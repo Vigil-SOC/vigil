@@ -1,6 +1,6 @@
 # uvx connectors from mcp-config.json, baked into the backend image: one
 # `uv tool install` per line, at the exact specs it pins.
-# tests/unit/_ratchets/test_mcp_runtime_pins.py keeps the two in step.
+# Keep the two in step.
 falcon-mcp==0.19.0
 git+https://github.com/Sentinel-One/purple-mcp.git@v0.7.0
 git+https://github.com/fctr-id/okta-mcp-server.git@02.0-beta

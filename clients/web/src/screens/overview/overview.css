@@ -295,6 +295,19 @@ a.ov-src:hover {
   color: var(--ac);
 }
 
+/* vendor logo: white tile in both themes, like .int-mark.logo (board draws it at ~0.6 of the tile) */
+.ov-tile.logo {
+  background: #fff;
+  box-shadow: inset 0 0 0 1px var(--ln0);
+  overflow: hidden;
+}
+
+.ov-tile.logo img {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+
 .ov-txt {
   min-width: 0;
   display: flex;
@@ -782,6 +795,18 @@ a.ov-out-l:focus-visible span {
   color: var(--tx1);
 }
 
+.ov-st.logo {
+  background: #fff;
+  box-shadow: inset 0 0 0 1px var(--ln0);
+  overflow: hidden;
+}
+
+.ov-st.logo img {
+  width: 12px;
+  height: 12px;
+  object-fit: contain;
+}
+
 .ov-sev {
   display: inline-flex;
   align-items: center;
@@ -1018,4 +1043,11 @@ button.ov-pill:hover {
   font-size: 12px;
   font-weight: 600;
   color: var(--ac);
+}
+
+.ov-flow-ctl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }

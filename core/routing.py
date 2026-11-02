@@ -72,9 +72,7 @@ class RouterMeta:
         the justification cannot be deleted or omitted silently. To enumerate
         every deviation and its rationale, iterate
         ``services.api.discovery.load_router_specs()`` — a bare ``grep reason=``
-        false-matches unrelated kwargs such as ``change_reason=``. The
-        enumeration is asserted by
-        ``tests/unit/test_router_discovery.py::test_every_non_required_router_has_a_reason``.
+        false-matches unrelated kwargs such as ``change_reason=``.
     :param enabled: Optional predicate evaluated at mount time. When it
         returns false the router is not mounted at all. Required for
         ``PUBLIC_WEBHOOK`` routers so an inbound receiver cannot be exposed

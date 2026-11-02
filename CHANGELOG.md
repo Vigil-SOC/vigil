@@ -56,11 +56,102 @@
 * **auth:** role permissions are now enforced on writes, not only on login. Case, finding, approval, agent-run and `/api/config` writes, chat, and the chat/MCP `approve_action`/`reject_action` tools answer 403 to a role that lacks `cases.write`, `findings.write`, `ai_decisions.approve`, `ai_chat.use` or `settings.write`/`integrations.write` (the seeded Viewer is read-only; Analyst and Senior Analyst no longer change settings). Approvals, merges and run directives record the signed-in user; the `approved_by`, `rejected_by`, `merged_by` and `actor` request fields are accepted and ignored. The `POST /api/workflows/runs/{id}/resume` route is removed: approve a paused run's action through `POST /api/v1/approvals/{id}/approve`. Grant a role the permission in `roles.permissions` if it should keep an action.
 * **approvals:** a confidence an agent or the daemon's triage model names no longer releases a response action. `create_approval_action` (MCP and chat) always queues the action for a person and refuses a confidence outside 0..1; the daemon's triage reply is ignored for a confidence outside 0..1, a repeated key or an action outside isolate/block/investigate/monitor/dismiss; and the executor leaves alone an approved action no person decided. Agent prompts no longer promise auto-approval. Operator directive text is capped at 2000 characters.
 * **workflows:** the workflow listing (`GET /api/workflows`, `/api/v1/workflows`) reports the last 7 days instead of today: `runs_today` is gone, replaced by `runs_7d`, `success_rate` (a 0..1 fraction) and `success_level` (good/fair/poor), and `mean_cost_usd` now averages the finished runs of the same window ([#1624](https://github.com/Vigil-SOC/vigil/issues/1624)). The Workflows tab is a column of cards in place of the table; its Agents, Last edited and Trust columns are gone.
-* **workflows:** each workflow now has an on/off switch in the console (`PUT /api/workflows/{id}/enabled`, stored as `workflows.disabled`), and nothing starts a workflow while it is off ([#1623](https://github.com/Vigil-SOC/vigil/issues/1623)). `DAEMON_THREAT_HUNT_ENABLED` and `ORCHESTRATOR_SHADOW_ADJUDICATION` are gone from the environment, compose and Helm values; setting them has no effect. The scheduled hunt is on unless you turn `threat-hunt` off; shadow adjudication is off until you turn `shadow-adjudication` on. `incident-response` is where alerts land when nothing else fits and cannot be turned off.
+* **workflows:** each workflow now has an on/off switch in the console (`PUT /api/workflows/{id}/enabled`, stored as `workflows.disabled`), and nothing starts a workflow while it is off ([#1623](https://github.com/Vigil-SOC/vigil/issues/1623)). `DAEMON_THREAT_HUNT_ENABLED` and `ORCHESTRATOR_SHADOW_ADJUDICATION` are gone from the environment, compose and Helm values; setting them has no effect. Shadow adjudication is off until you turn `shadow-adjudication` on. `incident-response` (where alerts land when nothing else fits) and `threat-hunt` (the scheduled and threat-intel hunts) cannot be turned off, and a `workflows.disabled` row that lists either has no effect ([#3468](https://github.com/Vigil-SOC/vigil/issues/3468)).
 * **logging:** the backend, daemon and llm-worker now write one JSON object per line to stdout and `vigil.log` whether or not `VIGIL_OTEL_ENABLED` is set, each with a `msg_template` field (and `exc_type` on exceptions) for grouping ([#1563](https://github.com/Vigil-SOC/vigil/issues/1563)). Set `VIGIL_LOG_FORMAT=text` for the old plain format; `./start.sh` in the foreground defaults to text. The daemon's `log_format` is gone. Third-party loggers (httpx, httpcore, sqlalchemy.engine, urllib3, watchfiles, asyncio) are pinned at WARNING.
 * **compose:** the State Directory (`master.key`, `secrets.enc`) and `data/investigations` now live in the `vigil_home` and `vigil_investigations` named volumes, shared by `backend`, `soc-daemon` and `llm-worker` ([#1263](https://github.com/Vigil-SOC/vigil/issues/1263)). The first `up` after this change recreates those containers and drops whatever is still in their writable layers. Save the backend's copy first: `docker cp deeptempo-backend:/home/vigil/.vigil ./vigil-state-backup`. After the upgrade, copy it into the volume and restart: `docker cp ./vigil-state-backup/. deeptempo-backend:/home/vigil/.vigil/ && docker exec -u 0 deeptempo-backend chown -R 1000:1000 /home/vigil/.vigil && docker compose restart backend soc-daemon llm-worker`.
 * **desktop:** Bifrost's runtime settings (provider keys, virtual keys, budgets, rate limits) now persist in a `bifrost_data` named volume, so they survive quitting the app ([#1452](https://github.com/Vigil-SOC/vigil/issues/1452)). Earlier versions kept them in an anonymous volume that every quit orphaned; those are not migrated, so re-enter any Bifrost settings made in its UI once. Providers seeded from environment variables come back on their own. Reclaim the orphaned volumes with `docker volume prune`.
 * **compose:** Bifrost's request log (`logs.db`) now lives in the `bifrost_data` volume, so gateway log history, cost time series and `recalculate-cost` survive a container recreate ([#1454](https://github.com/Vigil-SOC/vigil/issues/1454)). It was written to `/app/logs.db` in the container's writable layer. Applies to the server and desktop standalone stacks. The config store is untouched, so no volume reset is needed. History already in `/app/logs.db` is not migrated: the first recreate drops it, as every recreate did before. Snapshots still leave `logs.db` out, and a restore moves the live one aside into `.pre-restore-<stamp>` in the Bifrost data directory rather than restoring it.
+
+## [1.0.0](https://github.com/Vigil-SOC/vigil/compare/v0.10.3...v1.0.0) (2026-10-29)
+
+
+### Miscellaneous Chores
+
+* release 1.0.0 ([#3489](https://github.com/Vigil-SOC/vigil/issues/3489)) ([4a5348f](https://github.com/Vigil-SOC/vigil/commit/4a5348feb90bc8092396a72e23fd1a30fa5d0bca))
+
+## [0.10.3](https://github.com/Vigil-SOC/vigil/compare/v0.10.2...v0.10.3) (2026-10-29)
+
+## What's Changed
+* fix: Make Overview's alert rule the one rule Triage reads by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/3486
+* Keep a triage verdict the LLM worker is already producing by @ShmalexM in https://github.com/Vigil-SOC/vigil/pull/3481
+* Wait for the finding summary instead of giving up at 180 s by @ShmalexM in https://github.com/Vigil-SOC/vigil/pull/3482
+* Let a run no person started reject only its own run's approvals by @ShmalexM in https://github.com/Vigil-SOC/vigil/pull/3483
+* chore: release 0.10.3 by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/3487
+* chore(main): release 0.10.3 by @vigil-release-please[bot] in https://github.com/Vigil-SOC/vigil/pull/3488
+
+
+**Full Changelog**: https://github.com/Vigil-SOC/vigil/compare/v0.10.2...v0.10.3
+
+## [0.10.2](https://github.com/Vigil-SOC/vigil/compare/v0.10.1...v0.10.2) (2026-10-29)
+
+## What's Changed
+* Show vendor logos on source chips and the Overview; add the Elastic logo by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/3465
+* Overview outcome counts open lists that show the same number by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/3467
+* Cases chip counts follow the alerts_from range an Overview link opens with by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/3472
+* Ask before the agent drawer discards unsaved edits by @ShmalexM in https://github.com/Vigil-SOC/vigil/pull/3466
+* Command bar: one Enter or click runs a typed command by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3476
+* Workflows: threat-hunt is always on, like incident-response by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3475
+* The case sits beside Ask Vigil instead of under it by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3474
+* chore: release 0.10.2 by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/3479
+* Don't count a run a person rejected as the workflow failing by @ShmalexM in https://github.com/Vigil-SOC/vigil/pull/3477
+* chore(main): release 0.10.2 by @vigil-release-please[bot] in https://github.com/Vigil-SOC/vigil/pull/3480
+
+
+**Full Changelog**: https://github.com/Vigil-SOC/vigil/compare/v0.10.1...v0.10.2
+
+## [0.10.1](https://github.com/Vigil-SOC/vigil/compare/v0.10.0...v0.10.1) (2026-10-29)
+
+## What's Changed
+* Hide Health from the More menu and command bar, keeping /health (#3383) by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/3384
+* Every gate checks the name it declares; nothing checks settings.* by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3374
+* Say AutoOps is off on Triage, Home, Overview and the status line by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3375
+* Ask once to isolate a host, whether its alert named it by IP or hostname by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3364
+* Don't bill a budget park as wall time, so Keep going can resume the run by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3377
+* Strip case_data markers until stable so case text cannot close the brief by @ShmalexM in https://github.com/Vigil-SOC/vigil/pull/3359
+* [SW F7/F7a-1] medic-core pack source, rule test harness, I-1/I-2 ingest rules by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/2731
+* Run directives that decide or stop a run need ai_decisions.approve by @ShmalexM in https://github.com/Vigil-SOC/vigil/pull/3358
+* Triage API-stored findings within seconds instead of at the next backfill sweep by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/3385
+* Read AutoOps off from the Settings switch and send its buttons to Limits & autonomy by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3388
+* Show the triage verdict on the Triage queue; Score becomes Intake score by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3376
+* Drop the old audit stores once an install has earned it; keep their readers working (#3310) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3391
+* Medic sensor: LLM providers (default configured, active and keyed) (#2071) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3389
+* Medic API: incidents list and detail, sensors (#2084) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3390
+* Close a four-eyes gap in run directives; fix main's frontend build by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3386
+* CI and the dev environment build test databases with python -m core.upgrade; delete the dead seeding path by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3400
+* Don't count a step a person rejected as the agent failing by @ShmalexM in https://github.com/Vigil-SOC/vigil/pull/3370
+* Refuse the run's person a checkpoint approval when no pending row matches by @ShmalexM in https://github.com/Vigil-SOC/vigil/pull/3392
+* Stop the daemon responder from asking to isolate hosts; keep its executor and page PagerDuty on proposed containment by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/3402
+* Find an agent's tools by name or what they do, under the server that serves them (review fixes for #3394) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3407
+* Run a workflow on a real alert or case id, not a typed title (review fixes for #3371) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3409
+* Close an open case from its Summary by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/3415
+* Require a current MFA code to regenerate recovery codes by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3408
+* Show wall time used against its limit on a hunt's Limits panel by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3411
+* Start every run on a case, so a hunt stopped at a limit always has one to answer on by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/3418
+* Open Agents & workflows on the workflow, agent or skill a link names by @ShmalexM in https://github.com/Vigil-SOC/vigil/pull/3396
+* Open the Triage queue or Cases from each Overview outcome count, and the workflow from each agent card by @ShmalexM in https://github.com/Vigil-SOC/vigil/pull/3397
+* Show vendor logos on the integration catalog and connected list (PRD D6) (review fixes for #3399) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3419
+* Search the command bar through one endpoint, and find workflows, agents and skills (review fixes for #3398) by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/3420
+* Overview: keep a dominant outcome band from covering its neighbours (review fixes for #3393) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3421
+* Case full page: Collapse back to the side panel by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/3423
+* Prompt to pick a model after a provider key is saved by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3270
+* Use one name for queued alerts on Triage (#3412) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3425
+* Keep a dominant outcome band inside its own row on the Overview flow diagram (#3417) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3424
+* Put case tasks, relationships, merge and SLA changes on the trail (#3428) by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3430
+* Show alerts that never entered the queue on Triage (#3413) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3429
+* Delete the unit and integration tests by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3435
+* Drop the console shell's 1440px minimum width (#3416) by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3434
+* Show actions Vigil can't execute as recommendations, closed with their case by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3433
+* Land Dependabot bumps (web, desktop, Python) with regenerated locks by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3447
+* Add a Today / All toggle to Overview and Triage (#3414) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3446
+* Replace expired Discord invite link (#3450) by @johnvanlowe in https://github.com/Vigil-SOC/vigil/pull/3451
+* Medic reads agent readiness on every shape by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3454
+* Home recommendation cards: View case first and primary, Close case second and ghost by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/3456
+* Findings so far: rows open in place, lists past six show a count by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/3458
+* Case page: one Close case button on the title row, on every tab by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/3460
+* chore(main): release 0.10.1 by @vigil-release-please[bot] in https://github.com/Vigil-SOC/vigil/pull/3406
+
+
+**Full Changelog**: https://github.com/Vigil-SOC/vigil/compare/v0.10.0...v0.10.1
 
 ## [0.10.0](https://github.com/Vigil-SOC/vigil/compare/v0.9.0...v0.10.0) (2026-10-28)
 

@@ -10,6 +10,7 @@ reaches the engine on the next one.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -22,7 +23,7 @@ from typing import Any
 
 import yaml
 
-from services.medic.engine import Engine, LoadedRule, load_rule_file
+from services.medic.engine import Engine, LoadedRule, load_rule, load_rule_file
 from services.medic.router import Router
 from services.medic.sensors import (
     Bus,
@@ -41,6 +42,10 @@ log = logging.getLogger("services.medic")
 TICK_S = 15  # semantics.md §1
 DEV_RULES_DIR = Path(__file__).resolve().parents[1] / "rules" / "dev"
 DEV_SUPPRESSION = DEV_RULES_DIR / "suppression.yaml"
+# Several Helm series share this signal. Ungrouped, the newest read is
+# ambiguous_series and the rule never fires. Compose and host-native have no
+# pod label, so the file stays ungrouped and Helm adds the group at load.
+WORKER_NOT_READY = "pipeline.agent-worker-not-ready"
 GROUP_CAP = 64  # live groups per rule (semantics.md §3)
 ENGINE_STATE_VERSION = 1
 
@@ -52,6 +57,24 @@ def load_dev_rules(directory: Path = DEV_RULES_DIR) -> list[LoadedRule]:
         for p in sorted(directory.glob("*.yaml"))
         if p.name != DEV_SUPPRESSION.name
     ]
+
+
+def rules_for_shape(shape: str, directory: Path = DEV_RULES_DIR) -> list[LoadedRule]:
+    """`load_dev_rules`, with the worker rule grouped by pod on Helm."""
+    rules = load_dev_rules(directory)
+    if shape != "helm":
+        return rules
+    return [
+        _group_worker_by_pod(rule) if rule.id == WORKER_NOT_READY else rule
+        for rule in rules
+    ]
+
+
+def _group_worker_by_pod(loaded: LoadedRule) -> LoadedRule:
+    doc = copy.deepcopy(loaded.rule)
+    doc["signals"]["ready"]["sample"]["by"] = ["pod"]
+    doc["group_by"] = ["pod"]
+    return load_rule(doc, pack=loaded.pack)
 
 
 def load_dev_suppression(path: Path = DEV_SUPPRESSION) -> list[dict[str, Any]]:

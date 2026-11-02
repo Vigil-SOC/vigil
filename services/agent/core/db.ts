@@ -1,10 +1,10 @@
 import type { PoolConfig } from "pg";
 
-// DATABASE_URL wins so CI and the integration test keep passing a DSN, but a
-// deployed process has no DSN to pass: the chart ships discrete POSTGRES_* vars
-// because Kubernetes `$(VAR)` substitution does no URL-encoding, so a password
-// containing @ or / would render a malformed one (infra/helm/vigil/templates/
-// _env.tpl). pg takes the parts, so nothing needs encoding either way.
+// DATABASE_URL wins when it is set, but a deployed process has no DSN to pass:
+// the chart ships discrete POSTGRES_* vars because Kubernetes `$(VAR)`
+// substitution does no URL-encoding, so a password containing @ or / would render
+// a malformed one (infra/helm/vigil/templates/_env.tpl). pg takes the parts, so
+// nothing needs encoding either way.
 //
 // Here rather than in worker.ts because both entry points open a pool: the worker
 // drains the queue and serve answers the HTTP surface, and they are separate

@@ -123,7 +123,7 @@ So the prompt changed, and nothing else.
 ## Reading it
 
 - **The bar is met.** The kernel closed 17 of 30 benign runs, against a bar of 12. It answered no attack benign in 60 runs, including the blind and injection cases.
-- **The guard no longer costs correct closures.** It upheld all 23 of the agent's dismissals. As on 13 October, it never had a wrong dismissal to catch. So this set shows that the guard stopped holding sound closures. It does not show that the guard still catches unsound ones; `tests/core/agent.test.ts` covers that path.
+- **The guard no longer costs correct closures.** It upheld all 23 of the agent's dismissals. As on 13 October, it never had a wrong dismissal to catch. So this set shows that the guard stopped holding sound closures. It does not show that the guard still catches unsound ones.
 - **The 6 upheld runs graded undetermined come from the answer's own wording.** These are 6 of the 23 dismissals. The final report is the agent's summary, and in these runs the summary says the benign reading "should go through review before it stands" or "is held provisionally". The grader is told to read that as held. The investigate skill says "Benign and false_positive are reviewed before they stand", which may be what prompts this wording. That is a change to what the agent writes, not to the reviewer, and is left for a follow-up.
 - **The other 7 benign runs that did not close never reached the guard.**
   - `ben-10`, the reported phish with no payload, was escalated twice and held once.

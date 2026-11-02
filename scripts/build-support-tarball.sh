@@ -1,6 +1,6 @@
 #!/bin/sh
 # Build the vigil-support release asset: vigil-support-<version>.tar.gz and its
-# .sha256, in <outdir>. The release workflow and the tests run this same script.
+# .sha256, in <outdir>. The release workflow runs this same script.
 # Usage: scripts/build-support-tarball.sh <version> <outdir>   (version has no leading "v")
 set -eu
 

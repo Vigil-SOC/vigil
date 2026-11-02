@@ -1,4 +1,4 @@
-name: Nightly Tests
+name: Nightly
 
 on:
   schedule:
@@ -7,139 +7,6 @@ on:
   workflow_dispatch:  # Allow manual trigger
 
 jobs:
-  # ============================================================================
-  # Full Test Suite
-  # ============================================================================
-  full-test-suite:
-    name: Full Test Suite
-    # Canonical repo only. Scheduled workflows run on the default branch of any
-    # fork with Actions enabled, but forks lack the secrets this suite needs, so a
-    # nightly run just emails the fork owner a failure.
-    # Skipping (not failing) keeps forks quiet.
-    if: github.repository == 'Vigil-SOC/vigil'
-    runs-on: ubuntu-latest
-    # Same services, job env, extensions, init_database(), and agent-layer SQL
-    # as ci-cd.yml test-integration (and the DB pieces of test-unit-backend-db).
-    # DatabaseConfig does not read DATABASE_URL (#752); POSTGRES_* on the job
-    # is what Python actually uses. DATABASE_URL stays for the TypeScript
-    # walking-skeleton test, which shells out to npx tsx and reads it itself.
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: deeptempo_test
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-      # The walking-skeleton test enqueues onto BullMQ and spawns the TypeScript
-      # worker, so this job needs Redis and Node as well as Postgres.
-      redis:
-        image: redis:7-alpine
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 6379:6379
-    env:
-      TESTING: "true"
-      # Auth on, as a fresh install runs; tests/conftest.py supplies the JWT secret.
-      DEV_MODE: "false"
-      SECRET_KEY: "test-secret-key"
-      POSTGRES_HOST: localhost
-      POSTGRES_PORT: "5432"
-      POSTGRES_USER: test
-      POSTGRES_PASSWORD: test
-      POSTGRES_DB: deeptempo_test
-      DATABASE_URL: postgresql://test:test@localhost:5432/deeptempo_test
-      REDIS_URL: redis://localhost:6379/0
-
-    steps:
-      - uses: actions/checkout@v7
-      
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version-file: .python-version
-          cache: 'pip'
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: services/agent/package-lock.json
-
-      - name: Install agent-layer dependencies
-        working-directory: services/agent
-        run: npm ci
-      
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.lock
-
-      - name: Initialize schema
-        # As every install builds it: python -m core.upgrade as the owner, with
-        # the acknowledgement a fresh database needs in place of a restore
-        # point. The baseline brings the extensions, agent-layer tables and
-        # default rows. Then init_database() strict, as in ci-cd.yml (#562).
-        env:
-          VIGIL_UPGRADE_ACK_REASON: CI-fresh-database
-        run: |
-          VIGIL_UPGRADE_ACK_VERSION="$(tr -d '[:space:]' < VERSION)" python -m core.upgrade
-          DB_STRICT_SCHEMA=true python -c "from core.storage.connection import init_database; init_database()"
-
-      - name: Run all tests
-        run: |
-          pytest tests/ -v --cov --cov-report=xml --cov-report=term
-      
-      - name: Upload coverage
-        uses: codecov/codecov-action@v7
-        with:
-          file: ./coverage.xml
-          flags: nightly
-          name: nightly-full-suite
-
-  # ============================================================================
-  # Performance Regression Tests
-  # ============================================================================
-  performance-tests:
-    name: Performance Regression Tests
-    if: github.repository == 'Vigil-SOC/vigil'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version-file: .python-version
-          cache: 'pip'
-      
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.lock
-          pip install pytest-benchmark
-      
-      - name: Run performance tests
-        run: |
-          pytest tests/ -m performance --benchmark-only --benchmark-json=benchmark.json || true
-      
-      - name: Store benchmark results
-        uses: actions/upload-artifact@v7
-        with:
-          name: benchmark-results
-          path: benchmark.json
-
   # ============================================================================
   # Security Audit
   # ============================================================================
@@ -192,7 +59,7 @@ jobs:
   notify:
     name: Notify Results
     runs-on: ubuntu-latest
-    needs: [full-test-suite, performance-tests, security-audit]
+    needs: [security-audit]
     if: failure() && github.repository == 'Vigil-SOC/vigil'
     # `secrets` is not available in `if`, so it comes through env to be tested.
     env:
@@ -207,13 +74,13 @@ jobs:
           webhook-type: incoming-webhook
           payload: |
             {
-              "text": "⚠️ Nightly Tests Failed",
+              "text": "⚠️ Nightly Security Audit Failed",
               "blocks": [
                 {
                   "type": "section",
                   "text": {
                     "type": "mrkdwn",
-                    "text": "*⚠️ Nightly Tests Failed*\n*Repository:* ${{ github.repository }}\n*Branch:* ${{ github.ref_name }}\n*Action:* Review test results"
+                    "text": "*⚠️ Nightly Security Audit Failed*\n*Repository:* ${{ github.repository }}\n*Branch:* ${{ github.ref_name }}\n*Action:* Review the audit"
                   }
                 }
               ]

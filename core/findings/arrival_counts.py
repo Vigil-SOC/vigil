@@ -24,21 +24,21 @@ def utc_day_bounds(day: Optional[date] = None) -> tuple[datetime, datetime]:
     return start, start + timedelta(days=1)
 
 
-def arrivals_today_by_source(day: Optional[date] = None) -> list[dict]:
-    """Findings with ``created_at`` on that day, grouped by ``data_source``.
+def arrivals_today_by_source(
+    day: Optional[date] = None, *, all_time: bool = False
+) -> list[dict]:
+    """Findings with ``created_at`` on that day, or ever with ``all_time``, grouped by ``data_source``.
 
     An enabled federation source with no arrivals is still a source, at
     zero. The group-by alone would drop it.
     """
-    start, end = utc_day_bounds(day)
     db = get_db_manager()
     with db.session_scope() as session:
-        grouped = (
-            session.query(Finding.data_source, func.count(Finding.finding_id))
-            .filter(Finding.created_at >= start, Finding.created_at < end)
-            .group_by(Finding.data_source)
-            .all()
-        )
+        query = session.query(Finding.data_source, func.count(Finding.finding_id))
+        if not all_time:
+            start, end = utc_day_bounds(day)
+            query = query.filter(Finding.created_at >= start, Finding.created_at < end)
+        grouped = query.group_by(Finding.data_source).all()
         enabled = {
             row[0]
             for row in session.query(FederationSource.source_id)

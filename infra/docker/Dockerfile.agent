@@ -34,7 +34,7 @@ COPY services/agent/package.json services/agent/package-lock.json ./
 RUN npm ci
 
 COPY services/agent/ ./
-# tsconfig.json is noEmit so typecheck and vitest keep working untouched;
+# tsconfig.json is noEmit so typecheck keeps working untouched;
 # tsconfig.build.json is the emit config and exists only for this step.
 RUN npm run build
 

@@ -232,10 +232,15 @@
    .source-chip svg {
       flex: none;
    }
+   /* white tile in both themes so brand colours stay legible on the tinted chip */
    .source-chip-logo {
       flex: none;
-      width: 12px;
-      height: 12px;
+      box-sizing: border-box;
+      width: 14px;
+      height: 14px;
+      padding: 1px;
+      border-radius: 3px;
+      background: #fff;
       object-fit: contain;
    }
 
@@ -6008,6 +6013,13 @@
       gap: 20px;
    }
 
+   .tq-head-r {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+   }
+
    .tq-title {
       display: flex;
       flex-direction: column;
@@ -6186,7 +6198,7 @@
    .tq-table thead th:nth-child(2) { width: 124px; }
    .tq-table thead th:nth-child(4) { width: 190px; }
    .tq-table thead th:nth-child(5) { width: 108px; }
-   .tq-table thead th:nth-child(6) { width: 96px; }
+   .tq-table thead th:nth-child(6) { width: 116px; } /* fits "26 Oct 12:40" on an older row */
    .tq-table thead th:nth-child(7) { width: 108px; }
    .tq-table thead th:nth-child(8) { width: 176px; }
    .tq-table thead th:nth-child(9) { width: 20%; }
@@ -6247,6 +6259,9 @@
    .tq-pill.launched { background: var(--good-bg); color: var(--good); }
    .tq-pill.merged { background: var(--ac-bg); color: var(--ac); }
    .tq-pill.expired { color: var(--tx2); }
+   .tq-pill.not_picked_up,
+   .tq-pill.dismissed,
+   .tq-pill.excluded { color: var(--tx3); }
 
    .tq-why {
       display: block;

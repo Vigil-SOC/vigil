@@ -10,10 +10,8 @@ in ``services/api/main.py``.
 A router's **short name** is its filename minus any ``_router`` suffix
 (``core/cases/case_metrics_router.py`` and a parked ``cases.py`` read as
 ``case_metrics``/``cases``). Mount order is alphabetical by that name, matching
-the pre-#488 order. That stays safe because no route in one router shadows a
-route in another —
-``tests/unit/test_router_discovery.py::test_no_cross_router_path_shadowing``
-fails loudly the day that stops being true.
+the pre-#488 order. That stays safe only while no route in one router shadows
+a route in another.
 """
 
 from __future__ import annotations

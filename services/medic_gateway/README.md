@@ -40,20 +40,16 @@ python -m services.medic_gateway run
 python -m services.medic_gateway check   # exit 0 if both listeners answer
 ```
 
-## Tests
+## Checks
 
 Its own lock (no runtime dependencies; dev only). From the repo root, with the
-venv outside `services/` (the repo's ratchets scan every `.py` under it):
+venv outside `services/`:
 
 ```
-UV_PROJECT_ENVIRONMENT=../../.venv-medic-gateway uv run --project services/medic_gateway pytest services/medic_gateway
 UV_PROJECT_ENVIRONMENT=../../.venv-medic-gateway uv run --project services/medic_gateway ruff check services/medic_gateway
 UV_PROJECT_ENVIRONMENT=../../.venv-medic-gateway uv run --project services/medic_gateway ruff format --check services/medic_gateway
 UV_PROJECT_ENVIRONMENT=../../.venv-medic-gateway uv run --project services/medic_gateway lint-imports
 ```
-
-`tests/cases.py` is the bypass table (C3 check 10); `tests/test_inbound.py` pins
-the inbound list to `services/medic/contracts/medic-api.openapi.yaml`.
 
 ## Image
 

@@ -109,7 +109,7 @@ class Candidate:
 # journals as a visibility gap rather than running blind.
 CAPABILITIES: Dict[str, Tuple[Candidate, ...]] = {
     "telemetry_search": (
-        # In-repo servers, verified against their own list_tools() by a ratchet.
+        # In-repo servers, whose list_tools() names these tools.
         # splunk_execute first: it takes earliest, which nl_search cannot express.
         Candidate("splunk-selfhosted", ("splunk_execute", "splunk_nl_search")),
         Candidate("elastic", ("elastic_search_logs", "elastic_search_by_ioc")),
@@ -188,8 +188,7 @@ def _bound_capabilities(
     return bound
 
 
-# Flattened once, so the caller matching the catalogue and the ratchet checking it
-# read from one definition.
+# Flattened once, so every caller matching the catalogue reads from one definition.
 def _candidate_names(capability: str) -> Tuple[str, ...]:
     return tuple(name for name, _server in _candidates_by_name(capability))
 
@@ -429,7 +428,7 @@ def resolve(
 
 
 # What the threathunt arch asks for, by capability. Duplicated across the language
-# boundary for the same reason RUN_KINDS is, and held to it by a ratchet.
+# boundary for the same reason RUN_KINDS is, and must match it.
 HUNT_CAPABILITIES = (
     "findings_search",
     # One alert's whole record, its raw source evidence included. A page of findings
@@ -448,7 +447,7 @@ HUNT_CAPABILITIES = (
 HUNT_ITERATIONS = 8
 
 # The model calls one iteration may spend: the hunt plugin's stated allowance
-# (services/agent/plugins/hunt/plugin.yaml), held to it by a ratchet.
+# (services/agent/plugins/hunt/plugin.yaml).
 CALLS_PER_ITERATION = 60
 # 90 minutes of wall: at several minutes an iteration, a half-hour ceiling ends the
 # hunt on the clock with most of its cost budget unspent.
@@ -626,8 +625,8 @@ def resolve_root_cause(
 CHECKPOINT_POLICIES = ("ask", "auto")
 
 # The four moments a hunt may stop and ask, and what each does unless a definition
-# says otherwise. Mirrored from services/agent/plugins/hunt/checkpoints.ts and
-# held to it by a ratchet, so the reader can show a class the engine really has.
+# says otherwise. Mirrored from services/agent/plugins/hunt/checkpoints.ts, so the
+# reader can show a class the engine really has.
 CHECKPOINT_CLASSES = (
     "hypothesis_approval",
     "scope_extension",

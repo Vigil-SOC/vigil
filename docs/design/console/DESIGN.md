@@ -42,15 +42,15 @@ Tokens in `tokens/`. Two themes, neutral grays, one accent. Summary:
 
 ## 7. Layout
 
-- Root min-width 1440px; fluid above. Header 52px (logo · command bar ⌘K · autonomy chip · avatar; the Needs you island is phase 2) + nav 46px.
+- Root is fluid with no minimum width; tables wider than their space scroll inside their own card. Header 52px (logo · command bar ⌘K · autonomy chip · avatar; the Needs you island is phase 2) + nav 46px.
 - Case drawer 75% width over a scrim; expand toggles to 100% (icons `expand`/`shrink`). Side panel 280px. Drawer z 28: above page, below header (30) and menus (60).
 - Chat dock 400px when off a case.
 
 ### Screen rules
 
-Check every screen you change against these at 1440px and at 1920px, in a real browser with real data. Unit tests do not lay a page out, so none of this is caught by them.
+Check every screen you change against these at 1440px and at 1920px, in a real browser with real data.
 
-- **Nothing sideways.** No content is reachable only by scrolling sideways, and a row's primary action is on screen without scrolling. An element whose `scrollWidth` exceeds its `clientWidth` breaks this rule.
+- **Nothing sideways.** No content is reachable only by scrolling sideways, and a row's primary action is on screen without scrolling. An element whose `scrollWidth` exceeds its `clientWidth` breaks this rule, except a table that scrolls inside its own card.
 - **Prose wraps, then stops.** In tables, descriptions, summaries and other free text wrap, so a long one cannot decide a column's width, and stop at two lines with an ellipsis, so it cannot make its row tall. The full text is on hover (`title`) and wherever the row opens. Only IDs, numbers, times, chips and action buttons stay on one line.
 - **Rows stay even.** A cell that would grow its row far past its neighbours (a stack of chips, for example) shows the first few and "+N".
 - **Names match the nav.** A screen's heading uses the nav label (§2): the Agents & workflows screen is headed "Agents & workflows".

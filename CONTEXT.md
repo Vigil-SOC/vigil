@@ -366,9 +366,9 @@ _Avoid_: snapshot, baseline, fixture (a fixture is an input; a Golden is an
 expected output)
 
 **Fold Equivalence**:
-The property the gate asserts — every Fold over a historical Ledger reproduces
-its Golden byte-for-byte, projection and derivations alike. Its inputs are the
-pre-harness Ledgers under `tests/fixtures/runs/`; a run recorded by current code
+The property that every Fold over a historical Ledger reproduces its Golden
+byte-for-byte, projection and derivations alike. Its inputs are the pre-harness
+Ledgers under `services/agent/tests/fixtures/runs/`; a run recorded by current code
 is **Replay**'s fixture and not one of these.
 
 **Replay**:
@@ -377,7 +377,7 @@ against what was journaled at the time: the **Digest** from the events before th
 decision, and the recalled rows from the **Recall Event**. Distinct from **Fold
 Equivalence** — that check compares this implementation against the one it
 replaced, over a fixture population closed to old-format Ledgers, while a Replay
-reads a run this code recorded (`tests/fixtures/replay/`). A Replay that
+reads a run this code recorded (`services/agent/tests/fixtures/replay/`). A Replay that
 re-queried **Episodic Memory** rather than reading the journaled rows would read a
 neighbourhood that has moved since the run, and pass while showing a decision
 something it never saw.
@@ -430,8 +430,7 @@ _Avoid_: page, tab, view
   second one drifts. An **Unavailable Read** is not that second copy: it is the
   account of a read that did not happen, which only the harness ever writes.
   Declared in `core/memory/recall_contract.py` and
-  `services/agent/contracts/memory.ts`, with a ratchet that fails when they
-  disagree
+  `services/agent/contracts/memory.ts`, which must agree
 - **Ingestion** produces **Findings** and depends on **Storage** (never the reverse)
 - **Federation** drives **Ingestion** (an adapter wraps an ingestion service);
   Ingestion never depends on Federation

@@ -46,22 +46,16 @@ python -m services.medic_dockerproxy run
 python -m services.medic_dockerproxy check   # exit 0 if /_ping answers 200 through the proxy
 ```
 
-## Tests
+## Checks
 
 Its own lock (no runtime dependencies; dev only). From the repo root, with the
-venv outside `services/` (the repo's ratchets scan every `.py` under it):
+venv outside `services/`:
 
 ```
-UV_PROJECT_ENVIRONMENT=../../.venv-medic-dockerproxy uv run --project services/medic_dockerproxy pytest services/medic_dockerproxy
 UV_PROJECT_ENVIRONMENT=../../.venv-medic-dockerproxy uv run --project services/medic_dockerproxy ruff check services/medic_dockerproxy
 UV_PROJECT_ENVIRONMENT=../../.venv-medic-dockerproxy uv run --project services/medic_dockerproxy ruff format --check services/medic_dockerproxy
 UV_PROJECT_ENVIRONMENT=../../.venv-medic-dockerproxy uv run --project services/medic_dockerproxy lint-imports
 ```
-
-Most tests use a fake Docker on a Unix socket (`tests/conftest.py`; fixtures are
-real Docker 29.4 / API 1.54 replies with a planted secret).
-`tests/test_live_docker.py` is SP2's 43 against a live engine (C3 check 4 with
-the negative control); it skips without a Docker socket and must run in CI.
 
 ## Image
 

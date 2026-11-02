@@ -1,55 +1,100 @@
 """One read of the intake queue for the Triage screen.
 
-The strip and ``counts`` cover the whole ``intake_triggers`` table, as SQL
-aggregates. Kind, source, and state narrow only the returned rows, in SQL before
-the cap; only the rows returned are loaded and presented. Ranking is
-``rank_intake_row``; this module does not keep a second sort key.
+One row per alert, built from ``Finding``. Which group an alert is in is
+``alert_outcomes.alert_group``, the rule Overview reads: ``dismissed``, ``on_case``
+(``launched`` when its latest intake row launched, else ``merged``), ``excluded``,
+``queued`` or ``not_picked_up``. The latest intake row only adds detail. Ask and schedule
+rows have no alert and are all kept, with their own intake state. ``counts``
+cover all of them, as SQL aggregates. Kind, source, and state narrow only the returned rows,
+in SQL before the cap; only the rows returned are loaded and presented. Ranking
+is ``rank_intake_row``; this module does not keep a second sort key.
 """
 
 from __future__ import annotations
 
+import hashlib
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import case, distinct, func, literal
+from sqlalchemy import (
+    String,
+    and_,
+    case,
+    cast,
+    distinct,
+    exists,
+    func,
+    literal,
+    null,
+)
+from sqlalchemy.orm import aliased
 
 from core.federation.lag import source_collection_lag
+from core.findings.alert_outcomes import _cases_for, alert_group
 from core.findings.arrival_counts import arrivals_today_by_source, utc_day_bounds
 from core.findings.source_evidence import project_finding_source_evidence_for_list
 from core.findings.source_link import resolve_source_link
 from core.storage.connection import get_db_manager
-from core.storage.models import Case, Finding, IntakeTrigger, Investigation
+from core.storage.models import (
+    Case,
+    Finding,
+    IntakeTrigger,
+    Investigation,
+)
 from core.storage.shared_ioc_repository import CaseMatch
 from core.time import utcnow
 from services.daemon.config import OrchestratorConfig
 from services.daemon.orchestrator import _link_note, intake_rank_inputs, rank_intake_row
 
 ROW_CAP = 200
-ARRIVAL_INFO = "Arrivals count every finding stored today. The list is the intake rows."
+ARRIVAL_INFO = (
+    "Arrivals count every finding stored today. The list is one row per alert."
+)
 _PICKUP_STATES = ("launched", "merged")
-# Not an intake state: rows whose alert was marked as noise, whatever their intake
-# state, so the Overview's "Dismissed as noise" count can open the queue at them.
+# Alert states: Overview's groups spoken in Triage's words (see _rows). Not intake states.
 NOISE_STATE = "dismissed"
+NOT_PICKED_UP = "not_picked_up"
+EXCLUDED_STATE = "excluded"
+# An alert whose finding has no data_source counts and filters under this name.
+UNKNOWN_SOURCE = "Unknown"
+NOISE_LABEL = "Dismissed as noise"
 
-# The ⓘ copy for each strip figure, worded from what _strip counts.
+ARRIVAL_INFO_ALL = "Arrivals count every finding stored. The list is one row per alert."
+_TRUST_FLOOR_INFO = {
+    "source": "Not recorded yet: Vigil keeps no per-source trust score.",
+    "calculation": "The lowest score a finding needs before it is picked up automatically.",
+    "limit": "No score is computed, so no floor can be shown.",
+}
+# The ⓘ copy for each strip figure, worded from what _strip counts, per range.
 STRIP_INFO = {
     "picked_up": {
         "source": "Intake rows, all kinds, created today (UTC day).",
         "calculation": "Rows that launched a workflow or merged into a case, divided by rows created today.",
     },
     "waiting": {
-        "source": "Intake rows still queued, from any day.",
-        "calculation": "A count of rows in the Waiting state right now.",
+        "source": "Alerts that arrived today (UTC day) and are waiting for triage.",
+        "calculation": "A count of alerts in the Waiting state right now, as Overview counts them. Noise-marked alerts, alerts on a case and alerts naming an excluded IP are left out; queued schedule and ask rows are not alerts.",
     },
     "cases_created_today": {
         "source": "Intake rows launched today (UTC day) that opened a case.",
         "calculation": "The number of distinct cases across those rows.",
     },
-    "trust_floor": {
-        "source": "Not recorded yet: Vigil keeps no per-source trust score.",
-        "calculation": "The lowest score a finding needs before it is picked up automatically.",
-        "limit": "No score is computed, so no floor can be shown.",
+    "trust_floor": _TRUST_FLOOR_INFO,
+}
+STRIP_INFO_ALL = {
+    "picked_up": {
+        "source": "Intake rows, all kinds, from any day.",
+        "calculation": "Rows that launched a workflow or merged into a case, divided by all rows.",
     },
+    "waiting": {
+        "source": "Alerts waiting for triage, from any day.",
+        "calculation": "A count of alerts in the Waiting state right now, as Overview counts them. Noise-marked alerts, alerts on a case and alerts naming an excluded IP are left out; queued schedule and ask rows are not alerts.",
+    },
+    "cases_created_today": {
+        "source": "Intake rows from any day that launched and opened a case.",
+        "calculation": "The number of distinct cases across those rows.",
+    },
+    "trust_floor": _TRUST_FLOOR_INFO,
 }
 
 _KIND_LABELS = {
@@ -98,6 +143,12 @@ def _state_label(
         return "Added to a case", merged_into if merged_into in case_ids else None
     if state == "expired":
         return "Expired", None
+    if state == NOT_PICKED_UP:
+        return "Not picked up", None
+    if state == NOISE_STATE:
+        return NOISE_LABEL, None
+    if state == EXCLUDED_STATE:
+        return "Excluded", None
     return state, None
 
 
@@ -137,10 +188,11 @@ def _ranking(row: dict, now: datetime, config: OrchestratorConfig) -> dict:
     }
 
 
-def _sources(day: date, now: datetime) -> list[dict]:
-    """Arrivals already keep enabled sources. Lag only annotates those."""
+def _sources(day: Optional[date], now: datetime) -> list[dict]:
+    """Arrivals in range (all time when ``day`` is None) already keep enabled sources. Lag only annotates those."""
     arrivals = {
-        row["data_source"]: row["count"] for row in arrivals_today_by_source(day)
+        row["data_source"]: row["count"]
+        for row in arrivals_today_by_source(day, all_time=day is None)
     }
     lags = {row["source_id"]: row for row in source_collection_lag(now)}
     sources = []
@@ -157,68 +209,157 @@ def _sources(day: date, now: datetime) -> list[dict]:
     return sources
 
 
-def _source_column():
-    """A row's source name, over IntakeTrigger outer-joined to Finding."""
+def _finding_source(data_source):
+    return func.coalesce(func.nullif(data_source, ""), literal(UNKNOWN_SOURCE))
+
+
+def _other_source():
+    """The source name of a schedule or ask row: it has no alert."""
     return case(
         (IntakeTrigger.kind == "schedule", literal("Schedule")),
         (IntakeTrigger.kind == "human_ask", literal("Ask")),
-        else_=func.coalesce(Finding.data_source, ""),
+        else_=literal(UNKNOWN_SOURCE),
     )
 
 
-def _joined(session, *columns):
-    return (
-        session.query(*columns)
-        .select_from(IntakeTrigger)
-        .outerjoin(Finding, Finding.finding_id == IntakeTrigger.finding_id)
+def _rows(session, day: Optional[date]):
+    """Every alert in range as one row, plus the schedule and ask rows.
+
+    An alert's ``state`` comes from ``alert_group``. ``intake_id`` is its latest
+    intake row, null when it has none: a queued row is always the latest, since
+    only one may be queued per alert and a new row waits for the old to be decided.
+    ``arrived_at`` is when the alert arrived (an Ask or schedule row's own
+    creation); with ``day`` set only rows that arrived that UTC day are kept.
+    """
+    newer = aliased(IntakeTrigger)
+    alert = session.query(
+        Finding.finding_id.label("finding_id"),
+        Finding.data_source.label("data_source"),
+        Finding.severity.label("severity"),
+        Finding.created_at.label("arrived_at"),
+        alert_group().label("grp"),
     )
+    if day is not None:
+        start, end = utc_day_bounds(day)
+        alert = alert.filter(Finding.created_at >= start, Finding.created_at < end)
+    # OFFSET 0 keeps Postgres from inlining ``grp`` into each CASE and filter that
+    # reads it, so the group (and its exclusion scan) is computed once per alert.
+    alert = alert.offset(0).subquery("alerts")
+    alerts = (
+        session.query(
+            IntakeTrigger.id.label("intake_id"),
+            alert.c.finding_id.label("finding_id"),
+            cast(literal("detection"), String).label("kind"),
+            cast(
+                case(
+                    (alert.c.grp == "dismissed", literal(NOISE_STATE)),
+                    (
+                        alert.c.grp == "on_case",
+                        case(
+                            (IntakeTrigger.state == "launched", literal("launched")),
+                            else_=literal("merged"),
+                        ),
+                    ),
+                    (alert.c.grp == "excluded", literal(EXCLUDED_STATE)),
+                    (alert.c.grp == "scoring", literal("queued")),
+                    else_=literal(NOT_PICKED_UP),
+                ),
+                String,
+            ).label("state"),
+            _finding_source(alert.c.data_source).label("source"),
+            IntakeTrigger.priority.label("priority"),
+            alert.c.severity.label("severity"),
+            func.coalesce(IntakeTrigger.created_at, alert.c.arrived_at).label(
+                "created_at"
+            ),
+            # decided rows sort newest first by this; an undecided one by its arrival
+            func.coalesce(IntakeTrigger.decided_at, alert.c.arrived_at).label(
+                "order_at"
+            ),
+            alert.c.arrived_at.label("arrived_at"),
+        )
+        .select_from(alert)
+        .outerjoin(
+            IntakeTrigger,
+            and_(
+                IntakeTrigger.finding_id == alert.c.finding_id,
+                ~exists().where(
+                    newer.finding_id == IntakeTrigger.finding_id,
+                    newer.id > IntakeTrigger.id,
+                ),
+            ),
+        )
+    )
+    others = session.query(
+        IntakeTrigger.id,
+        IntakeTrigger.finding_id,
+        IntakeTrigger.kind,
+        IntakeTrigger.state,
+        _other_source(),
+        IntakeTrigger.priority,
+        cast(null(), String),
+        IntakeTrigger.created_at,
+        IntakeTrigger.decided_at,
+        IntakeTrigger.created_at,
+    ).filter(IntakeTrigger.kind != "detection")
+    if day is not None:
+        others = others.filter(
+            IntakeTrigger.created_at >= start, IntakeTrigger.created_at < end
+        )
+    return alerts.union_all(others).subquery("triage_rows")
 
 
-def _filtered(query, kind: Optional[str], source: Optional[str], state: Optional[str]):
+def _filtered(
+    query, rows, kind: Optional[str], source: Optional[str], state: Optional[str]
+):
     if kind:
-        query = query.filter(IntakeTrigger.kind == kind)
-    if state == NOISE_STATE:
-        query = query.filter(Finding.noise_marked_at.isnot(None))
-    elif state:
-        query = query.filter(IntakeTrigger.state == state)
+        query = query.filter(rows.c.kind == kind)
+    if state:
+        query = query.filter(rows.c.state == state)
     if source:
-        query = query.filter(_source_column() == source)
+        query = query.filter(rows.c.source == source)
     return query
 
 
-def _page_ids(
+# (intake_id, finding_id, state): an alert may have no intake row, and its state is the shared rule's.
+RowKey = tuple[Optional[int], Optional[str], str]
+
+
+def _page_keys(
     session,
+    rows,
     kind: Optional[str],
     source: Optional[str],
     state: Optional[str],
     now: datetime,
     config: OrchestratorConfig,
-) -> tuple[list[int], int]:
-    """The ids of the rows shown, in order, and how many rows match."""
+) -> tuple[list[RowKey], int]:
+    """``(intake_id, finding_id, state)`` of the rows shown, in order, and how many rows match."""
     matched = _filtered(
-        _joined(session, func.count(IntakeTrigger.id)), kind, source, state
+        session.query(func.count()).select_from(rows), rows, kind, source, state
     ).scalar()
     # Every queued row, with only what rank_intake_row reads; never ORDER BY severity.
     queued = []
     for row_id, row_kind, priority, created, finding_id, severity in _filtered(
-        _joined(
-            session,
-            IntakeTrigger.id,
-            IntakeTrigger.kind,
-            IntakeTrigger.priority,
-            IntakeTrigger.created_at,
-            Finding.finding_id,
-            Finding.severity,
-        ).filter(IntakeTrigger.state == "queued"),
+        session.query(
+            rows.c.intake_id,
+            rows.c.kind,
+            rows.c.priority,
+            rows.c.created_at,
+            rows.c.finding_id,
+            rows.c.severity,
+        ).filter(rows.c.state == "queued"),
+        rows,
         kind,
         source,
         state,
-    ).order_by(IntakeTrigger.id):
+    ).order_by(rows.c.intake_id):
         row = {
             "id": row_id,
             "kind": row_kind,
             "priority": priority,
             "created_at": _naive(created),
+            "finding_id": finding_id,
         }
         if finding_id is not None:
             row["_finding"] = {"severity": severity}
@@ -231,41 +372,55 @@ def _page_ids(
             promote_fraction=config.intake_ttl_promote_fraction,
         )
     )
-    ids = [row["id"] for row in queued[:ROW_CAP]]
-    room = ROW_CAP - len(ids)
+    keys: list[RowKey] = [
+        (row["id"], row["finding_id"], "queued") for row in queued[:ROW_CAP]
+    ]
+    room = ROW_CAP - len(keys)
     if room > 0:
-        # Newest decided first; a row with no decided_at sorts last.
-        ids += [
-            row_id
-            for (row_id,) in _filtered(
-                _joined(session, IntakeTrigger.id).filter(
-                    IntakeTrigger.state != "queued"
+        # Newest first; a decided row with no decided_at sorts last.
+        keys += [
+            (row_id, finding_id, row_state)
+            for row_id, finding_id, row_state in _filtered(
+                session.query(rows.c.intake_id, rows.c.finding_id, rows.c.state).filter(
+                    rows.c.state != "queued"
                 ),
+                rows,
                 kind,
                 source,
                 state,
             )
-            .order_by(IntakeTrigger.decided_at.desc().nullslast(), IntakeTrigger.id)
+            .order_by(
+                rows.c.order_at.desc().nullslast(),
+                rows.c.intake_id.nullsfirst(),
+                rows.c.finding_id,
+            )
             .limit(room)
         ]
-    return ids, matched
+    return keys, matched
+
+
+def _never_queued_id(finding_id: str) -> int:
+    """A stable negative id for a row with no intake id; intake ids are positive."""
+    digest = hashlib.sha256(finding_id.encode()).digest()
+    # 48 bits stay a safe integer in the browser
+    return -(int.from_bytes(digest[:6], "big") + 1)
 
 
 def _load(
-    session, ids: list[int]
+    session, keys: list[RowKey]
 ) -> tuple[list[dict], dict[str, dict], dict[str, str], set[str]]:
-    """The shown rows in ``ids`` order, and only their findings, workflows, cases."""
-    if not ids:
+    """The shown rows in ``keys`` order, and only their findings, workflows, cases."""
+    if not keys:
         return [], {}, {}, set()
-    sources = {}
+    ids = [row_id for row_id, _finding_id, _state in keys if row_id is not None]
     by_id = {}
-    for row, source in _joined(session, IntakeTrigger, _source_column()).filter(
-        IntakeTrigger.id.in_(ids)
-    ):
-        by_id[row.id] = row
-        sources[row.id] = source
+    if ids:
+        by_id = {
+            row.id: row
+            for row in session.query(IntakeTrigger).filter(IntakeTrigger.id.in_(ids))
+        }
     triggers = [by_id[row_id] for row_id in ids if row_id in by_id]
-    finding_ids = {row.finding_id for row in triggers if row.finding_id}
+    finding_ids = {fid for _row_id, fid, _state in keys if fid}
     findings: dict[str, dict] = {}
     if finding_ids:
         for finding in session.query(Finding).filter(
@@ -281,7 +436,16 @@ def _load(
                 "title": finding.title,
                 "description": finding.description,
                 "ai_enrichment": finding.ai_enrichment,
+                "created_at": finding.created_at,
             }
+    # The case Overview counts an on-case alert under, for a row with no door of its own.
+    linked = {
+        finding_id: case.case_id
+        for finding_id, case in _cases_for(
+            session,
+            [fid for _row_id, fid, state in keys if fid and state in _PICKUP_STATES],
+        ).items()
+    }
     inv_ids = {row.investigation_id for row in triggers if row.investigation_id}
     workflows: dict[str, str] = {}
     if inv_ids:
@@ -302,7 +466,16 @@ def _load(
         }
     case_ids = set(activities)
     rows = []
-    for row in triggers:
+    for row_id, finding_id, state in keys:
+        row = by_id.get(row_id) if row_id is not None else None
+        finding = findings.get(finding_id or "")
+        if row is None:
+            # an alert with no intake row
+            if finding is not None:
+                rows.append(
+                    _no_intake_row(finding, state, linked.get(finding_id or ""))
+                )
+            continue
         raw = row.payload if isinstance(row.payload, dict) else {}
         # The signed tool principal is for the worker, not the queue. A reader of
         # this row is not a holder of the internal token, and does not need it.
@@ -311,22 +484,59 @@ def _load(
             {
                 "id": row.id,
                 "kind": row.kind,
-                "state": row.state,
-                "source": sources[row.id],
+                "state": state,
+                "source": (
+                    _finding_name(finding)
+                    if row.kind == "detection"
+                    else _OTHER_SOURCES.get(row.kind, UNKNOWN_SOURCE)
+                ),
                 "priority": row.priority,
                 "finding_id": row.finding_id,
                 "payload": payload,
                 "investigation_id": row.investigation_id,
                 "case_id": row.case_id,
                 "merged_into": row.merged_into,
-                "merge_note": _merge_note(
-                    row, activities.get(row.merged_into or "", [])
+                "linked_case": linked.get(row.finding_id or ""),
+                "merge_note": (
+                    _merge_note(row, activities.get(row.merged_into or "", []))
+                    if state == "merged"
+                    else None
                 ),
                 "created_at": _naive(row.created_at),
                 "decided_at": _naive(row.decided_at),
             }
         )
     return rows, findings, workflows, case_ids
+
+
+_OTHER_SOURCES = {"schedule": "Schedule", "human_ask": "Ask"}
+
+
+def _finding_name(finding: Optional[dict]) -> str:
+    data_source = (finding or {}).get("data_source")
+    return (
+        data_source if isinstance(data_source, str) and data_source else UNKNOWN_SOURCE
+    )
+
+
+def _no_intake_row(finding: dict, state: str, linked_case: Optional[str]) -> dict:
+    """An alert no intake row ever named: not picked up, dismissed, or on a case."""
+    return {
+        "id": _never_queued_id(finding["finding_id"]),
+        "kind": "detection",
+        "state": state,
+        "source": _finding_name(finding),
+        "priority": None,
+        "finding_id": finding["finding_id"],
+        "payload": {},
+        "investigation_id": None,
+        "case_id": None,
+        "merged_into": None,
+        "linked_case": linked_case,
+        "merge_note": None,
+        "created_at": _naive(finding.get("created_at")),
+        "decided_at": None,
+    }
 
 
 def _merge_note(row, case_activities: list) -> Optional[str]:
@@ -423,6 +633,10 @@ def _present(
     label, door = _state_label(
         row["state"], row.get("case_id"), row.get("merged_into"), case_ids
     )
+    # On a case but no door of its own (a queued or expired row, or none): Overview's case.
+    if door is None and row["state"] in _PICKUP_STATES:
+        door = row.get("linked_case")
+    dismissed = row["state"] == NOISE_STATE
     ranking = _ranking(row, now, config)
     created = row.get("created_at")
     decided = row.get("decided_at")
@@ -440,6 +654,8 @@ def _present(
         "kind_label": _KIND_LABELS.get(kind, kind),
         "state": row["state"],
         "state_label": label,
+        # the pill takes the noise tone
+        "dismissed": dismissed,
         "source": row["source"],
         **ranking,
         "pickup_seconds": pickup,
@@ -462,55 +678,48 @@ def _present(
     }
 
 
-def _counts(session) -> dict:
-    """Every intake row by kind, source, and state, before filters and the cap.
-
-    The intake states partition the rows; ``NOISE_STATE`` counts across them.
-    """
+def _counts(session, rows) -> dict:
+    """Every row by kind, source, and state, before filters and the cap."""
     kinds: dict[str, int] = {}
     sources: dict[str, int] = {}
     states: dict[str, int] = {}
     total = 0
-    source = _source_column()
-    for kind, state, name, n in _joined(
-        session, IntakeTrigger.kind, IntakeTrigger.state, source, func.count()
-    ).group_by(IntakeTrigger.kind, IntakeTrigger.state, source):
+    for kind, state, name, n in session.query(
+        rows.c.kind, rows.c.state, rows.c.source, func.count()
+    ).group_by(rows.c.kind, rows.c.state, rows.c.source):
         total += n
         kinds[kind] = kinds.get(kind, 0) + n
         states[state] = states.get(state, 0) + n
-        if name:
-            sources[name] = sources.get(name, 0) + n
-    noise = (
-        _joined(session, func.count(IntakeTrigger.id))
-        .filter(Finding.noise_marked_at.isnot(None))
-        .scalar()
-    )
-    if noise:
-        states[NOISE_STATE] = noise
+        sources[name] = sources.get(name, 0) + n
     return {"total": total, "kind": kinds, "source": sources, "state": states}
 
 
-def _strip(session, counts: dict, day: date) -> dict:
-    start, end = utc_day_bounds(day)
-    denominator, numerator = (
-        session.query(
-            func.count(IntakeTrigger.id),
-            func.count(IntakeTrigger.id).filter(
-                IntakeTrigger.state.in_(_PICKUP_STATES)
-            ),
-        )
-        .filter(IntakeTrigger.created_at >= start, IntakeTrigger.created_at < end)
-        .one()
+def _strip(session, rows, counts: dict, day: Optional[date]) -> dict:
+    """The strip for one UTC day, or every row when ``day`` is None."""
+    picked = session.query(
+        func.count(IntakeTrigger.id),
+        func.count(IntakeTrigger.id).filter(IntakeTrigger.state.in_(_PICKUP_STATES)),
     )
-    cases = (
-        session.query(func.count(distinct(IntakeTrigger.case_id)))
-        .filter(
-            IntakeTrigger.state == "launched",
-            IntakeTrigger.case_id.isnot(None),
-            IntakeTrigger.case_id != "",
-            IntakeTrigger.decided_at >= start,
-            IntakeTrigger.decided_at < end,
+    cases = session.query(func.count(distinct(IntakeTrigger.case_id))).filter(
+        IntakeTrigger.state == "launched",
+        IntakeTrigger.case_id.isnot(None),
+        IntakeTrigger.case_id != "",
+    )
+    if day is not None:
+        start, end = utc_day_bounds(day)
+        picked = picked.filter(
+            IntakeTrigger.created_at >= start, IntakeTrigger.created_at < end
         )
+        cases = cases.filter(
+            IntakeTrigger.decided_at >= start, IntakeTrigger.decided_at < end
+        )
+    denominator, numerator = picked.one()
+    cases = cases.scalar()
+    # Alerts only, as Overview counts them; queued schedule and ask rows go in the sub-line.
+    waiting = (
+        session.query(func.count())
+        .select_from(rows)
+        .filter(rows.c.kind == "detection", rows.c.state == "queued")
         .scalar()
     )
     return {
@@ -519,7 +728,8 @@ def _strip(session, counts: dict, day: date) -> dict:
             "created_today": denominator,
             "share": None if denominator == 0 else numerator / denominator,
         },
-        "waiting": counts["state"].get("queued", 0),
+        "waiting": waiting,
+        "waiting_other": counts["state"].get("queued", 0) - waiting,
         "cases_created_today": cases,
     }
 
@@ -548,10 +758,13 @@ def _demo_triage(
     kind: Optional[str],
     source: Optional[str],
     state: Optional[str],
-    day: date,
+    day: Optional[date],
     now: datetime,
 ) -> dict:
-    """One detection row per demo finding. A linked case counts as launched."""
+    """One detection row per demo finding, in Overview's groups: dismissed, a linked case counts as launched, else not picked up.
+
+    With ``day`` set only findings that arrived that UTC day are rows.
+    """
     from core.findings.demo_reads import (
         _noise,
         _ord,
@@ -577,15 +790,22 @@ def _demo_triage(
             continue
         case = linked.get(finding_id)
         created = _when(finding)
+        if day is not None and (created is None or created.date() != day):
+            continue
         decided = parse_utc(case.get("created_at")) if case else None
         view = _finding_view(finding)
+        view["noise_marked_at"] = _noise(finding)
         case_id = case.get("case_id") if case else None
         built.append(
             {
                 "id": index,
                 "kind": "detection",
-                "state": "launched" if case else "queued",
-                "source": view["data_source"],
+                "state": (
+                    NOISE_STATE
+                    if view["noise_marked_at"]
+                    else "launched" if case else NOT_PICKED_UP
+                ),
+                "source": view["data_source"] or UNKNOWN_SOURCE,
                 "priority": None,
                 "finding_id": finding_id,
                 "payload": {},
@@ -604,49 +824,35 @@ def _demo_triage(
     for row in built:
         row_kind = str(row["kind"])
         row_state = str(row["state"])
-        row_source = row["source"] if isinstance(row["source"], str) else ""
         counts_kind[row_kind] = counts_kind.get(row_kind, 0) + 1
         counts_state[row_state] = counts_state.get(row_state, 0) + 1
-        if row_source:
-            counts_source[row_source] = counts_source.get(row_source, 0) + 1
-    noise = {f.get("finding_id") for f in findings if _noise(f)}
-    noise_rows = sum(1 for row in built if row["finding_id"] in noise)
-    if noise_rows:
-        counts_state[NOISE_STATE] = noise_rows
+        counts_source[row["source"]] = counts_source.get(row["source"], 0) + 1
 
     def _at(row: dict, field: str) -> Optional[datetime]:
         value = row.get(field)
         return value if isinstance(value, datetime) else None
 
-    today = [
-        row
-        for row in built
-        if (stamp := _at(row, "created_at")) and stamp.date() == day
-    ]
-    launched_today = sum(1 for row in today if row["state"] in _PICKUP_STATES)
+    # rows are already in range; under today a case also counts only when opened that day
+    launched_today = sum(1 for row in built if row["state"] in _PICKUP_STATES)
     cases_today = {
         row["case_id"]
         for row in built
         if row["state"] == "launched"
         and isinstance(row["case_id"], str)
-        and (stamp := _at(row, "decided_at")) is not None
-        and stamp.date() == day
+        and (
+            day is None
+            or ((stamp := _at(row, "decided_at")) is not None and stamp.date() == day)
+        )
     }
     arrivals: dict[str, int] = {}
-    for row in today:
-        name = row["source"] if isinstance(row["source"], str) else ""
-        if name:
-            arrivals[name] = arrivals.get(name, 0) + 1
+    for row in built:
+        arrivals[row["source"]] = arrivals.get(row["source"], 0) + 1
 
     selected = [
         row
         for row in built
         if (not kind or row["kind"] == kind)
-        and (
-            row["finding_id"] in noise
-            if state == NOISE_STATE
-            else not state or row["state"] == state
-        )
+        and (not state or row["state"] == state)
         and (not source or row["source"] == source)
     ]
     queued = [row for row in selected if row["state"] == "queued"]
@@ -659,14 +865,20 @@ def _demo_triage(
         )
     )
     decided_rows = [row for row in selected if row["state"] != "queued"]
-    decided_rows.sort(key=lambda row: (-_ord(_at(row, "decided_at")), row["id"]))
+    # a not-picked-up row has no decision, so it sorts by its arrival, as live
+    decided_rows.sort(
+        key=lambda row: (
+            -_ord(_at(row, "decided_at") or _at(row, "created_at")),
+            row["id"],
+        )
+    )
     shown = (queued + decided_rows)[:ROW_CAP]
     link_configs: dict[str, dict[str, str]] = {}
     presented = [
         _present(row, row["_finding"], "", case_ids, now, config, link_configs)
         for row in shown
     ]
-    denominator = len(today)
+    denominator = len(built)
     return {
         "rows": presented,
         "matched": len(selected),
@@ -676,7 +888,8 @@ def _demo_triage(
                 "created_today": denominator,
                 "share": None if denominator == 0 else launched_today / denominator,
             },
-            "waiting": counts_state.get("queued", 0),
+            "waiting": 0,
+            "waiting_other": 0,
             "cases_created_today": len(cases_today),
         },
         "counts": {
@@ -694,8 +907,9 @@ def _demo_triage(
             }
             for name in sorted(arrivals)
         ],
-        "arrival_info": ARRIVAL_INFO,
-        "strip_info": STRIP_INFO,
+        "range": "today" if day is not None else "all",
+        "arrival_info": ARRIVAL_INFO if day is not None else ARRIVAL_INFO_ALL,
+        "strip_info": STRIP_INFO if day is not None else STRIP_INFO_ALL,
         "breakdown_info": BREAKDOWN_INFO,
     }
 
@@ -707,14 +921,20 @@ def triage_payload(
     state: Optional[str] = None,
     day: Optional[date] = None,
     now: Optional[datetime] = None,
+    range: str = "today",
 ) -> dict:
-    """Queued rows by ``rank_intake_row``, then decided rows newest first."""
+    """Queued rows by ``rank_intake_row``, then decided rows newest first.
+
+    ``range="today"`` keeps rows that arrived on ``day`` (the UTC day by
+    default); ``"all"`` keeps every row.
+    """
     if now is None:
         now = utcnow()
     if now.tzinfo is not None:
         now = now.replace(tzinfo=None)
     if day is None:
         day = now.date()
+    bound: Optional[date] = None if range == "all" else day
     from core.config import is_demo_mode
 
     if is_demo_mode():
@@ -722,17 +942,18 @@ def triage_payload(
 
         findings, cases = load_demo()
         return _demo_triage(
-            findings, cases, kind=kind, source=source, state=state, day=day, now=now
+            findings, cases, kind=kind, source=source, state=state, day=bound, now=now
         )
     config = OrchestratorConfig()
     with get_db_manager().session_scope() as session:
         # One snapshot for every read: a row claimed between the queued and
         # decided queries would otherwise be listed twice.
         session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
-        counts = _counts(session)
-        strip = _strip(session, counts, day)
-        ids, matched = _page_ids(session, kind, source, state, now, config)
-        shown, findings, workflows, case_ids = _load(session, ids)
+        rows = _rows(session, bound)
+        counts = _counts(session, rows)
+        strip = _strip(session, rows, counts, bound)
+        keys, matched = _page_keys(session, rows, kind, source, state, now, config)
+        shown, findings, workflows, case_ids = _load(session, keys)
     link_configs: dict[str, dict[str, str]] = {}
     presented = []
     for row in shown:
@@ -750,8 +971,9 @@ def triage_payload(
         "matched": matched,
         "strip": strip,
         "counts": counts,
-        "sources": _sources(day, now),
-        "arrival_info": ARRIVAL_INFO,
-        "strip_info": STRIP_INFO,
+        "sources": _sources(bound, now),
+        "range": range,
+        "arrival_info": ARRIVAL_INFO if bound else ARRIVAL_INFO_ALL,
+        "strip_info": STRIP_INFO if bound else STRIP_INFO_ALL,
         "breakdown_info": BREAKDOWN_INFO,
     }

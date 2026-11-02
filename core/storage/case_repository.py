@@ -46,6 +46,9 @@ from core.time import utcnow
 # status / priority / assignee accept either a single value or a list.
 Filterable = Optional[Union[str, Sequence[str]]]
 
+# ``(start, end)`` of when an alert was created; ``None`` leaves that side open.
+AlertSpan = Tuple[Optional[datetime], Optional[datetime]]
+
 # Default page size for ``search`` and the case queue.
 PAGE_LIMIT = 100
 
@@ -125,7 +128,9 @@ def _case_runs():
             "last_activity_at"
         ),
     ).where(
-        run_case_id.isnot(None),
+        # Only cases that still exist: a deleted case leaves its runs behind, and
+        # they would otherwise be ranked on every read.
+        run_case_id.in_(select(Case.case_id)),
         WorkflowRun.deleted_at.is_(None),
         ~exists().where(
             Investigation.investigation_id
@@ -284,6 +289,39 @@ def _finding_source_exists(data_source: str):
             Finding.data_source == data_source,
         )
     )
+
+
+def _closed_by_person_exists(person_channels: Sequence[str]):
+    """A closure row whose channel reads as a person; no row reads as an agent."""
+    return exists(
+        select(CaseClosureInfo.case_id).where(
+            CaseClosureInfo.case_id == Case.case_id,
+            CaseClosureInfo.close_channel.in_(list(person_channels)),
+        )
+    )
+
+
+def _alerts_in_span_exists(span: AlertSpan):
+    """Cases holding an alert created in ``span`` (``None`` bounds are open).
+
+    A noise-marked alert is the Overview's Dismissed, never in a case node, so it
+    does not make its case hold alerts here.
+    """
+    held = (
+        select(Finding.finding_id)
+        .select_from(case_findings)
+        .join(Finding, Finding.finding_id == case_findings.c.finding_id)
+        .where(
+            case_findings.c.case_id == Case.case_id,
+            Finding.noise_marked_at.is_(None),
+        )
+    )
+    start, end = span
+    if start is not None:
+        held = held.where(Finding.created_at >= start)
+    if end is not None:
+        held = held.where(Finding.created_at < end)
+    return exists(held)
 
 
 @dataclass(frozen=True)
@@ -578,6 +616,10 @@ class CaseRepository:
         needs_you_ids: Optional[set[str]] = None,
         needs_you_only: bool = False,
         workflow_ids: Optional[set[str]] = None,
+        working: bool = False,
+        closed_by: Optional[str] = None,
+        person_channels: Sequence[str] = (),
+        alerts_span: Optional[AlertSpan] = None,
     ) -> Tuple[List[CaseQueueRow], int]:
         """One page of the queue.
 
@@ -591,8 +633,16 @@ class CaseRepository:
         ``needs_you_only`` keeps just the cases in ``needs_you_ids``; an empty
         set then returns no rows. ``workflow_ids`` keeps cases whose latest
         investigation ran one of those workflows (an empty set returns none).
+
+        ``working`` keeps open cases outside ``needs_you_ids``. ``closed_by``
+        (``agent`` or ``person``) keeps closed cases; ``person_channels`` are the
+        close channels that read as a person, and no closure row reads as an agent.
+        ``alerts_span`` keeps cases holding an alert created in ``(start, end)``,
+        either bound open.
         """
         now = now or utcnow()
+        if closed_by:
+            closed = True
         latest = _latest_investigations()
         live = _live_investigations()
         sla = _latest_slas()
@@ -675,6 +725,15 @@ class CaseRepository:
             workflow_ids=workflow_ids,
             only_ids=(needs_you_ids or set()) if needs_you_only else None,
         )
+        if working:
+            stmt = stmt.where(Case.status != "closed")
+            if needs_you_ids:
+                stmt = stmt.where(Case.case_id.notin_(sorted(needs_you_ids)))
+        if closed_by:
+            person = _closed_by_person_exists(person_channels)
+            stmt = stmt.where(person if closed_by == "person" else ~person)
+        if alerts_span is not None:
+            stmt = stmt.where(_alerts_in_span_exists(alerts_span))
         total = self.session.execute(
             select(func.count()).select_from(stmt.subquery())
         ).scalar_one()
@@ -735,10 +794,13 @@ class CaseRepository:
         *,
         now: Optional[datetime] = None,
         needs_you_ids: Optional[set[str]] = None,
+        alerts_span: Optional[AlertSpan] = None,
     ) -> CaseQueueStrip:
         """Open cases by combined state, SLA at risk, closures today.
 
         ``needs_you`` counts the open (not closed) cases in ``needs_you_ids``.
+        ``alerts_span``, when set, narrows those three counts to cases holding
+        an alert in it, as the queue's filter does; ``None`` counts every case.
 
         At risk is the same SQL predicate as the queue filter, over cases
         that are not closed. Today's closures are ``case_closure_info`` rows
@@ -748,11 +810,12 @@ class CaseRepository:
         now = now or utcnow()
         live = _live_investigations()
         combined = _combined_sql(live)
+        in_span = [] if alerts_span is None else [_alerts_in_span_exists(alerts_span)]
         grouped = self.session.execute(
             select(combined.label("state"), func.count())
             .select_from(Case)
             .outerjoin(live, live.c.live_case_id == Case.case_id)
-            .where(Case.status != "closed")
+            .where(Case.status != "closed", *in_span)
             .group_by(combined)
         ).all()
         by_state = {state: int(count) for state, count in grouped if state}
@@ -762,7 +825,7 @@ class CaseRepository:
             select(func.count())
             .select_from(Case)
             .outerjoin(sla, sla.c.sla_case_id == Case.case_id)
-            .where(Case.status != "closed", _sla_at_risk(sla, now))
+            .where(Case.status != "closed", _sla_at_risk(sla, now), *in_span)
         ).scalar_one()
 
         waiting = 0
@@ -773,6 +836,7 @@ class CaseRepository:
                 .where(
                     Case.status != "closed",
                     Case.case_id.in_(sorted(needs_you_ids)),
+                    *in_span,
                 )
             ).scalar_one()
 

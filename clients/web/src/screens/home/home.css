@@ -278,12 +278,14 @@
 
 .home-screen .home-card-top {
   display: flex;
+  flex-wrap: wrap; /* a long kind chip drops under the wait rather than being cut */
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px 8px;
 }
 
 .home-screen .home-waited {
+  white-space: nowrap;
   color: var(--tx2);
   font-size: 12px;
   font-weight: 700;

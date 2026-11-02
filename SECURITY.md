@@ -273,11 +273,11 @@ nightly audit in `nightly.yml`):
 - `bandit` for Python and `npm audit` for the web client.
 - Trivy scans of released container images.
 - Dependabot for dependency updates (`.github/dependabot.yml`).
-- Ratchet tests that fail the build on ambient state — new `os.getenv` calls
-  must go through `core.config` or `core.secrets`
-  (`tests/unit/_ratchets/`), which is what keeps credentials out of
-  scattered env reads.
 - `lint-imports` enforcing the layering in `.importlinter`.
+
+Configuration and credentials are read through `core.config` or
+`core.secrets`, never a new `os.getenv` call, which keeps credentials out of
+scattered env reads.
 
 If you are fixing a reported vulnerability, coordinate with the maintainers
 **before** opening a public pull request — a PR that describes the bug

@@ -21,18 +21,11 @@ dev = [
     "import-linter==2.15",
     "openapi-spec-validator>=0.7",
     "pytest>=8",
-    "ruff==0.17.2",
+    "ruff==0.17.3",
 ]
 
 [tool.uv]
 package = false
-
-[tool.pytest.ini_options]
-testpaths = ["contracts/tests", "tests"]
-# The repo root, so `services.medic` imports the way it does at runtime.
-pythonpath = ["../.."]
-# importlib: the contract tests and Medic's tests both have bare test_*.py names.
-addopts = ["--import-mode=importlib"]
 
 [tool.ruff]
 target-version = "py312"

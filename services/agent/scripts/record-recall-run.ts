@@ -17,7 +17,7 @@ import { recallHarness, recallHuntSpec } from "../tests/support/recall-hunt.js";
 // Not a Golden and it cannot become one. A Golden is the output of the
 // implementation being replaced (ADR 0012), and nothing produces the pre-harness
 // file ledger any more -- so this is a regression snapshot of the harness's own
-// recall path, and it belongs beside the replay test rather than in
+// recall path, and it belongs in tests/fixtures/replay rather than in
 // tests/fixtures/runs, whose population is closed.
 //
 // Run: npx tsx scripts/record-recall-run.ts
@@ -26,7 +26,7 @@ const OUT = join(import.meta.dirname, "..", "tests", "fixtures", "replay");
 const NAME = "hunt-recall";
 const RUN = "hunt-recall-0001";
 
-// The fixture config's call meter is set for a unit test; a whole hunt with a
+// The fixture config's call meter is set for a short scripted run; a whole hunt with a
 // write-up needs room to reach its terminal rather than parking on the ceiling.
 const MAX_CALLS = 40;
 

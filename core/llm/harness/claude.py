@@ -91,9 +91,8 @@ class ClaudeService:
             )
 
             # Fallback: pick up keys saved by the LLM Providers UI. Lazy
-            # import keeps the legacy/no-DB code path (and the unit tests
-            # that pre-date this fallback) working when core.storage.connection
-            # isn't importable.
+            # import keeps the legacy/no-DB code path working when
+            # core.storage.connection isn't importable.
             if not self.api_key:
                 try:
                     from core.llm.router.router import discover_anthropic_api_key

@@ -6,7 +6,7 @@
 # failure turns a two-second wait into a failed run.
 #
 # The agent worker applies this in services/agent/core/limiter.ts. This is the
-# Python half, and the two must not drift -- see tests/unit/llm/test_gateway_retry.py.
+# Python half, and the two must not drift.
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ RETRYABLE = frozenset({429, 500, 502, 503})
 
 # A ceiling was reached rather than a server stumbling. These answer the same way every
 # attempt, so they get one more try and not three, each of which bills tokens the
-# gateway discards. Mirrored in the agent layer's limiter.ts, held to it by a ratchet.
+# gateway discards. Mirrored in the agent layer's limiter.ts.
 CEILING = frozenset({408, 504})
 
 # The budget is spent. Retrying spends nothing and answers nothing.

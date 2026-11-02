@@ -41,11 +41,10 @@ releases and how that changes. How `VERSION` itself is bumped is on the
 
 ## Changing the contract on purpose
 
-Both snapshots are enforced by a drift test that fails on any difference. To
-change one deliberately, run its generator, commit the snapshot diff, and say
-so in the PR:
+Both snapshots are committed, and a change to either is a change to the
+contract. To change one deliberately, run its generator, commit the snapshot
+diff, and say so in the PR:
 
-- `/api/v1`: see [Enforcement](core/api/v1/README.md#enforcement-the-contract-snapshot)
+- `/api/v1`: see [The contract snapshot](core/api/v1/README.md#the-contract-snapshot)
   (`scripts/generate_api_v1_contract.py`).
-- MCP: `scripts/generate_mcp_frozen_tools.py`, checked by
-  `tests/unit/api/test_mcp_frozen_tools.py`.
+- MCP: `scripts/generate_mcp_frozen_tools.py`.

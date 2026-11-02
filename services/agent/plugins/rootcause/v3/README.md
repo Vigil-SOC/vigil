@@ -2,8 +2,8 @@
 
 The graph-based root-cause loop, ported from the standalone RCA loop (v3, snapshot of
 2026-10-16). The files keep the loop's own layout and wording so they can be read against
-it. Comments that cite `spec §` refer to that loop's `rca-agent-spec.md`. No comment or
-test names an evaluation scenario: tests/core/rootcause-v3-scenarios.test.ts holds that.
+it. Comments that cite `spec §` refer to that loop's `rca-agent-spec.md`. No comment names
+an evaluation scenario.
 
 Every `root_cause` run goes here (`worker.ts`). The kernel plugin under `plugins/rootcause/`
 is unreachable from the worker and is retired separately.

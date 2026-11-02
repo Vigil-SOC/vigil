@@ -5,7 +5,7 @@ derives each row's ``triggers`` from them, so the listing cannot drift from the
 code that actually starts a run.
 """
 
-from typing import List
+from typing import Dict, List, Optional
 
 # Where triage lands when nothing else fits, or when the routed workflow is off.
 FALLBACK_WORKFLOW = "incident-response"
@@ -32,5 +32,17 @@ def triggers_for(workflow_id: str) -> List[str]:
     return triggers
 
 
+# Workflows nothing can turn off, each with the reason the console shows.
+ALWAYS_ON: Dict[str, str] = {
+    FALLBACK_WORKFLOW: "Alerts land here when nothing else fits, so it stays on.",
+    SCHEDULED_WORKFLOW: "Hunts run on a schedule and on new threat intel, so it stays on.",
+}
+
+
 def can_disable(workflow_id: str) -> bool:
-    return workflow_id != FALLBACK_WORKFLOW
+    return workflow_id not in ALWAYS_ON
+
+
+def always_on_reason(workflow_id: str) -> Optional[str]:
+    """Why this workflow cannot be turned off; None when it can."""
+    return ALWAYS_ON.get(workflow_id)

@@ -290,6 +290,12 @@ class WorkflowRun(Base):
         # to decide whether a root-cause run was already teed up. Without it that is
         # a sequential scan that grows with run history.
         Index("idx_workflow_runs_triggered_by", "triggered_by", "started_at"),
+        # The case queue's run-only refs look a run up by its case (#3495).
+        Index(
+            "idx_workflow_runs_case_id",
+            text("(trigger_context ->> 'case_id')"),
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
     )
 
 

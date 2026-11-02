@@ -3,7 +3,11 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from core.response.approval_service import ActionStatus, ApprovalService
+from core.response.approval_service import (
+    EXECUTABLE_ACTION_TYPES,
+    ActionStatus,
+    ApprovalService,
+)
 from core.response.ceiling import execution_held
 from core.response.config import ResponseConfig
 
@@ -83,11 +87,7 @@ class AutonomousResponseService:
                         reason=action.reason,
                         confidence=action.confidence,
                     )
-                elif action.action_type in (
-                    "waf_block",
-                    "gateway_block",
-                    "access_revoke",
-                ):
+                elif action.action_type in EXECUTABLE_ACTION_TYPES:
                     result = self._execute_cloudflare_action(
                         action_type=action.action_type,
                         target=action.target,
