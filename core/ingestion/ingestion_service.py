@@ -48,6 +48,47 @@ MITRE_TACTIC_MAP = {
     9: "Lateral Movement",
 }
 
+
+def _parse_mitre_cell(raw: Any) -> Dict[str, Any]:
+    """A ``mitre_predictions`` text cell as ``{name: score or None}``.
+
+    JSON object passes through. A JSON list of ids, or a comma cell, keeps every
+    technique: a missing or non-numeric score is null and the loop continues.
+    ``T1071.001:0.85,T1059`` keeps the score and the bare id.
+    """
+    if not raw or not isinstance(raw, str):
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        predictions: Dict[str, Any] = {}
+        for pair in raw.split(","):
+            piece = pair.strip()
+            if not piece:
+                continue
+            technique, sep, score = piece.partition(":")
+            technique = technique.strip()
+            if not technique:
+                continue
+            if not sep:
+                predictions[technique] = None
+                continue
+            try:
+                predictions[technique] = float(score.strip())
+            except (ValueError, OverflowError):
+                predictions[technique] = None
+        return predictions
+    if isinstance(parsed, dict):
+        return parsed
+    if isinstance(parsed, list):
+        return {
+            item.strip(): None
+            for item in parsed
+            if isinstance(item, str) and item.strip()
+        }
+    return {}
+
+
 # 64 bits. The old 8 chars gave 32, where a 200k-row file is near-certain to
 # collide and every collision is silently reported as a duplicate.
 ID_HASH_WIDTH = 16
@@ -794,39 +835,7 @@ class IngestionService:
 
             finding_id = f"f-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
 
-        # JSON object passes through. A JSON list of ids, or a comma cell, keeps
-        # every technique: a missing or non-numeric score is null and the loop
-        # continues. ``T1071.001:0.85,T1059`` keeps the score and the bare id.
-        mitre_predictions: Dict[str, Any] = {}
-        raw_mitre = row.get("mitre_predictions")
-        if raw_mitre:
-            try:
-                parsed = json.loads(raw_mitre)
-            except json.JSONDecodeError:
-                for pair in raw_mitre.split(","):
-                    piece = pair.strip()
-                    if not piece:
-                        continue
-                    technique, sep, score = piece.partition(":")
-                    technique = technique.strip()
-                    if not technique:
-                        continue
-                    if not sep:
-                        mitre_predictions[technique] = None
-                        continue
-                    try:
-                        mitre_predictions[technique] = float(score.strip())
-                    except (ValueError, OverflowError):
-                        mitre_predictions[technique] = None
-            else:
-                if isinstance(parsed, dict):
-                    mitre_predictions = parsed
-                elif isinstance(parsed, list):
-                    mitre_predictions = {
-                        item.strip(): None
-                        for item in parsed
-                        if isinstance(item, str) and item.strip()
-                    }
+        mitre_predictions = _parse_mitre_cell(row.get("mitre_predictions"))
 
         # Parse entity context (JSON string)
         entity_context = None
@@ -1057,10 +1066,12 @@ class IngestionService:
         )
         finding_id = _content_finding_id(unique_key, event_ts)
 
-        # MITRE predictions from logits (softmax) when available, else from argmax label
-        mitre_predictions = {}
+        # The names a row carries win: the class order behind its index differs between
+        # exports. Else softmax over the logits, else the argmax index.
+        mitre_predictions = _parse_mitre_cell(row.get("mitre_predictions"))
         mitre_logits = row.get("mitre_logits")
-        if mitre_logits is not None and len(mitre_logits) > 0:
+        mitre_pred = row.get("mitre_pred")
+        if not mitre_predictions and mitre_logits is not None and len(mitre_logits):
             max_l = max(mitre_logits)
             exps = [math.exp(logit - max_l) for logit in mitre_logits]
             total = sum(exps)
@@ -1069,7 +1080,7 @@ class IngestionService:
                 if p >= 0.05:
                     tactic = MITRE_TACTIC_MAP.get(idx, f"mitre_class_{idx}")
                     mitre_predictions[tactic] = round(p, 4)
-        elif (mitre_pred := row.get("mitre_pred")) is not None:
+        elif not mitre_predictions and mitre_pred is not None:
             tactic = MITRE_TACTIC_MAP.get(int(mitre_pred))
             if tactic:
                 mitre_predictions[tactic] = None
