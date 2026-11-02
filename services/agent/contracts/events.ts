@@ -233,7 +233,7 @@ export interface CallPayload {
   call_id: string;
   tool: string;
   arguments: string;
-  // What the model read: scrubbed, capped and delimited.
+  // What the model read: credentials masked, scrubbed, capped and delimited.
   result: string;
   ok: boolean;
   failure: string | null;
@@ -242,6 +242,8 @@ export interface CallPayload {
   // What the model said before asking, on the first call of its turn only.
   thought?: string;
   duration_ms?: number;
+  // How many credentials were masked in result. Absent when there were none.
+  redacted?: number;
   // The role that made the call, when it was not the run's one agent: a step a
   // plugin ran under its own prompt and grants.
   role?: string;
