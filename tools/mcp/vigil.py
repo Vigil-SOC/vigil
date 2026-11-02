@@ -815,6 +815,7 @@ def add_case_ioc(
                 tags=tags,
                 context=context,
                 session=session,
+                added_by=actor(),
             )
             if ioc is None:
                 return jdump({"error": f"Could not add IOC {ioc_type}:{value}"})
@@ -854,37 +855,30 @@ def bulk_add_iocs(case_id: str, iocs: list) -> str:
     try:
         from core.cases.case_ioc_service import CaseIOCService
 
-        added = 0
-        failed = 0
         results = []
-        service = CaseIOCService()
+        valid = []
+        for ioc_data in iocs:
+            if not isinstance(ioc_data, dict) or not all(
+                isinstance(ioc_data.get(k), str) and ioc_data.get(k)
+                for k in ("ioc_type", "value")
+            ):
+                results.append(
+                    {"error": "ioc_type and value are required", "ioc": ioc_data}
+                )
+                continue
+            valid.append(ioc_data)
+        failed = len(results)
 
-        # One transaction for the batch. Calling the single-IOC tool in a loop
-        # opened a transaction per indicator, so a batch could half-land.
+        # One transaction and one trail entry for the batch.
         with service_session() as session:
-            for ioc_data in iocs:
-                try:
-                    ioc = service.add_ioc(
-                        case_id=case_id,
-                        ioc_type=ioc_data.get("ioc_type"),
-                        value=ioc_data.get("value"),
-                        threat_level=ioc_data.get("threat_level"),
-                        confidence=ioc_data.get("confidence"),
-                        source=ioc_data.get("source"),
-                        tags=ioc_data.get("tags"),
-                        context=ioc_data.get("context"),
-                        session=session,
-                    )
-                    if ioc is None:
-                        failed += 1
-                        results.append({"error": "not added", "ioc": ioc_data})
-                        continue
-                    session.flush()
-                    added += 1
-                    results.append({"success": True, "ioc": CaseIOCSchema.dump(ioc)})
-                except Exception as e:
-                    failed += 1
-                    results.append({"error": str(e), "ioc": ioc_data})
+            added_iocs = CaseIOCService().add_iocs(
+                case_id, valid, session, added_by=actor()
+            )
+            session.flush()
+            results += [
+                {"success": True, "ioc": CaseIOCSchema.dump(ioc)} for ioc in added_iocs
+            ]
+        added = len(added_iocs)
 
         return jdump(
             {

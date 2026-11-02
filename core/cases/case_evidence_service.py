@@ -12,8 +12,9 @@ from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
+from core.cases import case_trail
 from core.config import vigil_path
-from core.storage.models import CaseEvidence
+from core.storage.models import CaseAuditLog, CaseEvidence
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
@@ -89,6 +90,7 @@ class CaseEvidenceService:
         source: Optional[str] = None,
         tags: Optional[List[str]] = None,
         session: Optional[Session] = None,
+        legacy: Optional[CaseAuditLog] = None,
     ) -> Optional[CaseEvidence]:
         """
         Add evidence to a case.
@@ -103,14 +105,20 @@ class CaseEvidenceService:
             source: Evidence source
             tags: Tags
             session: Database session (optional)
+            legacy: The case audit row written instead when the trail is not in use
 
         Returns:
             Created CaseEvidence or None
 
         Raises:
             ValueError: if file_path points outside the evidence store
+
+        One ``case.evidence`` trail entry in the same transaction. A failed
+        append fails the write: an owned session returns None, a joined one
+        raises ``TrailWriteError``; ``trail.Paused`` always propagates.
         """
         full_path = self.resolve_stored_file(file_path) if file_path else None
+        joined = session is not None
         try:
             with unit_of_work(session) as session:
                 # Calculate file hashes if file exists
@@ -152,12 +160,28 @@ class CaseEvidenceService:
                 )
 
                 session.add(evidence)
+                # Hashes in the hashed payload; the name beside it, erasable.
+                case_trail.append_or_legacy(
+                    session,
+                    action=case_trail.EVIDENCE,
+                    signed_in=collected_by,
+                    case_id=case_id,
+                    legacy=legacy,
+                    operator_text=name,
+                    ids=lambda: {
+                        "evidence_id": evidence.evidence_id,
+                        "file_hash_sha256": file_hash_sha256,
+                        "file_hash_md5": file_hash_md5,
+                    },
+                )
 
                 logger.info(f"Added evidence {evidence.evidence_id} to case {case_id}")
                 return evidence
 
-        except Exception as e:
-            logger.error(f"Error adding evidence: {e}")
+        except Exception as exc:
+            if case_trail.propagates(exc, joined):
+                raise
+            logger.error("Error adding evidence: %s", exc)
             return None
 
     def add_chain_of_custody_entry(
@@ -180,7 +204,11 @@ class CaseEvidenceService:
 
         Returns:
             True if successful
+
+        One ``case.evidence.custody`` entry; a failed append fails it, as
+        ``add_evidence``. The notes go beside the hash.
         """
+        joined = session is not None
         try:
             with unit_of_work(session) as session:
                 evidence = (
@@ -201,18 +229,26 @@ class CaseEvidenceService:
                     "notes": notes or "",
                 }
 
-                chain = evidence.chain_of_custody or []
-                chain.append(entry)
-                evidence.chain_of_custody = chain
-
-                # Mark as updated to trigger ORM update
-                session.merge(evidence)
+                # A new list, so the JSONB column is seen as changed.
+                evidence.chain_of_custody = [*(evidence.chain_of_custody or []), entry]
+                case_trail.append_or_legacy(
+                    session,
+                    action=case_trail.CUSTODY,
+                    signed_in=user,
+                    case_id=evidence.case_id,
+                    # The action is free text from the request, so it is
+                    # erasable with the notes, not in the hashed payload.
+                    operator_text=": ".join(filter(None, [action, notes])) or None,
+                    ids=lambda: {"evidence_id": evidence_id},
+                )
 
                 logger.info(f"Added chain of custody entry for evidence {evidence_id}")
                 return True
 
-        except Exception as e:
-            logger.error(f"Error adding chain of custody entry: {e}")
+        except Exception as exc:
+            if case_trail.propagates(exc, joined):
+                raise
+            logger.error("Error adding chain of custody entry: %s", exc)
             return False
 
     def get_case_evidence(
