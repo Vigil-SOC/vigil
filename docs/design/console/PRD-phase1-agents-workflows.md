@@ -84,7 +84,7 @@ Section 12 kept today's graph builder and deferred the board's loop to phase 2. 
 
 ### Commands tab
 
-- **AW-C1. Commands.** The command bar's built-in set — name, arguments, what it runs. The five live commands, then `/hold`, `/isolate`, `/phish` and custom commands shown as **Later**. One list, shared with the command bar.
+- **AW-C1. Commands.** The command bar's built-in set — name, arguments, what it runs. The live commands of SH-P5, then `/hold`, `/isolate`, `/phish` and custom commands shown as **Later**. One list, shared with the command bar.
 
 ## 4. Definition of done
 

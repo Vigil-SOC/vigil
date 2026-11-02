@@ -8,7 +8,7 @@ import type { Schema } from '../../services/apiTypes'
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
-import { LIVE_COMMANDS } from '../../shell/commandBarModel'
+import { FEATURED_COMMANDS } from '../../shell/commandBarModel'
 import { useToast } from '../../shell/toast'
 import { useFusedDecision } from '../../shell/useFusedDecision'
 import {
@@ -397,7 +397,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
     </button>
   )
   // Later commands stay in the palette. A trailing space is the bar's signal to open that command's preview.
-  const shownChips = fillCommand ? LIVE_COMMANDS : []
+  const shownChips = fillCommand ? FEATURED_COMMANDS : []
   const boardClear = shownCount !== null && !error && shown.length === 0 && !noAlerts
 
   const sectionHead = (title: string, sub: string | null, tip: ReactNode, link: ReactNode) => (

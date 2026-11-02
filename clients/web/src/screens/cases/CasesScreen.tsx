@@ -137,6 +137,19 @@ export default function CasesScreen({ setViewFull, viewFull, openCase, caseSeed,
       alertsFrom: alertsFrom === 'today' || alertsFrom === 'all' ? alertsFrom : '',
     }
   })
+  // The state above read the URL once, and /decisions can land here with the list already open.
+  const askedNeedsYou = searchParams.get('needs_you') === '1'
+  useEffect(() => {
+    if (askedNeedsYou) setFilters((now) => ({ ...now, needsYou: true, state: '', working: false, closedBy: '', offset: 0 }))
+  }, [askedNeedsYou])
+  // Leaving the filter drops the param, so the next /decisions is a move and not the URL it is already on.
+  useEffect(() => {
+    if (filters.needsYou || !searchParams.has('needs_you')) return
+    setSearchParams((now) => {
+      now.delete('needs_you')
+      return now
+    }, { replace: true })
+  }, [filters.needsYou]) // eslint-disable-line react-hooks/exhaustive-deps
   const backToList = useCallback(() => setSearchParams({}), [setSearchParams])
   // Expand from the drawer leaves the page it was open on in the entry's state; a link or new tab has none
   const navigate = useNavigate()

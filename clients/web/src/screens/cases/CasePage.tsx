@@ -69,7 +69,7 @@ import {
   type StoppedRun,
 } from './caseFold'
 import './cases.css'
-import { CLOSURE_CATEGORIES, type CaseClosureView, type CaseInvestigationRef, type CaseLinkedFinding, type Phase } from './useCases'
+import { CASES_CHANGED, CLOSURE_CATEGORIES, type CaseClosureView, type CaseInvestigationRef, type CaseLinkedFinding, type Phase } from './useCases'
 
 const TABS = ['Summary', 'Explanations', 'Evidence', 'Checked', 'Memory and blind spots', 'Record'] as const
 type Tab = (typeof TABS)[number]
@@ -1179,6 +1179,11 @@ export function CasePage({
     setRecordKey((k) => k + 1)
     onRefreshRef.current?.()
   }, [])
+  // The command bar writes to this case from outside the page: a note, a stopped run.
+  useEffect(() => {
+    window.addEventListener(CASES_CHANGED, onReread)
+    return () => window.removeEventListener(CASES_CHANGED, onReread)
+  }, [onReread])
   const runs: CaseRun[] = caseRuns.map((ref) => ({ ref, fold: reads[ref.run_id]?.fold ?? null, phase: reads[ref.run_id]?.phase ?? 'loading' }))
   const fold = runId ? reads[runId]?.fold ?? null : null
   // The run id is unknown until the case read returns, so the run is still loading, not absent.

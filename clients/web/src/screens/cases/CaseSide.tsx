@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { Link } from 'react-router-dom'
 import { casesApi } from '../../services/api'
 import { slaLevel } from '../../shared/LevelBadge'
@@ -7,7 +7,7 @@ import { useNoSideways } from '../../shared/useNoSideways'
 import { commentCount, CommentsView, SectionCard, TasksView, useComments, useResource, useTasks, type Resource } from './CaseSections'
 import { timeLeft, when } from './caseFormat'
 import { entityShown, type RunFold } from './caseFold'
-import type { CaseInvestigationRef, CaseLinkedFinding } from './useCases'
+import { CASES_CHANGED, type CaseInvestigationRef, type CaseLinkedFinding } from './useCases'
 
 type Sla = { due: string; health: string } | null
 
@@ -258,6 +258,11 @@ function initialsOf(name: string): string {
 function People({ caseId, owner, onWritten }: { caseId: string; owner: string; onWritten?: () => void }) {
   const [open, setOpen] = useState(false)
   const comments = useComments(caseId)
+  const reloadComments = comments.reload
+  useEffect(() => {
+    window.addEventListener(CASES_CHANGED, reloadComments)
+    return () => window.removeEventListener(CASES_CHANGED, reloadComments)
+  }, [reloadComments])
   const tasks = useTasks(caseId)
   const tickets = useTickets(caseId)
   // Never a made-up count: the number appears only once that list has loaded.

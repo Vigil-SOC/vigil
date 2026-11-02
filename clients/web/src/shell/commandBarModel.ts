@@ -8,32 +8,52 @@ import { useEffect, useState } from 'react'
 import { casesApi, configApi, findingsApi, searchApi, workflowApi } from '../services/api'
 import type { Schema } from '../services/apiTypes'
 import type { IconName } from '../shared/icons'
+import { mapApiWorkflow } from '../data/mappers'
+import { prettyHandle, type Workflow } from '../data/appData'
+import { closurePayload, closureProblem } from '../screens/cases/ClosureFields'
+import { CLOSURE_CATEGORIES, notifyCasesChanged } from '../screens/cases/useCases'
 import { errorText } from '../shared/errorText'
 import type { ConsoleScreenGoOptions } from '../shared/types'
 import type { ToastKind } from './toast'
 
-type RefKind = 'case' | 'alert'
+type RefKind = 'case' | 'alert' | 'workflow'
 
-/** What a command takes. A ref only ever binds to an exact id, so a search word cannot reach an API. */
+interface Choice {
+  value: string
+  label: string
+  desc?: string
+}
+
+/**
+ * What a command takes. A ref only ever binds to an exact id, so a search word cannot reach an API.
+ * With a text slot the first word is the ref and the rest is text; without one the whole remainder is the ref.
+ */
 type Args =
-  | { kind: 'free'; rows?: RefKind }
-  | { kind: 'ref'; ref: RefKind }
+  | { kind: 'free'; rows?: 'alert' }
+  | { kind: 'ref'; ref: RefKind; text?: true; choices?: readonly Choice[] }
 
-/** What a line resolved to. Only bindLine makes one, and run takes nothing else. */
-export interface Bound {
+/** A ref a lookup found: a case, an alert, or a workflow and whether it can run. */
+type Ref = Hit & { huntLike?: boolean; off?: string }
+
+/** What a line resolved to. Only bindLine makes one, and run and fused take nothing else. */
+interface Bound {
   id: string
   text: string
+  /** The line named the id itself, rather than leaning on the open case. */
+  named: boolean
+  ref?: Ref
 }
 
 /** What binding a line reads, beyond the line itself. */
-export interface BindEnv {
+interface BindEnv {
   openCaseId: string | null
   jira: JiraReadiness
   attachment: HuntAttachment | null
+  can: (permission: string) => boolean
 }
 
 /** What a run may reach in the console around the bar. */
-export interface RunContext extends BindEnv {
+interface RunContext extends BindEnv {
   notify: (kind: ToastKind, text: string) => void
   onOpenCase: (caseId: string) => void
   onGo: (screen: string, options?: ConsoleScreenGoOptions) => void
@@ -52,8 +72,20 @@ interface CommandText {
   runs: string
 }
 
-export interface LiveCommand extends CommandText {
+/** A change that waits out the undo fuse; nothing is sent until it ends. */
+interface FusedAction {
+  text: string
+  doneText: string
+  failText: string
+  commit: () => Promise<unknown>
+}
+
+interface LiveBase extends CommandText {
   later: false
+  /** On the empty palette and the Home chips. */
+  featured?: true
+  /** The permissions the server gates this on. Without one the row stays, disabled with the reason. */
+  needs: string[]
   /** It reads an attached file; the paperclip is off for the rest. */
   takesFile?: boolean
   /** The workflow it starts, when it starts one. */
@@ -62,8 +94,12 @@ export interface LiveCommand extends CommandText {
   /** Why a resolved line cannot run yet. */
   blocked?: (target: Bound, env: BindEnv) => string | null
   preview: (target: Bound, env: BindEnv) => { line: string; note?: string }
-  run: (target: Bound, ctx: RunContext) => Promise<void>
 }
+
+type LiveCommand = LiveBase & (
+  | { run: (target: Bound, ctx: RunContext) => Promise<void>; fused?: never }
+  | { fused: (target: Bound) => FusedAction; run?: never }
+)
 
 interface LaterCommand extends CommandText {
   later: true
@@ -83,6 +119,22 @@ async function findingOrContext(text: string): Promise<{ finding_id: string } | 
   }
 }
 
+// The console's own close asks for a category; the status edit records this one, closed with no reason stated.
+const UNSPECIFIED = { value: 'unspecified', label: 'Unspecified', desc: 'Closed, no reason stated' } as const
+const CLOSE_AS = [...CLOSURE_CATEGORIES, UNSPECIFIED]
+
+/** The category and reason after the case on a /close line. No category typed is unspecified. */
+function closeAs(text: string) {
+  const [typed = '', ...rest] = text.split(/\s+/)
+  return { typed, reason: rest.join(' '), category: typed ? CLOSE_AS.find((c) => c.value === typed) : UNSPECIFIED }
+}
+
+function workflowOff(workflow: Workflow): string | undefined {
+  if (!workflow.enabled) return `${workflow.name} is off`
+  const blocked = (workflow.blockedBy ?? []).map(prettyHandle)
+  return blocked.length > 0 ? `${workflow.name} can’t run. ${blocked.join(', ')} ${blocked.length === 1 ? 'is' : 'are'} off` : undefined
+}
+
 /** The original stays on the case. The run has started, so a failed upload only warns. */
 async function keepDocument(caseId: string, document: Extract<HuntAttachment, { status: 'ready' }>, started: string, ctx: RunContext) {
   await casesApi
@@ -98,6 +150,8 @@ export const COMMANDS: CommandDef[] = [
     desc: 'Run incident response on a finding or a description of what you saw',
     runs: 'Incident response workflow',
     later: false,
+    featured: true,
+    needs: ['automation.read', 'ai_chat.use'],
     takesFile: true,
     workflowId: 'incident-response',
     args: { kind: 'free', rows: 'alert' },
@@ -125,6 +179,8 @@ export const COMMANDS: CommandDef[] = [
     desc: 'Start a hypothesis-driven threat hunt',
     runs: 'Threat hunt workflow',
     later: false,
+    featured: true,
+    needs: ['automation.read', 'ai_chat.use'],
     takesFile: true,
     workflowId: 'threat-hunt',
     args: { kind: 'free' },
@@ -170,6 +226,8 @@ export const COMMANDS: CommandDef[] = [
     desc: "Watch a case's latest run",
     runs: 'Opens Watch a run',
     later: false,
+    featured: true,
+    needs: ['cases.read'],
     args: { kind: 'ref', ref: 'case' },
     preview: ({ id }) => ({ line: `Watch the latest run on case ${id}` }),
     run: async ({ id }, ctx) => {
@@ -189,6 +247,8 @@ export const COMMANDS: CommandDef[] = [
     desc: 'Ask Vigil your question in chat',
     runs: 'Opens Ask Vigil',
     later: false,
+    featured: true,
+    needs: ['ai_chat.use'],
     takesFile: true,
     args: { kind: 'free' },
     blocked: ({ text }) => (text ? null : 'Add a question'),
@@ -204,11 +264,187 @@ export const COMMANDS: CommandDef[] = [
     desc: 'Create a Jira ticket from a case',
     runs: 'Exports the case to Jira',
     later: false,
+    featured: true,
+    needs: ['cases.read'],
     args: { kind: 'ref', ref: 'case' },
     blocked: (_target, { jira }) => jira.gap,
     preview: ({ id }, { jira }) => ({ line: `Export case ${id} to Jira project ${jira.projectKey}` }),
     run: async ({ id }, ctx) => {
       ctx.notify('ok', await casesApi.exportJira(id, ctx.jira.projectKey))
+    },
+  },
+  {
+    id: 'note',
+    name: '/note',
+    hint: '<case> <text>',
+    desc: 'Add a note to a case',
+    runs: 'Adds a comment to the case',
+    later: false,
+    needs: ['cases.write'],
+    args: { kind: 'ref', ref: 'case', text: true },
+    blocked: ({ text }) => (text ? null : 'Add the note'),
+    preview: ({ id, text }) => ({ line: `Add a note to case ${id}: ${text}` }),
+    run: async ({ id, text }, ctx) => {
+      await casesApi.addComment(id, { content: text })
+      notifyCasesChanged()
+      ctx.notify('ok', `Note added to case ${id}`)
+    },
+  },
+  {
+    id: 'assign',
+    name: '/assign',
+    hint: '<case> <user>',
+    desc: 'Hand a case to a person, by username or email',
+    runs: 'Changes the case owner, with undo',
+    later: false,
+    needs: ['cases.write', 'cases.assign'],
+    args: { kind: 'ref', ref: 'case', text: true },
+    blocked: ({ text }) => (text ? null : 'Add a username or email'),
+    preview: ({ id, text }) => ({ line: `Assign case ${id} to ${text}` }),
+    fused: ({ id, text }) => ({
+      text: `Assigning case ${id} to ${text}`,
+      doneText: `Case ${id} assigned to ${text}`,
+      failText: `Couldn’t assign case ${id}`,
+      commit: () => casesApi.update(id, { assignee: text }),
+    }),
+  },
+  {
+    id: 'close',
+    name: '/close',
+    hint: '<case> [category]',
+    desc: 'Close a case, with what it turned out to be',
+    runs: 'Closes the case, with undo',
+    later: false,
+    needs: ['cases.write'],
+    args: { kind: 'ref', ref: 'case', text: true, choices: CLOSE_AS },
+    blocked: ({ text }) => {
+      const { typed, reason, category } = closeAs(text)
+      if (!category) return `No category ${typed}. Use ${CLOSURE_CATEGORIES.map((c) => c.value).join(', ')} or ${UNSPECIFIED.value}.`
+      return category.value === 'unspecified' ? null : closureProblem(category.value, reason)
+    },
+    preview: ({ id, text }) => {
+      const { category, reason } = closeAs(text)
+      return { line: `Close case ${id} as ${category?.label.toLowerCase()}${reason ? `: ${reason}` : ''}` }
+    },
+    fused: ({ id, text }) => {
+      const { category, reason } = closeAs(text)
+      const label = category?.label.toLowerCase()
+      return {
+        text: `Closing case ${id} as ${label}`,
+        doneText: `Case ${id} closed as ${label}`,
+        failText: `Couldn’t close case ${id}`,
+        commit: () => casesApi.closeCase(id, !category || category.value === 'unspecified'
+          ? { closure_category: 'unspecified', ...(reason && { closure_notes: reason }) }
+          : closurePayload(category.value, reason)),
+      }
+    },
+  },
+  {
+    id: 'reopen',
+    name: '/reopen',
+    hint: '<case>',
+    desc: 'Reopen a closed case',
+    runs: 'Reopens the case, with undo',
+    later: false,
+    needs: ['cases.write'],
+    args: { kind: 'ref', ref: 'case' },
+    preview: ({ id }) => ({ line: `Reopen case ${id}` }),
+    fused: ({ id }) => ({
+      text: `Reopening case ${id}`,
+      doneText: `Case ${id} reopened`,
+      failText: `Couldn’t reopen case ${id}`,
+      commit: () => casesApi.update(id, { status: 'open' }),
+    }),
+  },
+  {
+    id: 'stop',
+    name: '/stop',
+    hint: '<case> [reason]',
+    desc: 'Stop the live run on a case and reject its pending approvals',
+    runs: 'Cancels the run',
+    later: false,
+    needs: ['automation.read', 'ai_decisions.approve'],
+    args: { kind: 'ref', ref: 'case', text: true },
+    preview: ({ id, text }) => ({ line: `Stop the live run on case ${id}${text ? `: ${text}` : ''}`, note: 'Pending approvals on the run get rejected.' }),
+    run: async ({ id, text }, ctx) => {
+      const runId = (await casesApi.getById(id)).data.investigations?.find((item) => item.live)?.run_id
+      if (!runId) {
+        ctx.notify('info', `Case ${id} has no live run to stop`)
+        return
+      }
+      await workflowApi.cancelRun(runId, text || 'Stopped from the command bar')
+      notifyCasesChanged()
+      ctx.notify('ok', `Stopped the run on case ${id}`)
+    },
+  },
+  {
+    id: 'run',
+    name: '/run',
+    hint: '<workflow> <input>',
+    desc: 'Start any workflow that is on',
+    runs: 'The workflow you name',
+    later: false,
+    needs: ['automation.read', 'ai_chat.use'],
+    args: { kind: 'ref', ref: 'workflow', text: true },
+    blocked: ({ text, ref }) => (text ? null : ref?.huntLike ? 'Add a hypothesis' : 'Add a finding id or context'),
+    preview: ({ id, text }) => ({ line: `Run ${id}: ${text}` }),
+    run: async ({ id, text, ref }, ctx) => {
+      const started = await workflowApi.execute(id, ref?.huntLike ? { hypothesis: text } : await findingOrContext(text))
+      const { case_id: caseId, run_id: runId } = started.data
+      if (caseId) ctx.onOpenCase(caseId)
+      else if (runId) ctx.onGo('workflows', { search: `?run=${encodeURIComponent(runId)}` })
+      ctx.notify('ok', `Started ${id}`)
+    },
+  },
+  {
+    id: 'noise',
+    name: '/noise',
+    hint: '<alert>',
+    desc: 'Dismiss an alert as noise',
+    runs: 'Marks the alert as noise, with undo',
+    later: false,
+    needs: ['findings.write'],
+    args: { kind: 'ref', ref: 'alert' },
+    preview: ({ id }) => ({ line: `Mark alert ${id} as noise` }),
+    fused: ({ id }) => ({
+      text: `Marking alert ${id} as noise`,
+      doneText: `Alert ${id} marked as noise`,
+      failText: `Couldn’t mark alert ${id} as noise`,
+      commit: () => findingsApi.markNoise(id),
+    }),
+  },
+  {
+    id: 'decisions',
+    name: '/decisions',
+    hint: '',
+    desc: 'See the cases waiting on a person',
+    runs: 'Opens Cases on Needs you',
+    later: false,
+    // The Cases screen's own gate: Home's Needs you section is closed to anyone without ai_decisions.approve.
+    needs: ['cases.read'],
+    args: { kind: 'free' },
+    preview: () => ({ line: 'Open the cases that need you' }),
+    run: async (_target, ctx) => {
+      ctx.onGo('cases', { search: '?needs_you=1' })
+    },
+  },
+  {
+    id: 'case',
+    name: '/case',
+    hint: '<title>',
+    desc: 'Open a new case with no alerts on it yet',
+    runs: 'Creates a case',
+    later: false,
+    needs: ['cases.write'],
+    args: { kind: 'free' },
+    blocked: ({ text }) => (text ? null : 'Add a title'),
+    preview: ({ text }) => ({ line: `Create a case: ${text}` }),
+    run: async ({ text }, ctx) => {
+      const { data } = await casesApi.create({ title: text, description: '', finding_ids: [], priority: 'medium', status: 'open' })
+      notifyCasesChanged()
+      if (!data.case_id) throw new Error('The case was created without an id')
+      ctx.onOpenCase(data.case_id)
+      ctx.notify('ok', `Case created: ${text}`)
     },
   },
   { id: 'hold', name: '/hold', hint: '<case or kind>', desc: 'Hold a case, or every case of one kind', runs: '—', later: true },
@@ -218,6 +454,15 @@ export const COMMANDS: CommandDef[] = [
 ]
 
 export const LIVE_COMMANDS = COMMANDS.filter((c): c is LiveCommand => !c.later)
+export const FEATURED_COMMANDS = LIVE_COMMANDS.filter((c) => c.featured)
+
+const LATER_WHY = 'Coming in a later release'
+
+/** Why this role cannot run a command, or null. */
+function deniedBy(command: LiveCommand, can: BindEnv['can']): string | null {
+  const missing = command.needs.find((permission) => !can(permission))
+  return missing ? `Your role can’t run ${command.name}. It needs ${missing}.` : null
+}
 
 type DestTag = 'Case' | 'Alert' | 'Page' | 'Command' | 'Recent' | 'Ask' | 'Argument'
 
@@ -229,6 +474,7 @@ export type Section =
   | 'Alerts'
   | 'Pages'
   | 'Agents & workflows'
+  | 'Close as'
   | 'Ask Vigil'
 
 export interface BoardLink {
@@ -252,6 +498,8 @@ export interface PaletteRow {
   icon: IconName
   desc: string
   disabled: boolean
+  /** Why a disabled row is disabled; its tooltip. */
+  why?: string
   commandId?: string
   caseId?: string
   findingId?: string
@@ -353,7 +601,10 @@ export function attachRefusal(file: { name: string; size: number }): string | nu
 export function attachBlockedBy(query: string): string | null {
   const line = parseLine(query)
   if (line?.kind === 'later') return `${line.command.name} is not available yet and takes no file`
-  return line?.kind === 'command' && !line.command.takesFile ? `${line.command.name} takes a case, not a file` : null
+  if (line?.kind !== 'command' || line.command.takesFile) return null
+  const { args, name } = line.command
+  if (args.kind !== 'ref') return `${name} takes no file`
+  return `${name} takes ${args.ref === 'alert' ? 'an alert' : `a ${args.ref}`}, not a file`
 }
 
 /** Over this many characters, or on more than one line, a paste attaches as a file instead of landing in the input. */
@@ -428,9 +679,10 @@ export function tagText(row: PaletteRow): string {
     case 'Ask':
       return 'Opens Ask Vigil'
     case 'Command':
-      return row.disabled ? 'Later' : 'Command'
+      if (!row.disabled) return 'Command'
+      return row.why === LATER_WHY ? 'Later' : 'No access'
     case 'Argument':
-      return 'Use'
+      return row.disabled ? 'Off' : 'Use'
   }
 }
 
@@ -484,10 +736,10 @@ export function useJiraReadiness(): JiraReadiness {
   return jira
 }
 
-export type CommandLine = { kind: 'command'; command: LiveCommand; word: string }
+type CommandLine = { kind: 'command'; command: LiveCommand; word: string; text: string }
 
 /** A line that starts with a slash: a live command, a Later one, or neither. */
-export type Line =
+type Line =
   | CommandLine
   | { kind: 'later'; command: LaterCommand }
   | { kind: 'unknown'; token: string; tail: string; near: LiveCommand[] }
@@ -524,7 +776,11 @@ export function parseLine(query: string): Line | null {
   const lower = token.toLowerCase()
   const command = COMMANDS.find((c) => c.name === lower)
   if (command?.later) return { kind: 'later', command }
-  if (command) return { kind: 'command', command, word: rest }
+  if (command) {
+    if (command.args.kind !== 'ref' || !command.args.text) return { kind: 'command', command, word: rest, text: '' }
+    const [word = ''] = rest.split(/\s+/)
+    return { kind: 'command', command, word, text: rest.slice(word.length).trim() }
+  }
   return { kind: 'unknown', token, tail: rest, near: commandsFor(lower).length > 0 ? [] : nearCommands(lower) }
 }
 
@@ -533,18 +789,33 @@ export interface RefLookup {
   kind: RefKind
   word: string
   failed: boolean
-  exact: Hit | null
-  hits: Hit[]
+  exact: Ref | null
+  hits: Ref[]
 }
 
-export function lookupWanted(line: Line | null): { kind: RefKind; word: string } | null {
-  if (line?.kind !== 'command') return null
+export function lookupWanted(line: Line | null, can: BindEnv['can']): { kind: RefKind; word: string } | null {
+  if (line?.kind !== 'command' || deniedBy(line.command, can)) return null
   const { args } = line.command
   const kind = args.kind === 'ref' ? args.ref : args.rows
   return kind ? { kind, word: line.word } : null
 }
 
 export async function fetchRefs(kind: RefKind, word: string, signal: AbortSignal): Promise<Pick<RefLookup, 'exact' | 'hits'>> {
+  if (kind === 'workflow') {
+    const { data } = await workflowApi.listAll()
+    const q = word.toLowerCase()
+    const refs: Ref[] = ((data as { workflows?: Parameters<typeof mapApiWorkflow>[0][] }).workflows ?? []).map(mapApiWorkflow).map((workflow) => ({
+      id: workflow.id,
+      title: workflow.name,
+      description: workflow.desc,
+      huntLike: workflow.huntLike,
+      off: workflowOff(workflow),
+    }))
+    return {
+      exact: refs.find((ref) => ref.id === word) ?? null,
+      hits: refs.filter((ref) => ref.id.includes(q) || ref.title.toLowerCase().includes(q)),
+    }
+  }
   if (word) {
     const { data } = await searchApi.query(word, signal)
     return { exact: (kind === 'case' ? data.case_exact : data.finding_exact) ?? null, hits: argumentHits(kind, data) }
@@ -559,33 +830,41 @@ export async function fetchRefs(kind: RefKind, word: string, signal: AbortSignal
   return { exact: null, hits: findings.map((f) => ({ id: f.finding_id, title: f.title || f.description || f.finding_id, data_source: f.data_source, severity: f.severity })) }
 }
 
-export type Binding =
-  | { state: 'off' | 'missing' | 'searching' | 'unresolved'; reason: string }
+type Binding =
+  | { state: 'off' | 'searching' | 'unresolved'; reason: string }
+  | { state: 'missing'; reason: string; target?: Bound }
   | { state: 'bound'; target: Bound; line: string; note?: string }
 
-function resolveRef({ word }: CommandLine, ref: RefKind, lookup: RefLookup | null, env: BindEnv): Bound | Exclude<Binding, { state: 'bound' }> {
+function resolveRef({ word, text }: CommandLine, args: Extract<Args, { kind: 'ref' }>, lookup: RefLookup | null, env: BindEnv): Bound | Exclude<Binding, { state: 'bound' }> {
+  const { ref } = args
+  const openCase = ref === 'case' ? env.openCaseId : null
   if (!word) {
-    if (ref === 'case' && env.openCaseId) return { id: env.openCaseId, text: '' }
-    return { state: 'missing', reason: `Add ${ref === 'alert' ? 'an alert' : 'a case'} id` }
+    if (openCase) return { id: openCase, text: '', named: false }
+    return { state: 'missing', reason: ref === 'workflow' ? 'Add a workflow' : `Add ${ref === 'alert' ? 'an alert' : 'a case'} id` }
   }
   if (lookup?.word !== word) return { state: 'searching', reason: `Looking for ${ref} ${word}…` }
   // The search itself failed, so nobody knows. The server answers for the id, as it would have.
-  if (lookup.failed) return { id: word, text: '' }
-  if (lookup.exact?.id) return { id: lookup.exact.id, text: '' }
+  if (lookup.failed) return { id: word, text, named: true }
+  if (lookup.exact?.off) return { state: 'off', reason: lookup.exact.off }
+  if (lookup.exact?.id) return { id: lookup.exact.id, text, named: true, ref: lookup.exact }
+  // Not an id, so with a case open it is the start of what was said about that case.
+  if (args.text && openCase) return { id: openCase, text: `${word} ${text}`.trim(), named: false }
   return { state: 'unresolved', reason: `No ${ref} ${word}.${lookup.hits.length > 0 ? ' Pick one below.' : ''}` }
 }
 
 export function bindLine(line: CommandLine, lookup: RefLookup | null, env: BindEnv): Binding {
   const { command, word } = line
+  const denied = deniedBy(command, env.can)
+  if (denied) return { state: 'off', reason: denied }
   // A command that reads the file waits for it, and a refused one stops it.
   if (command.takesFile) {
     if (env.attachment?.status === 'reading') return { state: 'off', reason: `Reading ${env.attachment.name}…` }
     if (env.attachment?.status === 'refused') return { state: 'off', reason: env.attachment.reason }
   }
-  const resolved = command.args.kind === 'ref' ? resolveRef(line, command.args.ref, lookup, env) : { id: '', text: word }
+  const resolved = command.args.kind === 'ref' ? resolveRef(line, command.args, lookup, env) : { id: '', text: word, named: false }
   if ('state' in resolved) return resolved
   const reason = command.blocked?.(resolved, env)
-  if (reason) return { state: 'missing', reason }
+  if (reason) return { state: 'missing', reason, target: resolved }
   return { state: 'bound', target: resolved, ...command.preview(resolved, env) }
 }
 
@@ -599,7 +878,7 @@ export interface BarView {
   running: boolean
 }
 
-export type KeyAction =
+type KeyAction =
   | { kind: 'none' }
   | { kind: 'default' }
   | { kind: 'run' }
@@ -649,8 +928,9 @@ function commandsFor(query: string): CommandDef[] {
   return COMMANDS.filter((command) => command.id !== 'custom' && command.name.toLowerCase().includes(q))
 }
 
-function commandRow(command: CommandDef, tail = ''): PaletteRow {
+function commandRow(command: CommandDef, can: BindEnv['can'], tail = ''): PaletteRow {
   const custom = command.id === 'custom'
+  const why = command.later ? LATER_WHY : deniedBy(command, can) ?? undefined
   return {
     key: `cmd:${command.id}`,
     label: custom ? command.desc : command.name,
@@ -658,19 +938,25 @@ function commandRow(command: CommandDef, tail = ''): PaletteRow {
     dest: 'Command',
     section: custom ? 'Custom commands' : 'Commands',
     icon: custom ? 'plus' : 'bolt',
-    desc: custom ? 'Agents & workflows › Commands' : command.desc,
-    disabled: command.later,
+    desc: custom ? 'Agents & workflows › Commands' : !command.later && why ? why : command.desc,
+    disabled: why !== undefined,
+    why,
     commandId: command.id,
-    ...(!command.later && { fill: `${command.name} ${tail}` }),
+    ...(!why && { fill: `${command.name} ${tail}` }),
   }
 }
 
-function slashRows(line: Line): PaletteRow[] {
-  if (line.kind === 'later') return [commandRow(line.command)]
-  if (line.kind === 'command') return [{ ...commandRow(line.command, line.word), echo: true }]
-  if (line.near.length > 0) return line.near.map((command) => ({ ...commandRow(command, line.tail), desc: `Did you mean ${command.name}?` }))
+function slashRows(line: Line, can: BindEnv['can']): PaletteRow[] {
+  if (line.kind === 'later') return [commandRow(line.command, can)]
+  if (line.kind === 'command') return [{ ...commandRow(line.command, can, `${line.word} ${line.text}`.trim()), echo: true }]
+  if (line.near.length > 0) {
+    return line.near.map((command) => {
+      const row = commandRow(command, can, line.tail)
+      return row.disabled ? row : { ...row, desc: `Did you mean ${command.name}?` }
+    })
+  }
   // COMMANDS lists the custom row last, so it lands in its own section.
-  return commandsFor(line.token).map((command) => commandRow(command, line.tail))
+  return commandsFor(line.token).map((command) => commandRow(command, can, line.tail))
 }
 
 function recentRow(text: string): PaletteRow {
@@ -728,13 +1014,14 @@ export function buildRows(
   hits: SearchHits | null,
   recents: string[],
   boards: BoardLink[],
+  can: BindEnv['can'],
 ): PaletteRow[] {
   const q = query.trim()
   const ql = q.toLowerCase()
-  if (!q) return [...recents.map(recentRow), ...LIVE_COMMANDS.map((command) => commandRow(command)), askRow('')]
+  if (!q) return [...recents.map(recentRow), ...FEATURED_COMMANDS.map((command) => commandRow(command, can)), askRow('')]
 
   const line = parseLine(q)
-  if (line) return slashRows(line)
+  if (line) return slashRows(line, can)
 
   const cases: PaletteRow[] = []
   const seen = new Set<string>()
@@ -785,7 +1072,7 @@ export function buildRows(
       search: search(encodeURIComponent(hit.id)),
     })),
   )
-  const commands = commandsFor(q).map((command) => commandRow(command))
+  const commands = commandsFor(q).map((command) => commandRow(command, can))
   const recent = recents.filter((text) => text.toLowerCase().includes(ql)).map(recentRow)
   // An exact finding id with no exact case id puts Alerts first.
   const alertsFirst = Boolean(hits?.finding_exact?.id) && !hits?.case_exact
@@ -799,11 +1086,43 @@ export function buildRows(
   ]
 }
 
-/** The rows under a command line that put an id on it. A settled id needs none. */
-export function argumentRows({ command, word }: CommandLine, binding: Binding, lookup: RefLookup | null): PaletteRow[] {
-  if (!lookup || binding.state === 'off') return []
-  if (binding.state === 'bound' && command.args.kind === 'ref' && word) return []
+const ROW_LOOK: Record<RefKind, { section: Section; icon: IconName; desc: (hit: Ref) => string }> = {
+  case: { section: 'Cases', icon: 'folder', desc: caseDesc },
+  alert: { section: 'Alerts', icon: 'alert', desc: (hit) => joinParts([hit.data_source, hit.severity]) },
+  workflow: { section: 'Agents & workflows', icon: 'flow', desc: (hit) => hit.off ?? hit.description ?? '' },
+}
+
+function choiceRows({ command }: CommandLine, target: Bound, choices: readonly Choice[]): PaletteRow[] {
+  const typed = target.text.split(/\s+/)[0].toLowerCase()
+  const matching = choices.filter((choice) => choice.value.startsWith(typed))
+  return (matching.length > 0 ? matching : choices).map((choice) => ({
+    key: `arg:${choice.value}`,
+    label: choice.label,
+    hint: choice.value,
+    dest: 'Argument' as const,
+    section: 'Close as' as const,
+    icon: 'check2' as const,
+    desc: choice.desc ?? '',
+    disabled: false,
+    fill: `${command.name} ${target.named ? `${target.id} ` : ''}${choice.value}`,
+  }))
+}
+
+/** The rows under a command line that fill it in. A settled ref needs none, and a case still waiting on its text must not offer another. */
+export function argumentRows(line: CommandLine, binding: Binding, lookup: RefLookup | null): PaletteRow[] {
+  if (binding.state === 'off') return []
+  const { command, text } = line
+  const { args } = command
+  const target = binding.state === 'bound' || binding.state === 'missing' ? binding.target : undefined
+  if (args.kind === 'ref' && target) {
+    if (args.choices) return choiceRows(line, target, args.choices)
+    if (target.named || binding.state === 'missing') return []
+  }
+  if (!lookup) return []
   const { kind } = lookup
+  const look = ROW_LOOK[kind]
+  // A word that fell through to the open case is text, so it stays when another case is picked.
+  const slot = args.kind === 'ref' && args.text ? ` ${target?.text ?? text}` : ''
   const seen = new Set<string>()
   return lookup.hits.flatMap((hit) => {
     if (!hit.id || seen.has(hit.id)) return []
@@ -813,17 +1132,18 @@ export function argumentRows({ command, word }: CommandLine, binding: Binding, l
       label: hit.title || hit.id,
       hint: hit.id,
       dest: 'Argument' as const,
-      section: kind === 'case' ? 'Cases' as const : 'Alerts' as const,
-      icon: kind === 'case' ? 'folder' as const : 'alert' as const,
-      desc: kind === 'case' ? caseDesc(hit) : joinParts([hit.data_source, hit.severity]),
-      disabled: false,
-      fill: `${command.name} ${hit.id}`,
+      section: look.section,
+      icon: look.icon,
+      desc: look.desc(hit),
+      disabled: Boolean(hit.off),
+      why: hit.off,
+      fill: `${command.name} ${hit.id}${slot}`,
     }]
   })
 }
 
 /** The argument rows a search answer holds, the exact id first. */
-function argumentHits(kind: RefKind, hits: SearchHits): Hit[] {
+function argumentHits(kind: 'case' | 'alert', hits: SearchHits): Hit[] {
   const found = kind === 'case' ? [hits.case_exact, ...(hits.cases ?? [])] : [hits.finding_exact, ...(hits.alerts ?? [])]
   return found.filter((hit): hit is Hit => Boolean(hit))
 }

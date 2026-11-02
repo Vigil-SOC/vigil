@@ -34,11 +34,12 @@ import {
   type SearchHits,
   useJiraReadiness,
 } from './commandBarModel'
+import { notifyCasesChanged } from '../screens/cases/useCases'
 import { errorText } from '../shared/errorText'
 
 // A disabled button gets no hover, so the tooltip sits on a wrapper.
-function LaterTip({ later, children }: { later: boolean; children: ReactNode }) {
-  return later ? <span className="vg-command-later" title="Coming in a later release">{children}</span> : <>{children}</>
+function RowTip({ why, children }: { why?: string; children: ReactNode }) {
+  return why ? <span className="vg-command-later" title={why}>{children}</span> : <>{children}</>
 }
 
 export default function CommandBar({
@@ -61,8 +62,8 @@ export default function CommandBar({
   /** Home draws the bar full width under the headline. Everywhere else it stays in the header. */
   placement?: 'header' | 'hero'
 }) {
-  const { user } = useAuth()
-  const { notify } = useToast()
+  const { user, hasPermission: can } = useAuth()
+  const { notify, notifyUndoable, pending } = useToast()
   const userId = user?.user_id
   const slotRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -139,7 +140,7 @@ export default function CommandBar({
 
   const line = parseLine(query)
   const commandLine = line?.kind === 'command' ? line : null
-  const want = lookupWanted(line)
+  const want = lookupWanted(line, can)
   const wantKind = want?.kind
   const wantWord = want?.word
   // The cases or alerts a command's argument can name, so nobody has to know the id.
@@ -150,7 +151,9 @@ export default function CommandBar({
     const timer = setTimeout(() => {
       fetchRefs(wantKind, wantWord, round.signal).then(
         (found) => {
-          if (live) setAnswer({ kind: wantKind, word: wantWord, failed: false, ...found })
+          if (!live) return
+          setAnswer({ kind: wantKind, word: wantWord, failed: false, ...found })
+          setActive(null)
         },
         () => {
           if (live) setAnswer({ kind: wantKind, word: wantWord, failed: true, exact: null, hits: [] })
@@ -167,10 +170,10 @@ export default function CommandBar({
   // Rows from another kind are never offered: a case id must not land after /investigate.
   const shownAnswer = answer?.kind === wantKind ? answer : null
   const lookup = shownAnswer?.word === wantWord ? shownAnswer : null
-  const env = { openCaseId, jira, attachment }
+  const env = { openCaseId, jira, attachment, can }
   const binding = commandLine ? bindLine(commandLine, lookup, env) : null
   const argRows = commandLine && binding ? argumentRows(commandLine, binding, shownAnswer) : []
-  const rows = [...buildRows(query, hits, recents, boards), ...argRows]
+  const rows = [...buildRows(query, hits, recents, boards, can), ...argRows]
   const view: BarView = { query, line, binding, rows, active, running }
   const highlighted = targetRow(view)
   const enterAction = keyAction('Enter', view)
@@ -343,11 +346,34 @@ export default function CommandBar({
 
   const run = async () => {
     if (binding?.state !== 'bound' || !commandLine || running) return
+    const { command } = commandLine
+    if (command.fused) {
+      const action = command.fused(binding.target)
+      // The toast drops a repeat of a running key without a word, so this is where the person hears it.
+      const key = `command:${command.id}:${binding.target.id}:${binding.target.text}`
+      if (pending.includes(key)) {
+        notify('info', `${action.text} is already waiting. Undo it or let it finish.`)
+        return
+      }
+      notifyUndoable({
+        key,
+        text: action.text,
+        commit: async () => {
+          await action.commit()
+          notifyCasesChanged()
+        },
+        doneText: action.doneText,
+        failText: (error) => `${action.failText}: ${errorText(error, 'the request failed')}`,
+      })
+      setQuery('')
+      setOpen(false)
+      return
+    }
     setRunning(true)
     // A file attached while the run starts is not the one it sent, so it stays.
     const sentSeq = attachSeq.current
     try {
-      await commandLine.command.run(binding.target, {
+      await command.run(binding.target, {
         ...env,
         notify,
         onOpenCase,
@@ -521,7 +547,7 @@ export default function CommandBar({
                   const on = index === highlighted
                   return (
                     <div key={row.key} className={`vg-command-item${on ? ' is-on' : ''}`}>
-                      <LaterTip later={row.disabled}>
+                      <RowTip why={row.disabled ? row.why : undefined}>
                         <button
                           id={row.key}
                           type="button"
@@ -540,7 +566,7 @@ export default function CommandBar({
                             {on && <span className="vg-command-enter">↵</span>}
                           </span>
                         </button>
-                      </LaterTip>
+                      </RowTip>
                       {row.dest === 'Recent' && row.recent && (
                         <button
                           type="button"
