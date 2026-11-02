@@ -5,7 +5,7 @@ import { caseSearchApi, casesApi, workflowApi } from '../../services/api'
 import { mapQueueCase } from '../../data/mappers'
 import type { CaseRow } from '../../data/data'
 import type { Schema } from '../../services/apiTypes'
-import type { ConsoleScreenProps } from '../../shared/types'
+import type { ChatSeed, ConsoleScreenProps } from '../../shared/types'
 import {
   useCases,
   useCaseDetail,
@@ -944,7 +944,7 @@ export function CasesDetail({
   onCollapse?: () => void
   pageKey: string
   /** Command-bar text for this case's composer. */
-  seed?: string | null
+  seed?: ChatSeed | null
   onSeedConsumed?: () => void
 }) {
   const { row: c, created, combinedState, investigations, closure, linkedFindings, phase, error, reload: reloadDetail, refresh } =

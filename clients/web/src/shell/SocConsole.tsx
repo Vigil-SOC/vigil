@@ -26,7 +26,7 @@ import { markConsoleTourSeen, readConsoleTourSeen } from './consoleTourSeen'
 import ErrorBoundary from './ErrorBoundary'
 import { ToastProvider } from './toast'
 import { useDesktopNotifications } from './useDesktopNotifications'
-import type { ConsoleScreenGoOptions, ConsoleScreenProps, SettingsSectionKey } from '../shared/types'
+import type { ChatSeed, ConsoleScreenGoOptions, ConsoleScreenProps, SeedDocument, SettingsSectionKey } from '../shared/types'
 import type { Schema } from '../services/apiTypes'
 import DashboardScreen from '../screens/dashboard/DashboardScreen'
 import CasesScreen from '../screens/cases/CasesScreen'
@@ -162,8 +162,8 @@ function SocConsoleInner() {
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window === 'undefined' ? 1440 : window.innerWidth,
   )
-  const [chatSeed, setChatSeed] = useState<string | null>(null)
-  const [caseSeed, setCaseSeed] = useState<string | null>(null)
+  const [chatSeed, setChatSeed] = useState<ChatSeed | null>(null)
+  const [caseSeed, setCaseSeed] = useState<ChatSeed | null>(null)
   const drawerCase = heldCase(location.state)
   const latestLocation = useRef(location)
   latestLocation.current = location
@@ -202,9 +202,9 @@ function SocConsoleInner() {
   const [needsYou, setNeedsYou] = useState(0)
   const [openCases, setOpenCases] = useState(0)
 
-  const openChat = useCallback((prompt?: string) => {
+  const openChat = useCallback((prompt?: string, document?: SeedDocument) => {
     setChatOpen(true)
-    if (prompt) setChatSeed(prompt)
+    if (prompt || document) setChatSeed({ text: prompt ?? '', document })
   }, [])
   const closeChat = useCallback(() => {
     setChatOpen(false)
@@ -214,9 +214,9 @@ function SocConsoleInner() {
   const pageCase = current === 'cases' && allowed ? new URLSearchParams(location.search).get('case') : null
   const openCaseId = drawerCase ?? pageCase
   // with a case open the text goes to its own composer, not the dock
-  const askVigil = useCallback((text?: string) => {
-    if (openCaseId && text) setCaseSeed(text)
-    else openChat(text)
+  const askVigil = useCallback((text?: string, document?: SeedDocument) => {
+    if (openCaseId && text) setCaseSeed({ text, document })
+    else openChat(text, document)
   }, [openCaseId, openChat])
   const clearCaseSeed = useCallback(() => setCaseSeed(null), [])
 

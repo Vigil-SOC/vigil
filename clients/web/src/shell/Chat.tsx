@@ -41,6 +41,7 @@ import { Popup } from '../shared/ui'
 import { LATER_RELEASE } from '../shared/later'
 import { errorText } from '../shared/errorText'
 import { attachRefusal } from './commandBarModel'
+import type { ChatSeed, SeedDocument } from '../shared/types'
 
 type Role = 'user' | 'vigil' | 'error'
 interface ChatMsg {
@@ -323,7 +324,7 @@ export default function Chat({
 }: {
   open: boolean
   onClose: () => void
-  seed?: string | null
+  seed?: ChatSeed | null
   /** Route key (`current` in SocConsole). Stored on the conversation; the title is display-only. */
   pageKey?: string
   pageTitle?: string
@@ -406,7 +407,7 @@ export default function Chat({
   messagesRef.current = messages
   // false until the locked case's conversation list has settled
   const caseReady = useRef(!lockedCaseId)
-  const pendingSend = useRef<string | null>(null)
+  const pendingSend = useRef<{ text: string; document?: SeedDocument } | null>(null)
   if (lockedCaseId) caseIdRef.current = lockedCaseId
   const putMessages = (next: ChatMsg[]) => {
     messagesRef.current = next
@@ -611,17 +612,18 @@ export default function Chat({
     setMentionHits(null)
   }
 
-  const send = async (override?: string, opts?: { fresh?: boolean }) => {
+  // `document` is a file the command bar already read: it rides on this turn, whatever the dock holds
+  const send = async (override?: string, opts?: { fresh?: boolean; document?: SeedDocument }) => {
     const text = (override ?? draft).trim()
     if (!text) return
     // Hold the turn until the locked thread is the one on screen.
     if (lockedCaseId && !caseReady.current) {
-      pendingSend.current = text
+      pendingSend.current = { text, document: opts?.document }
       setDraft('')
       return
     }
     // a fresh seed leaves the file behind, so a file still being read does not hold it
-    if (loading || (file?.status === 'reading' && !opts?.fresh)) return
+    if (loading || (file?.status === 'reading' && !opts?.fresh && !opts?.document)) return
     setHistoryOpen(false)
     const gen = turnGen.current
     localTurn.current = true
@@ -633,9 +635,14 @@ export default function Chat({
     // `fresh` keeps a new investigation's seed off an unrelated conversation
     const base = opts?.fresh ? [] : messagesRef.current
     // the turn a file first rides on names it, so the question reads right in history
-    const sentFile = file?.status === 'ready' && !opts?.fresh ? file : null
+    const handed = opts?.document ? { status: 'ready' as const, ...opts.document, named: false } : null
+    const sentFile = handed ?? (file?.status === 'ready' && !opts?.fresh ? file : null)
     const asked = sentFile && !sentFile.named ? `${text}\n\nAttached: ${sentFile.name}` : text
-    if (sentFile && !sentFile.named) setFile({ ...sentFile, named: true })
+    if (handed) {
+      // the handed file replaces the dock's; the case composer shows no chip, so it keeps none
+      fileSeq.current += 1
+      setFile(pinned ? null : { ...handed, named: true })
+    } else if (sentFile && !sentFile.named) setFile({ ...sentFile, named: true })
     const next: ChatMsg[] = [...base, { role: 'user', text: asked }]
     putMessages(next)
     setDraft('')
@@ -873,11 +880,12 @@ export default function Chat({
 
   // the seed prompt is deterministic per finding/case, so it doubles as the
   // dedup key for reusing an existing thread
-  const openInvestigation = async (prompt: string) => {
+  const openInvestigation = async (prompt: string, document?: SeedDocument) => {
     setHistoryOpen(false)
     if (loading) return
-    if (currentKeyRef.current === prompt && messages.length > 0) return // already here
-    const mapped = loadKeymap(userId)[prompt]
+    // a question with a file is a new turn, so it never just reopens the old thread
+    if (!document && currentKeyRef.current === prompt && messages.length > 0) return // already here
+    const mapped = document ? undefined : loadKeymap(userId)[prompt]
     if (mapped) {
       const opened = await openConversation(mapped, prompt)
       if (opened) return // reopened the existing thread for this finding/case
@@ -890,7 +898,7 @@ export default function Chat({
     dropFile()
     setKeymapEntry(userId, prompt, sessionRef.current) // so re-opening this finding restores it
     setSessionSummary(null)
-    send(prompt, { fresh: true })
+    send(prompt, { fresh: true, document })
   }
 
   const openReasoningTrace = () => {
@@ -1000,7 +1008,7 @@ export default function Chat({
       caseReady.current = true
       const queued = pendingSend.current
       pendingSend.current = null
-      if (queued) void send(queued)
+      if (queued) void send(queued.text, { document: queued.document })
     }
     conversationsApi
       .list({ case_id: lockedCaseId, limit: 1 })
@@ -1032,7 +1040,7 @@ export default function Chat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lockedCaseId])
 
-  const seedRef = useRef<string | null>(null)
+  const seedRef = useRef<ChatSeed | null>(null)
   useEffect(() => {
     // reset when the parent clears the seed, so the same finding can be
     // investigated again
@@ -1045,13 +1053,19 @@ export default function Chat({
     if (!open || seed === seedRef.current) return
     if (loading && (!lockedCaseId || caseReady.current)) return
     seedRef.current = seed
-    if (lockedCaseId) {
+    if (!seed.text) {
+      // a file with no question waits on the dock's chip for one
+      if (seed.document && !pinned) {
+        fileSeq.current += 1
+        setFile({ status: 'ready', ...seed.document, named: false })
+      }
+    } else if (lockedCaseId) {
       // append on this session; do not open a keymap investigation or clear the case
       caseIdRef.current = lockedCaseId
       setCaseId(lockedCaseId)
-      send(seed)
+      send(seed.text, { document: seed.document })
     } else {
-      openInvestigation(seed)
+      openInvestigation(seed.text, seed.document)
     }
     onSeedConsumed?.()
     // send intentionally omitted: we fire once per new seed, and again when a

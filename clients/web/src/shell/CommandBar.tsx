@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { casesApi, findingsApi, searchApi, workflowApi } from '../services/api'
 import { Icon } from '../shared/icons'
 import { useToast } from './toast'
-import type { ConsoleScreenGoOptions } from '../shared/types'
+import type { ConsoleScreenGoOptions, SeedDocument } from '../shared/types'
 import {
   argumentHits,
   argumentKind,
   argumentRows,
+  attachBlockedBy,
   ATTACH_TYPES,
   attachRefusal,
   buildRows,
@@ -20,6 +21,7 @@ import {
   isLiveCommand,
   liveCommandIn,
   moveEnabled,
+  PASTE_ATTACH_CHARS,
   PASTED_NAME,
   proposalFrom,
   runningHunt,
@@ -53,7 +55,7 @@ export default function CommandBar({
   placement = 'header',
 }: {
   boards: BoardLink[]
-  onOpenChat: (prompt?: string) => void
+  onOpenChat: (prompt?: string, document?: SeedDocument) => void
   onOpenCase: (caseId: string) => void
   onGo: (screen: string, options?: ConsoleScreenGoOptions) => void
   /** A case is open, so asking goes to its composer instead of the dock. */
@@ -78,7 +80,6 @@ export default function CommandBar({
   const [preview, setPreview] = useState<{ id: LiveCommandId; arg: string } | null>(null)
   const [running, setRunning] = useState(false)
   const [attachment, setAttachment] = useState<HuntAttachment | null>(null)
-  const [pasting, setPasting] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
   const attachSeq = useRef(0)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -252,12 +253,48 @@ export default function CommandBar({
     setAttachment(null)
   }, [])
 
+  // The typed command takes a case, or is not here yet: no file for it.
+  const attachBlocked = attachBlockedBy(query)
+
+  // Only a dragged file is taken, anywhere on the bar or its menu.
+  const carriesFile = (event: DragEvent<HTMLDivElement>) => !attachBlocked && event.dataTransfer.types.includes('Files')
   const onDropFile = (event: DragEvent<HTMLDivElement>) => {
+    if (!carriesFile(event)) return
     event.preventDefault()
     setDragging(false)
     const file = event.dataTransfer.files?.[0]
     if (file) void attach(file)
   }
+
+  // A pasted file attaches, as in the chat dock. Long or multi-line text attaches as text; a short line pastes.
+  const onPaste = (event: ClipboardEvent<HTMLInputElement>) => {
+    if (attachBlocked) return
+    const text = event.clipboardData.getData('text/plain')
+    const file = event.clipboardData.files?.[0]
+    if (file && !event.clipboardData.types.includes('text/plain')) {
+      event.preventDefault()
+      void attach(file)
+    } else if (text.trim() && (text.length > PASTE_ATTACH_CHARS || /\r|\n/.test(text.trim()))) {
+      event.preventDefault()
+      void attach(new File([text], `${PASTED_NAME}.txt`, { type: 'text/plain' }), true)
+    }
+  }
+
+  // Ask Vigil gets the read file with the question; one still being read, or refused, holds it back.
+  const ask = useCallback((text?: string): boolean => {
+    if (attachment?.status === 'reading') {
+      notify('info', `Still reading ${attachment.name}`)
+      return false
+    }
+    if (attachment?.status === 'refused') {
+      notify('err', `${attachment.reason} Remove ${attachment.name} to ask without it.`)
+      return false
+    }
+    const ready = attachment?.status === 'ready' ? attachment : null
+    onOpenChat(text, ready ? { name: ready.name, text: ready.text, pages: ready.pages, condensed: ready.condensed } : undefined)
+    if (ready) removeAttachment()
+    return true
+  }, [attachment, notify, onOpenChat, removeAttachment])
 
   // The door to the hunt already running on the attached document.
   const openRunning = useCallback((hunt: RunningHunt) => {
@@ -286,12 +323,14 @@ export default function CommandBar({
       setActive(0)
       return
     }
-    setOpen(false)
-    setPreview(null)
     if (row.dest === 'Ask') {
-      onOpenChat(query.trim() || undefined)
+      if (!ask(query.trim() || undefined)) return
+      setOpen(false)
+      setPreview(null)
       return
     }
+    setOpen(false)
+    setPreview(null)
     remember(query)
     if (row.dest === 'Case' && row.caseId) onOpenCase(row.caseId)
     else if (row.dest === 'Page' && row.page) {
@@ -303,7 +342,7 @@ export default function CommandBar({
       inputRef.current?.blur()
       onGo('overview', { search: `?alert=${encodeURIComponent(row.findingId)}` })
     }
-  }, [onGo, onOpenCase, onOpenChat, query, remember])
+  }, [ask, onGo, onOpenCase, query, remember])
 
   const choose = useCallback((row: PaletteRow) => {
     if (row.disabled) return
@@ -333,9 +372,15 @@ export default function CommandBar({
     const command = COMMANDS.find((c) => c.id === preview.id)
     const workflowId = command?.workflowId ?? ''
     setRunning(true)
+    // A file attached while the run starts is not the one it sent, so it stays.
+    const sentSeq = attachSeq.current
+    const dropSent = () => {
+      if (attachSeq.current === sentSeq) removeAttachment()
+    }
     try {
       switch (preview.id) {
         case 'investigate': {
+          const document = attachment?.status === 'ready' ? attachment : null
           let finding = false
           try {
             await findingsApi.getById(arg)
@@ -344,10 +389,20 @@ export default function CommandBar({
             finding = false
           }
           // The server opens the case, or reuses the open one holding the alert.
-          const started = await workflowApi.execute(workflowId, finding ? { finding_id: arg } : { context: arg })
+          const started = await workflowApi.execute(workflowId, {
+            ...(finding ? { finding_id: arg } : { context: arg }),
+            ...(document && { document: document.text }),
+          })
           const caseId = started.data.case_id
           if (!caseId) throw new Error('The run started without a case')
+          // The original stays on the case, as a hunt's does.
+          if (document) {
+            await casesApi
+              .attachDocument(caseId, document.file, { name: document.pasted ? PASTED_NAME : undefined, pages: document.pages })
+              .catch((error: unknown) => notify('err', `The run started, but ${document.name} could not be kept on the case: ${errorText(error, 'upload failed')}`))
+          }
           onOpenCase(caseId)
+          dropSent()
           notify('ok', `Started ${command?.runs}`)
           break
         }
@@ -375,7 +430,7 @@ export default function CommandBar({
               .catch((error: unknown) => notify('err', `The hunt started, but ${document.name} could not be kept on the case: ${errorText(error, 'upload failed')}`))
           }
           onOpenCase(caseId)
-          removeAttachment()
+          dropSent()
           notify('ok', `Hunt started on case "${title}"`)
           break
         }
@@ -390,7 +445,7 @@ export default function CommandBar({
           break
         }
         case 'ask':
-          onOpenChat(arg)
+          ask(arg)
           break
         case 'ticket':
           notify('ok', await casesApi.exportJira(arg, jira.projectKey))
@@ -408,7 +463,7 @@ export default function CommandBar({
     } finally {
       setRunning(false)
     }
-  }, [attachment, jira, notify, onGo, onOpenCase, onOpenChat, preview, removeAttachment])
+  }, [ask, attachment, jira, notify, onGo, onOpenCase, preview, removeAttachment])
 
   const onInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'ArrowDown') {
@@ -425,7 +480,7 @@ export default function CommandBar({
     }
     if (event.key === 'Tab' && query.trim()) {
       event.preventDefault()
-      onOpenChat(query.trim())
+      if (!ask(query.trim())) return
       setOpen(false)
       setPreview(null)
       return
@@ -461,8 +516,42 @@ export default function CommandBar({
           setOpen(false)
         }
       }}
+      onDragOver={(event) => {
+        if (!carriesFile(event)) return
+        event.preventDefault()
+        setDragging(true)
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false)
+      }}
+      onDrop={onDropFile}
     >
-      <div className={`vg-command-bar${open ? ' is-open' : ''}`}>
+      <div className={`vg-command-bar${open ? ' is-open' : ''}${dragging ? ' dragging' : ''}`}>
+        <input
+          ref={fileRef}
+          type="file"
+          hidden
+          accept={ATTACH_TYPES.join(',')}
+          aria-label="File to attach"
+          onChange={(event) => {
+            const file = event.target.files?.[0]
+            event.target.value = ''
+            if (file) void attach(file)
+          }}
+        />
+        {/* A disabled button gets no hover, so the reason sits on a wrapper. */}
+        <span className="vg-command-clip-wrap" title={attachBlocked ?? (attachment ? `Attached: ${attachment.name}` : 'Attach a file')}>
+          <button
+            type="button"
+            className={`vg-command-clip${attachment && attachment.status !== 'refused' ? ' is-on' : ''}`}
+            aria-label="Attach a file"
+            aria-description={attachBlocked ?? undefined}
+            disabled={attachBlocked !== null}
+            onClick={() => fileRef.current?.click()}
+          >
+            <Icon name="paperclip" size={placement === 'hero' ? 20 : 16} />
+          </button>
+        </span>
         <input
           ref={inputRef}
           role="combobox"
@@ -480,7 +569,6 @@ export default function CommandBar({
           value={query}
           onChange={(event) => {
             setQuery(event.target.value)
-            if (!/^\/hunt(\s|$)/i.test(event.target.value.trim())) removeAttachment()
             setHits(null)
             setPreview(liveCommandIn(event.target.value))
             setOpen(true)
@@ -488,6 +576,7 @@ export default function CommandBar({
           }}
           onFocus={() => setOpen(true)}
           onKeyDown={onInputKeyDown}
+          onPaste={onPaste}
         />
         {query && (
           <button
@@ -511,7 +600,7 @@ export default function CommandBar({
           type="button"
           className="vg-command-ask"
           onClick={() => {
-            onOpenChat()
+            if (!ask()) return
             setOpen(false)
             setPreview(null)
           }}
@@ -522,6 +611,26 @@ export default function CommandBar({
       </div>
       {open && (
         <div className="vg-command-menu">
+          {attachment && (
+            <div className="vg-command-files">
+              <span
+                className={`vg-command-file${attachment.status === 'refused' ? ' is-refused' : ''}`}
+                title={attachment.status === 'refused' ? attachment.reason : attachment.name}
+                role={attachment.status === 'refused' ? 'alert' : undefined}
+              >
+                <Icon name="paperclip" size={13} />
+                <span className="vg-command-file-name">{attachment.name}</span>
+                <span className="vg-command-file-meta">
+                  {attachment.status === 'reading' && 'reading…'}
+                  {attachment.status === 'ready' && `${attachment.pages} page${attachment.pages === 1 ? '' : 's'}${attachment.condensed ? ' · condensed' : ''}`}
+                  {attachment.status === 'refused' && attachment.reason}
+                </span>
+                <button type="button" aria-label={`Remove ${attachment.name}`} onClick={removeAttachment}>
+                  <Icon name="close" size={12} />
+                </button>
+              </span>
+            </div>
+          )}
           <div className="vg-command-scroll" id="vg-command-results" role="listbox">
             {rows.length === 0 && <div className="vg-command-empty">No matches</div>}
             {groups.map((group) => (
@@ -568,12 +677,7 @@ export default function CommandBar({
             ))}
           </div>
           {previewView && preview && (
-            <div
-              className={`vg-command-preview${dragging ? ' dragging' : ''}`}
-              onDragOver={preview.id === 'hunt' ? (event) => { event.preventDefault(); setDragging(true) } : undefined}
-              onDragLeave={preview.id === 'hunt' ? () => setDragging(false) : undefined}
-              onDrop={preview.id === 'hunt' ? onDropFile : undefined}
-            >
+            <div className="vg-command-preview">
               <p>{previewView.line}</p>
               <button
                 type="button"
@@ -583,68 +687,13 @@ export default function CommandBar({
               >
                 Run
               </button>
-              {preview.id === 'hunt' && (
+              {(previewView.note || alreadyRunning) && (
                 <div className="vg-command-attach">
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    hidden
-                    accept={ATTACH_TYPES.join(',')}
-                    aria-label="Attach intelligence file"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0]
-                      event.target.value = ''
-                      if (file) void attach(file)
-                    }}
-                  />
-                  <button type="button" className="btn" onClick={() => fileRef.current?.click()}>
-                    Attach intelligence
-                  </button>
-                  <button type="button" className="btn" aria-expanded={pasting !== null} onClick={() => setPasting((text) => (text === null ? '' : null))}>
-                    Paste text
-                  </button>
-                  {attachment && attachment.status !== 'refused' && (
-                    <span className="vg-command-file" title={attachment.name}>
-                      <span className="vg-command-file-name">{attachment.name}</span>
-                      {attachment.status === 'ready' && (
-                        <span className="vg-command-file-meta">
-                          {attachment.pages} page{attachment.pages === 1 ? '' : 's'}
-                          {attachment.condensed ? ' · condensed' : ''}
-                        </span>
-                      )}
-                    </span>
-                  )}
-                  {attachment && (
-                    <button type="button" className="btn" aria-label={`Remove ${attachment.name}`} onClick={removeAttachment}>
-                      Remove
-                    </button>
-                  )}
                   {previewView.note && <span className="vg-command-note">{previewView.note}</span>}
                   {alreadyRunning && (alreadyRunning.caseId || alreadyRunning.runId) && (
                     <button type="button" className="btn" onClick={() => openRunning(alreadyRunning)}>
                       Open its case
                     </button>
-                  )}
-                  {pasting !== null && (
-                    <div className="vg-command-paste">
-                      <textarea
-                        aria-label="Intelligence text"
-                        placeholder="Paste a report, an advisory or a list of indicators"
-                        value={pasting}
-                        onChange={(event) => setPasting(event.target.value)}
-                      />
-                      <button
-                        type="button"
-                        className="btn"
-                        disabled={!pasting.trim()}
-                        onClick={() => {
-                          void attach(new File([pasting], `${PASTED_NAME}.txt`, { type: 'text/plain' }), true)
-                          setPasting(null)
-                        }}
-                      >
-                        Attach text
-                      </button>
-                    </div>
                   )}
                 </div>
               )}

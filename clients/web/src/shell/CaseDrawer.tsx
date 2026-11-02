@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { CasesDetail } from '../screens/cases/CasesScreen'
+import type { ChatSeed } from '../shared/types'
 
 /** The case page under the header. Expand opens it full page at /cases?case=, noting where it came from. */
 export default function CaseDrawer({
@@ -14,7 +15,7 @@ export default function CaseDrawer({
   onClose: () => void
   /** SocConsole's current route key, stored on the pinned thread as page_context. */
   pageKey: string
-  seed?: string | null
+  seed?: ChatSeed | null
   onSeedConsumed?: () => void
 }) {
   const navigate = useNavigate()

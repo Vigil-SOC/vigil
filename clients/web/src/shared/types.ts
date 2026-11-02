@@ -16,6 +16,20 @@ export type SettingsSectionKey =
   | 'data'
   | 'audit'
 
+/** A file the command bar already read, handed to Ask Vigil with the question. */
+export interface SeedDocument {
+  name: string
+  text: string
+  pages: number
+  condensed: boolean
+}
+
+/** What opens a chat turn: the question, and the file that goes with it. Empty text with a file only attaches it. */
+export interface ChatSeed {
+  text: string
+  document?: SeedDocument
+}
+
 export interface ConsoleScreenGoOptions {
   search?: string
   replace?: boolean
@@ -35,7 +49,7 @@ export interface ConsoleScreenProps {
   /** Overview's wall mode. Hides the nav row and the top bar. */
   setWallMode?: (wall: boolean) => void
   /** Text for the open case's composer, typed in the command bar. */
-  caseSeed?: string | null
+  caseSeed?: ChatSeed | null
   onCaseSeedConsumed?: () => void
   /** Starts the console tour. Absent where the shell can't run it. */
   startTour?: () => void

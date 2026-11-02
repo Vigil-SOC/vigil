@@ -18,15 +18,17 @@ interface CommandDef {
   /** What it starts, as the bar's run() does; "—" for a Later row. */
   runs: string
   later: boolean
+  /** It reads an attached file; the paperclip is off for the rest. */
+  takesFile?: boolean
   /** The workflow a live command starts, when it starts one. */
   workflowId?: string
 }
 
 export const COMMANDS: CommandDef[] = [
-  { id: 'investigate', name: '/investigate', hint: '<finding or context>', desc: 'Run incident response on a finding or a description of what you saw', runs: 'Incident response workflow', later: false, workflowId: 'incident-response' },
-  { id: 'hunt', name: '/hunt', hint: '<hypothesis>', desc: 'Start a hypothesis-driven threat hunt', runs: 'Threat hunt workflow', later: false, workflowId: 'threat-hunt' },
+  { id: 'investigate', name: '/investigate', hint: '<finding or context>', desc: 'Run incident response on a finding or a description of what you saw', runs: 'Incident response workflow', later: false, takesFile: true, workflowId: 'incident-response' },
+  { id: 'hunt', name: '/hunt', hint: '<hypothesis>', desc: 'Start a hypothesis-driven threat hunt', runs: 'Threat hunt workflow', later: false, takesFile: true, workflowId: 'threat-hunt' },
   { id: 'replay', name: '/replay', hint: '<case>', desc: "Watch a case's latest run", runs: 'Opens Watch a run', later: false },
-  { id: 'ask', name: '/ask', hint: '<question>', desc: 'Ask Vigil your question in chat', runs: 'Opens Ask Vigil', later: false },
+  { id: 'ask', name: '/ask', hint: '<question>', desc: 'Ask Vigil your question in chat', runs: 'Opens Ask Vigil', later: false, takesFile: true },
   { id: 'ticket', name: '/ticket', hint: '<case>', desc: 'Create a Jira ticket from a case', runs: 'Exports the case to Jira', later: false },
   { id: 'hold', name: '/hold', hint: '<case or kind>', desc: 'Hold a case, or every case of one kind', runs: '—', later: true },
   { id: 'isolate', name: '/isolate', hint: '<host>', desc: 'Isolate a host. Irreversible, always asks you to confirm', runs: '—', later: true },
@@ -137,7 +139,7 @@ export type HuntProposal =
   | { status: 'proposed'; hypothesis: string; subjects?: Record<string, string[]>; approve?: boolean; running?: RunningHunt }
   | { status: 'none'; reason: string }
 
-/** The intelligence attached to a /hunt: being read, refused with a reason, or read. */
+/** The file attached in the bar: being read, refused with a reason, or read. */
 export type HuntAttachment =
   | { status: 'reading'; name: string }
   | { status: 'refused'; name: string; reason: string }
@@ -148,7 +150,7 @@ export type HuntAttachment =
       pasted: boolean
       pages: number
       condensed: boolean
-      /** The text the hunt reads: extracted, or condensed to fit. */
+      /** The text a run or Ask Vigil reads: extracted, or condensed to fit. */
       text: string
       proposal: HuntProposal | null
     }
@@ -163,6 +165,17 @@ export function attachRefusal(file: { name: string; size: number }): string | nu
   if (file.size > MAX_ATTACH_BYTES) return `File too large. The most that can be attached is ${MAX_ATTACH_BYTES / 1024 / 1024} MB.`
   return null
 }
+
+/** Why the typed command takes no file (the paperclip's tooltip), or null when it can take one. */
+export function attachBlockedBy(query: string): string | null {
+  const token = commandToken(query)
+  const command = COMMANDS.find((c) => c.name.toLowerCase() === token)
+  if (!command || command.takesFile) return null
+  return command.later ? `${command.name} is not available yet and takes no file` : `${command.name} takes a case, not a file`
+}
+
+/** Over this many characters, or on more than one line, a paste attaches as a file instead of landing in the input. */
+export const PASTE_ATTACH_CHARS = 500
 
 /** The hypothesis a run starts with: what was typed, else what the document proposed. */
 export function huntHypothesis(arg: string, attachment: HuntAttachment | null): string {
@@ -317,14 +330,17 @@ export function commandPreview(
   attachment: HuntAttachment | null = null,
 ): { line: string; disabled: boolean; note?: string } {
   const a = arg.trim()
+  // A command that reads the file waits for it, and a refused one stops it.
+  if (COMMANDS.find((c) => c.id === id)?.takesFile) {
+    if (attachment?.status === 'reading') return { line: `Reading ${attachment.name}…`, disabled: true }
+    if (attachment?.status === 'refused') return { line: attachment.reason, disabled: true }
+  }
   switch (id) {
     case 'investigate':
       return a
-        ? { line: `Run incident response for ${a}`, disabled: false }
+        ? { line: `Run incident response for ${a}${attachment?.status === 'ready' ? ` with ${attachment.name}` : ''}`, disabled: false }
         : { line: 'Add a finding id or context', disabled: true }
     case 'hunt': {
-      if (attachment?.status === 'reading') return { line: `Reading ${attachment.name}…`, disabled: true }
-      if (attachment?.status === 'refused') return { line: attachment.reason, disabled: true }
       const hypothesis = huntHypothesis(a, attachment)
       const running = runningHunt(attachment)
       if (hypothesis) {
@@ -342,7 +358,7 @@ export function commandPreview(
           ? { line: proposal.reason, disabled: true }
           : { line: 'Checking what the document covers…', disabled: true }
       }
-      return { line: 'Type a hypothesis, or attach intelligence to have one proposed', disabled: true }
+      return { line: 'Type a hypothesis, or attach a file to have one proposed', disabled: true }
     }
     case 'replay':
       return a
@@ -350,7 +366,7 @@ export function commandPreview(
         : { line: 'Add a case id', disabled: true }
     case 'ask':
       return a
-        ? { line: `Ask Vigil: ${a}`, disabled: false }
+        ? { line: `Ask Vigil: ${a}${attachment?.status === 'ready' ? ` (with ${attachment.name})` : ''}`, disabled: false }
         : { line: 'Add a question', disabled: true }
     case 'ticket':
       if (!a) return { line: 'Add a case id', disabled: true }
