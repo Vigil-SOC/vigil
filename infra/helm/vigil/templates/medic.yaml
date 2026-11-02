@@ -138,13 +138,16 @@ spec:
             # only adds group bits, so the root stays open to "other" (S7-1).
             - name: VIGIL_MEDIC_DATA_DIR
               value: /var/lib/vigil-medic/data
-            - name: VIGIL_MEDIC_AGENT_WORKER_ADDR
-              value: {{ .Values.medic.agentWorkerAddr | default (printf "%s-agent-worker:6990" $fn) | quote }}
             {{- if .Values.daemon.enabled }}
             # The daemon's /health and /status (D6-6), on its health port only.
             # Unset (daemon off) registers no daemon sensor: not installed, not down.
             - name: VIGIL_MEDIC_DAEMON_ADDR
               value: {{ printf "%s:%v" (include "vigil.daemon.fullname" .) .Values.daemon.ports.health | quote }}
+            {{- end }}
+            {{- if .Values.agentServe.enabled }}
+            # agent-serve /readyz (D6-8). The chart names it; config.py has no Helm default.
+            - name: VIGIL_MEDIC_AGENT_SERVE_ADDR
+              value: {{ printf "%s:%v" (include "vigil.agentServe.fullname" .) .Values.agentServe.service.port | quote }}
             {{- end }}
             # A3-3: the gateway's two listeners, on the same pods, through the
             # same Service. Medic's policy allows the outbound one (control) and
@@ -241,28 +244,4 @@ spec:
       port: {{ include "vigil.medic.apiPort" . }}
       targetPort: api
       protocol: TCP
-{{- if .Values.agentWorker.enabled }}
----
-{{- /*
-The agent worker has no Service (its work arrives over Redis), so Medic gets
-one for /readyz. With several replicas each read lands on one of them; per-pod
-reads come with the Kubernetes sensors (D6).
-*/}}
-apiVersion: v1
-kind: Service
-metadata:
-  name: {{ $fn }}-agent-worker
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "vigil.medic.labels" $medic | nindent 4 }}
-spec:
-  type: ClusterIP
-  selector:
-    {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "agent-worker") | nindent 4 }}
-  ports:
-    - name: readyz
-      port: 6990
-      targetPort: 6990
-      protocol: TCP
-{{- end }}
 {{- end }}

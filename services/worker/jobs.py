@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 from core.config import get_settings
 from core.llm.bifrost.admin import refresh_gateway_rates, run_gateway_rates_refresher
 from core.llm.cost.budget import BudgetExceeded
-from core.llm.gateway.gateway import QUEUE_NAME
+from core.llm.gateway.gateway import JOB_TIMEOUT, QUEUE_NAME
 from core.llm.gateway.gateway import redis_settings as gateway_redis_settings
 from core.llm.outage import report_outage, report_recovered
 from core.storage.connection import MissingPostgresPasswordError
@@ -257,7 +257,7 @@ class WorkerSettings:
     redis_settings = gateway_redis_settings()
     queue_name = QUEUE_NAME
     max_jobs = MAX_CONCURRENT_LLM_CALLS
-    job_timeout = 180
+    job_timeout = JOB_TIMEOUT
     retry_jobs = True
     max_tries = 3
     on_startup = on_startup

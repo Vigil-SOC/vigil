@@ -1,5 +1,6 @@
 import pLimit from "p-limit";
 import { errorFields, logger } from "./log.js";
+import { ProviderError } from "./provider.js";
 
 export interface RateLimit {
   rpm: number;
@@ -9,6 +10,10 @@ export interface RateLimit {
 // The gateway saying its own budget is gone. Distinct from a Refusal, which is
 // this layer's pool declining a call it has not yet made.
 export class GatewayExhausted extends Error {}
+
+// A call whose answer had begun reaching the reader when it failed. Not retried:
+// a second answer would follow the first. Carries what the cut-off answer burned.
+export class AnswerBroken extends ProviderError {}
 
 const log = logger("agent.limiter");
 
@@ -99,7 +104,7 @@ export class Limiter {
         return await call();
       } catch (error) {
         // A cancelled call is not a failure to retry: whoever cancelled it is gone.
-        if (signal?.aborted === true) throw error;
+        if (signal?.aborted === true || error instanceof AnswerBroken) throw error;
         const status = statusOf(error);
         if (status === 402) throw new GatewayExhausted((error as Error).message);
         // One more attempt, not three: retrying a ceiling costs a role its whole dispatch

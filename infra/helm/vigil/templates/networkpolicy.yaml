@@ -158,11 +158,12 @@ spec:
 {{- /*
 The control ADR 0014 leans on. Dropping the loopback check left the bearer token
 as the only in-process gate, and this is what replaces the bind: chat and run
-projections are reachable from the backend and from nowhere else.
+projections are reachable from the backend and, when Medic is enabled, from Medic.
 
 Deliberately narrower than the backend policy above, which admits any pod in the
 namespace. That one is shared by the daemon, llm-worker and helm test, so
-tightening it is a change to those; this surface has exactly one caller.
+tightening it is a change to those. A NetworkPolicy admits a port, so Medic
+reaches every route on this port; the bearer token is the only remaining gate.
 */ -}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -184,6 +185,15 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.agentServe.service.port }}
+    {{- if .Values.medic.enabled }}
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "vigil.medic.selectorLabels" (dict "context" . "component" "medic") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.agentServe.service.port }}
+    {{- end }}
     {{- include "vigil.networkPolicy.probeRule" (dict "context" . "port" .Values.agentServe.service.port) | nindent 4 }}
 ---
 {{- end }}

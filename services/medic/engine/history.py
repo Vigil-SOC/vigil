@@ -142,6 +142,10 @@ class History:
         Every rule and group reading the same series this tick shares one Reads."""
         produces = bool(group_by) and set(group_by) <= set(spec.get("by", []))
         want = spec.get("labels", {})
+        # A restored group from before this rule named these labels has none of
+        # them. Unknown, not a crash: the group still retires on silence.
+        if produces and any(n not in group for n in group_by):
+            return None
         pin = tuple((n, group[n]) for n in group_by) if produces else ()
         key = ("sample", spec["signal"], spec["key"], gkey(want), pin, now)
         return self._memoized(key, lambda: self._sample_reads(spec, want, pin, now))

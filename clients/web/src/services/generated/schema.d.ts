@@ -1453,7 +1453,11 @@ export interface paths {
          *     ``needs_you`` on each row. Page size defaults to the repository limit.
          *     ``needs_you=true`` keeps just those cases, and ``kind`` keeps cases whose
          *     latest investigation ran a workflow of that ``run_kind`` (none when no
-         *     workflow has it); both compose with the other filters.
+         *     workflow has it); both compose with the other filters. ``working=true``
+         *     keeps open cases that do not need you, ``closed_by=agent|person`` keeps
+         *     closed cases by who closed them, and ``alerts_from=today|all`` keeps cases
+         *     holding an alert created that UTC day (or any alert). The strip follows
+         *     ``alerts_from`` and ignores the other filters.
          */
         get: operations["get_api_cases"];
         put?: never;
@@ -4653,6 +4657,8 @@ export interface paths {
          * Get Overview
          * @description Arrivals, outcome nodes, agent rows, and the latest findings. Polled.
          *
+         *     ``range`` bounds arrivals and outcomes to the UTC day, or not at all.
+         *
          *     A missing read leaves that part empty and names the permission. The keys
          *     stay arrays: the console calls ``feed.find``.
          */
@@ -5782,7 +5788,11 @@ export interface paths {
          *     ``needs_you`` on each row. Page size defaults to the repository limit.
          *     ``needs_you=true`` keeps just those cases, and ``kind`` keeps cases whose
          *     latest investigation ran a workflow of that ``run_kind`` (none when no
-         *     workflow has it); both compose with the other filters.
+         *     workflow has it); both compose with the other filters. ``working=true``
+         *     keeps open cases that do not need you, ``closed_by=agent|person`` keeps
+         *     closed cases by who closed them, and ``alerts_from=today|all`` keeps cases
+         *     holding an alert created that UTC day (or any alert). The strip follows
+         *     ``alerts_from`` and ignores the other filters.
          */
         get: operations["get_api_v1_cases"];
         put?: never;
@@ -8270,6 +8280,16 @@ export interface components {
             new_password: string;
         };
         /**
+         * ChatDocument
+         * @description A file attached in the dock, already read by POST /workflows/threat-hunt/document.
+         */
+        ChatDocument: {
+            /** Name */
+            name: string;
+            /** Text */
+            text: string;
+        };
+        /**
          * ChatMessage
          * @description Chat message model.
          */
@@ -8288,6 +8308,7 @@ export interface components {
             agent_id?: string | null;
             /** Case Id */
             case_id?: string | null;
+            document?: components["schemas"]["ChatDocument"] | null;
             /** Messages */
             messages: components["schemas"]["ChatMessage"][];
             /** Page Context */
@@ -13921,6 +13942,9 @@ export interface operations {
                 closed?: boolean | null;
                 query?: string | null;
                 needs_you?: boolean;
+                working?: boolean;
+                closed_by?: ("agent" | "person") | null;
+                alerts_from?: ("today" | "all") | null;
                 kind?: string | null;
                 limit?: number;
                 offset?: number;
@@ -19699,7 +19723,9 @@ export interface operations {
     };
     get_api_overview: {
         parameters: {
-            query?: never;
+            query?: {
+                range?: "today" | "all";
+            };
             header?: {
                 authorization?: string | null;
             };
@@ -20996,6 +21022,7 @@ export interface operations {
                 kind?: string | null;
                 source?: string | null;
                 state?: string | null;
+                range?: "today" | "all";
             };
             header?: {
                 authorization?: string | null;
@@ -21701,6 +21728,9 @@ export interface operations {
                 closed?: boolean | null;
                 query?: string | null;
                 needs_you?: boolean;
+                working?: boolean;
+                closed_by?: ("agent" | "person") | null;
+                alerts_from?: ("today" | "all") | null;
                 kind?: string | null;
                 limit?: number;
                 offset?: number;

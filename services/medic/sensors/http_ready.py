@@ -29,7 +29,7 @@ from __future__ import annotations
 import socket
 import ssl
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
@@ -38,6 +38,74 @@ import httpx
 from services.medic.sensors.base import ReadError, Reading, SensorContext, Value
 
 _RESULTS = {200: "ready", 503: "not_ready"}
+
+
+@dataclass(frozen=True)
+class ReadyHit:
+    """One `/readyz`: a result (`ready` is true only for `ready`) or a read error."""
+
+    result: str = ""
+    status: int | None = None
+    latency_ms: float | None = None
+    error: ReadError | None = None
+
+
+def classify_status(status: int) -> str | ReadError:
+    """The result table: 200 / 5xx are results; 401 / 403 and other statuses are errors."""
+    if status in (401, 403):
+        return ReadError("auth", http_status=status)
+    if status == 200 or status >= 500:
+        return _RESULTS.get(status, f"http_{status}")
+    return ReadError("http_status", http_status=status)
+
+
+async def read_ready(
+    url: str,
+    *,
+    timeout_s: float,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> ReadyHit:
+    """GET `url` and classify it. `timeout_s` is the sensor's cap; httpx stops at 80%."""
+    limit = httpx.Timeout(timeout_s * 0.8)
+    started = time.perf_counter()
+    try:
+        async with (
+            httpx.AsyncClient(
+                transport=transport, timeout=limit, trust_env=False
+            ) as client,
+            client.stream("GET", url) as response,  # the body is never read
+        ):
+            status = response.status_code
+    except httpx.HTTPError as exc:
+        failed = failure(exc)
+        if isinstance(failed, ReadError):
+            return ReadyHit(error=failed)
+        return ReadyHit(result=failed)
+    classified = classify_status(status)
+    if isinstance(classified, ReadError):
+        return ReadyHit(error=classified)
+    latency_ms = round((time.perf_counter() - started) * 1000, 1)
+    return ReadyHit(result=classified, status=status, latency_ms=latency_ms)
+
+
+def ready_reading(
+    signal: str,
+    service: str,
+    instance: str,
+    hit: ReadyHit,
+    labels: Mapping[str, str] | None = None,
+) -> Reading:
+    """The one reading `read_ready` becomes. Labels ride on every value."""
+    if hit.error is not None:
+        return Reading(signal, service, error=hit.error, instance=instance)
+    marks = dict(labels or {})
+    values = [
+        Value.flag("ready", hit.result == "ready", marks),
+        Value.enum("result", hit.result, marks),
+        Value.gauge("status_code", hit.status, marks),
+        Value.gauge("latency_ms", hit.latency_ms, marks),
+    ]
+    return Reading(signal, service, values=values, instance=instance)
 
 
 def _cause(exc: BaseException, kind: type[BaseException]) -> bool:
@@ -93,49 +161,12 @@ class HttpReady:
         return f"{parts.hostname}:{parts.port or 80}"
 
     async def collect(self, ctx: SensorContext) -> Sequence[Reading]:
-        instance = self.instance
         # httpx's own limit sits inside the framework's hard cap, so a slow target
         # is classified here (connect vs read) rather than cut by the scheduler.
-        limit = httpx.Timeout(self.timeout_s * 0.8)
-        started = time.perf_counter()
-        try:
-            async with (
-                httpx.AsyncClient(
-                    transport=self.transport, timeout=limit, trust_env=False
-                ) as client,
-                client.stream("GET", self.url) as response,  # the body is never read
-            ):
-                status = response.status_code
-        except httpx.HTTPError as exc:
-            failed = failure(exc)
-            if isinstance(failed, ReadError):
-                return [self._error(instance, failed)]
-            return [self._result(instance, failed)]
-        latency_ms = round((time.perf_counter() - started) * 1000, 1)
-        if status in (401, 403):
-            return [self._error(instance, ReadError("auth", http_status=status))]
-        if status == 200 or status >= 500:
-            result = _RESULTS.get(status, f"http_{status}")
-            return [self._result(instance, result, status, latency_ms)]
-        return [self._error(instance, ReadError("http_status", http_status=status))]
-
-    def _result(
-        self,
-        instance: str,
-        result: str,
-        status: int | None = None,
-        latency_ms: float | None = None,
-    ) -> Reading:
-        values = [
-            Value.flag("ready", result == "ready"),
-            Value.enum("result", result),
-            Value.gauge("status_code", status),
-            Value.gauge("latency_ms", latency_ms),
-        ]
-        return Reading(self.signal, self.service, values=values, instance=instance)
-
-    def _error(self, instance: str, error: ReadError) -> Reading:
-        return Reading(self.signal, self.service, error=error, instance=instance)
+        hit = await read_ready(
+            self.url, timeout_s=self.timeout_s, transport=self.transport
+        )
+        return [ready_reading(self.signal, self.service, self.instance, hit)]
 
 
 def agent_worker_ready(host: str = "agent-worker", port: int = 6990) -> HttpReady:

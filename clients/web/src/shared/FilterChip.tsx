@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import './kit.css'
 
 /**
@@ -19,7 +20,7 @@ export function FilterChip({
   onClick: () => void
   list?: boolean
   dot?: string
-  count?: number | string
+  count?: ReactNode
   title?: string
 }) {
   return (

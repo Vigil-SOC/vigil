@@ -32,15 +32,16 @@ POLICY_CONTROL_VAR = "VIGIL_MEDIC_POLICY_CONTROL_ADDR"
 
 SHAPES = ("start_sh", "compose", "helm")
 DEFAULT_SHAPE = "compose"  # PROVISIONAL (S4-2): S6/S7/S8 set it per shape
-# Where the agent worker's /readyz listens (port 6990), per shape (PROVISIONAL S4-3).
+# Where the agent worker's /readyz listens (port 6990). Compose and host-native
+# only: Helm lists pods and reads each one, so sensors_for ignores this there.
 AGENT_WORKER_DEFAULT = {
     "start_sh": "127.0.0.1:6990",
     "compose": "agent-worker:6990",
     "helm": "agent-worker:6990",
 }
-# Where agent-serve's /readyz listens (6989). Compose only by default: agent-serve
-# is on medic-net there (S6). Helm's egress policy has no rule for it yet (S7 → D6)
-# and host-native is S11's, so there it is read only if the variable names it.
+# Where agent-serve's /readyz listens (6989). Compose defaults to the service
+# name. Helm and host-native have no default here: the chart and medic-loop set
+# VIGIL_MEDIC_AGENT_SERVE_ADDR. Unset registers no sensor.
 AGENT_SERVE_DEFAULT = {"compose": "agent-serve:6989"}
 # The SOC daemon's health port (/health, /status; D6-6). Optional everywhere:
 # on Compose without the `daemon` profile the name doesn't resolve (dns), which

@@ -1,6 +1,6 @@
 """Read-only Triage queue. Nothing on this router writes."""
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
@@ -26,6 +26,7 @@ def get_triage(
     kind: Optional[str] = Query(None),
     source: Optional[str] = Query(None),
     state: Optional[str] = Query(None),
+    range: Literal["today", "all"] = Query("today"),
 ):
     """Intake rows, ranking inputs, and the strip. Polled.
 
@@ -35,5 +36,10 @@ def get_triage(
     # Encoded here, in the threadpool: a returned dict goes through
     # jsonable_encoder on the event loop, which is slow at 200 rows.
     return JSONResponse(
-        triage_payload(kind=kind or None, source=source or None, state=state or None)
+        triage_payload(
+            kind=kind or None,
+            source=source or None,
+            state=state or None,
+            range=range,
+        )
     )

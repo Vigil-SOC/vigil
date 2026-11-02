@@ -1,6 +1,8 @@
 """Overview read for the console: arrivals, outcomes, agents, and the feed."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from core.auth.current_user import get_current_user
 from core.auth.permissions import missing_permission, permission_gate
@@ -18,13 +20,18 @@ ROUTER_META = RouterMeta(
 
 
 @router.get("/overview")
-async def get_overview(user: User = Depends(get_current_user)):
+async def get_overview(
+    range: Literal["today", "all"] = Query("today"),
+    user: User = Depends(get_current_user),
+):
     """Arrivals, outcome nodes, agent rows, and the latest findings. Polled.
+
+    ``range`` bounds arrivals and outcomes to the UTC day, or not at all.
 
     A missing read leaves that part empty and names the permission. The keys
     stay arrays: the console calls ``feed.find``.
     """
-    payload = overview_payload()
+    payload = overview_payload(range=range)
     missing = []
     if missing_permission(user.user_id, "findings.read"):
         payload["arrivals"] = []

@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Icon } from '../../shared/icons'
+import { ConfirmDialog } from '../../shared/ui'
 import { agentsApi, aiConfigApi, type AIModelInfo, type GeneratedAgentDraft } from '../../services/api'
 import type { ToolChange } from '../../data/appData'
 import { errMsg } from './runRead'
@@ -174,6 +175,9 @@ export function AgentDrawer({
   const [loadErr, setLoadErr] = useState<string | null>(null)
   const [form, setForm] = useState<AgentForm>({ ...BLANK_FORM })
   const [advanced, setAdvanced] = useState(false)
+  // the form as it opened, so closing can tell whether there is anything to lose
+  const [opened, setOpened] = useState({ form: BLANK_FORM, advanced: false })
+  const [confirmClose, setConfirmClose] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
   const [models, setModels] = useState<AIModelInfo[]>([])
   // null until /_meta/tools answers, or when it fails
@@ -190,13 +194,17 @@ export function AgentDrawer({
 
   const set = <K extends keyof AgentForm>(k: K, v: AgentForm[K]) => setForm((f) => ({ ...f, [k]: v }))
 
+  // Advanced decides whether Save keeps the whole-prompt override; text typed for an AI draft counts too
+  const dirty = aiText.trim() !== '' || advanced !== opened.advanced || JSON.stringify(form) !== JSON.stringify(opened.form)
+  const close = useCallback(() => (dirty ? setConfirmClose(true) : onClose()), [dirty, onClose])
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape') close()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [close])
 
   useEffect(() => {
     let cancelled = false
@@ -220,7 +228,7 @@ export function AgentDrawer({
         if (builtIn) a.system_prompt_override = a.system_prompt || ''
         if (builtIn) a.recommended_tools = a.recommended_tools || []
         setAgent(a)
-        setForm({
+        const loaded: AgentForm = {
           name: a.name || '',
           specialization: a.specialization || '',
           description: a.description || '',
@@ -235,8 +243,10 @@ export function AgentDrawer({
           enable_thinking: !!a.enable_thinking,
           model: a.model || '',
           fallback_model: a.fallback_model || '',
-        })
+        }
+        setForm(loaded)
         setAdvanced(!!a.system_prompt_override)
+        setOpened({ form: loaded, advanced: !!a.system_prompt_override })
         setPhase('ready')
       })
       .catch((e) => { if (!cancelled) { setLoadErr(errMsg(e)); setPhase('error') } })
@@ -337,222 +347,232 @@ export function AgentDrawer({
   const holdsSkills = form.tools.includes(READ_SKILL)
 
   return (
-    <div className="vg-side-scrim" onMouseDown={onClose}>
-      <aside
-        className="vg-side-panel"
-        role="dialog"
-        aria-label={isCreate ? 'New agent' : 'Edit agent'}
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-start gap-3">
-          <span className="flex flex-col gap-[3px] grow min-w-0">
-            <span className="text-[20px] font-bold leading-[1.25] tracking-[-0.2px] text-tx break-words">{title}</span>
-            {builtIn
-              ? <span className="vg-side-hint">Built in. Saving creates your own editable copy; the original stays available.</span>
-              : agent?.forked_from && <span className="vg-side-hint">Forked from <span className="mono">{agent.forked_from}</span></span>}
-          </span>
-          <button type="button" className="vg-side-close" aria-label="Close" onClick={onClose}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />
-            </svg>
-          </button>
-        </div>
-        {phase === 'loading' && <p className="text-[13px] text-tx-3">Loading agent…</p>}
-        {phase === 'error' && <div className="vg-side-err">Couldn’t load agent: {loadErr}</div>}
-        {phase === 'ready' && (
-          <>
-            {isCreate && describe ? (
-              <div className="vg-side-field">
-                <label htmlFor="vg-a-desc" className="vg-side-label">Describe the agent</label>
-                <textarea
-                  id="vg-a-desc"
-                  className="vg-side-input"
-                  rows={2}
-                  autoFocus
-                  value={aiText}
-                  placeholder="e.g. Triages cloud IAM misconfigurations and privilege-escalation paths in AWS/GCP."
-                  onChange={(e) => setAiText(e.target.value)}
-                />
-                <div className="flex items-center justify-end gap-2.5">
-                  {aiErr && <span className="vg-side-err mr-auto">{aiErr}</span>}
-                  <button type="button" className="vg-side-btn small line" disabled={aiBusy || !aiText.trim()} onClick={() => generate()}>
-                    <Icon name="sparkle" size={13} />&nbsp;{aiBusy ? 'Generating…' : aiDraft ? 'Regenerate draft' : 'Generate draft'}
-                  </button>
+    <>
+      <div className="vg-side-scrim" onMouseDown={close}>
+        <aside
+          className="vg-side-panel"
+          role="dialog"
+          aria-label={isCreate ? 'New agent' : 'Edit agent'}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-start gap-3">
+            <span className="flex flex-col gap-[3px] grow min-w-0">
+              <span className="text-[20px] font-bold leading-[1.25] tracking-[-0.2px] text-tx break-words">{title}</span>
+              {builtIn
+                ? <span className="vg-side-hint">Built in. Saving creates your own editable copy; the original stays available.</span>
+                : agent?.forked_from && <span className="vg-side-hint">Forked from <span className="mono">{agent.forked_from}</span></span>}
+            </span>
+            <button type="button" className="vg-side-close" aria-label="Close" onClick={close}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />
+              </svg>
+            </button>
+          </div>
+          {phase === 'loading' && <p className="text-[13px] text-tx-3">Loading agent…</p>}
+          {phase === 'error' && <div className="vg-side-err">Couldn’t load agent: {loadErr}</div>}
+          {phase === 'ready' && (
+            <>
+              {isCreate && describe ? (
+                <div className="vg-side-field">
+                  <label htmlFor="vg-a-desc" className="vg-side-label">Describe the agent</label>
+                  <textarea
+                    id="vg-a-desc"
+                    className="vg-side-input"
+                    rows={2}
+                    autoFocus
+                    value={aiText}
+                    placeholder="e.g. Triages cloud IAM misconfigurations and privilege-escalation paths in AWS/GCP."
+                    onChange={(e) => setAiText(e.target.value)}
+                  />
+                  <div className="flex items-center justify-end gap-2.5">
+                    {aiErr && <span className="vg-side-err mr-auto">{aiErr}</span>}
+                    <button type="button" className="vg-side-btn small line" disabled={aiBusy || !aiText.trim()} onClick={() => generate()}>
+                      <Icon name="sparkle" size={13} />&nbsp;{aiBusy ? 'Generating…' : aiDraft ? 'Regenerate draft' : 'Generate draft'}
+                    </button>
+                  </div>
+                  {aiDraft && (
+                    <div className="vg-side-assist">
+                      <Icon name="sparkle" size={16} />
+                      <label htmlFor="vg-a-refine" className="vg-side-assist-text">Draft applied below. Refine it: “add memory-forensics tools”</label>
+                      <input
+                        id="vg-a-refine"
+                        value={aiFeedback}
+                        autoComplete="off"
+                        placeholder="What should change?"
+                        onChange={(e) => setAiFeedback(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') generate(aiFeedback) }}
+                      />
+                      <button type="button" className="vg-side-btn small line" disabled={aiBusy || !aiFeedback.trim()} onClick={() => generate(aiFeedback)}>Refine</button>
+                    </div>
+                  )}
                 </div>
-                {aiDraft && (
+              ) : !isCreate && !builtIn && (
+                <div>
                   <div className="vg-side-assist">
                     <Icon name="sparkle" size={16} />
-                    <label htmlFor="vg-a-refine" className="vg-side-assist-text">Draft applied below. Refine it: “add memory-forensics tools”</label>
+                    <label htmlFor="vg-a-change" className="vg-side-assist-text">
+                      Describe a change and Vigil drafts it: “be more careful with finance hosts”
+                    </label>
                     <input
-                      id="vg-a-refine"
-                      value={aiFeedback}
+                      id="vg-a-change"
+                      value={aiText}
                       autoComplete="off"
                       placeholder="What should change?"
-                      onChange={(e) => setAiFeedback(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') generate(aiFeedback) }}
+                      onChange={(e) => setAiText(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') generate() }}
                     />
-                    <button type="button" className="vg-side-btn small line" disabled={aiBusy || !aiFeedback.trim()} onClick={() => generate(aiFeedback)}>Refine</button>
+                    <button type="button" className="vg-side-btn small line" disabled={aiBusy || !aiText.trim()} onClick={() => generate()}>
+                      {aiBusy ? 'Drafting…' : 'Draft change'}
+                    </button>
+                  </div>
+                  {aiErr && <div className="vg-side-err mt-1.5">{aiErr}</div>}
+                </div>
+              )}
+
+              <div className="vg-side-grid">
+                <div className="vg-side-field">
+                  <label htmlFor="vg-a-name" className="vg-side-label">Name</label>
+                  <input id="vg-a-name" className="vg-side-input" value={form.name} autoComplete="off" onChange={(e) => set('name', e.target.value)} />
+                </div>
+                <div className="vg-side-field">
+                  <label htmlFor="vg-a-spec" className="vg-side-label">Specialization</label>
+                  <input id="vg-a-spec" className="vg-side-input" value={form.specialization} autoComplete="off" onChange={(e) => set('specialization', e.target.value)} />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3">
+                <span className="vg-side-title">Instructions</span>
+                {builtIn ? (
+                  <div className="vg-side-field">
+                    <label htmlFor="vg-a-override" className="vg-side-label">Prompt</label>
+                    <textarea id="vg-a-override" className="vg-side-input mono" rows={10} value={form.system_prompt_override} onChange={(e) => set('system_prompt_override', e.target.value)} />
+                  </div>
+                ) : (
+                  <>
+                    <div className="vg-side-field">
+                      <label htmlFor="vg-a-role" className="vg-side-label">Specialty</label>
+                      <input id="vg-a-role" className="vg-side-input" value={form.role} autoComplete="off" placeholder="e.g. investigator" onChange={(e) => set('role', e.target.value)} />
+                    </div>
+                    <div className="vg-side-field">
+                      <label htmlFor="vg-a-principles" className="vg-side-label">Principles</label>
+                      <textarea id="vg-a-principles" className="vg-side-input" rows={3} value={form.extra_principles} onChange={(e) => set('extra_principles', e.target.value)} />
+                    </div>
+                    <div className="vg-side-field">
+                      <label htmlFor="vg-a-method" className="vg-side-label">Method</label>
+                      <textarea id="vg-a-method" className="vg-side-input" rows={3} value={form.methodology} onChange={(e) => set('methodology', e.target.value)} />
+                      <span className="vg-side-hint">
+                        Role, principles and method.{' '}
+                        {advanced ? 'Advanced: replacing the whole prompt.' : (
+                          <>
+                            <button type="button" className="vg-side-link" onClick={() => setAdvanced(true)}>Advanced</button>: replace the whole prompt.
+                          </>
+                        )}
+                      </span>
+                    </div>
+                  </>
+                )}
+                {!builtIn && advanced && (
+                  <div className="vg-side-field">
+                    <label htmlFor="vg-a-override" className="vg-side-label">Whole prompt (replaces the three parts above)</label>
+                    <textarea id="vg-a-override" className="vg-side-input mono" rows={10} value={form.system_prompt_override} onChange={(e) => set('system_prompt_override', e.target.value)} />
+                    <button type="button" className="vg-side-link self-start text-[12px]" onClick={() => setAdvanced(false)}>Use the three parts instead</button>
+                  </div>
+                )}
+                {!builtIn && advanced && agent?.effective_prompt && (
+                  <div className="vg-side-field">
+                    <button type="button" className="vg-side-fold" aria-expanded={showPreview} onClick={() => setShowPreview((v) => !v)}>
+                      <span style={{ transform: showPreview ? 'rotate(90deg)' : 'none', transition: 'transform .12s', display: 'inline-flex' }}><Icon name="chevR" size={13} /></span>
+                      Preview effective prompt
+                    </button>
+                    {showPreview && (
+                      <>
+                        <pre className="vg-side-pre">{agent.effective_prompt}</pre>
+                        <span className="vg-side-hint">This is the exact system prompt the model receives. Re-save to refresh.</span>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
-            ) : !isCreate && !builtIn && (
-              <div>
-                <div className="vg-side-assist">
-                  <Icon name="sparkle" size={16} />
-                  <label htmlFor="vg-a-change" className="vg-side-assist-text">
-                    Describe a change and Vigil drafts it: “be more careful with finance hosts”
-                  </label>
-                  <input
-                    id="vg-a-change"
-                    value={aiText}
-                    autoComplete="off"
-                    placeholder="What should change?"
-                    onChange={(e) => setAiText(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') generate() }}
-                  />
-                  <button type="button" className="vg-side-btn small line" disabled={aiBusy || !aiText.trim()} onClick={() => generate()}>
-                    {aiBusy ? 'Drafting…' : 'Draft change'}
-                  </button>
-                </div>
-                {aiErr && <div className="vg-side-err mt-1.5">{aiErr}</div>}
-              </div>
-            )}
 
-            <div className="vg-side-grid">
-              <div className="vg-side-field">
-                <label htmlFor="vg-a-name" className="vg-side-label">Name</label>
-                <input id="vg-a-name" className="vg-side-input" value={form.name} autoComplete="off" onChange={(e) => set('name', e.target.value)} />
-              </div>
-              <div className="vg-side-field">
-                <label htmlFor="vg-a-spec" className="vg-side-label">Specialization</label>
-                <input id="vg-a-spec" className="vg-side-input" value={form.specialization} autoComplete="off" onChange={(e) => set('specialization', e.target.value)} />
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-3">
-              <span className="vg-side-title">Instructions</span>
-              {builtIn ? (
-                <div className="vg-side-field">
-                  <label htmlFor="vg-a-override" className="vg-side-label">Prompt</label>
-                  <textarea id="vg-a-override" className="vg-side-input mono" rows={10} value={form.system_prompt_override} onChange={(e) => set('system_prompt_override', e.target.value)} />
-                </div>
-              ) : (
-                <>
+              <div className="vg-side-card">
+                <span className="vg-side-title">Model</span>
+                <div className="vg-side-grid">
                   <div className="vg-side-field">
-                    <label htmlFor="vg-a-role" className="vg-side-label">Specialty</label>
-                    <input id="vg-a-role" className="vg-side-input" value={form.role} autoComplete="off" placeholder="e.g. investigator" onChange={(e) => set('role', e.target.value)} />
+                    <label htmlFor="vg-a-model" className="vg-side-label">Model</label>
+                    <select id="vg-a-model" className="vg-side-input" value={form.model} onChange={(e) => set('model', e.target.value)}>
+                      <option value="">Use the default</option>
+                      {modelOptions.map((id) => <option key={id} value={id}>{modelLabel(id)}</option>)}
+                    </select>
                   </div>
                   <div className="vg-side-field">
-                    <label htmlFor="vg-a-principles" className="vg-side-label">Principles</label>
-                    <textarea id="vg-a-principles" className="vg-side-input" rows={3} value={form.extra_principles} onChange={(e) => set('extra_principles', e.target.value)} />
+                    <label htmlFor="vg-a-fb" className="vg-side-label">If it is unavailable, use</label>
+                    <select id="vg-a-fb" className="vg-side-input" value={form.fallback_model} onChange={(e) => set('fallback_model', e.target.value)}>
+                      <option value="">No fallback</option>
+                      {fallbackOptions.map((id) => <option key={id} value={id}>{modelLabel(id)}</option>)}
+                    </select>
                   </div>
                   <div className="vg-side-field">
-                    <label htmlFor="vg-a-method" className="vg-side-label">Method</label>
-                    <textarea id="vg-a-method" className="vg-side-input" rows={3} value={form.methodology} onChange={(e) => set('methodology', e.target.value)} />
-                    <span className="vg-side-hint">
-                      Role, principles and method.{' '}
-                      {advanced ? 'Advanced: replacing the whole prompt.' : (
-                        <>
-                          <button type="button" className="vg-side-link" onClick={() => setAdvanced(true)}>Advanced</button>: replace the whole prompt.
-                        </>
-                      )}
-                    </span>
+                    <label htmlFor="vg-a-th" className="vg-side-label">Thinking</label>
+                    <select id="vg-a-th" className="vg-side-input" value={form.enable_thinking ? 'on' : 'off'} onChange={(e) => set('enable_thinking', e.target.value === 'on')}>
+                      <option value="off">Off</option>
+                      <option value="on">On</option>
+                    </select>
                   </div>
-                </>
-              )}
-              {!builtIn && advanced && (
-                <div className="vg-side-field">
-                  <label htmlFor="vg-a-override" className="vg-side-label">Whole prompt (replaces the three parts above)</label>
-                  <textarea id="vg-a-override" className="vg-side-input mono" rows={10} value={form.system_prompt_override} onChange={(e) => set('system_prompt_override', e.target.value)} />
-                  <button type="button" className="vg-side-link self-start text-[12px]" onClick={() => setAdvanced(false)}>Use the three parts instead</button>
+                  <div className="vg-side-field">
+                    <label htmlFor="vg-a-mt" className="vg-side-label">Longest answer</label>
+                    <select id="vg-a-mt" className="vg-side-input" value={form.max_tokens} onChange={(e) => set('max_tokens', Number(e.target.value))}>
+                      {[...withSaved(TOKEN_CHOICES, form.max_tokens)].sort((a, b) => a - b).map((n) => <option key={n} value={n}>{fmtTokens(n)}</option>)}
+                    </select>
+                  </div>
                 </div>
-              )}
-              {!builtIn && advanced && agent?.effective_prompt && (
-                <div className="vg-side-field">
-                  <button type="button" className="vg-side-fold" aria-expanded={showPreview} onClick={() => setShowPreview((v) => !v)}>
-                    <span style={{ transform: showPreview ? 'rotate(90deg)' : 'none', transition: 'transform .12s', display: 'inline-flex' }}><Icon name="chevR" size={13} /></span>
-                    Preview effective prompt
-                  </button>
-                  {showPreview && (
-                    <>
-                      <pre className="vg-side-pre">{agent.effective_prompt}</pre>
-                      <span className="vg-side-hint">This is the exact system prompt the model receives. Re-save to refresh.</span>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div className="vg-side-card">
-              <span className="vg-side-title">Model</span>
-              <div className="vg-side-grid">
-                <div className="vg-side-field">
-                  <label htmlFor="vg-a-model" className="vg-side-label">Model</label>
-                  <select id="vg-a-model" className="vg-side-input" value={form.model} onChange={(e) => set('model', e.target.value)}>
-                    <option value="">Use the default</option>
-                    {modelOptions.map((id) => <option key={id} value={id}>{modelLabel(id)}</option>)}
-                  </select>
-                </div>
-                <div className="vg-side-field">
-                  <label htmlFor="vg-a-fb" className="vg-side-label">If it is unavailable, use</label>
-                  <select id="vg-a-fb" className="vg-side-input" value={form.fallback_model} onChange={(e) => set('fallback_model', e.target.value)}>
-                    <option value="">No fallback</option>
-                    {fallbackOptions.map((id) => <option key={id} value={id}>{modelLabel(id)}</option>)}
-                  </select>
-                </div>
-                <div className="vg-side-field">
-                  <label htmlFor="vg-a-th" className="vg-side-label">Thinking</label>
-                  <select id="vg-a-th" className="vg-side-input" value={form.enable_thinking ? 'on' : 'off'} onChange={(e) => set('enable_thinking', e.target.value === 'on')}>
-                    <option value="off">Off</option>
-                    <option value="on">On</option>
-                  </select>
-                </div>
-                <div className="vg-side-field">
-                  <label htmlFor="vg-a-mt" className="vg-side-label">Longest answer</label>
-                  <select id="vg-a-mt" className="vg-side-input" value={form.max_tokens} onChange={(e) => set('max_tokens', Number(e.target.value))}>
-                    {[...withSaved(TOKEN_CHOICES, form.max_tokens)].sort((a, b) => a - b).map((n) => <option key={n} value={n}>{fmtTokens(n)}</option>)}
-                  </select>
-                </div>
+                <span className="vg-side-hint">Uses Settings › AI models by default. A model chosen here wins over the default for this agent only.</span>
               </div>
-              <span className="vg-side-hint">Uses Settings › AI models by default. A model chosen here wins over the default for this agent only.</span>
-            </div>
 
-            <div className="flex flex-col gap-2">
-              <span className="vg-side-title">Skills</span>
-              <span className="vg-side-hint" style={{ fontSize: 13 }}>
-                {holdsSkills
-                  ? `Offered every skill in the library${skillCount === null ? '' : ` (${skillCount})`}. Choosing single skills comes later.`
-                  : 'Not offered skills.'}
-              </span>
-            </div>
+              <div className="flex flex-col gap-2">
+                <span className="vg-side-title">Skills</span>
+                <span className="vg-side-hint" style={{ fontSize: 13 }}>
+                  {holdsSkills
+                    ? `Offered every skill in the library${skillCount === null ? '' : ` (${skillCount})`}. Choosing single skills comes later.`
+                    : 'Not offered skills.'}
+                </span>
+              </div>
 
-            <div className="flex flex-col gap-2">
-              <span className="vg-side-title">Tools it may use</span>
-              {form.tools.length === 0 && <span className="vg-side-hint">No tools yet.</span>}
-              {form.tools.map((tool) => (
-                <div key={tool} className="vg-side-tool">
-                  <span className="vg-side-tool-name">{tool}</span>
-                  <ToolMark change={markOf(tool)} />
-                  <button type="button" className="vg-side-x" aria-label={`Remove ${tool}`} onClick={() => set('tools', form.tools.filter((t) => t !== tool))}>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />
-                    </svg>
-                  </button>
-                </div>
-              ))}
-              <ToolFinder catalog={addable} markOf={markOf} onAdd={(tool) => set('tools', [...form.tools, tool])} />
-            </div>
+              <div className="flex flex-col gap-2">
+                <span className="vg-side-title">Tools it may use</span>
+                {form.tools.length === 0 && <span className="vg-side-hint">No tools yet.</span>}
+                {form.tools.map((tool) => (
+                  <div key={tool} className="vg-side-tool">
+                    <span className="vg-side-tool-name">{tool}</span>
+                    <ToolMark change={markOf(tool)} />
+                    <button type="button" className="vg-side-x" aria-label={`Remove ${tool}`} onClick={() => set('tools', form.tools.filter((t) => t !== tool))}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+                <ToolFinder catalog={addable} markOf={markOf} onAdd={(tool) => set('tools', [...form.tools, tool])} />
+              </div>
 
-            {error && <div className="vg-side-err">{error}</div>}
-            <div className="vg-side-foot">
-              <button type="button" className="vg-side-btn" onClick={onClose}>Cancel</button>
-              <button type="button" className="vg-side-btn primary" disabled={!canSave} onClick={save}>
-                {busy ? (isCreate ? 'Creating…' : 'Saving…') : isCreate ? 'Create agent' : builtIn ? 'Save my copy' : 'Save'}
-              </button>
-            </div>
-          </>
-        )}
-      </aside>
-    </div>
+              {error && <div className="vg-side-err">{error}</div>}
+              <div className="vg-side-foot">
+                <button type="button" className="vg-side-btn" onClick={close}>Cancel</button>
+                <button type="button" className="vg-side-btn primary" disabled={!canSave} onClick={save}>
+                  {busy ? (isCreate ? 'Creating…' : 'Saving…') : isCreate ? 'Create agent' : builtIn ? 'Save my copy' : 'Save'}
+                </button>
+              </div>
+            </>
+          )}
+        </aside>
+      </div>
+      <ConfirmDialog
+        open={confirmClose}
+        title="Discard changes?"
+        body={`Your changes to ${agent?.name || 'this agent'} are not saved.`}
+        confirmLabel="Discard changes"
+        onConfirm={onClose}
+        onClose={() => setConfirmClose(false)}
+      />
+    </>
   )
 }

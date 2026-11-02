@@ -32,9 +32,9 @@ from services.medic.app.watchdog import Watchdog
 from services.medic.app.wiring import (
     TICK_S,
     Medic,
-    load_dev_rules,
     load_dev_suppression,
     load_engine_state,
+    rules_for_shape,
     save_engine_state,
 )
 from services.medic.redact import install_log_redaction
@@ -45,7 +45,7 @@ from services.medic.sensors.federation import federation_sources
 from services.medic.sensors.gateway import address as gateway_address
 from services.medic.sensors.gateway import gateway_session
 from services.medic.sensors.http_ready import agent_serve_ready, agent_worker_ready
-from services.medic.sensors.kube import kube_pods
+from services.medic.sensors.kube import agent_worker_pods, kube_pods
 from services.medic.sensors.logtail import compose_log_sensors
 from services.medic.sensors.providers import llm_providers
 from services.medic.sensors.work import work_sensors
@@ -201,9 +201,15 @@ def run(
 
 
 def sensors_for(env: Mapping[str, str], shape: str) -> list[Sensor]:
-    """The sensors this shape runs; raises ConfigError on an unusable address."""
-    host, port = config.agent_worker_addr(env, shape)
-    sensors: list[Sensor] = [agent_worker_ready(host=host, port=port)]
+    """The sensors this shape runs; raises ConfigError on an unusable address.
+
+    Helm reads each agent-worker pod. Compose and host-native read one address.
+    """
+    if shape == "helm":
+        sensors: list[Sensor] = [agent_worker_pods()]
+    else:
+        host, port = config.agent_worker_addr(env, shape)
+        sensors = [agent_worker_ready(host=host, port=port)]
     serve = config.agent_serve_addr(env, shape)
     if serve is not None:
         sensors.append(agent_serve_ready(host=serve[0], port=serve[1]))
@@ -396,7 +402,7 @@ def _run(
 def _build(
     writer, data_dir: Path, shape: str, sensors, clock, *, vigil_dev_mode: bool = False
 ) -> Medic:
-    rules, suppression = load_dev_rules(), load_dev_suppression()
+    rules, suppression = rules_for_shape(shape), load_dev_suppression()
     state = load_engine_state(data_dir)
     last_tick = (state or {}).get("last_tick")
     if isinstance(last_tick, int | float) and last_tick > clock.wall() + TICK_S:

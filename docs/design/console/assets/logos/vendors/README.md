@@ -21,6 +21,7 @@ brand has a square symbol, the file is the symbol, not the wordmark.
 | `paloalto.svg` | Palo Alto Networks | Simple Icons 15.22.0, slug `paloaltonetworks` (the one-colour mark) | CC0-1.0 (icon data); Palo Alto Networks trademark |
 | `pagerduty.svg` | PagerDuty | Simple Icons 15.22.0, slug `pagerduty`, brand green `#06AC38` (https://www.pagerduty.com/brand/) | CC0-1.0 (icon data); PagerDuty trademark |
 | `opensearch.svg` | OpenSearch | Simple Icons 15.22.0, slug `opensearch`, brand blue `#005EB8` (https://opensearch.org/trademark-brand-policy.html) | CC0-1.0 (icon data); OpenSearch trademark |
+| `elastic.svg` | Elastic | Simple Icons 15.22.0, slug `elastic`, brand blue `#005571` | CC0-1.0 (icon data); Elastic trademark |
 | `google-secops.svg` | Google Security Operations (Chronicle) | Simple Icons 15.22.0, slug `googlechronicle`, Google blue `#4285F4` | CC0-1.0 (icon data); Google trademark |
 | `slack.svg` | Slack | https://commons.wikimedia.org/wiki/File:Slack_icon_2019.svg (full-colour symbol) | Public domain on Commons; Slack trademark |
 | `google.svg` | Google (Google Threat Intelligence) | https://commons.wikimedia.org/wiki/File:Google_%22G%22_logo.svg (full-colour G) | Public domain on Commons; Google trademark |
@@ -40,7 +41,7 @@ Hybrid Analysis, Joe Sandbox, ANY.RUN, CAPE, Firecrawl, CloudCurrent VStrike
 and Atomic Red Team. The VMware wordmark is unreadable at 18 px. These vendors
 show the category icon until a mark is added.
 
-CrowdStrike, Cribl, Elastic, Microsoft Sentinel and AWS Security Hub also show
+CrowdStrike, Cribl, Microsoft Sentinel and AWS Security Hub also show
 the category icon. Their marks are available only as files copied from the
 vendor's own site, with no licence to redistribute them, or under icon terms
 written for architecture diagrams and documentation, not a product's UI.

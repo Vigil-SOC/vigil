@@ -165,13 +165,16 @@ def overview_parts(
     day,
     feed_limit: int,
 ) -> dict:
-    """Arrivals, today's states, and the feed. Agents and outcome nodes stay with Overview."""
+    """Arrivals, the day's states (every finding when ``day`` is None), and the feed.
+
+    Agents and outcome nodes stay with Overview.
+    """
     linked = best_case_by_finding(cases)
     arrivals: dict[str, int] = {}
     states = []
     for finding in findings:
         when = _when(finding)
-        if when is None or when.date() != day:
+        if day is not None and (when is None or when.date() != day):
             continue
         source = (
             finding.get("data_source")
@@ -185,6 +188,7 @@ def overview_parts(
                 "finding_id": finding.get("finding_id"),
                 "data_source": source,
                 "terminal_state": terminal_state(case, dismissed=_noise(finding)),
+                "case_id": case.get("case_id") if case else None,
             }
         )
     configs: dict = {}
@@ -280,11 +284,16 @@ def _matches(
     needs_you_ids: set[str],
     workflow_constrained: bool,
     data_source: Optional[str],
+    working: bool,
+    closed_by: Optional[str],
+    alerts_from_ids: Optional[set[str]],
 ) -> bool:
     # Demo cases have no workflow and no SLA, so those filters keep nothing.
     if workflow_constrained or sla_at_risk:
         return False
     status = (case.get("status") or "").strip()
+    if closed_by:
+        closed = True
     if closed is True:
         if status != _CLOSED:
             return False
@@ -295,6 +304,15 @@ def _matches(
         return False
     case_id = case.get("case_id") or ""
     if needs_you_only and case_id not in needs_you_ids:
+        return False
+    # Demo closes have no closure row, so they all read as an agent close.
+    if working and (status == _CLOSED or case_id in needs_you_ids):
+        return False
+    if closed_by == "person":
+        return False
+    if alerts_from_ids is not None and not alerts_from_ids.intersection(
+        _ids(case.get("finding_ids"))
+    ):
         return False
     if priority and (case.get("priority") or "") != priority:
         return False
@@ -333,14 +351,34 @@ def case_queue(
     needs_you_only: bool = False,
     workflow_constrained: bool = False,
     data_source: Optional[str] = None,
+    working: bool = False,
+    closed_by: Optional[str] = None,
+    alerts_from: Optional[str] = None,
 ) -> dict:
-    """One page of demo cases, in the queue's shape. The strip ignores the filters."""
+    """One page of demo cases, in the queue's shape.
+
+    The strip follows ``alerts_from`` and ignores the other filters.
+    """
     needs = open_case_ids(cases)
     findings_by_id = {
         finding["finding_id"]: finding
         for finding in findings
         if isinstance(finding.get("finding_id"), str)
     }
+    # Cases holding an alert from the span; None leaves the filter off.
+    alerts_from_ids = (
+        None
+        if alerts_from is None
+        else {
+            finding_id
+            for finding_id, finding in findings_by_id.items()
+            if not _noise(finding)
+            and (
+                alerts_from == "all"
+                or ((when := _when(finding)) is not None and when.date() == now.date())
+            )
+        }
+    )
     matched = [
         case
         for case in cases
@@ -357,6 +395,9 @@ def case_queue(
             needs_you_ids=needs,
             workflow_constrained=workflow_constrained,
             data_source=data_source,
+            working=working,
+            closed_by=closed_by,
+            alerts_from_ids=alerts_from_ids,
         )
     ]
     matched.sort(
@@ -408,6 +449,10 @@ def case_queue(
     for case in cases:
         status = (case.get("status") or "").strip()
         if not status or status == _CLOSED:
+            continue
+        if alerts_from_ids is not None and not alerts_from_ids.intersection(
+            _ids(case.get("finding_ids"))
+        ):
             continue
         by_state[status] = by_state.get(status, 0) + 1
     return {

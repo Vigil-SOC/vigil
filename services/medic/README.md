@@ -13,8 +13,9 @@ python -m services.medic check   # exit 0 only if the heartbeat is fresh (< 120 
 python -m services.medic check --ready  # exit 0 only if the API answers the status op (Helm readiness)
 ```
 
-`run` works in 15 s cycles: the sensors that are due read (`http_ready` on the
-agent worker's `/readyz`, and on Compose agent-serve's), every observation passes
+`run` works in 15 s cycles: the sensors that are due read the agent worker's
+`/readyz` (one address on Compose and host-native, each pod on Helm) and
+agent-serve's `/readyz` when its address is set. Every observation passes
 the K2 redaction choke, the engine evaluates the tick (suppression, group cap,
 upgrade windows) and decides when each incident routes (`route`), the router gives
 it its lane (the rule's, or lane 3 when a lane-1 rule fails the gate), and the store's single writer chains the record into
@@ -31,8 +32,8 @@ with its own reason (`stopped`, `stalled`, `crash-looping`, unknown).
 | `VIGIL_MEDIC_ENABLED` | off |
 | `VIGIL_MEDIC_DATA_DIR` | `/var/lib/vigil-medic` (macOS: `/Library/Application Support/vigil-medic`) |
 | `VIGIL_MEDIC_INSTALL_SHAPE` | `compose` (`start_sh`, `compose` or `helm`) |
-| `VIGIL_MEDIC_AGENT_WORKER_ADDR` | `agent-worker:6990` (`start_sh`: `127.0.0.1:6990`); `host:port` only |
-| `VIGIL_MEDIC_AGENT_SERVE_ADDR` | Compose: `agent-serve:6989`; elsewhere unset, and agent-serve isn't read unless it's set; `host:port` only |
+| `VIGIL_MEDIC_AGENT_WORKER_ADDR` | Compose: `agent-worker:6990`; host-native: `127.0.0.1:6990`. Helm ignores it and reads each agent-worker pod. `host:port` only |
+| `VIGIL_MEDIC_AGENT_SERVE_ADDR` | Compose: `agent-serve:6989`. Helm and host-native set it (the chart, `medic-loop`); unset registers no sensor. `host:port` only |
 | `VIGIL_MEDIC_POLICY_PROBE_ADDR` | Helm only, and required there (the chart sets it): a `host:port` Medic's NetworkPolicy must block |
 | `VIGIL_MEDIC_POLICY_CONTROL_ADDR` | Helm only, and required there: a `host:port` on the same pods that the policy allows |
 | `VIGIL_MEDIC_API_PORT` | `8470`: where `GET /v1/status` listens. On `127.0.0.1` unless `VIGIL_MEDIC_INSTALL_SHAPE` is set to `compose` (the one address that reaches `VIGIL_MEDIC_API_BIND_PEER`) or `helm` (every interface of the pod) |

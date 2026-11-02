@@ -7,8 +7,9 @@ networkPolicies.enabled is turned on (C3 §4.4, "the label trap"). commonLabels
 stay off the pod templates for the same reason.
 */}}
 
-{{/* Every Medic object name is <base>-medic<suffix>, the longest being
-     "-medic-agent-worker" (19), so the base leaves room for it within 63. */}}
+{{/* Every Medic object name is <base>-medic<suffix>. The base stays truncated
+     to 44, the room the removed <base>-medic-agent-worker Service used (19),
+     so an upgrade does not rename the objects that remain. */}}
 {{- define "vigil.medic.base" -}}
 {{- include "vigil.fullname" . | trunc 44 | trimSuffix "-" -}}
 {{- end -}}

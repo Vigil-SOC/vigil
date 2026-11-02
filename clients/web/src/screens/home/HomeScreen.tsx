@@ -135,7 +135,7 @@ function DecisionCard({
   // Nothing executes a recommendation: no Approve, and Reject only clears one with no case to close.
   const approvable = !answersOnCase(item) && !advice
   const rejectable = approvable || (advice && !caseId)
-  const linkClass = answersOnCase(item) || (advice && !onCloseCase) ? 'home-btn primary' : 'home-btn ghost'
+  const linkClass = answersOnCase(item) || advice ? 'home-btn primary' : 'home-btn ghost'
 
   return (
     <article className="home-card">
@@ -151,11 +151,6 @@ function DecisionCard({
       )}
       <div className="home-actions">
         {/* A hunt stopped at a limit is answered with Keep going on its case, not approved here. */}
-        {caseId && onCloseCase && (
-          <button type="button" className="home-btn primary" aria-label={`Close case for ${ask.text}`} disabled={busy} onClick={() => onCloseCase(caseId)}>
-            Close case
-          </button>
-        )}
         {!approvable ? null : item.reversibility === 'reversible' ? (
           <button type="button" className="home-btn primary" disabled={busy} onClick={() => onApprove(item, true)}>
             Approve
@@ -202,6 +197,12 @@ function DecisionCard({
           >
             View case
           </Link>
+        )}
+        {/* Closing is the step you can't undo, so it comes after looking and is the quiet one. */}
+        {caseId && onCloseCase && (
+          <button type="button" className="home-btn ghost" aria-label={`Close case for ${ask.text}`} disabled={busy} onClick={() => onCloseCase(caseId)}>
+            Close case
+          </button>
         )}
         {!caseId && item.finding_id && (
           <Link className={linkClass} to={`/overview?alert=${encodeURIComponent(item.finding_id)}`}>
