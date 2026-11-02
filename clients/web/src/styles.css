@@ -5993,7 +5993,7 @@
    /* ---------- Triage queue: follows the Triage board and tokens.json ---------- */
    /* The screen is view-full: head, tiles and chips on top, the card takes the rest and scrolls inside */
    .tq-page {
-      padding: 20px 26px 0;
+      padding: 20px 26px 26px;
       display: flex;
       flex-direction: column;
       gap: 14px;
