@@ -59,6 +59,11 @@ export type RunEventKind = (typeof RUN_EVENT_KINDS)[number];
 export const RUN_OUTCOMES = ["completed", "failed", "aborted", "budget_exhausted", "abandoned", "data_starved"] as const;
 export type RunOutcome = (typeof RUN_OUTCOMES)[number];
 
+// Why the model path stopped a run, beside the outcome and never instead of it. Named once,
+// where the call failed. Restated in the console's stopCause.ts, which must match.
+export const STOP_CAUSES = ["rate_limited", "provider_auth_refused", "model_unavailable", "gateway_budget_refused", "output_truncated", "unknown"] as const;
+export type StopCause = (typeof STOP_CAUSES)[number];
+
 // seq 0. Carries the resolved spec so resume needs no configuration file and
 // editing an arch mid-run cannot change a run already in flight.
 export interface RunPayload {
@@ -182,6 +187,8 @@ export interface ResumedPayload {
 export interface TerminalPayload {
   outcome: RunOutcome;
   reason: string;
+  // Set only when a model call is what stopped the run. Older ledgers never carry it.
+  stop_cause?: StopCause;
   // What the run leaves behind. Written by the workflow, because only it knows
   // what its deliverable is, and read from here by whoever reports the run out.
   summary?: string;

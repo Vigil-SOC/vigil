@@ -1,3 +1,4 @@
+import type { StopCause } from "../../../contracts/events.js";
 import { Refused, type KernelTurns } from "./model/client.js";
 import { ARTIFACT_KINDS, type Alert, type Artifact, type ArtifactKind } from "./types.js";
 
@@ -13,7 +14,14 @@ export interface Framed {
   index: string | null;
 }
 
-export class Unframed extends Error {}
+export class Unframed extends Error {
+  constructor(
+    message: string,
+    readonly stop_cause?: StopCause,
+  ) {
+    super(message);
+  }
+}
 
 const RULES = [
   "You read an incident brief and state the one event it reports, so an investigator can trace backward from it.",
@@ -46,7 +54,7 @@ export async function frameAlert(turns: Pick<KernelTurns, "turn">, runId: string
     max_turns: 0,
   });
   if (outcome.refusal !== null) throw new Refused(outcome.reason);
-  if (outcome.value === null) throw new Unframed(`the brief could not be read as an alert: ${outcome.reason}`);
+  if (outcome.value === null) throw new Unframed(`the brief could not be read as an alert: ${outcome.reason}`, outcome.stop_cause);
   const input = outcome.value;
   const observedAt = timeOf(input.observed_at);
   if (observedAt === null) throw new Unframed("the brief says when nothing happened, so there is no point in time to trace back from");

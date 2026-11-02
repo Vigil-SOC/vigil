@@ -39,11 +39,11 @@ spec:
         {{- end }}
         listName: {{ .Values.llmWorker.autoscaling.keda.queueName | default "arq:llm" | quote }}
         listLength: {{ .Values.llmWorker.autoscaling.keda.listLength | default "5" | quote }}
-      {{- if and .Values.redis.bitnami.enabled .Values.redis.bitnami.auth.enabled }}
+      {{- if or (and .Values.redis.bitnami.enabled .Values.redis.bitnami.auth.enabled) (include "vigil.redis.auth.inChart" .) }}
       authenticationRef:
         name: {{ include "vigil.llmWorker.fullname" . }}-keda-auth
       {{- end }}
-{{- if and .Values.redis.bitnami.enabled .Values.redis.bitnami.auth.enabled }}
+{{- if or (and .Values.redis.bitnami.enabled .Values.redis.bitnami.auth.enabled) (include "vigil.redis.auth.inChart" .) }}
 ---
 apiVersion: keda.sh/v1alpha1
 kind: TriggerAuthentication
@@ -55,7 +55,12 @@ metadata:
 spec:
   secretTargetRef:
     - parameter: password
+      {{- if .Values.redis.bitnami.enabled }}
       name: {{ include "vigil.redis.bitnami.passwordSecret" . }}
       key: {{ include "vigil.redis.bitnami.passwordSecretKey" . }}
+      {{- else }}
+      name: {{ include "vigil.redis.auth.secretName" . }}
+      key: {{ include "vigil.redis.auth.secretKey" . }}
+      {{- end }}
 {{- end }}
 {{- end }}

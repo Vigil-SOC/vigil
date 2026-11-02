@@ -10800,6 +10800,8 @@ export interface components {
             reason: string;
             /** Severity */
             severity?: string | null;
+            /** Stop Cause */
+            stop_cause?: string | null;
             /**
              * Summary
              * @default

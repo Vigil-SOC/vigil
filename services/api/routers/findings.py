@@ -14,7 +14,9 @@ from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from core.audit import trail
 from core.auth.permissions import permission_gate
+from core.cases import case_trail
 from core.cases.closure import ClosedByKind
 from core.findings.enrichment import (
     FindingNotFound,
@@ -167,6 +169,14 @@ def mark_finding_noise(
     finding.noise_marked_by = current_user.user_id
     finding.noise_marked_by_kind = ClosedByKind.ANALYST.value
     finding.noise_reason = reason or None
+    case_trail.append_or_legacy(
+        session,
+        action=trail.ACTION_FINDING_NOISE_MARK,
+        signed_in=current_user.username,
+        case_id=None,
+        operator_text=reason or None,
+        ids=lambda: {"finding_id": finding_id},
+    )
     return NoiseMarkResponse(
         finding_id=finding.finding_id,
         noise_marked_at=finding.noise_marked_at,
@@ -189,6 +199,14 @@ def clear_finding_noise(
     """Clear the noise mark. The actor is the signed-in user; the columns go back to null."""
     finding = _finding_or_404(session, finding_id)
     logger.info("cleared noise mark on %s by %s", finding_id, current_user.user_id)
+    if finding.noise_marked_at is not None:
+        case_trail.append_or_legacy(
+            session,
+            action=trail.ACTION_FINDING_NOISE_CLEAR,
+            signed_in=current_user.username,
+            case_id=None,
+            ids=lambda: {"finding_id": finding_id},
+        )
     finding.noise_marked_at = None
     finding.noise_marked_by = None
     finding.noise_marked_by_kind = None

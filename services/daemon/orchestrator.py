@@ -1772,8 +1772,10 @@ class Orchestrator:
 
     # The heartbeat. A failure here is logged loudly on purpose (#147): swallowed
     # quietly, last_activity_at stops moving and the supervisor stale-kills a run
-    # that is perfectly healthy. A run parked on a person is not stamped;
-    # the first reconcile after a resume stamps it again.
+    # that is perfectly healthy. A run parked on a person is not stamped, with or
+    # without a checkpoint, so what it spent leaves the hourly window instead of
+    # pausing intake until someone answers. The first reconcile after a resume
+    # stamps it again.
     def _record_progress(self, inv_id: str, projection: Dict[str, Any]) -> None:
         try:
             from core.storage.connection import get_db_manager
@@ -1793,7 +1795,9 @@ class Orchestrator:
                 inv.iteration_count = (
                     projection.get("iteration", 0) if counted is None else counted
                 )
-                if not _parked_on_a_person(projection):
+                if not (
+                    _parked_on_a_person(projection) or projection.get("open_checkpoint")
+                ):
                     inv.last_activity_at = utcnow()
                 # Null is "the gateway priced nothing", which is not zero spent.
                 cost = projection.get("cost_usd")

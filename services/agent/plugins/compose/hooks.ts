@@ -84,7 +84,7 @@ export function composeHooks(mirror: Mirror): PluginHooks {
         if (outcome.status === "failed" || outcome.value === null) {
           await append(ctx, [dispatched(ctx, phase, outcome.reason)]);
           await mirror.phase(run_id, { ...at(phase, order), status: "failed", error: outcome.reason });
-          return { kind: "end", outcome: outcome.refusal === null ? "failed" : "budget_exhausted", reason: `${phase.name}: ${outcome.reason}`, summary: null };
+          return { kind: "end", outcome: outcome.refusal === null ? "failed" : "budget_exhausted", reason: `${phase.name}: ${outcome.reason}`, summary: null, stop_cause: outcome.stop_cause };
         }
 
         await append(ctx, [
@@ -98,7 +98,7 @@ export function composeHooks(mirror: Mirror): PluginHooks {
 
     ended: async (ctx, terminal) => {
       const ledger = await readLedger(state(ctx), ctx.options.run_id);
-      await mirror.terminal(ctx.options.run_id, { outcome: terminal.outcome, reason: terminal.reason, summary: summarise(ledger.answers), cost_usd: ledger.spent });
+      await mirror.terminal(ctx.options.run_id, { outcome: terminal.outcome, reason: terminal.reason, stop_cause: terminal.stop_cause, summary: summarise(ledger.answers), cost_usd: ledger.spent });
     },
   };
 }

@@ -26,10 +26,18 @@ spec:
         - name: redis
           image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
           imagePullPolicy: {{ .Values.redis.image.pullPolicy | default "IfNotPresent" }}
+          # sh -c, so the password comes from the environment and is not in the
+          # command line. Without --requirepass anything that reaches the port
+          # owns the queues and the session store.
           command:
+            - sh
+            - -c
+            - exec redis-server "$@" --requirepass "$REDIS_PASSWORD"
             - redis-server
           args:
             {{- toYaml .Values.redis.args | nindent 12 }}
+          env:
+            {{- include "vigil.redis.auth.env" . | nindent 12 }}
           ports:
             - name: redis
               containerPort: 6379
@@ -39,15 +47,17 @@ spec:
           readinessProbe:
             exec:
               command:
-                - redis-cli
-                - ping
+                - sh
+                - -c
+                - REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping | grep -q PONG
             initialDelaySeconds: 5
             periodSeconds: 5
           livenessProbe:
             exec:
               command:
-                - redis-cli
-                - ping
+                - sh
+                - -c
+                - REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping | grep -q PONG
             initialDelaySeconds: 30
             periodSeconds: 10
           resources:

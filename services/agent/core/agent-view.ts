@@ -15,7 +15,7 @@ import {
   type UnboundPayload,
 } from "../contracts/events.js";
 import { recalledPayloadOf, type RecallPayload } from "../contracts/memory.js";
-import { heldBecause } from "./agent.js";
+import { deniedPark, heldBecause } from "./agent.js";
 import { replayFrames, type FrameReplay } from "./replay.js";
 
 // What a reader outside this process is told about a kernel run and what each turn
@@ -33,7 +33,9 @@ export interface AgentProjection {
   run_kind: RunKind | null;
   plugin: string | null;
   budgets: BudgetLimits | null;
-  status: "running" | "waiting_approval" | "terminal";
+  // parked: the door denied the run's last call, so it waits for a person to change
+  // the ceiling or the role. No checkpoint: nobody can answer it with an approval.
+  status: "running" | "waiting_approval" | "parked" | "terminal";
   outcome: TerminalPayload["outcome"] | null;
   reason: string;
   summary: string | null;
@@ -121,15 +123,16 @@ export function agentProjection(runId: string, events: readonly Envelope[]): Age
   }
 
   const open = raised.find((checkpoint) => !answered.has(checkpoint.checkpoint_id)) ?? null;
+  const denied = terminal === null && open === null ? deniedPark(events) : null;
   const sections = ((run?.spec as { sections?: Record<string, unknown> } | undefined)?.sections) ?? {};
   return {
     run_id: runId,
     run_kind: run?.run_kind ?? null,
     plugin: typeof sections["plugin"] === "string" ? (sections["plugin"] as string) : null,
     budgets: run?.budgets ?? null,
-    status: terminal !== null ? "terminal" : open !== null ? "waiting_approval" : "running",
+    status: terminal !== null ? "terminal" : open !== null ? "waiting_approval" : denied !== null ? "parked" : "running",
     outcome: terminal?.outcome ?? null,
-    reason: terminal?.reason ?? "",
+    reason: terminal?.reason ?? denied?.reason ?? "",
     summary: terminal?.summary ?? null,
     turns: new Set(steps.map((step) => step.turn)).size,
     calls: steps,

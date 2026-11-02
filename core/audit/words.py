@@ -127,6 +127,14 @@ def _sla_assign(p: Mapping[str, Any]) -> str:
     return f"Assigned SLA policy {policy}" if policy else "Assigned an SLA policy"
 
 
+def _noise_mark(p: Mapping[str, Any]) -> str:
+    return f"Marked {p.get('finding_id') or 'an alert'} as noise"
+
+
+def _noise_clear(p: Mapping[str, Any]) -> str:
+    return f"Cleared the noise mark on {p.get('finding_id') or 'an alert'}"
+
+
 def _role(verb: str) -> Callable[[Mapping[str, Any]], str]:
     return lambda p: (
         f"{verb} role {p['role_id']}" if p.get("role_id") else f"{verb} a role"
@@ -210,6 +218,8 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "case.sla.resume": "Resumed the SLA",
     "approval.approve": _approve,
     "approval.reject": "Rejected an action",
+    trail.ACTION_FINDING_NOISE_MARK: _noise_mark,
+    trail.ACTION_FINDING_NOISE_CLEAR: _noise_clear,
     # Old audit stores copied on upgrade (0018_legacy_audit_copy)
     "case.history": _case_history,
     "investigation.log": _investigation_log,
