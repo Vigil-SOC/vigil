@@ -555,7 +555,7 @@ def update_case(
     change = status_change(case.get("status"), status)
     # The write and a close share one session, so a refused close leaves the
     # case as it was. A write with no close owns its own session.
-    with (service_session() if change else nullcontext()) as session:
+    with service_session() if change else nullcontext() as session:
         if not data.update_case(case_id, session=session, **updates):
             return {"error": "Failed to update case"}
         if change:
