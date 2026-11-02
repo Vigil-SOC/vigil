@@ -10,6 +10,7 @@ import { techniqueName } from '../../data/mitre'
 import { EmptyState, Popup } from '../../shared/ui'
 import { stateWord } from '../../shared/findingState'
 import { Icon } from '../../shared/icons'
+import { decideFinding } from '../../shared/decideFinding'
 import { SEND_TO_TRIAGE_FAILED, sendFindingToTriage } from '../../shared/sendToTriage'
 import SourceChip from '../../shared/SourceChip'
 import { useFindingEnrichment, type Enrichment } from '../../shared/useFindingEnrichment'
@@ -254,7 +255,7 @@ export default function FindingPopup({
     const target = id
     setActing(true)
     setDismissError(null)
-    ;(dismissed ? findingsApi.clearNoise(target) : findingsApi.markNoise(target))
+    ;(dismissed ? findingsApi.clearNoise(target) : decideFinding(target, 'noise'))
       .then(() => findingsApi.getById(target))
       .then((res) => {
         if (triageFor.current === target) setRaw(res.data as RawFinding)

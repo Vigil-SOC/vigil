@@ -8,6 +8,7 @@ import { clock } from './clock'
 import FlowDiagram from './FlowDiagram'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { useSourceBadge } from '../../shared/useSourceBadge'
+import { decideFinding } from '../../shared/decideFinding'
 import { SEND_TO_TRIAGE_FAILED, sendFindingToTriage } from '../../shared/sendToTriage'
 import { EmptyState, Popup } from '../../shared/ui'
 import { useCountRange, withRange } from '../../shared/countRange'
@@ -25,6 +26,7 @@ import {
   type OverviewPayload,
 } from '../../services/api'
 import { errorText } from '../../shared/errorText'
+import { useAuth } from '../../contexts/AuthContext'
 import FindingDetails from '../../shared/FindingDetails'
 
 const NOISE_INFO =
@@ -106,8 +108,11 @@ export default function OverviewScreen({ go, goSettings, openCase, setViewFull, 
   const [marking, setMarking] = useState(false)
   const [launchNote, setLaunchNote] = useState<string | null>(null)
   const [ticketNote, setTicketNote] = useState<string | null>(null)
+  const [taking, setTaking] = useState(false)
+  const [takenCase, setTakenCase] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const jira = useJiraReadiness()
+  const { hasPermission } = useAuth()
   // The feed row when there is one; else the single read; else the last item shown, so a poll that
   // drops the alert (marked as noise) does not blank the popup.
   const shown = useRef<OverviewFeedItem | null>(null)
@@ -196,6 +201,7 @@ export default function OverviewScreen({ go, goSettings, openCase, setViewFull, 
     setMarked(open?.noise_marked ?? false)
     setLaunchNote(null)
     setTicketNote(null)
+    setTakenCase(null)
     setActionError(null)
   }, [open?.finding_id]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -221,6 +227,13 @@ export default function OverviewScreen({ go, goSettings, openCase, setViewFull, 
   }, [wall, setWallMode])
 
   const sourceLabel = open ? badgeOf(open.data_source).label : ''
+  const takeGap = !(hasPermission('cases.write') && hasPermission('cases.assign'))
+    ? 'Your role can’t take a case.'
+    : marked
+      ? 'Undo the noise mark first.'
+      : takenCase
+        ? 'You own this case.'
+        : null
 
   // One overlay at a time, in one navigation: a second navigate in the same click starts from the
   // location this render saw, so it would undo the first.
@@ -236,7 +249,7 @@ export default function OverviewScreen({ go, goSettings, openCase, setViewFull, 
     setMarking(true)
     try {
       if (wasMarked) await findingsApi.clearNoise(findingId)
-      else await findingsApi.markNoise(findingId)
+      else await decideFinding(findingId, 'noise')
       // Read the alert back so the Status row shows the state it landed in, in or out of the feed.
       const after = await overviewApi.alert(findingId).then((res) => res.data, () => null)
       if (stillOpen(findingId)) {
@@ -263,6 +276,26 @@ export default function OverviewScreen({ go, goSettings, openCase, setViewFull, 
       setLaunchNote(note)
     } catch (error) {
       if (stillOpen(findingId)) setActionError(errorText(error, SEND_TO_TRIAGE_FAILED))
+    }
+  }
+
+  const takeCase = async () => {
+    if (!open || taking) return
+    const findingId = open.finding_id
+    setActionError(null)
+    setTaking(true)
+    try {
+      const { case_id } = await decideFinding(findingId, 'take_case')
+      const after = await overviewApi.alert(findingId).then((res) => res.data, () => null)
+      if (stillOpen(findingId)) {
+        if (after) setRead({ id: findingId, status: 'ready', item: after })
+        setTakenCase(case_id ?? null)
+      }
+      load()
+    } catch (error) {
+      if (stillOpen(findingId)) setActionError(errorText(error, 'Couldn’t take this alert as a case'))
+    } finally {
+      setTaking(false)
     }
   }
 
@@ -367,6 +400,9 @@ export default function OverviewScreen({ go, goSettings, openCase, setViewFull, 
                 <Icon name="info" size={14} />
               </button>
               <button type="button" className="btn ghost" onClick={launch}>Send to triage</button>
+              <span title={takeGap ?? undefined}>
+                <button type="button" className="btn ghost" onClick={takeCase} disabled={taking || takeGap !== null}>Take as a case</button>
+              </span>
               {open.case_id && (
                 <button type="button" className="btn ghost" onClick={() => openCaseFromPopup(open.case_id!)}>
                   Open case
@@ -384,6 +420,21 @@ export default function OverviewScreen({ go, goSettings, openCase, setViewFull, 
             {launchNote && (
               <p>
                 <Link to={withRange('/triage', range)}>{launchNote}</Link>
+              </p>
+            )}
+            {takenCase && (
+              <p>
+                <Link
+                  className="ov-case-link"
+                  to={`/cases?case=${encodeURIComponent(takenCase)}`}
+                  onClick={(event) => {
+                    if (event.metaKey || event.ctrlKey || event.shiftKey) return // new tab or window
+                    event.preventDefault()
+                    openCaseFromPopup(takenCase)
+                  }}
+                >
+                  You own {takenCase}. Open it.
+                </Link>
               </p>
             )}
             {ticketNote && <p>{ticketNote}</p>}

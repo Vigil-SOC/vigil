@@ -1,7 +1,7 @@
 import axios from 'axios'
 import { basePath } from '../config/basePath'
 import type { Schema } from './apiTypes'
-import type { operations } from './generated/schema'
+import type { components, operations } from './generated/schema'
 
 // Auth is cookie-based; withCredentials sends the HttpOnly cookies on every
 // request, including through the Vite dev proxy.
@@ -127,6 +127,10 @@ export const approvalsApi = {
 /** how a findings read treats findings naming an analyst-excluded IP */
 export type ExclusionView = 'include' | 'hide' | 'only'
 
+export type FindingDecision = components['schemas']['FindingDecision']
+export type FindingDecisionResult = components['schemas']['FindingDecisionResponse']
+export type FindingOutcome = FindingDecision['outcome']
+
 export const findingsApi = {
   getAll: (params?: {
     severity?: string
@@ -156,16 +160,11 @@ export const findingsApi = {
 
   deleteAll: () => api.delete('/findings/all'),
 
-  markNoise: (id: string) =>
-    api.post(`/findings/${encodeURIComponent(id)}/noise`),
+  decide: (id: string, body: FindingDecision) =>
+    api.post<FindingDecisionResult>(`/findings/${encodeURIComponent(id)}/decide`, body),
 
   clearNoise: (id: string) =>
     api.delete(`/findings/${encodeURIComponent(id)}/noise`),
-
-  launchIntake: (id: string) =>
-    api.post<{ queued: boolean; already_queued: boolean; trigger_id?: number | null }>(
-      `/findings/${encodeURIComponent(id)}/intake`,
-    ),
 }
 
 export interface IpExclusion {

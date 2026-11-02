@@ -4304,6 +4304,7 @@
  "index uniq_findings_source_extid": "CREATE UNIQUE INDEX uniq_findings_source_extid ON public.findings USING btree (data_source, external_id) WHERE ((data_source IS NOT NULL) AND (external_id IS NOT NULL))",
  "index uniq_ip_exclusions_active_ip": "CREATE UNIQUE INDEX uniq_ip_exclusions_active_ip ON public.ip_exclusions USING btree (ip) WHERE (removed_at IS NULL)",
  "index uq_approval_actions_idempotency_key": "CREATE UNIQUE INDEX uq_approval_actions_idempotency_key ON public.approval_actions USING btree (idempotency_key) WHERE ((idempotency_key IS NOT NULL) AND ((status)::text <> 'failed'::text))",
+ "index uq_audit_trail_finding_decision": "CREATE UNIQUE INDEX uq_audit_trail_finding_decision ON public.audit_trail USING btree (((payload ->> 'finding_id'::text)), ((payload ->> 'request_id'::text))) WHERE ((payload ->> 'action'::text) = 'finding.decided'::text)",
  "index uq_chat_messages_conv_seq": "CREATE UNIQUE INDEX uq_chat_messages_conv_seq ON public.chat_messages USING btree (conversation_id, seq)",
  "index uq_intake_triggers_queued_finding": "CREATE UNIQUE INDEX uq_intake_triggers_queued_finding ON public.intake_triggers USING btree (finding_id) WHERE (((state)::text = 'queued'::text) AND (finding_id IS NOT NULL))",
  "index user_preferences_pkey": "CREATE UNIQUE INDEX user_preferences_pkey ON public.user_preferences USING btree (user_id)",

@@ -3,18 +3,24 @@
 The frozen read and record-update surface lives in ``core/api/v1/findings_router.py``
 and is mounted at both ``/api/v1/findings`` and (for now) ``/api/findings``.
 This module keeps the routes that are *not* part of that contract: AI
-enrichment generation and the destructive wipe. They remain under
-``/api/findings`` only.
+enrichment generation, the destructive wipe, and an analyst's decision on one
+finding. They remain under ``/api/findings`` only.
 """
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Optional
+from typing import Annotated, Any, Callable, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
-from core.auth.permissions import permission_gate
+from core.audit import trail
+from core.auth.permissions import deny_unless, permission_gate
+from core.cases import case_trail
+from core.cases.assignee import resolve_assignee
+from core.cases.case_sla_service import case_title, open_case, open_case_holding
 from core.cases.closure import ClosedByKind
 from core.findings.enrichment import (
     FindingNotFound,
@@ -44,8 +50,25 @@ logger = logging.getLogger(__name__)
 data_service = DatabaseDataService()
 
 
-class NoiseMarkRequest(BaseModel):
+Outcome = Literal["noise", "triage", "take_case"]
+
+
+class FindingDecision(BaseModel):
+    outcome: Outcome
     reason: Optional[str] = None
+    request_id: str = Field(
+        min_length=1,
+        max_length=200,
+        description="Minted once per decision. Sending it again replays the first answer.",
+    )
+
+
+class FindingDecisionResponse(BaseModel):
+    finding_id: str
+    outcome: Outcome
+    case_id: Optional[str] = None
+    already_queued: Optional[bool] = None
+    replayed: bool = False
 
 
 class NoiseMarkResponse(BaseModel):
@@ -54,13 +77,6 @@ class NoiseMarkResponse(BaseModel):
     noise_marked_by: Optional[str] = None
     noise_marked_by_kind: Optional[str] = None
     noise_reason: Optional[str] = None
-
-
-class IntakeLaunchResponse(BaseModel):
-    finding_id: str
-    queued: bool
-    already_queued: bool
-    trigger_id: Optional[int] = None
 
 
 def _finding_or_404(session: UnitOfWorkSession, finding_id: str) -> Finding:
@@ -149,30 +165,120 @@ def clear_all_findings(
     return {"success": True, "deleted": count, "message": f"Deleted {count} findings"}
 
 
+def _mark_noise(
+    session: Session, finding: Finding, user: User, reason: Optional[str]
+) -> dict[str, Any]:
+    finding.noise_marked_at = utcnow()
+    finding.noise_marked_by = user.user_id
+    finding.noise_marked_by_kind = ClosedByKind.ANALYST.value
+    finding.noise_reason = reason
+    return {}
+
+
+def _send_to_triage(
+    session: Session, finding: Finding, user: User, reason: Optional[str]
+) -> dict[str, Any]:
+    trigger_id = insert_intake_trigger(
+        kind="detection",
+        finding_id=finding.finding_id,
+        priority=intake_severity_band("detection", finding_severity=finding.severity),
+        session=session,
+    )
+    return {"already_queued": trigger_id is None}
+
+
+def _take_case(
+    session: Session, finding: Finding, user: User, reason: Optional[str]
+) -> dict[str, Any]:
+    owner = resolve_assignee(session, user.username)
+    case_id = open_case_holding(finding.finding_id, session=session)
+    if case_id is None:
+        band = intake_severity_band("detection", finding_severity=finding.severity)
+        case = open_case(
+            data_service,
+            title=case_title(
+                finding.title or finding.description or finding.finding_id
+            ),
+            finding_ids=[finding.finding_id],
+            priority="medium" if band == "unknown" else band,
+            description=finding.description or "",
+            session=session,
+        )
+        if not case:
+            raise HTTPException(status_code=500, detail="Failed to create case")
+        case_id = case["case_id"]
+    if not data_service.update_case(case_id, session=session, assignee=owner):
+        raise HTTPException(status_code=500, detail="Failed to assign case")
+    return {"case_id": case_id}
+
+
+@dataclass(frozen=True)
+class _Decision:
+    # Held beyond the route's findings.write, all checked before the first write.
+    permissions: tuple[str, ...]
+    apply: Callable[[Session, Finding, User, Optional[str]], dict[str, Any]]
+
+
+_DECISIONS: dict[Outcome, _Decision] = {
+    "noise": _Decision((), _mark_noise),
+    "triage": _Decision((), _send_to_triage),
+    "take_case": _Decision(("cases.write", "cases.assign"), _take_case),
+}
+
+
 @router.post(
-    "/{finding_id}/noise",
-    response_model=NoiseMarkResponse,
+    "/{finding_id}/decide",
+    response_model=FindingDecisionResponse,
     dependencies=_FINDINGS_WRITE,
 )
-def mark_finding_noise(
+def decide_finding(
     finding_id: str,
+    body: FindingDecision,
     current_user: Annotated[User, Depends(get_current_user)],
     session: UnitOfWorkSession,
-    body: Optional[NoiseMarkRequest] = None,
 ):
-    """Dismiss the finding as noise. The body is optional; the console sends none."""
-    finding = _finding_or_404(session, finding_id)
-    reason = ((body.reason if body else None) or "").strip()
-    finding.noise_marked_at = utcnow()
-    finding.noise_marked_by = current_user.user_id
-    finding.noise_marked_by_kind = ClosedByKind.ANALYST.value
-    finding.noise_reason = reason or None
-    return NoiseMarkResponse(
-        finding_id=finding.finding_id,
-        noise_marked_at=finding.noise_marked_at,
-        noise_marked_by=finding.noise_marked_by,
-        noise_marked_by_kind=finding.noise_marked_by_kind,
-        noise_reason=finding.noise_reason,
+    """One analyst decision on one finding, in one transaction with its trail entry.
+
+    A repeated ``request_id`` answers with the outcome on record and writes nothing.
+    """
+    decision = _DECISIONS[body.outcome]
+    for permission in decision.permissions:
+        deny_unless(current_user.user_id, permission, session)
+
+    # A duplicate waits here for the first to commit, then finds it on the trail.
+    # NO KEY so linking this finding to a case elsewhere does not wait on it.
+    finding = session.get(Finding, finding_id, with_for_update={"key_share": True})
+    if finding is None:
+        raise HTTPException(status_code=404, detail="Finding not found")
+
+    recorded = trail.recorded_decision(session, finding_id, body.request_id)
+    if recorded is not None:
+        return FindingDecisionResponse(
+            finding_id=finding_id,
+            outcome=recorded["decision"],
+            case_id=recorded.get("case_id"),
+            already_queued=recorded.get("already_queued"),
+            replayed=True,
+        )
+
+    reason = (body.reason or "").strip() or None
+    result = decision.apply(session, finding, current_user, reason)
+    case_trail.append_or_legacy(
+        session,
+        action=trail.ACTION_FINDING_DECIDED,
+        signed_in=current_user.username,
+        case_id=result.get("case_id"),
+        operator_text=reason,
+        ids=lambda: {
+            trail.OBJECT: finding_id,
+            "finding_id": finding_id,
+            "decision": body.outcome,
+            "request_id": body.request_id,
+            "already_queued": result.get("already_queued"),
+        },
+    )
+    return FindingDecisionResponse(
+        finding_id=finding_id, outcome=body.outcome, **result
     )
 
 
@@ -186,35 +292,22 @@ def clear_finding_noise(
     current_user: Annotated[User, Depends(get_current_user)],
     session: UnitOfWorkSession,
 ):
-    """Clear the noise mark. The actor is the signed-in user; the columns go back to null."""
+    """Clear the noise mark. The actor is the signed-in user; the columns go back to null.
+
+    Clearing a mark that is not there changes nothing, so it records nothing.
+    """
     finding = _finding_or_404(session, finding_id)
-    logger.info("cleared noise mark on %s by %s", finding_id, current_user.user_id)
-    finding.noise_marked_at = None
-    finding.noise_marked_by = None
-    finding.noise_marked_by_kind = None
-    finding.noise_reason = None
+    if finding.noise_marked_at is not None:
+        logger.info("cleared noise mark on %s by %s", finding_id, current_user.user_id)
+        finding.noise_marked_at = None
+        finding.noise_marked_by = None
+        finding.noise_marked_by_kind = None
+        finding.noise_reason = None
+        case_trail.append_or_legacy(
+            session,
+            action=trail.ACTION_FINDING_NOISE_CLEARED,
+            signed_in=current_user.username,
+            case_id=None,
+            ids=lambda: {trail.OBJECT: finding_id, "finding_id": finding_id},
+        )
     return NoiseMarkResponse(finding_id=finding.finding_id)
-
-
-@router.post(
-    "/{finding_id}/intake",
-    response_model=IntakeLaunchResponse,
-    dependencies=_FINDINGS_WRITE,
-)
-def launch_finding_into_intake(
-    finding_id: str,
-    session: UnitOfWorkSession,
-):
-    """Queue this finding for intake. ``already_queued`` when a queued row exists."""
-    finding = _finding_or_404(session, finding_id)
-    trigger_id = insert_intake_trigger(
-        kind="detection",
-        finding_id=finding.finding_id,
-        priority=intake_severity_band("detection", finding_severity=finding.severity),
-    )
-    return IntakeLaunchResponse(
-        finding_id=finding.finding_id,
-        queued=trigger_id is not None,
-        already_queued=trigger_id is None,
-        trigger_id=trigger_id,
-    )

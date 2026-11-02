@@ -55,6 +55,8 @@ ACTION_RESTORE = "audit.restore"
 # A retention period, or an erasure, announced in the same transaction that stores it.
 ACTION_RETENTION = "audit.retention"
 ACTION_ERASURE = "audit.erasure"
+ACTION_FINDING_DECIDED = "finding.decided"
+ACTION_FINDING_NOISE_CLEARED = "finding.noise_cleared"
 OUTCOME_DONE = "done"
 OUTCOME_DENIED = "denied"
 OUTCOME_RECORDED_LATE = "recorded late"
@@ -839,6 +841,28 @@ def read_all(session, query: TrailQuery) -> list[dict]:
         if len(page) < _READ_PAGE:
             return rows
         after = page[-1]["seq"]
+
+
+def recorded_decision(
+    session, finding_id: str, request_id: str
+) -> Optional[dict[str, Any]]:
+    """The payload of the decision ``request_id`` already made on this finding.
+
+    Reads the index of revision 0020, so the action is a literal in the SQL:
+    a bound value would not match the index's predicate.
+    """
+    if not in_use(session):
+        return None
+    row = session.execute(
+        text(f"""
+            SELECT payload FROM public.audit_trail
+            WHERE payload->>'{ACTION}' = '{ACTION_FINDING_DECIDED}'
+              AND payload->>'finding_id' = :finding_id
+              AND payload->>'request_id' = :request_id
+        """),
+        {"finding_id": finding_id, "request_id": request_id},
+    ).first()
+    return row[0] if row is not None else None
 
 
 def current_tip(session) -> Tip:

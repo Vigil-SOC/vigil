@@ -40,6 +40,7 @@ import {
 import { Popup } from '../shared/ui'
 import { LATER_RELEASE } from '../shared/later'
 import { errorText } from '../shared/errorText'
+import { newId } from '../shared/newId'
 import { attachRefusal } from './commandBarModel'
 import type { ChatSeed, SeedDocument } from '../shared/types'
 
@@ -88,16 +89,6 @@ interface TraceDetail {
   response_content?: string
   tool_calls?: Array<{ name?: string; input?: unknown }>
   tool_results?: Array<{ tool_use_id?: string; content?: unknown; is_error?: boolean }>
-}
-
-// randomUUID exists only in secure contexts (HTTPS or localhost); plain HTTP at a LAN address lacks it.
-const newSessionId = (): string => {
-  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID()
-  const b = crypto.getRandomValues(new Uint8Array(16))
-  b[6] = (b[6] & 0x0f) | 0x40 // version 4
-  b[8] = (b[8] & 0x3f) | 0x80 // RFC 4122 variant
-  const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`
 }
 
 class ServerRefusal extends Error {}
@@ -392,7 +383,7 @@ export default function Chat({
   const [traceSelected, setTraceSelected] = useState<TraceDetail | null>(null)
   const [sessionSummary, setSessionSummary] = useState<SessionSummary | null>(null)
 
-  const sessionRef = useRef<string>(newSessionId())
+  const sessionRef = useRef<string>(newId())
   const bodyRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -427,7 +418,7 @@ export default function Chat({
     if (switched) {
       messagesRef.current = []
       setMessages([])
-      sessionRef.current = newSessionId()
+      sessionRef.current = newId()
       currentKeyRef.current = null
       persistedRef.current = false
       setSessionSummary(null)
@@ -810,7 +801,7 @@ export default function Chat({
     if (loading) return
     archiveCurrent()
     putMessages([])
-    sessionRef.current = newSessionId()
+    sessionRef.current = newId()
     currentKeyRef.current = null
     persistedRef.current = false
     rememberCase(null)
@@ -891,7 +882,7 @@ export default function Chat({
       if (opened) return // reopened the existing thread for this finding/case
     }
     archiveCurrent()
-    sessionRef.current = newSessionId()
+    sessionRef.current = newId()
     currentKeyRef.current = prompt
     persistedRef.current = false
     rememberCase(null)
@@ -946,7 +937,7 @@ export default function Chat({
     // too. archiveCurrent would write this thread back into the local history.
     if (removed && id === sessionRef.current) {
       putMessages([])
-      sessionRef.current = newSessionId()
+      sessionRef.current = newId()
       currentKeyRef.current = null
       persistedRef.current = false
       setSessionSummary(null)
@@ -1020,14 +1011,14 @@ export default function Chat({
           if (!live || gen !== loadGen.current) return
           rememberCase(lockedCaseId)
         } else {
-          sessionRef.current = newSessionId()
+          sessionRef.current = newId()
           persistedRef.current = false
         }
         settle()
       })
       .catch(() => {
         if (!live || gen !== loadGen.current) return
-        sessionRef.current = newSessionId()
+        sessionRef.current = newId()
         persistedRef.current = false
         settle()
       })
