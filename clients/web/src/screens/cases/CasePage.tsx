@@ -1214,6 +1214,12 @@ export function CasePage({
     setRecordKey((k) => k + 1)
   }, [id, editStamp, c])
 
+  // A side-panel write (comment, task, file, IOC) writes a trail row too; re-read the record in place.
+  const onSideWrite = useCallback(() => {
+    quietRecord.current = true
+    setRecordKey((k) => k + 1)
+  }, [])
+
   // Each run is named once, on its tag, the filter, the cost lines and the Record's rows.
   const runLabels = useMemo(() => Object.fromEntries(investigations.map((item) => [item.run_id, runLabel(item, workflowNames)])), [investigations, workflowNames])
 
@@ -1779,14 +1785,14 @@ export function CasePage({
         </div>
 
         <aside className="case-side" aria-label="Case details">
-          <CaseSide key={id} caseId={id} linked={linkedFindings} owner={c?.ownerName || '—'} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} />
+          <CaseSide key={id} caseId={id} linked={linkedFindings} owner={c?.ownerName || '—'} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} onWritten={onSideWrite} />
           <details className="case-fold">
             <summary>Files</summary>
-            <EvidenceCard caseId={id} title="Files" />
+            <EvidenceCard caseId={id} title="Files" onWritten={onSideWrite} />
           </details>
           <details className="case-fold">
             <summary>IOCs</summary>
-            <IOCsCard caseId={id} />
+            <IOCsCard caseId={id} onWritten={onSideWrite} />
           </details>
         </aside>
       </div>

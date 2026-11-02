@@ -255,7 +255,7 @@ function initialsOf(name: string): string {
 }
 
 /** Comments, tasks and tickets load once here (open or not) and feed the collapsed line, the summary and the cards. */
-function People({ caseId, owner }: { caseId: string; owner: string }) {
+function People({ caseId, owner, onWritten }: { caseId: string; owner: string; onWritten?: () => void }) {
   const [open, setOpen] = useState(false)
   const comments = useComments(caseId)
   const tasks = useTasks(caseId)
@@ -284,8 +284,8 @@ function People({ caseId, owner }: { caseId: string; owner: string }) {
           <div className="side-meta">
             Comments {comments.phase === 'ready' ? n : '—'} · Tasks {count(tasks as Resource<unknown[]>)} · Tickets {count(tickets as Resource<unknown[]>)}
           </div>
-          <CommentsView caseId={caseId} resource={comments} />
-          <TasksView caseId={caseId} resource={tasks} />
+          <CommentsView caseId={caseId} resource={comments} onWritten={onWritten} />
+          <TasksView caseId={caseId} resource={tasks} onWritten={onWritten} />
           <TicketsView resource={tickets} />
         </div>
       )}
@@ -294,7 +294,7 @@ function People({ caseId, owner }: { caseId: string; owner: string }) {
 }
 
 /** The Details, Alerts, Related cases, Known and People blocks of the case side panel. */
-export function CaseSide({ caseId, linked, owner, latest, workflowNames, sla, closed, fold }: {
+export function CaseSide({ caseId, linked, owner, latest, workflowNames, sla, closed, fold, onWritten }: {
   caseId: string
   linked: CaseLinkedFinding[]
   owner: string
@@ -303,6 +303,8 @@ export function CaseSide({ caseId, linked, owner, latest, workflowNames, sla, cl
   sla: Sla
   closed: boolean
   fold: RunFold | null
+  /** A side-panel write succeeded; it wrote a trail row. */
+  onWritten?: () => void
 }) {
   const anchor = useRef<HTMLElement>(null)
   useNoSideways(anchor, 'The case side panel', '.case-side')
@@ -312,7 +314,7 @@ export function CaseSide({ caseId, linked, owner, latest, workflowNames, sla, cl
       <Alerts items={linked} />
       <RelatedCases caseId={caseId} />
       <Known fold={fold} hasRun={latest !== null} />
-      <People caseId={caseId} owner={owner} />
+      <People caseId={caseId} owner={owner} onWritten={onWritten} />
     </>
   )
 }
