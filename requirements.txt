@@ -2,7 +2,7 @@
 
 # Core
 numpy>=2.5.3
-pyarrow>=15.0.0
+pyarrow>=26.0.0
 ijson>=3.5.1
 anthropic>=0.45.0
 # In-repo servers use the 2.x lowlevel Server(on_list_tools=..., on_call_tool=...)
@@ -16,7 +16,7 @@ httpx>=0.28.1
 # No longer used by any application code — only the scripts/ utilities.
 requests>=2.34.2
 urllib3>=2.8.0
-boto3>=1.43.118
+boto3>=1.43.122
 aiohttp>=3.14.5
 
 # Core declared transitive deps
@@ -65,7 +65,7 @@ uv>=0.13.5
 
 # Authentication
 bcrypt>=5.0.0
-pyjwt>=2.13.0
+pyjwt>=2.15.1
 pyotp>=2.10.0
 cryptography>=50.0.2
 slowapi>=0.1.10
@@ -93,7 +93,7 @@ aiokafka>=0.14.0
 taxii2-client>=2.3.0
 
 # Monitoring & Observability
-sentry-sdk>=2.72.0
+sentry-sdk>=2.73.0
 prometheus-client>=0.19.0
 
 # OpenTelemetry
