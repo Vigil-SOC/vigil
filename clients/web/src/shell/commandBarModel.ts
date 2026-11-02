@@ -1,42 +1,223 @@
-/** Command palette rows. The last four are display-only. */
+/**
+ * The command bar's commands, one record each: what it takes, what its preview says,
+ * and what it does. A line goes query -> parseLine -> lookup -> bindLine -> keyAction,
+ * all derived in render, so nothing here can drift from what is typed.
+ */
 
 import { useEffect, useState } from 'react'
-import { configApi } from '../services/api'
+import { casesApi, configApi, findingsApi, searchApi, workflowApi } from '../services/api'
 import type { Schema } from '../services/apiTypes'
 import type { IconName } from '../shared/icons'
+import { errorText } from '../shared/errorText'
+import type { ConsoleScreenGoOptions } from '../shared/types'
+import type { ToastKind } from './toast'
 
-export type LiveCommandId = 'investigate' | 'hunt' | 'replay' | 'ask' | 'ticket'
+type RefKind = 'case' | 'alert'
 
-type CommandId = LiveCommandId | 'hold' | 'isolate' | 'phish' | 'custom'
+/** What a command takes. A ref only ever binds to an exact id, so a search word cannot reach an API. */
+type Args =
+  | { kind: 'free'; rows?: RefKind }
+  | { kind: 'ref'; ref: RefKind }
 
-interface CommandDef {
-  id: CommandId
+/** What a line resolved to. Only bindLine makes one, and run takes nothing else. */
+export interface Bound {
+  id: string
+  text: string
+}
+
+/** What binding a line reads, beyond the line itself. */
+export interface BindEnv {
+  openCaseId: string | null
+  jira: JiraReadiness
+  attachment: HuntAttachment | null
+}
+
+/** What a run may reach in the console around the bar. */
+export interface RunContext extends BindEnv {
+  notify: (kind: ToastKind, text: string) => void
+  onOpenCase: (caseId: string) => void
+  onGo: (screen: string, options?: ConsoleScreenGoOptions) => void
+  ask: (text?: string) => boolean
+  /** Removes the attachment, unless another was attached while the run started. */
+  dropSent: () => void
+}
+
+interface CommandText {
+  id: string
   name: string
   hint: string
   /** One line for the Commands tab. */
   desc: string
-  /** What it starts, as the bar's run() does; "—" for a Later row. */
+  /** What it starts; "—" for a Later row. */
   runs: string
-  later: boolean
+}
+
+export interface LiveCommand extends CommandText {
+  later: false
   /** It reads an attached file; the paperclip is off for the rest. */
   takesFile?: boolean
-  /** The workflow a live command starts, when it starts one. */
+  /** The workflow it starts, when it starts one. */
   workflowId?: string
+  args: Args
+  /** Why a resolved line cannot run yet. */
+  blocked?: (target: Bound, env: BindEnv) => string | null
+  preview: (target: Bound, env: BindEnv) => { line: string; note?: string }
+  run: (target: Bound, ctx: RunContext) => Promise<void>
+}
+
+interface LaterCommand extends CommandText {
+  later: true
+}
+
+type CommandDef = LiveCommand | LaterCommand
+
+const readyFile = (attachment: HuntAttachment | null) => (attachment?.status === 'ready' ? attachment : null)
+
+/** A finding id when the text is one, otherwise what the person saw. */
+async function findingOrContext(text: string): Promise<{ finding_id: string } | { context: string }> {
+  try {
+    await findingsApi.getById(encodeURIComponent(text))
+    return { finding_id: text }
+  } catch {
+    return { context: text }
+  }
+}
+
+/** The original stays on the case. The run has started, so a failed upload only warns. */
+async function keepDocument(caseId: string, document: Extract<HuntAttachment, { status: 'ready' }>, started: string, ctx: RunContext) {
+  await casesApi
+    .attachDocument(caseId, document.file, { name: document.pasted ? PASTED_NAME : undefined, pages: document.pages })
+    .catch((error: unknown) => ctx.notify('err', `${started}, but ${document.name} could not be kept on the case: ${errorText(error, 'upload failed')}`))
 }
 
 export const COMMANDS: CommandDef[] = [
-  { id: 'investigate', name: '/investigate', hint: '<finding or context>', desc: 'Run incident response on a finding or a description of what you saw', runs: 'Incident response workflow', later: false, takesFile: true, workflowId: 'incident-response' },
-  { id: 'hunt', name: '/hunt', hint: '<hypothesis>', desc: 'Start a hypothesis-driven threat hunt', runs: 'Threat hunt workflow', later: false, takesFile: true, workflowId: 'threat-hunt' },
-  { id: 'replay', name: '/replay', hint: '<case>', desc: "Watch a case's latest run", runs: 'Opens Watch a run', later: false },
-  { id: 'ask', name: '/ask', hint: '<question>', desc: 'Ask Vigil your question in chat', runs: 'Opens Ask Vigil', later: false, takesFile: true },
-  { id: 'ticket', name: '/ticket', hint: '<case>', desc: 'Create a Jira ticket from a case', runs: 'Exports the case to Jira', later: false },
+  {
+    id: 'investigate',
+    name: '/investigate',
+    hint: '<finding or context>',
+    desc: 'Run incident response on a finding or a description of what you saw',
+    runs: 'Incident response workflow',
+    later: false,
+    takesFile: true,
+    workflowId: 'incident-response',
+    args: { kind: 'free', rows: 'alert' },
+    blocked: ({ text }) => (text ? null : 'Add a finding id or context'),
+    preview: ({ text }, { attachment }) => ({ line: `Run incident response for ${text}${attachment?.status === 'ready' ? ` with ${attachment.name}` : ''}` }),
+    run: async ({ text }, ctx) => {
+      const document = readyFile(ctx.attachment)
+      // The server opens the case, or reuses the open one holding the alert.
+      const started = await workflowApi.execute('incident-response', {
+        ...(await findingOrContext(text)),
+        ...(document && { document: document.text }),
+      })
+      const caseId = started.data.case_id
+      if (!caseId) throw new Error('The run started without a case')
+      if (document) await keepDocument(caseId, document, 'The run started', ctx)
+      ctx.onOpenCase(caseId)
+      ctx.dropSent()
+      ctx.notify('ok', 'Started Incident response workflow')
+    },
+  },
+  {
+    id: 'hunt',
+    name: '/hunt',
+    hint: '<hypothesis>',
+    desc: 'Start a hypothesis-driven threat hunt',
+    runs: 'Threat hunt workflow',
+    later: false,
+    takesFile: true,
+    workflowId: 'threat-hunt',
+    args: { kind: 'free' },
+    blocked: ({ text }, { attachment }) => {
+      if (huntHypothesis(text, attachment)) return null
+      if (attachment?.status !== 'ready') return 'Type a hypothesis, or attach a file to have one proposed'
+      return attachment.proposal?.status === 'none' ? attachment.proposal.reason : 'Checking what the document covers…'
+    },
+    preview: ({ text }, { attachment }) => {
+      const running = runningHunt(attachment)
+      return {
+        line: `Start a threat hunt: ${huntHypothesis(text, attachment)}`,
+        ...(!text && { note: running ? huntStateNote(running) : 'Proposed from the document. Type your own to replace it.' }),
+      }
+    },
+    run: async ({ text }, ctx) => {
+      // What was typed, else what the attached document proposed.
+      const hypothesis = huntHypothesis(text, ctx.attachment)
+      const document = readyFile(ctx.attachment)
+      // The server puts the run on a case, so the drawer has something to open on.
+      const started = await workflowApi.execute('threat-hunt', {
+        hypothesis,
+        ...(document && { document: document.text }),
+        // The proposal's own subjects and approval ride with it, unedited.
+        ...(!text && document?.proposal?.status === 'proposed' && {
+          hypothesis_subjects: document.proposal.subjects,
+          approve_hypotheses: document.proposal.approve,
+        }),
+      })
+      const caseId = started.data.case_id
+      if (!caseId) throw new Error('The hunt started without a case')
+      // After the run is queued, so a refused hunt leaves no original behind.
+      if (document) await keepDocument(caseId, document, 'The hunt started', ctx)
+      ctx.onOpenCase(caseId)
+      ctx.dropSent()
+      ctx.notify('ok', `Hunt started on case "${huntTitle(hypothesis)}"`)
+    },
+  },
+  {
+    id: 'replay',
+    name: '/replay',
+    hint: '<case>',
+    desc: "Watch a case's latest run",
+    runs: 'Opens Watch a run',
+    later: false,
+    args: { kind: 'ref', ref: 'case' },
+    preview: ({ id }) => ({ line: `Watch the latest run on case ${id}` }),
+    run: async ({ id }, ctx) => {
+      // Investigations come newest first.
+      const runId = (await casesApi.getById(id)).data.investigations?.[0]?.run_id
+      if (runId) ctx.onGo('workflows', { search: `?run=${encodeURIComponent(runId)}` })
+      else {
+        ctx.onOpenCase(id)
+        ctx.notify('info', `Case ${id} has no run to replay`)
+      }
+    },
+  },
+  {
+    id: 'ask',
+    name: '/ask',
+    hint: '<question>',
+    desc: 'Ask Vigil your question in chat',
+    runs: 'Opens Ask Vigil',
+    later: false,
+    takesFile: true,
+    args: { kind: 'free' },
+    blocked: ({ text }) => (text ? null : 'Add a question'),
+    preview: ({ text }, { attachment }) => ({ line: `Ask Vigil: ${text}${attachment?.status === 'ready' ? ` (with ${attachment.name})` : ''}` }),
+    run: async ({ text }, ctx) => {
+      ctx.ask(text)
+    },
+  },
+  {
+    id: 'ticket',
+    name: '/ticket',
+    hint: '<case>',
+    desc: 'Create a Jira ticket from a case',
+    runs: 'Exports the case to Jira',
+    later: false,
+    args: { kind: 'ref', ref: 'case' },
+    blocked: (_target, { jira }) => jira.gap,
+    preview: ({ id }, { jira }) => ({ line: `Export case ${id} to Jira project ${jira.projectKey}` }),
+    run: async ({ id }, ctx) => {
+      ctx.notify('ok', await casesApi.exportJira(id, ctx.jira.projectKey))
+    },
+  },
   { id: 'hold', name: '/hold', hint: '<case or kind>', desc: 'Hold a case, or every case of one kind', runs: '—', later: true },
   { id: 'isolate', name: '/isolate', hint: '<host>', desc: 'Isolate a host. Irreversible, always asks you to confirm', runs: '—', later: true },
   { id: 'phish', name: '/phish', hint: '<message or sender>', desc: 'Run Phishing triage on a reported email', runs: '—', later: true },
   { id: 'custom', name: 'Custom commands', hint: '', desc: 'Create a command for any workflow', runs: '—', later: true },
 ]
 
-export const LIVE_COMMANDS = COMMANDS.filter((c) => !c.later)
+export const LIVE_COMMANDS = COMMANDS.filter((c): c is LiveCommand => !c.later)
 
 type DestTag = 'Case' | 'Alert' | 'Page' | 'Command' | 'Recent' | 'Ask' | 'Argument'
 
@@ -71,15 +252,17 @@ export interface PaletteRow {
   icon: IconName
   desc: string
   disabled: boolean
-  commandId?: CommandId
+  commandId?: string
   caseId?: string
   findingId?: string
   page?: string
   /** The query string a Page row opens its page with. */
   search?: string
   recent?: string
-  /** The id an argument row puts after the command. */
+  /** The line this row puts in the bar. */
   fill?: string
+  /** This row names the command already typed, so there is nothing to move to. */
+  echo?: boolean
 }
 
 interface JiraConfigRead {
@@ -168,10 +351,9 @@ export function attachRefusal(file: { name: string; size: number }): string | nu
 
 /** Why the typed command takes no file (the paperclip's tooltip), or null when it can take one. */
 export function attachBlockedBy(query: string): string | null {
-  const token = commandToken(query)
-  const command = COMMANDS.find((c) => c.name.toLowerCase() === token)
-  if (!command || command.takesFile) return null
-  return command.later ? `${command.name} is not available yet and takes no file` : `${command.name} takes a case, not a file`
+  const line = parseLine(query)
+  if (line?.kind === 'later') return `${line.command.name} is not available yet and takes no file`
+  return line?.kind === 'command' && !line.command.takesFile ? `${line.command.name} takes a case, not a file` : null
 }
 
 /** Over this many characters, or on more than one line, a paste attaches as a file instead of landing in the input. */
@@ -270,27 +452,6 @@ function caseDesc(hit: Hit): string {
   return state || (hit.match_type ? MATCH_DESC[hit.match_type] : '')
 }
 
-export function isLiveCommand(id: CommandId): id is LiveCommandId {
-  return id === 'investigate' || id === 'hunt' || id === 'replay' || id === 'ask' || id === 'ticket'
-}
-
-/** Text after the command name. Empty when the query is not that command. */
-export function commandRemainder(query: string, name: string): string {
-  const trimmed = query.trim()
-  const lower = trimmed.toLowerCase()
-  const command = name.toLowerCase()
-  if (lower === command) return ''
-  if (lower.startsWith(`${command} `)) return trimmed.slice(name.length).trim()
-  return ''
-}
-
-/** The live command the line starts with, and its argument. Null when the line is not one. */
-export function liveCommandIn(text: string): { id: LiveCommandId; arg: string } | null {
-  const lower = text.toLowerCase()
-  const command = LIVE_COMMANDS.find((c) => lower.startsWith(`${c.name} `))
-  return command ? { id: command.id as LiveCommandId, arg: commandRemainder(text, command.name) } : null
-}
-
 export function jiraReadiness(data: JiraConfigRead | null): JiraReadiness {
   if (!data) return { gap: 'Jira configuration could not be read', projectKey: '' }
   const enabled = (data.enabled_integrations ?? []).includes('jira')
@@ -323,71 +484,163 @@ export function useJiraReadiness(): JiraReadiness {
   return jira
 }
 
-export function commandPreview(
-  id: LiveCommandId,
-  arg: string,
-  jira: JiraReadiness,
-  attachment: HuntAttachment | null = null,
-): { line: string; disabled: boolean; note?: string } {
-  const a = arg.trim()
-  // A command that reads the file waits for it, and a refused one stops it.
-  if (COMMANDS.find((c) => c.id === id)?.takesFile) {
-    if (attachment?.status === 'reading') return { line: `Reading ${attachment.name}…`, disabled: true }
-    if (attachment?.status === 'refused') return { line: attachment.reason, disabled: true }
-  }
-  switch (id) {
-    case 'investigate':
-      return a
-        ? { line: `Run incident response for ${a}${attachment?.status === 'ready' ? ` with ${attachment.name}` : ''}`, disabled: false }
-        : { line: 'Add a finding id or context', disabled: true }
-    case 'hunt': {
-      const hypothesis = huntHypothesis(a, attachment)
-      const running = runningHunt(attachment)
-      if (hypothesis) {
-        return {
-          line: `Start a threat hunt: ${hypothesis}`,
-          disabled: false,
-          ...(!a && {
-            note: running ? huntStateNote(running) : 'Proposed from the document. Type your own to replace it.',
-          }),
-        }
-      }
-      if (attachment?.status === 'ready') {
-        const proposal = attachment.proposal
-        return proposal?.status === 'none'
-          ? { line: proposal.reason, disabled: true }
-          : { line: 'Checking what the document covers…', disabled: true }
-      }
-      return { line: 'Type a hypothesis, or attach a file to have one proposed', disabled: true }
+export type CommandLine = { kind: 'command'; command: LiveCommand; word: string }
+
+/** A line that starts with a slash: a live command, a Later one, or neither. */
+export type Line =
+  | CommandLine
+  | { kind: 'later'; command: LaterCommand }
+  | { kind: 'unknown'; token: string; tail: string; near: LiveCommand[] }
+
+const NEAR_DISTANCE = 2
+
+function editDistance(a: string, b: string): number {
+  let row = Array.from({ length: b.length + 1 }, (_, j) => j)
+  for (let i = 1; i <= a.length; i += 1) {
+    const next = [i]
+    for (let j = 1; j <= b.length; j += 1) {
+      next[j] = Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1))
     }
-    case 'replay':
-      return a
-        ? { line: `Watch the latest run on case ${a}`, disabled: false }
-        : { line: 'Add a case id', disabled: true }
-    case 'ask':
-      return a
-        ? { line: `Ask Vigil: ${a}${attachment?.status === 'ready' ? ` (with ${attachment.name})` : ''}`, disabled: false }
-        : { line: 'Add a question', disabled: true }
-    case 'ticket':
-      if (!a) return { line: 'Add a case id', disabled: true }
-      if (jira.gap) return { line: jira.gap, disabled: true }
-      return { line: `Export case ${a} to Jira project ${jira.projectKey}`, disabled: false }
-    default: {
-      const exhaustive: never = id
-      return exhaustive
-    }
+    row = next
   }
+  return row[b.length]
 }
 
-function commandToken(query: string): string {
-  return query.trim().toLowerCase().split(/\s+/)[0] ?? ''
+/** What a mistyped token was probably meant to be, nearest first. A second slash is a path, not a typo. */
+function nearCommands(token: string): LiveCommand[] {
+  if (token.indexOf('/', 1) > 0) return []
+  return LIVE_COMMANDS
+    .map((command) => ({ command, distance: editDistance(token, command.name) }))
+    .filter(({ distance }) => distance <= NEAR_DISTANCE)
+    .sort((a, b) => a.distance - b.distance)
+    .map(({ command }) => command)
+}
+
+export function parseLine(query: string): Line | null {
+  const trimmed = query.trim()
+  if (!trimmed.startsWith('/')) return null
+  const token = trimmed.split(/\s+/)[0]
+  const rest = trimmed.slice(token.length).trim()
+  const lower = token.toLowerCase()
+  const command = COMMANDS.find((c) => c.name === lower)
+  if (command?.later) return { kind: 'later', command }
+  if (command) return { kind: 'command', command, word: rest }
+  return { kind: 'unknown', token, tail: rest, near: commandsFor(lower).length > 0 ? [] : nearCommands(lower) }
+}
+
+/** The ids a word could be, from GET /search, or the first few a list shows when nothing is typed. */
+export interface RefLookup {
+  kind: RefKind
+  word: string
+  failed: boolean
+  exact: Hit | null
+  hits: Hit[]
+}
+
+export function lookupWanted(line: Line | null): { kind: RefKind; word: string } | null {
+  if (line?.kind !== 'command') return null
+  const { args } = line.command
+  const kind = args.kind === 'ref' ? args.ref : args.rows
+  return kind ? { kind, word: line.word } : null
+}
+
+export async function fetchRefs(kind: RefKind, word: string, signal: AbortSignal): Promise<Pick<RefLookup, 'exact' | 'hits'>> {
+  if (word) {
+    const { data } = await searchApi.query(word, signal)
+    return { exact: (kind === 'case' ? data.case_exact : data.finding_exact) ?? null, hits: argumentHits(kind, data) }
+  }
+  // Nothing typed yet: the first few the Cases list or the alert feed shows.
+  if (kind === 'case') {
+    const { data } = await casesApi.getAll({ limit: 5 })
+    return { exact: null, hits: (data.cases ?? []).map((c) => ({ id: c.case_id, title: c.title, priority: c.priority })) }
+  }
+  const { data } = await findingsApi.getAll({ limit: 5 }, signal)
+  const findings = (data as { findings?: { finding_id: string; title?: string | null; description?: string | null; data_source?: string | null; severity?: string | null }[] }).findings ?? []
+  return { exact: null, hits: findings.map((f) => ({ id: f.finding_id, title: f.title || f.description || f.finding_id, data_source: f.data_source, severity: f.severity })) }
+}
+
+export type Binding =
+  | { state: 'off' | 'missing' | 'searching' | 'unresolved'; reason: string }
+  | { state: 'bound'; target: Bound; line: string; note?: string }
+
+function resolveRef({ word }: CommandLine, ref: RefKind, lookup: RefLookup | null, env: BindEnv): Bound | Exclude<Binding, { state: 'bound' }> {
+  if (!word) {
+    if (ref === 'case' && env.openCaseId) return { id: env.openCaseId, text: '' }
+    return { state: 'missing', reason: `Add ${ref === 'alert' ? 'an alert' : 'a case'} id` }
+  }
+  if (lookup?.word !== word) return { state: 'searching', reason: `Looking for ${ref} ${word}…` }
+  // The search itself failed, so nobody knows. The server answers for the id, as it would have.
+  if (lookup.failed) return { id: word, text: '' }
+  if (lookup.exact?.id) return { id: lookup.exact.id, text: '' }
+  return { state: 'unresolved', reason: `No ${ref} ${word}.${lookup.hits.length > 0 ? ' Pick one below.' : ''}` }
+}
+
+export function bindLine(line: CommandLine, lookup: RefLookup | null, env: BindEnv): Binding {
+  const { command, word } = line
+  // A command that reads the file waits for it, and a refused one stops it.
+  if (command.takesFile) {
+    if (env.attachment?.status === 'reading') return { state: 'off', reason: `Reading ${env.attachment.name}…` }
+    if (env.attachment?.status === 'refused') return { state: 'off', reason: env.attachment.reason }
+  }
+  const resolved = command.args.kind === 'ref' ? resolveRef(line, command.args.ref, lookup, env) : { id: '', text: word }
+  if ('state' in resolved) return resolved
+  const reason = command.blocked?.(resolved, env)
+  if (reason) return { state: 'missing', reason }
+  return { state: 'bound', target: resolved, ...command.preview(resolved, env) }
+}
+
+/** Everything Enter, Tab and the footer read. `active` is null until the person presses an arrow. */
+export interface BarView {
+  query: string
+  line: Line | null
+  binding: Binding | null
+  rows: PaletteRow[]
+  active: number | null
+  running: boolean
+}
+
+export type KeyAction =
+  | { kind: 'none' }
+  | { kind: 'default' }
+  | { kind: 'run' }
+  | { kind: 'ask' }
+  | { kind: 'row'; index: number; label: 'open' | 'use' | 'complete' }
+
+const selectable = (row: PaletteRow) => !row.disabled && !row.echo
+
+function rowAction(rows: PaletteRow[], index: number): KeyAction {
+  const row = rows[index]
+  return { kind: 'row', index, label: row.dest === 'Command' ? 'complete' : row.fill !== undefined ? 'use' : 'open' }
+}
+
+/** First matching row wins, unless the person moved to one. */
+export function targetRow({ binding, rows, active }: BarView): number {
+  // Rows still showing for an older word are not an answer, even under the cursor.
+  if (binding?.state === 'searching') return -1
+  if (active !== null && rows[active] && selectable(rows[active])) return active
+  // A bound line runs on Enter.
+  if (binding?.state === 'bound') return -1
+  return rows.findIndex(selectable)
+}
+
+export function keyAction(key: 'Enter' | 'Tab', view: BarView): KeyAction {
+  const { query, line, binding, rows, running } = view
+  const fallback: KeyAction = key === 'Enter' ? { kind: 'none' } : { kind: 'default' }
+  if (running) return fallback
+  const index = targetRow(view)
+  if (!line && key === 'Tab') return query.trim() ? { kind: 'ask' } : { kind: 'default' }
+  if (index >= 0) return rowAction(rows, index)
+  // A pasted /var/log/x is a real question. Nothing listed means nothing here claims it.
+  if (line?.kind === 'unknown' && rows.length === 0 && key === 'Tab') return { kind: 'ask' }
+  if (binding?.state === 'bound' && key === 'Enter') return { kind: 'run' }
+  return fallback
 }
 
 function commandsFor(query: string): CommandDef[] {
   const q = query.trim().toLowerCase()
   if (!q) return LIVE_COMMANDS
   if (q.startsWith('/')) {
-    const token = commandToken(query)
+    const token = q.split(/\s+/)[0]
     return COMMANDS.filter((command) => {
       if (command.name.startsWith('/')) return command.name.toLowerCase().startsWith(token)
       return token === '/' || token === 'custom' || token.startsWith('custom')
@@ -396,7 +649,7 @@ function commandsFor(query: string): CommandDef[] {
   return COMMANDS.filter((command) => command.id !== 'custom' && command.name.toLowerCase().includes(q))
 }
 
-function commandRow(command: CommandDef): PaletteRow {
+function commandRow(command: CommandDef, tail = ''): PaletteRow {
   const custom = command.id === 'custom'
   return {
     key: `cmd:${command.id}`,
@@ -408,7 +661,16 @@ function commandRow(command: CommandDef): PaletteRow {
     desc: custom ? 'Agents & workflows › Commands' : command.desc,
     disabled: command.later,
     commandId: command.id,
+    ...(!command.later && { fill: `${command.name} ${tail}` }),
   }
+}
+
+function slashRows(line: Line): PaletteRow[] {
+  if (line.kind === 'later') return [commandRow(line.command)]
+  if (line.kind === 'command') return [{ ...commandRow(line.command, line.word), echo: true }]
+  if (line.near.length > 0) return line.near.map((command) => ({ ...commandRow(command, line.tail), desc: `Did you mean ${command.name}?` }))
+  // COMMANDS lists the custom row last, so it lands in its own section.
+  return commandsFor(line.token).map((command) => commandRow(command, line.tail))
 }
 
 function recentRow(text: string): PaletteRow {
@@ -469,10 +731,10 @@ export function buildRows(
 ): PaletteRow[] {
   const q = query.trim()
   const ql = q.toLowerCase()
-  if (!q) return [...recents.map(recentRow), ...LIVE_COMMANDS.map(commandRow), askRow('')]
+  if (!q) return [...recents.map(recentRow), ...LIVE_COMMANDS.map((command) => commandRow(command)), askRow('')]
 
-  // COMMANDS lists the custom row last, so it lands in its own section.
-  if (q.startsWith('/')) return commandsFor(q).map(commandRow)
+  const line = parseLine(q)
+  if (line) return slashRows(line)
 
   const cases: PaletteRow[] = []
   const seen = new Set<string>()
@@ -523,7 +785,7 @@ export function buildRows(
       search: search(encodeURIComponent(hit.id)),
     })),
   )
-  const commands = commandsFor(q).map(commandRow)
+  const commands = commandsFor(q).map((command) => commandRow(command))
   const recent = recents.filter((text) => text.toLowerCase().includes(ql)).map(recentRow)
   // An exact finding id with no exact case id puts Alerts first.
   const alertsFirst = Boolean(hits?.finding_exact?.id) && !hits?.case_exact
@@ -537,16 +799,13 @@ export function buildRows(
   ]
 }
 
-/** What a command's argument names: a case for /replay and /ticket, an alert for /investigate. */
-export function argumentKind(id: LiveCommandId): 'case' | 'alert' | null {
-  if (id === 'replay' || id === 'ticket') return 'case'
-  return id === 'investigate' ? 'alert' : null
-}
-
-/** The cases or alerts a command's argument can be, as rows that fill it in. */
-export function argumentRows(kind: 'case' | 'alert', hits: Hit[]): PaletteRow[] {
+/** The rows under a command line that put an id on it. A settled id needs none. */
+export function argumentRows({ command, word }: CommandLine, binding: Binding, lookup: RefLookup | null): PaletteRow[] {
+  if (!lookup || binding.state === 'off') return []
+  if (binding.state === 'bound' && command.args.kind === 'ref' && word) return []
+  const { kind } = lookup
   const seen = new Set<string>()
-  return hits.flatMap((hit) => {
+  return lookup.hits.flatMap((hit) => {
     if (!hit.id || seen.has(hit.id)) return []
     seen.add(hit.id)
     return [{
@@ -558,27 +817,24 @@ export function argumentRows(kind: 'case' | 'alert', hits: Hit[]): PaletteRow[] 
       icon: kind === 'case' ? 'folder' as const : 'alert' as const,
       desc: kind === 'case' ? caseDesc(hit) : joinParts([hit.data_source, hit.severity]),
       disabled: false,
-      fill: hit.id,
+      fill: `${command.name} ${hit.id}`,
     }]
   })
 }
 
 /** The argument rows a search answer holds, the exact id first. */
-export function argumentHits(kind: 'case' | 'alert', hits: SearchHits): Hit[] {
+function argumentHits(kind: RefKind, hits: SearchHits): Hit[] {
   const found = kind === 'case' ? [hits.case_exact, ...(hits.cases ?? [])] : [hits.finding_exact, ...(hits.alerts ?? [])]
   return found.filter((hit): hit is Hit => Boolean(hit))
 }
 
-export function firstEnabled(rows: PaletteRow[]): number {
-  return rows.findIndex((row) => !row.disabled)
-}
-
 export function moveEnabled(rows: PaletteRow[], from: number, direction: 1 | -1): number {
   if (rows.length === 0) return -1
-  let index = from
+  // Nothing highlighted yet: down lands on the first row, up on the last.
+  let index = from < 0 && direction < 0 ? 0 : from
   for (let step = 0; step < rows.length; step += 1) {
     index = (index + direction + rows.length) % rows.length
-    if (!rows[index].disabled) return index
+    if (selectable(rows[index])) return index
   }
   return from
 }
