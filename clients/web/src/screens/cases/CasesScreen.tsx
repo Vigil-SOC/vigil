@@ -846,7 +846,7 @@ function EditCaseForm({ c, onClose, onSaved, onStale }: {
       // Second, so a close that fails leaves the edits saved and the Case open,
       // rather than closed under a title that never landed.
       if (isClosing) {
-        await casesApi.closeCase(c.id, closurePayload(category, reason))
+        await casesApi.closeCase(c.id, { ...closurePayload(category, reason), expected: { status: stored.status } })
       }
       onSaved()
       onClose()

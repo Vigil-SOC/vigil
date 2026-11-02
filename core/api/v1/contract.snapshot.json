@@ -1888,6 +1888,16 @@
             ],
             "title": "Executive Summary"
           },
+          "expected": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CaseExpected"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "false_positive_reason": {
             "anyOf": [
               {
@@ -5663,6 +5673,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseConflictResponse"
+                }
+              }
+            },
+            "description": "A field in `expected` no longer holds that value."
           },
           "422": {
             "content": {

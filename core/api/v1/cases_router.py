@@ -214,6 +214,7 @@ class ClosureInfo(BaseModel):
     executive_summary: Optional[str] = None
     false_positive_reason: Optional[str] = None
     closure_notes: Optional[str] = None
+    expected: Optional[CaseExpected] = None
 
 
 class MergeRequest(BaseModel):
@@ -514,16 +515,29 @@ def _stale_fields(case: dict, expected: CaseExpected) -> List[CaseFieldConflict]
     ]
 
 
+def _conflict_response(conflicts: List[CaseFieldConflict]) -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content=CaseConflictResponse(
+            detail="This case changed after you last read it.",
+            conflicts=conflicts,
+        ).model_dump(),
+    )
+
+
+_STALE_RESPONSE = {
+    409: {
+        "model": CaseConflictResponse,
+        "description": "A field in `expected` no longer holds that value.",
+    }
+}
+
+
 @router.patch(
     "/{case_id}",
     dependencies=_CASES_WRITE,
     response_model=CaseSuccessResponse,
-    responses={
-        409: {
-            "model": CaseConflictResponse,
-            "description": "A field in `expected` no longer holds that value.",
-        }
-    },
+    responses=_STALE_RESPONSE,
 )
 def update_case(
     case_id: str,
@@ -554,13 +568,7 @@ def update_case(
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     if case_data.expected and (conflicts := _stale_fields(case, case_data.expected)):
-        return JSONResponse(
-            status_code=409,
-            content=CaseConflictResponse(
-                detail="This case changed after you last read it.",
-                conflicts=conflicts,
-            ).model_dump(),
-        )
+        return _conflict_response(conflicts)
 
     # Build updates dict
     updates = {}
@@ -804,7 +812,10 @@ def export_iocs(case_id: str, format: str = "json"):
 
 
 @router.post(
-    "/{case_id}/close", dependencies=_CASES_WRITE, response_model=CaseCloseResponse
+    "/{case_id}/close",
+    dependencies=_CASES_WRITE,
+    response_model=CaseCloseResponse,
+    responses=_STALE_RESPONSE,
 )
 def close_case(
     case_id: str,
@@ -816,6 +827,13 @@ def close_case(
     """Close case with closure metadata."""
 
     from core.cases.case_workflow_service import CaseWorkflowService
+
+    if data.expected:
+        case = _case_to_edit(session, case_id)
+        if not case:
+            raise HTTPException(status_code=404, detail="Case not found")
+        if conflicts := _stale_fields(case, data.expected):
+            return _conflict_response(conflicts)
 
     closure = CaseWorkflowService().close_case(
         session,

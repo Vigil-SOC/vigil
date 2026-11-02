@@ -29,7 +29,7 @@ import { CloseCaseDialog } from './ClosureFields'
 import { CaseSide } from './CaseSide'
 import { caseCitations, evidenceInNote } from './caseCitations'
 import type { Citation } from '../../shell/citations'
-import { caseConflicts, errorDetail, runLabel, timeLeft, when } from './caseFormat'
+import { errorDetail, runLabel, timeLeft, when } from './caseFormat'
 import {
   addedBy,
   agentRows,
@@ -1419,11 +1419,10 @@ export function CasePage({
     setBusy(true)
     setNote('')
     try {
-      await casesApi.update(id, { status: 'open', expected: { status: 'closed' } })
+      await casesApi.update(id, { status: 'open' })
       onChanged()
     } catch (e) {
       setNote(errorDetail(e, 'Couldn’t reopen the case'))
-      if (caseConflicts(e)) onRefresh?.()
     } finally {
       setBusy(false)
     }

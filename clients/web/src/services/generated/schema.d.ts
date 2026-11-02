@@ -8451,6 +8451,7 @@ export interface components {
             closure_notes?: string | null;
             /** Executive Summary */
             executive_summary?: string | null;
+            expected?: components["schemas"]["CaseExpected"] | null;
             /** False Positive Reason */
             false_positive_reason?: string | null;
             /** Lessons Learned */
@@ -14889,6 +14890,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseCloseResponse"];
+                };
+            };
+            /** @description A field in `expected` no longer holds that value. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseConflictResponse"];
                 };
             };
             /** @description Validation Error */
@@ -22267,6 +22277,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseCloseResponse"];
+                };
+            };
+            /** @description A field in `expected` no longer holds that value. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseConflictResponse"];
                 };
             };
             /** @description Validation Error */
