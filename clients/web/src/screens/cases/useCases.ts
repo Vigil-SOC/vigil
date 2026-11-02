@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { utcDayClock } from '../../shared/utc'
 import { casesApi } from '../../services/api'
 import { mapApiCase, mapQueueCase } from '../../data/mappers'
-import type { CaseRow } from '../../data/data'
+import type { CaseRecord, CaseRow } from '../../data/data'
 import type { Schema } from '../../services/apiTypes'
 
 export type Phase = 'loading' | 'ready' | 'error'
@@ -240,7 +240,7 @@ type CaseDetailBody = Parameters<typeof mapApiCase>[0] & {
 }
 
 export function useCaseDetail(id: string | null) {
-  const [row, setRow] = useState<CaseRow | null>(null)
+  const [row, setRow] = useState<CaseRecord | null>(null)
   const [created, setCreated] = useState<string>('—')
   const [combinedState, setCombinedState] = useState('')
   const [investigations, setInvestigations] = useState<CaseInvestigationRef[]>([])

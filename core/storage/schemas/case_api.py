@@ -7,7 +7,7 @@ under ``services/api/routers/`` because every module there must export a
 """
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -28,6 +28,21 @@ class CaseSuccessResponse(BaseModel):
     """Mutation that only reports whether it landed."""
 
     success: bool
+
+
+class CaseFieldConflict(BaseModel):
+    """One field whose stored value is not what the caller last saw."""
+
+    field: Literal["title", "description", "status", "priority", "assignee"]
+    expected: Optional[str] = None
+    current: Optional[str] = None
+
+
+class CaseConflictResponse(BaseModel):
+    """A refused edit. Nothing was written."""
+
+    detail: str
+    conflicts: List[CaseFieldConflict]
 
 
 class CaseQueueItem(BaseModel):
