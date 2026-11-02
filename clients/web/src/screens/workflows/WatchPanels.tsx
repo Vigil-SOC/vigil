@@ -5,6 +5,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { workflowApi, type ReplayDigest } from '../../services/api'
 import { Cost, fmtCost } from '../../shared/cost'
+import { Markdown } from '../../shared/Markdown'
 import { explanationColor, explanationWord, wordDisplay } from '../cases/caseFold'
 import { OpenCheckpoint, bearings, liveGap, provenanceTag } from './huntParts'
 import type { HuntEvidence, HuntStanding, HuntView, RootCauseBudgets, RootCauseEntry, WfRunDetail } from './runRead'
@@ -370,14 +371,31 @@ export function InvestigatePanels({ d, costs, at }: { d: WfRunDetail; costs: num
 }
 
 /** Root cause and compose have no steps to follow, so these read the run as it stands. */
+/** A playbook run's answer, as its agent wrote it. No replay exists for this kind, so this is the whole of what it found. */
+export function PlaybookReport({ d }: { d: WfRunDetail }) {
+  const details = (d.phases ?? []).flatMap((p) => (p.output?.details && Object.keys(p.output.details).length > 0 ? [{ id: p.phase_id, details: p.output.details }] : []))
+  if (!d.result_summary && details.length === 0) return null
+  return (
+    <div className="flex flex-col gap-2 min-w-0">
+      <Heading>Report · model text</Heading>
+      <div className={`flex flex-col gap-2.5 text-[12.5px] leading-[1.55] text-[var(--tx1)] px-3 py-2.5 ${CARD}`}>
+        {d.result_summary && <Markdown>{d.result_summary}</Markdown>}
+        {details.map((phase) => (
+          <pre key={phase.id} className="m-0 font-mono text-[11.5px] leading-[1.5] whitespace-pre-wrap break-words text-[var(--tx2)]">{JSON.stringify(phase.details, null, 2)}</pre>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function OtherPanels({ d }: { d: WfRunDetail }) {
-  const view = (d.projection ?? {}) as { run_kind?: unknown; cost_usd?: unknown; max_cost_usd?: unknown; notices?: unknown; recent_searches?: unknown; unbound?: unknown }
+  const view = (d.projection ?? {}) as { run_kind?: unknown; cost_usd?: unknown; max_cost_usd?: unknown; budgets?: { max_cost_usd?: unknown } | null; notices?: unknown; recent_searches?: unknown; unbound?: unknown }
   if (view.run_kind !== 'root_cause') {
     const compose = view.run_kind === 'compose'
     return (
       <Columns
         explanations={NO_EXPLANATIONS}
-        rows={[untracked('Budget'), untracked('Steps'), untracked('Scope')]}
+        rows={[compose ? budgetRow(num(view.cost_usd), num(view.budgets?.max_cost_usd)) : untracked('Budget'), untracked('Steps'), untracked('Scope')]}
         reviewer={<NoData>{NO_REVIEWER}</NoData>}
         blind={compose ? <Spots lines={unboundLines(view.unbound)} empty="None so far." /> : <NoData>Not recorded for this kind of run yet.</NoData>}
       />

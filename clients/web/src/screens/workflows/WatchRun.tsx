@@ -9,7 +9,7 @@ import {
   IN_FLIGHT, callFailure, callLine, fmtDuration, moveWord, useInvestigateReplay,
   type CallFailure, type HuntView, type InvestigateDecisionView, type RootCauseBudgets, type RootCauseEntry, type WfRunDetail,
 } from './runRead'
-import { Heading, HuntPanels, InvestigatePanels, OtherPanels, Prose, RootCausePanels } from './WatchPanels'
+import { Heading, HuntPanels, InvestigatePanels, OtherPanels, PlaybookReport, Prose, RootCausePanels } from './WatchPanels'
 
 /** What each kind of run is reduced to: one row per decision. `calls` is null when
  *  the record cannot say which calls followed (an older agent service). */
@@ -609,6 +609,7 @@ export function WatchRun({ d, onBack }: { d: WfRunDetail; onBack: () => void }) 
       {kind === 'playbook' && (
         <>
           <OneLine>{PLAYBOOK}</OneLine>
+          <PlaybookReport d={d} />
           <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3.5 items-start"><OtherPanels d={d} /></div>
         </>
       )}
