@@ -145,7 +145,9 @@ class SOCDaemon:
         # Sub-loop death shows on /status only; /health is unchanged.
         self._poller.set_loop_watcher(self._metrics_server.loop_watcher("federation"))
         self._processor.watch_loop = self._metrics_server.loop_watcher("processor")
-        self._orchestrator.watch_loop = self._metrics_server.loop_watcher("orchestrator")
+        self._orchestrator.watch_loop = self._metrics_server.loop_watcher(
+            "orchestrator"
+        )
 
         logger.info("All components initialized")
 
