@@ -3759,6 +3759,11 @@
   "nullable": false,
   "type": "character varying(16)"
  },
+ "column workflow_runs.stop_cause": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
  "column workflow_runs.total_cost_usd": {
   "default": "0",
   "nullable": false,
