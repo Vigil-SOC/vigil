@@ -35,6 +35,8 @@ ensure_jwt_secret >&2 || { step env fail; exit 1; }
 # The host backend and the gateway need the same value on /api/*. A set .env
 # value is kept. An empty one leaves the management API answering 401.
 ensure_bifrost_admin_password >&2
+# Host backend and workers inherit it; compose gives Redis the same value.
+ensure_redis_password >&2 || { step env fail; exit 1; }
 step env ok
 
 step docker start
