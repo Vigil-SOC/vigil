@@ -13,6 +13,12 @@ import yaml
 
 from core.agents.projections import read_projection
 from core.config import _safe_home
+from core.detections.gaps import (
+    TACTICS,
+    gap_report,
+    normalize_label,
+    read_alert_labels,
+)
 from core.detections.lint import lint_sigma
 from core.detections.reconstruction import (
     coverage_report,
@@ -24,6 +30,10 @@ from core.storage.database_data_service import DatabaseDataService
 
 # ``id = "T1219"`` under [[rule.threat.technique]] and its subtechnique tables.
 ELASTIC_TECHNIQUE_ID = re.compile(r'^id\s*=\s*"(T\d{4}(?:\.\d{3})?)"', re.MULTILINE)
+ELASTIC_TACTIC_NAME = re.compile(
+    r'^\[rule\.threat\.tactic\]\s*^id\s*=\s*"[^"]*"\s*^name\s*=\s*"([^"]+)"',
+    re.MULTILINE,
+)
 
 
 class SecurityDetectionsTools:
@@ -366,57 +376,41 @@ class SecurityDetectionsTools:
             },
         }
 
-    async def identify_gaps(self, context: str) -> Dict:
-        """
-        Identify detection gaps for a given context (e.g., "ransomware", "APT29").
+    async def identify_gaps(self, context: str = "") -> Dict:
+        """Techniques seen on stored alerts that no loaded rule declares, with what it cannot say.
 
         Args:
-            context: Context for gap analysis
-
-        Returns:
-            Gap analysis results
+            context: A case id, an ATT&CK label to match, or empty for every stored alert.
         """
         self._load_detections()
-
-        # Common ransomware techniques
-        ransomware_techniques = [
-            "T1486",  # Data Encrypted for Impact
-            "T1490",  # Inhibit System Recovery
-            "T1489",  # Service Stop
-            "T1047",  # Windows Management Instrumentation
-            "T1059.001",  # PowerShell
-        ]
-
-        # For demonstration, analyze common techniques
-        # In production, this would map context to specific technique sets
-        techniques_to_check = (
-            ransomware_techniques if "ransomware" in context.lower() else []
+        return gap_report(
+            context,
+            read_alert_labels(context),
+            self.detections_by_technique,
+            self._rules_by_tactic(),
+            {source: len(rules) for source, rules in self.detections_by_source.items()},
         )
 
-        gaps = []
-        coverage_map = {}
+    def _rules_by_tactic(self) -> Dict[str, int]:
+        counts: Dict[str, int] = defaultdict(int)
+        for detection in self.detections:
+            for tactic in self._declared_tactics(detection):
+                counts[tactic] += 1
+        return counts
 
-        for technique in techniques_to_check:
-            matching = self.detections_by_technique.get(technique, [])
-            count = len(matching)
-            coverage_map[technique] = count
-
-            if count < 3:  # Threshold for "gap"
-                gaps.append(
-                    {
-                        "technique": technique,
-                        "current_coverage": count,
-                        "priority": "high" if count == 0 else "medium",
-                    }
-                )
-
-        return {
-            "context": context,
-            "techniques_analyzed": len(techniques_to_check),
-            "gaps_identified": len(gaps),
-            "gaps": gaps,
-            "coverage_map": coverage_map,
-        }
+    def _declared_tactics(self, detection: Dict) -> set:
+        if detection["_source"] == "sigma":
+            tags = detection.get("tags") or []
+            names = [
+                tag[len("attack.") :]
+                for tag in tags
+                if isinstance(tag, str) and tag.startswith("attack.")
+            ]
+        elif detection["_source"] == "elastic":
+            names = ELASTIC_TACTIC_NAME.findall(detection["_content"])
+        else:
+            return set()
+        return {normalize_label(name) for name in names} & TACTICS
 
     async def get_coverage_stats(self, source_type: Optional[str] = None) -> Dict:
         """
