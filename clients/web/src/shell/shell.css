@@ -1008,6 +1008,13 @@
   font-size: 11px;
 }
 
+/* A phone has no ⌘K; its room goes to the input beside the paperclip. */
+@media (max-width: 600px) {
+  .vg-command-kbd {
+    display: none;
+  }
+}
+
 .vg-command-ask {
   flex: 0 0 auto;
   height: 26px;

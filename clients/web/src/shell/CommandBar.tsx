@@ -543,7 +543,7 @@ export default function CommandBar({
         <span className="vg-command-clip-wrap" title={attachBlocked ?? (attachment ? `Attached: ${attachment.name}` : 'Attach a file')}>
           <button
             type="button"
-            className={`vg-command-clip${attachment ? ' is-on' : ''}`}
+            className={`vg-command-clip${attachment && attachment.status !== 'refused' ? ' is-on' : ''}`}
             aria-label="Attach a file"
             aria-description={attachBlocked ?? undefined}
             disabled={attachBlocked !== null}
