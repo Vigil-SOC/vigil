@@ -62,6 +62,19 @@ TRIAGE_KEYS = (
 TRIAGE_MAX_TOKENS = 8192
 
 
+def not_offered_reason(action: str, band: str, confidence: float, bar: float) -> str:
+    """Why the gate turned an alert down, in the terms of the gate's own test."""
+    first = (
+        "triage said dismiss"
+        if action == "dismiss"
+        else "this install does not investigate that severity"
+    )
+    return (
+        f"Not offered: {first}. Severity {band}, confidence {confidence:.0%} "
+        f"is under the {bar:.0%} bar, no threat-intel hit."
+    )
+
+
 class FindingProcessor:
     """Processes findings through AI triage and enrichment."""
 
@@ -1108,6 +1121,7 @@ REASONING: [Brief explanation]
 
         from services.daemon.orchestrator import (
             insert_intake_trigger,
+            insert_not_offered,
             intake_severity_band,
         )
 
@@ -1131,3 +1145,14 @@ REASONING: [Brief explanation]
                 logger.info(
                     f"Finding {finding.get('finding_id')} queued for autonomous investigation"
                 )
+        else:
+            insert_not_offered(
+                finding_id=finding.get("finding_id"),
+                priority=band,
+                reason=not_offered_reason(
+                    recommended_action,
+                    band,
+                    confidence,
+                    self.response_config.review_threshold,
+                ),
+            )

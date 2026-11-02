@@ -6270,6 +6270,13 @@
       white-space: nowrap;
    }
 
+   .tq-why.reason {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      white-space: normal;
+   }
+
    .tq-why a {
       color: inherit;
       text-decoration: underline;

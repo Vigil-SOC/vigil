@@ -37,6 +37,8 @@ IN_FLIGHT_INVESTIGATION_STATUSES = (
     "executing",
     "waiting_approval",
 )
+# A run waiting on a person: for an answer to its checkpoint, or to be let go on.
+PARKED_INVESTIGATION_STATUSES = ("waiting_approval", "paused")
 FINISHED_INVESTIGATION_STATUSES = ("completed", "failed")
 # A run with no ``Investigation`` row (``/hunt``) has three live-ish words of its
 # own. The case reads them as a running run ``executing`` and a held one ``paused``.

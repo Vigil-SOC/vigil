@@ -466,6 +466,34 @@ def insert_intake_trigger(
         return None
 
 
+def insert_not_offered(*, finding_id: str, priority: str, reason: str) -> None:
+    """Put the gate's no on the ledger. The row is never queued, so nothing drains it.
+
+    An alert with a row already keeps it: Triage reads the latest row, and a person
+    sending the alert to triage is a later word than this one.
+    """
+    from core.storage.connection import get_db_manager
+    from core.storage.models import IntakeTrigger
+
+    try:
+        with get_db_manager().session_scope() as session:
+            if session.query(IntakeTrigger.id).filter_by(finding_id=finding_id).first():
+                return
+            session.add(
+                IntakeTrigger(
+                    kind="detection",
+                    state="not_offered",
+                    reason=reason,
+                    finding_id=finding_id,
+                    priority=priority,
+                    decided_at=utcnow(),
+                )
+            )
+    except Exception as e:
+        # The reason is a note on the alert; a miss costs the note, not the triage.
+        logger.error("Failed to record why %s was not offered: %s", finding_id, e)
+
+
 @dataclass(frozen=True)
 class CaseSpec:
     """Case to mint in the launch transaction. ``case_id`` is assigned before plan files."""
@@ -2501,6 +2529,7 @@ class Orchestrator:
             # /status reports `enabled` from the settings row, which a pause
             # never touches, so the pause is reported here.
             "hourly_paused": self._hourly_pause_decision(spent, limit),
+            "hourly_limit_usd": round(limit, 4),
             "per_investigation_limit": self.config.max_cost_per_investigation,
         }
 

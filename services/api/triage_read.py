@@ -68,7 +68,7 @@ _TRUST_FLOOR_INFO = {
 # The ⓘ copy for each strip figure, worded from what _strip counts, per range.
 STRIP_INFO = {
     "picked_up": {
-        "source": "Intake rows, all kinds, created today (UTC day).",
+        "source": "Intake rows, all kinds, created today (UTC day). Alerts triage did not offer are left out.",
         "calculation": "Rows that launched a workflow or merged into a case, divided by rows created today.",
     },
     "waiting": {
@@ -83,7 +83,7 @@ STRIP_INFO = {
 }
 STRIP_INFO_ALL = {
     "picked_up": {
-        "source": "Intake rows, all kinds, from any day.",
+        "source": "Intake rows, all kinds, from any day. Alerts triage did not offer are left out.",
         "calculation": "Rows that launched a workflow or merged into a case, divided by all rows.",
     },
     "waiting": {
@@ -108,7 +108,29 @@ BREAKDOWN_INFO = {
     "trust": "Vigil keeps no per-source trust score yet, so none is used in the ranking.",
     "weight": "Vigil keeps no per-row weight yet, so none is used in the ranking.",
     "score": "No score is computed, so there is nothing to compare against a floor.",
+    "reason": (
+        "A case the alert joined, or why it was not picked up, read from its latest "
+        "intake row. A not-offered alert quotes triage's severity and confidence and "
+        "the review bar as they stood when triage finished."
+    ),
 }
+
+# An expiry says only that nobody looked: it is not a verdict on the alert.
+_NOT_PICKED_UP_REASONS = {
+    "ttl_expired": "Expired: no agent picked it up before its time in the queue ran out.",
+    "ttl_expired_autoops_off": (
+        "Expired while AutoOps was off: no agent could pick it up, "
+        "and nobody has looked at it."
+    ),
+    "excluded_ip": "Taken off the queue: it named an excluded IP at the time.",
+}
+
+
+def _not_picked_up_reason(row: IntakeTrigger) -> Optional[str]:
+    """What the alert's latest intake row says happened; None when it says nothing."""
+    if row.state == "not_offered":
+        return row.reason
+    return _NOT_PICKED_UP_REASONS.get(row.reason or "")
 
 
 def _iso(value: Optional[datetime]) -> Optional[str]:
@@ -502,6 +524,9 @@ def _load(
                     if state == "merged"
                     else None
                 ),
+                "reason": (
+                    _not_picked_up_reason(row) if state == NOT_PICKED_UP else None
+                ),
                 "created_at": _naive(row.created_at),
                 "decided_at": _naive(row.decided_at),
             }
@@ -534,6 +559,7 @@ def _no_intake_row(finding: dict, state: str, linked_case: Optional[str]) -> dic
         "merged_into": None,
         "linked_case": linked_case,
         "merge_note": None,
+        "reason": None,
         "created_at": _naive(finding.get("created_at")),
         "decided_at": None,
     }
@@ -662,6 +688,7 @@ def _present(
         "workflow_id": workflow,
         "case_door": door,
         "merge_note": row.get("merge_note"),
+        "reason": row.get("reason"),
         "document": _document_line(kind, row["payload"]),
         "source_link": (
             resolve_source_link(finding, configs=link_configs)
@@ -696,10 +723,11 @@ def _counts(session, rows) -> dict:
 
 def _strip(session, rows, counts: dict, day: Optional[date]) -> dict:
     """The strip for one UTC day, or every row when ``day`` is None."""
+    # A row the gate wrote down and never offered is not an offer it could pick up.
     picked = session.query(
         func.count(IntakeTrigger.id),
         func.count(IntakeTrigger.id).filter(IntakeTrigger.state.in_(_PICKUP_STATES)),
-    )
+    ).filter(IntakeTrigger.state != "not_offered")
     cases = session.query(func.count(distinct(IntakeTrigger.case_id))).filter(
         IntakeTrigger.state == "launched",
         IntakeTrigger.case_id.isnot(None),
