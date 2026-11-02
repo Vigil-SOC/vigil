@@ -23,7 +23,7 @@
     "@opentelemetry/sdk-trace": "^3.0.0",
     "ajv": "^8.20.0",
     "bullmq": "5.81.3",
-    "openai": "^7.43.0",
+    "openai": "^7.45.1",
     "p-limit": "^7.3.3",
     "pg": "^8.23.1",
     "yaml": "^2.9.1"
