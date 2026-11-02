@@ -1935,6 +1935,10 @@ export interface paths {
          * Update Case
          * @description Update an existing case.
          *
+         *     A field named in ``expected`` is compared with the stored value before
+         *     anything is written; a mismatch is a 409 naming each such field, and writes
+         *     nothing. A field left out of ``expected`` is written without a comparison.
+         *
          *     Args:
          *         case_id: The case ID
          *         case_data: Case update data
@@ -6079,6 +6083,10 @@ export interface paths {
          * Update Case
          * @description Update an existing case.
          *
+         *     A field named in ``expected`` is compared with the stored value before
+         *     anything is written; a mismatch is a 409 naming each such field, and writes
+         *     nothing. A field left out of ``expected`` is written without a comparison.
+         *
          *     Args:
          *         case_id: The case ID
          *         case_data: Case update data
@@ -7436,6 +7444,16 @@ export interface components {
             comments: components["schemas"]["CaseCommentSchema"][];
         };
         /**
+         * CaseConflictResponse
+         * @description A refused edit. Nothing was written.
+         */
+        CaseConflictResponse: {
+            /** Conflicts */
+            conflicts: components["schemas"]["CaseFieldConflict"][];
+            /** Detail */
+            detail: string;
+        };
+        /**
          * CaseCreate
          * @description Case creation request.
          */
@@ -7605,6 +7623,41 @@ export interface components {
             tags?: string[];
             /** Updated At */
             updated_at?: string | null;
+        };
+        /**
+         * CaseExpected
+         * @description The values a caller last saw, for the fields it means to change.
+         *
+         *     A field left out is not compared. Per field, not ``updated_at``: agents and
+         *     runs touch a case throughout an investigation, so a whole-row version would
+         *     refuse every edit made during a run.
+         */
+        CaseExpected: {
+            /** Assignee */
+            assignee?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Priority */
+            priority?: string | null;
+            /** Status */
+            status?: string | null;
+            /** Title */
+            title?: string | null;
+        };
+        /**
+         * CaseFieldConflict
+         * @description One field whose stored value is not what the caller last saw.
+         */
+        CaseFieldConflict: {
+            /** Current */
+            current?: string | null;
+            /** Expected */
+            expected?: string | null;
+            /**
+             * Field
+             * @enum {string}
+             */
+            field: "title" | "description" | "status" | "priority" | "assignee";
         };
         /**
          * CaseFromTemplate
@@ -8192,6 +8245,7 @@ export interface components {
             assignee?: string | null;
             /** Description */
             description?: string | null;
+            expected?: components["schemas"]["CaseExpected"] | null;
             /** Notes */
             notes?: string | null;
             /** Priority */
@@ -8397,6 +8451,7 @@ export interface components {
             closure_notes?: string | null;
             /** Executive Summary */
             executive_summary?: string | null;
+            expected?: components["schemas"]["CaseExpected"] | null;
             /** False Positive Reason */
             false_positive_reason?: string | null;
             /** Lessons Learned */
@@ -14717,6 +14772,15 @@ export interface operations {
                     "application/json": components["schemas"]["CaseSuccessResponse"];
                 };
             };
+            /** @description A field in `expected` no longer holds that value. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseConflictResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -14826,6 +14890,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseCloseResponse"];
+                };
+            };
+            /** @description A field in `expected` no longer holds that value. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseConflictResponse"];
                 };
             };
             /** @description Validation Error */
@@ -22160,6 +22233,15 @@ export interface operations {
                     "application/json": components["schemas"]["CaseSuccessResponse"];
                 };
             };
+            /** @description A field in `expected` no longer holds that value. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseConflictResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -22195,6 +22277,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseCloseResponse"];
+                };
+            };
+            /** @description A field in `expected` no longer holds that value. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseConflictResponse"];
                 };
             };
             /** @description Validation Error */

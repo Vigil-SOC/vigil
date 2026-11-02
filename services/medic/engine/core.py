@@ -17,6 +17,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from services.medic.contracts import decision_chain
@@ -38,6 +39,48 @@ OPEN = ("firing", "resolving")
 _INSTANCE = re.compile(r"^mi_[0-9a-f]{16}$")
 _DECIMAL = re.compile(r"^-?[0-9]{1,15}(\.[0-9]{1,6})?$")
 EVAL = {True: "true", False: "false", None: "unknown"}
+
+
+@dataclass(frozen=True)
+class Builtin:
+    """A built-in `watcher.*` rule (§2): not pack content, never a suppression child.
+    `gauge` is the (signal, key) bool sample that raises it; None for sensor-blind,
+    which reads each sensor's heartbeat."""
+
+    id: str
+    lane: int
+    hold_s: int  # its `for`
+    keep_s: int  # its `keep_firing_for`
+    gauge: tuple[str, str] | None = None
+
+    @property
+    def meta(self) -> dict:
+        """The built-in's half of incident_opened. Built-ins don't bump the engine
+        API, so they carry the same 1.0 stamp."""
+        return {
+            "subject": "watcher",
+            "rule": {"id": self.id, "revision": 1, "pack_id": "medic-builtin"}
+            | {"pack_version": "1.0", "engine_api": "1.0", "input_trust": "trusted"},
+            "fault": None,
+            "detection_type": "event",
+            "advice": None,
+        }
+
+
+# The one table of built-ins; the router reads its lanes from here.
+BUILTINS = {
+    b.id: b
+    for b in (
+        Builtin(BLIND, 3, 120, 0),
+        Builtin("watcher.recording-stopped", 2, 0, 0, ("medic_recording", "stopped")),
+        # A reset is one event that may never read false: keep it on the console a day.
+        Builtin("watcher.store-reset", 3, 0, 86400, ("medic_store", "reset")),
+        Builtin(
+            "watcher.policy-unenforced", 2, 0, 0, ("medic_network_policy", "unenforced")
+        ),
+    )
+}
+_GAUGES = {b.gauge[0]: b for b in BUILTINS.values() if b.gauge}  # signal -> built-in
 
 
 def iso(t: float) -> str:
@@ -138,8 +181,8 @@ class Engine:
         self._place(found, now)
         records, rows, opens, retired = self._retire_removed_rules(now), [], [], []
         upgrading = self.upgrade.active(now)
-        for rule_id in sorted({r.id for r in self.active} | {BLIND}):
-            rule = self.by_id.get(rule_id) if rule_id != BLIND else None
+        for rule_id in sorted({r.id for r in self.active} | set(BUILTINS)):
+            rule = BUILTINS.get(rule_id) or self.by_id.get(rule_id)
             for key, m in sorted(self.machines.get(rule_id, {}).items()):
                 group = dict(json.loads(key))
                 value, evidence, untrusted = self._evaluate(rule, key, m, now)
@@ -149,10 +192,12 @@ class Engine:
                     records += gone
                     retired.append((rule_id, key))
                 elif m["state"] in OPEN:
-                    fault = rule.rule["fault"] if rule else None
+                    fault = None if isinstance(rule, Builtin) else rule.rule["fault"]
                     opens.append(suppress.Open(rule_id, fault, group, m, value))
                 rows.append((rule_id, group, m, value, untrusted))
-        for m, fields in suppress.route(now, opens, self.suppression, upgrading, BLIND):
+        for m, fields in suppress.route(
+            now, opens, self.suppression, upgrading, BUILTINS
+        ):
             records.append(_record("incident_updated", now, m, **fields))
         routed_now = {o.m["incident_id"] for o in opens if o.m.get("routed_at") == now}
         for rec in records:  # an incident routes on its opening tick, or is held
@@ -188,7 +233,7 @@ class Engine:
 
     def _retire_removed_rules(self, now: float) -> list[dict]:
         """A rule gone from the rule set ends its open incidents at once (§4)."""
-        known = {r.id for r in self.rules} | {BLIND}
+        known = {r.id for r in self.rules} | set(BUILTINS)
         out = []
         for rule_id in sorted(set(self.machines) - known):
             for _, m in sorted(self.machines.pop(rule_id).items()):
@@ -208,6 +253,8 @@ class Engine:
         if obs["kind"] == "sensor_health":
             self._machine(BLIND, {"sensor": obs["health"]["sensor"]})
             return
+        if (b := _GAUGES.get(obs["signal"])) and obs["outcome"] == "ok":
+            self._machine(b.id, {})
         groups: dict[str, list[str]] = {}  # shared by rules reading the same way
         for r, name, kind, spec, same in self._readers.get(obs["signal"], []):
             if same not in groups:
@@ -290,7 +337,7 @@ class Engine:
 
     # Evaluate and step.
 
-    def _evaluate(self, rule: LoadedRule | None, key: str, m: dict, now: float):
+    def _evaluate(self, rule: LoadedRule | Builtin, key: str, m: dict, now: float):
         if "members" in m:  # the overflow group: true if any member is true (§3)
             values, evidence, untrusted = [], {}, False
             for member in sorted(m["members"]):
@@ -302,7 +349,16 @@ class Engine:
                         evidence[name] = read
             return ev.k_any(values), evidence, untrusted
         group = dict(json.loads(key))
-        if rule is None:  # built-in sensor-blind: the sensor's newest heartbeat (§2)
+        if isinstance(rule, Builtin) and rule.gauge:  # the newest read of its gauge
+            reads = self.history.sample_reads(
+                {"signal": rule.gauge[0], "key": rule.gauge[1]}, [], {}, now
+            )
+            read = reads.newest_ok() if reads else None
+            if read is None or read[2]["state"] != "present":
+                return None, {}, False  # no reading: can't tell
+            return bool(read[2]["value"]), {rule.gauge[0]: read}, False
+        if isinstance(rule, Builtin):
+            # sensor-blind: the sensor's newest heartbeat (§2)
             beats = self.history.beats.get(group["sensor"], [])
             beats = [b for b in beats if b[0] <= now]
             if not beats:  # e.g. restored state, raw history gone: can't tell
@@ -316,8 +372,8 @@ class Engine:
 
     def _retire(self, rule, key: str, m: dict, now: float) -> list[dict] | None:
         """None if the group stays; else the records of its retirement."""
-        if rule is None or not rule.rule.get("group_by"):
-            return None  # sensor-blind groups and the {} group never retire
+        if isinstance(rule, Builtin) or not rule.rule.get("group_by"):
+            return None  # built-in groups and the {} group never retire
         if "members" in m:  # the overflow group never retires; its members do
             for member, seen in sorted(m["members"].items()):
                 if self._silent(rule, member, seen, now):
@@ -360,8 +416,11 @@ class Engine:
             slots.pop(key, None)
 
     def _step(self, rule, group, m, value, evidence, now, upgrading) -> list[dict]:
-        hold = rule.seconds("for", DEFAULT_FOR_S) if rule else 120
-        keep = rule.seconds("keep_firing_for", DEFAULT_KEEP_S) if rule else 0
+        if isinstance(rule, Builtin):
+            hold, keep = rule.hold_s, rule.keep_s
+        else:
+            hold = rule.seconds("for", DEFAULT_FOR_S)
+            keep = rule.seconds("keep_firing_for", DEFAULT_KEEP_S)
         keep = FLAP_HOLD_S if m.get("flapping") else keep  # §5 replaces it
         st, out, opened = m["state"], [], False
         if st == "inactive" and value is True:
@@ -436,9 +495,8 @@ class Engine:
 
     def _opened(self, rule, group, m, evidence, now, held) -> dict:
         glist = [{"name": k, "value": v} for k, v in sorted(group.items())]
-        rid = rule.id if rule else BLIND
         m["incident_id"] = decision_chain.incident_id(
-            self.instance_id, rid, glist, iso(m["active_since"])
+            self.instance_id, rule.id, glist, iso(m["active_since"])
         )
         m["evidenced"] = sorted(evidence)
         m["opened_at"] = now
@@ -516,20 +574,10 @@ def _max_window(node: dict, rule: LoadedRule) -> float:
     return rule.param(w["param"]) if isinstance(w, dict) else seconds(w) if w else 0
 
 
-BLIND_META = {
-    "subject": "watcher",
-    "rule": {"id": BLIND, "revision": 1, "pack_id": "medic-builtin"}
-    | {"pack_version": "1.0", "engine_api": "1.0", "input_trust": "trusted"},
-    "fault": None,
-    "detection_type": "event",
-    "advice": None,
-}
-
-
-def _meta(rule: LoadedRule | None) -> dict:
+def _meta(rule: LoadedRule | Builtin) -> dict:
     """The rule's half of incident_opened (decision-record.md §3)."""
-    if rule is None:
-        return copy.deepcopy(BLIND_META)
+    if isinstance(rule, Builtin):
+        return rule.meta
     r, (pack_id, pack_version) = rule.rule, rule.pack
     return {
         "subject": "vigil",

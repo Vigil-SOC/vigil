@@ -1,0 +1,61 @@
+id: v32-watcher-store-reset
+title: 'watcher.store-reset stays on the console for 24 h after medic_store stops reading reset'
+covers:
+- §2 built-in rules
+- §4 state machine
+start: '2026-10-07T10:00:00Z'
+end: +25h
+rules: []
+sensors:
+- id: medic.store
+  covers:
+  - medic_store
+  interval: 60s
+  service: medic
+  states:
+  - - +0s
+    - ok
+types:
+  medic_store:
+    reset: bool
+series:
+- signal: medic_store
+  key: reset
+  steps:
+  - - +0s
+    - false
+  - - +5m
+    - true
+  - - +6m
+    - false
+expect:
+- at: +5m
+  rule: watcher.store-reset
+  eval: true
+  state: firing
+  incident: A
+- at: +6m
+  rule: watcher.store-reset
+  eval: false
+  state: resolving
+  incident: A
+  note: a reset is one event; it doesn't resolve on the tick after it opened
+- at: +24h5m45s
+  rule: watcher.store-reset
+  eval: false
+  state: resolving
+  incident: A
+- at: +24h6m
+  rule: watcher.store-reset
+  eval: false
+  state: inactive
+  note: 'keep_firing_for: 24h from the first false read'
+incidents:
+  A:
+    rule: watcher.store-reset
+    active_since: +5m
+    opened_at: +5m
+    resolving_since: +6m
+    resolved_at: +24h6m
+    reason: cleared
+    routed_at: +5m

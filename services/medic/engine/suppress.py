@@ -12,6 +12,7 @@ list of group labels the two must agree on. Cycles are the pack loader's (F6).
 
 from __future__ import annotations
 
+from collections.abc import Container
 from dataclasses import dataclass
 
 from services.medic.engine.history import gkey
@@ -26,7 +27,7 @@ class Open:
     """One open incident (firing or resolving) after this tick's state machine step."""
 
     rule_id: str
-    fault: dict | None  # None for the built-in sensor-blind rule
+    fault: dict | None  # None for a built-in watcher rule
     group: dict
     m: dict  # its machine: the routing fields live here and are persisted
     value: bool | None  # this tick's evaluation
@@ -66,7 +67,11 @@ def selects(sel: dict, rule_id: str, fault: dict | None) -> bool:
 
 
 def route(
-    now: float, opens: list[Open], entries: list[dict], upgrading: bool, blind: str
+    now: float,
+    opens: list[Open],
+    entries: list[dict],
+    upgrading: bool,
+    builtins: Container[str],
 ) -> list[tuple[dict, dict]]:
     """Advance every open incident's routing; returns (machine, change fields) for
     each `incident_updated` record to write. An incident that routes on the tick it
@@ -79,7 +84,8 @@ def route(
         mine = [
             e
             for e in entries
-            if inc.rule_id != blind and selects(e["children"], inc.rule_id, inc.fault)
+            if inc.rule_id not in builtins
+            and selects(e["children"], inc.rule_id, inc.fault)
         ]
         parents = [
             p

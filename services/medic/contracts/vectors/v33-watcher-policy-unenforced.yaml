@@ -1,0 +1,54 @@
+id: v33-watcher-policy-unenforced
+title: 'watcher.policy-unenforced opens while medic_network_policy reads unenforced, and resolves when it reads enforced'
+covers:
+- §2 built-in rules
+- §4 state machine
+start: '2026-10-07T10:00:00Z'
+end: +20m
+rules: []
+sensors:
+- id: medic.network-policy
+  covers:
+  - medic_network_policy
+  interval: 60s
+  service: medic
+  shape: helm
+  states:
+  - - +0s
+    - ok
+types:
+  medic_network_policy:
+    unenforced: bool
+series:
+- signal: medic_network_policy
+  key: unenforced
+  steps:
+  - - +0s
+    - false
+  - - +5m
+    - true
+  - - +10m
+    - false
+expect:
+- at: +4m
+  rule: watcher.policy-unenforced
+  eval: false
+  state: inactive
+- at: +5m
+  rule: watcher.policy-unenforced
+  eval: true
+  state: firing
+  incident: A
+- at: +10m
+  rule: watcher.policy-unenforced
+  eval: false
+  state: inactive
+incidents:
+  A:
+    rule: watcher.policy-unenforced
+    active_since: +5m
+    opened_at: +5m
+    resolving_since: +10m
+    resolved_at: +10m
+    reason: cleared
+    routed_at: +5m

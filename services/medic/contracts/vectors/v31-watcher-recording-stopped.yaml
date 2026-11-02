@@ -1,0 +1,55 @@
+id: v31-watcher-recording-stopped
+title: 'watcher.recording-stopped opens while medic_recording reads stopped, and resolves when it reads recording again'
+covers:
+- §2 built-in rules
+- §4 state machine
+start: '2026-10-07T10:00:00Z'
+end: +20m
+rules: []
+sensors:
+- id: medic.recording
+  covers:
+  - medic_recording
+  interval: 60s
+  service: medic
+  states:
+  - - +0s
+    - ok
+types:
+  medic_recording:
+    stopped: bool
+series:
+- signal: medic_recording
+  key: stopped
+  steps:
+  - - +0s
+    - false
+  - - +5m
+    - true
+  - - +10m
+    - false
+expect:
+- at: +4m
+  rule: watcher.recording-stopped
+  eval: false
+  state: inactive
+- at: +5m
+  rule: watcher.recording-stopped
+  eval: true
+  state: firing
+  incident: A
+  note: 'for: 0s, so it opens on the first true read'
+- at: +10m
+  rule: watcher.recording-stopped
+  eval: false
+  state: inactive
+  note: 'keep_firing_for: 0s, so it resolves on the first false read'
+incidents:
+  A:
+    rule: watcher.recording-stopped
+    active_since: +5m
+    opened_at: +5m
+    resolving_since: +10m
+    resolved_at: +10m
+    reason: cleared
+    routed_at: +5m
