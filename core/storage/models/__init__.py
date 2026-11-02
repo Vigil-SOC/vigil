@@ -57,6 +57,7 @@ from core.storage.models.episodic import (
 )
 from core.storage.models.exclusion import IpExclusion
 from core.storage.models.finding import Finding, FindingMitrePrediction
+from core.storage.models.known_activity import KnownActivity
 from core.storage.models.medic import MedicLastSeen
 from core.storage.models.skill import SkillRead
 from core.storage.models.workflow import (
@@ -115,6 +116,7 @@ __all__ = [
     "IN_FLIGHT_INVESTIGATION_STATUSES",
     "IntegrationConfig",
     "IpExclusion",
+    "KnownActivity",
     "Investigation",
     "InvestigationLog",
     "JSONBList",

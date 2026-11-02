@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, List, Literal, Optional
 
-from pydantic import SecretStr, ValidationError, field_validator
+from pydantic import Field, SecretStr, ValidationError, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -346,6 +346,9 @@ class Settings(BaseSettings):
     orchestrator_stale_threshold: int = 300
     orchestrator_workdir: str = "data/investigations"
     orchestrator_dry_run: bool = False
+
+    # How long a known-activity rule lasts when the analyst picks no date.
+    known_activity_default_days: int = Field(default=30, ge=1)
 
     # Kafka ingestion. Credentials go through the secrets store, not here.
     kafka_enabled: bool = False

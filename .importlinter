@@ -88,6 +88,24 @@ ignore_imports =
     ; naming it here is what stops it becoming the precedent for the next one.
     core.integrations.mcp.in_process -> tools.mcp.vigil
 
+[importlinter:contract:known-activity]
+name = Known activity only explains: nothing that moves an alert reads it
+type = forbidden
+allow_indirect_imports = true
+source_modules =
+    core.cases
+    core.detections
+    core.federation
+    core.findings
+    core.ingestion
+    core.response
+    core.workflows
+    services.api.triage_read
+    services.daemon
+forbidden_modules =
+    core.memory.known_activity
+    core.memory.known_activity_router
+
 [importlinter:contract:medic]
 name = Medic imports nothing from core, tools or any other service (A3-1)
 type = forbidden

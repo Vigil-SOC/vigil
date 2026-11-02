@@ -259,6 +259,15 @@ _Avoid_: finding, case closure, outcome
 
 ### Shared-infrastructure tier
 
+**Known Activity** (`memory`):
+One analyst's statement that an entity doing something is expected, why, and until
+when. It explains an alert to the people and agents reading it and never decides
+anything: the queue, triage, severity, Verdicts, intake, exclusions and case state
+do not read it, and `.importlinter` holds that. A rule always expires, a person
+always answers for it, and agents get it as data in their **Recall**.
+_Avoid_: exclusion (an exclusion hides Findings and stops their triage; this hides
+nothing), allowlist, suppression
+
 **Storage** (`storage`):
 How Vigil persists and reads *its own* data — the full metadata-DB layer (ORM
 `models`, the engine/session in `connection`, `DatabaseService`, the DB-backed

@@ -2814,6 +2814,66 @@
   "nullable": true,
   "type": "character varying(100)"
  },
+ "column known_activity.created_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
+ "column known_activity.created_by": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(100)"
+ },
+ "column known_activity.entity_kind": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(20)"
+ },
+ "column known_activity.entity_value": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column known_activity.expires_at": {
+  "default": null,
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
+ "column known_activity.known_activity_id": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(50)"
+ },
+ "column known_activity.origin": {
+  "default": "'ad_hoc'::character varying",
+  "nullable": false,
+  "type": "character varying(20)"
+ },
+ "column known_activity.origin_ref": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(100)"
+ },
+ "column known_activity.reason": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column known_activity.removal_reason": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column known_activity.removed_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
+ "column known_activity.removed_by": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(100)"
+ },
  "column llm_interaction_logs.agent_id": {
   "default": null,
   "nullable": true,
@@ -3912,6 +3972,11 @@
  "constraint ip_exclusions.ck_ip_exclusions_origin": "CHECK (((origin)::text = ANY ((ARRAY['ad_hoc'::character varying, 'finding'::character varying, 'case'::character varying, 'run'::character varying])::text[])))",
  "constraint ip_exclusions.ck_ip_exclusions_removal": "CHECK (((removed_at IS NULL) = (removed_by IS NULL)))",
  "constraint ip_exclusions.ip_exclusions_pkey": "PRIMARY KEY (exclusion_id)",
+ "constraint known_activity.ck_known_activity_expiry": "CHECK ((expires_at > created_at))",
+ "constraint known_activity.ck_known_activity_kind": "CHECK (((entity_kind)::text = ANY ((ARRAY['ip'::character varying, 'domain'::character varying, 'host'::character varying, 'url'::character varying, 'email'::character varying, 'hash'::character varying, 'arn'::character varying, 'aws_key'::character varying, 'user'::character varying, 'process'::character varying])::text[])))",
+ "constraint known_activity.ck_known_activity_origin": "CHECK (((origin)::text = ANY ((ARRAY['ad_hoc'::character varying, 'finding'::character varying, 'case'::character varying, 'run'::character varying])::text[])))",
+ "constraint known_activity.ck_known_activity_removal": "CHECK (((removed_at IS NULL) = (removed_by IS NULL)))",
+ "constraint known_activity.known_activity_pkey": "PRIMARY KEY (known_activity_id)",
  "constraint llm_interaction_logs.llm_interaction_logs_interaction_id_key": "UNIQUE (interaction_id)",
  "constraint llm_interaction_logs.llm_interaction_logs_pkey": "PRIMARY KEY (id)",
  "constraint llm_provider_configs.llm_provider_configs_pkey": "PRIMARY KEY (provider_id)",
@@ -4238,6 +4303,8 @@
  "index idx_investigation_status": "CREATE INDEX idx_investigation_status ON public.investigations USING btree (status)",
  "index idx_investigation_workflow_id": "CREATE INDEX idx_investigation_workflow_id ON public.investigations USING btree (workflow_id)",
  "index idx_ip_exclusions_created_at": "CREATE INDEX idx_ip_exclusions_created_at ON public.ip_exclusions USING btree (created_at DESC)",
+ "index idx_known_activity_created_at": "CREATE INDEX idx_known_activity_created_at ON public.known_activity USING btree (created_at DESC)",
+ "index idx_known_activity_entity": "CREATE INDEX idx_known_activity_entity ON public.known_activity USING btree (entity_kind, entity_value) WHERE (removed_at IS NULL)",
  "index idx_llm_interaction_agent": "CREATE INDEX idx_llm_interaction_agent ON public.llm_interaction_logs USING btree (agent_id)",
  "index idx_llm_interaction_created": "CREATE INDEX idx_llm_interaction_created ON public.llm_interaction_logs USING btree (created_at)",
  "index idx_llm_interaction_investigation": "CREATE INDEX idx_llm_interaction_investigation ON public.llm_interaction_logs USING btree (investigation_id)",
@@ -4282,6 +4349,7 @@
  "index investigations_pkey": "CREATE UNIQUE INDEX investigations_pkey ON public.investigations USING btree (investigation_id)",
  "index ip_exclusions_pkey": "CREATE UNIQUE INDEX ip_exclusions_pkey ON public.ip_exclusions USING btree (exclusion_id)",
  "index ix_ai_decision_logs_agent_id": "CREATE INDEX ix_ai_decision_logs_agent_id ON public.ai_decision_logs USING btree (agent_id)",
+ "index known_activity_pkey": "CREATE UNIQUE INDEX known_activity_pkey ON public.known_activity USING btree (known_activity_id)",
  "index llm_interaction_logs_interaction_id_key": "CREATE UNIQUE INDEX llm_interaction_logs_interaction_id_key ON public.llm_interaction_logs USING btree (interaction_id)",
  "index llm_interaction_logs_pkey": "CREATE UNIQUE INDEX llm_interaction_logs_pkey ON public.llm_interaction_logs USING btree (id)",
  "index llm_provider_configs_pkey": "CREATE UNIQUE INDEX llm_provider_configs_pkey ON public.llm_provider_configs USING btree (provider_id)",
@@ -5688,6 +5756,28 @@
   "sequence": null
  },
  "relation ip_exclusions": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation known_activity": {
   "acl": [
    "app:DELETE",
    "app:INSERT",

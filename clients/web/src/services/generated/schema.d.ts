@@ -4098,6 +4098,90 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/known-activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Known Activity
+         * @description Rules in force, newest first; ``include_ended`` adds expired and removed.
+         */
+        get: operations["get_api_known-activity"];
+        put?: never;
+        /**
+         * Add Known Activity
+         * @description Record one rule. The actor is the session's person, never the body.
+         */
+        post: operations["post_api_known-activity"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/known-activity/for-case/{case_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * For Case
+         * @description What this case's linked alerts name, and the rules in force for them.
+         */
+        get: operations["get_api_known-activity_for-case_case_id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/known-activity/for-finding/{finding_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * For Finding
+         * @description Rules in force for what this alert names. Reading them leaves it unchanged.
+         */
+        get: operations["get_api_known-activity_for-finding_finding_id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/known-activity/{known_activity_id}/remove": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove
+         * @description Stop applying a rule. The row is kept, marked removed.
+         */
+        post: operations["post_api_known-activity_known_activity_id_remove"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/llm/health": {
         parameters: {
             query?: never;
@@ -7435,6 +7519,15 @@ export interface components {
             /** Comments */
             comments: components["schemas"]["CaseCommentSchema"][];
         };
+        /** CaseContextResponse */
+        CaseContextResponse: {
+            /** Default Expires At */
+            default_expires_at: string;
+            /** Entities */
+            entities: components["schemas"]["NamedEntity"][];
+            /** Known Activity */
+            known_activity: components["schemas"]["KnownActivityOut"][];
+        };
         /**
          * CaseCreate
          * @description Case creation request.
@@ -8927,6 +9020,11 @@ export interface components {
             /** Port */
             port?: number | null;
         };
+        /** FindingContextResponse */
+        FindingContextResponse: {
+            /** Known Activity */
+            known_activity: components["schemas"]["KnownActivityOut"][];
+        };
         /** FindingListResponse */
         FindingListResponse: {
             /** Findings */
@@ -9468,6 +9566,79 @@ export interface components {
             /** Routable */
             routable: boolean;
         };
+        /** KnownActivityCreate */
+        KnownActivityCreate: {
+            /** Entity Kind */
+            entity_kind: string;
+            /** Entity Value */
+            entity_value: string;
+            /**
+             * Expires At
+             * @description Absent takes the server's default duration.
+             */
+            expires_at?: string | null;
+            /**
+             * Origin
+             * @default ad_hoc
+             * @enum {string}
+             */
+            origin: "ad_hoc" | "finding" | "case" | "run";
+            /** Origin Ref */
+            origin_ref?: string | null;
+            /** Reason */
+            reason: string;
+        };
+        /** KnownActivityListResponse */
+        KnownActivityListResponse: {
+            /**
+             * Default Expires At
+             * @description When a new rule ends if nobody picks a date (server config).
+             */
+            default_expires_at: string;
+            /** Entity Kinds */
+            entity_kinds: string[];
+            /** Known Activity */
+            known_activity: components["schemas"]["KnownActivityOut"][];
+            /** Total */
+            total: number;
+        };
+        /** KnownActivityOut */
+        KnownActivityOut: {
+            /** Created At */
+            created_at: string;
+            /** Created By */
+            created_by: string;
+            /** Entity Kind */
+            entity_kind: string;
+            /** Entity Value */
+            entity_value: string;
+            /** Expires At */
+            expires_at: string;
+            /** Known Activity Id */
+            known_activity_id: string;
+            /** Origin */
+            origin: string;
+            /** Origin Ref */
+            origin_ref?: string | null;
+            /** Reason */
+            reason: string;
+            /** Removal Reason */
+            removal_reason?: string | null;
+            /** Removed At */
+            removed_at?: string | null;
+            /** Removed By */
+            removed_by?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "active" | "expired" | "removed";
+        };
+        /** KnownActivityRemove */
+        KnownActivityRemove: {
+            /** Reason */
+            reason?: string | null;
+        };
         /** LLMProviderCreate */
         LLMProviderCreate: {
             /** Api Key */
@@ -9681,6 +9852,13 @@ export interface components {
             trend_data?: {
                 [key: string]: unknown;
             }[];
+        };
+        /** NamedEntity */
+        NamedEntity: {
+            /** Entity Kind */
+            entity_kind: string;
+            /** Entity Value */
+            entity_value: string;
         };
         /** NeedsYouHypothesis */
         NeedsYouHypothesis: {
@@ -18754,6 +18932,177 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_known-activity": {
+        parameters: {
+            query?: {
+                include_ended?: boolean;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnownActivityListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_known-activity": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnownActivityCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnownActivityOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_known-activity_for-case_case_id": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseContextResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_known-activity_for-finding_finding_id": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                finding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FindingContextResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_known-activity_known_activity_id_remove": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                known_activity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["KnownActivityRemove"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnownActivityOut"];
                 };
             };
             /** @description Validation Error */

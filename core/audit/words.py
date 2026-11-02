@@ -210,6 +210,11 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "case.sla.resume": "Resumed the SLA",
     "approval.approve": _approve,
     "approval.reject": "Rejected an action",
+    # Known activity (core/memory/known_activity.py)
+    "known_activity.create": lambda p: "Recorded known activity"
+    + (f" ({_word(p['entity_kind'])})" if p.get("entity_kind") else ""),
+    "known_activity.remove": lambda p: "Removed known activity"
+    + (f" ({_word(p['entity_kind'])})" if p.get("entity_kind") else ""),
     # Old audit stores copied on upgrade (0018_legacy_audit_copy)
     "case.history": _case_history,
     "investigation.log": _investigation_log,
