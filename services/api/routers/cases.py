@@ -31,9 +31,8 @@ from core.cases.case_state import case_run_refs, primary_ref
 from core.cases.case_workflow_service import CaseWorkflowService
 from core.documents.extract import ACCEPTED_TYPES, DocumentRefused, spool_upload
 from core.routing import Auth, OptionalUnitOfWorkSession, RouterMeta, UnitOfWorkSession
-from core.storage.config_service import get_config_service
 from core.storage.database_data_service import DatabaseDataService
-from core.storage.models import Case, User
+from core.storage.models import User
 from core.storage.schemas import (
     CaseCommentSchema,
     CaseEscalationSchema,
@@ -121,18 +120,9 @@ async def clear_all_cases(
     """Delete all cases and case-derived generated data (requires cases.delete)."""
     deny_unless(current_user.user_id, "cases.delete", session)
 
+    # The purge's one trail entry commits with it (case_trail.PURGE).
     result = case_records_service.purge_all_cases(session)
     killed = len(result.killed_investigation_ids)
-    # Counts come back from the purge. record_audit commits on its own
-    # session, so this row is durable before the request commits.
-    get_config_service(user_id=str(current_user.user_id)).record_audit(
-        config_type="cases",
-        config_key="cases",
-        action="delete_all",
-        old_value={"count": result.cases, "killed_investigations": killed},
-        new_value=None,
-        change_reason="All cases deleted via API",
-    )
     background_tasks.add_task(
         _mark_workdirs_failed,
         result.killed_investigation_ids,
@@ -228,8 +218,7 @@ async def delete_case(
             raise HTTPException(status_code=404, detail="Case not found")
         return {"success": True}
 
-    case = session.get(Case, case_id)
-    title = case.title if case is not None else None
+    # The delete's trail entry commits with it (case_trail.DELETE).
     live = case_records_service.delete_case(session, case_id)
 
     if live is None:
@@ -243,15 +232,6 @@ async def delete_case(
                 f"({', '.join(live)}); kill or finish them first"
             ),
         )
-
-    get_config_service(user_id=str(current_user.user_id)).record_audit(
-        config_type="cases",
-        config_key=case_id,
-        action="delete",
-        old_value={"case_id": case_id, "title": title},
-        new_value=None,
-        change_reason="Case deleted via API",
-    )
     return {"success": True}
 
 

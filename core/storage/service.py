@@ -6,6 +6,7 @@ Provides high-level database operations for cases, findings, and related entitie
 
 import logging
 import re
+from contextlib import nullcontext
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -19,6 +20,7 @@ from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlalchemy.orm import lazyload, noload, selectinload
 
 from core.exceptions import default_on_error
+from core.storage import case_trail_hook
 from core.storage.case_repository import CaseRepository
 from core.storage.connection import get_db_manager
 from core.storage.ip_exclusion_repository import exclusion_view_filter
@@ -1094,7 +1096,7 @@ class DatabaseService:
 
     # ========== Case Operations ==========
 
-    @default_on_error(None)
+    @default_on_error(None, passthrough=case_trail_hook.RAISED)
     def create_case(
         self, case_id: str, title: str, finding_ids: List[str], **kwargs
     ) -> Optional[Case]:
@@ -1145,6 +1147,16 @@ class DatabaseService:
                 case.findings.extend(findings)
                 session.flush()
 
+            if writer := case_trail_hook.writer(session):
+                writer.append_case(
+                    session,
+                    writer.CREATE,
+                    case_id,
+                    operator_text=title or None,
+                    status=case.status,
+                    priority=case.priority,
+                    assignee=writer.assignee_principal(session, case.assignee),
+                )
             session.refresh(case)
             logger.info(f"Created case: {case_id} with {len(finding_ids)} findings")
             return case
@@ -1223,19 +1235,26 @@ class DatabaseService:
                 "by_priority": by_priority,
             }
 
-    @default_on_error(False)
-    def update_case(self, case_id: str, **updates) -> bool:
+    @default_on_error(False, passthrough=case_trail_hook.RAISED)
+    def update_case(self, case_id: str, *, session=None, **updates) -> bool:
         """
         Update a case.
 
         Args:
             case_id: Case ID
+            session: The caller's session, so the write and its follow-on work
+                (a close) commit or roll back together; None owns one here.
             **updates: Fields to update
 
         Returns:
             True if successful, False otherwise
         """
-        with self.db_manager.session_scope() as session:
+        scope = (
+            nullcontext(session)
+            if session is not None
+            else self.db_manager.session_scope()
+        )
+        with scope as session:
             case = session.get(Case, case_id)
             if not case:
                 logger.warning(f"Case not found: {case_id}")
@@ -1243,22 +1262,30 @@ class DatabaseService:
 
             # ``finding_ids`` maps to the ``findings`` relationship, not a
             # column, so the generic setattr loop below would drop it.
+            findings: tuple = ((), ())
             if "finding_ids" in updates:
+                was = {f.finding_id for f in case.findings}
                 CaseRepository(session).set_findings(
                     case, updates.pop("finding_ids") or []
                 )
+                now = {f.finding_id for f in case.findings}
+                findings = (sorted(now - was), sorted(was - now))
 
             # Update remaining mapped fields
+            before, after = {}, {}
             for key, value in updates.items():
                 if hasattr(case, key):
+                    before[key], after[key] = getattr(case, key), value
                     setattr(case, key, value)
 
             case.updated_at = utcnow()
             session.flush()
+            if writer := case_trail_hook.writer(session):
+                writer.append_update(session, case_id, before, after, findings=findings)
             logger.info(f"Updated case: {case_id}")
             return True
 
-    @default_on_error(False)
+    @default_on_error(False, passthrough=case_trail_hook.RAISED)
     def delete_case(self, case_id: str) -> bool:
         """
         Delete a case.
@@ -1276,10 +1303,14 @@ class DatabaseService:
                 return False
 
             session.delete(case)
+            if writer := case_trail_hook.writer(session):
+                writer.append_case(
+                    session, writer.DELETE, case_id, operator_text=case.title or None
+                )
             logger.info(f"Deleted case: {case_id}")
             return True
 
-    @default_on_error(False)
+    @default_on_error(False, passthrough=case_trail_hook.RAISED)
     def add_finding_to_case(self, case_id: str, finding_id: str) -> bool:
         """
         Add a finding to a case.
@@ -1303,11 +1334,15 @@ class DatabaseService:
                 case.findings.append(finding)
                 case.updated_at = utcnow()
                 session.flush()
+                if writer := case_trail_hook.writer(session):
+                    writer.append_case(
+                        session, writer.FINDINGS_LINK, case_id, linked=[finding_id]
+                    )
                 logger.info(f"Added finding {finding_id} to case {case_id}")
 
             return True
 
-    @default_on_error(False)
+    @default_on_error(False, passthrough=case_trail_hook.RAISED)
     def remove_finding_from_case(self, case_id: str, finding_id: str) -> bool:
         """
         Remove a finding from a case.
@@ -1331,6 +1366,10 @@ class DatabaseService:
                 case.findings.remove(finding)
                 case.updated_at = utcnow()
                 session.flush()
+                if writer := case_trail_hook.writer(session):
+                    writer.append_case(
+                        session, writer.UNLINK, case_id, unlinked=[finding_id]
+                    )
                 logger.info(f"Removed finding {finding_id} from case {case_id}")
 
             return True

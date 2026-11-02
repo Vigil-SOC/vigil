@@ -354,6 +354,9 @@ def delete_case(session: Session, case_id: str) -> Optional[List[str]]:
 
     session.delete(case)
     session.flush()
+    case_trail.append_case(
+        session, case_trail.DELETE, case_id, operator_text=case.title or None
+    )
     return []
 
 
@@ -406,4 +409,12 @@ def purge_all_cases(session: Session) -> PurgeResult:
     if table_present(session, "case_audit_logs"):
         session.query(CaseAuditLog).delete(synchronize_session=False)
     session.query(Case).delete(synchronize_session=False)
+    # One entry for the purge, with the count; not one per case.
+    case_trail.append_case(
+        session,
+        case_trail.PURGE,
+        None,
+        count=count,
+        killed_investigations=len(killed),
+    )
     return PurgeResult(cases=count, killed_investigation_ids=killed)

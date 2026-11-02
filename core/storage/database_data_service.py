@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from core.config import is_demo_mode
 from core.exceptions import DatabaseError
+from core.storage import case_trail_hook
 from core.storage.connection import (
     SchemaDriftError,
     SchemaRevisionError,
@@ -486,17 +487,21 @@ class DatabaseDataService:
                     priority=priority,
                 )
                 return CaseSchema.dump(case) if case else None
+            except case_trail_hook.RAISED:
+                raise
             except Exception as e:
                 logger.error(f"Error creating case in DB: {e}")
                 return None
         return None
 
-    def update_case(self, case_id: str, **updates) -> bool:
+    def update_case(self, case_id: str, *, session=None, **updates) -> bool:
         if self._demo_mode and self._demo_service:
             return self._demo_service.update_case(case_id, **updates)
         if self._db_available:
             try:
-                return self._db_service.update_case(case_id, **updates)
+                return self._db_service.update_case(case_id, session=session, **updates)
+            except case_trail_hook.RAISED:
+                raise
             except Exception as e:
                 logger.error(f"Error updating case in DB: {e}")
                 return False
@@ -508,6 +513,8 @@ class DatabaseDataService:
         if self._db_available:
             try:
                 return self._db_service.delete_case(case_id)
+            except case_trail_hook.RAISED:
+                raise
             except Exception as e:
                 logger.error(f"Error deleting case from DB: {e}")
                 return False
@@ -562,6 +569,8 @@ class DatabaseDataService:
         if self._db_available:
             try:
                 return self._db_service.add_finding_to_case(case_id, finding_id)
+            except case_trail_hook.RAISED:
+                raise
             except Exception as e:
                 logger.error(f"Error adding finding to case in DB: {e}")
                 return False

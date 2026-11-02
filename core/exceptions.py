@@ -37,7 +37,7 @@ class NotFoundError(SOCError):
         super().__init__(message, code)
 
 
-def default_on_error(default, *, level: str = "exception"):
+def default_on_error(default, *, level: str = "exception", passthrough: tuple = ()):
     """Log and return ``default`` if the wrapped function raises.
 
     For service methods whose callers read a falsy result as "unavailable".
@@ -53,6 +53,8 @@ def default_on_error(default, *, level: str = "exception"):
 
     Sync functions only: the wrapper cannot await, so decorating a coroutine
     would catch nothing. That raises at decoration time rather than silently.
+
+    ``passthrough`` names exceptions the caller must see, raised as they are.
     """
 
     def decorate(fn):
@@ -72,6 +74,8 @@ def default_on_error(default, *, level: str = "exception"):
         def wrapper(*args, **kwargs):
             try:
                 return fn(*args, **kwargs)
+            except passthrough:
+                raise
             except Exception:
                 log = getattr(logging.getLogger(fn.__module__), level)
                 log("%s failed", fn.__qualname__)
