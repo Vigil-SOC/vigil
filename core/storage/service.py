@@ -1173,7 +1173,16 @@ class DatabaseService:
             Case object or None if not found
         """
         with self.db_manager.session_scope() as session:
-            case = session.get(Case, case_id)
+            options = (
+                [
+                    selectinload(Case.findings).selectinload(
+                        Finding.mitre_prediction_rows
+                    )
+                ]
+                if include_findings
+                else [selectinload(Case.findings).noload(Finding.mitre_prediction_rows)]
+            )
+            case = session.get(Case, case_id, options=options)
             if case:
                 # Force load findings if needed
                 if include_findings:

@@ -96,7 +96,7 @@ class Finding(Base):
 
     # Relationships
     cases: Mapped[List["Case"]] = relationship(
-        "Case", secondary=case_findings, back_populates="findings", lazy="selectin"
+        "Case", secondary=case_findings, back_populates="findings", lazy="select"
     )
     mitre_prediction_rows: Mapped[List["FindingMitrePrediction"]] = relationship(
         "FindingMitrePrediction",
