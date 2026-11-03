@@ -184,6 +184,36 @@ def link_finding(
     return True
 
 
+def link_findings(
+    service: DatabaseDataService, case_id: str, new_finding_ids: List[str]
+) -> Optional[Dict[str, List[str]]]:
+    """Attach multiple Findings to a Case in a single read-modify-write pass.
+
+    Returns ``{"added": [...], "failed": [...]}`` where ``failed`` contains IDs
+    already present on the Case (or if the single batch update failed), or
+    ``None`` when the Case does not exist.
+    """
+    finding_ids = _existing(service, case_id, "finding_ids")
+    if finding_ids is None:
+        return None
+
+    seen = set(finding_ids)
+    added: List[str] = []
+    failed: List[str] = []
+    for fid in new_finding_ids:
+        if fid in seen:
+            failed.append(fid)
+        else:
+            seen.add(fid)
+            finding_ids.append(fid)
+            added.append(fid)
+
+    if added and not service.update_case(case_id, finding_ids=finding_ids):
+        logger.error("Could not link findings %s to case %s", added, case_id)
+        return {"added": [], "failed": list(new_finding_ids)}
+    return {"added": added, "failed": failed}
+
+
 def unlink_finding(
     service: DatabaseDataService, case_id: str, finding_id: str
 ) -> Optional[bool]:

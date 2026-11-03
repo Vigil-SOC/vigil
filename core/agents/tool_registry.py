@@ -181,10 +181,16 @@ def _bad_state(state: Optional[str]) -> Optional[Args]:
     return {"error": f"state must be one of {', '.join(FINDING_STATES)}"}
 
 
-def _data():
-    from core.storage.database_data_service import DatabaseDataService
+_data_service = None
 
-    return DatabaseDataService()
+
+def _data():
+    global _data_service
+    if _data_service is None:
+        from core.storage.database_data_service import DatabaseDataService
+
+        _data_service = DatabaseDataService()
+    return _data_service
 
 
 def _approvals():
@@ -413,9 +419,12 @@ def list_cases(
     priority: Optional[str] = None,
     limit: int = 50,
 ) -> Any:
-    # get_cases takes only a cap, so the filter runs after the full read.
-    # A cap applied first (limit*2) drops matches that sit past it.
-    cases = _data().get_cases()
+    data = _data()
+    sql_limit = 10000 if severity else limit
+    try:
+        cases = data.get_cases(limit=sql_limit, status=status, priority=priority)
+    except TypeError:
+        cases = data.get_cases()
     if status:
         cases = [case for case in cases if case.get("status") == status]
     if severity:
