@@ -49,6 +49,19 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 )
 
+// Coalesce concurrent 401 refresh attempts behind a single in-flight request
+// so single-use refresh token rotation does not revoke parallel callers.
+let refreshPromise: Promise<unknown> | null = null
+
+function refreshSession(): Promise<unknown> {
+  if (!refreshPromise) {
+    refreshPromise = api.post('/auth/refresh').finally(() => {
+      refreshPromise = null
+    })
+  }
+  return refreshPromise
+}
+
 // the browser carries the refresh_token cookie automatically
 api.interceptors.response.use(
   (response) => response,
@@ -67,7 +80,7 @@ api.interceptors.response.use(
       originalRequest._retry = true
 
       try {
-        await api.post('/auth/refresh')
+        await refreshSession()
         return api(originalRequest)
       } catch (refreshError) {
         return Promise.reject(refreshError)
@@ -92,7 +105,7 @@ export async function streamFetch(path: string, init: RequestInit = {}): Promise
   let res = await fetch(url, build())
   if (res.status === 401) {
     try {
-      await api.post('/auth/refresh')
+      await refreshSession()
       res = await fetch(url, build())
     } catch {
       /* empty */
