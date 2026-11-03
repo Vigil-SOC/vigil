@@ -148,8 +148,8 @@ class LLMInteractionLog(Base):
     rates_fetched_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    # Reserved for a future per-tenant id (#186). Not written: values that
-    # used to land here were the virtual key itself (#1268).
+    # Unused. Not written: values that used to land here were the virtual key
+    # itself (#1268).
     virtual_key_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     __table_args__ = (

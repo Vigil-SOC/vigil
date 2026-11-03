@@ -66,10 +66,11 @@ export default defineConfig(({ mode }) => {
     ],
     server: {
       // tokens.css lives under docs/, outside this package. Setting allow
-      // replaces Vite's default (the web root), so the repo root has to
-      // include it or the dev server refuses the file.
+      // replaces Vite's default (the web root), so both are named. Not the repo
+      // root: that would serve logs/ and backend source to anyone who can reach
+      // this port, which VIGIL_ALLOWED_HOSTS makes possible through a proxy.
       fs: {
-        allow: [resolve(__dirname, '..', '..')],
+        allow: [__dirname, resolve(__dirname, '..', '..', 'docs', 'design', 'console', 'tokens')],
       },
       port: 6988,
       host: '127.0.0.1', // Use IPv4 explicitly

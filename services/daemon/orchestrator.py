@@ -16,11 +16,11 @@ import logging
 import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from sqlalchemy import func
 
-from core.agents.builtins import ORCHESTRATION_DECISION_ID, ORCHESTRATOR_ACTOR
+from core.agents.builtins import ORCHESTRATOR_ACTOR
 from core.auth.principals import agent_principal_id
 from core.cases.case_sla_service import case_title, open_case_holding
 from core.config import get_settings
@@ -86,7 +86,6 @@ from core.findings.exclusions import cached_active_ips, excluded_ips_of
 from core.memory.entity_keys import finding_entity_keys, normalise_keys
 from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint
-from core.response.config import decision_rule
 from core.storage.connection import get_db_manager
 from core.storage.models import (
     FINISHED_INVESTIGATION_STATUSES,
@@ -708,6 +707,8 @@ class Orchestrator:
         self.config = config
         self._enabled = config.enabled
         self._shutdown_event: Optional[asyncio.Event] = None
+        # Set by the daemon: watch(name, task, shutdown_event) for /status loops.
+        self.watch_loop: Optional[Callable[..., None]] = None
         self._approvals = approvals or ApprovalService()
         # Read for the run_kind a definition declares; the file cache needs no DB.
         self._workflows = workflows or WorkflowsService()
@@ -767,11 +768,17 @@ class Orchestrator:
                     "Completing legacy review rows failed: %s", e, exc_info=True
                 )
 
-            tasks = [
-                asyncio.create_task(self._intake_loop(shutdown_event)),
-                asyncio.create_task(self._supervision_loop(shutdown_event)),
-                asyncio.create_task(self._distil_loop(shutdown_event)),
-            ]
+            loops = {
+                "_intake_loop": self._intake_loop,
+                "_supervision_loop": self._supervision_loop,
+                "_distil_loop": self._distil_loop,
+            }
+            tasks = []
+            for name, loop in loops.items():
+                task = asyncio.create_task(loop(shutdown_event))
+                if self.watch_loop:
+                    self.watch_loop(name, task, shutdown_event)
+                tasks.append(task)
 
             while not shutdown_event.is_set() and self._enabled:
                 self._sync_enabled_from_db()
@@ -1765,8 +1772,10 @@ class Orchestrator:
 
     # The heartbeat. A failure here is logged loudly on purpose (#147): swallowed
     # quietly, last_activity_at stops moving and the supervisor stale-kills a run
-    # that is perfectly healthy. A run parked on a person is not stamped;
-    # the first reconcile after a resume stamps it again.
+    # that is perfectly healthy. A run parked on a person is not stamped, with or
+    # without a checkpoint, so what it spent leaves the hourly window instead of
+    # pausing intake until someone answers. The first reconcile after a resume
+    # stamps it again.
     def _record_progress(self, inv_id: str, projection: Dict[str, Any]) -> None:
         try:
             from core.storage.connection import get_db_manager
@@ -1786,7 +1795,9 @@ class Orchestrator:
                 inv.iteration_count = (
                     projection.get("iteration", 0) if counted is None else counted
                 )
-                if not _parked_on_a_person(projection):
+                if not (
+                    _parked_on_a_person(projection) or projection.get("open_checkpoint")
+                ):
                     inv.last_activity_at = utcnow()
                 # Null is "the gateway priced nothing", which is not zero spent.
                 cost = projection.get("cost_usd")
@@ -1991,7 +2002,6 @@ class Orchestrator:
 
         state = self.workdir.read_state(inv_id)
         proposed_actions = state.get("proposed_actions", [])
-        rule = decision_rule("review.terminal_outcome", "completed")
 
         self.stats["investigations_completed"] += 1
         if _inv_completed is not None:
@@ -2008,17 +2018,6 @@ class Orchestrator:
 
         logger.info(
             f"Investigation {inv_id} COMPLETED ({len(proposed_actions)} actions)"
-        )
-
-        self._log_ai_decision(
-            decision_type="investigation_complete",
-            inv_id=inv_id,
-            reasoning=(
-                f"Terminal outcome completed. {len(proposed_actions)} proposed actions."
-            ),
-            action="complete",
-            confidence=1.0,
-            rule=rule,
         )
 
         self._send_notification(
@@ -2064,65 +2063,6 @@ class Orchestrator:
             logger.info(f"Created approval action for {inv_id}: {action_str}")
         except Exception as e:
             logger.error(f"Failed to create approval action: {e}")
-
-    # -------------------------------------------------------------------------
-    # AI Decision Logging
-    # -------------------------------------------------------------------------
-
-    def _log_ai_decision(
-        self,
-        decision_type: str,
-        inv_id: str,
-        reasoning: str,
-        action: str,
-        confidence: float = 1.0,
-        rule: Optional[str] = None,
-    ):
-        """Log a master agent decision to the AIDecisionLog table.
-
-        ``rule`` is the rendered ``decision_rule`` for decisions made on a
-        threshold; it lands in ``decision_metadata["rule"]``.
-        """
-        try:
-            from core.storage.connection import get_db_manager
-            from core.storage.models import AIDecisionLog, Investigation
-
-            with get_db_manager().session_scope() as session:
-                case_id = None
-                finding_id = None
-                inv = (
-                    session.query(Investigation)
-                    .filter_by(investigation_id=inv_id)
-                    .first()
-                )
-                if inv:
-                    case_id = inv.case_id
-                    trigger_ids = inv.trigger_ids or []
-                    if trigger_ids:
-                        finding_id = (
-                            trigger_ids[0] if isinstance(trigger_ids, list) else None
-                        )
-
-                entry = AIDecisionLog(
-                    decision_id=f"orch-{uuid.uuid4().hex[:8]}",
-                    agent_id=ORCHESTRATION_DECISION_ID,
-                    workflow_id=inv_id,
-                    finding_id=finding_id,
-                    case_id=case_id,
-                    decision_type=decision_type,
-                    confidence_score=confidence,
-                    reasoning=reasoning,
-                    recommended_action=action,
-                    decision_metadata={
-                        "source": ORCHESTRATOR_ACTOR,
-                        "investigation_id": inv_id,
-                        **({"rule": rule} if rule else {}),
-                    },
-                )
-                session.add(entry)
-            logger.debug(f"AI decision logged: {decision_type} for {inv_id}")
-        except Exception as e:
-            logger.error(f"Failed to log AI decision: {e}")
 
     # -------------------------------------------------------------------------
     # Closed-Case links

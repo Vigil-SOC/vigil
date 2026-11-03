@@ -13,7 +13,6 @@ interface JobBase {
   schema_version: number;
   run_id: string;
   run_kind: RunKind;
-  tenant_id: string | null;
   enqueued_at: string;
   enqueued_by: string;
   // API-signed token for the run. Absent for a system run that predates one,

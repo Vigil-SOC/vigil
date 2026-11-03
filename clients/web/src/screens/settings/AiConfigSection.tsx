@@ -13,9 +13,10 @@ import { useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { PageHead } from '../../shared/PageHead'
 import { NumberInput, SettingsCard, ToggleRow } from '../../shared/ui'
-import AiProvidersPanel from './AiProvidersPanel'
+import { useAlignOnSettle } from '../../shared/useAlignOnSettle'
+import AiProvidersPanel, { KEYS_CARD_ID } from './AiProvidersPanel'
 import AiModelsPanel from './AiModelsPanel'
-import AiBudgetsPanel from './AiBudgetsPanel'
+import AiBudgetsPanel, { SPENDING_CARD_ID } from './AiBudgetsPanel'
 import AiSpendPanel from './AiSpendPanel'
 import AiModelsOverview, { AGENT_MODEL_TABLE_ID } from './AiModelsOverview'
 import {
@@ -26,16 +27,25 @@ import {
 import { AI_CONFIG_DESC } from '../../config/aiComponents'
 import type { SectionProps } from './types'
 
-// ?tab=assignment scrolls to the per-agent table (Home links there); ?tab=catalogue opens the
-// Model catalogue card. Any other value is ignored.
+const SCROLLS_TO: Record<string, string | undefined> = {
+  assignment: AGENT_MODEL_TABLE_ID,
+  keys: KEYS_CARD_ID,
+  budgets: SPENDING_CARD_ID,
+}
+
+// ?tab=assignment scrolls to the per-agent table (Home links there), and keys and budgets to
+// their cards (a stopped run links there); ?tab=catalogue opens the Model catalogue card.
+// Any other value is ignored.
 export default function AiConfigSection({ notify }: SectionProps) {
   const [searchParams] = useSearchParams()
   const query = searchParams.get('tab')
   const [catalogue, setCatalogue] = useState(query === 'catalogue')
 
+  const page = useRef<HTMLDivElement>(null)
+  useAlignOnSettle((query && SCROLLS_TO[query]) || null, page)
+
   useEffect(() => {
     if (query === 'catalogue') setCatalogue(true)
-    if (query === 'assignment') document.getElementById(AGENT_MODEL_TABLE_ID)?.scrollIntoView?.({ block: 'start' })
   }, [query])
 
   // The Keys panel owns the add-provider dialog; the head asks it to open once.
@@ -49,7 +59,7 @@ export default function AiConfigSection({ notify }: SectionProps) {
         description={AI_CONFIG_DESC}
         actions={<button className="btn primary" onClick={() => setAddProvider(true)}><Icon name="plus" /> Add provider</button>}
       />
-      <div className="settings-content-inner flex flex-col gap-4 pb-20">
+      <div ref={page} className="settings-content-inner flex flex-col gap-4 pb-20">
         <AiModelsOverview notify={notify} />
         <AiProvidersPanel notify={notify} addProviderRequested={addProvider} onAddProviderOpened={opened} />
         <AiBudgetsPanel notify={notify} />
