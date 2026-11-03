@@ -30,7 +30,7 @@ from services.medic.app.heartbeat import (
 )
 from services.medic.app.policy_probe import Policy, PolicyCheck, Verdict
 from services.medic.app.policy_probe import probe as policy_probe
-from services.medic.app.trace import TraceCapture, start_capture
+from services.medic.app.trace import TraceCapture, pack_of, start_capture
 from services.medic.app.watchdog import Watchdog
 from services.medic.app.wiring import (
     TICK_S,
@@ -405,6 +405,7 @@ def _run(
                     shape=shape,
                     instance_id=writer.instance_id,
                     tick=grid_tick(clock),
+                    pack=pack_of(pack.rules),
                 ),
             )
         except config.ConfigError as exc:
