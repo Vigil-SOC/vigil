@@ -592,6 +592,7 @@ class _Status:
                 wall=clock.wall,
                 monotonic=clock.monotonic,
                 data_dir=data_dir,
+                writer=medic.writer,
                 bind_peer=api.bind_peer,
             )
         self._failing = self._api_failed = False
