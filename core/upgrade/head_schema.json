@@ -3219,6 +3219,51 @@
   "nullable": false,
   "type": "timestamp without time zone"
  },
+ "column rule_links.confirmed": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column rule_links.confirmed_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp with time zone"
+ },
+ "column rule_links.confirmed_by": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column rule_links.evidence": {
+  "default": "'{}'::jsonb",
+  "nullable": false,
+  "type": "jsonb"
+ },
+ "column rule_links.found_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp with time zone"
+ },
+ "column rule_links.how": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column rule_links.rule_a": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column rule_links.rule_b": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column rule_links.score": {
+  "default": null,
+  "nullable": true,
+  "type": "real"
+ },
  "column rule_versions.content": {
   "default": null,
   "nullable": false,
@@ -4039,6 +4084,12 @@
  "constraint principals.principals_pkey": "PRIMARY KEY (principal_id)",
  "constraint roles.roles_name_key": "UNIQUE (name)",
  "constraint roles.roles_pkey": "PRIMARY KEY (role_id)",
+ "constraint rule_links.rule_links_confirmed_check": "CHECK ((confirmed = ANY (ARRAY['auto'::text, 'pending'::text, 'confirmed'::text, 'rejected'::text])))",
+ "constraint rule_links.rule_links_how_check": "CHECK ((how = ANY (ARRAY['same_id'::text, 'vigil_tag'::text, 'known_name'::text, 'looks_same'::text])))",
+ "constraint rule_links.rule_links_order_check": "CHECK (((rule_a COLLATE \"C\") < (rule_b COLLATE \"C\")))",
+ "constraint rule_links.rule_links_pkey": "PRIMARY KEY (rule_a, rule_b)",
+ "constraint rule_links.rule_links_rule_a_fkey": "FOREIGN KEY (rule_a) REFERENCES rules(id)",
+ "constraint rule_links.rule_links_rule_b_fkey": "FOREIGN KEY (rule_b) REFERENCES rules(id)",
  "constraint rule_versions.rule_versions_pkey": "PRIMARY KEY (rule_id, version)",
  "constraint rule_versions.rule_versions_rule_id_fkey": "FOREIGN KEY (rule_id) REFERENCES rules(id)",
  "constraint rule_versions.rule_versions_version_check": "CHECK ((version >= 1))",
@@ -4370,6 +4421,7 @@
  "index idx_mcp_credentials_token_hash": "CREATE INDEX idx_mcp_credentials_token_hash ON public.mcp_credentials USING btree (token_hash)",
  "index idx_mcp_credentials_user": "CREATE INDEX idx_mcp_credentials_user ON public.mcp_credentials USING btree (user_id)",
  "index idx_role_name": "CREATE INDEX idx_role_name ON public.roles USING btree (name)",
+ "index idx_rule_links_rule_b": "CREATE INDEX idx_rule_links_rule_b ON public.rule_links USING btree (rule_b)",
  "index idx_shared_ioc_investigation": "CREATE INDEX idx_shared_ioc_investigation ON public.shared_iocs USING btree (investigation_id)",
  "index idx_shared_ioc_type": "CREATE INDEX idx_shared_ioc_type ON public.shared_iocs USING btree (ioc_type)",
  "index idx_shared_ioc_value": "CREATE INDEX idx_shared_ioc_value ON public.shared_iocs USING btree (value)",
@@ -4414,6 +4466,7 @@
  "index principals_pkey": "CREATE UNIQUE INDEX principals_pkey ON public.principals USING btree (principal_id)",
  "index roles_name_key": "CREATE UNIQUE INDEX roles_name_key ON public.roles USING btree (name)",
  "index roles_pkey": "CREATE UNIQUE INDEX roles_pkey ON public.roles USING btree (role_id)",
+ "index rule_links_pkey": "CREATE UNIQUE INDEX rule_links_pkey ON public.rule_links USING btree (rule_a, rule_b)",
  "index rule_versions_pkey": "CREATE UNIQUE INDEX rule_versions_pkey ON public.rule_versions USING btree (rule_id, version)",
  "index rules_pkey": "CREATE UNIQUE INDEX rules_pkey ON public.rules USING btree (id)",
  "index rules_source_native_key": "CREATE UNIQUE INDEX rules_source_native_key ON public.rules USING btree (source, native_key)",
@@ -6023,6 +6076,27 @@
  "relation roles": {
   "acl": [
    "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation rule_links": {
+  "acl": [
    "app:INSERT",
    "app:SELECT",
    "app:UPDATE",

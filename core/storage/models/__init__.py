@@ -59,6 +59,7 @@ from core.storage.models.exclusion import IpExclusion
 from core.storage.models.finding import Finding, FindingMitrePrediction
 from core.storage.models.medic import MedicLastSeen
 from core.storage.models.rule_inventory import RULE_STATUSES, Rule, RuleVersion
+from core.storage.models.rule_links import LINK_CONFIRMED, LINK_HOWS, RuleLink
 from core.storage.models.skill import SkillRead
 from core.storage.models.workflow import (
     FINISHED_INVESTIGATION_STATUSES,
@@ -134,6 +135,9 @@ __all__ = [
     "RULE_STATUSES",
     "Rule",
     "RuleVersion",
+    "LINK_CONFIRMED",
+    "LINK_HOWS",
+    "RuleLink",
     "SLAPolicy",
     "SharedIOC",
     "SketchMapping",

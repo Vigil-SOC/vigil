@@ -348,8 +348,11 @@ class TaskScheduler:
         return await ThreatFeedPoller().run_once()
 
     async def _run_rule_inventory(self):
-        """Read every rule source and record new, changed and removed rules."""
+        """Read every rule source, record what changed, then link copies of one rule."""
+        from core.detections.inventory.links import link_all
         from core.detections.inventory.sync import sync_all
 
         reports = await asyncio.to_thread(sync_all)
-        return {r.source: r.error or r.writes for r in reports}
+        result = {r.source: r.error or r.writes for r in reports}
+        result["links"] = (await asyncio.to_thread(link_all)).writes
+        return result
