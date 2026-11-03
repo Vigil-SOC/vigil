@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from core.audit import trail
 from core.auth.principals import SYSTEM_PRINCIPAL_ID, agent_principal_id
 from core.auth.tool_principal import Claims, bound_claims, current_claims  # noqa: F401
-from core.response.ceiling import effective_act_reversible, read_ceiling
+from core.response.ceiling import REVERSIBLE, effective_act, read_ceiling, workflow_of
 
 logger = logging.getLogger(__name__)
 
@@ -70,13 +70,14 @@ def phase_actors(phases: Any) -> dict[str, str]:
     return found
 
 
-def autonomy_label() -> str:
-    """Assist when effective act_reversible is off, otherwise Act."""
+def autonomy_label(run_id: Optional[str] = None) -> str:
+    """Act when the run's workflow may take a reversible tool, otherwise Assist."""
     try:
         stored = read_ceiling()
     except Exception:  # noqa: BLE001
         return "Assist"
-    return "Act" if effective_act_reversible(stored) else "Assist"
+    acts = effective_act(stored, REVERSIBLE, workflow_of(run_id))
+    return "Act" if acts else "Assist"
 
 
 def fingerprint(spec: Any) -> str:
@@ -199,7 +200,7 @@ def note_run_start(
         "actor": actor,
         "origin_kind": origin_kind,
         "origin": origin,
-        "autonomy": autonomy_label(),
+        "autonomy": autonomy_label(run_id),
         "fingerprint": fingerprint(spec),
         "run_id": run_id,
     }
@@ -236,7 +237,7 @@ def note_child(
         "actor": parent.get("actor") or SYSTEM_PRINCIPAL_ID,
         "origin_kind": "parent",
         "origin": parent_run_id,
-        "autonomy": parent.get("autonomy") or autonomy_label(),
+        "autonomy": parent.get("autonomy") or autonomy_label(parent_run_id),
         "fingerprint": fingerprint(spec),
         "run_id": child_run_id,
     }
