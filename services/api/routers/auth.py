@@ -32,6 +32,7 @@ from core.auth.auth_service import (
     raise_if_locked,
 )
 from core.auth.bootstrap_code import has_human_user, setup_code_matches
+from core.auth.current_user import _detached
 from core.auth.identity import claim_sign_in_names, identifier_in_use
 from core.auth.password_reset import (
     decode_reset_token,
@@ -85,7 +86,7 @@ def _bearer_token(request: Request) -> Optional[str]:
     return None
 
 
-async def _refuse_service_account(request: Request, session: UnitOfWorkSession):
+async def _refuse_service_account(request: Request):
     """Refuse a service account's token on every route but login and refresh.
 
     On the whole router, so a route added later can't leave it out. It never
@@ -93,6 +94,8 @@ async def _refuse_service_account(request: Request, session: UnitOfWorkSession):
     dependency (or none, for the public routes) decides as before. Both the
     access cookie and the bearer are checked, whichever the route would use.
     The header is read off the request so it stays out of the OpenAPI schema.
+    Its read is its own short session, like ``get_current_user``'s: the
+    request's would hold a connection while authentication takes another.
     """
     if request.scope.get("endpoint") in _SERVICE_ACCOUNT_ENDPOINTS:
         return
@@ -101,7 +104,7 @@ async def _refuse_service_account(request: Request, session: UnitOfWorkSession):
         user_id = payload.get("user_id") if payload else None
         if not user_id:
             continue
-        user = await asyncio.to_thread(_get_user, session, user_id)
+        user = await asyncio.to_thread(_detached, lambda db: _get_user(db, user_id))
         if user is not None and _is_service_account(user):
             await asyncio.to_thread(
                 trail_events.refused,

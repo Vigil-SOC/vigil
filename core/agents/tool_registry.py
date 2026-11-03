@@ -413,8 +413,8 @@ def list_cases(
     priority: Optional[str] = None,
     limit: int = 50,
 ) -> Any:
-    # Cases have no severity column, so severity filters priority. Both filters
-    # and the cap run in SQL; two different priorities match nothing.
+    # Cases have no severity column: severity names a priority, so both
+    # filters, and the cap, run in SQL. Two different priorities match nothing.
     if severity and priority and severity != priority:
         return []
     return _data().get_cases(limit=limit, status=status, priority=priority or severity)
@@ -582,9 +582,7 @@ def _case_records(args: Args) -> Args:
         )
         total = on_case.with_entities(func.count()).scalar() or 0
         page = (
-            on_case.options(
-                noload(Finding.cases), noload(Finding.mitre_prediction_rows)
-            )
+            on_case.options(noload(Finding.mitre_prediction_rows))
             .order_by(Finding.timestamp.desc().nulls_last(), Finding.finding_id)
             .offset(offset)
             .limit(limit)

@@ -499,13 +499,14 @@ def bulk_add_findings_to_case(
     try:
         from core.cases import case_journal_service
 
-        added = case_journal_service.link_findings(
+        result = case_journal_service.link_findings(
             get_data_service(), case_id, finding_ids
         )
-        if added is None:
+        if result is None:
             return jdump({"error": f"Case {case_id} not found"})
-        # Ids already on the case (or not written) count as failed.
-        failed = [f for f in finding_ids if f not in added]
+
+        added = result["added"]
+        failed = result["failed"]
 
         # Add activity noting what was added
         if added and note:

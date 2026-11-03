@@ -66,7 +66,7 @@ case_findings = Table(
     ),
     Column("added_at", DateTime, default=utcnow, nullable=False),
     # The primary key leads with case_id, so it cannot serve a lookup by
-    # finding: Finding.cases, the ON DELETE
-    # CASCADE from findings, and "which cases hold this finding".
+    # finding: Finding.cases, the ON DELETE CASCADE from findings, and "which
+    # cases hold this finding".
     Index("idx_case_findings_finding", "finding_id", "case_id"),
 )

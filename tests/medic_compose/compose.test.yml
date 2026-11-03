@@ -15,6 +15,9 @@
 services:
   medic:
     container_name: !reset null
+    # No signed pack ships yet: dev mode loads the medic-core source tree.
+    environment:
+      DEV_MODE: "true"
   medic-gateway:
     container_name: !reset null
   medic-dockerproxy:

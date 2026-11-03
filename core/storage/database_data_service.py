@@ -417,15 +417,13 @@ class DatabaseDataService:
         priority: Optional[str] = None,
     ) -> List[Dict]:
         if self._demo_mode and self._demo_service:
-            if not (status or priority):
-                return self._demo_service.get_cases(limit)
-            # Demo cases take no filters, so filter the sample rows here.
-            cases = [
-                case
-                for case in self._demo_service.get_cases()
-                if (not status or case.get("status") == status)
-                and (not priority or case.get("priority") == priority)
-            ]
+            cases = self._demo_service.get_cases(
+                10000 if (status or priority) else limit
+            )
+            if status:
+                cases = [c for c in cases if c.get("status") == status]
+            if priority:
+                cases = [c for c in cases if c.get("priority") == priority]
             return cases[:limit]
         if self._db_available:
             try:
