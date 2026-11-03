@@ -145,8 +145,11 @@ def _count_investigations_in_flight() -> int:
 
 # Rows actually running. An `assigned` row is stranded or transient, never
 # enqueued and waiting, so it must not count against the slot it needs freed:
-# counting it deadlocks pickup once `assigned` rows fill the cap (#1874).
-RUNNING_INVESTIGATION_STATUSES = ("executing", "waiting_approval")
+# counting it deadlocks pickup once `assigned` rows fill the cap (#1874). A parked
+# row has released its lease and calls no model, so unanswered approvals do not
+# stop new alerts being looked at. An answer resumes the run whatever this count
+# says: a step a person approved does not queue behind unrelated alerts.
+RUNNING_INVESTIGATION_STATUSES = ("executing",)
 
 
 def _count_investigations_running() -> int:
