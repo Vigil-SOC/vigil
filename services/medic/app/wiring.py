@@ -119,7 +119,12 @@ class EngineSink:
         self.engine.observe(dict(observation))
         if self.capture is not None and self.clock is not None:
             # `drain` runs just before `evaluate`: this is the tick it will see.
-            self.capture.write(observation, grid_tick(self.clock))
+            # If that tick was already evaluated (a quick restart, a clock step
+            # back), `evaluate` skips it and the engine sees this on the next.
+            tick, last = grid_tick(self.clock), self.engine.last_tick
+            if last is not None and tick <= last:
+                tick = int(last) + TICK_S
+            self.capture.write(observation, tick)
 
 
 class RecordingSensor:

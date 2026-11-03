@@ -83,6 +83,16 @@ def _write_manifest(
     os.replace(tmp, trace_dir / "manifest.json")
 
 
+def _trim(path: Path) -> bytes:
+    """The file's bytes up to its last newline: a failed or killed write can leave a
+    torn last line, which the validator counts as a line."""
+    data = path.read_bytes()
+    keep = data[: data.rfind(b"\n") + 1]
+    if len(keep) != len(data):
+        os.truncate(path, len(keep))
+    return keep
+
+
 def _source(path: Path) -> dict[str, Any]:
     """The manifest entry for one observations file, from what's on disk."""
     data = path.read_bytes()
@@ -137,9 +147,10 @@ class TraceCapture:
                 return
             f = self._files.get(sensor)
             if f is None:
-                path = self._dir / OBSERVATIONS / f"{sensor}.jsonl"
-                if not _SENSOR_FILE.fullmatch(f"{OBSERVATIONS}/{path.name}"):
+                name = f"{OBSERVATIONS}/{sensor}.jsonl"
+                if not _SENSOR_FILE.fullmatch(name):
                     raise ValueError("sensor id is not a trace file name")
+                path = self._dir / name
                 f = self._files[sensor] = open(path, "xb")  # noqa: SIM115
             f.write(line)
             f.flush()  # a kill loses little
@@ -165,6 +176,8 @@ class TraceCapture:
     def _finish(self, state: str, *, interrupted: bool, now: int) -> None:
         """Close the files and write the manifest; no observation, no trace."""
         was_open, self.state = self.state == "capturing", state
+        if state == "off":
+            self.id = None  # status: id is null when off
         for f in self._files.values():
             try:
                 f.close()
@@ -181,18 +194,13 @@ class TraceCapture:
                 return
             started = min(self._started, self._first)
             ended = max(now, self._last, started + 1)
-            sources = [
-                _source(p) for p in sorted((self._dir / OBSERVATIONS).glob("*.jsonl"))
-            ]
+            paths = sorted((self._dir / OBSERVATIONS).glob("*.jsonl"))
+            for p in paths:
+                _trim(p)
+            sources = [_source(p) for p in paths]
             _write_manifest(
                 self._dir, self._medic, sources, iso(started), iso(ended), interrupted
             )
-            if problems := validate(self._dir):
-                log.error(
-                    "Trace %s doesn't validate: %s",
-                    self.id,
-                    ", ".join(sorted({v.code for v in problems})),
-                )
         except Exception as exc:  # noqa: BLE001
             # No manifest: the next start finalises it from the files.
             log.error(
@@ -263,10 +271,7 @@ def _finalise(trace_dir: Path, medic: dict[str, Any]) -> None:
     arrived: list[datetime] = []
     obs_dir = trace_dir / OBSERVATIONS
     for path in sorted(obs_dir.glob("*.jsonl")) if obs_dir.is_dir() else ():
-        data = path.read_bytes()
-        keep = data[: data.rfind(b"\n") + 1]  # a killed write leaves a torn last line
-        if len(keep) != len(data):
-            os.truncate(path, len(keep))
+        keep = _trim(path)
         if not keep:
             path.unlink()
             continue
