@@ -45,6 +45,21 @@ Mechanism lives in `core/routing.py` (`legacy_prefixes`) and
 prefix; a router under `core/api/v1/` is namespaced `v1_<resource>` so it does
 not collide with the console router it split from).
 
+## Edits that name what they last saw
+
+`PATCH /api/v1/cases/{case_id}` (and its `/api/cases` mount) takes an optional
+`expected`: the values the caller last saw, for any of `title`, `description`,
+`status`, `priority` and `assignee`. If one of them no longer holds that value,
+the answer is a 409 with `{detail, conflicts: [{field, expected, current}]}` and
+nothing is written: no trail entry, no close, no SLA change, no note. Blank and
+null count as the same value. A field left out is written as it always was, so
+a caller that sends no `expected` sees no change, and two people editing
+different fields both land.
+
+`updated_at` cannot do this job. Runs and agents touch a case throughout an
+investigation, so a whole-row version would refuse every edit made during a run.
+The compare and the write share one transaction with the row locked.
+
 ## Deciding internal vs external
 
 A route is **external** (belongs here) if a caller that is not the Vigil

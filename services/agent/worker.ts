@@ -13,6 +13,7 @@ import { poolConfig, redisConfig } from "./core/db.js";
 import { bindHost, healthPort, healthServer } from "./core/health.js";
 import { GatewayExhausted } from "./core/limiter.js";
 import { errorFields, logger } from "./core/log.js";
+import { stopCauseOf } from "./core/provider.js";
 import { initTracing, shutdownTracing, traced } from "./core/tracing.js";
 import { jobIdFor, RUN_QUEUE, JOB_SCHEMA_VERSION, type RunJob } from "./contracts/job.js";
 import type { AgentEvent, CheckpointPayload, ResolutionPayload, RunPayload } from "./contracts/events.js";
@@ -353,7 +354,7 @@ export async function advance(
 async function forget(state: State, leases: Leases, job: RunJob, owner: string, error: unknown, last: boolean): Promise<void> {
   if ((await state.latestSeq(job.run_id)) === null) {
     if (job.reason === "start" && last) {
-      await mirrorFor().terminal(job.run_id, { outcome: "failed", reason: messageOf(error), summary: "" });
+      await mirrorFor().terminal(job.run_id, { outcome: "failed", reason: messageOf(error), stop_cause: stopCauseOf(error), summary: "" });
     }
     await leases.finish(job.run_id);
     return;
@@ -379,11 +380,11 @@ async function stopBecauseItCannotSucceed(
   if (error instanceof GatewayExhausted) {
     const reason = error.message;
     await state.append(job.run_id, [
-      { run_id: job.run_id, run_kind: job.run_kind, kind: "terminal", payload: { outcome: "budget_exhausted", reason } },
+      { run_id: job.run_id, run_kind: job.run_kind, kind: "terminal", payload: { outcome: "budget_exhausted", reason, stop_cause: error.kind } },
     ]);
     // abandon() does not report this error, so every kind, compose included, hears
     // budget_exhausted once. The spec-error path leaves compose to abandon().
-    await mirrorFor().terminal(job.run_id, { outcome: "budget_exhausted", reason, summary: "" });
+    await mirrorFor().terminal(job.run_id, { outcome: "budget_exhausted", reason, stop_cause: error.kind, summary: "" });
     await leases.finish(job.run_id);
     return true;
   }
@@ -441,6 +442,7 @@ async function settle(state: State, leases: Leases, job: RunJob, spec: RunSpec, 
       await mirrorFor().terminal(job.run_id, {
         outcome: terminal.outcome,
         reason: terminal.reason,
+        stop_cause: terminal.stop_cause,
         summary: terminal.summary ?? "",
         // A sealed hunt report already rounded to the row's four places. Other
         // kinds keep the raw sum, which the column rounds on its own.
@@ -472,7 +474,7 @@ export async function spentOn(state: State, runId: string): Promise<number> {
 // leaves its record open. One that died before the ledger opened is forget()'s.
 async function abandon(job: RunJob, error: unknown): Promise<void> {
   if (job.run_kind !== "compose" || error instanceof GatewayExhausted) return;
-  await mirrorFor().terminal(job.run_id, { outcome: "failed", reason: messageOf(error), summary: "" });
+  await mirrorFor().terminal(job.run_id, { outcome: "failed", reason: messageOf(error), stop_cause: stopCauseOf(error), summary: "" });
 }
 
 function messageOf(error: unknown): string {
@@ -597,7 +599,6 @@ export async function sweepOnce(leases: Leases, queue: Enqueue, limit = 50): Pro
       schema_version: JOB_SCHEMA_VERSION,
       run_id: claim.run_id,
       run_kind: claim.run_kind,
-      tenant_id: null,
       enqueued_at: new Date().toISOString(),
       enqueued_by: "system",
       reason: "resume",

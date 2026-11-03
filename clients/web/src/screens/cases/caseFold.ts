@@ -1,6 +1,7 @@
 // What the case page reads off GET /workflows/runs/{id}. Hunt-like runs arrive
 // under `hunt`; every other kind arrives under `projection`.
 import { sourceBadge } from '../../config/sourceBadges'
+import { STOP_CAUSES, stopCauseOf, type StopCause } from '../../shared/stopCause'
 import type { Phase } from './useCases'
 
 export interface CallRow {
@@ -145,6 +146,7 @@ interface RunMeta {
   reason: string
   /** The hunt's own status (`parked`, ...); empty for a run that is not a hunt. */
   huntStatus: string
+  stopCause: StopCause | null
 }
 
 /** The question a run is stopped on, as the run itself holds it. */
@@ -786,7 +788,7 @@ export function readFold(body: unknown): RunFold | null {
   const projection = row.projection && typeof row.projection === 'object' ? (row.projection as Record<string, unknown>) : null
   const folded = hunt ?? projection
   if (!folded) return null
-  const run = { status: str(row.status), error: str(row.error), reason: str(row.reason), huntStatus: str(hunt?.status) }
+  const run = { status: str(row.status), error: str(row.error), reason: str(row.reason), huntStatus: str(hunt?.status), stopCause: stopCauseOf(row.stop_cause) }
   // The head's run_kind decides; a body without one (a hunt before #2399) goes by the key it came under.
   const kind = str(folded.run_kind)
   if (kind === 'root_cause') return asHead(folded, run)
@@ -814,22 +816,26 @@ export interface StoppedRun {
   raw: string
   /** A hunt parked at one of its own limits (turns, time or budget), not on a question: Keep going lifts it. */
   atLimit: boolean
+  /** A model call is why it stopped: the line is the table's sentence, and the table holds the next step. */
+  cause: StopCause | null
 }
 
 const ENDED = ['failed', 'cancelled', 'canceled']
 
 export function stoppedRun(fold: RunFold | null): StoppedRun | null {
   if (!fold) return null
-  const { status, error, reason, huntStatus } = fold.run
+  const { status, error, reason, huntStatus, stopCause: cause } = fold.run
   const stopped = ENDED.includes(status)
   if (!stopped && huntStatus !== 'parked' && status !== 'paused') return null
   const raw = stopped ? error || fold.reason : fold.reason || reason
   const first = raw.split(' | ')[0].trim()
-  const line = first
-    ? `${first.charAt(0).toUpperCase()}${first.slice(1)}${/[.!?]$/.test(first) ? '' : '.'}`
-    : stopped ? 'The run ended without concluding and did not say why.' : 'The run is paused and did not say why.'
+  const line = cause
+    ? STOP_CAUSES[cause].sentence
+    : first
+      ? `${first.charAt(0).toUpperCase()}${first.slice(1)}${/[.!?]$/.test(first) ? '' : '.'}`
+      : stopped ? 'The run ended without concluding and did not say why.' : 'The run is paused and did not say why.'
   const atLimit = !stopped && fold.kind === 'hunt' && huntStatus === 'parked' && fold.openCheckpoint === null
-  return { state: stopped ? 'stopped' : 'paused', line, raw, atLimit }
+  return { state: stopped ? 'stopped' : 'paused', line, raw, atLimit, cause }
 }
 
 /** A run that ended for good without failing: what it found, in one statement read off the ledger's own
@@ -842,6 +848,8 @@ export interface EndedRun {
   /** The reason as the server wrote it, model prose included; '' when none was recorded. */
   raw: string
   question: OpenQuestionRow | null
+  /** A model call is why it ended here (a gateway budget refusal keeps its report): said beside the line. */
+  cause: StopCause | null
 }
 
 // The termination predicate's refusal names the question it would not conclude past.
@@ -853,10 +861,12 @@ export function endedRun(fold: RunFold | null): EndedRun | null {
   if (!fold || ENDED.includes(fold.run.status)) return null
   if (fold.run.status !== 'completed' && fold.run.huntStatus !== 'terminal') return null
   const concluded = `${fold.kind === 'hunt' ? 'hunt' : 'run'} concluded`
+  const cause = fold.run.stopCause
+  const said = cause ? STOP_CAUSES[cause].sentence : null
   const record = foldRecord(fold)
   if (!record) {
     const line = plural(fold.kind === 'lead' ? fold.findings.length : 0, 'finding')
-    return { line, reason: `${concluded} · ${line}`, raw: fold.reason, question: null }
+    return { line, reason: said ?? `${concluded} · ${line}`, raw: fold.reason, question: null, cause }
   }
   const tally = new Map<string, number>()
   for (const row of record.hypotheses) {
@@ -871,9 +881,10 @@ export function endedRun(fold: RunFold | null): EndedRun | null {
   const handedOff = record.hypotheses.some((row) => row.status === 'handed_off')
   return {
     line,
-    reason: handedOff ? `${concluded}, handed to IR` : `${concluded} · ${line}`,
+    reason: said ?? (handedOff ? `${concluded}, handed to IR` : `${concluded} · ${line}`),
     raw: fold.reason,
     question: cited ? record.openQuestions.find((q) => q.question_id === cited) ?? null : null,
+    cause,
   }
 }
 

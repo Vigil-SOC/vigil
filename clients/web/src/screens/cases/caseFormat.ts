@@ -1,4 +1,5 @@
 import { utcClock, utcDayClock } from '../../shared/utc'
+import type { Schema } from '../../services/apiTypes'
 import type { CaseInvestigationRef } from './useCases'
 
 export function when(value?: string | null): string {
@@ -28,4 +29,10 @@ export function errorDetail(error: unknown, fallback: string): string {
   const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
   if (typeof detail === 'string' && detail.trim()) return detail
   return (error as { message?: string })?.message || fallback
+}
+
+/** The fields a 409 from a case edit says have moved, or null for any other failure. */
+export function caseConflicts(error: unknown): Schema<'CaseFieldConflict'>[] | null {
+  const response = (error as { response?: { status?: number; data?: Partial<Schema<'CaseConflictResponse'>> } })?.response
+  return response?.status === 409 && response.data?.conflicts ? response.data.conflicts : null
 }

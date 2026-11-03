@@ -70,6 +70,24 @@
   font-size: 12px;
 }
 
+/* Trust strip (CaseDetail board): a 72x4 meter, then the text and its ⓘ. Neutral fill: no floor to judge against. */
+.case-page .dh-meta .case-trust-on {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--tx2);
+  white-space: nowrap;
+}
+.case-page .case-trust-bar {
+  width: 72px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg4);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.case-page .case-trust-bar > span { display: block; height: 100%; background: var(--tx2); }
+
 .case-page .case-sla.good { color: var(--good); }
 .case-page .case-sla.fair { color: var(--fair); }
 .case-page .case-sla.poor { color: var(--poor); }
@@ -693,7 +711,7 @@
 .case-page .case-disagree { display: flex; }
 
 .case-page .case-assess > span:first-child { margin-right: 4px; }
-.case-page .case-assess .case-assess-later { font-size: 12px; color: var(--tx3); }
+.case-page .case-assess .case-assess-done { color: var(--tx1); }
 .case-page .case-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .case-page .case-assess .case-actions { margin-left: auto; }
 
@@ -2003,3 +2021,20 @@
   .case-page .how-rows li { grid-template-columns: minmax(0, 1fr) auto; }
   .case-page .how-event { grid-column: 1 / -1; }
 }
+
+/* Edit dialog: another edit landed first. Fair, not poor: nothing has failed and nothing is lost. */
+.case-edit-conflicts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--fair-ln);
+  border-radius: var(--radius-card-inner);
+  background: var(--fair-bg);
+  color: var(--tx0);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.case-edit-conflicts p { margin: 0; }
+.case-edit-conflict { display: flex; flex-direction: column; gap: 8px; overflow-wrap: anywhere; }
+.case-edit-conflict > p { max-height: 120px; overflow-y: auto; }

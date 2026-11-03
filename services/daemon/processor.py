@@ -4,7 +4,9 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from redis.exceptions import RedisError
 
 from core.findings.exclusions import cached_active_ips, excluded_ips_of
 from core.ingestion.ack import settle_ack
@@ -29,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 _GATEWAY_OUTAGE = "daemon-triage-gateway"
 _PROVIDER_OUTAGE = "daemon-triage-provider"
+_QUEUE_OUTAGE = "daemon-triage-queue"
 
 # After this many consecutive failures (e.g. no provider key), pause enrichment
 # for the cooldown so a backfill can't stampede a dead gateway. Findings still ingest.
@@ -76,6 +79,8 @@ class FindingProcessor:
         # Bounded so a stalled processor holds producers back (put blocks)
         # instead of piling findings up in memory.
         self.input_queue: asyncio.Queue = asyncio.Queue(maxsize=INPUT_QUEUE_MAXSIZE)
+        # Set by the daemon: watch(name, task, shutdown_event) for /status loops.
+        self.watch_loop: Optional[Callable[..., None]] = None
 
         # Services (lazy loaded)
         self._data_service = None
@@ -235,7 +240,11 @@ class FindingProcessor:
 
         # Start worker tasks
         workers = [
-            asyncio.create_task(self._process_worker(i, shutdown_event))
+            self._watched(
+                f"_process_worker[{i}]",
+                asyncio.create_task(self._process_worker(i, shutdown_event)),
+                shutdown_event,
+            )
             for i in range(self.config.max_concurrent_tasks)
         ]
 
@@ -243,6 +252,11 @@ class FindingProcessor:
         backfill = asyncio.create_task(self._backfill_loop(shutdown_event))
         # Triages findings the API stored right away, ahead of the next sweep.
         signals = asyncio.create_task(self._signal_loop(shutdown_event))
+        # With their feature off these return at once, which is not a death.
+        if self._backfill_enabled():
+            self._watched("_backfill_loop", backfill, shutdown_event)
+        if self._signal_enabled():
+            self._watched("_signal_loop", signals, shutdown_event)
 
         # Wait for shutdown
         await shutdown_event.wait()
@@ -255,6 +269,18 @@ class FindingProcessor:
             *workers, backfill, signals, *pending, return_exceptions=True
         )
         logger.info("Finding processor stopped")
+
+    def _watched(self, name: str, task: "asyncio.Task", shutdown_event: asyncio.Event):
+        """Register a long-lived loop task with the /status watcher, if any."""
+        if self.watch_loop:
+            self.watch_loop(name, task, shutdown_event)
+        return task
+
+    def _backfill_enabled(self) -> bool:
+        return self.config.enrich_backfill_enabled and self._signal_enabled()
+
+    def _signal_enabled(self) -> bool:
+        return bool(self.config.auto_triage_enabled or self.config.auto_enrich_enabled)
 
     async def _process_worker(self, worker_id: int, shutdown_event: asyncio.Event):
         """Worker coroutine for processing findings."""
@@ -457,9 +483,7 @@ class FindingProcessor:
         breaker was paused, or the daemon restarted mid-flight — or whose triage
         recorded an error and never succeeded (#965). Gentle: small batches,
         skips while the breaker is open, paced by the in-flight cap."""
-        if not self.config.enrich_backfill_enabled:
-            return
-        if not (self.config.auto_triage_enabled or self.config.auto_enrich_enabled):
+        if not self._backfill_enabled():
             return
 
         while not shutdown_event.is_set():
@@ -502,7 +526,7 @@ class FindingProcessor:
         """Triage findings the API process stored, within seconds, instead of
         at the next backfill sweep. The API publishes their ids on Redis; with
         no Redis the sweep still finds them."""
-        if not (self.config.auto_triage_enabled or self.config.auto_enrich_enabled):
+        if not self._signal_enabled():
             return
         while not shutdown_event.is_set():
             client = None
@@ -741,10 +765,9 @@ REASONING: [Brief explanation]
                 from core.llm.gateway.gateway import get_llm_gateway
 
                 self._llm_gateway = await get_llm_gateway()
-                if not report_recovered(
+                report_recovered(
                     logger, _GATEWAY_OUTAGE, "LLM gateway connected for AI triage"
-                ):
-                    logger.info("LLM gateway connected for AI triage")
+                )
             except Exception as e:
                 report_outage(
                     logger,
@@ -811,9 +834,22 @@ REASONING: [Brief explanation]
             )
         except asyncio.TimeoutError:
             raise  # _triage_finding reports it against DAEMON_TRIAGE_TIMEOUT
-        except Exception as e:
-            logger.error(f"LLM queue triage error: {e}")
+        except RedisError as e:
+            # Class name only: Redis error text can carry connection details.
+            report_outage(
+                logger,
+                _QUEUE_OUTAGE,
+                "LLM queue unreachable, AI triage is failing: %s",
+                type(e).__name__,
+            )
             return None, f"{type(e).__name__}: {e}"
+        except Exception as e:
+            logger.error("LLM queue triage error: %s: %s", type(e).__name__, e)
+            return None, f"{type(e).__name__}: {e}"
+        # An error dict from the worker still means the queue was reachable.
+        report_recovered(
+            logger, _QUEUE_OUTAGE, "LLM queue reachable, AI triage resumed"
+        )
         if result is None:
             return None, "LLM returned no result"
         if isinstance(result, dict):

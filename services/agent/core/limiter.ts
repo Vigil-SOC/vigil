@@ -1,4 +1,5 @@
 import pLimit from "p-limit";
+import { ZERO_TOKENS } from "../contracts/budget.js";
 import { errorFields, logger } from "./log.js";
 import { ProviderError } from "./provider.js";
 
@@ -9,7 +10,11 @@ export interface RateLimit {
 
 // The gateway saying its own budget is gone. Distinct from a Refusal, which is
 // this layer's pool declining a call it has not yet made.
-export class GatewayExhausted extends Error {}
+export class GatewayExhausted extends ProviderError {
+  constructor(message: string) {
+    super(message, ZERO_TOKENS, "gateway_budget_refused");
+  }
+}
 
 // A call whose answer had begun reaching the reader when it failed. Not retried:
 // a second answer would follow the first. Carries what the cut-off answer burned.

@@ -2104,6 +2104,31 @@
   "nullable": false,
   "type": "text[]"
  },
+ "column episodic_notes.concluded_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp with time zone"
+ },
+ "column episodic_notes.entity_key": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column episodic_notes.id": {
+  "default": "nextval('episodic_notes_id_seq'::regclass)",
+  "nullable": false,
+  "type": "bigint"
+ },
+ "column episodic_notes.statement": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column episodic_notes.written_by": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
  "column episodic_read_log.as_of": {
   "default": null,
   "nullable": false,
@@ -2335,6 +2360,11 @@
   "type": "integer"
  },
  "column federation_sources.last_error": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column federation_sources.last_error_kind": {
   "default": null,
   "nullable": true,
   "type": "text"
@@ -3759,6 +3789,11 @@
   "nullable": false,
   "type": "character varying(16)"
  },
+ "column workflow_runs.stop_cause": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
  "column workflow_runs.total_cost_usd": {
   "default": "0",
   "nullable": false,
@@ -3881,6 +3916,8 @@
  "constraint episodic_gaps.episodic_gaps_investigation_kind_check": "CHECK ((investigation_kind = ANY (ARRAY['hunt'::text, 'case'::text, 'analyst'::text])))",
  "constraint episodic_gaps.episodic_gaps_pkey": "PRIMARY KEY (id)",
  "constraint episodic_gaps.episodic_gaps_unique": "UNIQUE (investigation_kind, investigation_id, hypothesis_id)",
+ "constraint episodic_notes.episodic_notes_pkey": "PRIMARY KEY (id)",
+ "constraint episodic_notes.episodic_notes_statement_check": "CHECK ((length(statement) > 0))",
  "constraint episodic_read_log.episodic_read_log_pkey": "PRIMARY KEY (id)",
  "constraint episodic_sightings.episodic_sightings_hit_count_check": "CHECK ((hit_count > 0))",
  "constraint episodic_sightings.episodic_sightings_investigation_kind_check": "CHECK ((investigation_kind = ANY (ARRAY['hunt'::text, 'case'::text, 'analyst'::text])))",
@@ -3899,6 +3936,7 @@
  "constraint episodic_verdicts.episodic_verdicts_unique": "UNIQUE (investigation_kind, investigation_id, hypothesis_id)",
  "constraint episodic_verdicts.episodic_verdicts_window": "CHECK ((first_seen <= last_seen))",
  "constraint episodic_verdicts.episodic_verdicts_window_source_check": "CHECK ((window_source = ANY (ARRAY['observed'::text, 'asserted'::text])))",
+ "constraint federation_sources.federation_sources_last_error_kind_check": "CHECK ((last_error_kind = ANY (ARRAY['auth'::text, 'network'::text, 'config'::text, 'quota'::text, 'upstream'::text, 'unknown'::text])))",
  "constraint federation_sources.federation_sources_pkey": "PRIMARY KEY (source_id)",
  "constraint finding_mitre_predictions.finding_mitre_predictions_finding_id_fkey": "FOREIGN KEY (finding_id) REFERENCES findings(finding_id) ON DELETE CASCADE",
  "constraint finding_mitre_predictions.finding_mitre_predictions_pkey": "PRIMARY KEY (finding_id, technique_id)",
@@ -4108,6 +4146,7 @@
  "index episodic_distil_markers_pkey": "CREATE UNIQUE INDEX episodic_distil_markers_pkey ON public.episodic_distil_markers USING btree (investigation_kind, investigation_id)",
  "index episodic_gaps_pkey": "CREATE UNIQUE INDEX episodic_gaps_pkey ON public.episodic_gaps USING btree (id)",
  "index episodic_gaps_unique": "CREATE UNIQUE INDEX episodic_gaps_unique ON public.episodic_gaps USING btree (investigation_kind, investigation_id, hypothesis_id)",
+ "index episodic_notes_pkey": "CREATE UNIQUE INDEX episodic_notes_pkey ON public.episodic_notes USING btree (id)",
  "index episodic_read_log_pkey": "CREATE UNIQUE INDEX episodic_read_log_pkey ON public.episodic_read_log USING btree (id)",
  "index episodic_sightings_pkey": "CREATE UNIQUE INDEX episodic_sightings_pkey ON public.episodic_sightings USING btree (id)",
  "index episodic_sightings_unique": "CREATE UNIQUE INDEX episodic_sightings_unique ON public.episodic_sightings USING btree (entity_key, investigation_kind, investigation_id, source_system)",
@@ -4206,6 +4245,7 @@
  "index idx_episodic_gaps_investigation": "CREATE INDEX idx_episodic_gaps_investigation ON public.episodic_gaps USING btree (investigation_kind, investigation_id)",
  "index idx_episodic_gaps_recall": "CREATE INDEX idx_episodic_gaps_recall ON public.episodic_gaps USING btree (concluded_at DESC, id)",
  "index idx_episodic_gaps_subjects": "CREATE INDEX idx_episodic_gaps_subjects ON public.episodic_gaps USING gin (subject_entities)",
+ "index idx_episodic_notes_recall": "CREATE INDEX idx_episodic_notes_recall ON public.episodic_notes USING btree (entity_key, concluded_at DESC, id)",
  "index idx_episodic_read_log_keys": "CREATE INDEX idx_episodic_read_log_keys ON public.episodic_read_log USING gin (keys)",
  "index idx_episodic_read_log_ts": "CREATE INDEX idx_episodic_read_log_ts ON public.episodic_read_log USING btree (ts)",
  "index idx_episodic_sightings_investigation": "CREATE INDEX idx_episodic_sightings_investigation ON public.episodic_sightings USING btree (investigation_kind, investigation_id)",
@@ -5349,6 +5389,44 @@
   ],
   "sequence": "[\"bigint\", 1, 1, 1, 9223372036854775807, 1, false]"
  },
+ "relation episodic_notes": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation episodic_notes_id_seq": {
+  "acl": [
+   "app:SELECT",
+   "app:USAGE",
+   "owner:SELECT",
+   "owner:UPDATE",
+   "owner:USAGE"
+  ],
+  "kind": "S",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": "[\"bigint\", 1, 1, 1, 9223372036854775807, 1, false]"
+ },
  "relation episodic_read_log": {
   "acl": [
    "app:DELETE",
@@ -6210,7 +6288,6 @@
  "schema public": {
   "acl": [
    "PUBLIC:USAGE",
-   "app:CREATE",
    "app:USAGE",
    "pg_database_owner:CREATE",
    "pg_database_owner:USAGE"

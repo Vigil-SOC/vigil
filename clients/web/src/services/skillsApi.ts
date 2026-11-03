@@ -50,6 +50,13 @@ export interface ApiSkillTest {
   results: { name: string; passed: boolean; missing: string[] }[]
 }
 
+/** A draft from POST /api/skills/generate: what the drawer's form holds. Nothing is saved until Save. */
+export interface SkillDraft {
+  name: string
+  description: string
+  body: string
+}
+
 export const skillsApi = {
   list: () => api.get<ApiSkill[]>('/skills').then((r) => r.data),
   get: (name: string) => api.get<ApiSkillDetail>(`/skills/${encodeURIComponent(name)}`).then((r) => r.data),
@@ -68,6 +75,8 @@ export const skillsApi = {
       .post<ApiSkill>('/skills/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } })
       .then((r) => r.data)
   },
+  generate: (description: string) =>
+    api.post<{ draft: SkillDraft }>('/skills/generate', { description }, { timeout: LLM_TIMEOUT }).then((r) => r.data.draft),
   test: (name: string) =>
     api
       .post<ApiSkillTest>(`/skills/${encodeURIComponent(name)}/test`, null, { timeout: LLM_TIMEOUT })

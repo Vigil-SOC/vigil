@@ -13,6 +13,7 @@ import type {
   RunKind,
   RunOutcome,
   RunPayload,
+  Confidence,
   Severity,
   TerminalHandoff,
   TerminalPayload,
@@ -33,7 +34,7 @@ import { unboundCapabilities, type RunSpec, type ToolSpec } from "./spec.js";
 import { hardStop, persistAsk, schemaErrors, streamTurn, type StreamEvent } from "./stream.js";
 import { childRunId, Framer } from "./frames.js";
 import { classify, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, SKILL_TOOL, starved, type RecordBackend } from "./record.js";
-import { SEVERITIES, type RunEventKind } from "../contracts/events.js";
+import { CONFIDENCES, SEVERITIES, type RunEventKind, type StopCause } from "../contracts/events.js";
 
 // The kernel: streamTurn's loop driven by a plugin, adding what every plugin needs: calls
 // journaled and resumed from, its answer shape, a second look, a stop honoured mid-call, one end.
@@ -65,7 +66,7 @@ export interface PluginContext {
 // Before the loop: park on a question of the plugin's own, or end the run here.
 export type Early =
   | { kind: "park"; checkpoint_id?: string; reason: string; tool?: string | null; args?: string | null }
-  | { kind: "end"; outcome: RunOutcome; reason: string; summary?: string | null; handoffs?: TerminalHandoff[] };
+  | { kind: "end"; outcome: RunOutcome; reason: string; summary?: string | null; handoffs?: TerminalHandoff[]; stop_cause?: StopCause | undefined };
 
 export interface Ending {
   outcome: RunOutcome;
@@ -287,7 +288,7 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
   if (denied !== null && Date.now() - denied.at < DENIAL_RECHECK_MS) return report(ctx, "waiting_approval", denied.reason, null);
 
   const early = (await options.hooks?.before?.(ctx)) ?? null;
-  if (early?.kind === "end") return end(ctx, early.outcome, early.reason, early.summary, early.handoffs);
+  if (early?.kind === "end") return end(ctx, early.outcome, early.reason, { summary: early.summary, handoffs: early.handoffs, stop_cause: early.stop_cause });
   if (early?.kind === "park") {
     if (early.checkpoint_id === undefined) return report(ctx, "waiting_approval", early.reason, null);
     await announceOpen(harness.state, run_id, options.run_kind, early.checkpoint_id, options.announce ?? noAnnounce);
@@ -316,11 +317,11 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
     if (loop.kind === "lost") return report(ctx, "aborted", LOST_LEASE, null);
     if (loop.kind === "exhausted") {
       const ending = await (options.hooks?.exhausted as NonNullable<PluginHooks["exhausted"]>)(ctx, loop.reason);
-      return end(ctx, ending.outcome, ending.reason, ending.summary, ending.handoffs);
+      return end(ctx, ending.outcome, ending.reason, { summary: ending.summary, handoffs: ending.handoffs, stop_cause: causeOfEnding(ending, "gateway_budget_refused") });
     }
     if (loop.kind === "halted") {
       const ending = (await options.hooks?.halted?.(ctx)) ?? { outcome: "completed" as const, reason: "the plugin ended the run" };
-      return isParked(ending) ? wait(ctx, ending) : end(ctx, ending.outcome, ending.reason, ending.summary, ending.handoffs);
+      return isParked(ending) ? wait(ctx, ending) : end(ctx, ending.outcome, ending.reason, { summary: ending.summary, handoffs: ending.handoffs });
     }
     const ending = (await options.hooks?.finish?.(ctx, loop.outcome)) ?? null;
     if (ending !== null && isParked(ending)) return wait(ctx, ending);
@@ -331,10 +332,10 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
         const answered = await harness.state.read(run_id);
         await harness.state.append(run_id, [event(options, "review", await reviewOf(ctx, loop.conclusion, callsIn(answered)))]);
       }
-      return end(ctx, ending.outcome, ending.reason, ending.summary, ending.handoffs, ending.severity);
+      return end(ctx, ending.outcome, ending.reason, { summary: ending.summary, handoffs: ending.handoffs, severity: ending.severity, stop_cause: causeOfEnding(ending, loop.outcome.stop_cause) });
     }
     if (loop.outcome.status !== "completed" || loop.outcome.value === null) {
-      return end(ctx, loop.outcome.refusal === null ? "failed" : "budget_exhausted", loop.outcome.reason);
+      return end(ctx, loop.outcome.refusal === null ? "failed" : "budget_exhausted", loop.outcome.reason, { stop_cause: loop.outcome.stop_cause });
     }
     if (loop.conclusion === null) return end(ctx, "failed", "the run answered but nothing was concluded");
     held = await harness.state.read(run_id);
@@ -353,16 +354,12 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
   const structured = isStructured(options.plugin.conclusion) ? options.plugin.conclusion : null;
   const cited = structured?.citations_field === undefined ? [] : citedRefs(conclusion.value[structured.citations_field]);
   const blind = recordModeOf(options.plugin) === "required" && starved(held, cited);
-  return end(
-    ctx,
-    blind ? "data_starved" : "completed",
-    summaryOf(options.plugin, conclusion, review),
-    undefined,
-    undefined,
-    severityOf(options.plugin, conclusion),
-    proposalsOf(options.plugin, conclusion),
-    dispositionOf(options.plugin, conclusion, review),
-  );
+  return end(ctx, blind ? "data_starved" : "completed", summaryOf(options.plugin, conclusion, review), {
+    severity: severityOf(options.plugin, conclusion),
+    proposed: proposalsOf(options.plugin, conclusion),
+    disposition: dispositionOf(options.plugin, conclusion, review),
+    confidence: confidenceOf(options.plugin, conclusion),
+  });
 }
 
 // The registry and dispatch the run actually holds: the deployment's tools, the
@@ -939,7 +936,6 @@ export async function runChild<T>(ctx: ParentRun, key: string, turn: TurnConfig)
       spec,
       budgets: harness.budget.limits,
       seed: child,
-      tenant_id: null,
       started_by: options.started_by ?? options.run_id,
       ...(options.origin === undefined ? {} : { origin: "parent" as const }),
       parent: { run_id: options.run_id, run_kind: options.run_kind, role: turn.role, key },
@@ -1118,7 +1114,7 @@ async function stopped(ctx: PluginContext, directive: DirectivePayload): Promise
   const text = directive.text.trim();
   const reason = text === "" ? "an operator stopped the run" : `an operator stopped the run: ${text}`;
   const summary = await ctx.options.hooks?.stopped?.(ctx, directive);
-  return end(ctx, "aborted", reason, summary);
+  return end(ctx, "aborted", reason, { summary });
 }
 
 // --- review --------------------------------------------------------------
@@ -1277,6 +1273,13 @@ export function severityOf(plugin: PluginManifest, conclusion: Pick<ConclusionPa
   return (SEVERITIES as readonly unknown[]).includes(rated) ? (rated as Severity) : undefined;
 }
 
+// How sure the answer said it was, when its plugin asks and it is one of CONFIDENCES.
+export function confidenceOf(plugin: PluginManifest, conclusion: Pick<ConclusionPayload, "value">): Confidence | undefined {
+  const field = isStructured(plugin.conclusion) ? plugin.conclusion.confidence_field : undefined;
+  const stated = field === undefined ? undefined : conclusion.value[field];
+  return (CONFIDENCES as readonly unknown[]).includes(stated) ? (stated as Confidence) : undefined;
+}
+
 // The disposition the answer gave, as the guard left it: a held benign goes out as its fallback.
 export function dispositionOf(plugin: PluginManifest, conclusion: ConclusionPayload, review: ReviewPayload): string | undefined {
   const field = isStructured(plugin.conclusion) ? plugin.conclusion.disposition_field : undefined;
@@ -1358,7 +1361,6 @@ async function open(harness: Harness<Kinds>, options: AgentOptions): Promise<voi
       spec,
       budgets: harness.budget.limits,
       seed: options.run_id,
-      tenant_id: null,
       started_by: options.started_by ?? "worker",
       ...(options.principal === undefined ? {} : { principal: options.principal }),
       ...(options.origin === undefined ? {} : { origin: options.origin }),
@@ -1375,7 +1377,6 @@ async function open(harness: Harness<Kinds>, options: AgentOptions): Promise<voi
       spec,
       budgets: harness.budget.limits,
       seed: options.run_id,
-      tenant_id: null,
       started_by: options.started_by ?? "worker",
       ...(options.principal === undefined ? {} : { principal: options.principal }),
       ...(options.origin === undefined ? {} : { origin: options.origin }),
@@ -1394,15 +1395,26 @@ async function wait(ctx: PluginContext, parked: Parked): Promise<AgentReport> {
   return report(ctx, "waiting_approval", parked.parked, parked.checkpoint_id === undefined ? null : { checkpoint_id: parked.checkpoint_id, tool: null, args: null });
 }
 
+// A plugin may still conclude after the call failed, and then the failure is not why it ended.
+function causeOfEnding(ending: Ending, cause: StopCause | undefined): StopCause | undefined {
+  return ending.outcome === "completed" ? undefined : cause;
+}
+
+interface EndFields {
+  summary?: string | null | undefined;
+  handoffs?: readonly TerminalHandoff[] | undefined;
+  severity?: Severity | undefined;
+  proposed?: readonly ProposedAction[] | undefined;
+  disposition?: string | undefined;
+  confidence?: Confidence | undefined;
+  stop_cause?: StopCause | undefined;
+}
+
 async function end(
   ctx: PluginContext,
   outcome: RunOutcome,
   reason: string,
-  summary?: string | null,
-  handoffs?: readonly TerminalHandoff[],
-  severity?: Severity,
-  proposed: readonly ProposedAction[] = [],
-  disposition?: string,
+  { summary, handoffs, severity, proposed = [], disposition, confidence, stop_cause }: EndFields = {},
 ): Promise<AgentReport> {
   // Something outside the run may have ended it while a call was in flight. Its
   // terminal stands; a second would give the run two endings.
@@ -1421,12 +1433,14 @@ async function end(
   const payload: TerminalPayload = {
     outcome,
     reason,
+    ...(stop_cause === undefined ? {} : { stop_cause }),
     ...(deliver === undefined ? {} : { summary: deliver }),
     ...(handoffs === undefined ? {} : { handoffs: [...handoffs] }),
     ...(severity === undefined ? {} : { severity }),
     ...(proposed.length === 0 ? {} : { proposed_actions: [...proposed] }),
     ...(finished_at === undefined ? {} : { finished_at }),
     ...(disposition === undefined ? {} : { disposition }),
+    ...(confidence === undefined ? {} : { confidence }),
   };
   await ctx.harness.state.append(ctx.options.run_id, [event(ctx.options, "terminal", payload)]);
   await ctx.options.hooks?.ended?.(ctx, payload);

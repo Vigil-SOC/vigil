@@ -6,8 +6,12 @@ a record in between reading the head and writing the next one. Sealing and
 verifying are the contract's own code (`contracts/decision_chain.py`), not a
 copy, so the store's hashes are the contract's by construction.
 
-Not here yet (G3): retention and purge, anchors, the size-cap incident, the
-reserve row, the free-space guard, the 16 KB record cap and the corruption reset.
+Bounded (G3b): a 16 KB record cap, a size cap (SQLite `max_page_count`) with a
+reserve held as a filler row, and a free-space guard. At a bound the writer
+stops recording: `append` raises RecordHeld, except for `reserve=True` records
+(the recording-stopped incident), which are written into the freed reserve.
+
+Not here yet (G3): retention and purge, anchors and the corruption reset.
 """
 
 from __future__ import annotations
@@ -19,7 +23,7 @@ import os
 import shutil
 import sqlite3
 import threading
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -47,8 +51,17 @@ SCHEMA_VERSION = 1  # of the SQLite layout below, not of the record (that's `v`)
 
 MIB = 2**20
 GIB = 2**30
-RESERVE_BYTES = 64 * MIB  # C4 §6.4; held as a filler row from G3 on
+RESERVE_BYTES = 64 * MIB  # C4 §6.4; held as a filler row inside the file
+# A cap too small for 64 MiB gets a reserve of a sixteenth of it (the default
+# 1 GiB cap gets exactly 64 MiB).
+RESERVE_FRACTION = 16
 NEAR_CAP_PERCENT = 80  # C4 §6.4 step 1
+RECORD_CAP = 16 * 1024  # bytes of a stored record's canonical JSON (G3b)
+# Recording resumes only with this share of the cap to spare, so it can't flap.
+RESUME_MARGIN_PERCENT = 5
+# Shared disks (Compose, host-native): stop below the larger of 10 % and 2 GiB free.
+DISK_FLOOR_PERCENT = 10
+DISK_FLOOR_MIN = 2 * GIB
 JOURNAL_SIZE_LIMIT = 16 * MIB
 # A reader waits this long for the file, then fails. Shorter than the writer's
 # 5 s: an open reader holds back WAL checkpoints (C4 §6.7).
@@ -83,6 +96,11 @@ def _first_float(node: Any, path: str) -> str | None:
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- The reserve: one filler row, deleted to make room when the cap is hit.
+CREATE TABLE IF NOT EXISTS reserve (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    filler BLOB NOT NULL
+);
 CREATE TABLE IF NOT EXISTS records (
     seq INTEGER PRIMARY KEY,
     hash TEXT NOT NULL UNIQUE,
@@ -110,6 +128,10 @@ class RecordRefused(StoreError):
         self.where = where
 
 
+class RecordHeld(StoreError):
+    """Recording is stopped (cap or free space): the record was not written."""
+
+
 @dataclass(frozen=True)
 class VerifyReport:
     ok: bool
@@ -128,25 +150,16 @@ class VerifyReport:
 
 @dataclass(frozen=True)
 class StoreUsage:
-    """A report only: nothing is enforced or purged yet (G3)."""
-
-    used_bytes: int
-    cap_bytes: int
+    used_bytes: int  # file + wal + shm
+    cap_bytes: int  # the effective cap: SQLite won't go below the file's size
     reserve_bytes: int
+    reserve_left_bytes: int
     free_bytes: int
-    state: str  # ok | near_cap | over_cap
-
-    @property
-    def free_covers_reserve(self) -> bool:
-        return self.free_bytes >= self.reserve_bytes
+    states: tuple[str, ...]  # StoreHealth.states (medic-api.openapi.yaml)
 
 
-def usage_state(used: int, cap: int) -> str:
-    if used > cap:
-        return "over_cap"
-    if used * 100 >= cap * NEAR_CAP_PERCENT:
-        return "near_cap"
-    return "ok"
+def _is_full(err: BaseException) -> bool:
+    return isinstance(err, sqlite3.OperationalError) and "full" in str(err)
 
 
 def utc_now() -> str:
@@ -224,6 +237,9 @@ class DecisionWriter:
         instance_id: str,
         cap_bytes: int,
         validator: Draft202012Validator,
+        *,
+        guard: bool = True,
+        disk_usage: Callable[[Path], Any] = shutil.disk_usage,
     ) -> None:
         self.root = root
         self.instance_id = instance_id
@@ -232,14 +248,37 @@ class DecisionWriter:
         self._cap = cap_bytes
         self._validator = validator
         self._mutex = threading.Lock()
+        self._guard = guard  # the free-space floor; off on Helm (the cap is clamped)
+        self._disk_usage = disk_usage  # the one seam to the filesystem's free space
+        self._reserve = min(RESERVE_BYTES, cap_bytes // RESERVE_FRACTION)
+        # SQLite won't set the limit below the file's size: read back what it took.
+        pages = max(1, cap_bytes // self._page_size(conn))
+        self._max_page_count = conn.execute(
+            f"PRAGMA max_page_count = {pages}"
+        ).fetchone()[0]
+        self._filler = conn.execute("SELECT count(*) FROM reserve").fetchone()[0] > 0
+        self._stop: str | None = None  # why recording is stopped, if it is
+        self.excerpts_dropped = 0
+        if self._max_page_count * self._page_size(conn) > cap_bytes:
+            log.warning(
+                "Store cap %d bytes is below the store's size; the effective cap is %d",
+                cap_bytes,
+                self._max_page_count * self._page_size(conn),
+            )
+        self._assess(conn)
 
     # -- writes ---------------------------------------------------------------------
 
-    def append(self, record: dict[str, Any]) -> dict[str, Any]:
+    def append(
+        self, record: dict[str, Any], *, reserve: bool = False
+    ) -> dict[str, Any]:
         """Seal `record` onto the chain and commit it. Returns the stored record.
 
         The caller supplies `v`, `at`, `type` and `body`; the writer owns `seq`,
-        `prev` and `hash`, so a caller can't fork or rewind the chain.
+        `prev` and `hash`, so a caller can't fork or rewind the chain. While
+        recording is stopped only `reserve=True` (the recording-stopped incident)
+        is written, into the freed reserve; anything else raises RecordHeld.
+        A record over RECORD_CAP loses excerpts, last evidence item first.
         """
         if not isinstance(record, dict):
             raise RecordRefused("E-SCHEMA", "$", "a record is a JSON object")
@@ -260,7 +299,36 @@ class DecisionWriter:
             # jsonschema calls 2.0 an integer, but Python hashes it as "2.0" and a
             # canonical-JSON verifier elsewhere as "2" (G2: integers only).
             raise RecordRefused("E-SCHEMA", where, "numbers are integers only")
-        return self._write(lambda last: decision_chain.seal(own, last))
+
+        def seal(last: dict[str, Any] | None) -> dict[str, Any]:
+            sealed = decision_chain.seal(own, last)
+            while (size := len(decision_chain.canonical(sealed))) > RECORD_CAP:
+                if not self._drop_excerpt(own):
+                    raise RecordRefused(
+                        "E-SIZE",
+                        "$",
+                        f"{size} bytes, over the {RECORD_CAP} cap, with no excerpt to drop",
+                    )
+                sealed = decision_chain.seal(own, last)
+            return sealed
+
+        return self._write(seal, reserve=reserve)
+
+    def _drop_excerpt(self, record: dict[str, Any]) -> bool:
+        """Drop the excerpt of the last evidence item that has one; count it."""
+        evidence = record.get("body", {}).get("evidence")
+        for i in range(len(evidence) - 1, -1, -1) if isinstance(evidence, list) else ():
+            if isinstance(evidence[i], dict) and evidence[i].pop("excerpt", None):
+                self.excerpts_dropped += 1
+                log.warning(
+                    "Record over %d bytes: dropped the excerpt of evidence item %d "
+                    "(%d dropped so far)",
+                    RECORD_CAP,
+                    i,
+                    self.excerpts_dropped,
+                )
+                return True
+        return False
 
     def reset(
         self,
@@ -292,9 +360,14 @@ class DecisionWriter:
 
         return self._write(seal)
 
-    def _write(self, seal) -> dict[str, Any]:
+    def _write(self, seal, *, reserve: bool = False) -> dict[str, Any]:
         with self._mutex:
             conn = self._open_conn()
+            self._assess(conn)
+            if self._stop and not reserve:
+                raise RecordHeld(
+                    f"recording is stopped ({self._stop}); nothing was written"
+                )
             try:
                 conn.execute("BEGIN IMMEDIATE")
             except sqlite3.OperationalError as err:
@@ -304,23 +377,42 @@ class DecisionWriter:
                     f"{self.root / DB_NAME}: another connection holds the write lock "
                     f"({err}); nothing was written"
                 ) from err
+            released = False
             try:
                 row = conn.execute(
                     "SELECT record FROM records ORDER BY seq DESC LIMIT 1"
                 ).fetchone()
                 sealed = seal(json.loads(row[0]) if row else None)
                 text = self._check(sealed)
+                if self._stop and self._filler:
+                    # Free the reserve; the insert below reuses its pages.
+                    conn.execute("DELETE FROM reserve")
+                    released = True
                 conn.execute(
                     "INSERT INTO records (seq, hash, record) VALUES (?, ?, ?)",
                     (sealed["seq"], sealed["hash"], text),
                 )
                 conn.execute("COMMIT")
-            except BaseException:
+            except BaseException as err:
                 # A failed COMMIT (SQLITE_FULL, I/O) may already have rolled back;
                 # an unconditional ROLLBACK would then hide the real error.
                 if conn.in_transaction:
                     conn.execute("ROLLBACK")
+                if _is_full(err) and not self._stop:
+                    # The hard cap (or a full disk) beat the soft check.
+                    self._trip("full")
+                    raise RecordHeld("the store is full; nothing was written") from err
+                if _is_full(err) and reserve:
+                    log.error(
+                        "The recording-stopped incident didn't fit: no room in the reserve"
+                    )
                 raise
+            if released:
+                self._filler = False
+                log.warning("Recording stopped: the reserve is released for incidents")
+            if self._stop:
+                # Fold the wal back, so the reserve's writes don't sit outside the cap.
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             return sealed
 
     def _check(self, sealed: dict[str, Any]) -> str:
@@ -346,22 +438,139 @@ class DecisionWriter:
         with self._mutex:
             return verify_rows(self._open_conn().execute(_SELECT_ALL), self._validator)
 
-    def usage(self) -> StoreUsage:
-        """Bytes used against the cap, and free disk against the reserve (stub)."""
-        used = 0
+    @property
+    def stopped(self) -> bool:
+        """True while recording is stopped (as of the last write or `refresh`)."""
+        return self._stop is not None
+
+    def refresh(self) -> bool:
+        """Re-check the bounds (and resume if room came back); returns `stopped`."""
         with self._mutex:
-            for name in (DB_NAME, DB_NAME + "-wal", DB_NAME + "-shm"):
-                try:
-                    used += (self.root / name).stat().st_size
-                except FileNotFoundError:
-                    pass
+            try:
+                self._assess(self._open_conn())
+            except (StoreError, sqlite3.Error) as exc:
+                log.error("Store bounds not checked: %s", type(exc).__name__)
+        return self.stopped
+
+    def usage(self) -> StoreUsage:
+        """Bytes used against the effective cap, the reserve, and free disk."""
+        with self._mutex:
+            conn = self._open_conn()
+            used = self._disk_bytes()
+            live = self._live_bytes(conn)
+            cap = self._max_page_count * self._page_size(conn)
+        left = self._reserve if self._filler else min(self._reserve, max(0, cap - live))
+        if self._stop:
+            states = (
+                ("recording_stopped",)
+                if self._filler
+                else ("on_reserve", "recording_stopped")
+            )
+        elif live * 100 >= self._cap * NEAR_CAP_PERCENT:
+            states = ("near_cap",)
+        else:
+            states = ("ok",)
         return StoreUsage(
             used_bytes=used,
-            cap_bytes=self._cap,
-            reserve_bytes=RESERVE_BYTES,
-            free_bytes=shutil.disk_usage(self.root).free,
-            state=usage_state(used, self._cap),
+            cap_bytes=cap,
+            reserve_bytes=self._reserve,
+            reserve_left_bytes=left,
+            free_bytes=self._disk_usage(self.root).free,
+            states=states,
         )
+
+    # -- bounds ---------------------------------------------------------------------
+
+    def _disk_bytes(self) -> int:
+        used = 0
+        for name in (DB_NAME, DB_NAME + "-wal", DB_NAME + "-shm"):
+            try:
+                used += (self.root / name).stat().st_size
+            except FileNotFoundError:
+                pass
+        return used
+
+    @staticmethod
+    def _page_size(conn: sqlite3.Connection) -> int:
+        return conn.execute("PRAGMA page_size").fetchone()[0]
+
+    def _live_bytes(self, conn: sqlite3.Connection, *, truncate: bool = False) -> int:
+        """What the store holds: pages in use (the freed reserve isn't) plus wal and
+        shm, which `max_page_count` doesn't bound. `truncate` first folds the wal
+        back into the file, as it's only ever shrunk by a checkpoint."""
+        if truncate:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        pages, free = (
+            conn.execute(f"PRAGMA {n}").fetchone()[0]
+            for n in ("page_count", "freelist_count")
+        )
+        extra = 0
+        for sfx in ("-wal", "-shm"):
+            try:
+                extra += (self.root / (DB_NAME + sfx)).stat().st_size
+            except FileNotFoundError:
+                pass
+        return (pages - free) * self._page_size(conn) + extra
+
+    def _floor(self, usage: Any) -> int | None:
+        if not self._guard:
+            return None
+        return max(usage.total * DISK_FLOOR_PERCENT // 100, DISK_FLOOR_MIN)
+
+    def _trip(self, reason: str) -> None:
+        self._stop = reason
+        log.error("Recording stopped (%s): Medic keeps detecting", reason)
+
+    def _arm(self, conn: sqlite3.Connection) -> bool:
+        """Fill the reserve. False if it doesn't fit (the cap's hard limit)."""
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "INSERT OR REPLACE INTO reserve (id, filler) VALUES (1, zeroblob(?))",
+                (self._reserve,),
+            )
+            conn.execute("COMMIT")
+        except BaseException as err:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            if _is_full(err):
+                return False
+            raise
+        self._filler = True
+        return True
+
+    def _assess(self, conn: sqlite3.Connection) -> None:
+        """Decide recording / stopped before a write: free space first, then size.
+        Stopped resumes only with room to spare, re-arming the reserve."""
+        try:
+            du = self._disk_usage(self.root)
+        except OSError as err:  # can't read free space: judge by size alone
+            log.error("Free space not read: %s", type(err).__name__)
+            du = None
+        floor = None if du is None else self._floor(du)
+        live = self._live_bytes(conn)
+        if live >= self._cap:
+            live = self._live_bytes(conn, truncate=True)
+        if self._stop is None:
+            if floor is not None and du.free < floor:
+                self._trip("disk")
+            elif live >= self._cap or (
+                not self._filler
+                and (live + self._reserve >= self._cap or not self._arm(conn))
+            ):
+                self._trip("cap")
+            return
+        # Stopped: room means the data, a reserve and a margin under the cap.
+        need = live + (0 if self._filler else self._reserve)
+        if need + self._cap * RESUME_MARGIN_PERCENT // 100 > self._cap:
+            return
+        if floor is not None and du.free < floor + self._reserve:
+            return
+        # A trip by SQLITE_FULL (a full disk) resumes only if the reserve fits again.
+        if (self._stop == "full" or not self._filler) and not self._arm(conn):
+            return
+        self._stop = None
+        log.warning("Recording resumed")
 
     def pragmas(self) -> dict[str, Any]:
         names = ("journal_mode", "synchronous", "auto_vacuum", "fullfsync")
@@ -445,9 +654,18 @@ def _connect(db: Path, busy_timeout_ms: int) -> sqlite3.Connection:
 
 
 def open_writer(
-    root: Path, *, cap_bytes: int = GIB, busy_timeout_ms: int = 5000
+    root: Path,
+    *,
+    cap_bytes: int = GIB,
+    busy_timeout_ms: int = 5000,
+    shape: str = "compose",
+    disk_usage: Callable[[Path], Any] = shutil.disk_usage,
 ) -> DecisionWriter:
     """Open (or create) `<root>/medic.db` as its one writer.
+
+    `shape` picks the disk rule: on Helm the volume is Medic's own, so the cap is
+    clamped to half of it; elsewhere the disk is shared and recording stops below
+    the free-space floor. `disk_usage` is the seam to the filesystem.
 
     Refuses (StoreRefused) a root or file that isn't private (files.mode_problem),
     a second writer (StoreLocked), a bad or missing instance id, a corrupt file,
@@ -455,6 +673,9 @@ def open_writer(
     """
     root = Path(root)
     prepare_root(root)
+    helm = shape == "helm"
+    if helm:
+        cap_bytes = min(cap_bytes, disk_usage(root).total // 2)
     lock_fd = _take_lock(root)
     conn: sqlite3.Connection | None = None
     try:
@@ -487,7 +708,21 @@ def open_writer(
         report.head_hash,
         instance_id,
     )
-    return DecisionWriter(root, conn, lock_fd, instance_id, cap_bytes, validator)
+    try:
+        return DecisionWriter(
+            root,
+            conn,
+            lock_fd,
+            instance_id,
+            cap_bytes,
+            validator,
+            guard=not helm,
+            disk_usage=disk_usage,
+        )
+    except BaseException:
+        conn.close()
+        os.close(lock_fd)
+        raise
 
 
 @contextmanager
