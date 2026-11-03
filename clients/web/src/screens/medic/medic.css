@@ -37,7 +37,9 @@
 .mdc-stale { margin: 0; font-size: 12px; color: var(--fair); }
 
 /* list: fixed columns so prose cannot decide a width; the title stops at two lines */
-.mdc-card:has(.mdc-tbl) { padding: 0; overflow: hidden; }
+.mdc-card:has(.mdc-tbl), .mdc-card:has(.mdc-sens) { padding: 0; overflow: hidden; }
+/* seven columns do not fit a phone: the table keeps a readable width and scrolls inside its card (shell.css) */
+.mdc-card:has(.mdc-sens) { overflow-x: auto; }
 .mdc-tbl { table-layout: fixed; }
 .mdc-tbl thead th, .mdc-tbl tbody td { overflow: hidden; }
 .mdc-tbl thead th:nth-child(1) { width: 19%; }
@@ -69,6 +71,19 @@
 .mdc-kids:disabled { cursor: default; }
 .mdc-unrated { color: var(--tx2); }
 .mdc-more { display: flex; justify-content: center; }
+
+/* sensors: fixed columns too, long ids and reasons wrap inside their cell */
+.mdc-sens { table-layout: fixed; min-width: 700px; }
+.mdc-sens thead th, .mdc-sens tbody td { overflow: hidden; white-space: normal; overflow-wrap: anywhere; vertical-align: top; }
+.mdc-sens thead th:nth-child(1) { width: 20%; }
+.mdc-sens thead th:nth-child(2) { width: 13%; }
+.mdc-sens thead th:nth-child(3), .mdc-sens thead th:nth-child(4) { width: 11%; }
+.mdc-sens thead th:nth-child(5) { width: 17%; }
+.mdc-sens thead th:nth-child(6) { width: 13%; }
+.mdc-sens tbody td:has(.empty-state-table) { white-space: normal; }
+.mdc-wrap { overflow-wrap: anywhere; }
+.mdc-link.mdc-cant { margin: 0; color: var(--poor); font-weight: 600; }
+.mdc-link.mdc-cant:hover { text-decoration: underline; }
 
 /* detail */
 .mdc-crumb { display: flex; }
