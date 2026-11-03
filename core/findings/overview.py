@@ -23,7 +23,7 @@ from core.storage.ip_exclusion_repository import exclusion_view_filter
 from core.storage.models import FederationSource, Finding, WorkflowRun, WorkflowRunPhase
 from core.time import utcnow
 from core.workflows.workflow_run_service import IN_FLIGHT_STATUSES
-from core.workflows.workflows_service import WorkflowsService
+from core.workflows.workflows_service import AGENT_RUN_PREFIX, WorkflowsService
 
 logger = logging.getLogger(__name__)
 
@@ -215,9 +215,13 @@ def _agent_rows(now: datetime) -> list[dict]:
                     phases[phase.run_id] = phase
         # Detach the bits we need before the session closes.
         steps = {}
+        listed = {workflow["id"] for workflow in workflows}
         for workflow_id, run in newest.items():
             phase = phases.get(run.run_id)
             steps[workflow_id] = phase.phase_id if phase is not None else run.status
+            # One agent run alone has no workflow to list under; it shows while it runs.
+            if workflow_id not in listed and workflow_id.startswith(AGENT_RUN_PREFIX):
+                workflows.append({"id": workflow_id, "name": run.workflow_name})
 
     by_status: dict[str, Counter[str]] = {}
     for workflow_id, status in grouped:

@@ -2578,9 +2578,26 @@
    }
 
    .ag-agent {
+      position: relative;
       display: flex;
       align-items: center;
       gap: 8px;
+   }
+
+   /* Over the cell's end rather than beside the name, so hidden actions take no width from it */
+   .ag-agent .row-act {
+      position: absolute;
+      right: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      padding-left: 8px;
+      background: var(--bg3);
+      pointer-events: none;
+   }
+
+   .agents-tbl tr:hover .ag-agent .row-act,
+   .agents-tbl tr:focus-within .ag-agent .row-act {
+      pointer-events: auto;
    }
 
    .ag-agent .ag-who {

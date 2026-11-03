@@ -99,6 +99,8 @@ class CaseInvestigationRef(BaseModel):
     investigation_id: Optional[str] = None
     status: str
     workflow_id: str
+    # As the run recorded it. A run with no entry in the workflow list has only this.
+    workflow_name: Optional[str] = None
     run_id: str
     live: bool = False
     cost_usd: float = 0

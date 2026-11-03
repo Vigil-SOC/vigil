@@ -1646,7 +1646,7 @@ export function CasePage({
               {reason && <span className="case-reason clamp2" title={reason}>{reason}</span>}
             </div>
             <div className="dh-meta">
-              {latest && <span>{workflowNames[latest.workflow_id] || latest.workflow_id}</span>}
+              {latest && <span>{workflowNames[latest.workflow_id] || latest.workflow_name || latest.workflow_id}</span>}
               {c.findings > 0 && <span>Combined from {c.findings} {c.findings === 1 ? 'alert' : 'alerts'}</span>}
               <span>Opened {created}</span>
               <span>
