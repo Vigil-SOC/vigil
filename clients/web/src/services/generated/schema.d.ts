@@ -4405,7 +4405,7 @@ export interface paths {
         };
         /**
          * Medic Status Route
-         * @description Medic's state word, and its own status snapshot when it is Running.
+         * @description Medic's state word, when it was last seen, and its own snapshot when Running.
          */
         get: operations["get_api_medic_status"];
         put?: never;
