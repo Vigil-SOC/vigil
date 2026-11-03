@@ -2,7 +2,7 @@
 
 from core.upgrade.revision import run_sql
 
-revision = "0024_triage_intake_finding_indexes"
+revision = "0024_triage_intake_indexes"
 down_revision = "0023_runtime_role_no_create"
 
 
