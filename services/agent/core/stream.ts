@@ -18,7 +18,7 @@ import {
   type Status,
   type TurnConfig,
 } from "./loop.js";
-import { ProviderError, type Message, type ToolCall, type ToolSchema, type Turn, type TurnRequest } from "./provider.js";
+import { ProviderError, stopCauseOf, type Message, type ToolCall, type ToolSchema, type Turn, type TurnRequest } from "./provider.js";
 import { assemble, canonical, DEFAULT_FOLD, prefixOf, windowCeiling, type FoldPolicy, type Prefix } from "./context.js";
 import { createHash } from "node:crypto";
 import { redactCredentials, scannerFor, wrap } from "./security.js";
@@ -142,7 +142,8 @@ class Run<T, Kinds extends Record<string, unknown>> {
     } catch (error) {
       if (this.cfg.signal?.aborted === true || hardStop(error)) throw error;
       const reason = error instanceof Error ? error.message : String(error);
-      return yield* announce(this.done("failed", null, reason));
+      const stop_cause = stopCauseOf(error);
+      return yield* announce({ ...this.done("failed", null, reason), ...(stop_cause === undefined ? {} : { stop_cause }) });
     }
   }
 
@@ -470,6 +471,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
 
     // The last attempt's emission when it parsed but missed the schema: a caller may keep what in it is sound.
     let rejectedValue: unknown;
+    let cut = false;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       rejectedValue = undefined;
       const refusal = await this.harness.budget.beginCall();
@@ -504,7 +506,8 @@ class Run<T, Kinds extends Record<string, unknown>> {
       // and asks for an answer just as long, so the ceiling is hit again. That is
       // what the ladder already exists for, so a cut-off emission folds and is
       // told what to do differently rather than shown itself.
-      if (parsed === undefined && cutOff(turn.content)) {
+      cut = parsed === undefined && cutOff(turn.content);
+      if (cut) {
         const tighter = FOLD_LADDER[this.folds];
         this.rejected.push("the emission ran past the output ceiling and was cut off mid-JSON; asked again for a shorter answer");
         tail = corrected("", "", true);
@@ -525,7 +528,12 @@ class Run<T, Kinds extends Record<string, unknown>> {
     }
 
     const outcome = this.done("failed", null, `the role never emitted a valid answer: ${this.rejected.join(" | ")}`);
-    return { ...outcome, emission_rejected: true, ...(rejectedValue === undefined ? {} : { rejected_value: rejectedValue }) };
+    return {
+      ...outcome,
+      emission_rejected: true,
+      ...(rejectedValue === undefined ? {} : { rejected_value: rejectedValue }),
+      ...(cut ? { stop_cause: "output_truncated" as const } : {}),
+    };
   }
 
   // Prefix, then the folded history, then a tail that is never persisted. What

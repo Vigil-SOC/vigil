@@ -183,6 +183,7 @@ class WorkflowRunService:
         cost_usd: Optional[float] = None,
         outcome: Optional[str] = None,
         reason: Optional[str] = None,
+        stop_cause: Optional[str] = None,
         finished_at: Optional[datetime] = None,
     ) -> bool:
         """Mark a run terminal. ``status`` must be one of the check-
@@ -191,6 +192,9 @@ class WorkflowRunService:
         ``outcome`` and ``reason`` are the agent layer's own terminal, written
         by the bridge. Callers that finalize a run themselves (a cancel, a
         queue that refused the job) omit them and they stay null.
+
+        ``stop_cause`` always follows the latest terminal: a compose run told
+        failed mid-retry can finish clean, and must not keep the old cause.
 
         ``finished_at`` is the instant the agent sealed the report. Absent, the
         row is stamped when this write lands.
@@ -226,6 +230,7 @@ class WorkflowRunService:
                     row.outcome = str(outcome)[:80]
                 if reason is not None:
                     row.reason = str(reason)[:5_000]
+                row.stop_cause = str(stop_cause)[:80] if stop_cause else None
                 if cost_usd is not None:
                     row.total_cost_usd = cost_usd
                 if row.started_at is not None:

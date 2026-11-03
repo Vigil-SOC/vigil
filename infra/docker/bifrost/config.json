@@ -3,7 +3,8 @@
   "client": {
     "enable_logging": true,
     "disable_content_logging": true,
-    "enforce_auth_on_inference": false
+    "enforce_auth_on_inference": false,
+    "allowed_origins": []
   },
   "governance": {
     "auth_config": {

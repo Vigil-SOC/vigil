@@ -44,7 +44,6 @@ class AgentId(str, Enum):
 # The autonomous loop authors decisions of its own but is not an agent: it has
 # no prompt, no BUILTIN_AGENTS record, and never appears in GET /agents.
 ORCHESTRATOR_ACTOR = "orchestrator"
-ORCHESTRATION_DECISION_ID = "orchestration"
 
 
 def blank_model(value: object) -> Optional[str]:

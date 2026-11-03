@@ -55,6 +55,8 @@ ACTION_RESTORE = "audit.restore"
 # A retention period, or an erasure, announced in the same transaction that stores it.
 ACTION_RETENTION = "audit.retention"
 ACTION_ERASURE = "audit.erasure"
+ACTION_FINDING_NOISE_MARK = "finding.noise.mark"
+ACTION_FINDING_NOISE_CLEAR = "finding.noise.clear"
 OUTCOME_DONE = "done"
 OUTCOME_DENIED = "denied"
 OUTCOME_RECORDED_LATE = "recorded late"

@@ -10,7 +10,10 @@ edited.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Sequence
+from typing import Mapping, Sequence
+
+# No repo imports there, so no cycle back into memory.
+from core.memory.recall_contract import VerdictOutcome
 
 
 class ClosureCategory(str, Enum):
@@ -44,6 +47,19 @@ class ClosedByKind(str, Enum):
     AGENT = "agent"
 
 
+# What each closure category concluded: the one mapping episodic memory writes
+# Verdicts from and agent agreement scores against. ``duplicate`` is absent on
+# purpose: a Case closed as a duplicate concluded nothing about the activity, it
+# said this record is the same record as another one. Writing an inconclusive
+# Verdict for it would put a claim in memory that nobody made, and writing a
+# proven one would count one determination twice.
+CLOSURE_OUTCOMES: Mapping[ClosureCategory, VerdictOutcome] = {
+    ClosureCategory.RESOLVED: VerdictOutcome.PROVEN,
+    ClosureCategory.FALSE_POSITIVE: VerdictOutcome.FALSE_POSITIVE,
+    ClosureCategory.UNABLE_TO_RESOLVE: VerdictOutcome.INCONCLUSIVE,
+    ClosureCategory.UNSPECIFIED: VerdictOutcome.INCONCLUSIVE,
+}
+
 # ``close_channel`` values. Trust is derived; the client cannot send either.
 CHANNEL_COOKIE = "cookie"
 CHANNEL_AGENT = "agent"
@@ -66,6 +82,7 @@ def closed_by_person(channel: str | None) -> bool:
 __all__: Sequence[str] = (
     "CHANNEL_AGENT",
     "CHANNEL_COOKIE",
+    "CLOSURE_OUTCOMES",
     "ClosedByKind",
     "ClosureCategory",
     "PERSON_CHANNELS",

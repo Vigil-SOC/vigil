@@ -90,6 +90,9 @@ class TerminalHandoff(BaseModel):
 class TerminalUpdate(BaseModel):
     outcome: str
     reason: str = ""
+    # Why the model path stopped the run. A free string: a word the console has no
+    # entry for reads as unknown there, not grounds to refuse the terminal.
+    stop_cause: Optional[str] = None
     summary: str = ""
     cost_usd: Optional[float] = None
     handoffs: List[TerminalHandoff] = Field(default_factory=list)
@@ -256,6 +259,7 @@ def record_terminal(
         cost_usd=update.cost_usd,
         outcome=update.outcome,
         reason=update.reason or None,
+        stop_cause=update.stop_cause,
         finished_at=_parse_finished_at(update.finished_at),
     )
 

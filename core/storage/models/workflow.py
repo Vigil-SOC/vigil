@@ -274,6 +274,9 @@ class WorkflowRun(Base):
     # this side finalized the run (a cancel, a queue that refused the job).
     outcome: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Why the model path stopped the run, for the console's table to word. Null on a
+    # run a model call did not stop, and on every run that ended before this column.
+    stop_cause: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # How far a hunt has got and the ceiling it runs under, as the agent layer last
     # reported them. Null for a run that never has (compose, or a hunt before its first
     # iteration lands), which the case list then reads from the trigger context.
