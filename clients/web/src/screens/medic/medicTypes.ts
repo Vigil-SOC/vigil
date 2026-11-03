@@ -82,3 +82,10 @@ export interface StatusRead {
     pack: { id: string; version: string; channel: string; expires_at: string; stale: boolean } | null
   }
 }
+
+/** The feedback request (FeedbackRequest): no user field, no source; an empty comment is left out. */
+export interface FeedbackBody {
+  value: string
+  suggested_lane?: number
+  comment?: string
+}
