@@ -21,7 +21,7 @@ keep_firing_for: 5m
 advice:
   summary: Polls for AWS Security Hub or Azure Sentinel fail because the SDK they need is missing from this install.
   fix: >-
-    Send this incident to DeepTempo Support: the Vigil package is missing a
+    Report it as a Vigil defect with this incident: the Vigil package is missing a
     dependency. On a host-native install you can work around it by installing
     the package the soc-daemon log names (boto3, or azure-mgmt-securityinsight
     and azure-identity) into Vigil's environment and restarting soc-daemon.

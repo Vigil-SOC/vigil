@@ -1,6 +1,6 @@
 """Medic's API listener (X2): `GET /v1/status`, the decision log, incidents and
-sensors. The other operations are later G3 work: `/v1/pack`, `/v1/export` and
-the feedback POST are not routed (404).
+sensors. The other operations are later G3 work: `/v1/pack` and the
+feedback POST are not routed (404).
 
 stdlib only, like the gateway (SP1 ⚑5). Every request needs `X-Medic-Key`,
 compared in constant time with the key file, re-read on each request so a new
@@ -205,7 +205,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handler(self) -> Callable[[], None] | None:
         """Status and sensors are exact targets. Decisions and incidents take a
-        query. Every other path, including `/v1/pack` and `/v1/export`, is not
+        query. Every other path, including `/v1/pack`, is not
         this listener's."""
         path, _, query = self.raw_target.partition("?")
         if self.raw_target == STATUS_PATH:
