@@ -513,8 +513,8 @@ function Header({ name, wf, actions, definition, onSave, onChangeDescription }: 
       ? `Edited ${formatDistanceToNowStrict(new Date(definition.updated_at), { addSuffix: true })} · version ${version}`
       : `Edited · version ${version}`
   return (
-    <div className="flex items-start gap-3">
-      <div className="flex flex-col gap-1 flex-1 min-w-0">
+    <div className="flex flex-wrap items-start gap-3">
+      <div className="flex flex-col gap-1 flex-1 basis-[240px] min-w-0">
         <div className="flex items-center gap-2.5">
           <h2 className="m-0 text-[20px] leading-[1.25] tracking-[-0.2px] text-tx min-w-0" style={{ fontWeight: 700 }}>{name}</h2>
           {wf && (
@@ -533,7 +533,7 @@ function Header({ name, wf, actions, definition, onSave, onChangeDescription }: 
         {err && <p role="alert" className="m-0 text-[12px] leading-[1.45] text-[var(--poor)]">{err}</p>}
       </div>
       {!wf && onSave && (
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2">
           <button className="btn ghost" disabled={saving} onClick={onChangeDescription}><Icon name="edit" /> Change description</button>
           <button className="btn primary disabled:opacity-50 disabled:cursor-not-allowed" disabled={saving} onClick={save}><Icon name="check2" /> {saving ? 'Saving…' : 'Save workflow'}</button>
         </div>
