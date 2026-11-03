@@ -54,9 +54,9 @@ from core.auth.token_blacklist import (
 from core.config import get_settings
 from core.platform.email_service import mail_is_configured, send_email
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.storage.unit_of_work import unit_of_work
 from core.storage.models import SignIn, User
 from core.storage.schemas import UserSchema
+from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 from services.api.middleware.auth import get_current_active_user
 from services.api.middleware.auth_rate_key import (
