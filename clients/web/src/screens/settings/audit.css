@@ -1,4 +1,4 @@
-/* Settings → Audit (#2766). List and chips follow boards/Cases.dc.html; entry detail and verify follow the case Record tab. */
+/* Settings → Audit (#2766). List and chips follow the Cases list; entry detail and verify follow the case Record tab. */
 .audit-top {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));

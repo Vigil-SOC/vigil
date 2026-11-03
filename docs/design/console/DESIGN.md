@@ -1,10 +1,6 @@
-# Vigil Console · design guide, phase-1 edition
+# Vigil Console · design system
 
-Trimmed from the v7 design package's DESIGN.md for phase 1. Vocabulary, visual system, layout and the component index are kept unchanged. The sections on principles, the autonomy model, the case page and Ask Vigil described phase-2 behaviour and are replaced by `PRD-phase1.md`, which is canonical for what phase 1 builds. When this file and a board disagree on appearance, the board wins; when either disagrees with the PRD on behaviour or scope, the PRD wins.
-
-## 1. Principles, 3. Autonomy model, 4. Case page, 5. Ask Vigil
-
-See `PRD-phase1.md` sections 3, 5, 10 and 11. Do not build from the full-package versions of these sections.
+The console's design system: vocabulary, the visual system, layout rules and the component index. Exact values are in `tokens/`. There are no screen mockups; the running console is the reference for how a screen is laid out.
 
 ## 2. Vocabulary
 
@@ -60,4 +56,4 @@ Check every screen you change against these at 1440px and at 1920px, in a real b
 
 ## 8. Component index
 
-See `components/`. Phase 1 ships: card, row-stack, tab-strip, state-pill, info-button, hold-to-confirm, undo-fuse, needs-you-strip, decision-block (reduced per PRD CP-P3), citation-chip, composer (Ask mode only). The sign-in, session and MFA boards use confirm-you. Not in phase 1 and not in this folder: tier-control, trust-strip, revert-window, parsed-action, evidence-row-actions.
+See `components/`. Phase 1 ships: card, row-stack, tab-strip, state-pill, info-button, hold-to-confirm, undo-fuse, needs-you-strip, decision-block, citation-chip, composer (Ask mode only). The sign-in, session and MFA screens use confirm-you. Not in phase 1 and not in this folder: tier-control, trust-strip, revert-window, parsed-action, evidence-row-actions.

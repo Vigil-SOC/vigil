@@ -5,7 +5,6 @@
    routes only once it holds a key whose credential Bifrost has verified, so the
    flow is: pick a card → add a key (inline, or the Settings KeyDialog for a
    cloud account or another provider) → Test → read the verdict banner.
-   Board: boards/OnboardingModel.dc.html
    ============================================================ */
 import { useEffect, useRef, useState } from 'react'
 import { Icon, type IconName } from '../../shared/icons'

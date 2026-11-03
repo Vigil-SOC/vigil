@@ -1,5 +1,4 @@
-/* Watch a run (PRD AW-W5): one run replayed step by step from its record. Board:
-   docs/design/console/boards/WorkflowRun.dc.html. The page reads the run; it asks
+/* Watch a run: one run replayed step by step from its record. The page reads the run; it asks
    for nothing new except the investigate replay RunDetail already reads. */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'

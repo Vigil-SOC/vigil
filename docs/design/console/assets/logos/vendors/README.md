@@ -3,7 +3,7 @@
 Each file is the vendor's own mark, used only to name the vendor's product next
 to its name. The marks remain their owners' trademarks; "public domain" below
 is the copyright status Wikimedia Commons records, not a trademark licence.
-Per PRD D6 the files ship unchanged into `clients/web/src/assets/vendors/`, and
+The files ship unchanged into `clients/web/src/assets/vendors/`, and
 the integration catalog points at them with a `logo` field. A vendor with no
 file here shows a neutral category icon with its name.
 
@@ -32,8 +32,7 @@ brand has a square symbol, the file is the symbol, not the wordmark.
 | `microsoft-teams.svg` | Microsoft Teams | https://commons.wikimedia.org/wiki/File:Microsoft_Office_Teams_(2025%E2%80%93present).svg | Public domain on Commons; Microsoft trademark |
 | `microsoft-entra-id.svg` | Microsoft Entra ID (Azure Active Directory) | https://commons.wikimedia.org/wiki/File:Microsoft_Entra_ID_color_icon.svg | Public domain on Commons; Microsoft trademark |
 
-The DeepTempo shield for LogLM is `../deeptempo-shield.svg`, as the Overview
-board draws it.
+The DeepTempo shield for LogLM is `../deeptempo-shield.svg`.
 
 No vendor-published SVG mark was found for Shodan, AlienVault OTX or MISP
 (their own sites and Commons have only raster logos), or for Carbon Black,
@@ -45,8 +44,8 @@ CrowdStrike, Cribl, Microsoft Sentinel and AWS Security Hub also show
 the category icon. Their marks are available only as files copied from the
 vendor's own site, with no licence to redistribute them, or under icon terms
 written for architecture diagrams and documentation, not a product's UI.
-`cloudtrail.svg` stays here for the boards but does not ship into the console
-for the same reason.
+`cloudtrail.svg` stays here but does not ship into the console for the same
+reason.
 
 To add a vendor: add its official mark here from a source whose licence allows
 redistributing it (CC0 icon data such as Simple Icons, or a file Commons

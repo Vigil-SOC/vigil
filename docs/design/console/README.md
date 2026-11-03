@@ -1,54 +1,14 @@
-# Vigil Console design reference, phase 1
+# Vigil Console design system
 
-This folder is what an implementer or groomer needs for console work in phase 1, and nothing else. It is a trimmed copy of the Vigil Console v7 design package (claude.ai/design export of 2026-09-30), limited to the boards, components and assets phase 1 uses.
+The console's look, in one place: what colour, type, spacing and components a screen uses. There are no screen mockups to match. The running console is the reference for how a screen is laid out, and a change to a screen is judged on whether it works well and fits the screens around it.
 
-## What is canonical
-
-1. **`PRD-phase1.md`** decides scope and behaviour. When anything in this folder disagrees with it on what to build, the PRD wins. It has no open decisions; section 16 records every decision and its grounds.
-2. **Boards** decide appearance. `boards/png/` holds a render of every board in this folder in dark and light at the board's own size (1440 × 900 for app boards, so content below the fold is only in the HTML), plus dark-only scene renders (`<Board>.<scene>.dark.png`), including the three case-page moods. `boards/*.dc.html` are the interactive originals (open one in a browser with `support.js` beside it); grep them for exact inline styles, spacing and copy. The live canvas is at https://claude.ai/artifact/LfdCAGfXzJaWzDASis8pWP and wins over the PNGs if they ever differ.
-3. **`DESIGN.md`** (phase-1 edition) holds vocabulary, the visual system, layout and the component index. **`tokens/`** holds the colour, type, radius, control and motion values for both themes. **`components/`** holds one spec per component phase 1 ships. `confirm-you.md` is used by the sign-in, session and MFA boards and is not a phase-1 component.
-
-**`MEDIC.md`** holds the Medic console's requirements (UX-1…UX-30: the Health card, the status-line fact and the `/medic` screen). It isn't phase-1 PRD scope, and no board covers it; it names the tokens and components each Medic surface uses.
-
-## Read the boards with the PRD open
-
-Every app board shares one shell, and that shell was drawn for the full product. The following appear on every board and are **phase 2**; the PRD names the class for each (Omitted, Later, Not measured yet):
-
-- the Needs you island in the header ("6 · Needs you · 214 running");
-- the Pulse, Fleet Wall and Coverage tabs (MainP2, SettingsSessions and AccountSignIns are drawn with the phase-1 nav: Home · Overview · Triage queue · Cases · Agents & workflows · Settings. SignIn has no app shell);
-- "View as" in the profile menu;
-- slash-command chips beyond the built-in set in PRD SH-P5;
-- on the case page: the tier control, trust strip, "Approve narrower", Hold with duration, Tell and Do modes, revert rows;
-- in the Settings sidebar: Team & access and Feedback & usage data (phase 2), Notifications (no board exists; not in the PRD), Appearance (removed per PRD D7).
-
-Numbers on the boards are sample data (1,284 alerts, 73 cases, 214 agents, 34 decisions) and are never defaults. PRD PF7 in rev 1.1 still applies: no policy number is hard-coded in the UI.
-
-## Boards in this folder, by PRD section
-
-| PRD section | Boards |
-|---|---|
-| 5 Shell | every app board for the header and nav; `Search` for the command bar; `MainP2` for the phase-1 nav |
-| 6 Onboarding | `OnboardingFlow`, `Onboarding`, `OnboardingConnect`, `OnboardingModel`, `OnboardingAgents`, `OnboardingLimits`, `OnboardingDone`, `FirstRun`, `Tour`, `TourAsk` (the tour's second stop is the Home Needs you section, not the island; `TourIsland` is not included) |
-| 7 Home | `MainP2` only (`Main` and `HomeBusy` are the phase-2 Home and are not included) |
-| 8 Overview | `Overview`, `OverviewAlert`, `OverviewEmpty`, `OverviewFull` |
-| 9 Triage queue | `Triage` |
-| 10 Cases | `Cases`, `CaseDetail` (moods needs, act, closed in `png/`), `CaseInvestigation`, `CaseComments` |
-| 11 Ask Vigil | `PulseChat` for the dock layout only (Pulse itself is phase 2), `ChatHistory`, `TourAsk` |
-| 12 Agents & workflows | `Agents`, `AgentEditor`, `SkillEditor`, `WorkflowRun` (`ToolPermissions` is phase 2 and not included) |
-| 13 Settings | `Settings`, `SettingsIntegrations`, `SettingsCustom`, `SettingsCollection`, `SettingsSLA`, `SettingsLimits`, `SettingsData` (`SettingsTeam`, `SettingsFeedback` are phase 2 and not included) |
-| Sessions and sign-in (vigil-mu sessions epic) | `SettingsSessions`, `AccountSignIns`, `SignIn` |
-| reference | `DesignSystem` (tokens, type, Good/Fair/Poor, components, shadcn/ui mapping in section 08), `Logo` |
-
-Not included on purpose: `Pulse*`, `FleetWall`, `Coverage`, `ToolPermissions`, `Main`, `HomeBusy`, `TourIsland`, `SettingsTeam`, `SettingsFeedback`, the `*V1` case boards (deprecated), `Handoff`, `HandoffData`, `Index`, and the five component specs for phase-2 components.
-
-The six `SettingsSessions` scenes `team-signins`, `team-end-one`, `team-end-all`, `team-ended`, `team-outranked` and `team-methods` are drawn inside the Team & access person drawer, over a people list this folder doesn't specify (`SettingsTeam` isn't included). On `AccountSignIns`, only the account drawer is the design; the page behind it isn't.
+- **`DESIGN.md`** holds the vocabulary, the visual system (surfaces, type, controls, Good/Fair/Poor levels, motion), layout and its *Screen rules*, and the component index.
+- **`tokens/`** holds the colour, type, radius, control and motion values for both themes. `tokens.css` is imported by the console; `tokens.json` carries the same values. Where `clients/web/src/styles.css` differs, the tokens win.
+- **`components/`** holds one spec per shared component.
+- **`MEDIC.md`** holds the Medic console's requirements (UX-1…UX-30: the Health card, the status-line fact and the `/medic` screen) and the tokens and components each surface uses.
 
 ## Assets
 
-`assets/logos/` holds the Vigil lockups (dark and light), app icon and mark, the DeepTempo shield (colour and mono), and `vendors/` (vendor marks for the integration catalog; each file's source is in its README). Per PRD D6 these ship into `clients/web/src/assets/vendors/` and the integration catalog gets a `logo` field; a vendor without a logo here shows a category icon with its name. `assets/icons/` holds the 82-icon line set (24 viewBox, 1.8 stroke, `currentColor`) with `icons.json`.
+`assets/logos/` holds the Vigil lockups (dark and light), app icon and mark, the DeepTempo shield (colour and mono), and `vendors/` (vendor marks for the integration catalog; each file's source is in its README). They ship into `clients/web/src/assets/vendors/` and the integration catalog points at them with a `logo` field; a vendor without a logo here shows a category icon with its name. `assets/icons/` holds the 82-icon line set (24 viewBox, 1.8 stroke, `currentColor`) with `icons.json`.
 
-Fonts: Plus Jakarta Sans 400–700 and Roboto Mono 400–500. The boards load them from Google Fonts; production self-hosts them (PRD epic 1).
-
-## Provenance
-
-Full package and generator: exported 2026-09-30 from the canvas above; the untrimmed zip is kept outside the repo. Full-product requirements: PRD rev 1.1 (2026-09-29), superseded for phase 1 by `PRD-phase1.md`. Sizing and the phase split: `vigil-console-v7-assessment.md` (outside the repo).
+Fonts: Plus Jakarta Sans 400–700 and Roboto Mono 400–500, self-hosted by the console.

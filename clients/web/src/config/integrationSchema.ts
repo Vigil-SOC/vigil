@@ -80,7 +80,7 @@ export interface IntegrationMetadata {
   has_ui?: boolean
   icon?: string
   /** Vendor logo from the design package (assets/vendors); without one the
-   *  console shows the category icon (PRD D6). */
+   *  console shows the category icon. */
   logo?: string
   fields: IntegrationField[]
   docs_url?: string
