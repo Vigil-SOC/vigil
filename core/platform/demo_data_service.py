@@ -190,6 +190,14 @@ class DemoDataService:
         DemoDataService._cases = [
             self._generate_case(DemoDataService._findings) for _ in range(num_cases)
         ]
+        # Curated Wazuh / LibreNMS / NetBox alerts: routine ones the agent
+        # settles alone and advanced ones that always need a person. No
+        # randomness, so the seed above is unaffected.
+        from core.platform.demo_scenarios import build_scenarios
+
+        scenario_findings, scenario_cases = build_scenarios(datetime.now(timezone.utc))
+        DemoDataService._findings.extend(scenario_findings)
+        DemoDataService._cases.extend(scenario_cases)
         logger.info("Demo data generated successfully")
 
     def get_findings(self, limit: int = 10000) -> List[Dict]:
