@@ -330,7 +330,7 @@ async def get_affected_entities(
 
     findings = (
         db.query(Finding)
-        .options(noload(Finding.mitre_prediction_rows))
+        .options(noload(Finding.cases), noload(Finding.mitre_prediction_rows))
         .filter(Finding.created_at.between(start_time, end_time), _NOT_PROBE)
         .all()
     )

@@ -591,7 +591,9 @@ def _case_records(args: Args) -> Args:
         )
         total = on_case.with_entities(func.count()).scalar() or 0
         page = (
-            on_case.options(noload(Finding.mitre_prediction_rows))
+            on_case.options(
+                noload(Finding.cases), noload(Finding.mitre_prediction_rows)
+            )
             .order_by(Finding.timestamp.desc().nulls_last(), Finding.finding_id)
             .offset(offset)
             .limit(limit)

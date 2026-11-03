@@ -15,7 +15,7 @@ from typing import Any, Callable, List
 from core.agents.projections import read_projection
 from core.cases import case_records_service
 from core.cases.case_state import case_run_refs, combined_state, primary_ref
-from core.storage.database_data_service import DatabaseDataService
+from core.storage.database_data_service import get_database_data_service
 from core.storage.unit_of_work import unit_of_work
 from core.workflows import catalog
 from core.workflows.workflow_run_service import WorkflowRunService
@@ -300,7 +300,7 @@ def _fit(
 
 def _case_reads(case_id: str) -> tuple:
     """The case, its alerts and its run refs: blocking reads, run off the loop."""
-    data_service = DatabaseDataService()
+    data_service = get_database_data_service()
     case = data_service.get_case(case_id)
     if not case:
         return None, [], []

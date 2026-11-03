@@ -1,0 +1,42 @@
+# L-5.a / L-5.c: Bifrost answered 402, gateway_retry raised BudgetExceeded
+# (core/llm/gateway_retry.py:92-98) and the llm-worker logs it through report_outage
+# (services/worker/jobs.py:101-112): once per tier, then every 100 refusals with a
+# " (still failing, %d failures)" suffix. The first successful routed call logs
+# "LLM budget available (%s tier)" (bare once per process, else "; recovered after %d
+# failures", jobs.py:179-186). The tier is the first arg, so the latch is per tier and
+# the rule is untrusted (keys read args), lane 2.
+# Limit: the clear comes from a call that gets through, so on an idle install the
+# incident stays open after the budget resets, until the next LLM call.
+apiVersion: medic.rules/v1
+kind: Rule
+id: llm.budget-exhausted
+title: The LLM spend budget is used up, so LLM calls are refused
+revision: 1
+fault: {class: llm, mode: L-5, causes: [L-5.a, L-5.c]}
+lane: 2
+detection: event
+signals:
+  spent:
+    log:
+      signal: log_llm_worker
+      logger: {eq: services.worker.jobs}
+      level: [ERROR]
+      template: {re2: '^LLM budget spent \(%s tier\); AI calls are refused until it resets( \(still failing, %d failures\))?$'}
+      keys: {tier: "args[0]"}
+  available:
+    log:
+      signal: log_llm_worker
+      logger: {eq: services.worker.jobs}
+      level: [INFO]
+      template: {re2: '^LLM budget available \(%s tier\)(; recovered after %d failures)?$'}
+      keys: {tier: "args[0]"}
+group_by: [tier]
+when: {fn: latch, set: spent, clear: available}
+for: 2m
+keep_firing_for: 5m
+advice:
+  summary: The LLM gateway refused calls because a spend budget is used up, so triage and other LLM work fail until it resets.
+  fix: >-
+    In Bifrost, check the virtual key's budget (and any team or customer budget
+    above it). Raise the budget, or wait for its period to reset. Vigil's work
+    resumes on its own once calls are accepted again.

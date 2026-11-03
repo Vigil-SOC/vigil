@@ -17,7 +17,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import array as pg_array
 from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
-from sqlalchemy.orm import lazyload, selectinload
+from sqlalchemy.orm import lazyload, noload, selectinload
 
 from core.exceptions import default_on_error
 from core.storage import case_trail_hook
@@ -179,7 +179,13 @@ def merge_ai_enrichment(
     return {**kept, **{k: v for k, v in new.items() if owned(k)}}
 
 
-_FINDING_READ_OPTIONS = (selectinload(Finding.mitre_prediction_rows),)
+# No read path or ``FindingSchema`` uses ``Finding.cases`` (#1439, #3658). It
+# lazy-loads on access, so on a detached finding it would raise; read paths
+# that hand back detached findings or dumps pin it empty with ``noload``.
+_FINDING_READ_OPTIONS = (
+    selectinload(Finding.mitre_prediction_rows),
+    noload(Finding.cases),
+)
 
 
 def technique_confidence_filter(min_confidence: float):
