@@ -10,6 +10,7 @@ import logging
 import os
 import threading
 import time
+import weakref
 from contextlib import contextmanager
 from dataclasses import astuple, dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, Generator, Optional
@@ -1135,7 +1136,8 @@ class SchemaRevisionError(RuntimeError):
 
 
 _cached_schema_head: Optional[str] = None
-_revision_verified_engines: set[int] = set()
+# Weak, not id(): retarget() swaps engines, and a freed engine's id can recur.
+_revision_verified_engines: "weakref.WeakSet[Engine]" = weakref.WeakSet()
 
 
 def schema_head() -> str:
@@ -1180,7 +1182,7 @@ def _require_schema_revision(engine: Engine) -> None:
     whose revision it cannot read. A refused connection stays OperationalError
     so a database that is down is still reported as down.
     """
-    if id(engine) in _revision_verified_engines:
+    if engine in _revision_verified_engines:
         return
     try:
         head = schema_head()
@@ -1211,7 +1213,7 @@ def _require_schema_revision(engine: Engine) -> None:
                 f"database revision is {revision}, this image's head is {head}; "
                 "run python -m core.upgrade as the database owner"
             )
-        _revision_verified_engines.add(id(engine))
+        _revision_verified_engines.add(engine)
     except (SchemaRevisionError, OperationalError):
         raise
     except Exception as exc:
