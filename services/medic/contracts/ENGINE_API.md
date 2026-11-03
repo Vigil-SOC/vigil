@@ -26,7 +26,7 @@
 | `apiVersion: medic.rules/v1`, `kind: Rule` | ✔ | |
 | `id` | ✔ | `ingest.*`, `llm.*` or `pipeline.*` (the three v1 fault classes). Stable for the rule's life |
 | `title`, `revision` | ✔ | `revision` is bumped on any change in behaviour |
-| `fault` | ✔ | `class`, B5 `mode` and `causes`. Used by G1/G2 and the evidence report |
+| `fault` | ✔ | `class`, B5 `mode` and `causes`. Used by G1/G2 |
 | `lane` | ✔ | 1, 2 or 3. G1's router consumes it. Lane 1 is gated (§5) |
 | `engine_api` | | §1 |
 | `input_trust` | | Only `untrusted` is allowed. Authors can raise trust, never lower it (§5) |

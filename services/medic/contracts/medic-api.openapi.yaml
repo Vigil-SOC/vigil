@@ -50,7 +50,6 @@ tags:
   - name: decisions
   - name: sensors
   - name: pack
-  - name: export
   - name: feedback
 
 components:
@@ -836,36 +835,6 @@ components:
               rule: { $ref: "./decision-record.schema.json#/$defs/rule_id" }
               suppressed: { type: integer, minimum: 1, x-medic-type: number }
 
-    EvidenceReport:
-      description: |
-        Envelope only. H5 replaces this with a $ref to `evidence-report.schema.json` (A3-4).
-        `metrics` holds counts, rates, rule IDs and enums only: no logs, evidence or comments (UX-29).
-      type: object
-      required: [format, instance_id, period, generated_at, chain_head, anchors, metrics]
-      properties:
-        format:
-          type: string
-          const: medic.evidence/v1
-          x-medic-type: enum
-        instance_id: { $ref: "./decision-record.schema.json#/$defs/instance_id" }
-        period:
-          type: object
-          required: [from, to]
-          additionalProperties: false
-          properties:
-            from: { $ref: "./decision-record.schema.json#/$defs/ts" }
-            to: { $ref: "./decision-record.schema.json#/$defs/ts" }
-        generated_at: { $ref: "./decision-record.schema.json#/$defs/ts" }
-        chain_head: { $ref: "#/components/schemas/ChainHead" }
-        anchors:
-          description: Purge anchors in the period (H5, T-17).
-          type: integer
-          minimum: 0
-          x-medic-type: number
-        metrics:
-          description: Owned by H5.
-          type: object
-
 paths:
   /v1/status:
     get:
@@ -1087,7 +1056,7 @@ paths:
       summary: The decision log (G2 records), oldest seq first
       description: |
         Pages through the hash chain in `seq` order. Used for the incident timeline
-        (`incident_id`), for H5 and eval tooling (`from_seq`), and to verify the chain from
+        (`incident_id`), for eval tooling (`from_seq`), and to verify the chain from
         outside. Records are returned byte-for-byte as stored. `oldest_seq` is the oldest record
         still held, so a caller that asked for an earlier `from_seq` can see that a purge
         (anchor) intervened.
@@ -1259,57 +1228,5 @@ paths:
                     trust_root: { version: 1, expires_at: "2027-10-01T00:00:00Z" }
                     suppression_7d:
                       - { rule: llm.key-rejected, suppressed: 2 }
-        "401": { $ref: "#/components/responses/Unauthorized" }
-        "503": { $ref: "#/components/responses/Busy" }
-
-  /v1/export:
-    get:
-      operationId: getEvidenceExport
-      tags: [export]
-      summary: Evidence report for a period (H5; UX-29)
-      description: |
-        Returns H5's closed-schema report as one JSON document. Read-only: Medic records
-        nothing. The console previews these exact bytes and downloads the same bytes it
-        previewed (no second fetch), so `X-Medic-Sha256` matches the saved file. **H5 owns the
-        body schema** (`contracts/evidence-report.schema.json`, A3-4, not yet written); until it
-        lands, `EvidenceReport` below is only the envelope, and G3's export route is blocked on H5.
-      x-medic-permission: admin
-      parameters:
-        - name: from
-          in: query
-          required: true
-          schema: { $ref: "./decision-record.schema.json#/$defs/ts" }
-        - name: to
-          in: query
-          required: true
-          description: Exclusive; must be after `from`, at most 31 days later, and not in the future.
-          schema: { $ref: "./decision-record.schema.json#/$defs/ts" }
-      responses:
-        "200":
-          description: The report bytes
-          headers:
-            X-Request-Id: { $ref: "#/components/headers/RequestId" }
-            X-Medic-Sha256:
-              description: sha256 (hex) of the exact response body bytes.
-              schema: { $ref: "./decision-record.schema.json#/$defs/hash" }
-            Content-Disposition:
-              description: 'attachment; filename="medic-evidence-<instance_id>-<from date>-<to date>.json"'
-              schema: { type: string }
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/EvidenceReport" }
-              examples:
-                week:
-                  value:
-                    format: medic.evidence/v1
-                    instance_id: mi_3f9a2c1b0d4e5f60
-                    period: { from: "2026-11-30T00:00:00Z", to: "2026-12-07T00:00:00Z" }
-                    generated_at: "2026-12-07T14:05:12Z"
-                    chain_head:
-                      seq: 4211
-                      hash: 76792190d1855c71c2b6b076ba494b9b4f8f795f24a8e2a767823e571fea4f7d
-                    anchors: 0
-                    metrics: {}
-        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "503": { $ref: "#/components/responses/Busy" }

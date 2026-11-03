@@ -58,6 +58,8 @@ class LastSeen:
     first_failed_at: Optional[datetime]
     failure_kind: Optional[str]
     updated_at: Optional[datetime] = None
+    # Medic's own typed state from the last good poll; not part of the status rule.
+    status_snapshot: Optional[dict] = None
 
 
 def medic_enabled(settings: Optional[Settings] = None) -> bool:

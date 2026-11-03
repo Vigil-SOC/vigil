@@ -1,4 +1,5 @@
-"""GET /api/processes: whether the agent layer and the SOC daemon are running.
+"""GET /api/processes: whether the agent layer and the SOC daemon are running,
+and Medic's state word.
 
 Read by setup's system checks and the console's status line. Signed-in only:
 the answer says whether alerts are being polled, which an anonymous caller has
@@ -29,9 +30,12 @@ ROUTER_META = RouterMeta(
 async def get_processes(
     processes: ProcessHealth = Depends(provide_process_health),
 ) -> ProcessStates:
-    """State of the agent layer and the SOC daemon.
+    """State of the agent layer, the SOC daemon and Medic.
 
     ``agent_layer`` is ``no_token`` when this server has no
-    AGENT_INTERNAL_TOKEN. Up to five seconds old.
+    AGENT_INTERNAL_TOKEN. ``medic`` is ``off``, ``down`` or ``unknown`` as the
+    backend decides, else Medic's stored state (``running``, ``starting``,
+    ``degraded``, ``blind``, ``not_recording`` or ``crash_looping``). Up to five
+    seconds old.
     """
     return await processes.read()

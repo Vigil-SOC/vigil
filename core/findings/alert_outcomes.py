@@ -13,6 +13,7 @@ from datetime import date, datetime
 from typing import Optional, Sequence
 
 from sqlalchemy import and_, case, exists, literal
+from sqlalchemy.orm import aliased
 
 from core.cases.closure import closed_by_person
 from core.findings.arrival_counts import utc_day_bounds
@@ -37,6 +38,7 @@ TERMINAL_LABELS = {
     "scoring": "Waiting for triage",
     "waiting": "Not picked up",
 }
+TTL_EXPIRED_REASONS = ("ttl_expired", "ttl_expired_autoops_off")
 
 
 @dataclass(frozen=True)
@@ -164,6 +166,29 @@ def finding_states(finding_ids: Sequence[str]) -> dict[str, tuple[str, Optional[
         )
         for finding_id in ids
     }
+
+
+def ttl_expired_alerts(finding_ids: Sequence[str]) -> set[str]:
+    """Those whose latest intake row ran out of time in the queue.
+
+    A reading inside a group, not a group: the states above stay the partition.
+    """
+    ids = list(finding_ids)
+    newer = aliased(IntakeTrigger)
+    expired: set[str] = set()
+    with get_db_manager().session_scope() as session:
+        for at in range(0, len(ids), _ID_CHUNK):
+            rows = session.query(IntakeTrigger.finding_id).filter(
+                IntakeTrigger.finding_id.in_(ids[at : at + _ID_CHUNK]),
+                IntakeTrigger.state == "expired",
+                IntakeTrigger.reason.in_(TTL_EXPIRED_REASONS),
+                ~exists().where(
+                    newer.finding_id == IntakeTrigger.finding_id,
+                    newer.id > IntakeTrigger.id,
+                ),
+            )
+            expired.update(finding_id for (finding_id,) in rows)
+    return expired
 
 
 def terminal_states_today(

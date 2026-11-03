@@ -1,5 +1,4 @@
 import { Link } from 'react-router-dom'
-import { useAutoOpsOff } from '../../shared/useAutoOpsOff'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
 import { LevelBadge } from '../../shared/LevelBadge'
@@ -40,8 +39,7 @@ function AgentCard({ agent }: { agent: OverviewAgent }) {
 }
 
 /** "Agents running now": one card per workflow, with its level pill and 30-day rate. */
-export default function AgentCards({ data, go, goSettings }: { data: OverviewPayload } & Pick<ConsoleScreenProps, 'go' | 'goSettings'>) {
-  const autoOpsOff = useAutoOpsOff()
+export default function AgentCards({ data, go, autoOpsOff }: { data: OverviewPayload; autoOpsOff: boolean | null } & Pick<ConsoleScreenProps, 'go'>) {
   const agents = [...data.agents].sort((a, b) => b.running - a.running || a.name.localeCompare(b.name))
   const idle = agents.every((a) => a.running === 0 && a.sample_size === 0)
   return (
@@ -66,16 +64,6 @@ export default function AgentCards({ data, go, goSettings }: { data: OverviewPay
           Agents &amp; workflows →
         </button>
       </div>
-      {autoOpsOff && !idle && (
-        <div className="ov-agents-empty">
-          <span className="ov-tile accent"><Icon name="bot" size={18} /></span>
-          <div className="ov-txt">
-            <b>AutoOps is off</b>
-            <span>No agent picks up an alert until it is on.</span>
-          </div>
-          <button type="button" className="btn ghost" onClick={() => goSettings('autoinvestigate')}>Open Limits &amp; autonomy →</button>
-        </div>
-      )}
       {idle ? (
         <div className="ov-agents-empty">
           <span className="ov-tile accent"><Icon name="bot" size={18} /></span>
@@ -87,9 +75,6 @@ export default function AgentCards({ data, go, goSettings }: { data: OverviewPay
                 : 'Agents pick up work on their own once alerts arrive from a connected source.'}
             </span>
           </div>
-          {autoOpsOff && (
-            <button type="button" className="btn ghost" onClick={() => goSettings('autoinvestigate')}>Open Limits &amp; autonomy →</button>
-          )}
           {data.empty && <Link className="btn primary no-underline" to={CONNECT_DATA}>Connect data</Link>}
         </div>
       ) : (

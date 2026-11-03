@@ -6,6 +6,8 @@ import logging
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from redis.exceptions import RedisError
+
 from core.findings.exclusions import cached_active_ips, excluded_ips_of
 from core.ingestion.ack import settle_ack
 from core.ingestion.dedup import RedisDedupSet
@@ -29,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 _GATEWAY_OUTAGE = "daemon-triage-gateway"
 _PROVIDER_OUTAGE = "daemon-triage-provider"
+_QUEUE_OUTAGE = "daemon-triage-queue"
 
 # After this many consecutive failures (e.g. no provider key), pause enrichment
 # for the cooldown so a backfill can't stampede a dead gateway. Findings still ingest.
@@ -60,6 +63,19 @@ TRIAGE_KEYS = (
 # models (Gemini 2.5, OpenAI reasoning) spend output tokens before it; the
 # gateway's 2048 default cut REASONING off mid-sentence (#2315).
 TRIAGE_MAX_TOKENS = 8192
+
+
+def not_offered_reason(action: str, band: str, confidence: float, bar: float) -> str:
+    """Why the gate turned an alert down, in the terms of the gate's own test."""
+    first = (
+        "triage said dismiss"
+        if action == "dismiss"
+        else "this install does not investigate that severity"
+    )
+    return (
+        f"Not offered: {first}. Severity {band}, confidence {confidence:.0%} "
+        f"is under the {bar:.0%} bar, no threat-intel hit."
+    )
 
 
 class FindingProcessor:
@@ -762,10 +778,9 @@ REASONING: [Brief explanation]
                 from core.llm.gateway.gateway import get_llm_gateway
 
                 self._llm_gateway = await get_llm_gateway()
-                if not report_recovered(
+                report_recovered(
                     logger, _GATEWAY_OUTAGE, "LLM gateway connected for AI triage"
-                ):
-                    logger.info("LLM gateway connected for AI triage")
+                )
             except Exception as e:
                 report_outage(
                     logger,
@@ -832,9 +847,22 @@ REASONING: [Brief explanation]
             )
         except asyncio.TimeoutError:
             raise  # _triage_finding reports it against DAEMON_TRIAGE_TIMEOUT
-        except Exception as e:
-            logger.error(f"LLM queue triage error: {e}")
+        except RedisError as e:
+            # Class name only: Redis error text can carry connection details.
+            report_outage(
+                logger,
+                _QUEUE_OUTAGE,
+                "LLM queue unreachable, AI triage is failing: %s",
+                type(e).__name__,
+            )
             return None, f"{type(e).__name__}: {e}"
+        except Exception as e:
+            logger.error("LLM queue triage error: %s: %s", type(e).__name__, e)
+            return None, f"{type(e).__name__}: {e}"
+        # An error dict from the worker still means the queue was reachable.
+        report_recovered(
+            logger, _QUEUE_OUTAGE, "LLM queue reachable, AI triage resumed"
+        )
         if result is None:
             return None, "LLM returned no result"
         if isinstance(result, dict):
@@ -1129,6 +1157,7 @@ REASONING: [Brief explanation]
 
         from services.daemon.orchestrator import (
             insert_intake_trigger,
+            insert_not_offered,
             intake_severity_band,
         )
 
@@ -1152,3 +1181,14 @@ REASONING: [Brief explanation]
                 logger.info(
                     f"Finding {finding.get('finding_id')} queued for autonomous investigation"
                 )
+        else:
+            insert_not_offered(
+                finding_id=finding.get("finding_id"),
+                priority=band,
+                reason=not_offered_reason(
+                    recommended_action,
+                    band,
+                    confidence,
+                    self.response_config.review_threshold,
+                ),
+            )

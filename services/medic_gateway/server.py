@@ -37,8 +37,6 @@ PASS_BACK = {
         "retry-after",
         "x-request-id",
         "x-medic-api-version",
-        "x-medic-sha256",
-        "content-disposition",
     ),
 }
 

@@ -8,6 +8,8 @@
 # network. The app mints two Postgres passwords per install: the owner password,
 # and a different one for vigil_app. It resets both on every start, so older
 # volumes pick them up too. App containers receive only the vigil_app password.
+# It also mints a Redis password once per install; redis takes it on every
+# start, so a volume from before it existed is password-protected from then on.
 name: vigil
 
 # Both agent processes take the same environment (see x-agent-env in
@@ -20,6 +22,11 @@ x-agent-env: &agent-env
   - POSTGRES_USER=vigil_app
   - POSTGRES_PASSWORD=${POSTGRES_APP_PASSWORD:?set by the desktop app}
   - REDIS_URL=redis://redis:6379/0
+  # services/agent/core/db.ts reads the password only beside host/port, not the URL.
+  - REDIS_HOST=redis
+  - REDIS_PORT=6379
+  - REDIS_DB=0
+  - REDIS_PASSWORD=${REDIS_PASSWORD:?set by the desktop app}
   # Each defaults to localhost:6987, which is the agent container itself here.
   - VIGIL_PLAYBOOKS_URL=http://backend:6987/internal/playbooks
   - VIGIL_PRICING_URL=http://backend:6987/internal/pricing
@@ -53,9 +60,17 @@ services:
     image: redis:7-alpine
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?set by the desktop app}
+    # sh -c so the password is read from the environment, not written into the
+    # command line that `docker inspect` and `ps` show.
+    command:
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction --requirepass "$$REDIS_PASSWORD"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # REDISCLI_AUTH is redis-cli's own way to take the password without argv.
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -106,6 +121,8 @@ services:
       - BIFROST_URL=http://bifrost:8080
       - BIFROST_ADMIN_PASSWORD=${BIFROST_ADMIN_PASSWORD:?set by the desktop app}
       - REDIS_URL=redis://redis:6379/0
+      # core/redis_client.py applies this over REDIS_URL.
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?set by the desktop app}
       - PYTHONUNBUFFERED=1
       # Auth stays on (DEV_MODE defaults to false in the image). The app mints
       # this per install and persists it; the backend fails closed without it.

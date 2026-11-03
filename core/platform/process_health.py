@@ -6,6 +6,10 @@ no alert is polled or triaged (no daemon). GET /api/processes reports both, for
 the setup checks and the status line. Each read is the route that process's own
 probes already use; nothing here adds a signal.
 
+It also carries Medic's state word. That one is not a probe: Medic may not be
+called from here, so the word is the backend's own (off, down, unknown) or else
+the status snapshot the poller last stored (at most about a minute old).
+
 Signed-in only, and never part of /api/health: that route is public and probed,
 and neither process decides whether this one is alive.
 """
@@ -24,7 +28,7 @@ from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
 
-# Per read. Both reads run at once, so a hung process costs a caller this much.
+# Per read. The reads run at once, so a hung process costs a caller this much.
 READ_TIMEOUT_S = 1.0
 # Callers within this window share one answer, and at most one read is in
 # flight: the status line polls from every open console.
@@ -32,12 +36,26 @@ CACHE_S = 5.0
 
 DaemonState = Literal["running", "unhealthy", "not_running", "unknown"]
 AgentLayerState = Literal[DaemonState, "no_token"]
-_State = TypeVar("_State", AgentLayerState, DaemonState)
+MedicState = Literal[
+    "off",
+    "running",
+    "down",
+    "unknown",
+    "starting",
+    "degraded",
+    "blind",
+    "not_recording",
+    "crash_looping",
+]
+
+
+_State = TypeVar("_State", AgentLayerState, DaemonState, MedicState)
 
 
 class ProcessStates(TypedDict):
     agent_layer: AgentLayerState
     daemon: DaemonState
+    medic: MedicState
 
 
 class ProcessHealth:
@@ -69,12 +87,13 @@ class ProcessHealth:
     async def _read(self) -> ProcessStates:
         # Each row on its own: a secrets error says nothing about the daemon.
         # A status read never fails its caller; an error is that row's unknown.
-        agent_layer, daemon = await asyncio.gather(
-            self._agent_layer(), self._daemon(), return_exceptions=True
+        agent_layer, daemon, medic = await asyncio.gather(
+            self._agent_layer(), self._daemon(), self._medic(), return_exceptions=True
         )
         states = ProcessStates(
             agent_layer=_or_unknown("agent_layer", agent_layer),
             daemon=_or_unknown("daemon", daemon),
+            medic=_or_unknown("medic", medic),
         )
         self._answer = (time.monotonic(), states)
         return states
@@ -93,6 +112,13 @@ class ProcessHealth:
         settings = get_settings()
         host, port = settings.daemon_health_host, settings.daemon_health_port
         return await self._state(f"http://{host}:{port}/health")
+
+    async def _medic(self) -> MedicState:
+        # The stored snapshot, never a call to Medic: a database read (off with
+        # the flag off reads nothing), so off the event loop.
+        from core.platform.medic_last_seen import current_state_word
+
+        return await asyncio.to_thread(current_state_word)  # type: ignore[return-value]
 
     async def _state(self, url: str) -> Literal["running", "unhealthy", "not_running"]:
         """running on a 200. not_running when refused or unresolvable. unhealthy

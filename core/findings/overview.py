@@ -13,6 +13,7 @@ from core.findings.alert_outcomes import (
     TERMINAL_LABELS,
     finding_states,
     terminal_states_today,
+    ttl_expired_alerts,
 )
 from core.findings.arrival_counts import arrivals_today_by_source
 from core.findings.source_evidence import project_finding_source_evidence_for_list
@@ -47,6 +48,11 @@ ARRIVAL_SOURCE = {
 RUNNING_SOURCE = "Runs still in history whose status is running or paused."
 STEP_SOURCE = "The open phase on the newest live run, or that run's status when it has no phase row."
 UNMEASURED_TEXT = "Not measured yet"
+EXPIRED_INFO = (
+    "Expired alerts are counted inside Not picked up. Each is an alert whose latest "
+    "intake row ran out of time in the queue before any agent took it, so nobody has "
+    "looked at it."
+)
 
 # Ticket, paused, stuck, and incidents stay outside the sum.
 _UNMEASURED = (
@@ -114,7 +120,14 @@ def completion_level(sample: int, completed: int) -> Optional[str]:
 _CASE_STATES = frozenset({"needs_you", "working", "resolved_auto", "resolved_person"})
 
 
-def _outcome_nodes(states: list[dict]) -> list[dict]:
+def _expired_among(states: list[dict]) -> int:
+    waiting = [
+        row["finding_id"] for row in states if row["terminal_state"] == "waiting"
+    ]
+    return len(ttl_expired_alerts(waiting))
+
+
+def _outcome_nodes(states: list[dict], expired: int = 0) -> list[dict]:
     counts = Counter(row["terminal_state"] for row in states)
     cases = {
         state: {
@@ -126,13 +139,15 @@ def _outcome_nodes(states: list[dict]) -> list[dict]:
     }
     nodes = []
     for state in _LIVE_ORDER:
+        shows_expired = state == "waiting" and expired > 0
         nodes.append(
             {
                 "state": state,
                 "label": _NODE_LABELS[state],
                 "count": counts.get(state, 0),
                 "case_count": len(cases[state]) if state in _CASE_STATES else None,
-                "info": None,
+                "expired_count": expired if shows_expired else None,
+                "info": EXPIRED_INFO if shows_expired else None,
                 "unmeasured_text": None,
             }
         )
@@ -143,6 +158,7 @@ def _outcome_nodes(states: list[dict]) -> list[dict]:
                 "label": label,
                 "count": None,
                 "case_count": None,
+                "expired_count": None,
                 "info": info,
                 "unmeasured_text": UNMEASURED_TEXT,
             }
@@ -400,7 +416,7 @@ def overview_payload(
         "range": range,
         "empty": enabled_count == 0 and not any_finding,
         "arrivals": arrivals,
-        "outcomes": _outcome_nodes(states),
+        "outcomes": _outcome_nodes(states, _expired_among(states)),
         "running_source": RUNNING_SOURCE,
         "step_source": STEP_SOURCE,
         "rate_info": RATE_INFO,

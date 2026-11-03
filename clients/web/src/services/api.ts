@@ -199,6 +199,19 @@ export const exclusionsApi = {
     api.post<IpExclusion>(`/exclusions/${encodeURIComponent(id)}/remove`, { reason: reason || null }),
 }
 
+export type Note = Schema<'NoteOut'>
+
+/** Analyst notes on an entity (#3605); keys are typed `type:value`, and none means every note. */
+export const notesApi = {
+  list: (entityKeys: string[]) =>
+    api.get<Schema<'NoteListResponse'>>('/memory/notes', {
+      params: { entity_key: entityKeys },
+      paramsSerializer: { indexes: null }, // entity_key=a&entity_key=b, as FastAPI reads a repeated query
+    }),
+  create: (body: Schema<'NoteCreate'>) => api.post<Note>('/memory/notes', body),
+  withdraw: (id: string) => api.delete<Note>(`/memory/notes/${encodeURIComponent(id)}`),
+}
+
 export interface CaseRecordRow {
   id: string
   at: string
@@ -790,6 +803,25 @@ export const budgetsApi = {
   getQuota: () => api.get<BudgetQuotaResponse>('/analytics/budget/quota'),
 }
 
+/** One workflow's tally in `agent_agreement` (core/reporting/analytics_service.py). */
+export interface WorkflowAgreement {
+  workflow_id: string
+  agreed: number
+  disagreed: number
+  agreement_rate: number | null
+  abstained: number
+  closed_without_determination: number
+  closed_by_agent_alone: number
+}
+
+export const analyticsApi = {
+  /** The agent_agreement block of GET /analytics; the route returns an untyped dict, so only this part is typed. */
+  getAgreement: (timeRange: '24h' | '7d' | '30d' | 'all' = '30d') =>
+    api
+      .get<{ agent_agreement?: { by_workflow?: WorkflowAgreement[] } }>('/analytics', { params: { time_range: timeRange } })
+      .then((res) => res.data.agent_agreement?.by_workflow ?? []),
+}
+
 export const storageApi = {
   getStatus: () => api.get('/storage/status'),
   getHealth: () => api.get('/storage/health'),
@@ -1038,9 +1070,18 @@ export const autonomyApi = {
     api.put<ToolClass>(`/autonomy/tools/${encodeURIComponent(name)}`, { effect_class }),
 }
 
+export interface OrchestratorStatus {
+  enabled?: boolean
+  waiting_approval: number
+  paused: number
+  oldest_parked_age_seconds: number | null
+  // Absent when the API has no orchestrator to ask; a banner then claims nothing.
+  cost: { hourly_paused?: boolean; hourly_cost_usd?: number; hourly_limit_usd?: number }
+}
+
 export const orchestratorApi = {
-  // AutoOps on or off, for the banners and the status line.
-  getStatus: () => api.get<{ enabled?: boolean }>('/orchestrator/status'),
+  // What keeps alerts from moving, for the banners and the status line.
+  getStatus: () => api.get<OrchestratorStatus>('/orchestrator/status'),
   kill: () => api.post('/orchestrator/kill'),
   purgeAll: () => api.post('/orchestrator/investigations/purge'),
 }
@@ -1334,6 +1375,8 @@ export interface OverviewOutcome {
   count: number | null
   // cases the alerts of a case node are in; null for the other nodes
   case_count: number | null
+  // how many of Not picked up ran out of time in the queue; null when none or another node
+  expired_count: number | null
   info: string | null
   unmeasured_text: string | null
 }
@@ -1407,6 +1450,8 @@ export interface TriageRow {
   workflow_id: string
   case_door: string | null
   merge_note: string | null
+  /** Why a not-picked-up alert was not picked up, when its latest intake row says. */
+  reason: string | null
   document: string | null
   source_link: string | null
   source_evidence: Record<string, unknown> | null
@@ -1476,7 +1521,7 @@ export interface TriagePayload {
     cases_created_today: TriageInfo
     trust_floor: TriageInfo & { limit: string }
   }
-  breakdown_info: { trust: string; weight: string; score: string }
+  breakdown_info: { trust: string; weight: string; score: string; reason: string }
 }
 
 export interface TriageQuery {
