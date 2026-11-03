@@ -10,6 +10,7 @@ import logging
 import os
 import threading
 import time
+import weakref
 from contextlib import contextmanager
 from dataclasses import astuple, dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, Generator, Optional
@@ -665,7 +666,7 @@ class DatabaseManager:
             force: Rebuild against freshly-read config even if already initialized
         """
         if self._engine is not None and not force:
-            logger.warning("Database already initialized")
+            logger.debug("Database already initialized")
             return
         try:
             # validate=False: create_engine is lazy today, so cold boot has
@@ -925,10 +926,13 @@ _schema_drift_lock = threading.Lock()
 def reset_schema_drift_check() -> None:
     """Forget the cached verdict so the next check re-inspects. For tests."""
     global _schema_drift_report, _schema_drift_report_at, _schema_drift_logged
+    global _cached_schema_head
     with _schema_drift_lock:
         _schema_drift_report = None
         _schema_drift_report_at = 0.0
         _schema_drift_logged = False
+        _cached_schema_head = None
+        _revision_verified_engines.clear()
 
 
 def get_schema_drift_report() -> Optional[Dict[str, Any]]:
@@ -1131,14 +1135,23 @@ class SchemaRevisionError(RuntimeError):
     """
 
 
+_cached_schema_head: Optional[str] = None
+# Weak, not id(): retarget() swaps engines, and a freed engine's id can recur.
+_revision_verified_engines: "weakref.WeakSet[Engine]" = weakref.WeakSet()
+
+
 def schema_head() -> str:
     """The single Alembic head this image knows how to serve."""
+    global _cached_schema_head
+    if _cached_schema_head is not None:
+        return _cached_schema_head
     heads = script_directory().get_heads()
     if len(heads) != 1:
         raise SchemaRevisionError(
             f"this image has {len(heads)} Alembic heads: {list(heads)}"
         )
-    return heads[0]
+    _cached_schema_head = heads[0]
+    return _cached_schema_head
 
 
 def stamp_schema_head(engine: Engine) -> None:
@@ -1169,6 +1182,8 @@ def _require_schema_revision(engine: Engine) -> None:
     whose revision it cannot read. A refused connection stays OperationalError
     so a database that is down is still reported as down.
     """
+    if engine in _revision_verified_engines:
+        return
     try:
         head = schema_head()
         with engine.connect() as conn:
@@ -1198,6 +1213,7 @@ def _require_schema_revision(engine: Engine) -> None:
                 f"database revision is {revision}, this image's head is {head}; "
                 "run python -m core.upgrade as the database owner"
             )
+        _revision_verified_engines.add(engine)
     except (SchemaRevisionError, OperationalError):
         raise
     except Exception as exc:

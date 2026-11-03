@@ -36,7 +36,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import func, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, noload
 
 from core.cases.closure import CLOSURE_OUTCOMES, ClosureCategory, trust_word
 from core.memory.distil import (
@@ -365,12 +365,16 @@ def _accept(session: Session, case: Case) -> ClosedCase:
 
     Only the instant is required: a Case closed without a closure row is a Case
     closed with no determination stated, which ``ClosedCase.category`` maps.
+    ``concluded_at`` is the later of ``closure.closed_at`` and ``case.updated_at``
+    so the marker matches ``GREATEST(i.closed_at, c.updated_at)`` in
+    ``_CANDIDATES`` (#3662).
     """
     case_id = case.case_id
     closure = session.get(CaseClosureInfo, case_id)
-    concluded_at = _utc(closure.closed_at if closure is not None else None) or _utc(
-        case.updated_at
-    )
+    closed_at = _utc(closure.closed_at if closure is not None else None)
+    updated_at = _utc(case.updated_at)
+    stamps = [ts for ts in (closed_at, updated_at) if ts is not None]
+    concluded_at = max(stamps) if stamps else None
     if concluded_at is None:
         raise CaseDistilRefused(
             f"{case_id} is closed but records no instant it closed at"
@@ -407,7 +411,7 @@ def write_case_distil(session: Session, case_id: str) -> Dict[str, int]:
     # included: a Case that is no longer failing must not keep a row saying it is.
     clear_failure(session, FailureKey(kind, case_id))
 
-    case = session.get(Case, case_id)
+    case = session.get(Case, case_id, options=[noload(Case.findings)])
     if case is None:
         raise CaseDistilRefused(f"{case_id} is not a case")
 

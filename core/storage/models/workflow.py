@@ -152,6 +152,16 @@ class IntakeTrigger(Base):
             postgresql_where=text("state = 'queued'"),
         ),
         Index(
+            "idx_intake_triggers_created_at",
+            text("created_at DESC"),
+        ),
+        Index(
+            "idx_intake_triggers_finding_id_id",
+            "finding_id",
+            text("id DESC"),
+            postgresql_where=text("finding_id IS NOT NULL"),
+        ),
+        Index(
             "uq_intake_triggers_queued_finding",
             "finding_id",
             unique=True,
