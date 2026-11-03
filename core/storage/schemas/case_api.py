@@ -128,6 +128,8 @@ class CaseLinkedFinding(BaseModel):
     description: Optional[str] = None
     source_link: Optional[str] = None
     entities: list[str] = []
+    # Typed ``type:value`` keys, as the orchestrator mints a run's recall keys.
+    entity_keys: list[str] = []
 
 
 class CaseDetailResponse(CaseSchema):
