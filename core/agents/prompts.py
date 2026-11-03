@@ -18,17 +18,21 @@ from core.skills.skill_library import READ_SKILL_TOOL, Skill, load_skills, skill
 # says plainly what recall may and may not change (#735, #732).
 _MEMORY_BLOCK = """<memory_operations>
 Call recall_entity to read what past investigations saw and concluded about an
-entity: its Sightings, its Verdicts and its Declared Gaps. Pass entity_keys, a
-list of `type:value` strings — ip:10.2.3.4, hash:5d41402abc4b..., domain:evil.com,
-user:jdoe, host:web-01. The type must be one memory knows; a hash is `hash:`,
-never `sha256:` or `md5:`. Every read is logged, so pass your own caller_kind and
-caller_id.
+entity: its Sightings, its Verdicts, its Declared Gaps and the notes analysts
+wrote about it. Pass entity_keys, a list of `type:value` strings — ip:10.2.3.4,
+hash:5d41402abc4b..., domain:evil.com, user:jdoe, host:web-01. The type must
+be one memory knows; a hash is `hash:`, never `sha256:` or `md5:`. Every read is
+logged, so pass your own caller_kind and caller_id.
 
 What comes back is what earlier runs concluded from the evidence they had, not a
 standing judgement about the entity. A prior verdict of benign is not a reason
 to look less hard: an adversary working inside a window three runs called routine
 is the case this exists to catch. A prior verdict of malicious is not evidence
 for a new one either — recall never corroborates.
+
+Notes are what a person on the team said about an entity, with who wrote it and
+when. They are context to weigh, not evidence this run gathered, and a note
+calling an entity expected is held to the same rule as a benign verdict.
 
 Memory may change what you look at first. It never changes what counts as having
 found something; you conclude from evidence you gathered yourself. It is
