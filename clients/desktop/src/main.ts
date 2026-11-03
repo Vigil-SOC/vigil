@@ -85,6 +85,7 @@ interface Config {
   postgresPassword?: string;
   postgresAppPassword?: string;
   bifrostAdminPassword?: string;
+  redisPassword?: string;
   // Decision 6: an upgrade without a restore point, acknowledged for one app
   // version. Ignored once the version changes.
   upgradeAckVersion?: string;
@@ -160,6 +161,16 @@ function bifrostAdminPassword(): string {
   if (saved) return saved;
   const pw = crypto.randomBytes(48).toString("base64url");
   writeConfig({ bifrostAdminPassword: pw });
+  return pw;
+}
+
+// Redis requirepass. Like Postgres it is never published to the host, but
+// without one any container on the stack network reads sessions and the queue.
+function redisPassword(): string {
+  const saved = readConfig().redisPassword;
+  if (saved) return saved;
+  const pw = crypto.randomBytes(32).toString("base64url");
+  writeConfig({ redisPassword: pw });
   return pw;
 }
 
@@ -541,6 +552,7 @@ const spawnCompose = (args: string[]) =>
       POSTGRES_PASSWORD: postgresPassword(),
       POSTGRES_APP_PASSWORD: postgresAppPassword(),
       BIFROST_ADMIN_PASSWORD: bifrostAdminPassword(),
+      REDIS_PASSWORD: redisPassword(),
       ...upgradeAckEnv(),
     },
   });
