@@ -61,16 +61,16 @@ SECURITY_DETECTION_TOOLS = [
     },
     {
         "name": "identify_gaps",
-        "description": "Identify detection gaps for a given context such as threat actor, attack type, or campaign. Analyzes which MITRE techniques have insufficient detection coverage. Use this for gap analysis and prioritization.",
+        "description": "Compare the ATT&CK techniques seen on stored alerts with the detection rules actually loaded, and list techniques no rule declares. Reads stored data only and writes nothing. Read answer and unknown first: alerts that name a tactic and no technique cannot prove a gap, and answer is unknown when the data cannot say.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "context": {
                     "type": "string",
-                    "description": "Context for gap analysis (e.g., 'ransomware', 'APT29', 'initial access', 'lateral movement')",
+                    "description": "A case id, an ATT&CK label to match on stored alerts (e.g. 'T1021', 'lateral movement'), or empty for every stored alert. A threat name such as 'APT29' is not mapped to techniques.",
                 }
             },
-            "required": ["context"],
+            "required": [],
         },
     },
     {
