@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 
 from core.auth import tool_principal
 from core.auth.current_user import get_current_user
@@ -24,8 +25,10 @@ from core.storage.config_service import get_config_service
 from core.storage.models import (
     FINISHED_INVESTIGATION_STATUSES,
     LIVE_INVESTIGATION_STATUSES,
+    PARKED_INVESTIGATION_STATUSES,
     User,
 )
+from core.time import utcnow
 from services.api.middleware.auth import get_current_active_user
 
 router = APIRouter()
@@ -120,16 +123,40 @@ def get_orchestrator_status():
     # Waiting room is intake_triggers. Count it here like GET /intake;
     # swallowing a miss as 0 would look like an empty queue.
     from core.storage.connection import get_db_manager
-    from core.storage.models import IntakeTrigger
+    from core.storage.models import IntakeTrigger, Investigation
 
     with get_db_manager().session_scope() as session:
         queued = session.query(IntakeTrigger).filter_by(state="queued").count()
+        is_parked = Investigation.status.in_(PARKED_INVESTIGATION_STATUSES)
+        parked = dict(
+            session.query(Investigation.status, func.count())
+            .filter(is_parked)
+            .group_by(Investigation.status)
+            .all()
+        )
+        # A parked run's heartbeat stopped when it parked.
+        parked_since = (
+            session.query(
+                func.min(
+                    func.coalesce(
+                        Investigation.last_activity_at, Investigation.created_at
+                    )
+                )
+            )
+            .filter(is_parked)
+            .scalar()
+        )
 
     return {
         "enabled": enabled,
         "active_agents": len(active),
         "max_concurrent_agents": max_agents,
         "queued": queued,
+        "waiting_approval": parked.get("waiting_approval", 0),
+        "paused": parked.get("paused", 0),
+        "oldest_parked_age_seconds": (
+            None if parked_since is None else (utcnow() - parked_since).total_seconds()
+        ),
         "completed": len(completed),
         "failed": len(failed),
         "total_investigations": len(investigations),

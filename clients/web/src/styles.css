@@ -6154,6 +6154,7 @@
    /* Fixed tracks, so Alert takes the free width and wraps to two lines instead of widening the table */
    .tq-table {
       table-layout: fixed;
+      min-width: 1360px; /* below it the table scrolls in its card, so Alert and why never shrink to a letter a line */
    }
 
    .tq-table thead th {
@@ -6268,6 +6269,13 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+   }
+
+   .tq-why.reason {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      white-space: normal;
    }
 
    .tq-why a {
@@ -7217,22 +7225,35 @@
 .fd-kv dd { margin: 0; color: var(--tx); font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
 .fd-muted { color: var(--tx-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* AutoOps off: said on every screen that would otherwise read as work moving */
+/* What holds intake: the Overview board's notice strip, said on every screen that would otherwise read as work moving */
 .autoops-off {
+   --notice: var(--fair);
+   --notice-bg: var(--fair-bg);
    display: flex;
    align-items: center;
-   gap: 10px;
+   gap: 12px;
    margin: 0 0 14px;
-   padding: 10px 14px;
-   border-radius: 10px;
-   background: var(--fair-bg);
-   border: 1px solid var(--fair-ln);
+   padding: 10px 12px 10px 14px;
+   border-radius: 12px;
+   background: var(--notice-bg);
+   border: 1px solid color-mix(in oklab, var(--notice) 35%, transparent);
    color: var(--tx0);
    font-size: 13px;
    line-height: 1.45;
 }
-.autoops-off svg { color: var(--fair); flex-shrink: 0; }
-.autoops-off .btn { margin-left: auto; }
+.autoops-off.poor { --notice: var(--poor); --notice-bg: var(--poor-bg); }
+.autoops-off > svg { color: var(--notice); flex-shrink: 0; }
+.autoops-off > span { flex-grow: 1; min-width: 0; }
+.autoops-off .btn {
+   justify-content: center;
+   box-sizing: border-box;
+   flex-shrink: 0;
+   height: 28px;
+   padding: 0 10px;
+   border-radius: 10px;
+   font-size: 12px;
+   font-weight: 600;
+}
 
 /* Triage queue: the verdict the daemon's triage saved */
 .tq-verdict {

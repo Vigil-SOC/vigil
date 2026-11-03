@@ -427,7 +427,12 @@ export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }
                 ))
             : bands.map((b) => {
                 const link = b.o.count > 0 ? OUTCOME_LINK[b.o.state] : undefined
-                const sub = CASE_NODES.has(b.o.state) && b.o.case_count !== null ? cases(b.o.case_count) : undefined
+                const sub =
+                  CASE_NODES.has(b.o.state) && b.o.case_count !== null
+                    ? cases(b.o.case_count)
+                    : b.o.expired_count !== null
+                      ? `${fmt(b.o.expired_count)} expired`
+                      : undefined
                 const head = (
                   <>
                     <b style={{ color: b.color }}>{fmt(b.o.count)}</b>

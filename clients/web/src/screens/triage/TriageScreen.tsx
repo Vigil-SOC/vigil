@@ -15,7 +15,7 @@ import { SourceEvidenceSection } from '../dashboard/SourceEvidenceSection'
 import { triageApi, type TriagePayload, type TriageQuery, type TriageRow, type TriageSource, type TriageVerdict } from '../../services/api'
 import { SeverityMark } from '../../shared/SeverityMark'
 import FindingDetails from '../../shared/FindingDetails'
-import { AutoOpsOffBanner } from '../../shared/AutoOpsOffBanner'
+import { IntakeBanners } from '../../shared/AutoOpsOffBanner'
 import { useAutoOpsOff } from '../../shared/useAutoOpsOff'
 import { RangeToggle } from '../../shared/RangeToggle'
 import { useCountRange } from '../../shared/countRange'
@@ -97,7 +97,7 @@ function lagNote(source: TriageSource): string {
 
 // "Grouped into, and why": the door (when there is one) is drawn as a link, this follows it
 function groupedRest(row: TriageRow): string {
-  if (!row.case_door) return row.workflow_id || BLANK
+  if (!row.case_door) return row.reason || row.workflow_id || BLANK
   const why = row.state === 'launched' ? ' (new)' : row.state === 'merged' && row.merge_note ? ` · ${row.merge_note}` : ''
   return `${why}${row.workflow_id ? ` · ${row.workflow_id}` : ''}`
 }
@@ -308,6 +308,7 @@ function Expanded({ row, data }: { row: TriageRow; data: TriagePayload }) {
   const tips = data.breakdown_info
   return (
     <div className="tq-panel" aria-label="Expanded row">
+      {row.reason && <BreakdownRow label="Why it was not picked up">{row.reason}</BreakdownRow>}
       {row.triage && <VerdictPanel verdict={row.triage} />}
       <span className="tq-h">How the ranking was worked out</span>
       <BreakdownRow label="Severity band">{row.severity_band}</BreakdownRow>
@@ -342,7 +343,7 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
   usePageSnapshot('triage', phase === 'ready' && data ? [
     `Triage queue, ${data.range === 'all' ? 'all time' : 'today (UTC)'}: ${data.matched} items. Picked up automatically ${data.strip.picked_up.launched_or_merged} of ${data.strip.picked_up.created_today}; cases created ${data.strip.cases_created_today}; waiting in line ${data.strip.waiting}.`,
     'Rows (arrived | kind | source | alert | severity | triage verdict | what happened | picked up in | grouped into | finding):',
-    ...data.rows.slice(0, 60).map((r) => [r.created_at ?? '-', r.kind_label, r.source || '-', r.title || r.description || r.document || '-', r.severity_band, verdictText(r.triage), r.state_label, r.pickup_seconds ?? '-', r.case_door || r.workflow_id || '-', r.finding_id ?? '-'].join(' | ')),
+    ...data.rows.slice(0, 60).map((r) => [r.created_at ?? '-', r.kind_label, r.source || '-', r.title || r.description || r.document || '-', r.severity_band, verdictText(r.triage), r.state_label, r.pickup_seconds ?? '-', r.case_door || r.reason || r.workflow_id || '-', r.finding_id ?? '-'].join(' | ')),
   ].join('\n') : '')
   const [openId, setOpenId] = useState<number | null>(null)
   const loadTicket = useRef(0)
@@ -451,11 +452,12 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
     {
       key: 'why',
       label: 'Grouped into, and why',
+      header: <span className="tq-th-info">Grouped into, and why{data && <InfoTip label="Where this comes from" text={data.breakdown_info.reason} />}</span>,
       render: (row) => {
         const door = row.case_door
         const rest = groupedRest(row)
         return (
-          <span className="tq-why" title={`${door ?? ''}${rest}`}>
+          <span className={`tq-why${row.reason ? ' reason' : ''}`} title={`${door ?? ''}${rest}`}>
             {door && (
               <Link
                 to={`/cases?case=${encodeURIComponent(door)}`}
@@ -494,7 +496,7 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
         </div>
       </div>
 
-      {autoOpsOff && <AutoOpsOffBanner goSettings={goSettings} />}
+      <IntakeBanners autoOpsOff={autoOpsOff} goSettings={goSettings} />
       {phase === 'loading' && <EmptyState loading icon="clock" title="Loading triage…" />}
       {phase === 'error' && (
         <EmptyState error icon="alert" title="Couldn’t load triage" primary={{ label: 'Retry', onClick: load, icon: 'refresh' }} />

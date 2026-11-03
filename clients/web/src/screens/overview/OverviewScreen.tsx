@@ -6,6 +6,8 @@ import AgentCards from './AgentCards'
 import AlertRail, { SevMark } from './AlertRail'
 import { clock } from './clock'
 import FlowDiagram from './FlowDiagram'
+import { IntakeBanners } from '../../shared/AutoOpsOffBanner'
+import { useAutoOpsOff } from '../../shared/useAutoOpsOff'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { useSourceBadge } from '../../shared/useSourceBadge'
 import { SEND_TO_TRIAGE_FAILED, sendFindingToTriage } from '../../shared/sendToTriage'
@@ -79,6 +81,7 @@ function EvidenceBody({ item }: { item: OverviewFeedItem }) {
 }
 
 export default function OverviewScreen({ go, goSettings, openCase, setViewFull, setWallMode, chatOpen }: ConsoleScreenProps) {
+  const autoOpsOff = useAutoOpsOff()
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
   const alertId = searchParams.get('alert') || null // an empty value is no alert
@@ -319,8 +322,9 @@ export default function OverviewScreen({ go, goSettings, openCase, setViewFull, 
       )}
       {phase === 'ready' && data && (
         <>
+          <IntakeBanners autoOpsOff={autoOpsOff} goSettings={goSettings} />
           <FlowDiagram data={data} wall={wall} onToggleWall={toggleWall} range={range} onRange={setRange} />
-          {!wall && <AgentCards data={data} go={go} goSettings={goSettings} />}
+          {!wall && <AgentCards data={data} go={go} autoOpsOff={autoOpsOff} />}
         </>
       )}
       </div>

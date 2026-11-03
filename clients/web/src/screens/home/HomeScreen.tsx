@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { AutoOpsOffBanner } from '../../shared/AutoOpsOffBanner'
+import { IntakeBanners } from '../../shared/AutoOpsOffBanner'
 import { useAutoOpsOff } from '../../shared/useAutoOpsOff'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
@@ -414,7 +414,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
   return (
     <div className="home-screen">
       <div className="home-page">
-        {autoOpsOff && <AutoOpsOffBanner goSettings={goSettings} />}
+        <IntakeBanners autoOpsOff={autoOpsOff} goSettings={goSettings} />
         {(shownCount !== null || share !== null || shownChips.length > 0 || onCommandHost) && (
           <div className="home-top">
             {shownCount !== null && (setup !== null || setupError !== null) && (
