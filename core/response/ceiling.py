@@ -474,12 +474,16 @@ _DROP_PENDING = "autonomy.drop_pending"
 
 
 def _after_commit(session) -> None:
+    # A SAVEPOINT release fires this too; only the outermost commit counts.
+    if session.in_nested_transaction():
+        return
     if session.info.pop(_DROP_PENDING, False):
         drop_below_floor()
 
 
 def _after_rollback(session) -> None:
-    session.info.pop(_DROP_PENDING, None)
+    if not session.in_nested_transaction():
+        session.info.pop(_DROP_PENDING, None)
 
 
 def drop_after_commit(session) -> None:
