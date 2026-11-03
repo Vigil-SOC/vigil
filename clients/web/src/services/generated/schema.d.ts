@@ -4416,6 +4416,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/memory/notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Notes
+         * @description Notes on these entities, or every note, newest first.
+         */
+        get: operations["get_api_memory_notes"];
+        put?: never;
+        /**
+         * Add Note
+         * @description Write a note. Several per entity are allowed; there is no edit.
+         */
+        post: operations["post_api_memory_notes"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/memory/notes/{note_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Note
+         * @description Withdraw a note: the row is deleted, and the trail keeps what it said.
+         */
+        delete: operations["delete_api_memory_notes_note_id"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/orchestrator/disable": {
         parameters: {
             query?: never;
@@ -5081,6 +5125,28 @@ export interface paths {
          *     (409 otherwise); ``source`` copies that skill's folder.
          */
         post: operations["post_api_skills"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/skills/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate Skill
+         * @description Draft a skill from a description.
+         *
+         *     Saves nothing: the drawer fills its form and POST /api/skills writes it.
+         */
+        post: operations["post_api_skills_generate"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9807,6 +9873,41 @@ export interface components {
             /** Noise Reason */
             noise_reason?: string | null;
         };
+        /** NoteCreate */
+        NoteCreate: {
+            /**
+             * Entity Key
+             * @description `type:value`, e.g. ip:10.0.5.12.
+             */
+            entity_key: string;
+            /** Statement */
+            statement: string;
+        };
+        /** NoteListResponse */
+        NoteListResponse: {
+            /** Notes */
+            notes: components["schemas"]["NoteOut"][];
+            /** Total */
+            total: number;
+        };
+        /**
+         * NoteOut
+         * @description The recall row: ``investigation_id`` is the note's id.
+         */
+        NoteOut: {
+            /** Concluded At */
+            concluded_at: string;
+            /** Entity Key */
+            entity_key: string;
+            /** Investigation Id */
+            investigation_id: string;
+            /** Investigation Kind */
+            investigation_kind: string;
+            /** Statement */
+            statement: string;
+            /** Written By */
+            written_by: string;
+        };
         /**
          * OrchestratorConfigResponse
          * @description Flat saved settings, the profiles the Settings cards render, and the
@@ -10626,6 +10727,15 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** SkillDraft */
+        SkillDraft: {
+            /** Body */
+            body: string;
+            /** Description */
+            description: string;
+            /** Name */
+            name: string;
+        };
         /** SkillFile */
         SkillFile: {
             /** Path */
@@ -10639,6 +10749,15 @@ export interface components {
             content: string;
             /** Path */
             path: string;
+        };
+        /** SkillGenerateRequest */
+        SkillGenerateRequest: {
+            /** Description */
+            description: string;
+        };
+        /** SkillGenerateResponse */
+        SkillGenerateResponse: {
+            draft: components["schemas"]["SkillDraft"];
         };
         /** SkillResponse */
         SkillResponse: {
@@ -19375,6 +19494,108 @@ export interface operations {
             };
         };
     };
+    get_api_memory_notes: {
+        parameters: {
+            query?: {
+                /** @description Repeat for several; omit for every note. */
+                entity_key?: string[] | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_memory_notes: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NoteCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_memory_notes_note_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                note_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     post_api_orchestrator_disable: {
         parameters: {
             query?: never;
@@ -20535,6 +20756,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SkillResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_skills_generate: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillGenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillGenerateResponse"];
                 };
             };
             /** @description Validation Error */

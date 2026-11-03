@@ -2,6 +2,8 @@
 
 `python -m core.upgrade` is the one thing that changes Vigil's database schema. It runs as the database owner (the `POSTGRES_*` settings, or `--database-url`), holds a lock so only one copy runs at a time, and prints one JSON line.
 
+The app logs in as `vigil_app`, which reads and writes rows and cannot create objects in the `public` schema. Revision `0023_runtime_role_no_create` removes that grant. Anything of your own that creates objects as `vigil_app` now gets `permission denied for schema public`; give it its own role. A `public` schema that still grants `CREATE` to `PUBLIC` (a database first created on PostgreSQL 14 or older) leaves `vigil_app` able to create through `PUBLIC`. `--check` lists that as drift on `schema public`, and `REVOKE CREATE ON SCHEMA public FROM PUBLIC` closes it.
+
 ```bash
 python -m core.upgrade --check                    # report only; writes nothing
 python -m core.upgrade --restore-point <id>       # apply, naming the restore point just taken

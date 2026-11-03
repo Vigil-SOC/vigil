@@ -81,7 +81,7 @@ export function harnessFor<K extends Record<string, unknown>>(
     // Wrapped rather than replaced: whatever the caller passed still answers the
     // cue-shaped recall, and the keyed read is added over the same endpoint the
     // tools go to -- one address for the far side, not two to keep in step.
-    memory: httpRecall(memory, { url: tools, token: internalToken() }),
+    memory: httpRecall(memory, { url: tools, token: internalToken(), ...(principal === undefined ? {} : { principal }) }),
     state,
   };
 }
