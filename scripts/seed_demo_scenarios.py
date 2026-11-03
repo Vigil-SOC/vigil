@@ -49,8 +49,10 @@ def main() -> int:
         print("\nDry run: nothing written. Pass --apply to write.")
         return 0
 
+    from core.storage.connection import init_database
     from core.storage.service import DatabaseService
 
+    init_database()
     db = DatabaseService()
     made_findings = made_cases = 0
     for f in findings:
