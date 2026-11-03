@@ -10,15 +10,17 @@ import logging
 from typing import Dict, Optional, Tuple
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from core.auth.permissions import permission_gate
 from core.llm.cost.budget import BudgetExceeded
+from core.llm.oneshot import NoProviderConfigured
 from core.llm.providers.registry import get_registry
 from core.llm.router.router import LLMRouter, get_provider_spec
 from core.llm.security import PromptInjectionBlocked
 from core.llm.target import component_fallback, model_for
 from core.routing import Auth, RouterMeta
+from core.skills.skill_ai_generator import SkillDraft, generate_skill_draft
 from core.skills.skill_eval import has_cases, load_cases, run_cases
 from core.skills.skill_library import (
     UPLOAD_MAX,
@@ -104,6 +106,14 @@ class SkillWriteRequest(BaseModel):
         if not value.strip():
             raise ValueError("Steps cannot be empty")
         return value
+
+
+class SkillGenerateRequest(BaseModel):
+    description: str = Field(..., pattern=r"\S")
+
+
+class SkillGenerateResponse(BaseModel):
+    draft: SkillDraft
 
 
 class SkillCaseResult(BaseModel):
@@ -250,6 +260,33 @@ async def upload_skill(file: UploadFile = File(...)):
     except SkillError as exc:
         raise _http(exc) from exc
     return _response(skill)
+
+
+@router.post(
+    "/generate", response_model=SkillGenerateResponse, dependencies=_SKILLS_WRITE
+)
+async def generate_skill(req: SkillGenerateRequest):
+    """Draft a skill from a description.
+
+    Saves nothing: the drawer fills its form and POST /api/skills writes it.
+    """
+    try:
+        draft = await generate_skill_draft(req.description)
+    except SkillError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except NoProviderConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except PromptInjectionBlocked as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except BudgetExceeded:
+        raise  # the app's handler renders it as a 402
+    except Exception as exc:
+        logger.exception("skill draft: model call failed")
+        raise HTTPException(
+            status_code=502,
+            detail="The model call failed. Check the provider and the gateway logs.",
+        ) from exc
+    return SkillGenerateResponse(draft=draft)
 
 
 @router.delete("/{name}", dependencies=_SKILLS_WRITE)

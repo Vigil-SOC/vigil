@@ -4945,6 +4945,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/skills/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate Skill
+         * @description Draft a skill from a description.
+         *
+         *     Saves nothing: the drawer fills its form and POST /api/skills writes it.
+         */
+        post: operations["post_api_skills_generate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/skills/upload": {
         parameters: {
             query?: never;
@@ -10484,6 +10506,15 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** SkillDraft */
+        SkillDraft: {
+            /** Body */
+            body: string;
+            /** Description */
+            description: string;
+            /** Name */
+            name: string;
+        };
         /** SkillFile */
         SkillFile: {
             /** Path */
@@ -10497,6 +10528,15 @@ export interface components {
             content: string;
             /** Path */
             path: string;
+        };
+        /** SkillGenerateRequest */
+        SkillGenerateRequest: {
+            /** Description */
+            description: string;
+        };
+        /** SkillGenerateResponse */
+        SkillGenerateResponse: {
+            draft: components["schemas"]["SkillDraft"];
         };
         /** SkillResponse */
         SkillResponse: {
@@ -20139,6 +20179,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SkillResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_skills_generate: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillGenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillGenerateResponse"];
                 };
             };
             /** @description Validation Error */
