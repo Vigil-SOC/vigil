@@ -263,7 +263,7 @@ def recover(traces: Path, medic: dict[str, Any]) -> None:
             continue
         try:
             _finalise(trace_dir, medic)
-        except Exception as exc:  # noqa: BLE001 (one bad directory isn't the rest's problem)
+        except Exception as exc:  # noqa: BLE001 (one bad dir, not the rest)
             log.error("Trace %s not finalised: %s", trace_dir.name, type(exc).__name__)
 
 
@@ -299,7 +299,9 @@ def _finalise(trace_dir: Path, medic: dict[str, Any]) -> None:
     log.warning(
         "Trace %s was interrupted: finalised%s",
         trace_dir.name,
-        f", but doesn't validate: {sorted({v.code for v in problems})}"
-        if problems
-        else "",
+        (
+            f", but doesn't validate: {sorted({v.code for v in problems})}"
+            if problems
+            else ""
+        ),
     )
