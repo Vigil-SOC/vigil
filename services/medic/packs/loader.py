@@ -7,6 +7,9 @@ trust_check.verify_envelope (signature, key state, dev mode, size, statement dig
 -> pack_check.check_pack (never on unverified bytes) -> trust_check.check_channel
 -> persist.
 
+`tolerate` (check_pack codes to let through) and `override_lineage` exist for the
+lifecycle (lifecycle.py); vet_pack() is the same checks without the write.
+
 A refusal is a return value, never an exception. The loader writes no decision log
 and touches no engine: the caller records `imported` / `rule_skipped` as pack_events.
 Everything it needs (trust root, Vigil version, dev mode, clock, data dir) is a
@@ -45,6 +48,7 @@ class LoadResult:
     errors: list[tuple[str, str]] = field(default_factory=list)  # (code, message)
     imported: dict | None = None  # id, channel, version, signed_by, previous
     rule_skipped: list[str] = field(default_factory=list)
+    tolerated: list[tuple[str, str]] = field(default_factory=list)  # let through
 
     @property
     def ok(self) -> bool:
@@ -153,15 +157,22 @@ def _refuse(errors: list[tuple[str, str]]) -> LoadResult:
     return LoadResult(errors=errors)
 
 
-def load_pack(
+def vet_pack(
     data: bytes,
     *,
-    data_dir: Path,
     trust_root: dict,
     vigil_version: str,
     dev_mode: bool,
     now: datetime,
-) -> LoadResult:
+    lineage: Lineage | None,
+    override_lineage: bool = False,
+    tolerate: frozenset[str] = frozenset(),
+):
+    """Every check short of writing: (errors, verified, check_pack result).
+
+    `tolerate` names check_pack codes to let through (the bundled pack's exception);
+    signature, key and channel failures are never tolerable.
+    """
     verified = trust_check.verify_envelope(
         data,
         trust_root,
@@ -170,21 +181,46 @@ def load_pack(
         dev_mode=dev_mode,
     )
     if not verified.ok:
-        return _refuse(verified.errors)
-
-    active = read_active(data_dir)
+        return verified.errors, verified, None
     res = check_pack(
         verified.payload,
         vigil_version=vigil_version,
         now=now,
-        last_known_good=active.lineage if active else None,
+        last_known_good=lineage,
+        override_lineage=override_lineage,
     )
-    errors = list(res.errors)
+    errors = [e for e in res.errors if e[0] not in tolerate]
     if res.manifest:
         pack = res.manifest["pack"]
         errors += trust_check.check_channel(verified, trust_root, pack["channel"])
+    return errors, verified, res
+
+
+def load_pack(
+    data: bytes,
+    *,
+    data_dir: Path,
+    trust_root: dict,
+    vigil_version: str,
+    dev_mode: bool,
+    now: datetime,
+    override_lineage: bool = False,
+    tolerate: frozenset[str] = frozenset(),
+) -> LoadResult:
+    active = read_active(data_dir)
+    errors, verified, res = vet_pack(
+        data,
+        trust_root=trust_root,
+        vigil_version=vigil_version,
+        dev_mode=dev_mode,
+        now=now,
+        lineage=active.lineage if active else None,
+        override_lineage=override_lineage,
+        tolerate=tolerate,
+    )
     if errors:
         return _refuse(errors)
+    pack = res.manifest["pack"]
 
     _persist(data_dir, data, active)
     imported = {
@@ -203,4 +239,8 @@ def load_pack(
         ),
     }
     log.info("pack imported %s %s/%s", pack["version"], pack["id"], pack["channel"])
-    return LoadResult(imported=imported, rule_skipped=list(res.skipped_rules))
+    return LoadResult(
+        imported=imported,
+        rule_skipped=list(res.skipped_rules),
+        tolerated=[e for e in res.errors if e[0] in tolerate],
+    )

@@ -5,12 +5,17 @@ import { DurationPicker } from '../../shared/DurationPicker'
 import { formatDuration } from '../../shared/duration'
 import { Icon } from '../../shared/icons'
 import { ScrubField } from '../../shared/ScrubField'
-import { ConfirmDialog, Field, SettingsCard, TextInput, Toggle } from '../../shared/ui'
+import { ConfirmDialog, Field, NumberInput, SettingsCard, TextInput, Toggle } from '../../shared/ui'
+import { NotMeasured } from '../../shared/NotMeasured'
+import { utcDayClock } from '../../shared/utc'
+import { agreementText, workflowTier, type WorkflowTier } from '../../shared/autonomy'
 import {
   matchesProfile,
   useCeiling,
+  useInvestigateWorkflows,
   useOrchestrator,
   useUnverifiedTools,
+  type InvestigateWorkflow,
   type InvestigationProfileValues,
   type OrchestratorBound,
   type OrchestratorConfig,
@@ -40,6 +45,7 @@ type PendingSave =
   | { kind: 'irreversible' }
   | { kind: 'stop' }
   | { kind: 'tool'; name: string; to: EffectClass }
+  | { kind: 'workflow'; workflow: InvestigateWorkflow }
 
 // Tighter last, as in core/response/ceiling.py; an unclassified tool loosens to anything
 const CLASS_ORDER: EffectClass[] = ['read', 'read_unverified', 'reversible', 'irreversible']
@@ -62,6 +68,29 @@ const splitTool = (name: string) => {
   return at > 0 ? { server: name.slice(0, at), tool: name.slice(at + 1) } : { server: '', tool: name }
 }
 const STOPPED_LOOSEN = 'Stopped: resume first'
+
+type WorkflowChoice = 'fleet' | 'act' | 'assist'
+const WORKFLOW_CHOICES: { to: WorkflowChoice; label: string }[] = [
+  { to: 'fleet', label: 'Follows fleet' },
+  { to: 'act', label: 'Act' },
+  { to: 'assist', label: 'Assist' },
+]
+const pct = (rate: number) => `${Math.round(rate * 100)}%`
+
+/** The row's last change: who raised it and on what agreement, or Vigil taking it back. */
+function lastChange(entry: WorkflowTier | undefined): string {
+  if (!entry) return ''
+  // the ceiling stores naive UTC stamps; without an offset a browser reads them as local time
+  const at = utcDayClock(/(Z|[+-]\d\d:?\d\d)$/.test(entry.at) ? entry.at : `${entry.at}Z`) ?? ''
+  const rate = entry.evidence?.agreement_rate
+  if (entry.by === 'system') {
+    // rounded down: the server drops below the exact floor, so 79.5% must not read as 80%
+    return `Lowered by Vigil ${at}: ${rate == null ? 'Not measured' : `${Math.floor(rate * 100)}%`} under the ${entry.floor}% floor`
+  }
+  if (entry.tier === 'assist') return `Set to Assist by ${entry.by} ${at}`
+  const over = entry.evidence ? entry.evidence.agreed + entry.evidence.disagreed : 0
+  return `Raised by ${entry.by} ${at} at ${rate == null ? 'Not measured' : `${pct(rate)} over ${over}`}`
+}
 const TOOLS_SHOWN = 8
 
 const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
@@ -86,6 +115,15 @@ const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
         title: 'Stop autonomy?',
         body: 'No tool acts on its own, and unattended writes, proposals and outside actions are off until you resume; reads continue. Automatic investigation turns off and investigations in progress are marked failed.',
       }
+    case 'workflow': {
+      const shown = agreementText(pending.workflow.agreement)
+      return {
+        title: `Let ${pending.workflow.name} act on its own?`,
+        body: `Its tools that change something, such as revoking a session, will stop waiting for a person. Last 30 days: ${
+          shown ? shown.text : 'not measured, no closure has been scored yet'
+        }. Below the floor, Vigil puts it back on Assist.`,
+      }
+    }
     case 'tool':
       return pending.to === 'read'
         ? {
@@ -133,6 +171,8 @@ const FLEET_ROWS: LimitRow[] = [
 export default function AutoInvestigateSection({ notify }: SectionProps) {
   const { config, setConfig, defaults, bounds, profiles, phase, reload, save } = useOrchestrator()
   const ceiling = useCeiling()
+  const investigate = useInvestigateWorkflows()
+  const [floor, setFloor] = useState('')
   const unverified = useUnverifiedTools()
   const [allTools, setAllTools] = useState(false)
   const { hasPermission } = useAuth()
@@ -273,8 +313,21 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
     }
   }
 
+  const setWorkflow = async (w: InvestigateWorkflow, to: WorkflowChoice, floorPct?: number) => {
+    try {
+      await ceiling.setWorkflow(w.id, { tier: to === 'fleet' ? null : to, floor: floorPct ?? null })
+      notify('ok', `${w.name} ${to === 'fleet' ? 'follows the fleet' : to === 'act' ? 'acts on its own' : 'asks first'}.`)
+    } catch (err) {
+      notify('err', errorText(err, 'Failed to save the workflow’s autonomy.'))
+    }
+  }
+
+  const floorValue = Number(floor)
+  const floorValid = /^\d+$/.test(floor) && floorValue >= 1 && floorValue <= 100
+
   const confirmPending = () => {
     if (!pending) return
+    if (pending.kind === 'workflow' && !floorValid) return
     const current = pending
     setPending(null)
     switch (current.kind) {
@@ -292,6 +345,9 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
         return
       case 'tool':
         classifyTool(current.name, current.to)
+        return
+      case 'workflow':
+        setWorkflow(current.workflow, 'act', floorValue)
         return
       default: {
         const _exhaustive: never = current
@@ -430,6 +486,76 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
       </div>
     )
   }
+
+  // Act is always a raise; so is following a fleet on Act (either flag) from Assist. The server decides, this only picks the gate.
+  const workflowRow = (w: InvestigateWorkflow, stopped: boolean) => {
+    const entry = workflowTier(ceil, w.id)
+    const current: WorkflowChoice = entry?.tier ?? 'fleet'
+    const raises = (to: WorkflowChoice) =>
+      to === 'act' || (to === 'fleet' && current === 'assist' && Boolean(ceil?.act_reversible || ceil?.act_irreversible))
+    const choices = WORKFLOW_CHOICES.filter((c) => c.to === current || (raises(c.to) ? canRaise : canLower))
+    const shown = agreementText(w.agreement)
+    const change = lastChange(entry)
+    return (
+      <div className="lim-row" key={w.id}>
+        <span className="lim-row-title">
+          {w.name}
+          {shown ? <span>{shown.text}</span> : <NotMeasured />}
+        </span>
+        <span className="lim-wf-tag">
+          <span>{entry?.floor ? `Floor ${entry.floor}%` : 'No floor'}</span>
+          {change && <span title={change}>{change}</span>}
+        </span>
+        <span className="lim-row-ctl">
+          <div className="lim-seg" role="group" aria-label={`Autonomy of ${w.name}`}>
+            {choices.map((c) => {
+              const blocked = c.to !== current && raises(c.to) && (stopped || (c.to === 'act' && locked))
+              return (
+                <button
+                  key={c.to}
+                  type="button"
+                  aria-pressed={c.to === current}
+                  disabled={blocked}
+                  title={blocked ? (stopped ? STOPPED_LOOSEN : 'Locked by the environment') : undefined}
+                  onClick={() => {
+                    if (c.to === current) return
+                    if (c.to === 'act') {
+                      setFloor('')
+                      setPending({ kind: 'workflow', workflow: w })
+                    } else setWorkflow(w, c.to)
+                  }}
+                >
+                  {c.label}
+                </button>
+              )
+            })}
+          </div>
+        </span>
+      </div>
+    )
+  }
+
+  const workflowList = (stopped: boolean) => (
+    <div className="lim-tools mt-3">
+      <div className="lim-tools-head">
+        <h4>Each investigation workflow</h4>
+        <span>
+          Act lets one workflow’s tools that change something act on their own, whatever the fleet does. Vigil puts it
+          back on Assist when its agreement with people falls below the floor.
+        </span>
+        {!canLower && <span>Your role can see these but not change them.</span>}
+        {canLower && !canRaise && <span>Your role can put a workflow on Assist. Letting one act needs permission to loosen autonomy.</span>}
+      </div>
+      {investigate.phase === 'loading' && <span className="text-xs text-tx-3">Loading workflows…</span>}
+      {investigate.phase === 'error' && (
+        <span className="text-xs text-tx-3">Could not load the workflows. Reload to try again.</span>
+      )}
+      {investigate.phase === 'ready' && investigate.workflows?.length === 0 && (
+        <span className="text-xs text-tx-3">No investigation workflow is installed.</span>
+      )}
+      {investigate.workflows?.map((w) => workflowRow(w, stopped))}
+    </div>
+  )
 
   const toolList = (stopped: boolean) => {
     const tools = (unverified.phase === 'ready' && unverified.tools) || []
@@ -661,6 +787,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                 <span className="text-sm text-tx-2">{ceil.four_eyes ? 'On' : 'Off'}</span>
               )}
             </div>
+            {workflowList(ceil.stopped)}
             {toolList(ceil.stopped)}
           </>
         )}
@@ -725,7 +852,30 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
       <ConfirmDialog
         open={dialog != null}
         title={dialog?.title ?? ''}
-        body={dialog?.body ?? ''}
+        body={
+          pending?.kind === 'workflow' ? (
+            <>
+              {dialog?.body}
+              <label className="lim-floor">
+                Floor
+                <NumberInput
+                  autoFocus
+                  min={1}
+                  max={100}
+                  step={1}
+                  value={floor}
+                  placeholder={String(agreementText(pending.workflow.agreement)?.pct ?? '')}
+                  onChange={(e) => setFloor(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && confirmPending()}
+                />
+                % agree, required
+              </label>
+            </>
+          ) : (
+            dialog?.body ?? ''
+          )
+        }
+        confirmDisabled={pending?.kind === 'workflow' && !floorValid}
         confirmLabel={pending?.kind === 'stop' ? 'Stop' : pending?.kind === 'tool' ? 'Confirm' : 'Save'}
         danger={pending?.kind === 'stop'}
         onConfirm={confirmPending}

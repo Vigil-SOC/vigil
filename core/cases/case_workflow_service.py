@@ -22,6 +22,7 @@ from core.cases.agent_closure import (
 from core.cases.closure import (
     CHANNEL_AGENT,
     ClosureCategory,
+    closed_by_person,
     trust_word,
 )
 from core.exceptions import NotFoundError, default_on_error
@@ -538,6 +539,11 @@ class CaseWorkflowService:
         principal, actor_text = actor_identity(session, closed_by)
         stored_by = principal or actor_text
         channel = close_channel()
+        if closed_by_person(channel):
+            from core.response.ceiling import drop_after_commit
+
+            # A person's closure can take a workflow under its floor (#3624).
+            drop_after_commit(session)
 
         case.status = "closed"
 

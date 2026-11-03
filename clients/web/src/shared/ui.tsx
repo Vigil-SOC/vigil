@@ -594,6 +594,7 @@ export function ConfirmDialog({
   confirmLabel = 'Confirm',
   danger = true,
   busy = false,
+  confirmDisabled = false,
   onConfirm,
   onClose,
 }: {
@@ -603,6 +604,7 @@ export function ConfirmDialog({
   confirmLabel?: string
   danger?: boolean
   busy?: boolean
+  confirmDisabled?: boolean
   onConfirm: () => void
   onClose: () => void
 }) {
@@ -616,7 +618,7 @@ export function ConfirmDialog({
         <button
           className={`btn ${danger ? 'danger' : 'primary'}`}
           onClick={onConfirm}
-          disabled={busy}
+          disabled={busy || confirmDisabled}
         >
           {busy ? 'Working…' : confirmLabel}
         </button>

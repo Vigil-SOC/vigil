@@ -23,6 +23,6 @@ keep_firing_for: 5m
 advice:
   summary: The agent worker has reported not ready for 2 minutes, so new investigation runs are queued but not picked up.
   fix: >-
-    Send this incident to DeepTempo Support with the evidence report. Check that
+    Report it as a Vigil defect with this incident. Check that
     the agent worker can reach Redis; restarting it reconnects only if Redis is
     up. Record what you did.

@@ -123,9 +123,6 @@ INBOUND = [
     Route("GET", "/v1/decisions/{seq}", segs={"seq": SEQ}),
     Route("GET", "/v1/sensors"),
     Route("GET", "/v1/pack"),
-    Route(
-        "GET", "/v1/export", {"from": (TS, 1), "to": (TS, 1)}, required=("from", "to")
-    ),
 ]
 
 

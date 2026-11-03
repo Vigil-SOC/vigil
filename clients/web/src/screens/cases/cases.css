@@ -70,7 +70,7 @@
   font-size: 12px;
 }
 
-/* Trust strip (CaseDetail board): a 72x4 meter, then the text and its ⓘ. Neutral fill: no floor to judge against. */
+/* Trust strip (CaseDetail board): a 72x4 meter, then the text and its ⓘ. Neutral fill unless the workflow has a floor. */
 .case-page .dh-meta .case-trust-on {
   display: inline-flex;
   align-items: center;
@@ -87,6 +87,8 @@
   flex-shrink: 0;
 }
 .case-page .case-trust-bar > span { display: block; height: 100%; background: var(--tx2); }
+.case-page .case-trust-bar.good > span { background: var(--good); }
+.case-page .case-trust-bar.poor > span { background: var(--poor); }
 
 .case-page .case-sla.good { color: var(--good); }
 .case-page .case-sla.fair { color: var(--fair); }
@@ -388,7 +390,7 @@
 
 .case-needs-strip button:hover { filter: brightness(1.1); }
 
-/* Side panel: Details, Cost, Known, People (boards/CaseComments.dc.html). */
+/* Side panel: Details, Cost, Known, People. */
 .case-side {
   flex: 0 0 280px;
   width: 280px;
@@ -1272,7 +1274,7 @@
 }
 .cases-list > * { flex-shrink: 0; }
 
-/* Cases list head and chip rows (boards/Cases.dc.html) */
+/* Cases list head and chip rows */
 .cases-top {
   display: flex;
   flex-direction: column;
@@ -1568,7 +1570,7 @@
   .case-composer .composer-note { grid-row: 2; grid-column: 1 / -1; white-space: normal; padding-bottom: 2px; }
   .case-composer .ci-send { grid-row: 1; grid-column: 2; }
 }
-/* Cases list table: the board's grid card (boards/Cases.dc.html) */
+/* Cases list table: a grid card */
 .cases-card.list-scroll {
   margin: 16px 26px 0;
   background: var(--bg1);

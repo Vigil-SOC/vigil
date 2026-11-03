@@ -318,7 +318,7 @@ def _denial(claims: Claims, tool: str) -> Optional[str]:
         refusal = permission_refusal(permission) if permission else None
         return None if refusal is None else refusal["error"]
     writes = not (permission or "").endswith(".read")
-    return unattended_refusal(tool, writes=writes)
+    return unattended_refusal(tool, writes=writes, run_id=claims.run_id)
 
 
 def _note_unbound(tool: str) -> None:

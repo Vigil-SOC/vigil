@@ -2,8 +2,8 @@
    Settings · AI models · Spend
 
    Total cost, calls, tokens, cache hit rate and the per-model table over a
-   24h / 7d / 30d / All window. Spend is a Settings readout, not a case readout
-   (PRD D11); the caps that bound it live in the Spending limit card and
+   24h / 7d / 30d / All window. Spend is a Settings readout, not a case readout;
+   the caps that bound it live in the Spending limit card and
    Settings › Autonomous investigation.
    ============================================================ */
 import { useState } from 'react'

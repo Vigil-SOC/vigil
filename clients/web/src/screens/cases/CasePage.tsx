@@ -1,7 +1,9 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { utcClock, utcDay, utcDayClock } from '../../shared/utc'
 import { Link } from 'react-router-dom'
-import { analyticsApi, approvalsApi, auditApi, casesApi, workflowApi, type CaseRecordRow, type NeedsYouItem, type WorkflowAgreement } from '../../services/api'
+import { analyticsApi, approvalsApi, auditApi, autonomyApi, casesApi, workflowApi, type CaseRecordRow, type Ceiling, type NeedsYouItem, type WorkflowAgreement } from '../../services/api'
+import { actsByDefault, agreementText, workflowTier } from '../../shared/autonomy'
+import { AUTONOMY_CHANGED, notifyAutonomyChanged } from '../settings/useSettings'
 import { FilterChip } from '../../shared/FilterChip'
 import { InfoTip } from '../../shared/InfoTip'
 import { IN_FLIGHT, extendRun, useRunDetail, type Grant } from '../workflows/runRead'
@@ -110,22 +112,20 @@ function closedLine(closure: CaseClosureView | null): string {
     .join(' · ')
 }
 
-/** "N reviews · X% agree" for a workflow with scored closures; null when nothing was scored. */
-function agreementText(row: WorkflowAgreement | undefined): { text: string; pct: number } | null {
-  const scored = row ? row.agreed + row.disagreed : 0
-  if (!row || !scored || row.agreement_rate == null) return null
-  const pct = Math.round(row.agreement_rate * 100)
-  return { text: `${plural(scored, 'review')} · ${pct}% agree`, pct }
-}
-
-/** The header's trust strip: how often this workflow's verdict matched a person's closure, last 30 days. */
-function TrustStrip({ row }: { row: WorkflowAgreement | undefined }) {
+/** The header's trust strip: how often this workflow's verdict matched a person's closure, last 30 days,
+ *  and whether its runs act on their own. The bar is judged against the workflow's floor when it has one. */
+function TrustStrip({ row, ceiling, workflowId }: { row: WorkflowAgreement | undefined; ceiling: Ceiling | null; workflowId: string | undefined }) {
   const shown = agreementText(row)
-  if (!shown) return <NotMeasured className="case-trust" />
+  const acts = actsByDefault(ceiling, workflowId) ? ' · acts by default' : ''
+  if (!shown) {
+    return acts ? <span className="case-trust case-trust-on"><NotMeasured />{acts}</span> : <NotMeasured className="case-trust" />
+  }
+  const floor = workflowTier(ceiling, workflowId)?.floor
+  const tone = floor && row?.agreement_rate != null ? (row.agreement_rate * 100 >= floor ? ' good' : ' poor') : ''
   return (
     <span className="case-trust case-trust-on">
-      <span className="case-trust-bar" aria-hidden><span style={{ width: `${shown.pct}%` }} /></span>
-      {shown.text}
+      <span className={`case-trust-bar${tone}`} aria-hidden><span style={{ width: `${shown.pct}%` }} /></span>
+      {shown.text}{acts}
       <InfoTip
         label="How this is measured"
         source="Cases closed in the last 30 days that a run of this workflow investigated."
@@ -540,7 +540,7 @@ function CaseNeedRow(props: NeedProps) {
 /** Rows the Memory tab's two cards show. */
 function memoryRows(fold: RunFold | null): number {
   const recall = fold?.recall
-  const opening = recall && !recall.unavailable ? recall.sightings.length + recall.verdicts.length : 0
+  const opening = recall && !recall.unavailable ? recall.notes.length + recall.sightings.length + recall.verdicts.length : 0
   return opening + recallEntityCalls(fold).length + (recall?.gaps.length ?? 0) + visibilityGaps(fold).length + leftOpen(fold).length
 }
 
@@ -619,7 +619,7 @@ function doorLines(folds: (RunFold | null)[], foldPhase: Phase, hasRun: boolean,
     evidence = 'Findings, no for or against'
   }
   const recalls = read.flatMap((one) => one.recall ?? [])
-  const recallRows = recalls.reduce((n, r) => n + r.sightings.length + r.verdicts.length + r.gaps.length, 0) + read.reduce((n, one) => n + recallEntityCalls(one).length, 0)
+  const recallRows = recalls.reduce((n, r) => n + r.notes.length + r.sightings.length + r.verdicts.length + r.gaps.length, 0) + read.reduce((n, one) => n + recallEntityCalls(one).length, 0)
   const blind = read.reduce((n, one) => n + visibilityGaps(one).length, 0)
   const open = read.reduce((n, one) => n + leftOpen(one).length, 0)
   const memory = [recallRows && plural(recallRows, 'recall row'), blind && plural(blind, 'gap'), open && plural(open, 'open question')].filter(Boolean).join(' · ')
@@ -1081,6 +1081,7 @@ export function CasePage({
   const [assessed, setAssessed] = useState<'Agreed' | 'Disagreed' | null>(null)
   const [agreement, setAgreement] = useState<WorkflowAgreement[]>([])
   const [agreementKey, setAgreementKey] = useState(0)
+  const [ceiling, setCeiling] = useState<Ceiling | null>(null)
   const canReadAudit = useAuth().hasPermission('audit.read')
   const [needsItems, setNeedsItems] = useState<NeedsYouItem[]>([])
   const [needsCount, setNeedsCount] = useState(0)
@@ -1139,6 +1140,20 @@ export function CasePage({
     analyticsApi.getAgreement('30d').then((rows) => { if (live) setAgreement(rows) }, () => { if (live) setAgreement([]) })
     return () => { live = false }
   }, [id, agreementKey])
+
+  // A person's close may drop a workflow below its floor: re-read the agreement here and the tier everywhere.
+  const afterClose = () => {
+    setAgreementKey((k) => k + 1)
+    notifyAutonomyChanged()
+  }
+
+  useEffect(() => {
+    let live = true
+    const read = () => autonomyApi.get().then(({ data }) => { if (live) setCeiling(data) }, () => { if (live) setCeiling(null) })
+    read()
+    window.addEventListener(AUTONOMY_CHANGED, read)
+    return () => { live = false; window.removeEventListener(AUTONOMY_CHANGED, read) }
+  }, [id])
 
   useEffect(() => {
     setTab('Summary')
@@ -1501,7 +1516,7 @@ export function CasePage({
     try {
       await casesApi.closeCase(id, { closure_category: closure.closure_category as ClosureCategory })
       setAssessed('Agreed')
-      setAgreementKey((k) => k + 1)
+      afterClose()
       onChanged()
     } catch (e) {
       setNote(errorDetail(e, 'Couldn’t record your agreement'))
@@ -1646,7 +1661,7 @@ export function CasePage({
               {reason && <span className="case-reason clamp2" title={reason}>{reason}</span>}
             </div>
             <div className="dh-meta">
-              {latest && <span>{workflowNames[latest.workflow_id] || latest.workflow_id}</span>}
+              {latest && <span>{workflowNames[latest.workflow_id] || latest.workflow_name || latest.workflow_id}</span>}
               {c.findings > 0 && <span>Combined from {c.findings} {c.findings === 1 ? 'alert' : 'alerts'}</span>}
               <span>Opened {created}</span>
               <span>
@@ -1658,7 +1673,7 @@ export function CasePage({
                   </>
                 )}
               </span>
-              <TrustStrip row={workflowAgreement} />
+              <TrustStrip row={workflowAgreement} ceiling={ceiling} workflowId={latest?.workflow_id} />
             </div>
           </>
         ) : (
@@ -1863,14 +1878,14 @@ export function CasePage({
             </section>
           )}
           {tab === 'Summary' && note && <p className="muted">{note}</p>}
-          <CloseCaseDialog open={closing} id={id} onClose={() => setClosing(false)} onClosed={() => { void loadNeeds(); onChanged() }} />
+          <CloseCaseDialog open={closing} id={id} onClose={() => setClosing(false)} onClosed={() => { void loadNeeds(); afterClose(); onChanged() }} />
           <CloseCaseDialog
             open={disagreeing}
             id={id}
             initial={closure?.closure_category === 'false_positive' ? 'resolved' : 'false_positive'}
             title="Disagree · close it as"
             onClose={() => setDisagreeing(false)}
-            onClosed={() => { setAssessed('Disagreed'); setAgreementKey((k) => k + 1); onChanged() }}
+            onClosed={() => { setAssessed('Disagreed'); afterClose(); onChanged() }}
           />
         </div>
 
@@ -2133,8 +2148,18 @@ function MemoryCards({ parts }: { parts: MemoryPart[] }) {
             ) : (
               <p className="muted">{tag && <RunTag label={tag} />}The run did not journal an opening recall.</p>
             )}
-            {(opened?.sightings.length || opened?.verdicts.length || recalled.length) ? (
+            {(opened?.notes.length || opened?.sightings.length || opened?.verdicts.length || recalled.length) ? (
               <div className="case-mem-rows">
+                {/* A person's statement, as the run read it: no Withdraw here (the side panel has it). */}
+                {opened?.notes.map((row, i) => (
+                  <MemoryRow
+                    key={`n${i}`}
+                    run={tag}
+                    tag="Note"
+                    text={[entityShown(row.entity), row.statement].filter(Boolean).join(' — ')}
+                    meta={[row.writtenBy || '—', utcDay(row.concludedAt)].filter(Boolean).join(' · ')}
+                  />
+                ))}
                 {opened?.sightings.map((row, i) => (
                   <MemoryRow
                     key={`s${i}`}

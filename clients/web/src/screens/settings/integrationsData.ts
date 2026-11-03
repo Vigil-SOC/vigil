@@ -53,7 +53,7 @@ export const SERVER_DISPLAY_NAMES = new Map(Object.entries({
 
 interface McpCategory {
   label: string
-  /** the neutral mark of a vendor with no logo (PRD D6) */
+  /** the neutral mark of a vendor with no logo */
   icon: IconName
   servers: string[]
 }

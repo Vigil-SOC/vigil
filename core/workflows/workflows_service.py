@@ -30,6 +30,9 @@ logger = logging.getLogger(__name__)
 # What a workflow definition runs as, and how a job names one. Both belong to the
 # agent layer's vocabulary, so they are stated here once rather than inline.
 COMPOSE_RUN_KIND = "compose"
+# One agent on its own. The definition is built from the agent when asked for and never
+# stored, so it follows the agent and no workflow list has to hide it.
+AGENT_RUN_PREFIX = "agent-run-"
 HUNT_RUN_KIND = "hunt"
 INVESTIGATE_RUN_KIND = "investigate"
 ROOT_CAUSE_RUN_KIND = "root_cause"
@@ -352,6 +355,39 @@ class WorkflowDefinition:
         return _checkpoints(self)
 
 
+def _agent_run_definition(workflow_id: str) -> Optional[WorkflowDefinition]:
+    """One phase holding one agent and its own tools; None for an unknown or disabled agent."""
+    from core.workflows.playbook_resolver import UnknownPlaybook, _profile_for
+
+    try:
+        agent = _profile_for(workflow_id.removeprefix(AGENT_RUN_PREFIX))
+    except UnknownPlaybook:
+        return None
+    return WorkflowDefinition(
+        workflow_id=workflow_id,
+        file_path=None,
+        metadata={
+            "name": f"{agent.name} on its own",
+            "description": f"Runs {agent.name} on one alert or case, with its own tools.",
+            "run_kind": COMPOSE_RUN_KIND,
+            "phases": [
+                {
+                    "id": "agent",
+                    "agent": agent.id,
+                    "name": agent.name,
+                    "instructions": (
+                        f"Work the alert or case you were given as {agent.name}, and "
+                        "say what you conclude.\n\nExpected output: a verdict with the "
+                        "evidence for it, and what a person should do next."
+                    ),
+                    "tools": list(agent.recommended_tools or []),
+                }
+            ],
+        },
+        body="",
+    )
+
+
 def _custom_workflow_to_definition(wf: Dict[str, Any]) -> WorkflowDefinition:
     """
     Adapt a database-backed custom workflow dict into a WorkflowDefinition so
@@ -526,6 +562,8 @@ class WorkflowsService:
 
     def get_workflow(self, workflow_id: str) -> Optional[WorkflowDefinition]:
         """Get a specific workflow by ID (custom workflows take precedence)."""
+        if workflow_id.startswith(AGENT_RUN_PREFIX):
+            return _agent_run_definition(workflow_id)
         custom = self._get_custom_workflow(workflow_id)
         if custom:
             return custom

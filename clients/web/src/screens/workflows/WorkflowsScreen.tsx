@@ -1,7 +1,8 @@
 import { Fragment, createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
+import { utcDay } from '../../shared/utc'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { EmptyState, Popup, TextInput, Toggle, activateOnKey } from '../../shared/ui'
 import { Markdown } from '../../shared/Markdown'
@@ -78,15 +79,15 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
   const [tab, setTab] = useState<WfTab>(() => tabFrom(searchParams.get('tab')))
   // a link followed while the screen is open names its tab again
   useEffect(() => setTab(tabFrom(searchParams.get('tab'))), [searchParams])
-  // lifted so the header's "New workflow" opens the same dialog from any tab
-  const [describing, setDescribing] = useState(false)
-  const [draft, setDraft] = useState<GeneratedDraft | null>(null)
+  // lifted so the header's "New workflow" opens the same dialog from any tab; the text it opens with, null when closed
+  const [describing, setDescribing] = useState<string | null>(null)
+  const [drafted, setDrafted] = useState<{ description: string; draft: GeneratedDraft } | null>(null)
   const workflows = useWorkflows()
   const agents = useAgents()
   const skills = useSkills()
   // ?run=<id> opens one run in place of the catalog, so a case activity can deep-link to it.
   const runId = searchParams.get('run')
-  const saveDraft = () => workflowApi.createCustom(draftPayload(draft!)).then(() => { setDraft(null); workflows.reload() })
+  const saveDraft = () => workflowApi.createCustom(draftPayload(drafted!.draft)).then(() => { setDrafted(null); workflows.reload() })
   const backToCatalog = useCallback(() => setSearchParams({}), [setSearchParams])
   // no chip while a list is loading or failed: a count of 0 would read as empty
   const count = (feed: { rows: unknown[]; phase: Phase }) => (feed.phase === 'ready' ? feed.rows.length : null)
@@ -107,7 +108,7 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
             <h1 className="m-0 text-[20px] leading-[1.25] tracking-[-0.2px] text-tx" style={{ fontWeight: 700 }}>{PAGE_TITLE}</h1>
             <p className="m-0 text-[13px] leading-[1.5] text-tx-2 max-w-[760px]">{PAGE_DESC}</p>
           </div>
-          <button className="btn primary wf-new" onClick={() => setDescribing(true)}><Icon name="plus" /> New workflow</button>
+          <button className="btn primary wf-new" onClick={() => setDescribing('')}><Icon name="plus" /> New workflow</button>
         </div>
         <div className="wf-tabs" role="tablist" aria-label="Workflow views">
           {tabs.map(([k, label, n]) => (
@@ -125,12 +126,12 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
           ))}
         </div>
       </div>
-      {tab === 'workflows' && draft && <WorkflowReaderPane draft={draft} onBack={() => setDraft(null)} onSave={saveDraft} />}
-      {tab === 'workflows' && !draft && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog feed={workflows} onCreate={() => setDescribing(true)} goSettings={goSettings} />)}
+      {tab === 'workflows' && drafted && <WorkflowReaderPane draft={drafted.draft} onBack={() => setDrafted(null)} onSave={saveDraft} onChangeDescription={() => setDescribing(drafted.description)} />}
+      {tab === 'workflows' && !drafted && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog feed={workflows} onCreate={() => setDescribing('')} goSettings={goSettings} />)}
       {tab === 'agents' && <AgentsTab feed={agents} skillCount={skills.phase === 'ready' ? skills.rows.length : null} onToggled={workflows.reload} />}
       {tab === 'skills' && <SkillsTab feed={skills} workflows={workflows} agents={agents} />}
       {tab === 'commands' && <CommandsTab />}
-      {describing && <DescribeDialog onClose={() => setDescribing(false)} onDrafted={(d) => { setDescribing(false); setTab('workflows'); setDraft(d) }} />}
+      {describing !== null && <DescribeDialog initial={describing} onClose={() => setDescribing(null)} onDrafted={(description, draft) => { setDescribing(null); setTab('workflows'); setDrafted({ description, draft }) }} />}
     </AgentRowsProvider>
   )
 }
@@ -838,7 +839,14 @@ function CoveragePanel({ entityKeys, onError, onProposal }: {
 
 /** Run a workflow — collects a target, starts it on the agent layer, then hands
     off to History, which reports phases, beliefs and anything the run waits on. */
-export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: () => void; onClose: () => void }) {
+export function RunModal({ wf, agent = false, onStarted, onWatch, onClose }: {
+  wf: Pick<Workflow, 'id' | 'name' | 'huntLike' | 'runKind'>
+  /** One agent on its own: there is no claim to test, and the run opens straight in Watch it run. */
+  agent?: boolean
+  onStarted: () => void
+  onWatch?: (runId: string) => void
+  onClose: () => void
+}) {
   const [findingId, setFindingId] = useState('')
   const [caseId, setCaseId] = useState('')
   const [context, setContext] = useState('')
@@ -956,7 +964,8 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
       const res = await workflowApi.execute(wf.id, { ...withTurns, ...ids })
       const started = (res.data as { run_id?: string })?.run_id ?? null
       setStarting(false)
-      if (started === null) onStarted() // nothing to confirm or link to
+      if (started !== null && onWatch) onWatch(started)
+      else if (started === null) onStarted() // nothing to confirm or link to
       else setStartedId(started)
     } catch (e) {
       setError(errMsg(e))
@@ -975,7 +984,9 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
   return (
     <Popup open onClose={onClose} title={`Run · ${wf.name}`}>
       <div className="flex flex-col gap-3.5">
-        <p className="text-[12.5px] text-tx-3 leading-[1.5]">Provide at least one target, then start the run — the agents work it on the server and History reports where it got to. A finding or case gives the run something to work from, and the report comes back onto the case you pick. A run that tests beliefs takes what you state: each line of Hypothesis goes on the board as its own, and the benign explanation goes up beside them as the claim to beat.</p>
+        <p className="text-[12.5px] text-tx-3 leading-[1.5]">{agent
+          ? `Pick an alert or a case for ${wf.name} to work on, with its own tools. Anything that would change something outside Vigil still asks a person first.`
+          : 'Provide at least one target, then start the run — the agents work it on the server and History reports where it got to. A finding or case gives the run something to work from, and the report comes back onto the case you pick. A run that tests beliefs takes what you state: each line of Hypothesis goes on the board as its own, and the benign explanation goes up beside them as the claim to beat.'}</p>
         {error && <div className="text-[12.5px] leading-[1.5]" style={{ color: 'var(--crit)' }}>{error}</div>}
         {isHuntLike && limits?.roles_note && (
           <div className="text-[12.5px] leading-[1.5]" style={{ color: 'var(--high)' }}>{limits.roles_note}</div>
@@ -990,7 +1001,7 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
         {isHuntLike && (
           <CoveragePanel entityKeys={Object.values(asked).flat()} onError={setError} onProposal={takeProposal} />
         )}
-        <Field
+        {!agent && <Field
           label="Hypothesis"
           value={hypothesis}
           onChange={setHypothesis}
@@ -999,7 +1010,7 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
           hint={isHuntLike
             ? 'One belief per line, each a claim the run can argue against. The benign account is added for you as the claim to beat. Say what each one is about below, so its verdict can be found again by that host or address.'
             : undefined}
-        />
+        />}
         {isHuntLike && (
           <HypothesisPreview
             text={hypothesis}
@@ -1040,7 +1051,7 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
         <div className="flex justify-end gap-2.5 pt-1">
           <button className="btn ghost" onClick={onClose}>Cancel</button>
           <button className="btn primary" disabled={!canRun} onClick={run}>
-            <Icon name="play" /> {starting ? 'Starting…' : 'Run workflow'}
+            <Icon name="play" /> {starting ? 'Starting…' : agent ? 'Run agent' : 'Run workflow'}
           </button>
         </div>
       </div>
@@ -2527,6 +2538,8 @@ function OpenedOn({ hunt, onGo }: { hunt: HuntView; onGo: (tab: HuntTab) => void
   if (recall === null) return null
   const asked = recall.keys.length === 0 ? 'no entities' : recall.keys.join(', ')
   const found = recalledCount(recall)
+  const notes = recall.notes?.length ?? 0
+  const left = (found ?? 0) - notes
 
   return (
     <div className="muted text-[11.5px]" style={{ marginTop: 8 }}>
@@ -2534,7 +2547,10 @@ function OpenedOn({ hunt, onGo }: { hunt: HuntView; onGo: (tab: HuntTab) => void
         ? <>Episodic memory could not be read, so this hunt opened on nothing.</>
         : found === 0
           ? <>No earlier investigation had looked at <span className="mono">{asked}</span>.</>
-          : <>Opened on {found} record{found === 1 ? '' : 's'} earlier investigations left about <span className="mono">{asked}</span>.</>}
+          : notes === 0
+            ? <>Opened on {found} record{found === 1 ? '' : 's'} earlier investigations left about <span className="mono">{asked}</span>.</>
+            // A note is a person's statement, not a record an investigation left.
+            : <>Opened on {left > 0 ? `${left} record${left === 1 ? '' : 's'} earlier investigations left and ` : ''}{notes} note{notes === 1 ? '' : 's'} from your team about <span className="mono">{asked}</span>.</>}
       {' '}
       <button className="btn ghost text-[11px]" onClick={() => onGo('memory')}>Memory ▸</button>
     </div>
@@ -3434,12 +3450,12 @@ function HuntStandings({ hunt }: { hunt: HuntView }) {
 
 /** Questions the hunt could not answer. Its own section because "not there" and
  *  "could not look" read identically otherwise, and only one clears a hypothesis. */
-/** Rows across all three kinds. Null when the read could not be served: a zero there
+/** Rows across every kind, notes included. Null when the read could not be served: a zero there
  *  would read as "memory holds nothing about these entities", which is what an
  *  answered read that came back empty says. */
 function recalledCount(recall: HuntRecall): number | null {
   if (recall.unavailable !== undefined) return null
-  return (recall.verdicts?.length ?? 0) + (recall.gaps?.length ?? 0) + (recall.sightings?.length ?? 0)
+  return (recall.verdicts?.length ?? 0) + (recall.gaps?.length ?? 0) + (recall.sightings?.length ?? 0) + (recall.notes?.length ?? 0)
 }
 
 function fmtWindow(w: RecalledWindow): string {
@@ -3464,7 +3480,7 @@ function droppedNote(recall: HuntRecall): string | null {
   const dropped = recall.dropped
   if (dropped === undefined) return null
   const held: string[] = []
-  for (const kind of ['verdicts', 'gaps', 'sightings'] as const) {
+  for (const kind of ['notes', 'verdicts', 'gaps', 'sightings'] as const) {
     const rows = dropped[kind]
     if (rows === undefined) continue
     if (rows.per_key_cap > 0) held.push(`${rows.per_key_cap} ${kind} past one entity's share`)
@@ -3496,6 +3512,7 @@ function HuntMemory({ recall }: { recall: HuntRecall }) {
   const verdicts = recall.verdicts ?? []
   const gaps = recall.gaps ?? []
   const sightings = recall.sightings ?? []
+  const notes = recall.notes ?? []
   const dropped = droppedNote(recall)
 
   return (
@@ -3506,10 +3523,34 @@ function HuntMemory({ recall }: { recall: HuntRecall }) {
         the hunt when opened.
       </div>
 
-      {verdicts.length + gaps.length + sightings.length === 0 && (
+      {verdicts.length + gaps.length + sightings.length + notes.length === 0 && (
         <div className="muted text-[12.5px] py-2">
           Nothing had been concluded about {recall.keys.length === 1 ? 'this entity' : 'these entities'} before this
           hunt. The read ran and came back empty: this is the first investigation on record to look.
+        </div>
+      )}
+
+      {notes.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <h4>Told by your team ({notes.length})</h4>
+          <div className="muted text-[11.5px] mb-2">What a person on the team said. Context to weigh, not a finding.</div>
+          <div className="table-wrap">
+            <table className="tbl">
+              <thead><tr><th>Note</th><th>Entity</th><th>From</th></tr></thead>
+              <tbody>
+                {notes.map((n) => (
+                  <tr key={n.investigation_id}>
+                    <td>{n.statement}</td>
+                    <td className="mono tight text-[11px]">{n.entity_key}</td>
+                    <td className="tight">
+                      {n.written_by || '—'}
+                      <div className="muted text-[11px]">{utcDay(n.concluded_at) ?? '—'}</div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -3794,6 +3835,8 @@ function AgentsTab({ feed, skillCount, onToggled }: { feed: Feed<AgentTemplate>;
   const [editId, setEditId] = useOpenItem('agent', 'agents')
   const [creating, setCreating] = useState<false | 'blank' | 'describe'>(false)
   const [deleteAgent, setDeleteAgent] = useState<AgentTemplate | null>(null)
+  const [runAgent, setRunAgent] = useState<AgentTemplate | null>(null)
+  const navigate = useNavigate()
   // optimistic On switches, dropped when the list reloads
   const [enabledNow, setEnabledNow] = useState<Record<string, boolean>>({})
   const [toggleErr, setToggleErr] = useState<string | null>(null)
@@ -3849,12 +3892,14 @@ function AgentsTab({ feed, skillCount, onToggled }: { feed: Feed<AgentTemplate>;
             onToggle={setEnabled}
             renderActions={(a) => a.custom ? (
               <span className="row-act">
+                <RunAgentButton agent={a} onRun={setRunAgent} />
                 <button title="Edit" aria-label={`Edit ${a.name}`} onClick={() => setEditId(a.handle)}><Icon name="edit" /></button>
                 <button title="Fork into a new copy" aria-label={`Fork ${a.name}`} disabled={busy !== null} onClick={() => fork(a.handle)}><Icon name={busy === a.handle ? 'refresh' : 'copy'} /></button>
                 <button title="Delete" aria-label={`Delete ${a.name}`} onClick={() => setDeleteAgent(a)}><Icon name="trash" /></button>
               </span>
             ) : (
               <span className="row-act">
+                <RunAgentButton agent={a} onRun={setRunAgent} />
                 <button title={`Open ${a.name}`} aria-label={`Open ${a.name}`} onClick={() => setEditId(a.handle)}><Icon name="fork" /></button>
               </span>
             )}
@@ -3880,7 +3925,29 @@ function AgentsTab({ feed, skillCount, onToggled }: { feed: Feed<AgentTemplate>;
         />
       )}
       {deleteAgent && <AgentDeleteModal agent={deleteAgent} onClose={() => setDeleteAgent(null)} onDeleted={() => { setDeleteAgent(null); reload() }} />}
+      {runAgent && (
+        <RunModal
+          wf={{ id: `agent-run-${runAgent.handle}`, name: runAgent.name, huntLike: false, runKind: 'compose' }}
+          agent
+          onClose={() => setRunAgent(null)}
+          onStarted={() => setRunAgent(null)}
+          onWatch={(runId) => { setRunAgent(null); navigate(`/workflows?run=${encodeURIComponent(runId)}`) }}
+        />
+      )}
     </div>
+  )
+}
+
+function RunAgentButton({ agent, onRun }: { agent: AgentTemplate; onRun: (agent: AgentTemplate) => void }) {
+  return (
+    <button
+      title={agent.enabled ? `Run ${agent.name} on an alert or case` : `${agent.name} is off`}
+      aria-label={`Run ${agent.name}`}
+      disabled={!agent.enabled}
+      onClick={() => onRun(agent)}
+    >
+      <Icon name="play" />
+    </button>
   )
 }
 
