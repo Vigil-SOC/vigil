@@ -1,4 +1,4 @@
-// The tile beside an integration's name (PRD D6): its vendor logo on a white
+// The tile beside an integration's name: its vendor logo on a white
 // tile, as the boards draw source logos, or the neutral category icon.
 import { Icon } from '../../shared/icons'
 import { categoryIcon } from './integrationsData'

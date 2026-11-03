@@ -1393,7 +1393,7 @@
   box-shadow: -16px 0 40px var(--shadow);
 }
 
-/* Right-hand drawers (skill, agent): docs/design/console/boards/SkillEditor.dc.html, AgentEditor.dc.html */
+/* Right-hand drawers (skill, agent) */
 .vg-side-scrim {
   position: fixed;
   top: 98px; /* below the header and nav, as the board's drawer sits under the nav */
@@ -2177,7 +2177,7 @@ select.vg-side-input {
   padding: 20px 22px 0;
 }
 
-/* Profile menu: docs/design/console/boards/MainP2.dc.html */
+/* Profile menu */
 .soc-console .user-pop {
   box-sizing: border-box;
   width: 300px;

@@ -1,7 +1,6 @@
-/* The Watch a run page's two right-hand columns (PRD AW-W5): Explanations being tested,
+/* The Watch a run page's two right-hand columns: Explanations being tested,
    Limits used, Reviewer and Blind spots hit, each as of the step the player holds.
-   Board: docs/design/console/boards/WorkflowRun.dc.html. Everything is a function of the
-   run detail and, for a hunt, the lead's recorded digest at that step: no endpoint, no fold. */
+   Everything is a function of the run detail and, for a hunt, the lead's recorded digest at that step: no endpoint, no fold. */
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { workflowApi, type ReplayDigest } from '../../services/api'
 import { Cost, fmtCost } from '../../shared/cost'

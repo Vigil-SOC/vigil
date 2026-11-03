@@ -1,4 +1,4 @@
-/* Setup wizard shell. Board: docs/design/console/boards/Onboarding.dc.html. Tokens only. */
+/* Setup wizard shell. Tokens only. */
 .su-root {
   position: absolute;
   inset: 0;
@@ -395,7 +395,7 @@
   font-weight: 600;
 }
 
-/* Choice cards and the Connect data step. Board: boards/OnboardingConnect.dc.html */
+/* Choice cards and the Connect data step. */
 .su-choices {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -604,7 +604,7 @@
   text-decoration: none;
 }
 
-/* Choose where AI runs. Board: boards/OnboardingModel.dc.html */
+/* Choose where AI runs. */
 .su-choices.two {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }

@@ -659,7 +659,7 @@
       border-radius: 2px;
    }
 
-   /* ---------- Agents & workflows tab strip (board Agents.dc.html) ---------- */
+   /* ---------- Agents & workflows tab strip ---------- */
    .wf-new {
       height: 34px;
       padding: 0 13px;
@@ -3638,7 +3638,7 @@
       color: var(--ac-tx);
    }
 
-   /* ---------- Settings > Integrations (board SettingsIntegrations.dc.html) ---------- */
+   /* ---------- Settings > Integrations ---------- */
    .int-banner {
       display: flex;
       align-items: center;
@@ -3739,7 +3739,7 @@
       color: var(--tx2);
    }
 
-   /* vendor logo or category icon beside a name (PRD D6); logos sit on white
+   /* vendor logo or category icon beside a name; logos sit on white
       in both themes, as the Overview board draws source logos */
    .int-ident { display: flex; align-items: center; gap: 10px; min-width: 0; }
    .int-mark {
@@ -3757,7 +3757,7 @@
    .int-mark.logo { background: #fff; box-shadow: inset 0 0 0 1px var(--ln0); }
    .int-mark img { width: 18px; height: 18px; object-fit: contain; }
 
-   /* setup drawer: reuses the vg-side-panel shell; board SettingsIntegrations.dc.html */
+   /* setup drawer: reuses the vg-side-panel shell */
    .int-drawer-head { display: flex; align-items: flex-start; gap: 12px; }
    .int-drawer-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 20px; font-weight: 700; line-height: 1.25; letter-spacing: -0.2px; color: var(--tx0); }
    .int-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
@@ -3921,7 +3921,7 @@
       font-weight: 650;
    }
 
-   /* ---------- Settings > Integrations > Custom (board SettingsCustom.dc.html) ---------- */
+   /* ---------- Settings > Integrations > Custom ---------- */
    .cb {
       display: flex;
       flex-direction: column;
@@ -4066,7 +4066,7 @@
    .cb-checks li.bad, .cb-checks li.bad svg { color: var(--poor); }
    .cb-syntax { font-family: var(--font-mono); font-size: 11px; color: var(--poor); overflow-wrap: anywhere; }
 
-   /* Vigil MCP server tab (board SettingsIntegrations.dc.html) */
+   /* Vigil MCP server tab */
    .mcp-card {
       display: flex;
       flex-direction: column;
@@ -4513,7 +4513,7 @@
       min-width: 0;
    }
 
-   /* Tool-class cards and their segment: SettingsLimits.dc.html and tokens.json (meta 12px, label 12px/600) */
+   /* Tool-class cards and their segment: tokens.json (meta 12px, label 12px/600) */
    .lim-class {
       display: flex;
       flex-direction: column;
@@ -6941,7 +6941,7 @@
    }
 }
 
-/* ---- Skills tab: folder cards (boards/Agents.dc.html, Skills). The tone is the
+/* ---- Skills tab: folder cards. The tone is the
    accent for a built-in skill and --vio for a custom one. A folder lifts its
    SKILL.md out on hover or focus. Scoped to .sk-*, so no other screen moves. ---- */
 .soc-console .sk-card {
@@ -7219,7 +7219,7 @@
    }
 }
 
-   /* Add integration: category chips and search over a card grid; board SettingsIntegrations.dc.html */
+   /* Add integration: category chips and search over a card grid */
    .int-filters { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
    /* chips wrap inside their own block so search stays at their right until the row is too narrow */
    .int-cats { display: flex; flex: 1 1 360px; flex-wrap: wrap; gap: 6px; }

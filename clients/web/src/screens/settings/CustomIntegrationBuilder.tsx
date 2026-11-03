@@ -1,4 +1,3 @@
-// Board: SettingsCustom.dc.html.
 import { useRef, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
