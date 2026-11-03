@@ -50,6 +50,9 @@ class OpenSearchService:
         self.timeout = timeout
 
         self._client: Optional[httpx.AsyncClient] = None
+        # The exception behind the last search that returned None, so a caller
+        # that raises can chain it and the failure keeps its type.
+        self.last_search_error: Optional[BaseException] = None
         self._dashboards_client: Optional[httpx.AsyncClient] = None
 
     # ------------------------------------------------------------------
@@ -157,12 +160,14 @@ class OpenSearchService:
         if sort:
             body["sort"] = sort
         client = self.client
+        self.last_search_error = None
         try:
             resp = await client.post(f"/{target}/_search", json=body)
             resp.raise_for_status()
             return resp.json()
         except Exception as exc:
             logger.error(f"OpenSearch search error: {exc}")
+            self.last_search_error = exc
             return None
 
     async def search_by_ip(

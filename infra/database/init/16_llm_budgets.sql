@@ -1,11 +1,10 @@
 -- 16_llm_budgets.sql
--- Per-tenant LLM budget enforcement via Bifrost virtual keys (#186).
+-- LLM budget enforcement via a Bifrost virtual key (#186).
 --
 -- This migration is intentionally minimal: a single global VK MVP per the
--- locked design decision. Vigil has no tenant model today (per-user RBAC
--- only), so all calls share one Bifrost VK and one budget. The
--- `virtual_key_id` column lands now to future-proof per-tenant attribution
--- once tenancy ships (#165).
+-- locked design decision. Vigil has no tenant model (per-user RBAC only),
+-- so all calls share one Bifrost VK and one budget. The `virtual_key_id`
+-- column is unused.
 
 -- NOTE: the `virtual_key_id` column and `idx_llm_interaction_vk` index on
 -- `llm_interaction_logs` are declared on the ORM model

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Budget, Refusal } from "../contracts/budget.js";
-import type { NewEvent, RunKind } from "../contracts/events.js";
+import type { NewEvent, RunKind, StopCause } from "../contracts/events.js";
 import type { ToolResult } from "../contracts/tool.js";
 import type { Message, Provider } from "./provider.js";
 import type { Registry } from "./registry.js";
@@ -113,6 +113,8 @@ export interface Attempt {
   // Set by invoke. Absent when the attempt never ran: a refusal, a rejection,
   // or a result served from an earlier pass of the ledger.
   duration_ms?: number;
+  // Credentials masked out of result as it entered the run. Absent when there were none.
+  redacted?: number;
   // Experimental guards (core/guards.ts): what the model was shown in place
   // of wrapped.text, and the reader's findings it was rendered from.
   shown?: string;
@@ -131,6 +133,8 @@ export interface Outcome<T> {
   status: Status;
   value: T | null;
   refusal: Refusal | null;
+  // Set only when a failed model call is why this turn failed.
+  stop_cause?: StopCause;
   // Set only when parked: the call the harness stopped at, and the checkpoint a
   // resolution must answer for it to go through.
   pending: Pending | null;

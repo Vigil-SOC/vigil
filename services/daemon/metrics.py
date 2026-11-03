@@ -10,10 +10,11 @@ flag is on.
 """
 
 import asyncio
+import functools
 import logging
 import time
 from datetime import timedelta
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from aiohttp import web
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
@@ -131,6 +132,43 @@ class MetricsServer:
         self.orchestrator = None
 
         self._tasks: Dict[str, asyncio.Task] = {}
+        # Sub-loops by component group, read only by /status (never /health).
+        self._loops: Dict[str, Dict[str, Dict[str, Any]]] = {}
+
+    def loop_watcher(self, group: str) -> Callable[..., None]:
+        """A ``watch(name, task, shutdown_event)`` callable for one component."""
+        return functools.partial(self.watch_loop, group)
+
+    def watch_loop(
+        self,
+        group: str,
+        name: str,
+        task: "asyncio.Task",
+        shutdown_event: asyncio.Event,
+    ) -> None:
+        """Track a sub-loop task for /status. Calling it again re-arms the loop.
+
+        Dead = ended with an exception, or ended cleanly before shutdown.
+        A cancel, or an end during shutdown, drops the entry instead.
+        """
+        loops = self._loops.setdefault(group, {})
+        loops[name] = {"state": "running", "died_at": None}
+
+        def _done(t: "asyncio.Task") -> None:
+            if t.cancelled():
+                loops.pop(name, None)
+                return
+            exc = t.exception()
+            if exc is None and shutdown_event.is_set():
+                loops.pop(name, None)
+                return
+            logger.error("Daemon loop %s stopped unexpectedly", name, exc_info=exc)
+            loops[name] = {"state": "dead", "died_at": utcnow().isoformat()}
+
+        task.add_done_callback(_done)
+
+    def loops_status(self, group: str) -> Dict[str, Dict[str, Any]]:
+        return {name: dict(entry) for name, entry in self._loops.get(group, {}).items()}
 
     def register_task(self, name: str, task: "asyncio.Task") -> None:
         """Track a component's task so /health reflects whether it is alive."""
@@ -261,6 +299,7 @@ class MetricsServer:
 
         processor_stats = self.processor.stats.copy() if self.processor else {}
         processor_stats.update(_processor_pipeline(self.processor))
+        processor_stats["loops"] = self.loops_status("processor")
         metrics["processor"] = processor_stats
 
         metrics["executor"] = self.executor.stats.copy() if self.executor else {}
@@ -275,9 +314,11 @@ class MetricsServer:
         else:
             orch_stats = {}
         orch_stats.update(_orchestrator_capacity(self.orchestrator))
+        orch_stats["loops"] = self.loops_status("orchestrator")
         metrics["orchestrator"] = orch_stats
 
         metrics["federation"] = _federation_totals(self.poller)
+        metrics["federation"]["loops"] = self.loops_status("federation")
         llm_depth, runs_depth = _redis_queue_depths()
         metrics["llm_queue_depth"] = llm_depth
         metrics["agent_runs_depth"] = runs_depth

@@ -4,6 +4,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Icon } from '../../shared/icons'
 import { Cost } from '../../shared/cost'
+import { STOP_CAUSES, stopCauseOf } from '../../shared/stopCause'
+import { StopLine } from '../../shared/StopLine'
 import { utcClock as hhmm } from '../../shared/utc'
 import {
   IN_FLIGHT, callFailure, callLine, fmtDuration, moveWord, useInvestigateReplay,
@@ -54,7 +56,8 @@ const workflowTitle = (name: string) => {
 
 /** What the run is stopped on, if it is. A person's question outranks a pause; a dead run outranks both. */
 function haltOf(d: WfRunDetail): Halt | null {
-  if (d.status === 'failed' || d.status === 'cancelled') return { kind: d.status, reason: d.error || d.hunt?.reason || d.reason || '' }
+  const cause = stopCauseOf(d.stop_cause)
+  if (d.status === 'failed' || d.status === 'cancelled') return { kind: d.status, reason: cause ? STOP_CAUSES[cause].badge : d.error || d.hunt?.reason || d.reason || '' }
   if (d.hunt?.open_checkpoint) return { kind: 'needs_you', reason: '' }
   if (d.status === 'paused' || d.hunt?.status === 'parked') return { kind: 'paused', reason: d.hunt?.reason || d.reason || '' }
   return null
@@ -600,9 +603,11 @@ export function WatchRun({ d, onBack }: { d: WfRunDetail; onBack: () => void }) 
   const kind = typeof recorded === 'string' && HUNT_LIKE_RUN_KINDS.includes(recorded) ? 'hunt'
     : recorded === 'investigate' ? 'investigate' : recorded === 'root_cause' ? 'root_cause' : d.hunt ? 'hunt' : 'playbook'
   const tail = kind === 'playbook' ? null : live && !halt ? 'Live.' : 'Replayed step by step from the record.'
+  const cause = stopCauseOf(d.stop_cause)
   return (
     <div className="flex flex-col gap-3.5 px-[22px] pt-5 pb-[110px]">
       <Header d={d} hypothesis={kind === 'hunt' ? hypothesisOf(d) : null} tail={tail} onBack={onBack} />
+      {cause && <StopLine cause={cause} raw={d.error || d.reason} />}
       {kind === 'hunt' && <HuntReplay d={d} hunt={d.hunt ?? null} live={live} halt={halt} />}
       {kind === 'investigate' && <InvestigateReplay d={d} live={live} halt={halt} />}
       {kind === 'root_cause' && <RootCauseReplay d={d} live={live} halt={halt} />}

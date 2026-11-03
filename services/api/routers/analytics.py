@@ -20,6 +20,7 @@ from core.reporting.analytics_service import (
     calculate_metrics,
     collect_insights_inputs,
     get_affected_entities,
+    get_agent_agreement,
     get_attack_time_heatmap,
     get_cost_breakdown,
     get_mitre_technique_distribution,
@@ -86,6 +87,9 @@ async def get_analytics(
     # Get MITRE technique distribution
     mitre_techniques = await get_mitre_technique_distribution(db, start_time, end_time)
 
+    # The investigation's verdict against the closure, for closures in the window
+    agent_agreement = await get_agent_agreement(db, start_time, end_time)
+
     # NOTE: AI insights are intentionally NOT generated here — they are
     # served from an in-memory cache via GET /analytics/insights so this
     # endpoint returns fast and never blocks on the Claude API.
@@ -97,6 +101,7 @@ async def get_analytics(
         "affectedEntities": affected_entities,
         "attackHeatmap": attack_heatmap,
         "mitreTechniques": mitre_techniques,
+        "agent_agreement": agent_agreement,
     }
 
 

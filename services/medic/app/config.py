@@ -30,6 +30,10 @@ POLICY_PROBE_VAR = "VIGIL_MEDIC_POLICY_PROBE_ADDR"
 # ...and a host:port it allows (the gateway): the positive control.
 POLICY_CONTROL_VAR = "VIGIL_MEDIC_POLICY_CONTROL_ADDR"
 
+# The decision store's size cap in MiB (G3b). Default 1 GiB.
+STORE_MAX_MB_VAR = "VIGIL_MEDIC_STORE_MAX_MB"
+STORE_MAX_MB_DEFAULT = 1024
+
 SHAPES = ("start_sh", "compose", "helm")
 DEFAULT_SHAPE = "compose"  # PROVISIONAL (S4-2): S6/S7/S8 set it per shape
 # Where the agent worker's /readyz listens (port 6990). Compose and host-native
@@ -92,6 +96,17 @@ def install_shape(env: Mapping[str, str]) -> str:
         # The value isn't echoed: a mis-pasted secret would land in the log.
         raise ConfigError(f"{SHAPE_VAR} is not one of {', '.join(SHAPES)}")
     return value
+
+
+def store_max_bytes(env: Mapping[str, str]) -> int:
+    value = (env.get(STORE_MAX_MB_VAR) or "").strip()
+    if not value:
+        return STORE_MAX_MB_DEFAULT * 2**20
+    if not value.isascii() or not value.isdigit() or int(value) < 1:
+        raise ConfigError(
+            f"{STORE_MAX_MB_VAR} is not a whole number of MiB (value not shown)"
+        )
+    return int(value) * 2**20
 
 
 def _host_port(var: str, value: str) -> tuple[str, int]:

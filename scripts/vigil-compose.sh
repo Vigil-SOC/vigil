@@ -66,7 +66,18 @@ detect_project() {
     [ -n "$COMPOSE_PROJECT_NAME" ] || die "deeptempo-postgres is not running; start the stack or set COMPOSE_PROJECT_NAME"
     export COMPOSE_PROJECT_NAME
 }
-dc() { docker compose -f "$COMPOSE_FILE" "$@"; }
+# The compose file refuses to start without REDIS_PASSWORD. This script has no
+# minting of its own: use the caller's, else the one the running Redis was
+# started with, else the one start.sh minted. Redis stays up through a restore.
+redis_password() {
+    [ -n "${REDIS_PASSWORD:-}" ] && return 0
+    REDIS_PASSWORD="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' deeptempo-redis 2>/dev/null \
+        | sed -n 's/^REDIS_PASSWORD=//p' | head -1 || true)"
+    [ -n "$REDIS_PASSWORD" ] || REDIS_PASSWORD="$(cat "${VIGIL_DIR:-$HOME/.vigil}/redis_password" 2>/dev/null || true)"
+    [ -n "$REDIS_PASSWORD" ] || die "no Redis password: run ./start.sh once so Redis starts with one"
+    export REDIS_PASSWORD
+}
+dc() { redis_password; docker compose -f "$COMPOSE_FILE" "$@"; }
 psql_q() { docker exec deeptempo-postgres psql -U "$PG_USER" -d "$PG_DB" -Atc "$1"; }
 counts() {
     psql_q "select 'findings='||count(*) from findings union all
@@ -86,6 +97,7 @@ preflight() {
         || die "deeptempo-postgres is not healthy"
     detect_project
     load_env
+    redis_password   # here, so a missing one stops the run before dc is used in a subshell
     # Refuse to snapshot an empty state volume and call it a backup.
     if [ -z "${VIGIL_BACKUP_STATE_DIR:-}" ]; then
         local vol="${COMPOSE_PROJECT_NAME}_vigil_home"

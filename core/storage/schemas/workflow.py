@@ -52,6 +52,7 @@ class WorkflowRunSchema(ORMSchema):
     error: Optional[str] = None
     outcome: Optional[str] = None
     reason: Optional[str] = None
+    stop_cause: Optional[str] = None
     result_summary: Optional[str] = None
 
     @classmethod

@@ -3,7 +3,7 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { caseSearchApi, casesApi, workflowApi } from '../../services/api'
 import { mapQueueCase } from '../../data/mappers'
-import type { CaseRow } from '../../data/data'
+import { CASE_EDIT_FIELDS, type CaseEditField, type CaseEditValues, type CaseRecord, type CaseRow } from '../../data/data'
 import type { Schema } from '../../services/apiTypes'
 import type { ChatSeed, ConsoleScreenProps } from '../../shared/types'
 import {
@@ -29,7 +29,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../shell/toast'
 import { inputCls } from './CaseSections'
 import { CasePage } from './CasePage'
-import { errorDetail } from './caseFormat'
+import { caseConflicts, errorDetail } from './caseFormat'
 import { ClosureFields, closurePayload, closureProblem, type ClosureCategory } from './ClosureFields'
 import { LATER_RELEASE } from '../../shared/later'
 import { holdCase } from '../../shell/heldCase'
@@ -756,103 +756,187 @@ function NewCaseDialog({ open, onClose, onCreated }: { open: boolean; onClose: (
   )
 }
 
-function EditCaseDialog({ open, c, onClose, onSaved }: { open: boolean; c: CaseRow | null; onClose: () => void; onSaved: () => void }) {
-  const [title, setTitle] = useState('')
-  const [priority, setPriority] = useState('medium')
-  const [status, setStatus] = useState('open')
-  const [assignee, setAssignee] = useState('')
-  const [description, setDescription] = useState('')
+type CaseConflict = Schema<'CaseFieldConflict'>
+
+const CASE_STATUS_OPTIONS = [
+  { value: 'open', label: 'Open' },
+  { value: 'investigating', label: 'Investigating' },
+  { value: 'closed', label: 'Closed' },
+]
+
+/** A stored value outside the menu still shows as itself rather than as an empty picker. */
+function withStored(options: { value: string; label: string }[], value: string) {
+  return !value || options.some((o) => o.value === value) ? options : [{ value, label: value }, ...options]
+}
+
+const CONFLICT_NAME: Record<CaseEditField, string> = {
+  title: 'The title',
+  description: 'The description',
+  status: 'The status',
+  priority: 'The priority',
+  assignee: 'The assignee',
+}
+
+function conflictValue(field: CaseEditField, value: string): string {
+  if (field === 'status') return CASE_STATUS_OPTIONS.find((o) => o.value === value)?.label ?? (value || 'blank')
+  if (field === 'priority') return CASE_PRIO_OPTIONS.find((o) => o.value === value)?.label ?? (value || 'blank')
+  if (field === 'assignee') return value || 'unassigned'
+  return value ? `“${value}”` : 'empty'
+}
+
+function EditCaseDialog({ open, c, onClose, onSaved, onStale }: {
+  open: boolean
+  c: CaseRecord | null
+  onClose: () => void
+  onSaved: () => void
+  /** The case moved under this edit: re-read it behind the dialog. */
+  onStale: () => void
+}) {
+  return (
+    <Popup open={open} onClose={onClose} title="Edit case" width={520}>
+      {c && <EditCaseForm c={c} onClose={onClose} onSaved={onSaved} onStale={onStale} />}
+    </Popup>
+  )
+}
+
+// Mounted once per opening. Its state starts from the case as read then and does
+// not follow later reads: a run re-reads the case while it works, and following
+// that would wipe what is typed here and hide the change it should be compared with.
+function EditCaseForm({ c, onClose, onSaved, onStale }: {
+  c: CaseRecord
+  onClose: () => void
+  onSaved: () => void
+  onStale: () => void
+}) {
+  const [values, setValues] = useState<CaseEditValues>(c.stored)
+  // What this edit last saw on the server, field by field. A save names these for
+  // the fields it changes, so the server can refuse one that has moved since.
+  const [seen, setSeen] = useState<CaseEditValues>(c.stored)
+  const [conflicts, setConflicts] = useState<CaseConflict[]>([])
   const [category, setCategory] = useState<ClosureCategory>('resolved')
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
-
-  useEffect(() => {
-    if (open && c) {
-      setTitle(c.title)
-      setPriority(c.prio)
-      setStatus(c.status)
-      setAssignee(c.ownerName && c.ownerName !== '—' && c.ownerName !== 'unassigned' ? c.ownerName : '')
-      setDescription(c.desc || '')
-      setCategory('resolved')
-      setReason('')
-      setErr('')
-    }
-  }, [open, c])
+  const set = (field: CaseEditField) => (value: string) => setValues((v) => ({ ...v, [field]: value }))
 
   // Only a Case crossing into closed is being closed. Re-saving one that is
   // already closed is an edit, and re-stamping it would move the closure's date
   // and re-derive its verdict for a typo fix.
-  const closing = status === 'closed' && c?.status !== 'closed'
+  const closingFrom = (mine: CaseEditValues, stored: CaseEditValues) => mine.status === 'closed' && stored.status !== 'closed'
+  const closing = closingFrom(values, seen)
 
-  const submit = async () => {
-    if (!c) return
-    if (!title.trim()) { setErr('Title is required.'); return }
-    const problem = closing ? closureProblem(category, reason) : null
+  const save = async (mine: CaseEditValues, stored: CaseEditValues) => {
+    if (!mine.title.trim()) { setErr('Title is required.'); return }
+    const isClosing = closingFrom(mine, stored)
+    const problem = isClosing ? closureProblem(category, reason) : null
     if (problem) { setErr(problem); return }
+    // Only what this person changed: sending the rest would write back old values
+    // over someone else's edit to a field this person never touched.
+    const changed = CASE_EDIT_FIELDS.filter((field) => mine[field] !== stored[field])
+    if (!changed.length) { onClose(); return }
+    const update: Schema<'CaseUpdate'> = {
+      expected: Object.fromEntries(changed.map((field) => [field, stored[field]])),
+    }
+    const landed = { ...stored }
+    for (const field of changed) {
+      if (field !== 'status') {
+        // '' (not omitted) so clearing the field clears it
+        update[field] = mine[field].trim()
+        landed[field] = mine[field].trim()
+      } else if (!isClosing && isCaseStatus(mine.status)) {
+        // The status is left off when closing: the close endpoint sets it, and a
+        // PATCH carrying it too would stamp a second, unstated closure over the
+        // category chosen here.
+        update.status = mine.status
+        landed.status = mine.status
+      }
+    }
     setBusy(true)
     setErr('')
     try {
-      // The status is left off when closing: the close endpoint sets it, and a
-      // PATCH carrying it too would stamp a second, unstated closure over the
-      // category chosen here.
-      await casesApi.update(c.id, {
-        title: title.trim(),
-        priority,
-        ...(closing || !isCaseStatus(status) ? {} : { status }),
-        // '' (not omitted) so clearing the field unassigns
-        assignee: assignee.trim(),
-        description: description.trim() || undefined,
-      })
+      await casesApi.update(c.id, update)
+      setSeen(landed)
       // Second, so a close that fails leaves the edits saved and the Case open,
       // rather than closed under a title that never landed.
-      if (closing) {
-        await casesApi.closeCase(c.id, closurePayload(category, reason))
+      if (isClosing) {
+        await casesApi.closeCase(c.id, { ...closurePayload(category, reason), expected: { status: stored.status } })
       }
       onSaved()
       onClose()
     } catch (e) {
-      setErr(errorDetail(e, 'Failed to save changes'))
+      const moved = caseConflicts(e)
+      if (moved) {
+        setConflicts(moved)
+        onStale()
+      } else {
+        setErr(errorDetail(e, 'Failed to save changes'))
+      }
     } finally {
       setBusy(false)
     }
   }
 
+  // A conflict interrupts a save the person already asked for, so the last answer
+  // carries it on, now comparing with the values just shown. A third edit is caught.
+  const answer = (conflict: CaseConflict, take: 'current' | 'mine') => {
+    const current = conflict.current ?? ''
+    const nextSeen = { ...seen, [conflict.field]: current }
+    const nextValues = take === 'current' ? { ...values, [conflict.field]: current } : values
+    const left = conflicts.filter((other) => other.field !== conflict.field)
+    setSeen(nextSeen)
+    setValues(nextValues)
+    setConflicts(left)
+    if (!left.length) void save(nextValues, nextSeen)
+  }
+
   return (
-    <Popup open={open} onClose={onClose} title="Edit case" width={520}>
-      <div className="flex flex-col gap-3.5">
+    <div className="flex flex-col gap-3.5">
+      <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
+        <span>Title</span>
+        <input className={inputCls} value={values.title} onChange={(e) => set('title')(e.target.value)} autoFocus />
+      </label>
+      <div className="grid grid-cols-2 gap-3">
         <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
-          <span>Title</span>
-          <input className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
-        </label>
-        <div className="grid grid-cols-2 gap-3">
-          <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
-            <span>Priority</span>
-            <Select value={priority} onSelect={setPriority} options={CASE_PRIO_OPTIONS} />
-          </label>
-          <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
-            <span>Status</span>
-            <Select value={status} onSelect={setStatus} options={[
-              { value: 'open', label: 'Open' }, { value: 'investigating', label: 'Investigating' }, { value: 'closed', label: 'Closed' },
-            ]} />
-          </label>
-        </div>
-        {closing && <ClosureFields category={category} reason={reason} onCategory={setCategory} onReason={setReason} />}
-        <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
-          <span>Assignee</span>
-          <input className={inputCls} placeholder="name or email" value={assignee} onChange={(e) => setAssignee(e.target.value)} />
+          <span>Priority</span>
+          <Select value={values.priority} onSelect={set('priority')} options={withStored(CASE_PRIO_OPTIONS, values.priority)} />
         </label>
         <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
-          <span>Description</span>
-          <textarea className={inputCls} rows={4} value={description} onChange={(e) => setDescription(e.target.value)} style={{ resize: 'vertical' }} />
+          <span>Status</span>
+          <Select value={values.status} onSelect={set('status')} options={withStored(CASE_STATUS_OPTIONS, values.status)} />
         </label>
-        {err && <div className="text-[13px]" style={{ color: 'var(--crit)' }}>{err}</div>}
-        <div className="flex justify-end gap-2.5">
-          <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn primary" onClick={submit} disabled={busy}>{busy ? 'Saving…' : 'Save changes'}</button>
-        </div>
       </div>
-    </Popup>
+      {closing && <ClosureFields category={category} reason={reason} onCategory={setCategory} onReason={setReason} />}
+      <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
+        <span>Assignee</span>
+        <input className={inputCls} placeholder="name or email" value={values.assignee} onChange={(e) => set('assignee')(e.target.value)} />
+      </label>
+      <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
+        <span>Description</span>
+        <textarea className={inputCls} rows={4} value={values.description} onChange={(e) => set('description')(e.target.value)} style={{ resize: 'vertical' }} />
+      </label>
+      {conflicts.length > 0 && (
+        <div role="alert" className="case-edit-conflicts">
+          <p>This case changed while you were editing. Your edits are still here.</p>
+          {conflicts.map((conflict) => (
+            <div key={conflict.field} className="case-edit-conflict">
+              <p>
+                {CONFLICT_NAME[conflict.field]} changed from {conflictValue(conflict.field, conflict.expected ?? '')} to{' '}
+                {conflictValue(conflict.field, conflict.current ?? '')}. Yours is {conflictValue(conflict.field, values[conflict.field])}.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button className="btn ghost" onClick={() => answer(conflict, 'current')} disabled={busy}>Use the current value</button>
+                <button className="btn" onClick={() => answer(conflict, 'mine')} disabled={busy}>Save mine anyway</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {err && <div className="text-[13px]" style={{ color: 'var(--crit)' }}>{err}</div>}
+      <div className="flex justify-end gap-2.5">
+        <button className="btn ghost" onClick={onClose}>Cancel</button>
+        <button className="btn primary" onClick={() => void save(values, seen)} disabled={busy || conflicts.length > 0}>{busy ? 'Saving…' : 'Save changes'}</button>
+      </div>
+    </div>
   )
 }
 
@@ -1002,6 +1086,7 @@ export function CasesDetail({
         c={c}
         onClose={() => setAction(null)}
         onSaved={onChanged}
+        onStale={refresh}
       />
       <MergeCaseDialog
         open={action === 'merge'}

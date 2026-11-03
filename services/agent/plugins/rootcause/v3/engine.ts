@@ -1,8 +1,10 @@
-import type { AgentEvent, CallPayload, DirectivePayload, NewEvent, RunOutcome, RunPayload, TerminalPayload } from "../../../contracts/events.js";
+import type { AgentEvent, CallPayload, DirectivePayload, NewEvent, RunOutcome, RunPayload, StopCause, TerminalPayload } from "../../../contracts/events.js";
 import type { RegisteredTool } from "../../../contracts/tool.js";
 import type { AgentKinds, StopSource } from "../../../core/agent.js";
 import { GatewayExhausted } from "../../../core/limiter.js";
 import type { Harness } from "../../../core/loop.js";
+import { stopCauseOf } from "../../../core/provider.js";
+import { redactCredentials } from "../../../core/security.js";
 import type { RunSpec } from "../../../core/spec.js";
 import { toolsFrom } from "../../../tools/remote.js";
 import { loadPlugin } from "../../index.js";
@@ -76,7 +78,6 @@ export async function runRootCauseV3(harness: Harness<V3Kinds>, options: V3Optio
         spec: { ...spec, sections: { ...spec.sections, engine: ENGINE } },
         budgets: harness.budget.limits,
         seed: run_id,
-        tenant_id: null,
         started_by: options.started_by ?? "worker",
         ...(options.principal === undefined ? {} : { principal: options.principal }),
         ...(options.origin === undefined ? {} : { origin: options.origin }),
@@ -119,10 +120,10 @@ async function drive(
 ): Promise<V3Report> {
   const { run_id, spec } = options;
   const state = harness.state;
-  const end = async (outcome: RunOutcome, reason: string, summary?: string): Promise<V3Report> => {
+  const end = async (outcome: RunOutcome, reason: string, summary?: string, stop_cause?: StopCause): Promise<V3Report> => {
     // Something outside the run may have ended it first; its terminal stands.
     if ((await state.terminal(run_id)) === null) {
-      const payload: TerminalPayload = { outcome, reason, ...(summary === undefined ? {} : { summary }) };
+      const payload: TerminalPayload = { outcome, reason, ...(summary === undefined ? {} : { summary }), ...(stop_cause === undefined ? {} : { stop_cause }) };
       await state.append(run_id, [event("terminal", payload)]);
     }
     return { status: outcome, reason };
@@ -140,8 +141,8 @@ async function drive(
     throw error;
   }
 
-  // The source's own tool, through the agent's dispatch: bounded and attributed like any other call.
-  const invoke: Invoke = (args) => harness.dispatch.invoke(bound.tool, args, signal);
+  // The source's own tool, through the agent's dispatch: bounded, attributed and masked like any other call.
+  const invoke: Invoke = async (args) => redactCredentials(await harness.dispatch.invoke(bound.tool, args, signal)).value;
   const turns = new KernelTurns(harness as unknown as Harness<AgentKinds>, {
     run_id, run_kind: "root_cause", spec, plugin: loadPlugin("rootcause").manifest, tools, signal,
     ...(options.started_by === undefined ? {} : { started_by: options.started_by }),
@@ -178,8 +179,8 @@ async function drive(
   try {
     setup = folded.setup ?? (await open(options, bound.adapter, invoke, turns));
   } catch (error) {
-    if (error instanceof Unframed) return end("failed", error.message);
-    if (spentOut(error)) return end("budget_exhausted", error.message);
+    if (error instanceof Unframed) return end("failed", error.message, undefined, error.stop_cause);
+    if (spentOut(error)) return end("budget_exhausted", error.message, undefined, stopCauseOf(error));
     if (signal.aborted) return halted(signal, end, state, run_id, event);
     throw error;
   }
@@ -202,7 +203,7 @@ async function drive(
       environment = await scope(deps, cfg, range);
     } catch (error) {
       if (signal.aborted) return halted(signal, end, state, run_id, event);
-      if (spentOut(error)) return end("budget_exhausted", error.message);
+      if (spentOut(error)) return end("budget_exhausted", error.message, undefined, stopCauseOf(error));
       log(`environment mapping failed: ${String(error)}`);
       environment = null;
     }
@@ -241,8 +242,8 @@ async function drive(
     if (signal.aborted && !(signal.reason instanceof Stopped)) return { status: "lost", reason: String(signal.reason) };
     await state.append(run_id, [event("rootcause_exit", { exit: cut, report: written, entries: trace.drain() })]);
     if (signal.aborted) return halted(signal, end, state, run_id, event, conclusionOf(written));
-    if (spentOut(error)) return end("budget_exhausted", error.message, conclusionOf(written));
-    return end("failed", error instanceof Error ? error.message : String(error), conclusionOf(written));
+    if (spentOut(error)) return end("budget_exhausted", error.message, conclusionOf(written), stopCauseOf(error));
+    return end("failed", error instanceof Error ? error.message : String(error), conclusionOf(written), stopCauseOf(error));
   }
   await state.append(run_id, [event("rootcause_exit", { exit, report, entries: trace.drain() })]);
   const outcome: RunOutcome = exit === "budget-exhausted" ? "budget_exhausted" : "completed";

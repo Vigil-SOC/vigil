@@ -165,6 +165,7 @@ def record_success(
             row.last_poll_at = when
             row.last_success_at = when
             row.last_error = None
+            row.last_error_kind = None
             row.consecutive_errors = 0
             row.cursor = cursor or {}
             row.dropped_total = (row.dropped_total or 0) + max(dropped, 0)
@@ -172,8 +173,11 @@ def record_success(
         logger.warning("record_success(%s) failed: %s", source_id, e)
 
 
-def record_failure(source_id: str, error: str) -> None:
-    """Increment consecutive_errors. We never auto-disable (per design)."""
+def record_failure(source_id: str, error: str, kind: str = "unknown") -> None:
+    """Increment consecutive_errors. We never auto-disable (per design).
+
+    ``kind`` is one of ``error_kind.KINDS``; the runner passes the classifier's answer.
+    """
     try:
         from core.storage.connection import get_db_manager
         from core.storage.models import FederationSource
@@ -184,6 +188,7 @@ def record_failure(source_id: str, error: str) -> None:
                 return
             row.last_poll_at = utcnow()
             row.last_error = (error or "")[:2000]
+            row.last_error_kind = kind
             row.consecutive_errors = (row.consecutive_errors or 0) + 1
     except Exception as e:
         logger.warning("record_failure(%s) failed: %s", source_id, e)
