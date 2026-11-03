@@ -199,6 +199,19 @@ export const exclusionsApi = {
     api.post<IpExclusion>(`/exclusions/${encodeURIComponent(id)}/remove`, { reason: reason || null }),
 }
 
+export type Note = Schema<'NoteOut'>
+
+/** Analyst notes on an entity (#3605); keys are typed `type:value`, and none means every note. */
+export const notesApi = {
+  list: (entityKeys: string[]) =>
+    api.get<Schema<'NoteListResponse'>>('/memory/notes', {
+      params: { entity_key: entityKeys },
+      paramsSerializer: { indexes: null }, // entity_key=a&entity_key=b, as FastAPI reads a repeated query
+    }),
+  create: (body: Schema<'NoteCreate'>) => api.post<Note>('/memory/notes', body),
+  withdraw: (id: string) => api.delete<Note>(`/memory/notes/${encodeURIComponent(id)}`),
+}
+
 export interface CaseRecordRow {
   id: string
   at: string
@@ -788,6 +801,25 @@ export const budgetsApi = {
   set: (payload: BudgetSettings) =>
     api.put<BudgetSettings>('/analytics/budget', payload),
   getQuota: () => api.get<BudgetQuotaResponse>('/analytics/budget/quota'),
+}
+
+/** One workflow's tally in `agent_agreement` (core/reporting/analytics_service.py). */
+export interface WorkflowAgreement {
+  workflow_id: string
+  agreed: number
+  disagreed: number
+  agreement_rate: number | null
+  abstained: number
+  closed_without_determination: number
+  closed_by_agent_alone: number
+}
+
+export const analyticsApi = {
+  /** The agent_agreement block of GET /analytics; the route returns an untyped dict, so only this part is typed. */
+  getAgreement: (timeRange: '24h' | '7d' | '30d' | 'all' = '30d') =>
+    api
+      .get<{ agent_agreement?: { by_workflow?: WorkflowAgreement[] } }>('/analytics', { params: { time_range: timeRange } })
+      .then((res) => res.data.agent_agreement?.by_workflow ?? []),
 }
 
 export const storageApi = {

@@ -155,6 +155,7 @@ async def list_sources() -> Dict[str, Any]:
                 "last_poll_at": None,
                 "last_success_at": None,
                 "last_error": None,
+                "last_error_kind": None,
                 "consecutive_errors": 0,
                 "dropped_total": 0,
             }
@@ -234,6 +235,7 @@ async def health() -> Dict[str, Any]:
                 "last_success_at": r.get("last_success_at"),
                 "consecutive_errors": r.get("consecutive_errors", 0),
                 "last_error": r.get("last_error"),
+                "last_error_kind": r.get("last_error_kind"),
             }
             for r in rows
         ],

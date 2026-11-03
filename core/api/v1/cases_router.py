@@ -20,8 +20,10 @@ from datetime import datetime
 from typing import Dict, List, Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from core.auth.current_user import get_current_user
 from core.auth.permissions import deny_unless, permission_gate
@@ -43,11 +45,12 @@ from core.deps import provide_workflows
 from core.findings.arrival_counts import utc_day_bounds
 from core.findings.source_link import resolve_source_link
 from core.integrations.elastic.ingestion import ElasticIngestion
+from core.memory.entity_keys import finding_entity_keys
 from core.response.approval_service import needs_you_case_ids
 from core.routing import Auth, OptionalUnitOfWorkSession, RouterMeta, UnitOfWorkSession
 from core.storage.case_repository import PAGE_LIMIT, CaseRepository
 from core.storage.database_data_service import DatabaseDataService
-from core.storage.models import CaseClosureInfo, Finding, User, case_findings
+from core.storage.models import Case, CaseClosureInfo, Finding, User, case_findings
 from core.storage.schemas import (
     CaseClosureInfoSchema,
     CaseEvidenceSchema,
@@ -56,8 +59,10 @@ from core.storage.schemas import (
 )
 from core.storage.schemas.case_api import (
     CaseCloseResponse,
+    CaseConflictResponse,
     CaseDetailResponse,
     CaseEvidenceListResponse,
+    CaseFieldConflict,
     CaseIOCBulkResponse,
     CaseIOCExportResponse,
     CaseIOCListResponse,
@@ -133,6 +138,23 @@ class CaseCreate(BaseModel):
     status: CaseStatus = "open"
 
 
+class CaseExpected(BaseModel):
+    """The values a caller last saw, for the fields it means to change.
+
+    A field left out is not compared. Per field, not ``updated_at``: agents and
+    runs touch a case throughout an investigation, so a whole-row version would
+    refuse every edit made during a run.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    priority: Optional[str] = None
+    assignee: Optional[str] = None
+
+
 class CaseUpdate(BaseModel):
     """Case update request."""
 
@@ -142,6 +164,7 @@ class CaseUpdate(BaseModel):
     priority: Optional[str] = None
     notes: Optional[str] = None
     assignee: Optional[str] = None
+    expected: Optional[CaseExpected] = None
 
 
 class EvidenceAdd(BaseModel):
@@ -192,6 +215,7 @@ class ClosureInfo(BaseModel):
     executive_summary: Optional[str] = None
     false_positive_reason: Optional[str] = None
     closure_notes: Optional[str] = None
+    expected: Optional[CaseExpected] = None
 
 
 class MergeRequest(BaseModel):
@@ -378,6 +402,9 @@ def _linked_findings(session, finding_ids: object) -> List[CaseLinkedFinding]:
                 title=row.title,
                 description=row.description,
                 entities=finding_entities(row.entity_context),
+                entity_keys=finding_entity_keys(
+                    [{"entity_context": row.entity_context}]
+                ),
                 source_link=resolve_source_link(
                     {
                         "evidence_links": list(row.evidence_links or []),
@@ -468,8 +495,53 @@ def create_case(case_data: CaseCreate):
     return case
 
 
+def _case_to_edit(session: Session, case_id: str) -> Optional[dict]:
+    """The case as it stands, with its row locked until the request's commit.
+
+    Every read the edit makes comes from here, on the session that writes: a
+    read on a second connection would need a free one while this lock has other
+    edits of the case queued up holding theirs.
+    """
+    if data_service.is_demo_mode():
+        return data_service.get_case(case_id)
+    case = session.get(Case, case_id, with_for_update=True)
+    return CaseSchema.dump(case) if case else None
+
+
+def _stale_fields(case: dict, expected: CaseExpected) -> List[CaseFieldConflict]:
+    """Blank and null are the same value: a form cannot tell them apart."""
+    return [
+        CaseFieldConflict.model_validate(
+            {"field": field, "expected": seen, "current": case.get(field)}
+        )
+        for field, seen in expected.model_dump(exclude_unset=True).items()
+        if (case.get(field) or "") != (seen or "")
+    ]
+
+
+def _conflict_response(conflicts: List[CaseFieldConflict]) -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content=CaseConflictResponse(
+            detail="This case changed after you last read it.",
+            conflicts=conflicts,
+        ).model_dump(),
+    )
+
+
+_STALE_RESPONSE = {
+    409: {
+        "model": CaseConflictResponse,
+        "description": "A field in `expected` no longer holds that value.",
+    }
+}
+
+
 @router.patch(
-    "/{case_id}", dependencies=_CASES_WRITE, response_model=CaseSuccessResponse
+    "/{case_id}",
+    dependencies=_CASES_WRITE,
+    response_model=CaseSuccessResponse,
+    responses=_STALE_RESPONSE,
 )
 def update_case(
     case_id: str,
@@ -481,6 +553,10 @@ def update_case(
     """
     Update an existing case.
 
+    A field named in ``expected`` is compared with the stored value before
+    anything is written; a mismatch is a 409 naming each such field, and writes
+    nothing. A field left out of ``expected`` is written without a comparison.
+
     Args:
         case_id: The case ID
         case_data: Case update data
@@ -488,6 +564,16 @@ def update_case(
     Returns:
         Success status
     """
+    if case_data.assignee is not None:
+        # The case owner. Task assignee stays cases.write.
+        deny_unless(current_user.user_id, "cases.assign", session)
+
+    case = _case_to_edit(session, case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    if case_data.expected and (conflicts := _stale_fields(case, case_data.expected)):
+        return _conflict_response(conflicts)
+
     # Build updates dict
     updates = {}
     if case_data.title is not None:
@@ -499,35 +585,24 @@ def update_case(
     if case_data.priority is not None:
         updates["priority"] = case_data.priority
     if case_data.assignee is not None:
-        # The case owner. Task assignee stays cases.write.
-        deny_unless(current_user.user_id, "cases.assign", session)
         # Empty or whitespace unassigns; anything else must name one person.
-        stored = (data_service.get_case(case_id) or {}).get("assignee")
         updates["assignee"] = resolve_assignee(
-            session, case_data.assignee, current=stored
+            session, case_data.assignee, current=case.get("assignee")
         )
     if case_data.notes is not None:
-        case = data_service.get_case(case_id)
-        if not case:
-            raise HTTPException(status_code=404, detail="Case not found")
-        notes = case.get("notes") or []
-        notes.append(
+        updates["notes"] = [
+            *(case.get("notes") or []),
             {
                 "timestamp": utcnow().isoformat() + "Z",
                 "content": case_data.notes,
-            }
-        )
-        updates["notes"] = notes
+            },
+        ]
 
-    change = status_change(
-        (data_service.get_case(case_id) or {}).get("status"), case_data.status
-    )
+    change = status_change(case.get("status"), case_data.status)
 
     # The write and a close share this session: a refused trail append raises
     # (500, nothing written); Paused is a 503.
     if not data_service.update_case(case_id, session=session, **updates):
-        if not data_service.get_case(case_id):
-            raise HTTPException(status_code=404, detail="Case not found")
         raise HTTPException(status_code=500, detail="Failed to update case")
 
     if change:
@@ -741,7 +816,10 @@ def export_iocs(case_id: str, format: str = "json"):
 
 
 @router.post(
-    "/{case_id}/close", dependencies=_CASES_WRITE, response_model=CaseCloseResponse
+    "/{case_id}/close",
+    dependencies=_CASES_WRITE,
+    response_model=CaseCloseResponse,
+    responses=_STALE_RESPONSE,
 )
 def close_case(
     case_id: str,
@@ -753,6 +831,13 @@ def close_case(
     """Close case with closure metadata."""
 
     from core.cases.case_workflow_service import CaseWorkflowService
+
+    if data.expected:
+        case = _case_to_edit(session, case_id)
+        if not case:
+            raise HTTPException(status_code=404, detail="Case not found")
+        if conflicts := _stale_fields(case, data.expected):
+            return _conflict_response(conflicts)
 
     closure = CaseWorkflowService().close_case(
         session,

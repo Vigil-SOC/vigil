@@ -71,6 +71,8 @@ export function huntView(
   const wall = wallUsed(events, base.status === "terminal", options.now ?? Date.now());
   return {
     ...base,
+    // Denied at the door: the ledger's own status stays active, the run waits all the same.
+    ...(kernel.status === "parked" && base.status === "active" ? { status: "parked" as const, reason: kernel.reason } : {}),
     disposition: dispositionOf(kernel),
     held: heldOf(kernel),
     moves,

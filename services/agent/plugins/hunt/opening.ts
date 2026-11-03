@@ -132,7 +132,6 @@ export async function startHunt(
     spec,
     budgets: spec.budgets,
     seed: runId,
-    tenant_id: null,
     started_by: startedBy,
     ...(principal === undefined ? {} : { principal }),
     ...(origin === undefined ? {} : { origin }),

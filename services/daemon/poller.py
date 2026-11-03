@@ -20,7 +20,7 @@ import hmac
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from core.config import get_settings
 from core.federation.runner import FederationRunner
@@ -180,6 +180,9 @@ class DataPoller:
             "errors": 0,
             "webhook_rejections": {},
         }
+
+    def set_loop_watcher(self, watch: Callable[..., None]) -> None:
+        self._federation.watch_loop = watch
 
     def set_output_queue(self, queue: asyncio.Queue):
         """Set the output queue for processed findings."""

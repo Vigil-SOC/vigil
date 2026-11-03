@@ -17,7 +17,7 @@ from core.agents.enablement import disabled_agent_ids, disabled_message
 from core.agents.projections import agent_route
 from core.agents.prompts import _skills_section
 from core.auth import tool_principal
-from core.auth.permissions import permission_gate
+from core.auth.permissions import deny_unless, permission_gate
 from core.auth.principals import CHAT_PLUGIN_ID, agent_principal_id
 from core.cases.case_brief import RULES, case_brief
 from core.chat import conversation_service
@@ -385,6 +385,10 @@ async def chat_stream(
     # Every blocking read of the setup (database, skill files, MCP status,
     # registries) in one hop off the event loop.
     def setup():
+        # The case brief carries the case and its alerts, so it needs what
+        # reading the case directly needs.
+        if case_id:
+            deny_unless(user_id, "cases.read")
         # Before the agent lookup, which swallows errors.
         if request.agent_id and request.agent_id in disabled_agent_ids():
             raise HTTPException(

@@ -17,7 +17,7 @@ export interface LeadProjection {
   disposition: string | null;
   // What the run was granted, off its opening event. Null when the ledger has none.
   budgets: BudgetLimits | null;
-  status: "running" | "waiting_approval" | "terminal";
+  status: "running" | "waiting_approval" | "parked" | "terminal";
   outcome: TerminalPayload["outcome"] | null;
   reason: string;
   iterations: number;

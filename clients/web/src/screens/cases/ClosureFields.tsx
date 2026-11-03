@@ -61,20 +61,28 @@ export function ClosureFields({ category, reason, onCategory, onReason }: {
   )
 }
 
-/** Close an open Case from its page. Calls only the close endpoint, which sets the status itself. */
-export function CloseCaseDialog({ open, id, onClose, onClosed }: { open: boolean; id: string; onClose: () => void; onClosed: () => void }) {
-  const [category, setCategory] = useState<ClosureCategory>('resolved')
+/** Close a Case from its page, or re-close one the agent closed (`initial` preselects the determination).
+ *  Calls only the close endpoint, which sets the status itself. */
+export function CloseCaseDialog({ open, id, initial = 'resolved', title = 'Close case', onClose, onClosed }: {
+  open: boolean
+  id: string
+  initial?: ClosureCategory
+  title?: string
+  onClose: () => void
+  onClosed: () => void
+}) {
+  const [category, setCategory] = useState<ClosureCategory>(initial)
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
 
   useEffect(() => {
     if (open) {
-      setCategory('resolved')
+      setCategory(initial)
       setReason('')
       setErr('')
     }
-  }, [open])
+  }, [open, initial])
 
   const submit = async () => {
     const problem = closureProblem(category, reason)
@@ -93,7 +101,7 @@ export function CloseCaseDialog({ open, id, onClose, onClosed }: { open: boolean
   }
 
   return (
-    <Popup open={open} onClose={onClose} title="Close case" width={480}>
+    <Popup open={open} onClose={onClose} title={title} width={480}>
       <div className="flex flex-col gap-3.5">
         <ClosureFields category={category} reason={reason} onCategory={setCategory} onReason={setReason} />
         {err && <div className="text-[13px]" style={{ color: 'var(--crit)' }}>{err}</div>}

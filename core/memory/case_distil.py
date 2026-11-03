@@ -33,12 +33,12 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from core.cases.closure import ClosureCategory, trust_word
+from core.cases.closure import CLOSURE_OUTCOMES, ClosureCategory, trust_word
 from core.memory.distil import (
     DEFAULT_BATCH,
     FailureKey,
@@ -54,7 +54,6 @@ from core.memory.recall_contract import (
     InvestigationKind,
     Stance,
     Trust,
-    VerdictOutcome,
     WindowSource,
     bounded_prose,
 )
@@ -78,18 +77,6 @@ logger = logging.getLogger(__name__)
 # Distil's version: re-deriving is delete-then-insert scoped to one
 # investigation, and a change to how a Case maps must not re-offer every hunt.
 CASE_DISTIL_MAPPING_VERSION = 1
-
-# What each closure category concluded. ``duplicate`` is absent on purpose: a
-# Case closed as a duplicate concluded nothing about the activity, it said this
-# record is the same record as another one. Writing an inconclusive Verdict for
-# it would put a claim in memory that nobody made, and writing a proven one
-# would count one determination twice.
-_OUTCOMES: Mapping[ClosureCategory, VerdictOutcome] = {
-    ClosureCategory.RESOLVED: VerdictOutcome.PROVEN,
-    ClosureCategory.FALSE_POSITIVE: VerdictOutcome.FALSE_POSITIVE,
-    ClosureCategory.UNABLE_TO_RESOLVE: VerdictOutcome.INCONCLUSIVE,
-    ClosureCategory.UNSPECIFIED: VerdictOutcome.INCONCLUSIVE,
-}
 
 # Cases whose episodic rows disagree with their current state, in both
 # directions: closed ones whose Verdict is missing, stale, or derived at another
@@ -435,7 +422,7 @@ def write_case_distil(session: Session, case_id: str) -> Dict[str, int]:
     closed = _accept(session, case)
 
     category = closed.category
-    outcome = _OUTCOMES.get(category) if category is not None else None
+    outcome = CLOSURE_OUTCOMES.get(category) if category is not None else None
     if outcome is None:
         if category is not ClosureCategory.DUPLICATE:
             logger.warning(

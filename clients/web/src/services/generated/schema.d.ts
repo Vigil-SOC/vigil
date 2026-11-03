@@ -273,96 +273,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/ai/decisions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Ai Decisions
-         * @description List AI decisions with optional filters.
-         *
-         *     Use this to review decisions that need feedback or analyze past decisions.
-         */
-        get: operations["get_api_ai_decisions"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/ai/decisions/pending-feedback": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Pending Feedback Decisions
-         * @description Get decisions that are awaiting human feedback.
-         *
-         *     Returns decisions ordered by confidence (lowest first) since
-         *     low-confidence decisions benefit most from feedback.
-         */
-        get: operations["get_api_ai_decisions_pending-feedback"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/ai/decisions/stats": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Ai Decision Stats
-         * @description Get statistics on AI decisions and feedback.
-         *
-         *     Provides metrics on AI accuracy, agreement rates, and time saved.
-         */
-        get: operations["get_api_ai_decisions_stats"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/ai/decisions/{decision_id}/feedback": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Submit Feedback
-         * @description Submit human feedback on an AI decision.
-         *
-         *     This allows SOC analysts to grade AI decisions and provide feedback
-         *     for continuous improvement.
-         */
-        post: operations["post_api_ai_decisions_decision_id_feedback"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/ai/models": {
         parameters: {
             query?: never;
@@ -1934,6 +1844,10 @@ export interface paths {
         /**
          * Update Case
          * @description Update an existing case.
+         *
+         *     A field named in ``expected`` is compared with the stored value before
+         *     anything is written; a mismatch is a 409 naming each such field, and writes
+         *     nothing. A field left out of ``expected`` is written without a comparison.
          *
          *     Args:
          *         case_id: The case ID
@@ -4360,6 +4274,192 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/medic/decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Decisions */
+        get: operations["get_api_medic_decisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/medic/decisions/{seq}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Decision */
+        get: operations["get_api_medic_decisions_seq"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/medic/incidents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Incidents */
+        get: operations["get_api_medic_incidents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/medic/incidents/{incident_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Incident */
+        get: operations["get_api_medic_incidents_incident_id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/medic/incidents/{incident_id}/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Feedback
+         * @description Record the signed-in admin's rating. The identity is the session's, never the body's.
+         */
+        post: operations["post_api_medic_incidents_incident_id_feedback"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/medic/pack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Pack */
+        get: operations["get_api_medic_pack"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/medic/sensors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Sensors */
+        get: operations["get_api_medic_sensors"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/medic/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Medic Status Route
+         * @description Medic's state word, and its own status snapshot when it is Running.
+         */
+        get: operations["get_api_medic_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/memory/notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Notes
+         * @description Notes on these entities, or every note, newest first.
+         */
+        get: operations["get_api_memory_notes"];
+        put?: never;
+        /**
+         * Add Note
+         * @description Write a note. Several per entity are allowed; there is no edit.
+         */
+        post: operations["post_api_memory_notes"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/memory/notes/{note_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Note
+         * @description Withdraw a note: the row is deleted, and the trail keeps what it said.
+         */
+        delete: operations["delete_api_memory_notes_note_id"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/orchestrator/disable": {
         parameters: {
             query?: never;
@@ -4700,10 +4800,13 @@ export interface paths {
         };
         /**
          * Get Processes
-         * @description State of the agent layer and the SOC daemon.
+         * @description State of the agent layer, the SOC daemon and Medic.
          *
          *     ``agent_layer`` is ``no_token`` when this server has no
-         *     AGENT_INTERNAL_TOKEN. Up to five seconds old.
+         *     AGENT_INTERNAL_TOKEN. ``medic`` is ``off``, ``down`` or ``unknown`` as the
+         *     backend decides, else Medic's stored state (``running``, ``starting``,
+         *     ``degraded``, ``blind``, ``not_recording`` or ``crash_looping``). Up to five
+         *     seconds old.
          */
         get: operations["get_api_processes"];
         put?: never;
@@ -5025,6 +5128,28 @@ export interface paths {
          *     (409 otherwise); ``source`` copies that skill's folder.
          */
         post: operations["post_api_skills"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/skills/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate Skill
+         * @description Draft a skill from a description.
+         *
+         *     Saves nothing: the drawer fills its form and POST /api/skills writes it.
+         */
+        post: operations["post_api_skills_generate"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6079,6 +6204,10 @@ export interface paths {
          * Update Case
          * @description Update an existing case.
          *
+         *     A field named in ``expected`` is compared with the stored value before
+         *     anything is written; a mismatch is a 409 naming each such field, and writes
+         *     nothing. A field left out of ``expected`` is written without a comparison.
+         *
          *     Args:
          *         case_id: The case ID
          *         case_data: Case update data
@@ -7052,82 +7181,6 @@ export interface components {
             components: string[];
         };
         /**
-         * AIDecisionResponse
-         * @description Response model for AI decision.
-         */
-        AIDecisionResponse: {
-            /** Accuracy Grade */
-            accuracy_grade: number | null;
-            /** Action Appropriateness */
-            action_appropriateness: number | null;
-            /** Actual Outcome */
-            actual_outcome: string | null;
-            /** Agent Id */
-            agent_id: string;
-            /** Case Id */
-            case_id: string | null;
-            /** Confidence Score */
-            confidence_score: number;
-            /** Decision Id */
-            decision_id: string;
-            /** Decision Metadata */
-            decision_metadata: {
-                [key: string]: unknown;
-            } | null;
-            /** Decision Type */
-            decision_type: string;
-            /** Feedback Comment */
-            feedback_comment: string | null;
-            /** Feedback Timestamp */
-            feedback_timestamp: string | null;
-            /** Finding Id */
-            finding_id: string | null;
-            /** Human Decision */
-            human_decision: string | null;
-            /** Human Reviewer */
-            human_reviewer: string | null;
-            /** Id */
-            id: number;
-            /** Reasoning */
-            reasoning: string;
-            /** Reasoning Grade */
-            reasoning_grade: number | null;
-            /** Recommended Action */
-            recommended_action: string;
-            /** Time Saved Minutes */
-            time_saved_minutes: number | null;
-            /** Timestamp */
-            timestamp: string;
-            /** Workflow Id */
-            workflow_id: string | null;
-        };
-        /**
-         * AIDecisionStatsResponse
-         * @description Response model for AI decision statistics.
-         */
-        AIDecisionStatsResponse: {
-            /** Agreement Rate */
-            agreement_rate: number;
-            /** Avg Accuracy Grade */
-            avg_accuracy_grade: number;
-            /** Feedback Rate */
-            feedback_rate: number;
-            /** Outcomes */
-            outcomes: {
-                [key: string]: unknown;
-            };
-            /** Period Days */
-            period_days: number;
-            /** Total Decisions */
-            total_decisions: number;
-            /** Total Time Saved Hours */
-            total_time_saved_hours: number;
-            /** Total Time Saved Minutes */
-            total_time_saved_minutes: number;
-            /** Total With Feedback */
-            total_with_feedback: number;
-        };
-        /**
          * AIOperationsSettingsConfig
          * @description Local Ollama enrichment recovery toggles.
          *
@@ -7436,6 +7489,16 @@ export interface components {
             comments: components["schemas"]["CaseCommentSchema"][];
         };
         /**
+         * CaseConflictResponse
+         * @description A refused edit. Nothing was written.
+         */
+        CaseConflictResponse: {
+            /** Conflicts */
+            conflicts: components["schemas"]["CaseFieldConflict"][];
+            /** Detail */
+            detail: string;
+        };
+        /**
          * CaseCreate
          * @description Case creation request.
          */
@@ -7607,6 +7670,41 @@ export interface components {
             updated_at?: string | null;
         };
         /**
+         * CaseExpected
+         * @description The values a caller last saw, for the fields it means to change.
+         *
+         *     A field left out is not compared. Per field, not ``updated_at``: agents and
+         *     runs touch a case throughout an investigation, so a whole-row version would
+         *     refuse every edit made during a run.
+         */
+        CaseExpected: {
+            /** Assignee */
+            assignee?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Priority */
+            priority?: string | null;
+            /** Status */
+            status?: string | null;
+            /** Title */
+            title?: string | null;
+        };
+        /**
+         * CaseFieldConflict
+         * @description One field whose stored value is not what the caller last saw.
+         */
+        CaseFieldConflict: {
+            /** Current */
+            current?: string | null;
+            /** Expected */
+            expected?: string | null;
+            /**
+             * Field
+             * @enum {string}
+             */
+            field: "title" | "description" | "status" | "priority" | "assignee";
+        };
+        /**
          * CaseFromTemplate
          * @description Create case from template.
          */
@@ -7738,6 +7836,11 @@ export interface components {
              * @default []
              */
             entities: string[];
+            /**
+             * Entity Keys
+             * @default []
+             */
+            entity_keys: string[];
             /** Finding Id */
             finding_id: string;
             /** Source Link */
@@ -8192,6 +8295,7 @@ export interface components {
             assignee?: string | null;
             /** Description */
             description?: string | null;
+            expected?: components["schemas"]["CaseExpected"] | null;
             /** Notes */
             notes?: string | null;
             /** Priority */
@@ -8397,6 +8501,7 @@ export interface components {
             closure_notes?: string | null;
             /** Executive Summary */
             executive_summary?: string | null;
+            expected?: components["schemas"]["CaseExpected"] | null;
             /** False Positive Reason */
             false_positive_reason?: string | null;
             /** Lessons Learned */
@@ -9776,6 +9881,41 @@ export interface components {
             /** Noise Reason */
             noise_reason?: string | null;
         };
+        /** NoteCreate */
+        NoteCreate: {
+            /**
+             * Entity Key
+             * @description `type:value`, e.g. ip:10.0.5.12.
+             */
+            entity_key: string;
+            /** Statement */
+            statement: string;
+        };
+        /** NoteListResponse */
+        NoteListResponse: {
+            /** Notes */
+            notes: components["schemas"]["NoteOut"][];
+            /** Total */
+            total: number;
+        };
+        /**
+         * NoteOut
+         * @description The recall row: ``investigation_id`` is the note's id.
+         */
+        NoteOut: {
+            /** Concluded At */
+            concluded_at: string;
+            /** Entity Key */
+            entity_key: string;
+            /** Investigation Id */
+            investigation_id: string;
+            /** Investigation Kind */
+            investigation_kind: string;
+            /** Statement */
+            statement: string;
+            /** Written By */
+            written_by: string;
+        };
         /**
          * OrchestratorConfigResponse
          * @description Flat saved settings, the profiles the Settings cards render, and the
@@ -10107,6 +10247,11 @@ export interface components {
              * @enum {string}
              */
             daemon: "running" | "unhealthy" | "not_running" | "unknown";
+            /**
+             * Medic
+             * @enum {string}
+             */
+            medic: "off" | "running" | "down" | "unknown" | "starting" | "degraded" | "blind" | "not_recording" | "crash_looping";
         };
         /**
          * ProfileUpdateRequest
@@ -10595,6 +10740,15 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** SkillDraft */
+        SkillDraft: {
+            /** Body */
+            body: string;
+            /** Description */
+            description: string;
+            /** Name */
+            name: string;
+        };
         /** SkillFile */
         SkillFile: {
             /** Path */
@@ -10608,6 +10762,15 @@ export interface components {
             content: string;
             /** Path */
             path: string;
+        };
+        /** SkillGenerateRequest */
+        SkillGenerateRequest: {
+            /** Description */
+            description: string;
+        };
+        /** SkillGenerateResponse */
+        SkillGenerateResponse: {
+            draft: components["schemas"]["SkillDraft"];
         };
         /** SkillResponse */
         SkillResponse: {
@@ -10733,7 +10896,11 @@ export interface components {
              * @default hunt
              */
             run_kind: string;
-            /** Tenant Id */
+            /**
+             * Tenant Id
+             * @deprecated
+             * @description Accepted and ignored: Vigil has no tenant model.
+             */
             tenant_id?: string | null;
         };
         /** StartRunResponse */
@@ -10761,52 +10928,6 @@ export interface components {
              * @enum {string}
              */
             status: "running" | "paused";
-        };
-        /**
-         * SubmitFeedbackRequest
-         * @description Request model for submitting feedback on an AI decision.
-         */
-        SubmitFeedbackRequest: {
-            /**
-             * Accuracy Grade
-             * @description Accuracy grade (0-1)
-             */
-            accuracy_grade?: number | null;
-            /**
-             * Action Appropriateness
-             * @description Action appropriateness (0-1)
-             */
-            action_appropriateness?: number | null;
-            /**
-             * Actual Outcome
-             * @description Actual outcome: 'true_positive', 'false_positive', etc.
-             */
-            actual_outcome?: string | null;
-            /**
-             * Feedback Comment
-             * @description Optional feedback comment
-             */
-            feedback_comment?: string | null;
-            /**
-             * Human Decision
-             * @description Human's decision: 'agree', 'disagree', or 'partial'
-             */
-            human_decision: string;
-            /**
-             * Human Reviewer
-             * @description Ignored: the signed-in user is recorded as the reviewer.
-             */
-            human_reviewer?: string | null;
-            /**
-             * Reasoning Grade
-             * @description Reasoning quality grade (0-1)
-             */
-            reasoning_grade?: number | null;
-            /**
-             * Time Saved Minutes
-             * @description Estimated time saved by AI
-             */
-            time_saved_minutes?: number | null;
         };
         /** SurfaceToggle */
         SurfaceToggle: {
@@ -10957,6 +11078,8 @@ export interface components {
             reason: string;
             /** Severity */
             severity?: string | null;
+            /** Stop Cause */
+            stop_cause?: string | null;
             /**
              * Summary
              * @default
@@ -12033,158 +12156,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_ai_decisions: {
-        parameters: {
-            query?: {
-                /** @description Filter by agent ID */
-                agent_id?: string | null;
-                /** @description Filter by finding ID */
-                finding_id?: string | null;
-                /** @description Filter by case ID */
-                case_id?: string | null;
-                /** @description Filter by workflow ID */
-                workflow_id?: string | null;
-                /** @description Filter by feedback status */
-                has_feedback?: boolean | null;
-                /** @description Maximum results */
-                limit?: number;
-                /** @description Offset for pagination */
-                offset?: number;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AIDecisionResponse"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "get_api_ai_decisions_pending-feedback": {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_ai_decisions_stats: {
-        parameters: {
-            query?: {
-                /** @description Filter by agent ID */
-                agent_id?: string | null;
-                /** @description Number of days to analyze */
-                days?: number;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AIDecisionStatsResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_ai_decisions_decision_id_feedback: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                decision_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SubmitFeedbackRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AIDecisionResponse"];
                 };
             };
             /** @description Validation Error */
@@ -14717,6 +14688,15 @@ export interface operations {
                     "application/json": components["schemas"]["CaseSuccessResponse"];
                 };
             };
+            /** @description A field in `expected` no longer holds that value. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseConflictResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -14826,6 +14806,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseCloseResponse"];
+                };
+            };
+            /** @description A field in `expected` no longer holds that value. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseConflictResponse"];
                 };
             };
             /** @description Validation Error */
@@ -19264,6 +19253,362 @@ export interface operations {
             };
         };
     };
+    get_api_medic_decisions: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_medic_decisions_seq: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                seq: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_medic_incidents: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_medic_incidents_incident_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                incident_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_medic_incidents_incident_id_feedback: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                incident_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_medic_pack: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_medic_sensors: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_medic_status: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_memory_notes: {
+        parameters: {
+            query?: {
+                /** @description Repeat for several; omit for every note. */
+                entity_key?: string[] | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_memory_notes: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NoteCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_memory_notes_note_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                note_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     post_api_orchestrator_disable: {
         parameters: {
             query?: never;
@@ -20424,6 +20769,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SkillResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_skills_generate: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillGenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillGenerateResponse"];
                 };
             };
             /** @description Validation Error */
@@ -22160,6 +22540,15 @@ export interface operations {
                     "application/json": components["schemas"]["CaseSuccessResponse"];
                 };
             };
+            /** @description A field in `expected` no longer holds that value. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseConflictResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -22195,6 +22584,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseCloseResponse"];
+                };
+            };
+            /** @description A field in `expected` no longer holds that value. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseConflictResponse"];
                 };
             };
             /** @description Validation Error */

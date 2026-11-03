@@ -76,6 +76,17 @@ const AGENT_LAYER_FACT: Partial<Record<ProcessesRead['agent_layer'], string>> = 
   unhealthy: 'Agent layer is not ready.',
 }
 
+/** Medic's states that add a fact; running and off add none. */
+const MEDIC_FACT: Partial<Record<ProcessesRead['medic'], Fact>> = {
+  down: { level: 'poor', sentence: 'Medic is down.' },
+  blind: { level: 'poor', sentence: "Medic can't see part of Vigil." },
+  not_recording: { level: 'poor', sentence: 'Medic is not recording.' },
+  crash_looping: { level: 'poor', sentence: 'Medic keeps crashing.' },
+  degraded: { level: 'fair', sentence: 'Medic is degraded.' },
+  starting: { level: 'fair', sentence: 'Medic is starting.' },
+  unknown: { level: 'fair', sentence: "Vigil can't tell if Medic is running." },
+}
+
 /** Worst fact wins. Poor outranks Fair; within a level, earlier checks outrank later ones. */
 export function foldStatus(reads: StatusReads): StatusFold {
   const facts: Fact[] = []
@@ -102,6 +113,10 @@ export function foldStatus(reads: StatusReads): StatusFold {
   if (reads.processes?.daemon === 'unhealthy') {
     facts.push({ level: 'fair', sentence: 'SOC daemon reports a stopped component.' })
   }
+
+  // An older backend sends no medic field, which adds no fact.
+  const medic = reads.processes?.medic && MEDIC_FACT[reads.processes.medic]
+  if (medic) facts.push(medic)
 
   const failing = failingFederationSource(reads.federation)
   if (failing) {

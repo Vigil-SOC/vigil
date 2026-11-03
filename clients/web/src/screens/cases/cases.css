@@ -70,6 +70,24 @@
   font-size: 12px;
 }
 
+/* Trust strip (CaseDetail board): a 72x4 meter, then the text and its ⓘ. Neutral fill: no floor to judge against. */
+.case-page .dh-meta .case-trust-on {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--tx2);
+  white-space: nowrap;
+}
+.case-page .case-trust-bar {
+  width: 72px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg4);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.case-page .case-trust-bar > span { display: block; height: 100%; background: var(--tx2); }
+
 .case-page .case-sla.good { color: var(--good); }
 .case-page .case-sla.fair { color: var(--fair); }
 .case-page .case-sla.poor { color: var(--poor); }
@@ -433,6 +451,27 @@
 }
 
 .side-meta { color: var(--tx3); font-size: 11.5px; }
+.side-card .side-withdraw { display: block; margin-top: 4px; font-size: 11.5px; }
+.side-card .side-withdraw:disabled { opacity: .6; cursor: default; }
+
+/* "+ Tell the agents something": the board's dashed button, and the form it opens in its place. */
+.side-tell {
+  height: 28px;
+  border-radius: 10px;
+  border: 1px dashed var(--ln2);
+  background: transparent;
+  color: var(--tx2);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.side-tell:hover { color: var(--tx0); border-color: var(--vio); }
+.side-note-form { display: grid; gap: 6px; }
+.side-note-form select,
+.side-note-form textarea { font: inherit; font-size: 12.5px; }
+.side-note-actions { display: flex; gap: 6px; }
+.case-side .text-crit { margin: 0; }
 .side-card .side-meta { margin-top: 2px; }
 .side-people > .side-meta { color: var(--tx2); font-size: 12px; }
 
@@ -693,7 +732,7 @@
 .case-page .case-disagree { display: flex; }
 
 .case-page .case-assess > span:first-child { margin-right: 4px; }
-.case-page .case-assess .case-assess-later { font-size: 12px; color: var(--tx3); }
+.case-page .case-assess .case-assess-done { color: var(--tx1); }
 .case-page .case-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .case-page .case-assess .case-actions { margin-left: auto; }
 
@@ -2003,3 +2042,20 @@
   .case-page .how-rows li { grid-template-columns: minmax(0, 1fr) auto; }
   .case-page .how-event { grid-column: 1 / -1; }
 }
+
+/* Edit dialog: another edit landed first. Fair, not poor: nothing has failed and nothing is lost. */
+.case-edit-conflicts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--fair-ln);
+  border-radius: var(--radius-card-inner);
+  background: var(--fair-bg);
+  color: var(--tx0);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.case-edit-conflicts p { margin: 0; }
+.case-edit-conflict { display: flex; flex-direction: column; gap: 8px; overflow-wrap: anywhere; }
+.case-edit-conflict > p { max-height: 120px; overflow-y: auto; }
