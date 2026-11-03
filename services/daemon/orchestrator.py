@@ -16,11 +16,11 @@ import logging
 import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from sqlalchemy import func
 
-from core.agents.builtins import ORCHESTRATION_DECISION_ID, ORCHESTRATOR_ACTOR
+from core.agents.builtins import ORCHESTRATOR_ACTOR
 from core.auth.principals import agent_principal_id
 from core.cases.case_sla_service import case_title, open_case_holding
 from core.config import get_settings
@@ -86,12 +86,10 @@ from core.findings.exclusions import cached_active_ips, excluded_ips_of
 from core.memory.entity_keys import finding_entity_keys, normalise_keys
 from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint
-from core.response.config import decision_rule
 from core.storage.connection import get_db_manager
 from core.storage.models import (
     FINISHED_INVESTIGATION_STATUSES,
     IN_FLIGHT_INVESTIGATION_STATUSES,
-    PARKED_INVESTIGATION_STATUSES,
     IntakeTrigger,
     Investigation,
 )
@@ -159,15 +157,6 @@ def _count_investigations_running() -> int:
         return (
             session.query(Investigation)
             .filter(Investigation.status.in_(RUNNING_INVESTIGATION_STATUSES))
-            .count()
-        )
-
-
-def _count_investigations_parked() -> int:
-    with get_db_manager().session_scope() as session:
-        return (
-            session.query(Investigation)
-            .filter(Investigation.status.in_(PARKED_INVESTIGATION_STATUSES))
             .count()
         )
 
@@ -749,6 +738,8 @@ class Orchestrator:
         self.config = config
         self._enabled = config.enabled
         self._shutdown_event: Optional[asyncio.Event] = None
+        # Set by the daemon: watch(name, task, shutdown_event) for /status loops.
+        self.watch_loop: Optional[Callable[..., None]] = None
         self._approvals = approvals or ApprovalService()
         # Read for the run_kind a definition declares; the file cache needs no DB.
         self._workflows = workflows or WorkflowsService()
@@ -808,11 +799,17 @@ class Orchestrator:
                     "Completing legacy review rows failed: %s", e, exc_info=True
                 )
 
-            tasks = [
-                asyncio.create_task(self._intake_loop(shutdown_event)),
-                asyncio.create_task(self._supervision_loop(shutdown_event)),
-                asyncio.create_task(self._distil_loop(shutdown_event)),
-            ]
+            loops = {
+                "_intake_loop": self._intake_loop,
+                "_supervision_loop": self._supervision_loop,
+                "_distil_loop": self._distil_loop,
+            }
+            tasks = []
+            for name, loop in loops.items():
+                task = asyncio.create_task(loop(shutdown_event))
+                if self.watch_loop:
+                    self.watch_loop(name, task, shutdown_event)
+                tasks.append(task)
 
             while not shutdown_event.is_set() and self._enabled:
                 self._sync_enabled_from_db()
@@ -897,7 +894,7 @@ class Orchestrator:
         if not self._hourly_budget_exhausted():
             schedule_runs = self._schedule_runs_in_flight()
             for row in launchable:
-                if not self._room_to_launch():
+                if self._running() >= self.config.max_concurrent_agents:
                     break
                 is_schedule = row.get("kind") == "schedule"
                 # Skipped, not a break: rows behind it may be detections.
@@ -1340,7 +1337,7 @@ class Orchestrator:
             inv_id = inv.get("investigation_id")
             if not inv_id:
                 continue
-            if not self._room_to_launch():
+            if self._running() >= self.config.max_concurrent_agents:
                 return
 
             self._update_investigation_status(inv_id, "assigned")
@@ -1486,25 +1483,6 @@ class Orchestrator:
             # Unknown reads as full: a failed count must not lift the cap.
             logger.error("Failed to count running investigations: %s", e)
             return self.config.max_concurrent_agents
-
-    def _parked_full(self) -> bool:
-        """Parked runs hold no slot, so nothing else bounds how many pile up.
-
-        Paused counts too: a run the ceiling refused parks there within one
-        reconcile, so slots alone would let a flood of them launch without end.
-        """
-        try:
-            return _count_investigations_parked() >= self.config.parked_limit
-        except Exception as e:
-            # Unknown reads as full: a failed count must not lift the limit.
-            logger.error("Failed to count parked investigations: %s", e)
-            return True
-
-    def _room_to_launch(self) -> bool:
-        return (
-            self._running() < self.config.max_concurrent_agents
-            and not self._parked_full()
-        )
 
     # A run belongs to the worker, so nothing here stops one. The record is marked
     # and the run finishes or hits its ceiling; reaping a stalled worker is #633.
@@ -2055,7 +2033,6 @@ class Orchestrator:
 
         state = self.workdir.read_state(inv_id)
         proposed_actions = state.get("proposed_actions", [])
-        rule = decision_rule("review.terminal_outcome", "completed")
 
         self.stats["investigations_completed"] += 1
         if _inv_completed is not None:
@@ -2072,17 +2049,6 @@ class Orchestrator:
 
         logger.info(
             f"Investigation {inv_id} COMPLETED ({len(proposed_actions)} actions)"
-        )
-
-        self._log_ai_decision(
-            decision_type="investigation_complete",
-            inv_id=inv_id,
-            reasoning=(
-                f"Terminal outcome completed. {len(proposed_actions)} proposed actions."
-            ),
-            action="complete",
-            confidence=1.0,
-            rule=rule,
         )
 
         self._send_notification(
@@ -2128,65 +2094,6 @@ class Orchestrator:
             logger.info(f"Created approval action for {inv_id}: {action_str}")
         except Exception as e:
             logger.error(f"Failed to create approval action: {e}")
-
-    # -------------------------------------------------------------------------
-    # AI Decision Logging
-    # -------------------------------------------------------------------------
-
-    def _log_ai_decision(
-        self,
-        decision_type: str,
-        inv_id: str,
-        reasoning: str,
-        action: str,
-        confidence: float = 1.0,
-        rule: Optional[str] = None,
-    ):
-        """Log a master agent decision to the AIDecisionLog table.
-
-        ``rule`` is the rendered ``decision_rule`` for decisions made on a
-        threshold; it lands in ``decision_metadata["rule"]``.
-        """
-        try:
-            from core.storage.connection import get_db_manager
-            from core.storage.models import AIDecisionLog, Investigation
-
-            with get_db_manager().session_scope() as session:
-                case_id = None
-                finding_id = None
-                inv = (
-                    session.query(Investigation)
-                    .filter_by(investigation_id=inv_id)
-                    .first()
-                )
-                if inv:
-                    case_id = inv.case_id
-                    trigger_ids = inv.trigger_ids or []
-                    if trigger_ids:
-                        finding_id = (
-                            trigger_ids[0] if isinstance(trigger_ids, list) else None
-                        )
-
-                entry = AIDecisionLog(
-                    decision_id=f"orch-{uuid.uuid4().hex[:8]}",
-                    agent_id=ORCHESTRATION_DECISION_ID,
-                    workflow_id=inv_id,
-                    finding_id=finding_id,
-                    case_id=case_id,
-                    decision_type=decision_type,
-                    confidence_score=confidence,
-                    reasoning=reasoning,
-                    recommended_action=action,
-                    decision_metadata={
-                        "source": ORCHESTRATOR_ACTOR,
-                        "investigation_id": inv_id,
-                        **({"rule": rule} if rule else {}),
-                    },
-                )
-                session.add(entry)
-            logger.debug(f"AI decision logged: {decision_type} for {inv_id}")
-        except Exception as e:
-            logger.error(f"Failed to log AI decision: {e}")
 
     # -------------------------------------------------------------------------
     # Closed-Case links

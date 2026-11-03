@@ -6,6 +6,7 @@ from typing import List, Optional
 from sqlalchemy import (
     ARRAY,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -228,6 +229,9 @@ class FederationSource(Base):
     last_poll_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     last_success_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Whose fault the last failure was (auth, network, config, quota, upstream,
+    # unknown); null while healthy. Set by the runner's classifier, never from text.
+    last_error_kind: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     consecutive_errors: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
@@ -249,7 +253,13 @@ class FederationSource(Base):
         server_default=text("now()"),
     )
 
-    __table_args__ = (Index("idx_federation_sources_enabled", "enabled"),)
+    __table_args__ = (
+        Index("idx_federation_sources_enabled", "enabled"),
+        CheckConstraint(
+            "last_error_kind IN ('auth','network','config','quota','upstream','unknown')",
+            name="federation_sources_last_error_kind_check",
+        ),
+    )
 
 
 class ConfigAuditLog(Base):

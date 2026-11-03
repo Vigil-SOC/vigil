@@ -59,6 +59,11 @@ export type RunEventKind = (typeof RUN_EVENT_KINDS)[number];
 export const RUN_OUTCOMES = ["completed", "failed", "aborted", "budget_exhausted", "abandoned", "data_starved"] as const;
 export type RunOutcome = (typeof RUN_OUTCOMES)[number];
 
+// Why the model path stopped a run, beside the outcome and never instead of it. Named once,
+// where the call failed. Restated in the console's stopCause.ts, which must match.
+export const STOP_CAUSES = ["rate_limited", "provider_auth_refused", "model_unavailable", "gateway_budget_refused", "output_truncated", "unknown"] as const;
+export type StopCause = (typeof STOP_CAUSES)[number];
+
 // seq 0. Carries the resolved spec so resume needs no configuration file and
 // editing an arch mid-run cannot change a run already in flight.
 export interface RunPayload {
@@ -66,7 +71,8 @@ export interface RunPayload {
   spec: unknown;
   budgets: BudgetLimits;
   seed: string;
-  tenant_id: string | null;
+  // Never read or written. Older rows hold null.
+  tenant_id?: string | null;
   // The actor principal id when the start job named one. Older rows hold the
   // free-text enqueued_by this replaced.
   started_by: string;
@@ -182,6 +188,8 @@ export interface ResumedPayload {
 export interface TerminalPayload {
   outcome: RunOutcome;
   reason: string;
+  // Set only when a model call is what stopped the run. Older ledgers never carry it.
+  stop_cause?: StopCause;
   // What the run leaves behind. Written by the workflow, because only it knows
   // what its deliverable is, and read from here by whoever reports the run out.
   summary?: string;
@@ -190,6 +198,9 @@ export interface TerminalPayload {
   // How bad the run rated what it found, in case priorities, for the case it was
   // started from. Only a completed run whose plugin names a severity_field sets it.
   severity?: Severity;
+  // How sure the run said it was of its verdict. Only a completed run whose plugin
+  // names a confidence_field sets it.
+  confidence?: Confidence;
   // The run's verdict, after the guard, for the case it was started from. Only a
   // completed run whose plugin names a disposition_field sets it.
   disposition?: string;
@@ -201,6 +212,10 @@ export interface TerminalPayload {
 // The ratings a run may conclude with: the case priorities, less unknown.
 export const SEVERITIES = ["low", "medium", "high", "critical"] as const;
 export type Severity = (typeof SEVERITIES)[number];
+
+// How sure a run may say it is of its verdict.
+export const CONFIDENCES = ["low", "medium", "high"] as const;
+export type Confidence = (typeof CONFIDENCES)[number];
 
 // Work the run finished by giving away, each carrying the document it hands over
 // rather than a pointer to one: the receiver has no access to this ledger.

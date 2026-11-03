@@ -11,6 +11,12 @@ x-agent-env: &agent-env
   - POSTGRES_USER=vigil_app
   - POSTGRES_PASSWORD=${POSTGRES_APP_PASSWORD:-vigil_app_password_change_me}
   - REDIS_URL=redis://redis:6379/0
+  # The agent reads REDIS_PASSWORD only beside REDIS_HOST, and the password is
+  # never put in a URL, so the parts are named as the Helm chart names them.
+  - REDIS_HOST=redis
+  - REDIS_PORT=6379
+  - REDIS_DB=0
+  - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD is empty - start the stack with ./start.sh, which mints it}
   # The four /internal endpoints. Each defaults to localhost:6987 in-process,
   # which is the agent container itself here, so all four have to be named.
   # VIGIL_RUNS_URL unset is the quiet one: progress stops reaching the UI and a
@@ -145,15 +151,24 @@ services:
     image: redis:7-alpine
     container_name: deeptempo-redis
     ports:
-      # Loopback-only, for the same reason as postgres above, and with less
-      # standing in the way: this Redis runs without requirepass, so anything
-      # that reaches the port owns the ARQ queue and the session store.
+      # Loopback-only, for the same reason as postgres above. It also requires
+      # a password (per install, minted by scripts/lib.sh ensure_redis_password),
+      # so a process that reaches the port gets NOAUTH, not the ARQ queue and
+      # the session store. An empty requirepass would mean no auth, hence `:?`.
       - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD is empty - start the stack with ./start.sh, which mints it}
+    # sh -c so the password is read from the environment, not written into the
+    # command line that `docker inspect` and `ps` show.
+    command:
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction --requirepass "$$REDIS_PASSWORD"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # REDISCLI_AUTH is redis-cli's own way to take the password without argv.
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -184,6 +199,8 @@ services:
       # Management API only. Inference does not use it.
       BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-}
       REDIS_URL: redis://redis:6379/0
+      # core/redis_client.py applies it over the password-free URL.
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is empty - start the stack with ./start.sh, which mints it}
       # Shared secret the agent worker presents on /internal. Unset means every
       # such call answers 503, so no workflow can run.
       AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:-}
@@ -384,6 +401,8 @@ services:
       BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-}
       # Redis (LLM queue)
       REDIS_URL: redis://redis:6379/0
+      # core/redis_client.py applies it over the password-free URL.
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is empty - start the stack with ./start.sh, which mints it}
       # Same seam as backend. localhost:6989 is the host-run default; without
       # these, _read_fold cannot reach agent-serve and completed runs stay executing.
       AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:-}
@@ -510,6 +529,7 @@ services:
       - BIFROST_URL=${BIFROST_URL:-http://bifrost:8080}
       - BIFROST_ADMIN_PASSWORD=${BIFROST_ADMIN_PASSWORD:-}
       - REDIS_URL=redis://redis:6379/0
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD is empty - start the stack with ./start.sh, which mints it}
       # No HTTP port here: worker metrics reach Prometheus through the OTLP
       # push to the collector, scraped at otel-collector:8889.
       - VIGIL_OTEL_ENABLED=${VIGIL_OTEL_ENABLED:-false}
@@ -811,8 +831,10 @@ services:
       # Loopback-only, for the same reason as postgres and redis above.
       # /api/* requires the minted password, so a sibling container can no
       # longer rewrite providers. Inference on this same port does not, so
-      # one can still place a model call; that stays a separate choice. The
-      # UI at http://localhost:8080 takes the same password.
+      # one can still place a model call; that stays a separate choice. An
+      # empty client.allowed_origins keeps web pages from reading its answers
+      # or sending it JSON; loopback origins always pass. The UI at
+      # http://localhost:8080 takes the same password.
       - "127.0.0.1:8080:8080"
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}

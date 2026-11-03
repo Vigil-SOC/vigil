@@ -75,6 +75,9 @@ dc() {
     # real password. An empty one does not open the API, but nothing in Vigil
     # could call it.
     ensure_bifrost_admin_password
+    # Compose refuses to start redis without one (`${REDIS_PASSWORD:?}`), so a
+    # caller that skipped start.sh still gets the install's password.
+    ensure_redis_password >&2 || return 1
     local -a medic_files=() medic_env=()
     _dc_medic
     OLLAMA_URL="$(_container_ollama_url)" \
@@ -409,6 +412,30 @@ ensure_jwt_secret() {
     export JWT_SECRET_KEY
 }
 
+# --- Redis password ---
+# Redis holds the LLM queue, the agent run queue and the session store, so the
+# core stack's Redis requires a password (Compose --requirepass; REDIS_URL stays
+# password-free, core/redis_client.py applies REDIS_PASSWORD over it). Same rule
+# as the JWT secret: a REDIS_PASSWORD the caller or .env already set wins, else
+# one is minted once into ~/.vigil/redis_password and never regenerated. Never
+# written into .env. Hex, so it needs no quoting in a URL, a shell or Compose.
+# Call after load_env.
+ensure_redis_password() {
+    [ -n "${REDIS_PASSWORD:-}" ] && { export REDIS_PASSWORD; return 0; }
+    local dir="${VIGIL_DIR:-$HOME/.vigil}" file
+    file="$dir/redis_password"
+    if [ ! -s "$file" ]; then
+        mkdir -p "$dir" && chmod 700 "$dir" 2>/dev/null || true
+        # Written whole, then moved: a concurrent reader never sees a half-file.
+        (umask 177; { openssl rand -hex 24 2>/dev/null || od -An -tx1 -N24 /dev/urandom | tr -d ' \n'; } \
+            | tr -d '\n' > "$file.tmp.$$" && mv -f "$file.tmp.$$" "$file") \
+            || { rm -f "$file.tmp.$$"; echo "Could not write $file" >&2; return 1; }
+        echo "Generated Redis password at $file"
+    fi
+    REDIS_PASSWORD="$(cat "$file")"
+    export REDIS_PASSWORD
+}
+
 # --- Values in .env ---
 # The value .env gives KEY, as sourcing it does: the last assignment wins, an
 # `export` prefix is allowed, quotes are dropped, and so is a trailing comment or
@@ -630,21 +657,36 @@ wait_for_url() {
     return 1
 }
 
+# --- Whole seconds on a clock that wall-clock corrections cannot step ---
+# A WSL2 guest's clock can jump by hours, and $SECONDS follows it. macOS has no
+# /proc/uptime.
+monotonic_seconds() {
+    local up
+    if [ -r /proc/uptime ]; then
+        read -r up _ </proc/uptime
+        echo "${up%%.*}"
+    else
+        echo "$SECONDS"
+    fi
+}
+
 # --- Wait for the daemon-mode backend to serve health ---
 # /api/health only answers once the lifespan has connected every enabled MCP
 # server, so a healthy start can take minutes (#2910). Polls URL while PID is
 # alive, saying so every 15s; fails as soon as PID exits, or after TIMEOUT.
 wait_for_backend() {
-    # Wall clock, not a loop count: curl can block 2s on a socket uvicorn accepted.
-    local url="$1" pid="$2" timeout="${3:-300}" start=$SECONDS next=15
-    while [ $((SECONDS - start)) -lt "$timeout" ]; do
+    # Elapsed time, not a loop count: curl can block 2s on a socket uvicorn accepted.
+    local url="$1" pid="$2" timeout="${3:-300}" start elapsed next=15
+    start=$(monotonic_seconds)
+    while [ $(($(monotonic_seconds) - start)) -lt "$timeout" ]; do
         if ! kill -0 "$pid" 2>/dev/null; then
             echo "Backend exited during startup." >&2
             return 1
         fi
         curl -sf --max-time 2 "$url" >/dev/null 2>&1 && return 0
-        if [ $((SECONDS - start)) -ge $next ]; then
-            echo "Backend startup still in progress ($((SECONDS - start))s, connecting MCP servers)..."
+        elapsed=$(($(monotonic_seconds) - start))
+        if [ "$elapsed" -ge "$next" ]; then
+            echo "Backend startup still in progress (${elapsed}s, connecting MCP servers)..."
             next=$((next + 15))
         fi
         sleep 1
@@ -696,8 +738,15 @@ ensure_container() {
     local name="$1" service="$2" profile="${3:-}"
     # Anchored exact-name match so e.g. deeptempo-postgres-test doesn't
     # mask a missing deeptempo-postgres.
+    # Redis is the exception: an install that predates its password has a
+    # running, open Redis, and returning here would leave it that way. `up -d`
+    # is a no-op when nothing changed and recreates it when the command did.
     if [ -n "$(docker ps -q -f "name=^${name}$")" ]; then
-        return 0
+        [ "$service" = "redis" ] || return 0
+        # Logs are saved first: a recreate discards them.
+        save_container_logs "$name"
+        dc up -d redis
+        return
     fi
     # `up -d` on a stopped container may recreate it, which discards its logs.
     save_container_logs "$name"

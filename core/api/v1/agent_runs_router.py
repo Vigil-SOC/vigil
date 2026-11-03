@@ -74,7 +74,11 @@ class StartRunRequest(BaseModel):
     )
     prompt: str = Field(default="", description="What the run is being asked to do.")
     overrides: Optional[Dict[str, Any]] = None
-    tenant_id: Optional[str] = None
+    tenant_id: Optional[str] = Field(
+        default=None,
+        deprecated=True,
+        description="Accepted and ignored: Vigil has no tenant model.",
+    )
 
 
 class StartRunResponse(BaseModel):
@@ -211,7 +215,6 @@ async def start_run(
         run_kind=request.run_kind,
         request=payload,
         enqueued_by=user.username,
-        tenant_id=request.tenant_id,
         principal=tool_principal.mint(
             user.username,
             person_id=person_id,

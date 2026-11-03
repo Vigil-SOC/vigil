@@ -52,6 +52,8 @@ import {
 } from './modelPrompt'
 import './aiModels.css'
 
+export const KEYS_CARD_ID = 'ai-keys'
+
 // Only the two outcomes a check actually decided are a level: routable is
 // Good, rejected is Poor. A probe that could not run is a chip, never Fair,
 // and no verdicts at all (the check failed) draws nothing.
@@ -289,6 +291,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
   return (
     <SettingsCard
       wide
+      id={KEYS_CARD_ID}
       title="Keys"
       desc="A provider can hold several keys; traffic is shared by weight and moves to another key if one is rejected. Saving a key tests it."
       actions={

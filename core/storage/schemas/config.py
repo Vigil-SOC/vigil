@@ -74,6 +74,7 @@ class FederationSourceSchema(ORMSchema):
     last_poll_at: OptDateTime = None
     last_success_at: OptDateTime = None
     last_error: Optional[str] = None
+    last_error_kind: Optional[str] = None
     consecutive_errors: Optional[int] = None
     dropped_total: Optional[int] = None
     created_at: OptDateTime = None

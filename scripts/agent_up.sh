@@ -36,6 +36,20 @@ export POSTGRES_USER="${POSTGRES_USER:-vigil_app}"
 _app_pw="$(env_file_value POSTGRES_APP_PASSWORD)"
 export POSTGRES_PASSWORD="${POSTGRES_APP_PASSWORD:-${_app_pw:-vigil_app_password_change_me}}"
 export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
+# Redis requires a password (a REDIS_PASSWORD in .env wins, as for the backend).
+# The agent reads it only alongside REDIS_HOST, so name the parts of a plain
+# redis:// URL; a rediss:// one keeps its TLS through the URL.
+[ -n "${REDIS_PASSWORD:-}" ] || REDIS_PASSWORD="$(env_file_value REDIS_PASSWORD)"
+[ -z "$REDIS_PASSWORD" ] || export REDIS_PASSWORD
+ensure_redis_password >&2
+case "$REDIS_URL" in
+    redis://*)
+        _r="${REDIS_URL#redis://}"; _r="${_r##*@}"
+        _hp="${_r%%/*}"; _db=""; case "$_r" in */*) _db="${_r#*/}" ;; esac
+        export REDIS_HOST="${REDIS_HOST:-${_hp%%:*}}"
+        case "$_hp" in *:*) export REDIS_PORT="${REDIS_PORT:-${_hp##*:}}" ;; esac
+        [ -z "$_db" ] || export REDIS_DB="${REDIS_DB:-${_db%%[?#]*}}" ;;
+esac
 
 # All four, because each defaults to this process rather than the backend.
 export VIGIL_PLAYBOOKS_URL="${VIGIL_PLAYBOOKS_URL:-http://localhost:6987/internal/playbooks}"

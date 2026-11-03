@@ -1,4 +1,5 @@
 import { ZERO_TOKENS, type TokenCounts } from "../contracts/budget.js";
+import type { StopCause } from "../contracts/events.js";
 
 export interface ToolCall {
   id: string;
@@ -68,12 +69,34 @@ export interface Provider {
 }
 
 // Carries what was already burned, so a call that fails does not drop spend the
-// budget still has to account for.
+// budget still has to account for, and what stopped it, so no reader parses the message.
 export class ProviderError extends Error {
   constructor(
     message: string,
     readonly tokens: TokenCounts = ZERO_TOKENS,
+    readonly kind: StopCause = "unknown",
   ) {
     super(message);
   }
+}
+
+const CAUSE_OF_STATUS: Readonly<Record<number, StopCause>> = {
+  401: "provider_auth_refused",
+  402: "gateway_budget_refused",
+  403: "provider_auth_refused",
+  404: "model_unavailable",
+  408: "model_unavailable",
+  429: "rate_limited",
+};
+
+// No status is a call nobody answered, and a 5xx is the far side failing: both mean the model
+// could not be reached. Any other status is a refusal this table has no words for yet.
+export function stopCauseOfStatus(status: number | undefined): StopCause {
+  if (status === undefined || status >= 500) return "model_unavailable";
+  return CAUSE_OF_STATUS[status] ?? "unknown";
+}
+
+// Undefined for anything but a failed model call: a defect in this process is not the model path.
+export function stopCauseOf(error: unknown): StopCause | undefined {
+  return error instanceof ProviderError ? error.kind : undefined;
 }

@@ -89,13 +89,6 @@ class OrchestratorConfig:
     intake_ttl_seconds: int = 4 * 3600
     intake_ttl_promote_fraction: float = 0.25
     intake_surge_depth: int = 20
-    # How many runs may wait on a person, per slot, before launches stop. Each can
-    # resume with no slot and no cap check, so this bounds that burst of spend.
-    parked_runs_per_slot: int = 2
-
-    @property
-    def parked_limit(self) -> int:
-        return self.max_concurrent_agents * self.parked_runs_per_slot
 
 
 @dataclass

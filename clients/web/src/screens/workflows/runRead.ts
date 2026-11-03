@@ -23,6 +23,8 @@ export interface WfRun {
   /** The agent-layer terminal. Null when this side finalized the run itself. */
   outcome?: string | null
   reason?: string | null
+  /** Why the model path stopped the run; read through stopCauseOf. */
+  stop_cause?: string | null
   /** Optional: runs that predate the name and version columns carry neither. */
   workflow_name?: string | null
   workflow_version?: number | null

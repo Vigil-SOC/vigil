@@ -10,6 +10,9 @@ can prove what the gateway let through. stdlib only; runs in python:3.12-slim.
 - agent-worker (6990) / agent-serve (6989): `/readyz` 200 "ready", or 503
   "not ready" while /tmp/not-ready exists. The 503 carries STUB_CANARY in its
   body and a Set-Cookie header: Medic must keep it out of its store and logs.
+- elastic (9200): an Elasticsearch with no alerts. Any POST answers an empty
+  `hits`; every request is logged and `GET /__seen` (from inside this container
+  only) returns the log, so a test can prove whether a poll arrived.
 - anything else: 200 `{}` on HTTP ports, accept-and-close on raw TCP ones.
 """
 
@@ -32,6 +35,7 @@ PORTS = {
     "agent-serve": [6989],
     "soc-daemon": [8081, 9090, 9091],
     "bifrost": [8080],
+    "elastic": [9200],
 }
 RAW_PORTS = {"redis": [6379], "postgres": [5432]}
 NOT_READY = Path("/tmp/not-ready")
@@ -75,6 +79,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle(self) -> None:
         body = self._body()
+        if ROLE == "elastic":
+            return self._elastic()
         if ROLE == "backend":
             if self.path == "/__seen" and self.client_address[0] == "127.0.0.1":
                 with LOCK:
@@ -97,6 +103,14 @@ class Handler(BaseHTTPRequestHandler):
                 )
             return self._reply(200, "ready")
         return self._reply(200, {})
+
+    def _elastic(self) -> None:
+        if self.path == "/__seen" and self.client_address[0] == "127.0.0.1":
+            with LOCK:
+                return self._reply(200, {"seen": SEEN})
+        with LOCK:
+            SEEN.append({"method": self.command, "path": self.path, "at": time.time()})
+        return self._reply(200, {"hits": {"total": {"value": 0}, "hits": []}})
 
     def _backend(self, body: bytes) -> None:
         if self.command == "POST" and self.path in (
