@@ -6,6 +6,7 @@ import { NotMeasured } from '../../shared/NotMeasured'
 import { TabStrip } from '../../shared/TabStrip'
 import { EmptyState } from '../../shared/ui'
 import { IncidentsTab } from './IncidentsTab'
+import { SensorsTab } from './SensorsTab'
 import type { StatusRead } from './medicTypes'
 import { safeText } from './safeText'
 import { useStatus } from './useMedic'
@@ -24,7 +25,7 @@ const WORDS: Record<string, [string, Level]> = {
   crash_looping: ['Crash-looping', 'poor'],
 }
 
-const TABS = [{ id: 'incidents', label: 'Incidents' }] as const
+const TABS = [{ id: 'incidents', label: 'Incidents' }, { id: 'cant-see', label: "Can't see" }] as const
 
 const mb = (b: number) => (b >= 2 ** 30 ? `${(b / 2 ** 30).toFixed(1)} GiB` : `${Math.round(b / 2 ** 20)} MB`)
 
@@ -38,9 +39,10 @@ export default function MedicScreen() {
   const { status, error, reload } = useStatus()
   const [params, setParams] = useSearchParams()
   const incidentId = params.get('incident')
-  // the tab is in the URL; one exists today, so any other ?tab= reads as it
+  // the tab is in the URL; any other ?tab= reads as Incidents
   const tab = TABS.find((t) => t.id === params.get('tab'))?.id ?? 'incidents'
-  const open = (id: string | null) => setParams(id ? { tab, incident: id } : { tab })
+  // an incident always opens in the Incidents tab, whichever tab linked to it
+  const open = (id: string | null) => setParams(id ? { tab: 'incidents', incident: id } : { tab })
 
   if (!status) {
     return (
@@ -85,7 +87,7 @@ export default function MedicScreen() {
             <p>Store: {m.store.states.map(safeText).join(', ')} · {mb(m.store.bytes_used)} of {mb(m.store.cap_bytes)}</p>
             <p>
               Sensors: {m.sensors.reporting} reporting
-              {m.sensors.cant_see > 0 && <> · <span className="mdc-cant">{m.sensors.cant_see} Medic can't see</span></>}
+              {m.sensors.cant_see > 0 && <> · <button type="button" className="mdc-link mdc-cant" onClick={() => setParams({ tab: 'cant-see' })}>{m.sensors.cant_see} Medic can't see ›</button></>}
             </p>
             <p>
               {m.pack
@@ -107,7 +109,9 @@ export default function MedicScreen() {
           <div className="mdc-tabs">
             <TabStrip label="Medic sections" tabs={TABS} active={tab} onChange={(id) => setParams({ tab: id })} />
           </div>
-          <IncidentsTab status={status} incidentId={incidentId} open={open} />
+          {tab === 'cant-see'
+            ? <SensorsTab status={status} open={open} />
+            : <IncidentsTab status={status} incidentId={incidentId} open={open} />}
         </>
       )}
     </div>

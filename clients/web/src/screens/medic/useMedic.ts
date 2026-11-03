@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import api from '../../services/api'
-import type { DecisionRecord, FeedbackBody, IncidentDetail, IncidentPage, StatusRead } from './medicTypes'
+import type { DecisionRecord, FeedbackBody, IncidentDetail, IncidentPage, SensorList, StatusRead } from './medicTypes'
 
 export type Phase = 'loading' | 'ready' | 'error'
 
@@ -44,6 +44,38 @@ export function useStatus() {
   useEffect(load, [load])
   useVisiblePoll(load, true)
   return { status, error, reload: load }
+}
+
+/** GET /api/medic/sensors: every sensor, not paginated. Polled while visible; a failed read keeps the last good list and `failedSince` says since when. */
+export function useSensors(enabled: boolean) {
+  const [list, setList] = useState<SensorList | null>(null)
+  const [phase, setPhase] = useState<Phase>('loading')
+  const [failedSince, setFailedSince] = useState<number | null>(null)
+  const [lastGood, setLastGood] = useState<number | null>(null)
+  const gen = useRef(0)
+  const load = useCallback(() => {
+    const mine = ++gen.current
+    api.get<SensorList>('/medic/sensors').then((r) => {
+      if (!Array.isArray(r.data?.items)) throw new Error('not a sensor list') // the proxy passes bytes through
+      return r.data
+    }).then(
+      (data) => {
+        if (mine !== gen.current) return
+        setList(data)
+        setPhase('ready')
+        setFailedSince(null)
+        setLastGood(Date.now())
+      },
+      () => {
+        if (mine !== gen.current) return
+        setFailedSince((t) => t ?? Date.now())
+        setPhase((p) => (p === 'ready' ? p : 'error'))
+      },
+    )
+  }, [])
+  useEffect(() => { if (enabled) load() }, [enabled, load])
+  useVisiblePoll(load, enabled)
+  return { list, phase, failedSince, lastGood, reload: load }
 }
 
 export interface IncidentFilters {

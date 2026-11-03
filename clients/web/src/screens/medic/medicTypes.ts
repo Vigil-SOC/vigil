@@ -83,6 +83,22 @@ export interface StatusRead {
   }
 }
 
+/** One row of GET /api/medic/sensors (Sensor). `state` and `reason` are enums on the contract but read as any string. */
+export interface Sensor {
+  id: string
+  state: string
+  since: string | null
+  last_good_at: string | null
+  reason: string | null
+  dropped_last_hour: number | null
+  watcher_incident_id: string | null
+}
+
+export interface SensorList {
+  as_of: string
+  items: Sensor[]
+}
+
 /** The feedback request (FeedbackRequest): no user field, no source; an empty comment is left out. */
 export interface FeedbackBody {
   value: string
