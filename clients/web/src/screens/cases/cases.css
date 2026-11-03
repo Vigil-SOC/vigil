@@ -70,7 +70,7 @@
   font-size: 12px;
 }
 
-/* Trust strip (CaseDetail board): a 72x4 meter, then the text and its ⓘ. Neutral fill: no floor to judge against. */
+/* Trust strip (CaseDetail board): a 72x4 meter, then the text and its ⓘ. Neutral fill unless the workflow has a floor. */
 .case-page .dh-meta .case-trust-on {
   display: inline-flex;
   align-items: center;
@@ -87,6 +87,8 @@
   flex-shrink: 0;
 }
 .case-page .case-trust-bar > span { display: block; height: 100%; background: var(--tx2); }
+.case-page .case-trust-bar.good > span { background: var(--good); }
+.case-page .case-trust-bar.poor > span { background: var(--poor); }
 
 .case-page .case-sla.good { color: var(--good); }
 .case-page .case-sla.fair { color: var(--fair); }

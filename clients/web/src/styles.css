@@ -4470,6 +4470,44 @@
       color: var(--fair);
    }
 
+   /* Per-workflow rows: the floor, then the last change */
+   .lim-wf-tag {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+      font-size: 11px;
+      line-height: 1.45;
+      color: var(--tx3);
+   }
+
+   .lim-wf-tag span:first-child {
+      color: var(--tx1);
+      font-weight: 600;
+   }
+
+   /* the last change wraps, then stops at two lines; the full text is on hover */
+   .lim-wf-tag span + span {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+   }
+
+   .lim-floor {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 14px;
+      font-size: 13px;
+      color: var(--tx1);
+   }
+
+   .lim-floor .field-input {
+      width: 84px;
+   }
+
    .lim-row-ctl {
       justify-self: end;
       min-width: 0;
@@ -4599,7 +4637,8 @@
          grid-template-columns: minmax(0, 1fr) auto;
       }
 
-      .lim-row-tag {
+      .lim-row-tag,
+      .lim-wf-tag {
          grid-column: 1;
          grid-row: 2;
       }

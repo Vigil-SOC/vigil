@@ -8,6 +8,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { approvalsApi, autonomyApi, casesApi, configApi, consoleApi, federationApi, mcpApi } from '../services/api'
 import { Icon, type IconName } from '../shared/icons'
 import { InfoTip } from '../shared/InfoTip'
+import { anyActs } from '../shared/autonomy'
 import { PageHead } from '../shared/PageHead'
 import { NAV, TITLES, type ConsoleScreenKey, type NavGate } from '../data/data'
 import { ExtensionProvider, useExtensions } from '../extensions/ExtensionProvider'
@@ -369,8 +370,8 @@ function SocConsoleInner() {
       autonomyApi
         .get()
         .then(({ data }) => {
-          // Act is effective act_reversible: stored, not stopped, not env-locked
-          if (live) setAssist(!(data.act_reversible && !data.stopped && !data.environment_locked))
+          // Act when the fleet or any workflow may act, and nothing is stopped or env-locked
+          if (live) setAssist(!anyActs(data))
         })
         .catch(() => {})
     read()
@@ -597,7 +598,7 @@ function SocConsoleInner() {
                 <InfoTip
                   label="How autonomy is derived"
                   source="The autonomy ceiling: whether tools that change something may act on their own."
-                  calculation="Act when they may; Assist when they ask first, while autonomy is stopped, or while the environment locks Act off."
+                  calculation="Act when they may for the whole fleet or for any one investigation workflow; Assist when every one asks first, while autonomy is stopped, or while the environment locks Act off."
                   limit="Set in Settings › Limits & autonomy."
                 />
               </div>

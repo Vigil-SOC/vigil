@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import api, {
   aiConfigApi,
+  analyticsApi,
   autonomyApi,
   budgetsApi,
   configApi,
@@ -12,6 +13,7 @@ import api, {
   mcpApi,
   orchestratorApi,
   storageApi,
+  workflowApi,
   type AIConfigResponse,
   type AIModelInfo,
   type BudgetQuotaResponse,
@@ -23,7 +25,9 @@ import api, {
   type IngestionJob,
   type PlatformDatabaseProxyConfig,
   type ToolClass,
+  type WorkflowAgreement,
 } from '../../services/api'
+import type { ApiWorkflow } from '../../data/mappers'
 import type { Schema } from '../../services/apiTypes'
 import { loadCustomIntegrations } from '../../config/integrations'
 import type { LastTest } from './integrationHealth'
@@ -589,8 +593,54 @@ export function useCeiling() {
     }
   }, [refresh])
   const resume = useCallback(async () => apply((await autonomyApi.resume()).data), [apply])
+  const setWorkflow = useCallback(
+    async (id: string, body: Schema<'WorkflowAutonomyBody'>) => {
+      try {
+        return apply((await autonomyApi.setWorkflow(id, body)).data)
+      } catch (err) {
+        refresh()
+        throw err
+      }
+    },
+    [apply, refresh],
+  )
 
-  return { ceiling, phase, save, stop, resume, refresh }
+  return { ceiling, phase, save, stop, resume, refresh, setWorkflow }
+}
+
+export interface InvestigateWorkflow {
+  id: string
+  name: string
+  agreement: WorkflowAgreement | undefined
+}
+
+/** Investigate-kind workflows, the only ones with their own tier, with their 30-day agreement. */
+export function useInvestigateWorkflows() {
+  const [workflows, setWorkflows] = useState<InvestigateWorkflow[] | null>(null)
+  const [phase, setPhase] = useState<Phase>('loading')
+
+  useEffect(() => {
+    let cancelled = false
+    Promise.all([workflowApi.listAll(), analyticsApi.getAgreement('30d').catch(() => [])])
+      .then(([res, agreement]) => {
+        if (cancelled) return
+        const listed = ((res.data?.workflows ?? []) as ApiWorkflow[]).filter((w) => w.run_kind === 'investigate')
+        setWorkflows(
+          listed.map((w) => ({
+            id: w.id,
+            name: w.name || w.id,
+            agreement: agreement.find((row) => row.workflow_id === w.id),
+          })),
+        )
+        setPhase('ready')
+      })
+      .catch(() => !cancelled && setPhase('error'))
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  return { workflows, phase }
 }
 
 /** Outside tools nobody has confirmed: stored as read_unverified, or exposed and unclassified. */
