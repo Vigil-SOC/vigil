@@ -52,6 +52,8 @@ export interface CaseLinkedFinding {
   source_link: string | null
   /** Hosts and users the alert names. */
   entities: string[]
+  /** The same, typed `type:value` as a run's recall keys, and IPs, hashes and domains too. */
+  entity_keys: string[]
 }
 
 /** Matches ``CaseRepository`` page size. */
@@ -215,6 +217,7 @@ function asLinkedFindings(raw: unknown): CaseLinkedFinding[] {
       description: typeof o.description === 'string' ? o.description : null,
       source_link: typeof o.source_link === 'string' && o.source_link ? o.source_link : null,
       entities: Array.isArray(o.entities) ? o.entities.filter((e): e is string => typeof e === 'string') : [],
+      entity_keys: Array.isArray(o.entity_keys) ? o.entity_keys.filter((e): e is string => typeof e === 'string') : [],
     }]
   })
 }

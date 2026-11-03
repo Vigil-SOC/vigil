@@ -1,11 +1,13 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react'
 import { Link } from 'react-router-dom'
-import { casesApi } from '../../services/api'
+import { useAuth } from '../../contexts/AuthContext'
+import { casesApi, notesApi, type Note } from '../../services/api'
 import { slaLevel } from '../../shared/LevelBadge'
 import { StatePill } from '../../shared/StatePill'
 import { useNoSideways } from '../../shared/useNoSideways'
-import { commentCount, CommentsView, SectionCard, TasksView, useComments, useResource, useTasks, type Resource } from './CaseSections'
-import { timeLeft, when } from './caseFormat'
+import { utcDay } from '../../shared/utc'
+import { commentCount, CommentsView, inputCls, SectionCard, TasksView, useComments, useResource, useTasks, type Resource } from './CaseSections'
+import { errorDetail, timeLeft, when } from './caseFormat'
 import { entityShown, type RunFold } from './caseFold'
 import { CASES_CHANGED, type CaseInvestigationRef, type CaseLinkedFinding } from './useCases'
 
@@ -189,35 +191,159 @@ function Prose({ text }: { text: string }) {
   return <p className="muted side-clamp" title={text}>{text}</p>
 }
 
-function Known({ fold, hasRun }: { fold: RunFold | null; hasRun: boolean }) {
+// The server's EPISODIC_PROSE_CAP (core/memory/recall_contract.py).
+const NOTE_CAP = 2000
+
+type KnownCard = { key: string; text: string; meta: string; noteId?: string }
+
+function noteMeta(note: { writtenBy: string; concludedAt: string }, mine: boolean): string {
+  return `Memory · this tenant · ${mine ? 'you, just now' : `written by ${note.writtenBy || '—'}, ${utcDay(note.concludedAt) ?? '—'}`}`
+}
+
+function asNote(n: Note) {
+  return { id: n.investigation_id, entity: n.entity_key, statement: n.statement, writtenBy: n.written_by, concludedAt: n.concluded_at }
+}
+
+/** Notes standing now on these keys; never fetched for none, which the API reads as every note. */
+function useStandingNotes(keys: string[]) {
+  const [notes, setNotes] = useState<ReturnType<typeof asNote>[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [tick, setTick] = useState(0)
+  const joined = keys.join('\n')
+  useEffect(() => {
+    setError(null)
+    if (!joined) return setNotes([])
+    let cancelled = false
+    notesApi
+      .list(joined.split('\n'))
+      .then((res) => !cancelled && setNotes(res.data.notes.map(asNote)))
+      .catch((e) => !cancelled && setError(errorDetail(e, 'Failed to load')))
+    return () => {
+      cancelled = true
+    }
+  }, [joined, tick])
+  // Patch now, then read again: a list read before the write must not land over it.
+  const patch = (next: (rows: ReturnType<typeof asNote>[]) => ReturnType<typeof asNote>[]) => {
+    setNotes(next)
+    setTick((t) => t + 1)
+  }
+  return { notes, patch, error }
+}
+
+/** Pick one of the case's entities, write one sentence, Save. Stands in for the board's Tell-mode composer. */
+function NoteForm({ keys, onSaved, onCancel }: { keys: string[]; onSaved: (note: Note) => void; onCancel: () => void }) {
+  const [picked, setEntity] = useState(keys[0])
+  const entity = keys.includes(picked) ? picked : keys[0] // the keys can change under an open form
+  const [text, setText] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const save = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!text.trim()) return
+    setSaving(true)
+    setError(null)
+    try {
+      onSaved((await notesApi.create({ entity_key: entity, statement: text.trim() })).data)
+    } catch (err) {
+      setError(errorDetail(err, 'Couldn’t save the note'))
+      setSaving(false)
+    }
+  }
+  return (
+    <form className="side-note-form" onSubmit={save}>
+      <select className={inputCls} aria-label="Entity" value={entity} onChange={(e) => setEntity(e.target.value)}>
+        {keys.map((key) => <option key={key} value={key} title={key}>{entityShown(key)}</option>)}
+      </select>
+      <textarea
+        className={`${inputCls} resize-none`}
+        rows={3}
+        maxLength={NOTE_CAP}
+        aria-label="What the agents should know"
+        placeholder="One sentence the agents should know about it"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        autoFocus
+      />
+      <div className="side-note-actions">
+        <button type="submit" className="btn primary" disabled={saving || !text.trim()}>{saving ? 'Saving…' : 'Save'}</button>
+        <button type="button" className="btn" onClick={onCancel} disabled={saving}>Cancel</button>
+      </div>
+      {error && <p role="alert" className="text-crit">{error}</p>}
+    </form>
+  )
+}
+
+function Known({ fold, hasRun, keys, onWritten }: { fold: RunFold | null; hasRun: boolean; keys: string[]; onWritten?: () => void }) {
+  const canWrite = useAuth().hasPermission('findings.write')
+  const standing = useStandingNotes(keys)
+  const [mine, setMine] = useState<Set<string>>(() => new Set())
+  const [writing, setWriting] = useState(false)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [writeError, setWriteError] = useState<string | null>(null)
   const recall = fold?.recall
-  const cards = recall && !recall.unavailable
-    ? [
-        ...recall.verdicts.map((v) => ({ text: [v.outcome, v.statement].filter(Boolean).join(' — '), kind: 'Verdict' })),
-        ...recall.sightings.map((s) => ({
-          text: [entityShown(s.entity), s.source, s.hits == null ? '' : `${s.hits} ${s.hits === 1 ? 'hit' : 'hits'}`].filter(Boolean).join(' · '),
-          kind: 'Sighting',
-        })),
-        ...recall.gaps.map((g) => ({ text: [g.disposition.replace(/_/g, ' '), g.statement].filter(Boolean).join(' — '), kind: 'Gap' })),
-      ]
-    : []
+  const read = recall && !recall.unavailable ? recall : null
+  const standingIds = new Set(standing.notes.map((n) => n.id))
+  const recalledIds = new Set(read?.notes.map((n) => n.id))
+  // What the run read, then what stands now that it did not; a recalled note withdrawn since stays, without Withdraw.
+  const cards: KnownCard[] = [
+    ...(read?.notes ?? []).map((n) => ({ key: `n${n.id}`, text: n.statement, meta: noteMeta(n, false), noteId: standingIds.has(n.id) ? n.id : undefined })),
+    ...standing.notes.filter((n) => !recalledIds.has(n.id)).map((n) => ({ key: `n${n.id}`, text: n.statement, meta: noteMeta(n, mine.has(n.id)), noteId: n.id })),
+    ...(read?.verdicts ?? []).map((v, i) => ({ key: `v${i}`, text: [v.outcome, v.statement].filter(Boolean).join(' — '), meta: 'Verdict' })),
+    ...(read?.sightings ?? []).map((s, i) => ({
+      key: `s${i}`,
+      text: [entityShown(s.entity), s.source, s.hits == null ? '' : `${s.hits} ${s.hits === 1 ? 'hit' : 'hits'}`].filter(Boolean).join(' · '),
+      meta: 'Sighting',
+    })),
+    ...(read?.gaps ?? []).map((g, i) => ({ key: `g${i}`, text: [g.disposition.replace(/_/g, ' '), g.statement].filter(Boolean).join(' — '), meta: 'Gap' })),
+  ]
+  const saved = (note: Note) => {
+    standing.patch((rows) => [asNote(note), ...rows])
+    setMine((ids) => new Set(ids).add(note.investigation_id))
+    setWriting(false)
+    onWritten?.()
+  }
+  const withdraw = async (id: string) => {
+    setBusy(id)
+    setWriteError(null)
+    try {
+      await notesApi.withdraw(id)
+    } catch (e) {
+      // 404: someone withdrew it already, which is what was asked
+      if ((e as { response?: { status?: number } })?.response?.status !== 404) {
+        setWriteError(errorDetail(e, 'Couldn’t withdraw the note'))
+        setBusy(null)
+        return
+      }
+    }
+    standing.patch((rows) => rows.filter((n) => n.id !== id))
+    setBusy(null)
+    onWritten?.()
+  }
   return (
     <Block title="Known about these entities">
-      {!recall && <p className="muted">{hasRun ? 'The run did not journal a recall.' : 'Nothing has looked at these entities yet.'}</p>}
       {recall?.unavailable && <Prose text={`Recall did not happen: ${recall.unavailable}`} />}
-      {recall && !recall.unavailable && cards.length === 0 && (
-        <Prose text={`Nothing recorded about ${recall.keys.map(entityShown).join(', ') || 'these entities'}.`} />
-      )}
+      {cards.length === 0 && !recall && <p className="muted">{hasRun ? 'The run did not journal a recall.' : 'Nothing has looked at these entities yet.'}</p>}
+      {cards.length === 0 && read && <Prose text={`Nothing recorded about ${read.keys.map(entityShown).join(', ') || 'these entities'}.`} />}
       {cards.length > 0 && (
         <div className="side-cards">
-          {cards.map((card, i) => (
-            <div key={i} className="side-card">
+          {cards.map((card) => (
+            <div key={card.key} className="side-card">
               <div className="side-clamp" title={card.text}>{card.text}</div>
-              <div className="side-meta">{card.kind}</div>
+              <div className="side-meta">{card.meta}</div>
+              {canWrite && card.noteId && (
+                <button type="button" className="side-more side-withdraw" disabled={busy !== null} onClick={() => withdraw(card.noteId!)}>
+                  {busy === card.noteId ? 'Withdrawing…' : 'Withdraw'}
+                </button>
+              )}
             </div>
           ))}
         </div>
       )}
+      {standing.error && <p className="muted">Couldn’t load notes: {standing.error}</p>}
+      {writeError && <p role="alert" className="text-crit">{writeError}</p>}
+      {canWrite && keys.length > 0 && (writing
+        ? <NoteForm keys={keys} onSaved={saved} onCancel={() => setWriting(false)} />
+        : <button type="button" className="side-tell" onClick={() => setWriting(true)}>+ Tell the agents something</button>)}
     </Block>
   )
 }
@@ -313,12 +439,15 @@ export function CaseSide({ caseId, linked, owner, latest, workflowNames, sla, cl
 }) {
   const anchor = useRef<HTMLElement>(null)
   useNoSideways(anchor, 'The case side panel', '.case-side')
+  // The typed keys runs recall on: the run's, then each linked alert's. Bare values never reach the notes API.
+  const recalled = fold?.recall && !fold.recall.unavailable ? fold.recall.keys : []
+  const keys = [...new Set([...recalled, ...linked.flatMap((f) => f.entity_keys)])]
   return (
     <>
       <Details anchor={anchor} linked={linked} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} />
       <Alerts items={linked} />
       <RelatedCases caseId={caseId} />
-      <Known fold={fold} hasRun={latest !== null} />
+      <Known fold={fold} hasRun={latest !== null} keys={keys} onWritten={onWritten} />
       <People caseId={caseId} owner={owner} onWritten={onWritten} />
     </>
   )

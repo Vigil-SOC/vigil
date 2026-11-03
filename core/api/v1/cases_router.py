@@ -45,6 +45,7 @@ from core.deps import provide_workflows
 from core.findings.arrival_counts import utc_day_bounds
 from core.findings.source_link import resolve_source_link
 from core.integrations.elastic.ingestion import ElasticIngestion
+from core.memory.entity_keys import finding_entity_keys
 from core.response.approval_service import needs_you_case_ids
 from core.routing import Auth, OptionalUnitOfWorkSession, RouterMeta, UnitOfWorkSession
 from core.storage.case_repository import PAGE_LIMIT, CaseRepository
@@ -401,6 +402,9 @@ def _linked_findings(session, finding_ids: object) -> List[CaseLinkedFinding]:
                 title=row.title,
                 description=row.description,
                 entities=finding_entities(row.entity_context),
+                entity_keys=finding_entity_keys(
+                    [{"entity_context": row.entity_context}]
+                ),
                 source_link=resolve_source_link(
                     {
                         "evidence_links": list(row.evidence_links or []),
