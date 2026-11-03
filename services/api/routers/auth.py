@@ -912,11 +912,14 @@ async def update_current_user(
             detail="Send profile fields in the JSON body",
         )
 
+    # current_user is detached; write through this session's own row.
+    user = session.get(User, current_user.user_id)
+
     try:
         email_changed, payload = await asyncio.to_thread(
             _apply_profile_update,
             session,
-            current_user,
+            user,
             body.full_name,
             body.email,
             body.current_password,
@@ -935,7 +938,7 @@ async def update_current_user(
                 )
             # After the Redis round-trip. A refresh during that wait must
             # still be older than the cutoff this request commits.
-            stamp_session_cutoff(current_user)
+            stamp_session_cutoff(user)
 
         logger.info(f"User profile updated: {current_user.username}")
         return payload
@@ -996,9 +999,12 @@ async def change_password(
             detail=exc.as_detail(),
         )
 
+    # current_user is detached; write through this session's own row.
+    user = session.get(User, current_user.user_id)
+
     try:
         # Enforce no-reuse + hash + history rotation
-        await asyncio.to_thread(_apply_new_password, current_user, body.new_password)
+        await asyncio.to_thread(_apply_new_password, user, body.new_password)
         await asyncio.to_thread(
             trail_events.record,
             session,
@@ -1021,7 +1027,7 @@ async def change_password(
             )
         # After the Redis round-trip, so a refresh during that wait is still
         # older than the cutoff this request commits.
-        stamp_session_cutoff(current_user)
+        stamp_session_cutoff(user)
 
         clear_auth_cookies(response)
         logger.info(f"Password changed for user: {current_user.username}")
