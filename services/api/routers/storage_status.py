@@ -42,9 +42,9 @@ async def get_storage_status():
     """
     try:
         from core.config import is_demo_mode
-        from core.storage.database_data_service import DatabaseDataService
+        from core.storage.database_data_service import get_database_data_service
 
-        test_service = DatabaseDataService()
+        test_service = get_database_data_service()
         backend_info = test_service.get_backend_info()
         demo_mode = is_demo_mode()
 
@@ -124,9 +124,9 @@ async def check_storage_health():
     """
     try:
         from core.config import is_demo_mode
-        from core.storage.database_data_service import DatabaseDataService
+        from core.storage.database_data_service import get_database_data_service
 
-        service = DatabaseDataService()
+        service = get_database_data_service()
         demo_mode = is_demo_mode()
 
         try:

@@ -445,9 +445,11 @@ def _load(
     finding_ids = {fid for _row_id, fid, _state in keys if fid}
     findings: dict[str, dict] = {}
     if finding_ids:
+        # ``Finding.cases`` is ``lazy="selectin"``; triage never reads it, and
+        # the load pulls each linked case's JSONB once per finding (#3656).
         for finding in (
             session.query(Finding)
-            .options(noload(Finding.mitre_prediction_rows))
+            .options(noload(Finding.cases), noload(Finding.mitre_prediction_rows))
             .filter(Finding.finding_id.in_(finding_ids))
         ):
             findings[finding.finding_id] = {

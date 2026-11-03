@@ -467,6 +467,10 @@ def _render_custom_workflow_body(
 class WorkflowsService:
     """Service for discovering, parsing, and executing workflow definitions."""
 
+    _BUNDLED_CACHE: Dict[
+        Path, Tuple[Tuple[Tuple[str, int], ...], Dict[str, WorkflowDefinition]]
+    ] = {}
+
     def __init__(
         self,
         workflows_dir: Optional[Path] = None,
@@ -500,14 +504,21 @@ class WorkflowsService:
             logger.warning(f"Workflows directory not found: {self.workflows_dir}")
             return
 
-        for workflow_dir in sorted(self.workflows_dir.iterdir()):
-            if not workflow_dir.is_dir():
-                continue
+        resolved_dir = self.workflows_dir.resolve()
+        workflow_files = [
+            workflow_dir / "WORKFLOW.md"
+            for workflow_dir in sorted(self.workflows_dir.iterdir())
+            if workflow_dir.is_dir() and (workflow_dir / "WORKFLOW.md").exists()
+        ]
+        sig = tuple((wf.parent.name, wf.stat().st_mtime_ns) for wf in workflow_files)
+        cached = self._BUNDLED_CACHE.get(resolved_dir)
+        if cached is not None and cached[0] == sig:
+            self._cache = dict(cached[1])
+            self._cache_loaded_at = datetime.now()
+            return
 
-            workflow_file = workflow_dir / "WORKFLOW.md"
-            if not workflow_file.exists():
-                continue
-
+        for workflow_file in workflow_files:
+            workflow_dir = workflow_file.parent
             try:
                 content = workflow_file.read_text(encoding="utf-8")
                 metadata, body = _read_workflow_file(content)
@@ -526,6 +537,7 @@ class WorkflowsService:
             except Exception as e:
                 logger.error(f"Error loading workflow from {workflow_file}: {e}")
 
+        self._BUNDLED_CACHE[resolved_dir] = (sig, dict(self._cache))
         self._cache_loaded_at = datetime.now()
         logger.info(f"Loaded {len(self._cache)} workflows from {self.workflows_dir}")
 

@@ -17,7 +17,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import array as pg_array
 from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
-from sqlalchemy.orm import lazyload, selectinload
+from sqlalchemy.orm import lazyload, noload, selectinload
 
 from core.exceptions import default_on_error
 from core.storage import case_trail_hook
@@ -179,8 +179,13 @@ def merge_ai_enrichment(
     return {**kept, **{k: v for k, v in new.items() if owned(k)}}
 
 
-# ``Finding.cases`` loads lazily by default (#1439, #3656), so reads need no opt-out.
-_FINDING_READ_OPTIONS = (selectinload(Finding.mitre_prediction_rows),)
+# No read path or ``FindingSchema`` uses ``Finding.cases`` (#1439, #3658). It
+# lazy-loads on access, so on a detached finding it would raise; read paths
+# that hand back detached findings or dumps pin it empty with ``noload``.
+_FINDING_READ_OPTIONS = (
+    selectinload(Finding.mitre_prediction_rows),
+    noload(Finding.cases),
+)
 
 
 def technique_confidence_filter(min_confidence: float):
@@ -871,10 +876,15 @@ class DatabaseService:
             True if successful, False otherwise
         """
         with self.db_manager.session_scope() as session:
+            # lazyload, not noload: the session stays open, so a caller that
+            # does touch ``cases`` still gets the real collection.
             finding = session.get(
                 Finding,
                 finding_id,
-                options=(selectinload(Finding.mitre_prediction_rows),),
+                options=(
+                    selectinload(Finding.mitre_prediction_rows),
+                    lazyload(Finding.cases),
+                ),
             )
             if not finding:
                 logger.warning(f"Finding not found: {finding_id}")
@@ -924,7 +934,9 @@ class DatabaseService:
         with self.db_manager.session_scope() as session:
             finding = session.execute(
                 select(Finding)
-                .options(lazyload(Finding.mitre_prediction_rows))
+                .options(
+                    lazyload(Finding.mitre_prediction_rows), lazyload(Finding.cases)
+                )
                 .where(Finding.finding_id == finding_id)
                 .with_for_update()
             ).scalar_one_or_none()
@@ -1160,7 +1172,16 @@ class DatabaseService:
             Case object or None if not found
         """
         with self.db_manager.session_scope() as session:
-            case = session.get(Case, case_id)
+            options = (
+                [
+                    selectinload(Case.findings).selectinload(
+                        Finding.mitre_prediction_rows
+                    )
+                ]
+                if include_findings
+                else [selectinload(Case.findings).noload(Finding.mitre_prediction_rows)]
+            )
+            case = session.get(Case, case_id, options=options)
             if case:
                 # Force load findings if needed
                 if include_findings:

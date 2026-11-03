@@ -251,6 +251,14 @@ def _agent_rows(now: datetime) -> list[dict]:
     return rows
 
 
+# The feed never reads ``finding.cases``; its ``lazy="selectin"`` default would
+# SELECT every linked case row, all of its JSONB, once per finding (#3656).
+_FEED_LOAD_OPTIONS = (
+    noload(Finding.cases),
+    noload(Finding.mitre_prediction_rows),
+)
+
+
 def _feed_items(load) -> list[dict]:
     """Feed items for the findings ``load(session)`` returns; one body for the feed and the single read."""
     db = get_db_manager()
@@ -308,7 +316,7 @@ def _feed() -> list[dict]:
     # excluded findings are hidden, as the findings queue hides them
     return _feed_items(
         lambda session: session.query(Finding)
-        .options(noload(Finding.mitre_prediction_rows))
+        .options(*_FEED_LOAD_OPTIONS)
         .filter(Finding.noise_marked_at.is_(None), exclusion_view_filter("hide"))
         .order_by(Finding.created_at.desc(), Finding.finding_id.desc())
         .limit(FEED_LIMIT)
@@ -357,7 +365,7 @@ def overview_alert(finding_id: str) -> Optional[dict]:
         return demo_alert(findings, cases, finding_id)
     items = _feed_items(
         lambda session: session.query(Finding)
-        .options(noload(Finding.mitre_prediction_rows))
+        .options(*_FEED_LOAD_OPTIONS)
         .filter(Finding.finding_id == finding_id)
         .all()
     )
