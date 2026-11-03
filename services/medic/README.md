@@ -31,6 +31,7 @@ with its own reason (`stopped`, `stalled`, `crash-looping`, unknown).
 |---|---|
 | `VIGIL_MEDIC_ENABLED` | off |
 | `VIGIL_MEDIC_DATA_DIR` | `/var/lib/vigil-medic` (macOS: `/Library/Application Support/vigil-medic`) |
+| `VIGIL_MEDIC_STORE_MAX_MB` | `1024`. The decision store's size cap in MiB (whole number, ≥ 1). At the cap, or below the free-space floor, Medic stops recording and says so on `/v1/status` and the heartbeat |
 | `VIGIL_MEDIC_INSTALL_SHAPE` | `compose` (`start_sh`, `compose` or `helm`) |
 | `VIGIL_MEDIC_AGENT_WORKER_ADDR` | Compose: `agent-worker:6990`; host-native: `127.0.0.1:6990`. Helm ignores it and reads each agent-worker pod. `host:port` only |
 | `VIGIL_MEDIC_AGENT_SERVE_ADDR` | Compose: `agent-serve:6989`. Helm and host-native set it (the chart, `medic-loop`); unset registers no sensor. `host:port` only |

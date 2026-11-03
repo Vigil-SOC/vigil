@@ -28,14 +28,16 @@ from services.medic.router import Router
 from services.medic.sensors import (
     Bus,
     Pipeline,
+    Reading,
     Scheduler,
     Sensor,
     SensorContext,
     Stats,
+    Value,
 )
 from services.medic.sensors.base import Clock
 from services.medic.sensors.logtail import LOG_CAPACITY, bind_log_tails
-from services.medic.store import DecisionWriter, StoreError
+from services.medic.store import DecisionWriter, RecordHeld, StoreError
 
 log = logging.getLogger("services.medic")
 
@@ -48,6 +50,8 @@ DEV_SUPPRESSION = DEV_RULES_DIR / "suppression.yaml"
 WORKER_NOT_READY = "pipeline.agent-worker-not-ready"
 GROUP_CAP = 64  # live groups per rule (semantics.md §3)
 ENGINE_STATE_VERSION = 1
+RECORDING_STOPPED = "watcher.recording-stopped"
+HELD_MAX = 1000  # decisions kept in memory while recording is stopped
 
 
 def load_dev_rules(directory: Path = DEV_RULES_DIR) -> list[LoadedRule]:
@@ -100,6 +104,28 @@ class EngineSink:
         self.engine.observe(dict(observation))
 
 
+class RecordingSensor:
+    """`medic_recording`/`stopped`: whether the store has stopped recording. The
+    built-in watcher.recording-stopped rule opens its incident on true and
+    resolves it on false."""
+
+    id = "medic.recording"
+    service = "medic"
+    interval_s = 60
+    timeout_s = 5.0
+    covers = ("medic_recording",)
+    uses_vigil_api = False
+
+    def __init__(self, writer: DecisionWriter) -> None:
+        self.writer = writer
+
+    async def collect(self, ctx: SensorContext) -> Sequence[Reading]:
+        stopped = self.writer.stopped
+        return [
+            Reading("medic_recording", self.service, [Value.flag("stopped", stopped)])
+        ]
+
+
 class Medic:
     def __init__(
         self,
@@ -136,6 +162,10 @@ class Medic:
             clock,
         )
         self.unstored = 0  # records the store refused or couldn't take
+        # Decisions held while recording is stopped (not durable: a crash drops
+        # them, uncounted) and the incidents allowed into the reserve.
+        self.held: list[dict[str, Any]] = []
+        self._reserved: set[str] = set()
         self._stepped_back = False
 
     async def cycle(self) -> list[dict[str, Any]]:
@@ -154,30 +184,68 @@ class Medic:
                 log.warning("Wall clock is %d s behind the last tick", last - tick)
             return []  # same tick again, or the wall clock stepped back
         self._stepped_back = False
+        self._resume()
         stored = []
         records = self.engine.tick(datetime.fromtimestamp(tick, UTC))
         status = self.engine.status()  # this tick's runtime_untrusted flags (R3)
+        self._reserved.update(
+            row["incident_id"]
+            for row in status
+            if row["rule"] == RECORDING_STOPPED and row["incident_id"]
+        )
         for record in records:
             routed = {"v": 1, **self.router.route(record, status)}
-            try:
-                stored.append(self.writer.append(routed))
-            # C5: the loop keeps beating whatever state the store is in (G3 adds
-            # "recording stopped"); a lost record is counted and said once each.
-            except (StoreError, sqlite3.Error) as exc:
+            if stored_record := self._store(routed):
+                stored.append(stored_record)
+        return stored
+
+    def _resume(self) -> None:
+        """Re-check the store's bounds; when recording is back, write the held
+        decisions in order and clear the list."""
+        if self.writer.refresh() or not self.held:
+            return
+        held, self.held = self.held, []
+        log.warning("Recording resumed: writing %d held decisions", len(held))
+        for routed in held:
+            self._store(routed)  # held again if recording stops mid-flush
+
+    def _store(self, routed: dict[str, Any]) -> dict[str, Any] | None:
+        body = routed["body"]
+        if (
+            routed["type"] == "incident_opened"
+            and body["rule"]["id"] == RECORDING_STOPPED
+        ):
+            self._reserved.add(body["incident_id"])
+        try:
+            stored = self.writer.append(
+                routed, reserve=body.get("incident_id") in self._reserved
+            )
+        except RecordHeld:
+            if len(self.held) < HELD_MAX:
+                if not self.held:
+                    log.warning("Recording is stopped: holding decisions in memory")
+                self.held.append(routed)
+            else:
                 self.unstored += 1
                 log.error(
-                    "Decision record not stored: %s %s (%s)",
-                    record["type"],
-                    record["body"]["incident_id"],
-                    getattr(exc, "code", type(exc).__name__),
+                    "Decision record lost: recording is stopped and %d are held (%s %s)",
+                    HELD_MAX,
+                    routed["type"],
+                    body.get("incident_id"),
                 )
-                continue
-            log.info(
-                "%s %s seq %d",
-                record["type"],
-                record["body"]["incident_id"],
-                stored[-1]["seq"],
+            return None
+        # C5: the loop keeps beating whatever state the store is in; a lost
+        # record is counted and said once each.
+        except (StoreError, sqlite3.Error) as exc:
+            self.unstored += 1
+            log.error(
+                "Decision record not stored: %s %s (%s)",
+                routed["type"],
+                body.get("incident_id"),
+                getattr(exc, "code", type(exc).__name__),
             )
+            return None
+        log.info("%s %s seq %d", routed["type"], body.get("incident_id"), stored["seq"])
         return stored
 
 
