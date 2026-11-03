@@ -1,0 +1,123 @@
+# Test-only override for the Medic fault injectors (tests/medic_eval/inject/).
+# Never for installs.
+#
+# The stack the injectors break: the real backend, Postgres, upgrade, Redis,
+# soc-daemon, agent-serve and agent-worker, since the faults live in those
+# services (compose.v1.yml has a real backend only, compose.test.yml none).
+# Stand-ins: Bifrost, the backup, mcp-runner and the Elastic the daemon polls.
+# Medic itself is not here: every verify reads Vigil directly.
+#
+# Names and host ports are reset so it runs beside a developer's deeptempo-*
+# stack, under its own project (medic-eval-*). Written out per service:
+# merge keys drop !reset. Images are tagged <project>-<name>:local so a build never
+# replaces one a developer is running.
+services:
+  postgres:
+    container_name: !reset null
+    ports: !reset []
+  upgrade:
+    container_name: !reset null
+    image: ${COMPOSE_PROJECT_NAME:?}-backend:local
+  redis:
+    container_name: !reset null
+    ports: !reset []
+
+  backend:
+    container_name: !reset null
+    image: ${COMPOSE_PROJECT_NAME:?}-backend:local
+    pull_policy: never
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.backend
+    ports: !reset []
+    restart: "no"
+    environment:
+      # The injectors save settings through the API without a browser's cookie pair.
+      VIGIL_CSRF_ENABLED: "false"
+
+  soc-daemon:
+    container_name: !reset null
+    image: ${COMPOSE_PROJECT_NAME:?}-daemon:local
+    pull_policy: never
+    ports: !reset []
+    restart: "no"
+    environment:
+      # docker-compose.yml gives the daemon no JWT_SECRET_KEY, and it exits at
+      # start without one (auth_service imports it) unless DEV_MODE is on.
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
+      # Empty is the I-5.a fault: the daemon then refuses every push with 503.
+      DAEMON_WEBHOOK_TOKEN: ${MEDIC_EVAL_WEBHOOK_TOKEN-}
+
+  agent-serve:
+    container_name: !reset null
+    image: ${COMPOSE_PROJECT_NAME:?}-agent:local
+    pull_policy: never
+    restart: "no"
+    environment:
+      # Empty is the P-1.c fault; the backend keeps the real one.
+      AGENT_INTERNAL_TOKEN: ${MEDIC_EVAL_AGENT_TOKEN-}
+  agent-worker:
+    container_name: !reset null
+    image: ${COMPOSE_PROJECT_NAME:?}-agent:local
+    pull_policy: never
+    build: !reset null
+    restart: "no"
+    environment:
+      AGENT_INTERNAL_TOKEN: ${MEDIC_EVAL_AGENT_TOKEN-}
+
+  # The token one-shots only need a shell and Python.
+  mcp-runner-token:
+    image: python:3.12-slim
+    pull_policy: missing
+    build: !reset null
+  metrics-token:
+    image: python:3.12-slim
+    pull_policy: missing
+
+  mcp-runner:
+    image: python:3.12-slim
+    pull_policy: missing
+    container_name: !reset null
+    entrypoint: !override ["sleep", "infinity"]
+    environment: !reset {}
+    volumes: !reset []
+    depends_on: !reset {}
+    restart: "no"
+
+  backup-pre-upgrade:
+    image: python:3.12-slim
+    build: !reset null
+    container_name: !reset null
+    entrypoint: !override ["true"]
+    command: !reset null
+    volumes: !reset []
+    environment: !reset {}
+    depends_on: !reset {}
+
+  bifrost:
+    image: python:3.12-slim
+    build: !reset null
+    container_name: !reset null
+    ports: !reset []
+    depends_on: !reset {}
+    extra_hosts: !reset []
+    entrypoint: !reset null
+    command: !override ["python", "/stub/stub.py"]
+    volumes: !override ["${MEDIC_EVAL_STUB_DIR:?}/stub.py:/stub/stub.py:ro"]
+    healthcheck: !override {test: ["CMD", "python", "-c", "0"], interval: 5s}
+    restart: "no"
+    environment: !override
+      STUB_ROLE: bifrost
+
+  # The Elastic the daemon polls in I-4.b: no alerts, and it logs every request.
+  siem-stub:
+    image: python:3.12-slim
+    pull_policy: missing
+    command: ["python", "/stub/stub.py"]
+    volumes: ["${MEDIC_EVAL_STUB_DIR:?}/stub.py:/stub/stub.py:ro"]
+    environment:
+      STUB_ROLE: elastic
+    healthcheck: {test: ["CMD", "python", "-c", "0"], interval: 5s}
+    restart: "no"
+    networks:
+      - deeptempo-network

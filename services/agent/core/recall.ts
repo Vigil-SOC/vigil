@@ -1,5 +1,5 @@
 import { emptyRecall, recallOf, RECALL_TOOL, type RecallResult } from "../contracts/memory.js";
-import type { ToolResult } from "../contracts/tool.js";
+import type { ToolPrincipal, ToolResult } from "../contracts/tool.js";
 import { deadline } from "./remote.js";
 import type { Memory } from "./seams.js";
 import { traceHeaders } from "./tracing.js";
@@ -16,6 +16,9 @@ export interface RecallOptions {
   url: string;
   token: string;
   timeoutMs?: number;
+  // Whom the run acts for, as remoteDispatch sends it: the endpoint refuses a
+  // call that names nobody, so a read without it is journaled as unavailable.
+  principal?: ToolPrincipal;
   fetch?: typeof globalThis.fetch;
 }
 
@@ -80,6 +83,7 @@ export function httpRecall(base: Memory, options: RecallOptions): Memory {
               // before the tool runs. One row because the answer is one mapping,
               // which is also what stops _rows slicing the lists inside it.
               bounds: { max_rows: 1, timeout_ms: timeoutMs },
+              ...(options.principal === undefined ? {} : { principal: options.principal }),
             }),
             signal: held.signal,
           });

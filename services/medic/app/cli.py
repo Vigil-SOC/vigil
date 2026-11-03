@@ -32,6 +32,7 @@ from services.medic.app.watchdog import Watchdog
 from services.medic.app.wiring import (
     TICK_S,
     Medic,
+    RecordingSensor,
     load_dev_suppression,
     load_engine_state,
     rules_for_shape,
@@ -49,7 +50,7 @@ from services.medic.sensors.kube import agent_worker_pods, kube_pods
 from services.medic.sensors.logtail import compose_log_sensors, helm_log_sensors
 from services.medic.sensors.providers import llm_providers
 from services.medic.sensors.work import work_sensors
-from services.medic.store import StoreError, open_writer
+from services.medic.store import RecordHeld, StoreError, open_writer
 
 log = logging.getLogger("services.medic")
 
@@ -163,6 +164,7 @@ def run(
         sensors = sensors_for(env, shape)
         probe_target = config.policy_probe_addr(env, shape)
         probe_control = config.policy_control_addr(env, shape)
+        store_cap = config.store_max_bytes(env)
     except config.ConfigError as exc:
         log.error("Medic can't start: %s", exc)
         return 1
@@ -195,6 +197,7 @@ def run(
             watchdog_poll_s=watchdog_poll_s,
             api=api,
             vigil_dev_mode=config.dev_mode(env),
+            store_cap=store_cap,
         )
     finally:
         os.umask(old_umask)
@@ -307,6 +310,7 @@ def _run(
     watchdog_poll_s: float,
     api: ApiSettings | None = None,
     vigil_dev_mode: bool = False,
+    store_cap: int = config.STORE_MAX_MB_DEFAULT * 2**20,
 ) -> int:
     started_at = clock.wall()
     try:
@@ -318,7 +322,7 @@ def _run(
     gap = pending_gap(data_dir, now=started_at)
     previous_beat = read_heartbeat(data_dir)
     try:
-        writer = open_writer(data_dir)
+        writer = open_writer(data_dir, cap_bytes=store_cap, shape=shape)
     except StoreError as exc:
         log.error("Medic can't open its store: %s", exc)
         return 1
@@ -327,19 +331,28 @@ def _run(
         # crash loop neither grows the store nor reads healthy (S4 review #1).
         try:
             medic = _build(
-                writer, data_dir, shape, sensors, clock, vigil_dev_mode=vigil_dev_mode
+                writer,
+                data_dir,
+                shape,
+                [*sensors, RecordingSensor(writer)],
+                clock,
+                vigil_dev_mode=vigil_dev_mode,
             )
         except Exception as exc:  # logged (redacted), exit 1
             log.exception("Medic can't start: %s", type(exc).__name__)
             return 1
         try:
-            write_gap(writer, gap)
+            try:
+                write_gap(writer, gap)
+            except RecordHeld:  # stopped at start: written, in order, on resume
+                medic.held.append({"v": 1, "at": gap["to"], "type": "gap", "body": gap})
             write_heartbeat(
                 data_dir,
                 cycle=0,
                 now=started_at,
                 started_at=started_at,
                 pid=os.getpid(),
+                state="degraded" if writer.stopped else "running",
             )
         except (OSError, StoreError, sqlite3.Error) as exc:
             log.error("cannot write to the data dir %s: %s", data_dir, exc)
@@ -466,10 +479,13 @@ async def _loop(
                 now=clock.wall(),
                 started_at=started_at,
                 pid=os.getpid(),
+                # `check` still passes (degraded is healthy): a pod out of disk
+                # isn't helped by a restart.
+                state="degraded" if medic.writer.stopped else "running",
             )
         except OSError as exc:
             # The loop is alive, so the watchdog keeps quiet; `check` goes stale and
-            # the probe reports it. Disk-full handling belongs to the store (G3).
+            # the probe reports it.
             log.error("cannot write the heartbeat: %s", exc)
         after_cycle(cycle=cycle)
         watchdog.beat()
