@@ -200,7 +200,9 @@ async def medic_status_route() -> Response:
 
     state = await asyncio.to_thread(current_status)
     if state is not MedicStatus.RUNNING:
-        return JSONResponse({"state": state.value}, headers={"Cache-Control": "no-store"})
+        return JSONResponse(
+            {"state": state.value}, headers={"Cache-Control": "no-store"}
+        )
     async with _status_lock:  # one fetch per process when polls overlap
         cached = _status_cache
         if cached is None or time.monotonic() - cached[0] >= _STATUS_TTL_S:
