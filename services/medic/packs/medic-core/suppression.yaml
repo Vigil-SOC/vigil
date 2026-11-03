@@ -37,3 +37,14 @@ entries:
   - parent: {rule: llm.gateway-unreachable}
     children: {rule: llm.calls-failing}
     why: With Bifrost unreachable every call fails. Show the gateway, not the generic failure count.
+  # --- pipeline (F7c) ---
+  # processor-errors and triage-stalled (mode P-4) are already children of class llm above.
+  - parent: {mode: L-5}
+    children: {rule: pipeline.orchestrator-slots-held}
+    why: A spend cap or exhausted budget holds new runs too; show the budget fault.
+  - parent: {rule: ingest.processor-without-database}
+    children: {rule: pipeline.daemon-component-hung}
+    why: With no database nothing is processed while findings still arrive; show the database fault, not a hung processor.
+  - parent: {rule: ingest.processor-store-dropped}
+    children: {rule: pipeline.daemon-component-hung}
+    why: Findings that fail to store aren't processed; show the store fault, not a hung processor.
