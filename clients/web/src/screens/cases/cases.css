@@ -451,6 +451,27 @@
 }
 
 .side-meta { color: var(--tx3); font-size: 11.5px; }
+.side-card .side-withdraw { display: block; margin-top: 4px; font-size: 11.5px; }
+.side-card .side-withdraw:disabled { opacity: .6; cursor: default; }
+
+/* "+ Tell the agents something": the board's dashed button, and the form it opens in its place. */
+.side-tell {
+  height: 28px;
+  border-radius: 10px;
+  border: 1px dashed var(--ln2);
+  background: transparent;
+  color: var(--tx2);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.side-tell:hover { color: var(--tx0); border-color: var(--vio); }
+.side-note-form { display: grid; gap: 6px; }
+.side-note-form select,
+.side-note-form textarea { font: inherit; font-size: 12.5px; }
+.side-note-actions { display: flex; gap: 6px; }
+.case-side .text-crit { margin: 0; }
 .side-card .side-meta { margin-top: 2px; }
 .side-people > .side-meta { color: var(--tx2); font-size: 12px; }
 

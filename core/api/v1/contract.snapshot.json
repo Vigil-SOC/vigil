@@ -1171,6 +1171,14 @@
             "title": "Entities",
             "type": "array"
           },
+          "entity_keys": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Entity Keys",
+            "type": "array"
+          },
           "finding_id": {
             "title": "Finding Id",
             "type": "string"

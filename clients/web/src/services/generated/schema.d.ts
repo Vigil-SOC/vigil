@@ -7669,6 +7669,11 @@ export interface components {
              * @default []
              */
             entities: string[];
+            /**
+             * Entity Keys
+             * @default []
+             */
+            entity_keys: string[];
             /** Finding Id */
             finding_id: string;
             /** Source Link */
