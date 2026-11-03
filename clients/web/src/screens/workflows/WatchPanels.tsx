@@ -370,7 +370,6 @@ export function InvestigatePanels({ d, costs, at }: { d: WfRunDetail; costs: num
   )
 }
 
-/** Root cause and compose have no steps to follow, so these read the run as it stands. */
 /** A playbook run's answer, as its agent wrote it. No replay exists for this kind, so this is the whole of what it found. */
 export function PlaybookReport({ d }: { d: WfRunDetail }) {
   const details = (d.phases ?? []).flatMap((p) => (p.output?.details && Object.keys(p.output.details).length > 0 ? [{ id: p.phase_id, details: p.output.details }] : []))
@@ -388,6 +387,7 @@ export function PlaybookReport({ d }: { d: WfRunDetail }) {
   )
 }
 
+/** Root cause and compose have no steps to follow, so these read the run as it stands. */
 export function OtherPanels({ d }: { d: WfRunDetail }) {
   const view = (d.projection ?? {}) as { run_kind?: unknown; cost_usd?: unknown; max_cost_usd?: unknown; budgets?: { max_cost_usd?: unknown } | null; notices?: unknown; recent_searches?: unknown; unbound?: unknown }
   if (view.run_kind !== 'root_cause') {
