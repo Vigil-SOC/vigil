@@ -11,25 +11,40 @@ names nobody.
 
 Each outside tool also has one stored effect class (#3304), read here by every
 caller that decides whether a tool call needs an approval.
+
+Each investigate-kind workflow may carry its own tier in the same row (#3624):
+``act`` or ``assist`` replaces the fleet's ``act_reversible`` for its runs. A
+person raises it with an agreement floor; Vigil drops it to ``assist`` when a
+person's closure takes its agreement below that floor.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from typing import Any, Iterable, Optional
+from dataclasses import dataclass, field, replace
+from datetime import timedelta
+from types import MappingProxyType
+from typing import Any, Callable, Iterable, Mapping, Optional
 
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from core.config import Settings, get_settings
 from core.storage import config_service as config_store
-from core.storage.models import ToolEffectClass
+from core.storage.models import SystemConfig, ToolEffectClass, WorkflowRun
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
 CEILING_KEY = "autonomy.ceiling"
+ACT = "act"
+ASSIST = "assist"
+TIERS = (ACT, ASSIST)
+AGREEMENT_WINDOW = timedelta(days=30)
+
+
+def _no_workflows() -> Mapping[str, dict]:
+    return MappingProxyType({})
 
 
 @dataclass(frozen=True)
@@ -38,6 +53,8 @@ class Ceiling:
     act_irreversible: bool = False
     stopped: bool = False
     four_eyes: bool = False
+    # workflow id -> {tier, floor, evidence, by, at}. Absent follows the fleet.
+    workflows: Mapping[str, dict] = field(default_factory=_no_workflows)
 
 
 @dataclass(frozen=True)
@@ -88,6 +105,31 @@ def environment_locks_act(settings: Optional[Settings] = None) -> bool:
     )
 
 
+def _workflow_entries(value: Any) -> Mapping[str, dict]:
+    """Entries with a known tier; anything else follows the fleet."""
+    if not isinstance(value, dict):
+        return _no_workflows()
+    return MappingProxyType(
+        {
+            str(wid): dict(entry)
+            for wid, entry in value.items()
+            if isinstance(entry, dict) and entry.get("tier") in TIERS
+        }
+    )
+
+
+def _parse(value: Any) -> Ceiling:
+    if not isinstance(value, dict):
+        return Ceiling()
+    return Ceiling(
+        act_reversible=_flag(value.get("act_reversible")),
+        act_irreversible=_flag(value.get("act_irreversible")),
+        stopped=_flag(value.get("stopped")),
+        four_eyes=_flag(value.get("four_eyes")),
+        workflows=_workflow_entries(value.get("workflows")),
+    )
+
+
 def read_stored_ceiling() -> tuple[Ceiling, bool]:
     """The stored row. ``(defaults, False)`` when the key is absent.
 
@@ -96,17 +138,7 @@ def read_stored_ceiling() -> tuple[Ceiling, bool]:
     value = config_store.get_config_service().read_system_config(CEILING_KEY)
     if value is None:
         return Ceiling(), False
-    if not isinstance(value, dict):
-        return Ceiling(), True
-    return (
-        Ceiling(
-            act_reversible=_flag(value.get("act_reversible")),
-            act_irreversible=_flag(value.get("act_irreversible")),
-            stopped=_flag(value.get("stopped")),
-            four_eyes=_flag(value.get("four_eyes")),
-        ),
-        True,
-    )
+    return _parse(value), True
 
 
 def read_ceiling() -> Ceiling:
@@ -123,20 +155,52 @@ def try_read_stored_ceiling() -> Optional[tuple[Ceiling, bool]]:
         return None
 
 
-def effective_act_reversible(
-    stored: Ceiling, settings: Optional[Settings] = None
-) -> bool:
-    if stored.stopped or environment_locks_act(settings):
-        return False
-    return stored.act_reversible
+def workflow_tier(stored: Ceiling, workflow_id: Optional[str]) -> Optional[str]:
+    entry = stored.workflows.get(workflow_id) if workflow_id else None
+    return entry.get("tier") if entry else None
 
 
-def effective_act_irreversible(
-    stored: Ceiling, settings: Optional[Settings] = None
+def stored_act(
+    stored: Ceiling, effect: Optional[str], workflow_id: Optional[str]
 ) -> bool:
+    """Whether the stored row lets a run of ``workflow_id`` take ``effect``.
+
+    Stop and the environment lock are not read here. A workflow's tier replaces
+    the fleet's ``act_reversible``; ``irreversible`` always needs the fleet's
+    ``act_irreversible`` and never runs under ``assist``.
+    """
+    tier = workflow_tier(stored, workflow_id)
+    if effect == REVERSIBLE:
+        return stored.act_reversible if tier is None else tier == ACT
+    if effect == IRREVERSIBLE:
+        return stored.act_irreversible and tier != ASSIST
+    return False
+
+
+def effective_act(
+    stored: Ceiling,
+    effect: Optional[str],
+    workflow_id: Optional[str] = None,
+    settings: Optional[Settings] = None,
+) -> bool:
+    """The one answer to "may this run act": stop and the lock beat every tier."""
     if stored.stopped or environment_locks_act(settings):
         return False
-    return stored.act_irreversible
+    return stored_act(stored, effect, workflow_id)
+
+
+def workflow_of(run_id: Optional[str]) -> Optional[str]:
+    """The workflow behind a run. None follows the fleet, a failed read too."""
+    if not run_id:
+        return None
+    try:
+        with unit_of_work() as session:
+            return session.execute(
+                select(WorkflowRun.workflow_id).where(WorkflowRun.run_id == run_id)
+            ).scalar()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("workflow of run %s not read; fleet flags apply: %s", run_id, exc)
+        return None
 
 
 def ceiling_view(stored: Ceiling, settings: Optional[Settings] = None) -> CeilingView:
@@ -162,25 +226,19 @@ def execution_held() -> bool:
     return stored.stopped
 
 
-def _dump(ceiling: Ceiling) -> dict[str, bool]:
+def _dump(ceiling: Ceiling) -> dict[str, Any]:
     return {
         "act_reversible": ceiling.act_reversible,
         "act_irreversible": ceiling.act_irreversible,
         "stopped": ceiling.stopped,
         "four_eyes": ceiling.four_eyes,
+        "workflows": {wid: dict(e) for wid, e in ceiling.workflows.items()},
     }
 
 
-def _store(ceiling: Ceiling, user_id: str, reason: str) -> None:
-    ok = config_store.get_config_service(user_id=user_id).set_system_config(
-        key=CEILING_KEY,
-        value=_dump(ceiling),
-        description="Autonomy ceiling",
-        config_type="autonomy",
-        change_reason=reason,
-    )
-    if not ok:
-        raise CeilingWriteError("autonomy.ceiling was not stored")
+def _store(user_id: str, reason: str, **fields: Any) -> Ceiling:
+    """Write only ``fields`` over the row as it is now; the rest stays as stored."""
+    return _locked_update(lambda current: (replace(current, **fields), reason), user_id)
 
 
 def _raises(current: bool, requested: Optional[bool]) -> bool:
@@ -215,20 +273,18 @@ def update_ceiling(
             current.act_irreversible, act_irreversible
         ):
             raise CeilingRefusal(403, "A service account cannot raise the ceiling")
-    updated = Ceiling(
-        act_reversible=(
-            current.act_reversible if act_reversible is None else act_reversible
-        ),
-        act_irreversible=(
-            current.act_irreversible if act_irreversible is None else act_irreversible
-        ),
-        stopped=current.stopped,
-        four_eyes=current.four_eyes if four_eyes is None else four_eyes,
-    )
-    if updated == current:
+    edit = {
+        name: value
+        for name, value in (
+            ("act_reversible", act_reversible),
+            ("act_irreversible", act_irreversible),
+            ("four_eyes", four_eyes),
+        )
+        if value is not None
+    }
+    if replace(current, **edit) == current:
         return current
-    _store(updated, user_id, "Autonomy ceiling updated")
-    return updated
+    return _store(user_id, "Autonomy ceiling updated", **edit)
 
 
 def stop_ceiling(user_id: str) -> Ceiling:
@@ -239,14 +295,7 @@ def stop_ceiling(user_id: str) -> Ceiling:
     current = read_ceiling()
     if current.stopped:
         return current
-    updated = Ceiling(
-        act_reversible=current.act_reversible,
-        act_irreversible=current.act_irreversible,
-        stopped=True,
-        four_eyes=current.four_eyes,
-    )
-    _store(updated, user_id, "Autonomy stopped")
-    return updated
+    return _store(user_id, "Autonomy stopped", stopped=True)
 
 
 def resume_ceiling(*, user_id: str, caller_is_service: bool) -> Ceiling:
@@ -259,14 +308,190 @@ def resume_ceiling(*, user_id: str, caller_is_service: bool) -> Ceiling:
     current = read_ceiling()
     if not current.stopped:
         return current
-    updated = Ceiling(
-        act_reversible=current.act_reversible,
-        act_irreversible=current.act_irreversible,
-        stopped=False,
-        four_eyes=current.four_eyes,
+    return _store(user_id, "Autonomy resumed", stopped=False)
+
+
+def raises_workflow(current: Ceiling, workflow_id: str, after: Ceiling) -> bool:
+    """A raise is anything that lets the workflow act where it could not.
+
+    Stop and the environment lock are ignored: they hold every tier alike.
+    """
+    return any(
+        stored_act(after, effect, workflow_id)
+        and not stored_act(current, effect, workflow_id)
+        for effect in (REVERSIBLE, IRREVERSIBLE)
     )
-    _store(updated, user_id, "Autonomy resumed")
-    return updated
+
+
+def _evidence(tally: Optional[dict], window_end: str) -> dict[str, Any]:
+    tally = tally or {}
+    return {
+        "agreed": tally.get("agreed", 0),
+        "disagreed": tally.get("disagreed", 0),
+        "agreement_rate": tally.get("agreement_rate"),
+        "window_end": window_end,
+    }
+
+
+def agreement_by_workflow(session) -> tuple[dict[str, dict], str]:
+    """Each workflow's 30-day agreement tally, and the window's end."""
+    from core.reporting.analytics_service import agent_agreement
+
+    end = utcnow()
+    scored = agent_agreement(session, end - AGREEMENT_WINDOW, end)
+    tallies = {t["workflow_id"]: t for t in scored["by_workflow"]}
+    return tallies, end.isoformat()
+
+
+def workflow_evidence(workflow_id: str) -> dict[str, Any]:
+    """The workflow's 30-day agreement, computed here and never taken from a client."""
+    with unit_of_work() as session:
+        tallies, window_end = agreement_by_workflow(session)
+    return _evidence(tallies.get(workflow_id), window_end)
+
+
+def workflow_entry(
+    tier: str, floor: Optional[int], evidence: Optional[dict], by: str
+) -> dict[str, Any]:
+    return {
+        "tier": tier,
+        "floor": floor,
+        "evidence": evidence,
+        "by": by,
+        "at": utcnow().isoformat(),
+    }
+
+
+def _locked_update(
+    change: Callable[[Ceiling], tuple[Ceiling, str]], actor: str
+) -> Ceiling:
+    """Read, change and write the row in one transaction with it locked.
+
+    ``change`` sees the row as it is now, so no other write is lost, and the
+    write leaves the same ``config.change`` entry as ``set_system_config``.
+    """
+    try:
+        return _write_locked(change, actor)
+    except CeilingRefusal:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise CeilingWriteError("autonomy.ceiling was not stored") from exc
+
+
+def _write_locked(change: Callable[[Ceiling], tuple[Ceiling, str]], actor: str):
+    with unit_of_work() as session:
+        row = session.execute(
+            select(SystemConfig)
+            .where(SystemConfig.key == CEILING_KEY)
+            .with_for_update()
+        ).scalar_one_or_none()
+        current = _parse(row.value) if row is not None else Ceiling()
+        updated, reason = change(current)
+        if updated == current:
+            return current
+        old = row.value if row is not None else None
+        value = _dump(updated)
+        if row is None:
+            session.add(
+                SystemConfig(
+                    key=CEILING_KEY,
+                    value=value,
+                    description="Autonomy ceiling",
+                    config_type="autonomy",
+                    updated_by=actor,
+                )
+            )
+        else:
+            row.value = value
+            row.updated_by = actor
+        config_store.ConfigService(user_id=actor)._create_audit_log(
+            session,
+            config_type="autonomy",
+            config_key=CEILING_KEY,
+            action="create" if old is None else "update",
+            old_value=old,
+            new_value=value,
+            change_reason=reason,
+        )
+        return updated
+
+
+def set_workflow_tier(
+    workflow_id: str, entry: Optional[dict], user_id: str, *, raises: bool
+) -> Ceiling:
+    """Store one workflow's entry; None returns it to the fleet flags.
+
+    A raise is refused if a stop landed since the caller looked.
+    """
+
+    def change(current: Ceiling) -> tuple[Ceiling, str]:
+        if raises and current.stopped:
+            raise CeilingRefusal(409, "Stopped: resume first")
+        workflows = dict(current.workflows)
+        if entry is None:
+            workflows.pop(workflow_id, None)
+        else:
+            workflows[workflow_id] = entry
+        updated = replace(current, workflows=MappingProxyType(workflows))
+        return updated, f"Autonomy of workflow {workflow_id} set"
+
+    return _locked_update(change, user_id)
+
+
+def drop_below_floor() -> None:
+    """Every workflow on Act whose agreement fell below its floor goes to Assist.
+
+    Written as the system, under the row lock, so a concurrent edit is not
+    lost. Never raises.
+    """
+    try:
+        with unit_of_work() as session:
+            tallies, window_end = agreement_by_workflow(session)
+        dropped: list[str] = []
+
+        def change(current: Ceiling) -> tuple[Ceiling, str]:
+            workflows = dict(current.workflows)
+            for wid, entry in current.workflows.items():
+                floor = entry.get("floor")
+                if entry.get("tier") != ACT or not isinstance(floor, int):
+                    continue
+                evidence = _evidence(tallies.get(wid), window_end)
+                rate = evidence["agreement_rate"]
+                if rate is not None and rate < floor / 100:
+                    workflows[wid] = workflow_entry(ASSIST, floor, evidence, _SYSTEM)
+                    dropped.append(wid)
+            reason = "Agreement fell below the floor: " + ", ".join(sorted(dropped))
+            return replace(current, workflows=MappingProxyType(workflows)), reason
+
+        _locked_update(change, _SYSTEM)
+        if dropped:
+            logger.warning("workflows dropped to Assist: %s", ", ".join(dropped))
+    except Exception:  # noqa: BLE001 - a close never fails on this
+        logger.exception("agreement floors not checked after a close")
+
+
+_DROP_PENDING = "autonomy.drop_pending"
+
+
+def _after_commit(session) -> None:
+    # A SAVEPOINT release fires this too; only the outermost commit counts.
+    if session.in_nested_transaction():
+        return
+    if session.info.pop(_DROP_PENDING, False):
+        drop_below_floor()
+
+
+def _after_rollback(session) -> None:
+    if not session.in_nested_transaction():
+        session.info.pop(_DROP_PENDING, None)
+
+
+def drop_after_commit(session) -> None:
+    """Check the floors once ``session`` commits; a rolled-back close drops nothing."""
+    session.info[_DROP_PENDING] = True
+    if not event.contains(session, "after_commit", _after_commit):
+        event.listen(session, "after_commit", _after_commit)
+        event.listen(session, "after_rollback", _after_rollback)
 
 
 # Effect classes, loosest first (#3304). A name with no row is unclassified.
@@ -362,13 +587,15 @@ def asks_first(names: Iterable[str]) -> frozenset[str]:
 STOPPED = "Stopped"
 
 
-def unattended_refusal(tool: str, *, writes: bool) -> Optional[str]:
+def unattended_refusal(
+    tool: str, *, writes: bool, run_id: Optional[str] = None
+) -> Optional[str]:
     """Why a run no person started may not make this call, or None (#3306).
 
     Reads run, stopped or not. ``writes`` says whether one of Vigil's own tools
     changes a record; those run unless stopped. An outside call runs only under
-    the effective act flag its class needs. A ceiling that cannot be read
-    grants nothing.
+    the effective act its class needs, for the run's own workflow (#3624). A
+    ceiling that cannot be read grants nothing.
     """
     classes = tool_classes([tool])
     own = tool not in classes
@@ -383,9 +610,9 @@ def unattended_refusal(tool: str, *, writes: bool) -> Optional[str]:
     if own:
         return None
     effect = classes[tool]
-    if effect == REVERSIBLE and effective_act_reversible(stored):
-        return None
-    if effect == IRREVERSIBLE and effective_act_irreversible(stored):
+    if effect in (REVERSIBLE, IRREVERSIBLE) and effective_act(
+        stored, effect, workflow_of(run_id)
+    ):
         return None
     return (
         f"{tool} is {effect or 'unclassified'} and the autonomy ceiling "

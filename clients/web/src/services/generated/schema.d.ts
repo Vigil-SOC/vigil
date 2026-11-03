@@ -1256,6 +1256,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/autonomy/workflows/{workflow_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put Workflow Autonomy
+         * @description Set one investigate-kind workflow's tier. The permission depends on the direction.
+         *
+         *     Act is always a raise: it holds after the fleet is lowered. Anything else that
+         *     lets the workflow act where it could not, such as clearing Assist under a fleet
+         *     on Act, is a raise too. A raise is a person's ``ai_autonomy.write``, refused
+         *     while stopped, and stores the workflow's 30-day agreement beside its floor.
+         *     Anything else is ``ai_autonomy.stop``.
+         */
+        put: operations["put_api_autonomy_workflows_workflow_id"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/bifrost/routability": {
         parameters: {
             query?: never;
@@ -8357,6 +8383,15 @@ export interface components {
             read: boolean;
             /** Stopped */
             stopped: boolean;
+            /**
+             * Workflows
+             * @default {}
+             */
+            workflows: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
             /** Write */
             write: boolean;
         };
@@ -11396,6 +11431,19 @@ export interface components {
             /** User Id */
             user_id: string;
         };
+        /**
+         * WorkflowAutonomyBody
+         * @description One workflow's tier. No tier returns it to the fleet flags.
+         *
+         *     ``floor`` is the whole-percent agreement under which Vigil drops an Act
+         *     workflow to Assist. There is no evidence field: the server computes it.
+         */
+        WorkflowAutonomyBody: {
+            /** Floor */
+            floor?: number | null;
+            /** Tier */
+            tier?: ("act" | "assist") | null;
+        };
         /** WorkflowDetailResponse */
         WorkflowDetailResponse: {
             /** Agent */
@@ -13694,6 +13742,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ToolClassEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_autonomy_workflows_workflow_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowAutonomyBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CeilingResponse"];
                 };
             };
             /** @description Validation Error */

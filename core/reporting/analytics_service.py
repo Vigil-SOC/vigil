@@ -715,6 +715,12 @@ def _closure_says_real(category: Optional[str]) -> Optional[bool]:
 async def get_agent_agreement(
     db: Session, start_time: datetime, end_time: datetime
 ) -> Dict[str, Any]:
+    return agent_agreement(db, start_time, end_time)
+
+
+def agent_agreement(
+    db: Session, start_time: datetime, end_time: datetime
+) -> Dict[str, Any]:
     """How often the investigation's verdict matched the closure, overall and per workflow.
 
     Only closures of a Case with a dispositioned investigation count. A person's
