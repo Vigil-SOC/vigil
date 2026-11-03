@@ -43,6 +43,12 @@ from core.storage.models.workflow import (
 )
 from core.time import utcnow
 
+# CaseSchema reads only ``finding_ids``: load the links, not each finding's
+# MITRE prediction rows.
+CASE_FINDING_IDS_ONLY = selectinload(Case.findings).noload(
+    Finding.mitre_prediction_rows
+)
+
 # status / priority / assignee accept either a single value or a list.
 Filterable = Optional[Union[str, Sequence[str]]]
 
@@ -491,9 +497,7 @@ class CaseRepository:
         stmt = self._build(**filters)
         order_column = Case.created_at if order_by == "created_at" else Case.updated_at
         stmt = (
-            stmt.options(
-                selectinload(Case.findings).noload(Finding.mitre_prediction_rows)
-            )
+            stmt.options(CASE_FINDING_IDS_ONLY)
             .order_by(order_column.desc())
             .limit(limit)
             .offset(offset)
