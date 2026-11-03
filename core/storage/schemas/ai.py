@@ -14,32 +14,6 @@ from core.storage.schemas.base import (
 )
 
 
-class AIDecisionLogSchema(ORMSchema):
-    """AIDecisionLog."""
-
-    id: Optional[int] = None
-    decision_id: Optional[str] = None
-    agent_id: Optional[str] = None
-    workflow_id: Optional[str] = None
-    finding_id: Optional[str] = None
-    case_id: Optional[str] = None
-    decision_type: Optional[str] = None
-    confidence_score: Optional[float] = None
-    reasoning: Optional[str] = None
-    recommended_action: Optional[str] = None
-    decision_metadata: Optional[Any] = None
-    human_reviewer: Optional[str] = None
-    human_decision: Optional[str] = None
-    feedback_comment: Optional[str] = None
-    accuracy_grade: Optional[float] = None
-    reasoning_grade: Optional[float] = None
-    action_appropriateness: Optional[float] = None
-    actual_outcome: Optional[str] = None
-    time_saved_minutes: Optional[int] = None
-    timestamp: OptDateTime = None
-    feedback_timestamp: OptDateTime = None
-
-
 class LLMInteractionLogSchema(ORMSchema):
     """LLMInteractionLog."""
 

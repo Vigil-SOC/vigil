@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from sqlalchemy import func
 
-from core.agents.builtins import ORCHESTRATION_DECISION_ID, ORCHESTRATOR_ACTOR
+from core.agents.builtins import ORCHESTRATOR_ACTOR
 from core.auth.principals import agent_principal_id
 from core.cases.case_sla_service import case_title, open_case_holding
 from core.config import get_settings
@@ -86,7 +86,6 @@ from core.findings.exclusions import cached_active_ips, excluded_ips_of
 from core.memory.entity_keys import finding_entity_keys, normalise_keys
 from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint
-from core.response.config import decision_rule
 from core.storage.connection import get_db_manager
 from core.storage.models import (
     FINISHED_INVESTIGATION_STATUSES,
@@ -2003,7 +2002,6 @@ class Orchestrator:
 
         state = self.workdir.read_state(inv_id)
         proposed_actions = state.get("proposed_actions", [])
-        rule = decision_rule("review.terminal_outcome", "completed")
 
         self.stats["investigations_completed"] += 1
         if _inv_completed is not None:
@@ -2020,17 +2018,6 @@ class Orchestrator:
 
         logger.info(
             f"Investigation {inv_id} COMPLETED ({len(proposed_actions)} actions)"
-        )
-
-        self._log_ai_decision(
-            decision_type="investigation_complete",
-            inv_id=inv_id,
-            reasoning=(
-                f"Terminal outcome completed. {len(proposed_actions)} proposed actions."
-            ),
-            action="complete",
-            confidence=1.0,
-            rule=rule,
         )
 
         self._send_notification(
@@ -2076,65 +2063,6 @@ class Orchestrator:
             logger.info(f"Created approval action for {inv_id}: {action_str}")
         except Exception as e:
             logger.error(f"Failed to create approval action: {e}")
-
-    # -------------------------------------------------------------------------
-    # AI Decision Logging
-    # -------------------------------------------------------------------------
-
-    def _log_ai_decision(
-        self,
-        decision_type: str,
-        inv_id: str,
-        reasoning: str,
-        action: str,
-        confidence: float = 1.0,
-        rule: Optional[str] = None,
-    ):
-        """Log a master agent decision to the AIDecisionLog table.
-
-        ``rule`` is the rendered ``decision_rule`` for decisions made on a
-        threshold; it lands in ``decision_metadata["rule"]``.
-        """
-        try:
-            from core.storage.connection import get_db_manager
-            from core.storage.models import AIDecisionLog, Investigation
-
-            with get_db_manager().session_scope() as session:
-                case_id = None
-                finding_id = None
-                inv = (
-                    session.query(Investigation)
-                    .filter_by(investigation_id=inv_id)
-                    .first()
-                )
-                if inv:
-                    case_id = inv.case_id
-                    trigger_ids = inv.trigger_ids or []
-                    if trigger_ids:
-                        finding_id = (
-                            trigger_ids[0] if isinstance(trigger_ids, list) else None
-                        )
-
-                entry = AIDecisionLog(
-                    decision_id=f"orch-{uuid.uuid4().hex[:8]}",
-                    agent_id=ORCHESTRATION_DECISION_ID,
-                    workflow_id=inv_id,
-                    finding_id=finding_id,
-                    case_id=case_id,
-                    decision_type=decision_type,
-                    confidence_score=confidence,
-                    reasoning=reasoning,
-                    recommended_action=action,
-                    decision_metadata={
-                        "source": ORCHESTRATOR_ACTOR,
-                        "investigation_id": inv_id,
-                        **({"rule": rule} if rule else {}),
-                    },
-                )
-                session.add(entry)
-            logger.debug(f"AI decision logged: {decision_type} for {inv_id}")
-        except Exception as e:
-            logger.error(f"Failed to log AI decision: {e}")
 
     # -------------------------------------------------------------------------
     # Closed-Case links
