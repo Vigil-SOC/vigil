@@ -1,0 +1,36 @@
+# medic-core rule (F7c-agents). An agent-worker or agent-serve container that has
+# stopped (exited, or dead) and stays stopped: compose restart: unless-stopped
+# brings back a crash but not a container someone stopped or one that Docker gave up
+# on. A crash loop reads "restarting", not "exited": that is
+# pipeline.agent-container-restarting. A stopped container also leaves Docker's DNS,
+# so the readiness sensors go blind (watcher.sensor-blind) rather than read
+# ready=false: this rule is what names the stop, and nothing needs suppressing.
+# Compose only: Helm's pod controller recreates a stopped pod itself, and a pod that
+# stays down also fails the readiness rules.
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.agent-container-down
+title: An agent container has stopped
+revision: 1
+fault: {class: pipeline, mode: P-1, causes: [P-1]}
+lane: 3
+detection: event
+shapes: [compose]
+signals:
+  worker: {sample: {signal: containers, key: state, labels: {service: agent-worker}}}
+  serve: {sample: {signal: containers, key: state, labels: {service: agent-serve}}}
+when:
+  any:
+    - {fn: latest, signal: worker, op: "==", value: exited}
+    - {fn: latest, signal: worker, op: "==", value: dead}
+    - {fn: latest, signal: serve, op: "==", value: exited}
+    - {fn: latest, signal: serve, op: "==", value: dead}
+for: 2m
+keep_firing_for: 5m
+advice:
+  summary: The agent-worker or agent-serve container has been stopped for 2 minutes, so runs queue with no worker or chat and run status reads fail.
+  fix: >-
+    Check which container stopped (docker compose ps agent-worker agent-serve) and
+    read its log (docker compose logs) for why. If nobody stopped it on purpose,
+    start it again (docker compose up -d agent-worker agent-serve). If it stops
+    again, report it as a Vigil defect with this incident. Record what you did.
