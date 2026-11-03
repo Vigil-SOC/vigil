@@ -20,6 +20,8 @@ from services.medic.engine.evaluate import (
     ts,
 )
 
+RETIRE_S = 24 * 3600  # covered silence before a group retires (§3); marks age out too
+
 
 def gkey(group: dict) -> str:
     """A group's stable key: canonical JSON of its sorted (name, value) pairs."""

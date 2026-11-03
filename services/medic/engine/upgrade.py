@@ -12,7 +12,7 @@ start.
 
 from __future__ import annotations
 
-from services.medic.engine.history import gkey
+from services.medic.engine.history import RETIRE_S, gkey
 
 WINDOW_S = 900  # 15 min after the last restart (§7, ⚑ 4)
 CAP_S = 3600  # a chain of windows holds no longer than this after its first marker
@@ -35,6 +35,12 @@ class UpgradeWatch:
             "marks": self.marks,
             "restarts": self.restarts,
         }
+
+    def prune(self, now: float) -> None:
+        """Drop marks not read for RETIRE_S: churning label values (container ids)
+        would otherwise grow them forever. Not the rule horizon: a sensor blind for
+        longer but under RETIRE_S must still see its new value open a window."""
+        self.marks = {s: m for s, m in self.marks.items() if m[0] >= now - RETIRE_S}
 
     @property
     def end(self) -> float | None:
