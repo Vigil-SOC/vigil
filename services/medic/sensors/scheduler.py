@@ -172,9 +172,11 @@ class Scheduler:
                     "last_good_at": st.last_ok_at,
                     "reason": reason,
                     # null means not measured, never 0
-                    "dropped_last_hour": None
-                    if st.drops is None
-                    else self.bus.stats[st.sensor.id].dropped - st.drops[0][1],
+                    "dropped_last_hour": (
+                        None
+                        if st.drops is None
+                        else self.bus.stats[st.sensor.id].dropped - st.drops[0][1]
+                    ),
                 }
             )
         return out
