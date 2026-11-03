@@ -790,6 +790,25 @@ export const budgetsApi = {
   getQuota: () => api.get<BudgetQuotaResponse>('/analytics/budget/quota'),
 }
 
+/** One workflow's tally in `agent_agreement` (core/reporting/analytics_service.py). */
+export interface WorkflowAgreement {
+  workflow_id: string
+  agreed: number
+  disagreed: number
+  agreement_rate: number | null
+  abstained: number
+  closed_without_determination: number
+  closed_by_agent_alone: number
+}
+
+export const analyticsApi = {
+  /** The agent_agreement block of GET /analytics; the route returns an untyped dict, so only this part is typed. */
+  getAgreement: (timeRange: '24h' | '7d' | '30d' | 'all' = '30d') =>
+    api
+      .get<{ agent_agreement?: { by_workflow?: WorkflowAgreement[] } }>('/analytics', { params: { time_range: timeRange } })
+      .then((res) => res.data.agent_agreement?.by_workflow ?? []),
+}
+
 export const storageApi = {
   getStatus: () => api.get('/storage/status'),
   getHealth: () => api.get('/storage/health'),
@@ -1042,8 +1061,6 @@ export interface OrchestratorStatus {
   enabled?: boolean
   waiting_approval: number
   paused: number
-  // no new alert is picked up once approvals and paused runs together reach this
-  parked_limit: number
   oldest_parked_age_seconds: number | null
   // Absent when the API has no orchestrator to ask; a banner then claims nothing.
   cost: { hourly_paused?: boolean; hourly_cost_usd?: number; hourly_limit_usd?: number }

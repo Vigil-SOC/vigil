@@ -22,10 +22,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from core.federation import registry, store
 from core.federation.contract import FederationAdapter
+from core.federation.error_kind import classify_failure
 from core.federation.seed import seed_federation_sources
 from core.ingestion.ack import Pending, new_ack, stored_keys, wait_all
 from core.ingestion.dedup import RedisDedupSet
@@ -55,6 +56,8 @@ class FederationRunner:
     def __init__(self, output_queue: Optional[asyncio.Queue]) -> None:
         self._output_queue = output_queue
         self._adapter_tasks: Dict[str, asyncio.Task] = {}
+        # Set by the daemon: watch(name, task, shutdown_event) for /status loops.
+        self.watch_loop: Optional[Callable[..., None]] = None
         self._dedup: Dict[str, RedisDedupSet] = {}
         # Sources already warned about as unconfigured, so the warning is
         # logged on the transition rather than every tick.
@@ -83,9 +86,10 @@ class FederationRunner:
         # 2. Spawn one task per registered adapter (instantiated once, reused).
         for adapter in registry.list_adapters():
             self._dedup[adapter.name] = RedisDedupSet(f"federation:{adapter.name}")
-            self._adapter_tasks[adapter.name] = asyncio.create_task(
-                self._adapter_loop(adapter, shutdown_event)
-            )
+            task = asyncio.create_task(self._adapter_loop(adapter, shutdown_event))
+            self._adapter_tasks[adapter.name] = task
+            if self.watch_loop:
+                self.watch_loop(adapter.name, task, shutdown_event)
 
         if not self._adapter_tasks:
             # No adapters at all — wait for shutdown.
@@ -222,7 +226,7 @@ class FederationRunner:
                 )
             self.polls += 1
             self.errors += 1
-            store.record_failure(source_id, str(e))
+            store.record_failure(source_id, str(e), classify_failure(e))
             return
         self.polls += 1
 

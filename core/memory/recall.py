@@ -67,6 +67,7 @@ from core.memory.recall_contract import (
     RECALL_PER_KEY_CAP,
     RECALL_TOOL,
     UNKNOWN_CALLER,
+    InvestigationKind,
     empty_dropped,
     recall_ranking,
 )
@@ -79,6 +80,11 @@ Row = Dict[str, Any]
 # `row_counts` too -- the contract's tuple rather than a second copy of it, so a
 # kind added there cannot be one this module quietly stops returning.
 KINDS: Tuple[str, ...] = DROPPED_KINDS
+
+# What the overall budget is spent across. Notes are a person's few words on an
+# entity, capped per key alone, so a busy read never withholds one.
+UNCAPPED_KINDS: Tuple[str, ...] = ("notes",)
+OVERALL_KINDS: Tuple[str, ...] = tuple(k for k in KINDS if k not in UNCAPPED_KINDS)
 
 
 # RECALL_ORDER as (field, descending) pairs. Both the SQL below and the overall
@@ -161,12 +167,15 @@ _GAP_COLUMNS = (
     "r.statement, r.disposition, r.reason, r.subject_entities, r.concluded_at"
 )
 
+_NOTE_COLUMNS = "r.id, r.entity_key, r.statement, r.written_by, r.concluded_at"
+
 _QUERIES = {
     "sightings": _statement("episodic_sightings", _BY_KEY, _ANY_KEY, _SIGHTING_COLUMNS),
     "verdicts": _statement(
         "episodic_verdicts", _BY_SUBJECT, _ANY_SUBJECT, _VERDICT_COLUMNS
     ),
     "gaps": _statement("episodic_gaps", _BY_SUBJECT, _ANY_SUBJECT, _GAP_COLUMNS),
+    "notes": _statement("episodic_notes", _BY_KEY, _ANY_KEY, _NOTE_COLUMNS),
 }
 
 # Fetched for the Verdicts that survived both caps rather than joined into the
@@ -294,7 +303,23 @@ def gap_row(row: Mapping[str, Any]) -> Row:
     }
 
 
-_SHAPES = {"sightings": _sighting, "verdicts": verdict_row, "gaps": gap_row}
+def note_row(row: Mapping[str, Any]) -> Row:
+    return {
+        "investigation_kind": InvestigationKind.ANALYST.value,
+        "investigation_id": str(row["id"]),
+        "concluded_at": iso(row["concluded_at"]),
+        "entity_key": row["entity_key"],
+        "statement": row["statement"],
+        "written_by": row["written_by"],
+    }
+
+
+_SHAPES = {
+    "sightings": _sighting,
+    "verdicts": verdict_row,
+    "gaps": gap_row,
+    "notes": note_row,
+}
 
 
 class _Selected(NamedTuple):
@@ -348,8 +373,9 @@ def _page(
 def _apply_overall_cap(
     pages: Mapping[str, List[_Selected]],
 ) -> Tuple[Dict[str, List[_Selected]], Dict[str, int]]:
-    """Spend the overall cap across all kinds and keys, newest first.
+    """Spend the overall cap across sightings, verdicts and gaps, newest first.
 
+    Notes pass through with their per-key cap alone (:data:`UNCAPPED_KINDS`).
     One budget rather than one per kind, which is what the contract's
     ``overall_cap`` says. This is the step that decides which rows a caller
     actually sees, so it sorts on :data:`_ORDER_TERMS` -- RECALL_ORDER parsed --
@@ -374,7 +400,7 @@ def _apply_overall_cap(
     one of them by negating it would need a number -- which for ``concluded_at``
     means a float epoch, turning two rows a microsecond apart into a tie.
     """
-    ordered = [(kind, selected) for kind in KINDS for selected in pages[kind]]
+    ordered = [(kind, selected) for kind in OVERALL_KINDS for selected in pages[kind]]
 
     for field, descending in reversed(_ORDER_TERMS):
         ordered.sort(
@@ -383,7 +409,8 @@ def _apply_overall_cap(
         if field == _PRIMARY_KEY:
             ordered.sort(key=lambda entry: entry[0])
 
-    kept: Dict[str, List[_Selected]] = {kind: [] for kind in KINDS}
+    kept: Dict[str, List[_Selected]] = {kind: [] for kind in OVERALL_KINDS}
+    kept.update({kind: list(pages[kind]) for kind in UNCAPPED_KINDS})
     for kind, selected in ordered[:RECALL_OVERALL_CAP]:
         kept[kind].append(selected)
 
@@ -467,6 +494,7 @@ def recall(
         "sightings": [],
         "verdicts": [],
         "gaps": [],
+        "notes": [],
         "dropped": empty_dropped(),
         "ranking": recall_ranking(),
     }

@@ -1,4 +1,4 @@
-import type { ProposedAction, ResolutionPayload, RunOutcome, Severity, TerminalHandoff } from "../../contracts/events.js";
+import type { ProposedAction, ResolutionPayload, RunOutcome, Severity, StopCause, TerminalHandoff } from "../../contracts/events.js";
 import { httpAnswers } from "../../core/answers.js";
 import { errorFields, logger } from "../../core/log.js";
 
@@ -31,6 +31,7 @@ export interface PhaseUpdate {
 export interface TerminalResult {
   outcome: RunOutcome;
   reason: string;
+  stop_cause?: StopCause | undefined;
   summary: string;
   cost_usd?: number;
   // The instant the run finished. The row's finished_at, not the arrival of this post.

@@ -62,6 +62,11 @@ export const MISSING_FINDING_SEVERITY = 'Unrated' as const
 export const MISSING_FINDING_TIME = 'Source time unavailable' as const
 export const NO_CONFIDENCE = 'confidence not given' as const
 
+export const CASE_EDIT_FIELDS = ['title', 'description', 'status', 'priority', 'assignee'] as const
+export type CaseEditField = (typeof CASE_EDIT_FIELDS)[number]
+/** The fields a person edits, as text. Blank is ''. */
+export type CaseEditValues = Record<CaseEditField, string>
+
 export interface CaseRow {
   id: string
   title: string
@@ -94,6 +99,11 @@ export interface CaseRow {
   createdTs?: number
   /** True when this queue row is in the same needs-you set that sorted it first. */
   needsYou?: boolean
+}
+
+/** A case read, not a queue row. `stored` is unformatted, so a display default is never taken for someone's change. */
+export interface CaseRecord extends CaseRow {
+  stored: CaseEditValues
 }
 
 export const TITLES: Record<ConsoleScreenKey, [string, string]> = {

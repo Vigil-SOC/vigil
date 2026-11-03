@@ -183,7 +183,7 @@ async def _maybe_dispatch_via_router(
         report_recovered(
             logger,
             f"llm-budget-{tier}",
-            "LLM budget spent (%s tier); AI calls are refused until it resets",
+            "LLM budget available (%s tier)",
             tier,
         )
     return result

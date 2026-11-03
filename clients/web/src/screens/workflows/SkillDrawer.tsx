@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { HoldButton } from '../../shared/HoldButton'
+import { Icon } from '../../shared/icons'
 import { Popup } from '../../shared/ui'
 import { skillsApi, type ApiSkillDetail, type ApiSkillTest } from '../../services/skillsApi'
 import { skillUsageText, type Skill } from '../../data/appData'
@@ -44,6 +45,9 @@ export function SkillDrawer({
   const [testError, setTestError] = useState<string | null>(null)
   const panel = useRef<HTMLDivElement>(null)
   const [file, setFile] = useState<{ content?: string; error?: string }>({})
+  const [aiText, setAiText] = useState('')
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiErr, setAiErr] = useState<string | null>(null)
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -97,6 +101,7 @@ export function SkillDrawer({
   }, [name])
 
   const pathUnset = rootUnset || (detail !== null && !detail.operator_root_set)
+  const canDescribe = creating && canWrite && !pathUnset
   const nameLocked = detail !== null && !detail.bundled
   const needsNewName = detail?.bundled === true && skillName.trim() === detail.name
   // POST /api/skills overwrites an operator skill of the same name, so a taken name is refused here.
@@ -122,6 +127,20 @@ export function SkillDrawer({
         setError(errMsg(e))
         setBusy(false)
       })
+  }
+
+  const generate = () => {
+    setAiBusy(true)
+    setAiErr(null)
+    skillsApi
+      .generate(aiText.trim())
+      .then((d) => {
+        setSkillName((typed) => (typed.trim() ? typed : d.name))
+        setDescription(d.description)
+        setBody(d.body)
+      })
+      .catch((e) => setAiErr(errMsg(e)))
+      .finally(() => setAiBusy(false))
   }
 
   // The drawer scrolls and the panel sits below the fields: bring it into view when a run starts and when it lands.
@@ -177,6 +196,27 @@ export function SkillDrawer({
                 Saving writes a new skill under the operator root and leaves the bundled directory unchanged.
               </p>
             )}
+            {canDescribe && (
+              <div className="vg-side-field">
+                <label htmlFor="vg-s-describe" className="vg-side-label">Describe the skill</label>
+                <textarea
+                  id="vg-s-describe"
+                  className="vg-side-input"
+                  rows={2}
+                  autoFocus
+                  value={aiText}
+                  placeholder="e.g. Decides whether a reported login from a new country is the user travelling or a stolen account."
+                  onChange={(e) => setAiText(e.target.value)}
+                />
+                <span className="vg-side-hint">Vigil drafts the fields below for you to edit, replacing what they hold. Nothing is saved until Save.</span>
+                <div className="flex items-center justify-end gap-2.5">
+                  {aiErr && <span className="vg-side-err mr-auto">{aiErr}</span>}
+                  <button type="button" className="vg-side-btn small line" disabled={aiBusy || !aiText.trim()} onClick={generate}>
+                    <Icon name="sparkle" size={13} />&nbsp;{aiBusy ? 'Generating…' : 'Generate draft'}
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="vg-side-field">
               <label htmlFor="vg-s-name" className="vg-side-label">Name</label>
               <input
@@ -187,7 +227,7 @@ export function SkillDrawer({
                 disabled={nameLocked}
                 autoComplete="off"
                 placeholder={creating ? 'lowercase-with-hyphens' : undefined}
-                autoFocus={creating}
+                autoFocus={creating && !canDescribe}
                 onChange={(e) => setSkillName(e.target.value)}
               />
               <span className="vg-side-hint">Lower case and hyphens, 64 characters at most</span>
@@ -202,6 +242,7 @@ export function SkillDrawer({
                 rows={3}
                 maxLength={1024}
                 value={description}
+                readOnly={aiBusy}
                 onChange={(e) => setDescription(e.target.value)}
               />
               <span className="vg-side-hint">Agents read this to decide whether the skill applies (1,024 characters at most)</span>
@@ -215,6 +256,7 @@ export function SkillDrawer({
                   className="vg-side-input mono"
                   rows={9}
                   value={body}
+                  readOnly={aiBusy}
                   onChange={(e) => setBody(e.target.value)}
                 />
                 {!body.trim() && err('Add the steps an agent should follow.')}

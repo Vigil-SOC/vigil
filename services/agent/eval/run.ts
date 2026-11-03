@@ -228,7 +228,6 @@ async function runCase(engine: Engine, one: EvalCase, config: string, grader: Gr
     schema_version: 1,
     run_id: runId,
     run_kind: "investigate",
-    tenant_id: null,
     enqueued_at: new Date().toISOString(),
     enqueued_by: "eval",
     reason: "start",

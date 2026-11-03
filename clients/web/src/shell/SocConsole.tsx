@@ -554,7 +554,7 @@ function SocConsoleInner() {
       placement={commandOnHome ? 'hero' : 'header'}
       boards={commandBoards}
       onOpenChat={askVigil}
-      caseOpen={openCaseId !== null}
+      openCaseId={openCaseId}
       onOpenCase={setDrawerCase}
       onGo={(next, options) => {
         if (drawerCase) setDrawerCase(null)

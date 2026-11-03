@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Budget, Refusal } from "../contracts/budget.js";
-import type { NewEvent, RunKind } from "../contracts/events.js";
+import type { NewEvent, RunKind, StopCause } from "../contracts/events.js";
 import type { ToolResult } from "../contracts/tool.js";
 import type { Message, Provider } from "./provider.js";
 import type { Registry } from "./registry.js";
@@ -133,6 +133,8 @@ export interface Outcome<T> {
   status: Status;
   value: T | null;
   refusal: Refusal | null;
+  // Set only when a failed model call is why this turn failed.
+  stop_cause?: StopCause;
   // Set only when parked: the call the harness stopped at, and the checkpoint a
   // resolution must answer for it to go through.
   pending: Pending | null;

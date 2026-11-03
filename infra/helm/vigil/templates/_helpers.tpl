@@ -429,6 +429,37 @@ Bitnami Redis password secret — used by app pods to resolve REDIS_PASSWORD.
 {{- end -}}
 
 {{/*
+Password of the in-chart Redis. A Secret of its own (not the app Secret, and not
+the redis.bitnami.auth keys), so the Redis pod holds only this. Name and key come
+from redis.auth; redis.auth.existingSecret supplies a pre-created one and the
+chart then renders none (templates/redis-secret.yaml).
+*/}}
+{{/* Non-empty when pods reach the chart's own Redis (not Bitnami, not an external URL). */}}
+{{- define "vigil.redis.auth.inChart" -}}
+{{- if and .Values.redis.enabled (not .Values.redis.bitnami.enabled) (not .Values.redis.external.url) -}}true{{- end -}}
+{{- end -}}
+
+{{- define "vigil.redis.auth.secretName" -}}
+{{- .Values.redis.auth.existingSecret | default (printf "%s-auth" (include "vigil.redis.fullname" .)) -}}
+{{- end -}}
+
+{{- define "vigil.redis.auth.secretKey" -}}
+{{- .Values.redis.auth.existingSecretKey | default "REDIS_PASSWORD" -}}
+{{- end -}}
+
+{{/*
+The REDIS_PASSWORD env entry that reads it. Callers that talk to the in-chart
+Redis include this; an external Redis URL carries its own password.
+*/}}
+{{- define "vigil.redis.auth.env" -}}
+- name: REDIS_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "vigil.redis.auth.secretName" . }}
+      key: {{ include "vigil.redis.auth.secretKey" . }}
+{{- end -}}
+
+{{/*
 Is an external Redis URL stored in a secret?
 */}}
 {{- define "vigil.redis.urlFromSecret" -}}

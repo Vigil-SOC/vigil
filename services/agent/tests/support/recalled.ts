@@ -56,6 +56,7 @@ export const recalledFixture = (over: Partial<RecallResult> = {}): RecallResult 
     sightings: { per_key_cap: 4, overall_cap: 0 },
     verdicts: { per_key_cap: 0, overall_cap: 0 },
     gaps: { per_key_cap: 0, overall_cap: 0 },
+    notes: { per_key_cap: 0, overall_cap: 0 },
   },
   ranking: { order: "recency", per_key_cap: 20, overall_cap: 200 },
   ...over,
