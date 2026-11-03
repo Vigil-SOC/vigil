@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import and_, func, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, noload
 
 from core.cases.closure import CLOSURE_OUTCOMES, ClosureCategory, closed_by_person
 from core.llm.providers.registry import get_registry, infer_provider_type
@@ -330,6 +330,7 @@ async def get_affected_entities(
 
     findings = (
         db.query(Finding)
+        .options(noload(Finding.mitre_prediction_rows))
         .filter(Finding.created_at.between(start_time, end_time), _NOT_PROBE)
         .all()
     )
