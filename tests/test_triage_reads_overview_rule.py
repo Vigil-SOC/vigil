@@ -48,6 +48,7 @@ def seeded(monkeypatch):
     for module in (
         "core.findings.alert_outcomes",
         "core.findings.arrival_counts",
+        "core.findings.overview",
         "core.federation.lag",
         "services.api.triage_read",
     ):
@@ -127,3 +128,34 @@ def test_triage_reads_overviews_groups(seeded):
     waiting = triage_payload(range="all", kind="detection", state="queued")
     assert [r["finding_id"] for r in waiting["rows"]] == ["f-queued"]
     assert waiting["matched"] == 1
+
+
+def test_feed_reads_do_not_load_case_rows_per_finding(seeded):
+    """``Finding.cases`` is ``lazy="selectin"``; the triage and Overview feed
+    reads never use it, so they must not SELECT the linked case rows (all of
+    their JSONB, once per finding) (#3656)."""
+    from sqlalchemy import event
+    from sqlalchemy.engine import Engine
+
+    from core.findings import overview
+    from services.api.triage_read import triage_payload
+
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(Engine, "before_cursor_execute", record)
+    try:
+        triage_payload(range="all")
+        overview._feed()
+        overview.overview_alert("f-oncase")
+    finally:
+        event.remove(Engine, "before_cursor_execute", record)
+
+    case_loads = [
+        s
+        for s in statements
+        if "case_findings.finding_id" in s and "cases.timeline" in s
+    ]
+    assert case_loads == []
