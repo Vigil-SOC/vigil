@@ -22,8 +22,13 @@ it its lane (the rule's, or lane 3 when a lane-1 rule fails the gate), and the s
 `medic.db`. Each cycle then saves
 the engine state and writes the heartbeat; a loop that stops cycling for 180 s
 is ended by the watchdog. On start, if the last heartbeat shows Medic was
-stalled or off, one `gap` record goes into the chain first. Rules and
-`suppression.yaml` come from the `medic-core` pack in `packs/medic-core/` (read from the source tree; signed packs are F6).
+stalled or off, one `gap` record goes into the chain first. Rules,
+suppression and the log catalogue come from one rule pack, chosen at start:
+
+- **Dev mode** (`DEV_MODE` on): the unsigned `medic-core` source tree in `packs/medic-core/`. The pack lifecycle is not used and `/v1/status` shows `pack: null`.
+- **Otherwise**: the verified active pack in `<data dir>/packs/`. At start the lifecycle checks the image's trust root (`packs/bundled/trust-root.dsse.json`), falls back from a revoked pack, and seeds or upgrades from the image's bundled pack (`packs/bundled/medic-core.json`). Each pack event (`imported`, `rule_skipped`) goes into the decision log. `/v1/status.pack` describes the active pack.
+- **No verified pack** (and dev mode off): Medic logs one WARNING and starts with no rules. The built-in `watcher.*` rules still run, `check` stays healthy, and `pack` is null.
+
 `check` fails on any heartbeat state but `running` or `degraded` (C5 K-d), each
 with its own reason (`stopped`, `stalled`, `crash-looping`, unknown).
 
