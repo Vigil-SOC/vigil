@@ -18,7 +18,7 @@ END
 $$;
 
 -- CREATE stays: adoption compares this file's result with the frozen baseline.
--- Revision 0020_runtime_role_no_create revokes it on the way to head.
+-- Revision 0022_runtime_role_no_create revokes it on the way to head.
 GRANT USAGE, CREATE ON SCHEMA public TO vigil_app;
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO vigil_app;

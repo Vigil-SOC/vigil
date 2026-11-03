@@ -2,8 +2,8 @@
 
 from core.upgrade.revision import run_sql
 
-revision = "0020_runtime_role_no_create"
-down_revision = "0019_finding_ip_addresses"
+revision = "0022_runtime_role_no_create"
+down_revision = "0021_federation_error_kind"
 
 
 def upgrade() -> None:
