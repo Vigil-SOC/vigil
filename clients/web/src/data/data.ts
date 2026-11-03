@@ -10,6 +10,7 @@ export type ConsoleScreenKey =
   | 'metrics'
   | 'workflows'
   | 'health'
+  | 'medic'
   | 'settings'
 
 /** A nav item carrying a gate only renders when the gate is satisfied. */
@@ -27,6 +28,7 @@ export const NAV: [IconName, string, ConsoleScreenKey, NavGate?][] = [
   ['folder', 'Cases', 'cases'],
   ['bars', 'Case Metrics', 'metrics'],
   ['flow', 'Agents & workflows', 'workflows'],
+  ['eye', 'Medic', 'medic'],
   ['gear', 'Settings', 'settings'],
 ]
 
@@ -115,5 +117,6 @@ export const TITLES: Record<ConsoleScreenKey, [string, string]> = {
   metrics: ['Case Metrics', 'Real-time SOC performance analytics'],
   workflows: ['Agents & workflows', 'How Vigil works a case. Workflows are the plays, agents do the work, skills are what agents know how to do, and tool permissions decide what they may change on their own.'],
   health: ['Health', 'Operational health — approvals waiting, recent workflow runs, probe scores'],
+  medic: ['Medic', 'What Medic watches in this install, and the incidents it records'],
   settings: ['Settings', 'Configure Vigil — AI, integrations, users and platform'],
 }

@@ -192,17 +192,34 @@ _status_cache: Optional[tuple[float, dict]] = None
 _status_lock = asyncio.Lock()
 
 
+def _last_seen_at() -> Optional[str]:
+    """When the backend last got an answer from Medic (UTC), or None."""
+    from core.platform.medic_last_seen import read_last_seen
+
+    try:
+        seen, _ = read_last_seen()
+    except Exception:  # noqa: BLE001 - Postgres down: nothing to report
+        return None
+    at = seen.last_seen_at if seen else None
+    return at.strftime("%Y-%m-%dT%H:%M:%SZ") if at else None
+
+
 @router.get("/status", dependencies=[_read])
 async def medic_status_route() -> Response:
-    """Medic's state word, and its own status snapshot when it is Running."""
+    """Medic's state word, when it was last seen, and its own snapshot when Running."""
     global _status_cache
     from core.platform.medic_last_seen import current_status
 
     state = await asyncio.to_thread(current_status)
+    # Off has no history worth showing; the other states say when Medic last answered.
+    last_seen = (
+        None if state is MedicStatus.OFF else await asyncio.to_thread(_last_seen_at)
+    )
     if state is not MedicStatus.RUNNING:
-        return JSONResponse(
-            {"state": state.value}, headers={"Cache-Control": "no-store"}
-        )
+        body = {"state": state.value}
+        if last_seen:
+            body["last_seen_at"] = last_seen
+        return JSONResponse(body, headers={"Cache-Control": "no-store"})
     async with _status_lock:  # one fetch per process when polls overlap
         cached = _status_cache
         if cached is None or time.monotonic() - cached[0] >= _STATUS_TTL_S:
@@ -214,10 +231,10 @@ async def medic_status_route() -> Response:
             except ValueError:
                 return _problem(503, "medic_unavailable")
             cached = _status_cache = (time.monotonic(), snapshot)
-    return JSONResponse(
-        {"state": state.value, "medic": cached[1]},
-        headers={"Cache-Control": "no-store"},
-    )
+    body = {"state": state.value, "medic": cached[1]}
+    if last_seen:
+        body["last_seen_at"] = last_seen
+    return JSONResponse(body, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/incidents", dependencies=[_read])
