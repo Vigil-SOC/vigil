@@ -75,6 +75,13 @@ STATUS = (
     "from core.platform.medic_last_seen import current_status; "
     "print(current_status().value)"
 )
+# The word GET /api/processes carries as `medic` (the same function it calls).
+WORD = (
+    "from core.storage.connection import init_database; "
+    "init_database(); "
+    "from core.platform.medic_last_seen import current_state_word; "
+    "print(current_state_word())"
+)
 ROW = (
     "SELECT coalesce(last_seen_at::text, '-'), coalesce(first_failed_at::text, '-'), "
     "coalesce(failure_kind, '-'), coalesce(status_snapshot->>'state', '-') "
@@ -169,6 +176,8 @@ def test_enabled_reads_running_through_the_gateway(stack, running) -> None:
     # start-up grace or past it, and its agent-worker sensor reading (the stub
     # answers /readyz), so never blind, degraded or crash-looping here.
     assert state in MEDIC_STATES and state in ("starting", "running")
+    # ...and it is the word the console's status line reads.
+    assert stack.py("backend", WORD) == state
     # The agent sensor reads once the enable script has put the agents on
     # medic-net; the first poll can land while they are being recreated
     # (measured: can't see at +30 s, reporting from the next poll on).

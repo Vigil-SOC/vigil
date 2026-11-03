@@ -46,6 +46,8 @@ interface WfPhase {
   duration_ms?: number | null
   cost_usd?: number | null
   error?: string | null
+  /** What the phase's agent answered with; details has no fixed shape. */
+  output?: { summary?: string; details?: Record<string, unknown> } | null
 }
 /** A hunt reports beliefs and where each stands; it has no phases to report against. */
 export interface HuntStanding {
