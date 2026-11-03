@@ -2,6 +2,7 @@ import { Fragment, createContext, useCallback, useContext, useEffect, useRef, us
 import { Link, useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
+import { utcDay } from '../../shared/utc'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { EmptyState, Popup, TextInput, Toggle, activateOnKey } from '../../shared/ui'
 import { Markdown } from '../../shared/Markdown'
@@ -2527,6 +2528,8 @@ function OpenedOn({ hunt, onGo }: { hunt: HuntView; onGo: (tab: HuntTab) => void
   if (recall === null) return null
   const asked = recall.keys.length === 0 ? 'no entities' : recall.keys.join(', ')
   const found = recalledCount(recall)
+  const notes = recall.notes?.length ?? 0
+  const left = (found ?? 0) - notes
 
   return (
     <div className="muted text-[11.5px]" style={{ marginTop: 8 }}>
@@ -2534,7 +2537,10 @@ function OpenedOn({ hunt, onGo }: { hunt: HuntView; onGo: (tab: HuntTab) => void
         ? <>Episodic memory could not be read, so this hunt opened on nothing.</>
         : found === 0
           ? <>No earlier investigation had looked at <span className="mono">{asked}</span>.</>
-          : <>Opened on {found} record{found === 1 ? '' : 's'} earlier investigations left about <span className="mono">{asked}</span>.</>}
+          : notes === 0
+            ? <>Opened on {found} record{found === 1 ? '' : 's'} earlier investigations left about <span className="mono">{asked}</span>.</>
+            // A note is a person's statement, not a record an investigation left.
+            : <>Opened on {left > 0 ? `${left} record${left === 1 ? '' : 's'} earlier investigations left and ` : ''}{notes} note{notes === 1 ? '' : 's'} from your team about <span className="mono">{asked}</span>.</>}
       {' '}
       <button className="btn ghost text-[11px]" onClick={() => onGo('memory')}>Memory ▸</button>
     </div>
@@ -3434,12 +3440,12 @@ function HuntStandings({ hunt }: { hunt: HuntView }) {
 
 /** Questions the hunt could not answer. Its own section because "not there" and
  *  "could not look" read identically otherwise, and only one clears a hypothesis. */
-/** Rows across all three kinds. Null when the read could not be served: a zero there
+/** Rows across every kind, notes included. Null when the read could not be served: a zero there
  *  would read as "memory holds nothing about these entities", which is what an
  *  answered read that came back empty says. */
 function recalledCount(recall: HuntRecall): number | null {
   if (recall.unavailable !== undefined) return null
-  return (recall.verdicts?.length ?? 0) + (recall.gaps?.length ?? 0) + (recall.sightings?.length ?? 0)
+  return (recall.verdicts?.length ?? 0) + (recall.gaps?.length ?? 0) + (recall.sightings?.length ?? 0) + (recall.notes?.length ?? 0)
 }
 
 function fmtWindow(w: RecalledWindow): string {
@@ -3464,7 +3470,7 @@ function droppedNote(recall: HuntRecall): string | null {
   const dropped = recall.dropped
   if (dropped === undefined) return null
   const held: string[] = []
-  for (const kind of ['verdicts', 'gaps', 'sightings'] as const) {
+  for (const kind of ['notes', 'verdicts', 'gaps', 'sightings'] as const) {
     const rows = dropped[kind]
     if (rows === undefined) continue
     if (rows.per_key_cap > 0) held.push(`${rows.per_key_cap} ${kind} past one entity's share`)
@@ -3496,6 +3502,7 @@ function HuntMemory({ recall }: { recall: HuntRecall }) {
   const verdicts = recall.verdicts ?? []
   const gaps = recall.gaps ?? []
   const sightings = recall.sightings ?? []
+  const notes = recall.notes ?? []
   const dropped = droppedNote(recall)
 
   return (
@@ -3506,10 +3513,34 @@ function HuntMemory({ recall }: { recall: HuntRecall }) {
         the hunt when opened.
       </div>
 
-      {verdicts.length + gaps.length + sightings.length === 0 && (
+      {verdicts.length + gaps.length + sightings.length + notes.length === 0 && (
         <div className="muted text-[12.5px] py-2">
           Nothing had been concluded about {recall.keys.length === 1 ? 'this entity' : 'these entities'} before this
           hunt. The read ran and came back empty: this is the first investigation on record to look.
+        </div>
+      )}
+
+      {notes.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <h4>Told by your team ({notes.length})</h4>
+          <div className="muted text-[11.5px] mb-2">What a person on the team said. Context to weigh, not a finding.</div>
+          <div className="table-wrap">
+            <table className="tbl">
+              <thead><tr><th>Note</th><th>Entity</th><th>From</th></tr></thead>
+              <tbody>
+                {notes.map((n) => (
+                  <tr key={n.investigation_id}>
+                    <td>{n.statement}</td>
+                    <td className="mono tight text-[11px]">{n.entity_key}</td>
+                    <td className="tight">
+                      {n.written_by || '—'}
+                      <div className="muted text-[11px]">{utcDay(n.concluded_at) ?? '—'}</div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

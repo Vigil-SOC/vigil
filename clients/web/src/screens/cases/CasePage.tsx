@@ -540,7 +540,7 @@ function CaseNeedRow(props: NeedProps) {
 /** Rows the Memory tab's two cards show. */
 function memoryRows(fold: RunFold | null): number {
   const recall = fold?.recall
-  const opening = recall && !recall.unavailable ? recall.sightings.length + recall.verdicts.length : 0
+  const opening = recall && !recall.unavailable ? recall.notes.length + recall.sightings.length + recall.verdicts.length : 0
   return opening + recallEntityCalls(fold).length + (recall?.gaps.length ?? 0) + visibilityGaps(fold).length + leftOpen(fold).length
 }
 
@@ -619,7 +619,7 @@ function doorLines(folds: (RunFold | null)[], foldPhase: Phase, hasRun: boolean,
     evidence = 'Findings, no for or against'
   }
   const recalls = read.flatMap((one) => one.recall ?? [])
-  const recallRows = recalls.reduce((n, r) => n + r.sightings.length + r.verdicts.length + r.gaps.length, 0) + read.reduce((n, one) => n + recallEntityCalls(one).length, 0)
+  const recallRows = recalls.reduce((n, r) => n + r.notes.length + r.sightings.length + r.verdicts.length + r.gaps.length, 0) + read.reduce((n, one) => n + recallEntityCalls(one).length, 0)
   const blind = read.reduce((n, one) => n + visibilityGaps(one).length, 0)
   const open = read.reduce((n, one) => n + leftOpen(one).length, 0)
   const memory = [recallRows && plural(recallRows, 'recall row'), blind && plural(blind, 'gap'), open && plural(open, 'open question')].filter(Boolean).join(' · ')
@@ -2133,8 +2133,18 @@ function MemoryCards({ parts }: { parts: MemoryPart[] }) {
             ) : (
               <p className="muted">{tag && <RunTag label={tag} />}The run did not journal an opening recall.</p>
             )}
-            {(opened?.sightings.length || opened?.verdicts.length || recalled.length) ? (
+            {(opened?.notes.length || opened?.sightings.length || opened?.verdicts.length || recalled.length) ? (
               <div className="case-mem-rows">
+                {/* A person's statement, as the run read it: no Withdraw here (the side panel has it). */}
+                {opened?.notes.map((row, i) => (
+                  <MemoryRow
+                    key={`n${i}`}
+                    run={tag}
+                    tag="Note"
+                    text={[entityShown(row.entity), row.statement].filter(Boolean).join(' — ')}
+                    meta={[row.writtenBy || '—', utcDay(row.concludedAt)].filter(Boolean).join(' · ')}
+                  />
+                ))}
                 {opened?.sightings.map((row, i) => (
                   <MemoryRow
                     key={`s${i}`}
