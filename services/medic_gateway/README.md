@@ -7,7 +7,7 @@ never as a sidecar, and is built from the Python standard library alone.
 | Listener | Caller → upstream | Allows |
 |---|---|---|
 | outbound | Medic → backend | 15 exact `GET`s (SP1 decision 1 a′), plus `GET /_gw/status` (the gateway's login state) |
-| inbound | backend → Medic API | X2's 8 reads + `POST /v1/incidents/{id}/feedback`; only `X-Medic-Key`, `X-Medic-Admin`, `X-Request-Id` |
+| inbound | backend → Medic API | X2's 7 reads + `POST /v1/incidents/{id}/feedback`; only `X-Medic-Key`, `X-Medic-Admin`, `X-Request-Id` |
 
 Rules: the raw request-target is checked against a narrow character set and an
 exact list; anything ambiguous (`%`, `.`, `//`, `;`, `\`, absolute-form, unknown or

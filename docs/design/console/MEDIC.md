@@ -2,13 +2,13 @@
 
 ## 1. Purpose and scope
 
-This file holds the UX requirements for Medic in the console, UX-1 to UX-30: the Medic fact in the shell status line and the `/medic` screen with its Incidents, Can't see, Content pack and Export tabs. Its readers are the implementers of the screen issues (#2101, #2103, #2105, #2107, #2109, #2113) and their reviewers; each of those issues cites the UX rows it builds (section 9), and where this file and the epic's record (#2094) differ, the record wins. It is the Medic console's requirements, not phase-1 PRD scope (`PRD-phase1.md` does not cover Medic).
+This file holds the UX requirements for Medic in the console, UX-1 to UX-30 (UX-29 was removed and the other numbers were not changed): the Medic fact in the shell status line and the `/medic` screen with its Incidents, Can't see and Content pack tabs. Its readers are the implementers of the screen issues (#2101, #2103, #2105, #2107, #2109) and their reviewers; each of those issues cites the UX rows it builds (section 9), and where this file and the epic's record (#2094) differ, the record wins. It is the Medic console's requirements, not phase-1 PRD scope (`PRD-phase1.md` does not cover Medic).
 
-Medic's own contracts are the source for every state value, record type and field name used here: `services/medic/contracts/decision-record.schema.json` (the records Medic stores), `services/medic/contracts/medic-api.openapi.yaml` (the nine read and feedback operations, each naming its permission in `x-medic-permission`), `services/medic/contracts/pack-manifest.schema.json` and `services/medic/contracts/evidence-report.schema.json`. The console reaches Medic only through the backend's `/api/medic/…` routes, added by #2099, which check `medic.read` or `medic.admin` (`core/auth/permissions.py`; seeded by `infra/database/init/45_medic_permissions.sql`: Admin gets both, Manager gets `medic.read`).
+Medic's own contracts are the source for every state value, record type and field name used here: `services/medic/contracts/decision-record.schema.json` (the records Medic stores), `services/medic/contracts/medic-api.openapi.yaml` (the eight read and feedback operations, each naming its permission in `x-medic-permission`), and `services/medic/contracts/pack-manifest.schema.json`. The console reaches Medic only through the backend's `/api/medic/…` routes, added by #2099, which check `medic.read` or `medic.admin` (`core/auth/permissions.py`; seeded by `infra/database/init/45_medic_permissions.sql`: Admin gets both, Manager gets `medic.read`).
 
 ### Overview
 
-Medic shows up in two places. **(1)** A **Medic fact in the shell status line**, for everyone, shows the status word and turns red for Down, Blind, Not recording and Crash-looping. **(2)** A **`/medic` screen**, gated by `medic.read`, is headed by a **status block** (Medic's single worst-wins status) and has four tabs: **Incidents** (a list, then a detail with the "would have" panel, timeline, evidence and feedback), **Can't see** (sensors), **Content pack** and **Export**. Every write action needs `medic.admin`: rating, pack import, revert and export. Medic in observe-only mode asks the admin for nothing. Ratings are invited but never nagged, and the unrated state is always visible, because a missing rating is left out of Medic's evaluation metrics and never counted as "agree". Everything Medic stores is displayed as **text, never HTML** (section 10).
+Medic shows up in two places. **(1)** A **Medic fact in the shell status line**, for everyone, shows the status word and turns red for Down, Blind, Not recording and Crash-looping. **(2)** A **`/medic` screen**, gated by `medic.read`, is headed by a **status block** (Medic's single worst-wins status) and has three tabs: **Incidents** (a list, then a detail with the "would have" panel, timeline, evidence and feedback), **Can't see** (sensors), and **Content pack**. Every write action needs `medic.admin`: rating, pack import, revert and switching to the bundled pack. Medic in observe-only mode asks the admin for nothing. Ratings are invited but never nagged, and the unrated state is always visible, because a missing rating is left out of Medic's evaluation metrics and never counted as "agree". Everything Medic stores is displayed as **text, never HTML** (section 10).
 
 ### Design sources
 
@@ -21,8 +21,8 @@ There is no Claude Design board for Health or `/medic`: Health stays unlisted at
 | UX-1 | Status word in the shell status line | Everyone | The status word of section 3. Users without `medic.read` see this word only |
 | UX-2 | Shell status line | Everyone (status word only) | `Medic: <state> · <for N min>` |
 | UX-3 | (cut, #2094 record) | | |
-| UX-4 | `/medic` (More menu, label "Medic") | `medic.read` | The status block of section 3, then tabs: `?tab=incidents` (default) · `cant-see` · `pack` · `export` |
-| UX-5 | Write actions | `medic.admin` only; buttons are **hidden** without it, and the backend enforces it server-side (#2099) | Rate, comment, import, revert, switch to bundled, export |
+| UX-4 | `/medic` (More menu, label "Medic") | `medic.read` | The status block of section 3, then tabs: `?tab=incidents` (default) · `cant-see` · `pack` |
+| UX-5 | Write actions | `medic.admin` only; buttons are **hidden** without it, and the backend enforces it server-side (#2099) | Rate, comment, import, revert, switch to bundled |
 
 The status word for everyone (UX-1, UX-2) comes from the `medic` field that #2101 adds to `ProcessStates` on `GET /api/processes` (`core/platform/process_health.py`; `platform.read`), the read `clients/web/src/shell/statusLine.ts` already folds. Backend off, down or unknown wins; otherwise it is Medic's stored `status_snapshot.state`, at most one poll (60 s) old. There is no second, ungated Medic route; the `medic.read` status route (#2099) feeds the `/medic` status block only. `/medic` is a new screen key, gated through `SCREEN_PERMS` in `clients/web/src/shell/SocConsole.tsx` and listed in `MORE_KEYS`; both entries are added by #2103, in the new folder `clients/web/src/screens/medic/` (new in #2103).
 
@@ -142,7 +142,7 @@ Components: `TextInput` `EmptyState`. The rating control is plain code under `cl
 
 Tokens: `vio` `vio-bg`
 
-## 7. Can't see, Content pack, Export
+## 7. Can't see, Content pack
 
 ### Can't see (`?tab=cant-see`)
 
@@ -168,15 +168,6 @@ Components: `card` `InfoTip` `ConfirmDialog` `HoldButton` `EmptyState` `hold-to-
   - **Switch to bundled:** shown only when the active pack is out of Vigil's range after an upgrade (`in_vigil_range: false`, with `bundled` set). Logged override.
 - **UX-28 Revoked key:** a red strip says "Pack X was removed: its signing key was revoked. Medic is running the bundled baseline Y." (from `revoked_notice.removed` and `revoked_notice.running`). It stays until an admin acknowledges it, and the acknowledgement is logged; the acknowledge operation is added by #2026.
 
-### Export (`?tab=export`)
-
-The report is `GET /v1/export` (`getEvidenceExport`): one JSON document in the closed schema `services/medic/contracts/evidence-report.schema.json`, with its sha256 in the `X-Medic-Sha256` header.
-
-Tokens: `bg1` `bg2` `ln0` `tx0` `tx2` `ac`
-Components: `card` `DurationPicker` `EmptyState` `MedicExportPreview` (new in #2113)
-
-- **UX-29** `medic.admin` only. Pick a period (defaults to the last 7 days; the API takes at most 31 days, not in the future). With `DurationPicker` the period is "the last N" ending now, clamped to 31 days. **Generate** produces the evidence report. The console then shows the **exact bytes** in a read-only monospace viewer, with size, sha256 and the chain head (`chain_head`), plus the line "Contains counts, rates, rule IDs and enums only. No logs, evidence or comments". **Download** saves the same bytes it previewed, with no second fetch. **There is no "send" button.** The admin sends the file through their own channel, so the console adds no path off the site. Each export is written to the backend's audit log (#2099).
-
 ## 8. Empty, error and loading states
 
 - **UX-30 Empty, error and loading states.** Use `EmptyState` throughout (`loading` and `error` for the live region). **Off:** "Medic is off on this install." Admins also see "Set `VIGIL_MEDIC_ENABLED=true`" (see `docs/medic/enable.md`). **Down or Unknown:** `/medic` still shows the last stored incidents, with a red strip "Medic is down: showing data up to HH:MM". **No incidents:** "No incidents. Medic is watching 11 sensors." (the count is `sensors.reporting`). Never show "All healthy" while any sensor is in "can't see".
@@ -193,8 +184,8 @@ Which issue builds each requirement. Each screen issue cites its rows; "not assi
 | §2 | UX-1 Status word in the status line, for everyone | #2101 (`ProcessStates.medic` and the fold fact) |
 | §2 | UX-2 Status line | #2101 |
 | §2 | UX-3 (cut, #2094 record) | none |
-| §2 | UX-4 `/medic` and its tabs | #2103 (Incidents), #2107 (Can't see, Content pack), #2113 (Export) |
-| §2 | UX-5 Write actions for `medic.admin` only | #2105 (rate, comment), #2109 (import, revert, switch), #2113 (export); server side #2099 |
+| §2 | UX-4 `/medic` and its tabs | #2103 (Incidents), #2107 (Can't see, Content pack) |
+| §2 | UX-5 Write actions for `medic.admin` only | #2105 (rate, comment), #2109 (import, revert, switch); server side #2099 |
 | §3 | UX-6 States and weight | #2101 (state word, `LevelBadge` `label`); #2103 (status block) |
 | §3 | UX-7 Status line fact | #2101 (`ProcessStates.medic` and the fold fact) |
 | §3 | UX-8 (cut, #2094 record) | none |
@@ -218,8 +209,7 @@ Which issue builds each requirement. Each screen issue cites its rows; "not assi
 | §7 | UX-26 Suppression counts | #2107 |
 | §7 | UX-27 Pack actions | #2109 (Medic operations: #2026) |
 | §7 | UX-28 Revoked key strip | #2107 (acknowledge operation: #2026) |
-| §7 | UX-29 Export | #2113 (report: #2111) |
-| §8 | UX-30 Empty, error and loading states | #2101 (status part), #2103; each tab's own states: #2107, #2113 |
+| §8 | UX-30 Empty, error and loading states | #2101 (status part), #2103; each tab's own states: #2107 |
 
 ## 10. Security notes for reviewers
 
@@ -230,5 +220,4 @@ Everything Medic stores came from Vigil's logs, a pack, or an admin, so the cons
 - **Hostile input.** Every Medic string a screen shows renders each of these inert, as visible text: `<img src=x onerror=alert(1)>`, a Markdown link to a script URL (the string `[x]` immediately followed by `(javascript:alert(1))`), a `javascript:` URL, ANSI colour and cursor codes, a 10 KB string, and RTL override characters (UX-18).
 - **The one external link**, once a `pack_diff` field exists, is that link: new tab, `rel="noopener noreferrer"`. Until then `/medic` has none (UX-25).
 - **Identity from the session.** The feedback request carries no user field; the backend sets the admin from the session (UX-19).
-- **No path off the site.** Export is download only, with no send button (UX-29).
 - **Hidden and enforced.** Write controls are hidden without `medic.admin`, and the backend refuses them anyway (UX-5).
