@@ -135,6 +135,14 @@ def _noise_clear(p: Mapping[str, Any]) -> str:
     return f"Cleared the noise mark on {p.get('finding_id') or 'an alert'}"
 
 
+def _note(verb: str) -> Callable[[Mapping[str, Any]], str]:
+    return lambda p: (
+        f"{verb} a note on {p['entity_key']}"
+        if p.get("entity_key")
+        else f"{verb} a note"
+    )
+
+
 def _role(verb: str) -> Callable[[Mapping[str, Any]], str]:
     return lambda p: (
         f"{verb} role {p['role_id']}" if p.get("role_id") else f"{verb} a role"
@@ -220,6 +228,9 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "approval.reject": "Rejected an action",
     trail.ACTION_FINDING_NOISE_MARK: _noise_mark,
     trail.ACTION_FINDING_NOISE_CLEAR: _noise_clear,
+    # Analyst notes on an entity (core/memory/notes.py)
+    "memory.note.written": _note("Wrote"),
+    "memory.note.withdrawn": _note("Withdrew"),
     # Old audit stores copied on upgrade (0018_legacy_audit_copy)
     "case.history": _case_history,
     "investigation.log": _investigation_log,

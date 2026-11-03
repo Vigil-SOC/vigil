@@ -43,8 +43,8 @@ class InvestigationKind(str, Enum):
 
     A run-keyed schema cannot represent the Case-authored Verdicts the writer
     split requires. Wider than ``source_tier.InvestigationKind``, which selects
-    a source vocabulary — an ``analyst`` investigation names no sources, and
-    nothing writes one yet.
+    a source vocabulary — an ``analyst`` investigation names no sources. It is
+    an analyst's note on an entity (``episodic_notes``), and its id is the note's.
     """
 
     HUNT = "hunt"
@@ -165,6 +165,7 @@ RECALL_RESULT_KEYS: Tuple[str, ...] = (
     "sightings",
     "verdicts",
     "gaps",
+    "notes",
     "dropped",
     "ranking",
 )
@@ -223,11 +224,21 @@ GAP_FIELDS: Tuple[str, ...] = _PROVENANCE + (
     "subject_entities",
 )
 
+# What a person on the team said about one entity. `investigation_kind` is always
+# `analyst`, `investigation_id` the note's id and `concluded_at` when it was
+# written. Context for a run to weigh, never evidence it gathered.
+NOTE_FIELDS: Tuple[str, ...] = _PROVENANCE + (
+    "entity_key",
+    "statement",
+    "written_by",
+)
+
 WINDOW_FIELDS: Tuple[str, ...] = ("first_seen", "last_seen")
 
 # Per kind, and per reason: the two reasons mean different things to a caller.
-# A total is the sum and is not restated.
-DROPPED_KINDS: Tuple[str, ...] = ("sightings", "verdicts", "gaps")
+# A total is the sum and is not restated. Notes are capped per key only, so their
+# overall_cap is always 0.
+DROPPED_KINDS: Tuple[str, ...] = ("sightings", "verdicts", "gaps", "notes")
 DROPPED_REASONS: Tuple[str, ...] = ("per_key_cap", "overall_cap")
 
 # How a queried key is matched against a stored one. The rule is `defang` then
@@ -285,7 +296,8 @@ RECALL_ORDER = "concluded_at DESC, id ASC"
 # one entity present in every hunt would otherwise consume by itself.
 RECALL_PER_KEY_CAP = 20
 
-# Rows across all kinds and keys, applied after the per-key cap.
+# Rows across sightings, verdicts and gaps, applied after the per-key cap. Notes
+# are outside it: a person wrote each one, and one entity's notes are few.
 RECALL_OVERALL_CAP = 100
 
 # Copied into the result rather than referenced, because a RunSpec records the

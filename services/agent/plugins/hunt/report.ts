@@ -306,7 +306,7 @@ function openedOn(recall: RecallPayload | null): string[] {
   return [
     heading,
     "",
-    `Read on ${asked}, as of ${recall.as_of}. What earlier investigations left on the record:`,
+    `Read on ${asked}, as of ${recall.as_of}. What ${recall.notes.length > 0 ? "analysts and " : ""}earlier investigations left on the record:`,
     "",
     ...notes.map((note) => `- ${note}`),
     "",

@@ -33,7 +33,8 @@ export const STANCES = ["supports", "weakens", "neither"] as const;
 export type Stance = (typeof STANCES)[number];
 
 // Keyed by kind and id, never run_id: a run-keyed schema cannot represent the
-// Case-authored Verdicts the writer split requires. Nothing writes `analyst` yet.
+// Case-authored Verdicts the writer split requires. `analyst` is a note a person
+// wrote on an entity, and its id is the note's.
 export const INVESTIGATION_KINDS = ["hunt", "case", "analyst"] as const;
 export type InvestigationKind = (typeof INVESTIGATION_KINDS)[number];
 
@@ -127,6 +128,14 @@ export interface RecalledGap extends RecalledProvenance {
   readonly subject_entities: readonly string[];
 }
 
+// What a person on the team said about one entity, who wrote it and when
+// (concluded_at). Context for the run to weigh, never evidence it gathered.
+export interface RecalledNote extends RecalledProvenance {
+  readonly entity_key: string;
+  readonly statement: string;
+  readonly written_by: string;
+}
+
 // Per reason, because the two mean different things to a caller: per_key_cap
 // means one entity had more history than its share, overall means the read was
 // broad. A total is the sum and is not restated.
@@ -139,6 +148,8 @@ export interface RecallDropped {
   readonly sightings: DroppedRows;
   readonly verdicts: DroppedRows;
   readonly gaps: DroppedRows;
+  // Capped per key only, so overall_cap is always 0.
+  readonly notes: DroppedRows;
 }
 
 // The parameters that chose this set, copied in rather than referenced: a RunSpec
@@ -149,12 +160,13 @@ export interface RecallRanking {
   readonly order: string;
   // Rows per kind, per key. Applied as a LATERAL and before the overall cap.
   readonly per_key_cap: number;
-  // Rows across all kinds and keys.
+  // Rows across sightings, verdicts and gaps; notes are outside it.
   readonly overall_cap: number;
 }
 
 // Named as a value too, so recallOf can check for them at runtime, which is where
-// the drift arrives.
+// the drift arrives. Required keys only: `notes` arrived later, and a ledger
+// journaled before it is read through withNotes rather than refused.
 export const RECALL_RESULT_KEYS = [
   "keys",
   "as_of",
@@ -177,6 +189,7 @@ export interface RecallResult {
   readonly sightings: readonly RecalledSighting[];
   readonly verdicts: readonly RecalledVerdict[];
   readonly gaps: readonly RecalledGap[];
+  readonly notes: readonly RecalledNote[];
   readonly dropped: RecallDropped;
   readonly ranking: RecallRanking;
 }
@@ -242,7 +255,8 @@ export const emptyRecall = (keys: readonly string[], asOf: string): RecallResult
     sightings: [],
     verdicts: [],
     gaps: [],
-    dropped: { sightings: none, verdicts: none, gaps: none },
+    notes: [],
+    dropped: { sightings: none, verdicts: none, gaps: none, notes: none },
     ranking: { order: "none", per_key_cap: 0, overall_cap: 0 },
   };
 };
@@ -295,11 +309,14 @@ const sightingNote = (sighting: RecalledSighting): string => {
   return held.join(" — ");
 };
 
+const analystNoteLine = (note: RecalledNote): string =>
+  [`analyst note on ${note.entity_key}: ${note.statement}`, `written by ${note.written_by}, ${note.concluded_at}`].join(" — ");
+
 // Per kind and per reason, because the two reasons mean different things to a
 // reader: a per-key cap says one entity had more history than its share, and an
 // overall cap says the read was simply broad. Summing them keeps the number and
 // discards the half a reader would act on.
-const DROPPED_KINDS = ["sightings", "verdicts", "gaps"] as const;
+const DROPPED_KINDS = ["sightings", "verdicts", "gaps", "notes"] as const;
 
 const droppedNote = (result: RecallResult): string | null => {
   const held: string[] = [];
@@ -311,11 +328,13 @@ const droppedNote = (result: RecallResult): string | null => {
   return held.length === 0 ? null : `Some history was not carried: ${held.join(", ")}.`;
 };
 
-// What an earlier investigation concluded before where an entity was seen: a
-// settled claim bears on the run's own question and a sighting is a lead. A fixed
-// presentation fold, not a parameter -- see the note at the top of this file.
+// What a person on the team said first, then what an earlier investigation
+// concluded before where an entity was seen: a settled claim bears on the run's
+// own question and a sighting is a lead. A fixed presentation fold, not a
+// parameter -- see the note at the top of this file.
 export function recalledNotes(result: RecallResult): readonly string[] {
   const notes = [
+    ...result.notes.map(analystNoteLine),
     ...result.verdicts.map(verdictNote),
     ...result.gaps.map(gapNote),
     ...result.sightings.map(sightingNote),
@@ -323,6 +342,18 @@ export function recalledNotes(result: RecallResult): readonly string[] {
   if (notes.length === 0) return [];
   const dropped = droppedNote(result);
   return dropped === null ? notes : [...notes, dropped];
+}
+
+// A payload journaled before notes existed has no `notes` and no `dropped.notes`.
+// Read once, here, as none of either, so an old run renders exactly as it did.
+function withNotes(payload: object): RecallResult {
+  const held = payload as RecallResult;
+  if (held.notes !== undefined && held.dropped?.notes !== undefined) return held;
+  return {
+    ...held,
+    notes: held.notes ?? [],
+    dropped: { ...held.dropped, notes: held.dropped?.notes ?? { per_key_cap: 0, overall_cap: 0 } },
+  };
 }
 
 // Only what the two functions below read off an event: the kind that selects it
@@ -366,7 +397,7 @@ export function recalledRowsOf(log: readonly LedgerRecord[]): RecallResult | nul
   // Validated rather than cast: a drifted payload cast to a RecallResult renders
   // as an entity nobody has looked at -- see RecallUnavailable for why that
   // particular wrong answer is the one that hides.
-  return RECALL_RESULT_KEYS.every((key) => key in payload) ? (payload as RecallResult) : null;
+  return RECALL_RESULT_KEYS.every((key) => key in payload) ? withNotes(payload) : null;
 }
 
 // The journaled payload whole, outage included, for a reader that presents the read
@@ -399,5 +430,5 @@ export const recallOf = (result: ToolResult): RecallResult | null => {
   if (!result.ok || result.rowCount !== 1 || result.rows.length !== 1) return null;
   const row = result.rows[0];
   if (typeof row !== "object" || row === null) return null;
-  return RECALL_RESULT_KEYS.every((key) => key in row) ? (row as RecallResult) : null;
+  return RECALL_RESULT_KEYS.every((key) => key in row) ? withNotes(row) : null;
 };
