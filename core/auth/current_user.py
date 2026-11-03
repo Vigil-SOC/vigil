@@ -13,6 +13,7 @@ import logging
 from typing import Callable, Optional
 
 from fastapi import Header, HTTPException, Request, status
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from core.auth.auth_cookies import ACCESS_COOKIE_NAME
@@ -92,7 +93,8 @@ def _detached(lookup: Callable[[Session], Optional[User]]) -> Optional[User]:
     """Run ``lookup`` in a short session and detach its row.
 
     Holding the request's session for the lookup kept its connection idle in
-    transaction for the whole handler (#3660).
+    transaction for the whole handler (#3660). Callers run this in a worker
+    thread: a checkout waiting on a full pool must not block the event loop.
     """
     with unit_of_work() as db:
         user = lookup(db)
@@ -134,7 +136,7 @@ async def get_current_user(
     # DEV MODE: Bypass authentication and return mock user
     if DEV_MODE:
         logger.debug("DEV_MODE: Bypassing authentication")
-        return _detached(_get_dev_user)
+        return await run_in_threadpool(_detached, _get_dev_user)
 
     cookie = request.cookies.get(ACCESS_COOKIE_NAME)
     # The cookie wins when a bearer is also present.
@@ -209,8 +211,9 @@ async def get_current_user(
         )
 
     # Get user from database
-    user = _detached(
-        lambda db: db.query(User).filter(User.user_id == payload["user_id"]).first()
+    user = await run_in_threadpool(
+        _detached,
+        lambda db: db.query(User).filter(User.user_id == payload["user_id"]).first(),
     )
     if not user:
         raise HTTPException(
