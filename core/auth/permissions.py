@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from fastapi import Depends, Header, HTTPException, Request, status
-from sqlalchemy.orm import Session
 
 from core.auth import current_user as current_user_module
 from core.auth.auth_cookies import ACCESS_COOKIE_NAME
@@ -363,14 +362,11 @@ def reject_mcp_credential(request: Request, authorization: Optional[str]) -> Non
 
 async def resolve_signed_in_user(
     request: Request,
-    session: Optional[Session] = Depends(current_user_module._no_session),
     authorization: Optional[str] = Header(None),
 ) -> User:
     """The session user, after a credential has already been refused."""
     reject_mcp_credential(request, authorization)
-    user = await current_user_module.get_current_user(
-        request, authorization, session=session
-    )
+    user = await current_user_module.get_current_user(request, authorization)
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="User account is inactive"

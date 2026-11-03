@@ -12,7 +12,8 @@ are unaffected.
 import logging
 from typing import Optional
 
-from fastapi import Depends, Header, HTTPException, Request, status
+from fastapi import Header, HTTPException, Request, status
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from core.auth.auth_cookies import ACCESS_COOKIE_NAME
@@ -88,19 +89,30 @@ def _get_dev_user(session: Session) -> User:
     return _dev_user
 
 
-def _no_session() -> Optional[Session]:
-    """Default FastAPI dependency for ``session`` so auth opens a short-lived
-    ``unit_of_work`` rather than holding a request-spanning ``UnitOfWorkSession``
-    open across the endpoint handler (#3660).
+def _load_detached(user_id: Optional[str]) -> Optional[User]:
+    """Read a user in a session of its own and detach it, so the connection is
+    back in the pool before the endpoint runs. ``None`` is the DEV_MODE admin.
+
+    A request-scoped session would hold its connection idle in transaction for
+    the whole handler while the permission check and the handler take more
+    from the same pool. Callers run this in a worker thread: a checkout that
+    waits on a full pool must not block the event loop that returns
+    connections to it.
     """
-    return None
+    with unit_of_work() as db:
+        if user_id is None:
+            user = _get_dev_user(db)
+        else:
+            user = db.query(User).filter(User.user_id == user_id).first()
+        # The transient dev fallback was never added to the session.
+        if user is not None and user in db:
+            db.expunge(user)
+    return user
 
 
 async def get_current_user(
     request: Request,
     authorization: Optional[str] = Header(None),
-    *,
-    session: Optional[Session] = Depends(_no_session),
 ) -> User:
     """
     Resolve the authenticated user from either the access_token HttpOnly
@@ -113,10 +125,11 @@ async def get_current_user(
     Args:
         request: FastAPI request (used to read the access_token cookie).
         authorization: Authorization header (Bearer token fallback).
-        session: Database session.
 
     Returns:
-        Current User object.
+        The current User, detached: the lookup's connection goes back to the
+        pool before the endpoint runs. An endpoint that writes to the user
+        loads it into its own session first.
 
     Raises:
         HTTPException: If no token is present, validation fails, or the user
@@ -130,11 +143,7 @@ async def get_current_user(
     # DEV MODE: Bypass authentication and return mock user
     if DEV_MODE:
         logger.debug("DEV_MODE: Bypassing authentication")
-        with unit_of_work(session) as db:
-            dev_user = _get_dev_user(db)
-            if session is None and dev_user in db:
-                db.expunge(dev_user)
-            return dev_user
+        return await run_in_threadpool(_load_detached, None)
 
     cookie = request.cookies.get(ACCESS_COOKIE_NAME)
     # The cookie wins when a bearer is also present.
@@ -208,17 +217,12 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Get user from database inside a short-lived unit_of_work so the pooled
-    # connection is returned before the route handler runs (#3660).
-    with unit_of_work(session) as db:
-        user = db.query(User).filter(User.user_id == payload["user_id"]).first()
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found",
-            )
-        if session is None and user in db:
-            db.expunge(user)
+    user = await run_in_threadpool(_load_detached, payload["user_id"])
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+        )
 
     if not user.is_active:
         raise HTTPException(

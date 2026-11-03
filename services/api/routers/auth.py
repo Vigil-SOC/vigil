@@ -54,6 +54,7 @@ from core.auth.token_blacklist import (
 from core.config import get_settings
 from core.platform.email_service import mail_is_configured, send_email
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
+from core.storage.unit_of_work import unit_of_work
 from core.storage.models import SignIn, User
 from core.storage.schemas import UserSchema
 from core.time import utcnow
@@ -85,7 +86,16 @@ def _bearer_token(request: Request) -> Optional[str]:
     return None
 
 
-async def _refuse_service_account(request: Request, session: UnitOfWorkSession):
+def _load_user(user_id: str) -> Optional[User]:
+    """A user read in a short session of its own, detached."""
+    with unit_of_work() as session:
+        user = _get_user(session, user_id)
+        if user is not None:
+            session.expunge(user)
+    return user
+
+
+async def _refuse_service_account(request: Request):
     """Refuse a service account's token on every route but login and refresh.
 
     On the whole router, so a route added later can't leave it out. It never
@@ -93,6 +103,8 @@ async def _refuse_service_account(request: Request, session: UnitOfWorkSession):
     dependency (or none, for the public routes) decides as before. Both the
     access cookie and the bearer are checked, whichever the route would use.
     The header is read off the request so it stays out of the OpenAPI schema.
+    Its read is its own short session, like ``get_current_user``'s: the
+    request's would hold a connection while authentication takes another.
     """
     if request.scope.get("endpoint") in _SERVICE_ACCOUNT_ENDPOINTS:
         return
@@ -101,7 +113,7 @@ async def _refuse_service_account(request: Request, session: UnitOfWorkSession):
         user_id = payload.get("user_id") if payload else None
         if not user_id:
             continue
-        user = await asyncio.to_thread(_get_user, session, user_id)
+        user = await asyncio.to_thread(_load_user, user_id)
         if user is not None and _is_service_account(user):
             await asyncio.to_thread(
                 trail_events.refused,
@@ -912,11 +924,14 @@ async def update_current_user(
             detail="Send profile fields in the JSON body",
         )
 
+    # current_user is detached; the write goes through the endpoint's session.
+    user = session.get(User, current_user.user_id)
+
     try:
         email_changed, payload = await asyncio.to_thread(
             _apply_profile_update,
             session,
-            current_user,
+            user,
             body.full_name,
             body.email,
             body.current_password,
@@ -935,7 +950,7 @@ async def update_current_user(
                 )
             # After the Redis round-trip. A refresh during that wait must
             # still be older than the cutoff this request commits.
-            stamp_session_cutoff(current_user)
+            stamp_session_cutoff(user)
 
         logger.info(f"User profile updated: {current_user.username}")
         return payload
@@ -996,9 +1011,12 @@ async def change_password(
             detail=exc.as_detail(),
         )
 
+    # current_user is detached; the write goes through the endpoint's session.
+    user = session.get(User, current_user.user_id)
+
     try:
         # Enforce no-reuse + hash + history rotation
-        await asyncio.to_thread(_apply_new_password, current_user, body.new_password)
+        await asyncio.to_thread(_apply_new_password, user, body.new_password)
         await asyncio.to_thread(
             trail_events.record,
             session,
@@ -1021,7 +1039,7 @@ async def change_password(
             )
         # After the Redis round-trip, so a refresh during that wait is still
         # older than the cutoff this request commits.
-        stamp_session_cutoff(current_user)
+        stamp_session_cutoff(user)
 
         clear_auth_cookies(response)
         logger.info(f"Password changed for user: {current_user.username}")
