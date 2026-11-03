@@ -24,7 +24,7 @@ from services.medic.contracts import decision_chain
 from services.medic.contracts.rule_check import seconds
 from services.medic.engine import evaluate as ev
 from services.medic.engine import suppress
-from services.medic.engine.history import History, gkey, sample_entries
+from services.medic.engine.history import RETIRE_S, History, gkey, sample_entries
 from services.medic.engine.loader import DEFAULT_FOR_S, DEFAULT_KEEP_S, LoadedRule
 from services.medic.engine.upgrade import UpgradeWatch
 
@@ -33,7 +33,6 @@ TICK_S = 15
 BLIND = "watcher.sensor-blind"  # built-in (§2, K1 T-09): one group per sensor
 GROUP_CAP = 64  # live groups per rule; the rest share one overflow group (§3)
 OVERFLOW = "__overflow__"
-RETIRE_S = 24 * 3600  # covered silence before a group retires (§3)
 FLAP_OPENS, FLAP_WINDOW_S, FLAP_HOLD_S = 3, 3600, 1800  # §5
 OPEN = ("firing", "resolving")
 _INSTANCE = re.compile(r"^mi_[0-9a-f]{16}$")
@@ -229,6 +228,7 @@ class Engine:
         self._status = status
         reach = self._horizon + 2 * max(self.history.interval.values(), default=0)
         self.history.prune(now - reach - TICK_S)
+        self.upgrade.prune(now)
         return records
 
     def _retire_removed_rules(self, now: float) -> list[dict]:

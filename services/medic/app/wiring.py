@@ -49,7 +49,6 @@ DEV_SUPPRESSION = DEV_RULES_DIR / "suppression.yaml"
 # pod label, so the file stays ungrouped and Helm adds the group at load.
 WORKER_NOT_READY = "pipeline.agent-worker-not-ready"
 GROUP_CAP = 64  # live groups per rule (semantics.md §3)
-ENGINE_STATE_VERSION = 1
 RECORDING_STOPPED = "watcher.recording-stopped"
 HELD_MAX = 1000  # decisions kept in memory while recording is stopped
 
@@ -257,11 +256,10 @@ def save_engine_state(data_dir: Path, state: dict[str, Any]) -> None:
     """Atomically (temp file, then rename), private to Medic's uid."""
     path = engine_state_path(data_dir)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    doc = {"v": ENGINE_STATE_VERSION, "engine": state}
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".engine-state.")
     try:
         with os.fdopen(fd, "w") as f:
-            json.dump(doc, f, sort_keys=True, allow_nan=False)
+            json.dump(state, f, sort_keys=True, allow_nan=False)
         os.chmod(tmp, 0o600)
         os.replace(tmp, path)
     except BaseException:
@@ -279,11 +277,9 @@ def load_engine_state(data_dir: Path) -> dict[str, Any] | None:
     except (OSError, ValueError) as exc:
         log.warning("Engine state unreadable, starting fresh: %s", type(exc).__name__)
         return None
-    if (
-        not isinstance(doc, dict)
-        or doc.get("v") != ENGINE_STATE_VERSION
-        or not isinstance(doc.get("engine"), dict)
-    ):
+    if isinstance(doc, dict) and isinstance(doc.get("engine"), dict):
+        doc = doc["engine"]  # the older {"v", "engine"} wrapper
+    if not isinstance(doc, dict) or doc.get("v") != 1:  # the engine's own version
         log.warning("Engine state has an unknown version, starting fresh")
         return None
-    return doc.get("engine")
+    return doc
