@@ -181,16 +181,10 @@ def _bad_state(state: Optional[str]) -> Optional[Args]:
     return {"error": f"state must be one of {', '.join(FINDING_STATES)}"}
 
 
-_data_service = None
-
-
 def _data():
-    global _data_service
-    if _data_service is None:
-        from core.storage.database_data_service import DatabaseDataService
+    from core.storage.database_data_service import get_database_data_service
 
-        _data_service = DatabaseDataService()
-    return _data_service
+    return get_database_data_service()
 
 
 def _approvals():
@@ -419,23 +413,11 @@ def list_cases(
     priority: Optional[str] = None,
     limit: int = 50,
 ) -> Any:
-    data = _data()
-    sql_limit = 10000 if severity else limit
-    try:
-        cases = data.get_cases(limit=sql_limit, status=status, priority=priority)
-    except TypeError:
-        cases = data.get_cases()
-    if status:
-        cases = [case for case in cases if case.get("status") == status]
-    if severity:
-        cases = [
-            case
-            for case in cases
-            if case.get("severity") == severity or case.get("priority") == severity
-        ]
-    if priority:
-        cases = [case for case in cases if case.get("priority") == priority]
-    return cases[:limit]
+    # Cases have no severity column: severity names a priority, so both
+    # filters, and the cap, run in SQL. Two different priorities match nothing.
+    if severity and priority and severity != priority:
+        return []
+    return _data().get_cases(limit=limit, status=status, priority=priority or severity)
 
 
 def get_case(*, case_id: str) -> Any:

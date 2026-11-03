@@ -122,9 +122,9 @@ def get_data_service():
     """Return the shared DatabaseDataService (demo mode or PostgreSQL)."""
     global _data_service
     if _data_service is None:
-        from core.storage.database_data_service import DatabaseDataService
+        from core.storage.database_data_service import get_database_data_service
 
-        _data_service = DatabaseDataService()
+        _data_service = get_database_data_service()
         backend_info = _data_service.get_backend_info()
         logger.info(f"MCP vigil using backend: {backend_info['backend']}")
 
