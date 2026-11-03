@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Medic API
-  version: "1.0.0"
+  version: "1.1.0"
   summary: Medic's read-only API, plus one admin write (decision feedback).
   description: |
     Contract X2 (2026-10-07). G3 builds this API inside the Medic process; H3 (the backend
@@ -702,7 +702,7 @@ components:
       required: [id, state, since, last_good_at, reason, dropped_last_hour, watcher_incident_id]
       additionalProperties: false
       properties:
-        id: { $ref: "./decision-record.schema.json#/$defs/signal_id" }
+        id: { $ref: "./decision-record.schema.json#/$defs/id" }
         state:
           type: string
           enum: [reporting, cant_see, "off"]
