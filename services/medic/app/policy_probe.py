@@ -14,6 +14,7 @@ from __future__ import annotations
 import enum
 import socket
 from collections.abc import Callable
+from dataclasses import dataclass
 
 TIMEOUT_S = 3.0
 
@@ -30,6 +31,18 @@ class Verdict(enum.Enum):
         """What a policy would produce. Only evidence with a working control,
         and a refusal only once it has held (see cli._policy_enforced)."""
         return self in (Verdict.BLOCKED, Verdict.REFUSED)
+
+
+class Policy(enum.Enum):
+    ENFORCED = "enforced"
+    UNENFORCED = "unenforced"  # the probe reached the forbidden target
+    UNKNOWN = "unknown"  # the control or the probe failed: proves nothing
+
+
+@dataclass(frozen=True)
+class PolicyCheck:
+    state: Policy
+    text: str  # what to log, without the caller's framing
 
 
 def _resolve(host: str, port: int) -> list[tuple[str, int]]:

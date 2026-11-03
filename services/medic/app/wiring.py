@@ -10,24 +10,27 @@ reaches the engine on the next one.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import logging
 import os
 import sqlite3
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from services.medic.app.policy_probe import Policy, PolicyCheck
 from services.medic.engine import Engine, LoadedRule, load_rule, load_rule_file
 from services.medic.router import Router
 from services.medic.sensors import (
     Bus,
     Pipeline,
+    ReadError,
     Reading,
     Scheduler,
     Sensor,
@@ -49,6 +52,7 @@ DEV_SUPPRESSION = DEV_RULES_DIR / "suppression.yaml"
 # pod label, so the file stays ungrouped and Helm adds the group at load.
 WORKER_NOT_READY = "pipeline.agent-worker-not-ready"
 GROUP_CAP = 64  # live groups per rule (semantics.md §3)
+NETWORK_POLICY = "medic_network_policy"
 RECORDING_STOPPED = "watcher.recording-stopped"
 HELD_MAX = 1000  # decisions kept in memory while recording is stopped
 
@@ -122,6 +126,66 @@ class RecordingSensor:
         stopped = self.writer.stopped
         return [
             Reading("medic_recording", self.service, [Value.flag("stopped", stopped)])
+        ]
+
+
+class PolicyStartupSensor:
+    """`medic_network_policy`/`unenforced`, once, after a startup refusal that
+    lasted: true, then false on the next collect, so the incident opens and
+    resolves within a minute of the clean start. Then it reads nothing."""
+
+    id = "medic.network-policy-start"
+    service = "medic"
+    interval_s = 30
+    timeout_s = 5.0
+    covers = ("medic_network_policy",)
+    uses_vigil_api = False
+
+    def __init__(self) -> None:
+        self._reads = [True, False]
+
+    async def collect(self, ctx: SensorContext) -> Sequence[Reading]:
+        if not self._reads:
+            return []
+        flag = self._reads.pop(0)
+        return [Reading(NETWORK_POLICY, self.service, [Value.flag("unenforced", flag)])]
+
+
+class PolicySensor:
+    """The startup NetworkPolicy check, re-run once after start and every 6 h
+    (Helm). Losing enforcement mid-run opens watcher.policy-unenforced. A check
+    that couldn't tell (control down, inconclusive probe) is an error read, never
+    `unenforced`. `skip_first`: the startup sensor owns the first read."""
+
+    id = "medic.network-policy"
+    service = "medic"
+    interval_s = 21_600
+    # The check retries the control for ~90 s and the target for ~20 s.
+    timeout_s = 150.0
+    covers = (NETWORK_POLICY,)
+    uses_vigil_api = False
+
+    def __init__(
+        self, check: Callable[[], PolicyCheck], *, skip_first: bool = False
+    ) -> None:
+        self.check, self._skip = check, skip_first
+
+    async def collect(self, ctx: SensorContext) -> Sequence[Reading]:
+        if self._skip:
+            self._skip = False
+            return []
+        found = await asyncio.to_thread(self.check)  # blocks: off the event loop
+        if found.state is Policy.UNKNOWN:
+            log.warning("NetworkPolicy re-check: %s", found.text)
+            return [Reading(NETWORK_POLICY, self.service, error=ReadError("other"))]
+        if found.state is Policy.UNENFORCED:
+            log.error("NetworkPolicy re-check: %s", found.text)
+        return [
+            Reading(
+                NETWORK_POLICY,
+                self.service,
+                [Value.flag("unenforced", found.state is Policy.UNENFORCED)],
+            )
         ]
 
 
