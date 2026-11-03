@@ -2,6 +2,7 @@
    docs/design/console/boards/WorkflowRun.dc.html. The page reads the run; it asks
    for nothing new except the investigate replay RunDetail already reads. */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { Cost } from '../../shared/cost'
 import { STOP_CAUSES, stopCauseOf } from '../../shared/stopCause'
@@ -45,6 +46,7 @@ const HUNT_LIKE_RUN_KINDS = ['hunt', 'adjudicate']
 
 export const STEP_MS = 1400
 export const UNSUPPORTED = 'Replay isn’t available for this kind of run yet.'
+export const AGENT_RUN = 'One agent works this on its own, with its own tools. Its report appears here when it finishes.'
 export const PLAYBOOK = 'A playbook runs its phases in order, with no lead agent to watch. Its phases are listed in History.'
 
 
@@ -594,6 +596,19 @@ function Header({ d, hypothesis, tail, onBack }: { d: WfRunDetail; hypothesis: s
   )
 }
 
+/** A playbook run has no replay to raise this in, so its wait for a person is said here. The decision is on the case. */
+function WaitingOnPerson({ d }: { d: WfRunDetail }) {
+  const open = (d.projection as { open_checkpoint?: { question?: string } | null } | null | undefined)?.open_checkpoint
+  if (!open) return null
+  const caseId = d.trigger_context?.case_id
+  return (
+    <OneLine>
+      Stopped · needs you. {open.question}{' '}
+      {typeof caseId === 'string' && caseId && <Link className="underline" to={`/cases?case=${encodeURIComponent(caseId)}`}>Decide on the case</Link>}
+    </OneLine>
+  )
+}
+
 /** `d` is the run as getRun last saw it; RunView keeps it fresh while the run is in flight. */
 export function WatchRun({ d, onBack }: { d: WfRunDetail; onBack: () => void }) {
   const live = IN_FLIGHT.includes(d.status)
@@ -613,7 +628,8 @@ export function WatchRun({ d, onBack }: { d: WfRunDetail; onBack: () => void }) 
       {kind === 'root_cause' && <RootCauseReplay d={d} live={live} halt={halt} />}
       {kind === 'playbook' && (
         <>
-          <OneLine>{PLAYBOOK}</OneLine>
+          <OneLine>{d.workflow_id?.startsWith('agent-run-') ? AGENT_RUN : PLAYBOOK}</OneLine>
+          <WaitingOnPerson d={d} />
           <PlaybookReport d={d} />
           <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3.5 items-start"><OtherPanels d={d} /></div>
         </>

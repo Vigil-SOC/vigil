@@ -41,7 +41,7 @@ from core.workflows.workflow_run_service import (
     IN_FLIGHT_STATUSES,
     WorkflowRunService,
 )
-from core.workflows.workflows_service import WorkflowsService
+from core.workflows.workflows_service import AGENT_RUN_PREFIX, WorkflowsService
 
 router = APIRouter()
 
@@ -169,7 +169,11 @@ async def set_enabled(
     current_user: User = Depends(get_current_user),
 ):
     """Turn a workflow (built-in or custom) on or off. Setting the current state is a no-op."""
-    if service.get_workflow(workflow_id) is None:
+    # One agent alone is switched with the agent, not here
+    if (
+        workflow_id.startswith(AGENT_RUN_PREFIX)
+        or service.get_workflow(workflow_id) is None
+    ):
         raise HTTPException(
             status_code=404, detail=f"Workflow not found: {workflow_id}"
         )

@@ -18,7 +18,7 @@ export function timeLeft(due: string): string {
 
 /** The one name for a run on the case page: its workflow and when it started, else a short id. */
 export function runLabel(ref: CaseInvestigationRef, names: Record<string, string>): string {
-  const name = names[ref.workflow_id] || ref.workflow_id || ref.run_id.slice(0, 8)
+  const name = names[ref.workflow_id] || ref.workflow_name || ref.workflow_id || ref.run_id.slice(0, 8)
   // refs carry naive UTC stamps; without an offset a browser would read them as local time
   const at = ref.created_at && (/(Z|[+-]\d\d:?\d\d)$/.test(ref.created_at) ? ref.created_at : `${ref.created_at}Z`)
   const clock = utcClock(at)

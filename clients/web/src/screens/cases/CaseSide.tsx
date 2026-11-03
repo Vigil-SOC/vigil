@@ -39,7 +39,7 @@ function Details({ linked, latest, workflowNames, sla, closed, fold, anchor }: {
     <Block title="Details" anchor={anchor}>
       <dl className="side-kv">
         <dt>Workflow</dt>
-        <dd>{latest ? workflowNames[latest.workflow_id] || latest.workflow_id : '—'}</dd>
+        <dd>{latest ? workflowNames[latest.workflow_id] || latest.workflow_name || latest.workflow_id : '—'}</dd>
         <dt>Resolve by</dt>
         <dd>
           {sla ? when(sla.due) : '—'}

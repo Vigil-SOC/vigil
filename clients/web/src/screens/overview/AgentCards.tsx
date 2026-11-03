@@ -14,6 +14,12 @@ function fmtRate(rate: number | null): string {
   return `${(rate * 100).toFixed(1)}%`
 }
 
+// One agent run alone has no workflow to open, so its card opens the agent
+const AGENT_RUN = 'agent-run-'
+const agentHref = (id: string) => id.startsWith(AGENT_RUN)
+  ? `/workflows?tab=agents&agent=${encodeURIComponent(id.slice(AGENT_RUN.length))}`
+  : `/workflows?workflow=${encodeURIComponent(id)}`
+
 /** The name links to the workflow on Agents & workflows; the link covers the card. */
 function AgentCard({ agent }: { agent: OverviewAgent }) {
   const doing = agent.current_step ? `${agent.running} running · ${agent.current_step}` : `${agent.running} running`
@@ -21,7 +27,7 @@ function AgentCard({ agent }: { agent: OverviewAgent }) {
   return (
     <div role="listitem" className={`ov-agent${agent.level === 'fair' || agent.level === 'poor' ? ` ${agent.level}` : ''}`}>
       <b title={agent.name}>
-        <Link className="ov-agent-open" to={`/workflows?workflow=${encodeURIComponent(agent.workflow_id)}`}>{agent.name}</Link>
+        <Link className="ov-agent-open" to={agentHref(agent.workflow_id)}>{agent.name}</Link>
       </b>
       <span className="ov-agent-doing" title={doing}>{doing}</span>
       <div className="ov-agent-rate">
