@@ -22,6 +22,9 @@ from core.detections.reconstruction import (
 )
 from core.storage.database_data_service import DatabaseDataService
 
+# ``id = "T1219"`` under [[rule.threat.technique]] and its subtechnique tables.
+ELASTIC_TECHNIQUE_ID = re.compile(r'^id\s*=\s*"(T\d{4}(?:\.\d{3})?)"', re.MULTILINE)
+
 
 class SecurityDetectionsTools:
     """
@@ -144,14 +147,7 @@ class SecurityDetectionsTools:
                             self.detections.append(detection)
                             self.detections_by_source["sigma"].append(detection)
 
-                            # Index by MITRE technique
-                            tags = detection.get("tags", [])
-                            for tag in tags:
-                                if isinstance(tag, str) and tag.startswith("attack.t"):
-                                    technique = tag.replace("attack.", "").upper()
-                                    self.detections_by_technique[technique].append(
-                                        detection
-                                    )
+                            self._index_techniques(detection)
                 except Exception:
                     pass  # Skip malformed files
 
@@ -167,13 +163,7 @@ class SecurityDetectionsTools:
                             self.detections.append(detection)
                             self.detections_by_source["splunk"].append(detection)
 
-                            # Index by MITRE technique
-                            tags = detection.get("tags", {}).get("mitre_attack_id", [])
-                            if isinstance(tags, list):
-                                for tag in tags:
-                                    self.detections_by_technique[tag.upper()].append(
-                                        detection
-                                    )
+                            self._index_techniques(detection)
                 except Exception:
                     pass
 
@@ -192,14 +182,7 @@ class SecurityDetectionsTools:
                         self.detections.append(detection)
                         self.detections_by_source["elastic"].append(detection)
 
-                        # Extract technique IDs from content
-                        techniques = re.findall(
-                            r'technique_id\s*=\s*"(T\d{4}(?:\.\d{3})?)"', content
-                        )
-                        for technique in techniques:
-                            self.detections_by_technique[technique.upper()].append(
-                                detection
-                            )
+                        self._index_techniques(detection)
                 except Exception:
                     pass
 
@@ -216,13 +199,7 @@ class SecurityDetectionsTools:
                             self.detections.append(detection)
                             self.detections_by_source["kql"].append(detection)
 
-                            # Index by MITRE technique
-                            techniques = detection.get("mitre", [])
-                            if isinstance(techniques, list):
-                                for technique in techniques:
-                                    self.detections_by_technique[
-                                        technique.upper()
-                                    ].append(detection)
+                            self._index_techniques(detection)
                 except Exception:
                     pass
 
@@ -237,11 +214,7 @@ class SecurityDetectionsTools:
                         self.detections.append(detection)
                         self.detections_by_source["kql"].append(detection)
 
-                        # Index by MITRE technique
-                        for technique in detection.get("mitre", []):
-                            self.detections_by_technique[technique.upper()].append(
-                                detection
-                            )
+                        self._index_techniques(detection)
                 except Exception:
                     pass
 
@@ -543,24 +516,31 @@ class SecurityDetectionsTools:
         return detection
 
     def _extract_techniques(self, detection: Dict) -> List[str]:
-        """Extract MITRE techniques from a detection"""
-        techniques = []
+        """The distinct MITRE techniques a detection declares."""
+        source = detection["_source"]
+        if source == "sigma":
+            tags = detection.get("tags") or []
+            named = [
+                tag.replace("attack.", "")
+                for tag in tags
+                if isinstance(tag, str) and tag.startswith("attack.t")
+            ]
+        elif source == "splunk":
+            # ESCU moved this to the top level; older clones keep it under tags.
+            tags = detection.get("tags")
+            nested = tags.get("mitre_attack_id") if isinstance(tags, dict) else None
+            named = detection.get("mitre_attack_id") or nested or []
+        elif source == "elastic":
+            named = ELASTIC_TECHNIQUE_ID.findall(detection["_content"])
+        else:
+            named = detection.get("mitre") or []
+        if not isinstance(named, list):
+            return []
+        return list(dict.fromkeys(t.upper() for t in named if isinstance(t, str)))
 
-        if detection["_source"] == "sigma":
-            tags = detection.get("tags", [])
-            for tag in tags:
-                if isinstance(tag, str) and tag.startswith("attack.t"):
-                    techniques.append(tag.replace("attack.", "").upper())
-        elif detection["_source"] == "splunk":
-            tags = detection.get("tags", {}).get("mitre_attack_id", [])
-            if isinstance(tags, list):
-                techniques.extend([t.upper() for t in tags])
-        elif detection["_source"] == "kql":
-            techs = detection.get("mitre", [])
-            if isinstance(techs, list):
-                techniques.extend([t.upper() for t in techs])
-
-        return techniques
+    def _index_techniques(self, detection: Dict) -> None:
+        for technique in self._extract_techniques(detection):
+            self.detections_by_technique[technique].append(detection)
 
     async def lint_detections(
         self,
