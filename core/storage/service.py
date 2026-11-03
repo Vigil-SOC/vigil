@@ -179,10 +179,9 @@ def merge_ai_enrichment(
     return {**kept, **{k: v for k, v in new.items() if owned(k)}}
 
 
-# ``Finding.cases`` is mapped ``lazy="selectin"``, so without an override every
-# Finding load also SELECTs each linked case row (all of its JSONB) and then
-# drops it: no read path or ``FindingSchema`` uses it (#1439). Read paths that
-# hand back detached findings or dumps opt out with ``noload``.
+# No read path or ``FindingSchema`` uses ``Finding.cases`` (#1439, #3658). It
+# lazy-loads on access, so on a detached finding it would raise; read paths
+# that hand back detached findings or dumps pin it empty with ``noload``.
 _FINDING_READ_OPTIONS = (
     selectinload(Finding.mitre_prediction_rows),
     noload(Finding.cases),
