@@ -410,12 +410,28 @@ class DatabaseDataService:
                 return False
         return False
 
-    def get_cases(self, limit: int = 10000) -> List[Dict]:
+    def get_cases(
+        self,
+        limit: int = 10000,
+        status: Optional[str] = None,
+        priority: Optional[str] = None,
+    ) -> List[Dict]:
         if self._demo_mode and self._demo_service:
-            return self._demo_service.get_cases(limit)
+            if not (status or priority):
+                return self._demo_service.get_cases(limit)
+            # Demo cases take no filters, so filter the sample rows here.
+            cases = [
+                case
+                for case in self._demo_service.get_cases()
+                if (not status or case.get("status") == status)
+                and (not priority or case.get("priority") == priority)
+            ]
+            return cases[:limit]
         if self._db_available:
             try:
-                cases = self._db_service.get_cases(limit=limit)
+                cases = self._db_service.get_cases(
+                    status=status, priority=priority, limit=limit
+                )
                 return CaseSchema.dump_many(cases)
             except Exception as e:
                 logger.error(f"Error getting cases from DB: {e}")

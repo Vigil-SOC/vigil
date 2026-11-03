@@ -184,6 +184,32 @@ def link_finding(
     return True
 
 
+def link_findings(
+    service: DatabaseDataService, case_id: str, finding_ids: List[str]
+) -> Optional[List[str]]:
+    """Attach several Findings in one read and one write.
+
+    Returns the ids newly attached; ids already on the Case are skipped.
+    None when the Case does not exist.
+    """
+    existing = _existing(service, case_id, "finding_ids")
+    if existing is None:
+        return None
+    on_case = set(existing)
+    added = []
+    for finding_id in finding_ids:
+        if finding_id not in on_case:
+            on_case.add(finding_id)
+            added.append(finding_id)
+    if not added:
+        return []
+
+    if not service.update_case(case_id, finding_ids=existing + added):
+        logger.error("Could not link findings %s to case %s", added, case_id)
+        return []
+    return added
+
+
 def unlink_finding(
     service: DatabaseDataService, case_id: str, finding_id: str
 ) -> Optional[bool]:

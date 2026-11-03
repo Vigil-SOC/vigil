@@ -32,10 +32,16 @@ class MCPRegistry:
             name: Server name (e.g., 'security-detections', 'vigil')
             tools: List of tool definitions (name, description, input_schema)
         """
+        # Re-registered every chat turn; only a new or changed server is news.
+        changed = not self._servers.get(name) or (
+            tools and self._tools_cache.get(name) != tools
+        )
         self._servers[name] = True
         if tools:
             self._tools_cache[name] = tools
-        logger.info(f"Registered MCP server: {name} ({len(tools or [])} tools)")
+        (logger.info if changed else logger.debug)(
+            f"Registered MCP server: {name} ({len(tools or [])} tools)"
+        )
 
     def get_active_servers(self) -> List[str]:
         """Get names of all active servers."""
