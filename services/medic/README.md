@@ -23,7 +23,7 @@ it its lane (the rule's, or lane 3 when a lane-1 rule fails the gate), and the s
 the engine state and writes the heartbeat; a loop that stops cycling for 180 s
 is ended by the watchdog. On start, if the last heartbeat shows Medic was
 stalled or off, one `gap` record goes into the chain first. Rules and
-`suppression.yaml` are the dev-mode set in `rules/dev/` (no pack loader yet, F6).
+`suppression.yaml` come from the `medic-core` pack in `packs/medic-core/` (read from the source tree; signed packs are F6).
 `check` fails on any heartbeat state but `running` or `degraded` (C5 K-d), each
 with its own reason (`stopped`, `stalled`, `crash-looping`, unknown).
 
