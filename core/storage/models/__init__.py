@@ -58,6 +58,7 @@ from core.storage.models.episodic import (
 from core.storage.models.exclusion import IpExclusion
 from core.storage.models.finding import Finding, FindingMitrePrediction
 from core.storage.models.medic import MedicLastSeen
+from core.storage.models.rule_inventory import RULE_STATUSES, Rule, RuleVersion
 from core.storage.models.skill import SkillRead
 from core.storage.models.workflow import (
     FINISHED_INVESTIGATION_STATUSES,
@@ -130,6 +131,9 @@ __all__ = [
     "SignIn",
     "MedicLastSeen",
     "Role",
+    "RULE_STATUSES",
+    "Rule",
+    "RuleVersion",
     "SLAPolicy",
     "SharedIOC",
     "SketchMapping",

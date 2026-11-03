@@ -3219,6 +3219,81 @@
   "nullable": false,
   "type": "timestamp without time zone"
  },
+ "column rule_versions.content": {
+  "default": null,
+  "nullable": false,
+  "type": "jsonb"
+ },
+ "column rule_versions.fingerprint": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column rule_versions.rule_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column rule_versions.seen_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp with time zone"
+ },
+ "column rule_versions.seen_in": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column rule_versions.version": {
+  "default": null,
+  "nullable": false,
+  "type": "integer"
+ },
+ "column rules.first_seen": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp with time zone"
+ },
+ "column rules.id": {
+  "default": "('R-'::text || (nextval('rules_number_seq'::regclass))::text)",
+  "nullable": false,
+  "type": "text"
+ },
+ "column rules.last_changed": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp with time zone"
+ },
+ "column rules.latest_version": {
+  "default": null,
+  "nullable": false,
+  "type": "integer"
+ },
+ "column rules.name": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column rules.native_key": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column rules.source": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column rules.status": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column rules.techniques": {
+  "default": "'{}'::text[]",
+  "nullable": false,
+  "type": "text[]"
+ },
  "column shared_iocs.created_at": {
   "default": "now()",
   "nullable": false,
@@ -3964,6 +4039,13 @@
  "constraint principals.principals_pkey": "PRIMARY KEY (principal_id)",
  "constraint roles.roles_name_key": "UNIQUE (name)",
  "constraint roles.roles_pkey": "PRIMARY KEY (role_id)",
+ "constraint rule_versions.rule_versions_pkey": "PRIMARY KEY (rule_id, version)",
+ "constraint rule_versions.rule_versions_rule_id_fkey": "FOREIGN KEY (rule_id) REFERENCES rules(id)",
+ "constraint rule_versions.rule_versions_version_check": "CHECK ((version >= 1))",
+ "constraint rules.rules_latest_version_check": "CHECK ((latest_version >= 1))",
+ "constraint rules.rules_pkey": "PRIMARY KEY (id)",
+ "constraint rules.rules_source_native_key": "UNIQUE (source, native_key)",
+ "constraint rules.rules_status_check": "CHECK ((status = ANY (ARRAY['active'::text, 'disabled'::text, 'removed'::text])))",
  "constraint shared_iocs.shared_iocs_investigation_id_fkey": "FOREIGN KEY (investigation_id) REFERENCES investigations(investigation_id) ON DELETE CASCADE",
  "constraint shared_iocs.shared_iocs_pkey": "PRIMARY KEY (id)",
  "constraint sign_ins.sign_ins_end_reason_check": "CHECK (((end_reason)::text = ANY ((ARRAY['sign_out'::character varying, 'expiry'::character varying, 'revoked'::character varying])::text[])))",
@@ -4332,6 +4414,9 @@
  "index principals_pkey": "CREATE UNIQUE INDEX principals_pkey ON public.principals USING btree (principal_id)",
  "index roles_name_key": "CREATE UNIQUE INDEX roles_name_key ON public.roles USING btree (name)",
  "index roles_pkey": "CREATE UNIQUE INDEX roles_pkey ON public.roles USING btree (role_id)",
+ "index rule_versions_pkey": "CREATE UNIQUE INDEX rule_versions_pkey ON public.rule_versions USING btree (rule_id, version)",
+ "index rules_pkey": "CREATE UNIQUE INDEX rules_pkey ON public.rules USING btree (id)",
+ "index rules_source_native_key": "CREATE UNIQUE INDEX rules_source_native_key ON public.rules USING btree (source, native_key)",
  "index shared_iocs_pkey": "CREATE UNIQUE INDEX shared_iocs_pkey ON public.shared_iocs USING btree (id)",
  "index sign_ins_pkey": "CREATE UNIQUE INDEX sign_ins_pkey ON public.sign_ins USING btree (sign_in_id)",
  "index sketch_mappings_pkey": "CREATE UNIQUE INDEX sketch_mappings_pkey ON public.sketch_mappings USING btree (id)",
@@ -5956,6 +6041,64 @@
    false
   ],
   "sequence": null
+ },
+ "relation rule_versions": {
+  "acl": [
+   "app:INSERT",
+   "app:SELECT",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation rules": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation rules_number_seq": {
+  "acl": [
+   "app:SELECT",
+   "app:USAGE",
+   "owner:SELECT",
+   "owner:UPDATE",
+   "owner:USAGE"
+  ],
+  "kind": "S",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": "[\"bigint\", 1, 1, 1, 9223372036854775807, 1, false]"
  },
  "relation shared_iocs": {
   "acl": [

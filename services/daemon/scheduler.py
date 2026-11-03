@@ -18,6 +18,10 @@ from services.daemon.threat_feed_poller import ThreatFeedPoller
 
 logger = logging.getLogger(__name__)
 
+# The rule inventory reads every source in full; hourly catches deletions soon
+# enough without re-reading thousands of rules every few minutes.
+RULE_INVENTORY_INTERVAL = 3600
+
 
 def _sandbox_poll_enabled() -> bool:
     return get_settings().sandbox_auto_submit
@@ -130,6 +134,14 @@ class TaskScheduler:
                 name="threat_feed_poll",
                 func=self._run_threat_feed_poll,
                 interval=ThreatFeedPoller.poll_interval_seconds(),
+            )
+        )
+
+        self._tasks.append(
+            ScheduledTask(
+                name="rule_inventory",
+                func=self._run_rule_inventory,
+                interval=RULE_INVENTORY_INTERVAL,
             )
         )
 
@@ -334,3 +346,10 @@ class TaskScheduler:
     async def _run_threat_feed_poll(self):
         """Pull Cloudforce One STIX/TAXII indicators into threat_indicators."""
         return await ThreatFeedPoller().run_once()
+
+    async def _run_rule_inventory(self):
+        """Read every rule source and record new, changed and removed rules."""
+        from core.detections.inventory.sync import sync_all
+
+        reports = await asyncio.to_thread(sync_all)
+        return {r.source: r.error or r.writes for r in reports}
