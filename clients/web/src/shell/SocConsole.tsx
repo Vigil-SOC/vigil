@@ -293,6 +293,7 @@ function SocConsoleInner() {
   useEffect(() => {
     let live = true
     const pollNeedsYou = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
       approvalsApi
         .needsYou()
         .then((res) => {
@@ -311,11 +312,16 @@ function SocConsoleInner() {
           /* keep the previous count */
         })
     }
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') pollNeedsYou()
+    }
     pollNeedsYou()
     const id = setInterval(pollNeedsYou, 20_000)
+    document.addEventListener('visibilitychange', onVisibility)
     return () => {
       live = false
       clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [])
 
@@ -413,14 +419,23 @@ function SocConsoleInner() {
         }
       })
     }
+    const onTick = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      pollStatus()
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') pollStatus()
+    }
     pollStatus()
-    const id = setInterval(pollStatus, 30_000)
+    const id = setInterval(onTick, 30_000)
     // a key write should clear "No routable provider." without waiting out the interval
     window.addEventListener(ROUTABILITY_CHANGED, pollStatus)
+    document.addEventListener('visibilitychange', onVisibility)
     return () => {
       live = false
       clearInterval(id)
       window.removeEventListener(ROUTABILITY_CHANGED, pollStatus)
+      document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [])
 
