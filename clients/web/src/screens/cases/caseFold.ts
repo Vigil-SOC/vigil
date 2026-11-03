@@ -131,8 +131,16 @@ export interface RecalledGap extends RecallProvenance {
   statement: string
 }
 
+/** What an analyst told the agents about one entity; `id` is the note's id. */
+export interface RecalledNote extends RecallProvenance {
+  entity: string
+  statement: string
+  writtenBy: string
+}
+
 interface RecallView {
   keys: string[]
+  notes: RecalledNote[]
   gaps: RecalledGap[]
   sightings: RecalledSighting[]
   verdicts: RecalledVerdict[]
@@ -525,11 +533,15 @@ function recallOf(raw: unknown): RecallView | null {
   const sightings = rowsOf(o.sightings, (r) =>
     str(r.entity_key) ? { ...provenanceOf(r), entity: str(r.entity_key), source: str(r.source_system), hits: num(r.hit_count) } : null,
   )
+  // A ledger journaled before notes has no key: none.
+  const notes = rowsOf(o.notes, (r) =>
+    str(r.statement) ? { ...provenanceOf(r), entity: str(r.entity_key), statement: str(r.statement), writtenBy: str(r.written_by) } : null,
+  )
   const verdicts = rowsOf(o.verdicts, (r) => (str(r.statement) ? { ...provenanceOf(r), outcome: str(r.outcome), statement: str(r.statement) } : null))
   const unavailable = typeof o.unavailable === 'string' ? o.unavailable : null
   // A journaled empty result is known-to-be-none. An absent payload is not a recall.
   if (unavailable === null && !Array.isArray(o.keys)) return null
-  return { keys, gaps, sightings, verdicts, unavailable }
+  return { keys, notes, gaps, sightings, verdicts, unavailable }
 }
 
 function checkpointOf(raw: unknown): OpenCheckpointRow | null {

@@ -300,6 +300,7 @@ def read_last_seen() -> tuple[Optional[LastSeen], datetime]:
                 first_failed_at=row.first_failed_at,
                 failure_kind=row.failure_kind,
                 updated_at=row.updated_at,
+                status_snapshot=row.status_snapshot,
             ),
             now,
         )
@@ -317,6 +318,24 @@ def current_status(
     except Exception:  # noqa: BLE001 - Postgres down: the console can't tell
         return MedicStatus.UNKNOWN
     return medic_status(settings, seen, now or db_now)
+
+
+def current_state_word(settings: Optional[Settings] = None) -> str:
+    """The one word for the status line: off, down or unknown win; otherwise
+    Medic's stored snapshot state. One row read, so the two can't disagree. A
+    missing or unrecognised snapshot state is unknown, never running."""
+    settings = settings or get_settings()
+    if not medic_enabled(settings):
+        return MedicStatus.OFF.value
+    try:
+        seen, db_now = read_last_seen()
+    except Exception:  # noqa: BLE001 - Postgres down: the console can't tell
+        return MedicStatus.UNKNOWN.value
+    status = medic_status(settings, seen, db_now)
+    if status is not MedicStatus.RUNNING:
+        return status.value
+    state = (seen.status_snapshot or {}).get("state") if seen else None
+    return state if state in _STATES else MedicStatus.UNKNOWN.value
 
 
 async def run_poller(settings: Settings, interval: float = POLL_INTERVAL_S) -> None:

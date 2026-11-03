@@ -6154,6 +6154,7 @@
    /* Fixed tracks, so Alert takes the free width and wraps to two lines instead of widening the table */
    .tq-table {
       table-layout: fixed;
+      min-width: 1360px; /* below it the table scrolls in its card, so Alert and why never shrink to a letter a line */
    }
 
    .tq-table thead th {

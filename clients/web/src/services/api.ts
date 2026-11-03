@@ -199,6 +199,19 @@ export const exclusionsApi = {
     api.post<IpExclusion>(`/exclusions/${encodeURIComponent(id)}/remove`, { reason: reason || null }),
 }
 
+export type Note = Schema<'NoteOut'>
+
+/** Analyst notes on an entity (#3605); keys are typed `type:value`, and none means every note. */
+export const notesApi = {
+  list: (entityKeys: string[]) =>
+    api.get<Schema<'NoteListResponse'>>('/memory/notes', {
+      params: { entity_key: entityKeys },
+      paramsSerializer: { indexes: null }, // entity_key=a&entity_key=b, as FastAPI reads a repeated query
+    }),
+  create: (body: Schema<'NoteCreate'>) => api.post<Note>('/memory/notes', body),
+  withdraw: (id: string) => api.delete<Note>(`/memory/notes/${encodeURIComponent(id)}`),
+}
+
 export interface CaseRecordRow {
   id: string
   at: string
