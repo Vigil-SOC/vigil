@@ -13,7 +13,6 @@ untouched. Only the status snapshot is parsed and cached (15 s, per process).
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 import time
 from typing import Optional
