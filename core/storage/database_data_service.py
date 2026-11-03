@@ -446,7 +446,9 @@ class DatabaseDataService:
             return self._demo_service.get_case(case_id)
         if self._db_available:
             try:
-                case = self._db_service.get_case(case_id, include_findings=True)
+                # CaseSchema reads only finding ids; full findings would load
+                # every finding's MITRE prediction rows for nothing (#3658).
+                case = self._db_service.get_case(case_id)
                 return CaseSchema.dump(case) if case else None
             except Exception as e:
                 logger.error(f"Error getting case from DB: {e}")

@@ -23,7 +23,7 @@ from sqlalchemy import (
     select,
     union_all,
 )
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from core.storage.models import (
     Case,
@@ -490,7 +490,14 @@ class CaseRepository:
         """Return matching cases (no total count)."""
         stmt = self._build(**filters)
         order_column = Case.created_at if order_by == "created_at" else Case.updated_at
-        stmt = stmt.order_by(order_column.desc()).limit(limit).offset(offset)
+        stmt = (
+            stmt.options(
+                selectinload(Case.findings).noload(Finding.mitre_prediction_rows)
+            )
+            .order_by(order_column.desc())
+            .limit(limit)
+            .offset(offset)
+        )
         return list(self.session.execute(stmt).scalars().all())
 
     def search(
