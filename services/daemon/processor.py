@@ -6,6 +6,8 @@ import logging
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from redis.exceptions import RedisError
+
 from core.findings.exclusions import cached_active_ips, excluded_ips_of
 from core.ingestion.ack import settle_ack
 from core.ingestion.dedup import RedisDedupSet
@@ -29,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 _GATEWAY_OUTAGE = "daemon-triage-gateway"
 _PROVIDER_OUTAGE = "daemon-triage-provider"
+_QUEUE_OUTAGE = "daemon-triage-queue"
 
 # After this many consecutive failures (e.g. no provider key), pause enrichment
 # for the cooldown so a backfill can't stampede a dead gateway. Findings still ingest.
@@ -762,10 +765,9 @@ REASONING: [Brief explanation]
                 from core.llm.gateway.gateway import get_llm_gateway
 
                 self._llm_gateway = await get_llm_gateway()
-                if not report_recovered(
+                report_recovered(
                     logger, _GATEWAY_OUTAGE, "LLM gateway connected for AI triage"
-                ):
-                    logger.info("LLM gateway connected for AI triage")
+                )
             except Exception as e:
                 report_outage(
                     logger,
@@ -832,9 +834,22 @@ REASONING: [Brief explanation]
             )
         except asyncio.TimeoutError:
             raise  # _triage_finding reports it against DAEMON_TRIAGE_TIMEOUT
-        except Exception as e:
-            logger.error(f"LLM queue triage error: {e}")
+        except RedisError as e:
+            # Class name only: Redis error text can carry connection details.
+            report_outage(
+                logger,
+                _QUEUE_OUTAGE,
+                "LLM queue unreachable, AI triage is failing: %s",
+                type(e).__name__,
+            )
             return None, f"{type(e).__name__}: {e}"
+        except Exception as e:
+            logger.error("LLM queue triage error: %s: %s", type(e).__name__, e)
+            return None, f"{type(e).__name__}: {e}"
+        # An error dict from the worker still means the queue was reachable.
+        report_recovered(
+            logger, _QUEUE_OUTAGE, "LLM queue reachable, AI triage resumed"
+        )
         if result is None:
             return None, "LLM returned no result"
         if isinstance(result, dict):
