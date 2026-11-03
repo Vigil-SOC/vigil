@@ -9,7 +9,7 @@ export function useAutoOpsOff(): boolean | null {
   useEffect(() => {
     let live = true
     const read = () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      if (document.visibilityState === 'hidden') return
       Promise.resolve()
         .then(() => configApi.getOrchestrator())
         .then((res) => live && setOff(res?.data?.enabled === false))

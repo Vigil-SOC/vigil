@@ -293,7 +293,7 @@ function SocConsoleInner() {
   useEffect(() => {
     let live = true
     const pollNeedsYou = () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      if (document.visibilityState === 'hidden') return
       approvalsApi
         .needsYou()
         .then((res) => {
@@ -420,7 +420,7 @@ function SocConsoleInner() {
       })
     }
     const onTick = () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      if (document.visibilityState === 'hidden') return
       pollStatus()
     }
     const onVisibility = () => {

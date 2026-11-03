@@ -103,6 +103,21 @@ export async function streamFetch(path: string, init: RequestInit = {}): Promise
 
 export type NeedsYouItem = Schema<'NeedsYouItem'>
 
+// The shell and the screen under it poll some reads together; callers that overlap share one
+// request. Only in-flight reads are shared, so a read that starts after one lands is always fresh.
+const inflight = new Map<string, Promise<unknown>>()
+function coalesce<T>(key: string, read: () => Promise<T>): Promise<T> {
+  const running = inflight.get(key)
+  if (running) return running as Promise<T>
+  const promise = read().finally(() => {
+    if (inflight.get(key) === promise) inflight.delete(key)
+  })
+  inflight.set(key, promise)
+  return promise
+}
+// a read already in flight when a write lands predates it: don't hand it to the next caller
+const afterWrite = <T>(key: string, write: Promise<T>) => write.finally(() => inflight.delete(key))
+
 export const approvalsApi = {
   list: (params?: {
     status?: string
@@ -112,50 +127,17 @@ export const approvalsApi = {
 
   listPending: () => api.get('/approvals/pending'),
 
-  needsYou: (caseId?: string) => {
-    if (caseId) {
-      return api.get<{ count: number; items: NeedsYouItem[] }>('/approvals/needs-you', {
-        params: { case_id: caseId },
-      })
-    }
-    const now = Date.now()
-    if (needsYouCache && now < needsYouCache.expiresAt) {
-      return needsYouCache.promise
-    }
-    const promise = api
-      .get<{ count: number; items: NeedsYouItem[] }>('/approvals/needs-you')
-      .catch((err) => {
-        if (needsYouCache?.promise === promise) needsYouCache = null
-        throw err
-      })
-    needsYouCache = { promise, expiresAt: now + DEDUP_TTL_MS }
-    return promise
-  },
+  needsYou: (caseId?: string) =>
+    caseId
+      ? api.get<{ count: number; items: NeedsYouItem[] }>('/approvals/needs-you', { params: { case_id: caseId } })
+      : coalesce('needs-you', () => api.get<{ count: number; items: NeedsYouItem[] }>('/approvals/needs-you')),
 
-  approve: (actionId: string, approved_by?: string) => {
-    needsYouCache = null
-    return api.post(`/approvals/${actionId}/approve`, { approved_by })
-  },
+  approve: (actionId: string, approved_by?: string) =>
+    afterWrite('needs-you', api.post(`/approvals/${actionId}/approve`, { approved_by })),
 
-  reject: (actionId: string, reason: string, rejected_by?: string) => {
-    needsYouCache = null
-    return api.post(`/approvals/${actionId}/reject`, { reason, rejected_by })
-  },
+  reject: (actionId: string, reason: string, rejected_by?: string) =>
+    afterWrite('needs-you', api.post(`/approvals/${actionId}/reject`, { reason, rejected_by })),
 }
-
-const DEDUP_TTL_MS = 2_000
-let needsYouCache: {
-  promise: ReturnType<typeof api.get<{ count: number; items: NeedsYouItem[] }>>
-  expiresAt: number
-} | null = null
-let setupStepsCache: {
-  promise: ReturnType<typeof api.get<Schema<'SetupStepsResponse'>>>
-  expiresAt: number
-} | null = null
-let orchestratorCache: {
-  promise: ReturnType<typeof api.get<any>>
-  expiresAt: number
-} | null = null
 
 /** how a findings read treats findings naming an analyst-excluded IP */
 export type ExclusionView = 'include' | 'hide' | 'only'
@@ -584,23 +566,11 @@ export const configApi = {
   
   getDemoMode: () => api.get('/config/demo-mode'),
   setDemoMode: (enabled: boolean) => api.post('/config/demo-mode', { enabled }),
-  getSetupSteps: () => {
-    const now = Date.now()
-    if (setupStepsCache && now < setupStepsCache.expiresAt) {
-      return setupStepsCache.promise
-    }
-    const promise = api.get<Schema<'SetupStepsResponse'>>('/config/setup-steps').catch((err) => {
-      if (setupStepsCache?.promise === promise) setupStepsCache = null
-      throw err
-    })
-    setupStepsCache = { promise, expiresAt: now + DEDUP_TTL_MS }
-    return promise
-  },
+  getSetupSteps: () =>
+    coalesce('setup-steps', () => api.get<Schema<'SetupStepsResponse'>>('/config/setup-steps')),
   getSetupState: () => api.get<Schema<'SetupState'>>('/config/setup-state'),
-  putSetupState: (update: Schema<'SetupStateUpdate'>) => {
-    setupStepsCache = null
-    return api.put<Schema<'SetupState'>>('/config/setup-state', update)
-  },
+  putSetupState: (update: Schema<'SetupStateUpdate'>) =>
+    afterWrite('setup-steps', api.put<Schema<'SetupState'>>('/config/setup-state', update)),
   resetDemoData: () => api.post('/config/demo-mode/reset'),
   
   getIntegrations: () => api.get('/config/integrations'),
@@ -653,18 +623,7 @@ export const configApi = {
     webhook_secret?: string
   }) => api.post('/config/darktrace', data),
 
-  getOrchestrator: () => {
-    const now = Date.now()
-    if (orchestratorCache && now < orchestratorCache.expiresAt) {
-      return orchestratorCache.promise
-    }
-    const promise = api.get('/config/orchestrator').catch((err) => {
-      if (orchestratorCache?.promise === promise) orchestratorCache = null
-      throw err
-    })
-    orchestratorCache = { promise, expiresAt: now + DEDUP_TTL_MS }
-    return promise
-  },
+  getOrchestrator: () => coalesce('orchestrator', () => api.get('/config/orchestrator')),
   getIntent: () => api.get('/config/intent'),
   setOrchestrator: (data: {
     enabled: boolean
@@ -678,11 +637,10 @@ export const configApi = {
     stale_threshold: number
     workdir_base: string
   }) => {
-    orchestratorCache = null
     // GET also carries profiles, defaults and bounds; none are stored
     const rest: Record<string, unknown> = { ...data }
     for (const key of ['profiles', 'defaults', 'bounds']) delete rest[key]
-    return api.post('/config/orchestrator', rest)
+    return afterWrite('orchestrator', api.post('/config/orchestrator', rest))
   },
 }
 

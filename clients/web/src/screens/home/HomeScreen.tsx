@@ -269,7 +269,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
   useEffect(() => {
     void load()
     const id = window.setInterval(() => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      if (document.visibilityState === 'hidden') return
       void load()
     }, POLL_MS)
     const onVisibility = () => {
