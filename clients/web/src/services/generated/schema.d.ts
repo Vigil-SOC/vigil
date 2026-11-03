@@ -4800,10 +4800,13 @@ export interface paths {
         };
         /**
          * Get Processes
-         * @description State of the agent layer and the SOC daemon.
+         * @description State of the agent layer, the SOC daemon and Medic.
          *
          *     ``agent_layer`` is ``no_token`` when this server has no
-         *     AGENT_INTERNAL_TOKEN. Up to five seconds old.
+         *     AGENT_INTERNAL_TOKEN. ``medic`` is ``off``, ``down`` or ``unknown`` as the
+         *     backend decides, else Medic's stored state (``running``, ``starting``,
+         *     ``degraded``, ``blind``, ``not_recording`` or ``crash_looping``). Up to five
+         *     seconds old.
          */
         get: operations["get_api_processes"];
         put?: never;
@@ -10239,6 +10242,11 @@ export interface components {
              * @enum {string}
              */
             daemon: "running" | "unhealthy" | "not_running" | "unknown";
+            /**
+             * Medic
+             * @enum {string}
+             */
+            medic: "off" | "running" | "down" | "unknown" | "starting" | "degraded" | "blind" | "not_recording" | "crash_looping";
         };
         /**
          * ProfileUpdateRequest
