@@ -78,15 +78,15 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
   const [tab, setTab] = useState<WfTab>(() => tabFrom(searchParams.get('tab')))
   // a link followed while the screen is open names its tab again
   useEffect(() => setTab(tabFrom(searchParams.get('tab'))), [searchParams])
-  // lifted so the header's "New workflow" opens the same dialog from any tab
-  const [describing, setDescribing] = useState(false)
-  const [draft, setDraft] = useState<GeneratedDraft | null>(null)
+  // lifted so the header's "New workflow" opens the same dialog from any tab; the text it opens with, null when closed
+  const [describing, setDescribing] = useState<string | null>(null)
+  const [drafted, setDrafted] = useState<{ description: string; draft: GeneratedDraft } | null>(null)
   const workflows = useWorkflows()
   const agents = useAgents()
   const skills = useSkills()
   // ?run=<id> opens one run in place of the catalog, so a case activity can deep-link to it.
   const runId = searchParams.get('run')
-  const saveDraft = () => workflowApi.createCustom(draftPayload(draft!)).then(() => { setDraft(null); workflows.reload() })
+  const saveDraft = () => workflowApi.createCustom(draftPayload(drafted!.draft)).then(() => { setDrafted(null); workflows.reload() })
   const backToCatalog = useCallback(() => setSearchParams({}), [setSearchParams])
   // no chip while a list is loading or failed: a count of 0 would read as empty
   const count = (feed: { rows: unknown[]; phase: Phase }) => (feed.phase === 'ready' ? feed.rows.length : null)
@@ -107,7 +107,7 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
             <h1 className="m-0 text-[20px] leading-[1.25] tracking-[-0.2px] text-tx" style={{ fontWeight: 700 }}>{PAGE_TITLE}</h1>
             <p className="m-0 text-[13px] leading-[1.5] text-tx-2 max-w-[760px]">{PAGE_DESC}</p>
           </div>
-          <button className="btn primary wf-new" onClick={() => setDescribing(true)}><Icon name="plus" /> New workflow</button>
+          <button className="btn primary wf-new" onClick={() => setDescribing('')}><Icon name="plus" /> New workflow</button>
         </div>
         <div className="wf-tabs" role="tablist" aria-label="Workflow views">
           {tabs.map(([k, label, n]) => (
@@ -125,12 +125,12 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
           ))}
         </div>
       </div>
-      {tab === 'workflows' && draft && <WorkflowReaderPane draft={draft} onBack={() => setDraft(null)} onSave={saveDraft} />}
-      {tab === 'workflows' && !draft && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog feed={workflows} onCreate={() => setDescribing(true)} goSettings={goSettings} />)}
+      {tab === 'workflows' && drafted && <WorkflowReaderPane draft={drafted.draft} onBack={() => setDrafted(null)} onSave={saveDraft} onChangeDescription={() => setDescribing(drafted.description)} />}
+      {tab === 'workflows' && !drafted && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog feed={workflows} onCreate={() => setDescribing('')} goSettings={goSettings} />)}
       {tab === 'agents' && <AgentsTab feed={agents} skillCount={skills.phase === 'ready' ? skills.rows.length : null} onToggled={workflows.reload} />}
       {tab === 'skills' && <SkillsTab feed={skills} workflows={workflows} agents={agents} />}
       {tab === 'commands' && <CommandsTab />}
-      {describing && <DescribeDialog onClose={() => setDescribing(false)} onDrafted={(d) => { setDescribing(false); setTab('workflows'); setDraft(d) }} />}
+      {describing !== null && <DescribeDialog initial={describing} onClose={() => setDescribing(null)} onDrafted={(description, draft) => { setDescribing(null); setTab('workflows'); setDrafted({ description, draft }) }} />}
     </AgentRowsProvider>
   )
 }

@@ -12,8 +12,8 @@ function errMsg(e: unknown): string {
 }
 
 /** One prompt field. The result opens in the reader pane as an AI draft; nothing is saved here. */
-export default function DescribeDialog({ onClose, onDrafted }: { onClose: () => void; onDrafted: (draft: GeneratedDraft) => void }) {
-  const [prompt, setPrompt] = useState('')
+export default function DescribeDialog({ initial, onClose, onDrafted }: { initial: string; onClose: () => void; onDrafted: (description: string, draft: GeneratedDraft) => void }) {
+  const [prompt, setPrompt] = useState(initial)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const ready = prompt.trim() !== '' && !busy
@@ -24,11 +24,12 @@ export default function DescribeDialog({ onClose, onDrafted }: { onClose: () => 
   const generate = () => {
     setBusy(true)
     setError(null)
-    workflowApi.generate(prompt.trim())
+    const description = prompt.trim()
+    workflowApi.generate(description)
       .then((res) => {
         const draft = res.data?.draft
         if (!draft) throw new Error('No draft came back. Try describing it differently.')
-        if (open.current) onDrafted(draft)
+        if (open.current) onDrafted(description, draft)
       })
       .catch((e) => { if (open.current) { setError(errMsg(e)); setBusy(false) } })
   }

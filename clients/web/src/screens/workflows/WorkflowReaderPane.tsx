@@ -65,7 +65,7 @@ interface ReaderActions {
 }
 
 /** A draft's `onSave` resolves once the workflow exists and rejects with what the server said. */
-type ReaderProps = ({ wf: Workflow } & ReaderActions) | { draft: DraftDefinition; onBack?: () => void; onSave: () => Promise<unknown> }
+type ReaderProps = ({ wf: Workflow } & ReaderActions) | { draft: DraftDefinition; onBack?: () => void; onSave: () => Promise<unknown>; onChangeDescription: () => void }
 
 const DRAFT_MISSING = 'Shown once the workflow is saved.'
 const NOT_LOADED = 'Couldn’t load this.'
@@ -476,7 +476,7 @@ function WatchButton({ wf }: { wf: Workflow }) {
   )
 }
 
-function Header({ name, wf, actions, definition, onSave }: { name: string; wf: Workflow | null; actions: ReaderActions | null; definition: Definition; onSave?: () => Promise<unknown> }) {
+function Header({ name, wf, actions, definition, onSave, onChangeDescription }: { name: string; wf: Workflow | null; actions: ReaderActions | null; definition: Definition; onSave?: () => Promise<unknown>; onChangeDescription?: () => void }) {
   // optimistic, dropped once the list reads the row again
   const [now, setNow] = useState<boolean | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -513,8 +513,8 @@ function Header({ name, wf, actions, definition, onSave }: { name: string; wf: W
       ? `Edited ${formatDistanceToNowStrict(new Date(definition.updated_at), { addSuffix: true })} · version ${version}`
       : `Edited · version ${version}`
   return (
-    <div className="flex items-start gap-3">
-      <div className="flex flex-col gap-1 flex-1 min-w-0">
+    <div className="flex flex-wrap items-start gap-3">
+      <div className="flex flex-col gap-1 flex-1 basis-[240px] min-w-0">
         <div className="flex items-center gap-2.5">
           <h2 className="m-0 text-[20px] leading-[1.25] tracking-[-0.2px] text-tx min-w-0" style={{ fontWeight: 700 }}>{name}</h2>
           {wf && (
@@ -533,7 +533,8 @@ function Header({ name, wf, actions, definition, onSave }: { name: string; wf: W
         {err && <p role="alert" className="m-0 text-[12px] leading-[1.45] text-[var(--poor)]">{err}</p>}
       </div>
       {!wf && onSave && (
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <button className="btn ghost" disabled={saving} onClick={onChangeDescription}><Icon name="edit" /> Change description</button>
           <button className="btn primary disabled:opacity-50 disabled:cursor-not-allowed" disabled={saving} onClick={save}><Icon name="check2" /> {saving ? 'Saving…' : 'Save workflow'}</button>
         </div>
       )}
@@ -558,6 +559,8 @@ export default function WorkflowReaderPane(props: ReaderProps) {
   const draft = 'draft' in props ? props.draft : null
   const { phase, definition, pre, missing } = useSource('wf' in props ? props.wf.id : null, draft)
   const [selected, setSelected] = useState<number | null>(null)
+  // a new draft may have other stages at the same place
+  useEffect(() => setSelected(null), [draft])
   const entries = entriesOf(pre.roles)
   const huntLike = definition.hunt_like === true
   const runKind = definition.run_kind || 'compose'
@@ -593,7 +596,7 @@ export default function WorkflowReaderPane(props: ReaderProps) {
         {phase === 'error' && <p className="m-0 text-[13px] text-tx-2">Couldn’t load this workflow.</p>}
         {phase === 'ready' && (
           <>
-            <Header name={'wf' in props ? props.wf.name : props.draft.name} wf={'wf' in props ? props.wf : null} actions={'wf' in props ? props : null} definition={definition} onSave={'draft' in props ? props.onSave : undefined} />
+            <Header name={'wf' in props ? props.wf.name : props.draft.name} wf={'wf' in props ? props.wf : null} actions={'wf' in props ? props : null} definition={definition} onSave={'draft' in props ? props.onSave : undefined} onChangeDescription={'draft' in props ? props.onChangeDescription : undefined} />
             {strip && stages.length > 0 ? (
               <HowItRuns strip={strip} entries={entries} pre={pre} selected={selected} onSelect={setSelected}>{panels}</HowItRuns>
             ) : (
