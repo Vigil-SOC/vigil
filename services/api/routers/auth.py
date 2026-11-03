@@ -32,6 +32,7 @@ from core.auth.auth_service import (
     raise_if_locked,
 )
 from core.auth.bootstrap_code import has_human_user, setup_code_matches
+from core.auth.current_user import _detached
 from core.auth.identity import claim_sign_in_names, identifier_in_use
 from core.auth.password_reset import (
     decode_reset_token,
@@ -56,7 +57,6 @@ from core.platform.email_service import mail_is_configured, send_email
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import SignIn, User
 from core.storage.schemas import UserSchema
-from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 from services.api.middleware.auth import get_current_active_user
 from services.api.middleware.auth_rate_key import (
@@ -86,15 +86,6 @@ def _bearer_token(request: Request) -> Optional[str]:
     return None
 
 
-def _load_user(user_id: str) -> Optional[User]:
-    """A user read in a short session of its own, detached."""
-    with unit_of_work() as session:
-        user = _get_user(session, user_id)
-        if user is not None:
-            session.expunge(user)
-    return user
-
-
 async def _refuse_service_account(request: Request):
     """Refuse a service account's token on every route but login and refresh.
 
@@ -113,7 +104,7 @@ async def _refuse_service_account(request: Request):
         user_id = payload.get("user_id") if payload else None
         if not user_id:
             continue
-        user = await asyncio.to_thread(_load_user, user_id)
+        user = await asyncio.to_thread(_detached, lambda db: _get_user(db, user_id))
         if user is not None and _is_service_account(user):
             await asyncio.to_thread(
                 trail_events.refused,
@@ -924,7 +915,7 @@ async def update_current_user(
             detail="Send profile fields in the JSON body",
         )
 
-    # current_user is detached; the write goes through the endpoint's session.
+    # current_user is detached; write through this session's own row.
     user = session.get(User, current_user.user_id)
 
     try:
@@ -1011,7 +1002,7 @@ async def change_password(
             detail=exc.as_detail(),
         )
 
-    # current_user is detached; the write goes through the endpoint's session.
+    # current_user is detached; write through this session's own row.
     user = session.get(User, current_user.user_id)
 
     try:

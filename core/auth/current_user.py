@@ -10,7 +10,7 @@ are unaffected.
 """
 
 import logging
-from typing import Optional
+from typing import Callable, Optional
 
 from fastapi import Header, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
@@ -89,25 +89,19 @@ def _get_dev_user(session: Session) -> User:
     return _dev_user
 
 
-def _load_detached(user_id: Optional[str]) -> Optional[User]:
-    """Read a user in a session of its own and detach it, so the connection is
-    back in the pool before the endpoint runs. ``None`` is the DEV_MODE admin.
+def _detached(lookup: Callable[[Session], Optional[User]]) -> Optional[User]:
+    """Run ``lookup`` in a short session and detach its row.
 
-    A request-scoped session would hold its connection idle in transaction for
-    the whole handler while the permission check and the handler take more
-    from the same pool. Callers run this in a worker thread: a checkout that
-    waits on a full pool must not block the event loop that returns
-    connections to it.
+    Holding the request's session for the lookup kept its connection idle in
+    transaction for the whole handler (#3660). Callers run this in a worker
+    thread: a checkout waiting on a full pool must not block the event loop.
     """
     with unit_of_work() as db:
-        if user_id is None:
-            user = _get_dev_user(db)
-        else:
-            user = db.query(User).filter(User.user_id == user_id).first()
-        # The transient dev fallback was never added to the session.
+        user = lookup(db)
+        # The transient dev fallback was never in the session.
         if user is not None and user in db:
             db.expunge(user)
-    return user
+        return user
 
 
 async def get_current_user(
@@ -127,9 +121,8 @@ async def get_current_user(
         authorization: Authorization header (Bearer token fallback).
 
     Returns:
-        The current User, detached: the lookup's connection goes back to the
-        pool before the endpoint runs. An endpoint that writes to the user
-        loads it into its own session first.
+        Current User object, detached: the lookup's session closes before the
+        endpoint runs, so a writer must load its own copy into its session.
 
     Raises:
         HTTPException: If no token is present, validation fails, or the user
@@ -143,7 +136,7 @@ async def get_current_user(
     # DEV MODE: Bypass authentication and return mock user
     if DEV_MODE:
         logger.debug("DEV_MODE: Bypassing authentication")
-        return await run_in_threadpool(_load_detached, None)
+        return await run_in_threadpool(_detached, _get_dev_user)
 
     cookie = request.cookies.get(ACCESS_COOKIE_NAME)
     # The cookie wins when a bearer is also present.
@@ -217,7 +210,11 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user = await run_in_threadpool(_load_detached, payload["user_id"])
+    # Get user from database
+    user = await run_in_threadpool(
+        _detached,
+        lambda db: db.query(User).filter(User.user_id == payload["user_id"]).first(),
+    )
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

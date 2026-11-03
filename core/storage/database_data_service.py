@@ -577,3 +577,14 @@ class DatabaseDataService:
                 logger.error(f"Error adding finding to case in DB: {e}")
                 return False
         return False
+
+
+_database_data_service: Optional[DatabaseDataService] = None
+
+
+def get_database_data_service() -> DatabaseDataService:
+    """Return the process-wide DatabaseDataService singleton (#3666)."""
+    global _database_data_service
+    if _database_data_service is None:
+        _database_data_service = DatabaseDataService()
+    return _database_data_service

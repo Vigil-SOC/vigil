@@ -1,0 +1,44 @@
+# L-4.a / L-4.c: the backend can't reach Bifrost (core/llm/bifrost/mirror.py:290-297,
+# #1689; the mirror reconcile runs on every catalogue refresh, services/api/main.py:300-312).
+# core/llm/outage.py appends to the caller's literal: set on the entry ERROR or its
+# " (still failing, %d failures)" reminder; clear on "<healthy>; recovered after %d
+# failures" or the bare healthy line a process logs on its first success. A restart
+# during the outage keeps the latch set, since the new process re-reports at once.
+# The backend runs 2 uvicorn workers on one log stream: one worker's first healthy
+# line can clear another's outage, and reminders come only every 100 failures.
+# All #1689 latches need INFO lines: a site that raises the log level above INFO never
+# logs the clear, and its latches stay set.
+# Lane 2: B5 says lane 1 for bundled Bifrost, but log lines alone can't route there.
+apiVersion: medic.rules/v1
+kind: Rule
+id: llm.gateway-unreachable
+title: The backend can't reach the LLM gateway (Bifrost)
+revision: 1
+fault: {class: llm, mode: L-4, causes: [L-4.a, L-4.c]}
+lane: 2
+detection: event
+signals:
+  down:
+    log:
+      signal: log_backend
+      logger: {eq: core.llm.bifrost.mirror}
+      level: [ERROR]
+      template: {re2: '^Mirror reconcile skipped — Bifrost unreachable: %s( \(still failing, %d failures\))?$'}
+  up:
+    log:
+      signal: log_backend
+      logger: {eq: core.llm.bifrost.mirror}
+      level: [INFO]
+      template: {re2: '^Bifrost reachable for mirror reconcile(; recovered after %d failures)?$'}
+when: {fn: latch, set: down, clear: up}
+for: 2m
+keep_firing_for: 5m
+advice:
+  summary: The backend can't reach Bifrost, the LLM gateway, so LLM calls and provider changes fail.
+  fix: >-
+    Check that Bifrost is running and that BIFROST_URL resolves from the backend
+    (Compose: the bifrost container; host-native: http://localhost:8080; Helm: the
+    gateway URL you configured). If Bifrost is up, check its own log for errors
+    reaching the model provider (network egress, proxy, or for Ollama the
+    OLLAMA_URL and, on Linux Compose, host.docker.internal mapped to the host
+    gateway).

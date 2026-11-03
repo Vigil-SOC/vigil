@@ -18,7 +18,7 @@ from core.cases.case_search_service import CaseSearchService
 from core.deps import provide_workflows
 from core.routing import Auth, RouterMeta
 from core.skills.skill_library import load_skills, skill_roots
-from core.storage.database_data_service import DatabaseDataService
+from core.storage.database_data_service import get_database_data_service
 from core.storage.models import User
 from core.storage.unit_of_work import unit_of_work
 from core.workflows.workflows_service import WorkflowsService
@@ -112,7 +112,7 @@ def search(
             if missing_permission(user.user_id, permission, session) is None
         }
     results = SearchResults()
-    data_service = DatabaseDataService()
+    data_service = get_database_data_service()
     if "cases.read" in allowed:
         case = data_service.get_case(q)
         if case:
