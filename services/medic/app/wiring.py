@@ -20,13 +20,15 @@ import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import yaml
 
 from services.medic.app.policy_probe import Policy, PolicyCheck
 from services.medic.app.trace import TraceCapture
 from services.medic.engine import Engine, LoadedRule, load_rule, load_rule_file
+from services.medic.packs import lifecycle
+from services.medic.packs.loader import read_active, vet_pack
 from services.medic.router import Router
 from services.medic.sensors import (
     Bus,
@@ -46,7 +48,10 @@ from services.medic.store import DecisionWriter, RecordHeld, StoreError
 log = logging.getLogger("services.medic")
 
 TICK_S = 15  # semantics.md §1
-PACK_DIR = Path(__file__).resolve().parents[1] / "packs" / "medic-core"
+PACK_DIR = Path(__file__).resolve().parents[1] / "packs" / "medic-core"  # dev mode only
+# The image's own trust root and bundled pack: fixed names, no setting.
+BUNDLED_DIR = Path(__file__).resolve().parents[1] / "packs" / "bundled"
+VERSION_FILE = Path(__file__).resolve().parents[3] / "VERSION"
 # Several Helm series share this signal. Ungrouped, the newest read is
 # ambiguous_series and the rule never fires. Compose and host-native have no
 # pod label, so the file stays ungrouped and Helm adds the group at load.
@@ -57,30 +62,127 @@ RECORDING_STOPPED = "watcher.recording-stopped"
 HELD_MAX = 1000  # decisions kept in memory while recording is stopped
 
 
-def load_medic_core(
-    shape: str, directory: Path = PACK_DIR
-) -> tuple[list[LoadedRule], list[dict[str, Any]], set[tuple[str, str]]]:
-    """The medic-core pack from the source tree (unsigned; #2025 swaps in the active
-    pack): its rules, suppression entries and (logger, template) catalogue.
-    Missing files or no rules raise; a bad rule raises RuleLoadError."""
-    pack_doc = yaml.safe_load((directory / "pack.yaml").read_text())["pack"]
-    pack = (pack_doc["id"], pack_doc["version"])
-    files = sorted((directory / "rules").glob("*.yaml"))
-    if not files:
-        raise FileNotFoundError(f"no rules in {directory / 'rules'}")
-    rules = [load_rule_file(p, pack=pack) for p in files]
+class Loaded(NamedTuple):
+    """What the engine and sensors take from a rule pack."""
+
+    rules: list[LoadedRule]
+    suppression: list[dict[str, Any]]
+    catalog: set[tuple[str, str]]
+    facts: dict[str, Any] | None = None  # PackFacts of the active pack; None in dev
+    events: Sequence[dict[str, Any]] = ()  # pack_event bodies for the decision log
+
+
+def load_pack(
+    shape: str,
+    *,
+    dev_mode: bool,
+    data_dir: Path,
+    now: datetime,
+    vigil_version: str | None = None,
+) -> Loaded:
+    """The rules Medic runs. Dev mode: the medic-core source tree, unsigned. Otherwise:
+    the verified active pack, after the lifecycle's start-up work (trust root,
+    revocation fallback, bundled seed or upgrade). With no verified pack it is
+    empty, never an error: the built-in watcher.* rules still run. Dev mode lets a
+    bad rule raise, which stops the start."""
+    if dev_mode:
+        pack_doc = yaml.safe_load((PACK_DIR / "pack.yaml").read_text())["pack"]
+        files = sorted((PACK_DIR / "rules").glob("*.yaml"))
+        if not files:
+            raise FileNotFoundError(f"no rules in {PACK_DIR / 'rules'}")
+        pack = (pack_doc["id"], pack_doc["version"])
+        return _assemble(
+            shape,
+            pack,
+            [load_rule_file(p, pack=pack) for p in files],
+            yaml.safe_load((PACK_DIR / "suppression.yaml").read_text()),
+            yaml.safe_load((PACK_DIR / "catalog.yaml").read_text()),
+        )
+    try:
+        return _load_active(shape, data_dir, now, vigil_version)
+    except Exception as exc:  # noqa: BLE001 (a bad pack never crash-loops Medic)
+        return _no_pack(f"loading it failed ({type(exc).__name__}: {exc})")
+
+
+def _no_pack(reason: str, events: Sequence[dict[str, Any]] = ()) -> Loaded:
+    """`events`: what the lifecycle already did, still owed to the decision log."""
+    log.warning(
+        "Medic has no rule pack (%s): only the built-in watcher.* rules run", reason
+    )
+    return Loaded([], [], set(), events=events)
+
+
+def _assemble(shape, pack, rules, suppression_doc, catalog_doc, **extra) -> Loaded:
     if shape == "helm":
         rules = [
             _group_worker_by_pod(rule) if rule.id == WORKER_NOT_READY else rule
             for rule in rules
         ]
-    doc = yaml.safe_load((directory / "suppression.yaml").read_text())
     # `why` is the pack's note to a human; the engine's shape check refuses it.
     suppression = [
-        {k: v for k, v in e.items() if k != "why"} for e in doc["entries"] or []
+        {k: v for k, v in e.items() if k != "why"}
+        for e in (suppression_doc or {}).get("entries") or []
     ]
-    entries = yaml.safe_load((directory / "catalog.yaml").read_text())["entries"]
-    return rules, suppression, {(e["logger"], e["template"]) for e in entries}
+    entries = (catalog_doc or {}).get("entries") or []
+    catalog = {(e["logger"], e["template"]) for e in entries}
+    return Loaded(rules, suppression, catalog, **extra)
+
+
+def _load_active(
+    shape: str, data_dir: Path, now: datetime, vigil_version: str | None
+) -> Loaded:
+    try:
+        root_bytes = (BUNDLED_DIR / "trust-root.dsse.json").read_bytes()
+    except OSError as exc:
+        return _no_pack(f"the image's trust root is unreadable: {type(exc).__name__}")
+    try:
+        bundled = (BUNDLED_DIR / "medic-core.json").read_bytes()
+    except OSError:
+        bundled = None
+    vigil = vigil_version or VERSION_FILE.read_text().strip()
+    root, started = lifecycle.start(
+        data_dir=data_dir, image_trust_root=root_bytes, bundled=bundled,
+        vigil_version=vigil, dev_mode=False, now=now,
+    )  # fmt: skip
+    for code, message in started.errors:
+        log.error("pack start-up: %s %s", code, message)
+    try:
+        return _from_active(shape, data_dir, now, vigil, root, bundled, started.events)
+    except Exception as exc:  # noqa: BLE001 (the events are already owed)
+        return _no_pack(
+            f"loading it failed ({type(exc).__name__}: {exc})", started.events
+        )
+
+
+def _from_active(shape, data_dir, now, vigil, root, bundled, events) -> Loaded:
+    active = read_active(data_dir)
+    if active is None:
+        return _no_pack("no verified pack is active", events)
+    # Verified again, strictly as the bundled pack is (stale and out-of-range run).
+    errors, verified, res = vet_pack(
+        active.data, trust_root=root, vigil_version=vigil, dev_mode=False, now=now,
+        lineage=None, tolerate=lifecycle.TOLERATED,
+    )  # fmt: skip
+    if errors:
+        return _no_pack(
+            f"the active pack did not verify: {[c for c, _ in errors]}", events
+        )
+    pack = (res.manifest["pack"]["id"], res.manifest["pack"]["version"])
+    files = json.loads(verified.payload)["files"]
+    rules = [load_rule(doc, pack=pack) for doc in res.rules.values()]
+    state = lifecycle.pack_state(
+        data_dir=data_dir,
+        trust_root=root,
+        bundled=bundled,
+        vigil_version=vigil,
+        now=now,
+    )
+    return _assemble(
+        shape, pack, rules,
+        yaml.safe_load(files.get("suppression.yaml", "entries: []")),
+        yaml.safe_load(files.get("catalog.yaml", "entries: []")),
+        facts=state["active"], events=events,
+    )  # fmt: skip
 
 
 def _group_worker_by_pod(loaded: LoadedRule) -> LoadedRule:

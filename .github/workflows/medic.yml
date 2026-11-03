@@ -116,7 +116,7 @@ jobs:
           docker volume create medic_ci
           docker run -d --name medic --read-only --cap-drop ALL \
             --security-opt no-new-privileges \
-            -e VIGIL_MEDIC_ENABLED=true \
+            -e VIGIL_MEDIC_ENABLED=true -e DEV_MODE=true \
             -v medic_ci:/var/lib/vigil-medic vigil-medic:ci
           for _ in $(seq 1 30); do
             if docker exec medic python -m services.medic check; then

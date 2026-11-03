@@ -12,8 +12,8 @@ import sys
 import time
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 from services.medic.api.history import record_exit, record_start
 from services.medic.api.ready import check_ready
@@ -34,16 +34,17 @@ from services.medic.app.trace import TraceCapture, start_capture
 from services.medic.app.watchdog import Watchdog
 from services.medic.app.wiring import (
     TICK_S,
+    Loaded,
     Medic,
     PolicySensor,
     PolicyStartupSensor,
     RecordingSensor,
     grid_tick,
     load_engine_state,
-    load_medic_core,
+    load_pack,
     save_engine_state,
 )
-from services.medic.engine import LoadedRule
+from services.medic.engine.core import iso
 from services.medic.redact import install_log_redaction
 from services.medic.sensors import Sensor
 from services.medic.sensors.containers import docker_containers
@@ -167,12 +168,9 @@ def run(
         return 0
     try:
         shape = config.install_shape(env)
-        try:
-            pack = load_medic_core(shape)
-        except Exception as exc:  # noqa: BLE001 (any bad pack file stops the start)
-            log.error("Medic can't start: medic-core did not load: %s", exc)
-            return 1
-        sensors = sensors_for(env, shape, pack[2])
+        # Validates the addresses now; the sensors are built again once the
+        # pack's catalogue is known (it needs the data dir, opened later).
+        sensors_for(env, shape, ())
         probe_target = config.policy_probe_addr(env, shape)
         probe_control = config.policy_control_addr(env, shape)
         policy_check = (
@@ -208,8 +206,7 @@ def run(
         return _run(
             data_dir,
             shape=shape,
-            pack=pack,
-            sensors=sensors,
+            sensors=functools.partial(sensors_for, env, shape),
             clock=clock,
             sleep=sleep,
             max_cycles=max_cycles,
@@ -343,8 +340,7 @@ def _run(
     data_dir: Path,
     *,
     shape: str,
-    pack: tuple[list[LoadedRule], list[dict[str, Any]], Collection[tuple[str, str]]],
-    sensors: Sequence[Sensor],
+    sensors: Callable[[Collection[tuple[str, str]]], list[Sensor]],
     clock: SystemClock,
     sleep: Callable[[float], Awaitable[None]],
     max_cycles: int | None,
@@ -387,12 +383,20 @@ def _run(
         # Built first: a start that can't build writes no gap and no beat, so a
         # crash loop neither grows the store nor reads healthy (S4 review #1).
         try:
+            # The lifecycle needs the data dir, so the pack loads here, and its
+            # catalogue goes to the sensors (the log tails read it).
+            pack = load_pack(
+                shape,
+                dev_mode=vigil_dev_mode,
+                data_dir=data_dir,
+                now=datetime.fromtimestamp(started_at, UTC),
+            )
             medic = _build(
                 writer,
                 data_dir,
                 shape,
                 pack,
-                [*sensors, *policy_sensors, RecordingSensor(writer)],
+                [*sensors(pack.catalog), *policy_sensors, RecordingSensor(writer)],
                 clock,
                 vigil_dev_mode=vigil_dev_mode,
                 capture=start_capture(
@@ -403,7 +407,10 @@ def _run(
                     tick=grid_tick(clock),
                 ),
             )
-        except Exception as exc:  # logged (redacted), exit 1
+        except config.ConfigError as exc:
+            log.error("Medic can't start: %s", exc)
+            return 1
+        except Exception as exc:  # logged (redacted), exit 1; a bad dev rule too
             log.exception("Medic can't start: %s", type(exc).__name__)
             return 1
         try:
@@ -411,6 +418,10 @@ def _run(
                 write_gap(writer, gap)
             except RecordHeld:  # stopped at start: written, in order, on resume
                 medic.held.append({"v": 1, "at": gap["to"], "type": "gap", "body": gap})
+            for event in pack.events:  # what the pack's start-up did, after the gap
+                medic._store(
+                    {"v": 1, "at": iso(started_at), "type": "pack_event", "body": event}
+                )
             write_heartbeat(
                 data_dir,
                 cycle=0,
@@ -430,6 +441,8 @@ def _run(
             clock,
             started_at,
             record_start(data_dir, now=started_at, previous_beat=previous_beat),
+            dev_mode=vigil_dev_mode,
+            pack=pack.facts,
         )
         status.publish(cycle=0)
         watchdog = Watchdog(
@@ -484,14 +497,14 @@ def _build(
     writer,
     data_dir: Path,
     shape: str,
-    pack,
+    pack: Loaded,
     sensors,
     clock,
     *,
     vigil_dev_mode: bool = False,
     capture: TraceCapture | None = None,
 ) -> Medic:
-    rules, suppression, _ = pack  # the catalogue is already on the log tails
+    rules, suppression = pack.rules, pack.suppression
     state = load_engine_state(data_dir)
     last_tick = (state or {}).get("last_tick")
     if isinstance(last_tick, int | float) and last_tick > clock.wall() + TICK_S:
@@ -591,8 +604,11 @@ class _Status:
     built is skipped (the API answers `busy` once it's stale), and the listener
     retries on its own."""
 
-    def __init__(self, medic, data_dir, api, clock, started_at, history) -> None:
+    def __init__(
+        self, medic, data_dir, api, clock, started_at, history, *, dev_mode, pack
+    ) -> None:
         self.medic, self.data_dir, self.clock = medic, data_dir, clock
+        self.dev_mode, self.pack = dev_mode, pack  # fixed at start
         self.started_at, self.history = started_at, history
         self.board = StatusBoard()
         self.api = None
@@ -626,6 +642,8 @@ class _Status:
                 decisions_lost=self.medic.unstored,
                 chain=read_chain(self.data_dir),
                 trace=self.medic.capture.status(),
+                dev_mode=self.dev_mode,
+                pack=self.pack,
             )
             sensors = build_sensors(
                 self.medic.scheduler.sensor_states(),

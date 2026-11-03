@@ -233,7 +233,8 @@ class Engine:
 
     def _retire_removed_rules(self, now: float) -> list[dict]:
         """A rule gone from the rule set ends its open incidents at once (§4)."""
-        known = {r.id for r in self.rules} | set(BUILTINS)
+        # Active only: a skipped or off-shape rule is retired, not kept open.
+        known = {r.id for r in self.active} | set(BUILTINS)
         out = []
         for rule_id in sorted(set(self.machines) - known):
             for _, m in sorted(self.machines.pop(rule_id).items()):
