@@ -23,7 +23,7 @@ from services.medic.app.heartbeat import STARTUP_GRACE_S
 from services.medic.store import StoreError, open_reader
 from services.medic.store.writer import StoreUsage
 
-API_VERSION = "1.0"
+API_VERSION = "1.1"
 
 # The writer's usage().states are StoreHealth.states (medic-api.openapi.yaml).
 _NOT_RECORDING = {"recording_stopped", "migration_blocked"}
@@ -110,8 +110,10 @@ def build_status(
     usage: StoreUsage,
     decisions_lost: int,
     chain: dict[str, Any],
+    trace: dict[str, Any],
 ) -> dict[str, Any]:
-    """`scheduler` is `Scheduler.status()`; `usage` is the writer's `usage()`."""
+    """`scheduler` is `Scheduler.status()`; `usage` is the writer's `usage()`;
+    `trace` is `TraceCapture.status()`."""
     uptime_s = max(0, int(now - started_at))
     sensors = _sensors(scheduler)
     store = _store(usage, decisions_lost, chain)
@@ -138,6 +140,7 @@ def build_status(
         "sensors": sensors,
         "pack": None,
         "chain_head": chain["head"],
+        "trace": {"id": trace["id"], "state": trace["state"]},
     }
 
 

@@ -443,6 +443,12 @@ class DecisionWriter:
         """True while recording is stopped (as of the last write or `refresh`)."""
         return self._stop is not None
 
+    @property
+    def stop_reason(self) -> str | None:
+        """Why recording is stopped: "disk" (the free-space floor), "cap" (the size
+        cap), "full" (SQLITE_FULL), or None."""
+        return self._stop
+
     def refresh(self) -> bool:
         """Re-check the bounds (and resume if room came back); returns `stopped`."""
         with self._mutex:

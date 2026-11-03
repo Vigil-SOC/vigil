@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Medic API
-  version: "1.0.0"
+  version: "1.1.0"
   summary: Medic's read-only API, plus one admin write (decision feedback).
   description: |
     Contract X2 (2026-10-07). G3 builds this API inside the Medic process; H3 (the backend
@@ -381,7 +381,7 @@ components:
     Status:
       type: object
       required: [api_version, instance_id, state, now, heartbeat_at, cycle, started_at, uptime_s,
-                 restarts_24h, last_exit, dev_mode, store, sensors, pack, chain_head]
+                 restarts_24h, last_exit, dev_mode, store, sensors, pack, chain_head, trace]
       additionalProperties: false
       properties:
         api_version:
@@ -439,6 +439,27 @@ components:
             - type: "null"
               x-medic-type: enum
             - $ref: "#/components/schemas/ChainHead"
+        trace:
+          description: |
+            Trace capture (D7), set by VIGIL_MEDIC_TRACE: whether Medic is writing the
+            observations its engine receives into a trace. Not the decision store (see
+            `store.states`). `stopped_at_cap` stays until restart; detection is unaffected.
+          type: object
+          required: [id, state]
+          additionalProperties: false
+          properties:
+            id:
+              description: The trace-id; null when off.
+              oneOf:
+                - type: "null"
+                  x-medic-type: enum
+                - type: string
+                  pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+                  x-medic-type: id
+            state:
+              type: string
+              enum: [capturing, stopped_at_cap, "off"]
+              x-medic-type: enum
 
     StoreHealth:
       description: C4 §6.6. Several states can hold at once.
@@ -857,7 +878,7 @@ paths:
               examples:
                 degraded:
                   value:
-                    api_version: "1.0"
+                    api_version: "1.1"
                     instance_id: mi_3f9a2c1b0d4e5f60
                     state: degraded
                     now: "2026-12-07T14:02:31Z"
@@ -889,6 +910,7 @@ paths:
                     chain_head:
                       seq: 4211
                       hash: 76792190d1855c71c2b6b076ba494b9b4f8f795f24a8e2a767823e571fea4f7d
+                    trace: { id: null, state: "off" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "503": { $ref: "#/components/responses/Busy" }
 
