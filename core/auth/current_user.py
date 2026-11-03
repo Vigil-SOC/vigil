@@ -12,7 +12,7 @@ are unaffected.
 import logging
 from typing import Optional
 
-from fastapi import Header, HTTPException, Request, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from core.auth.auth_cookies import ACCESS_COOKIE_NAME
@@ -22,8 +22,8 @@ from core.auth.session_cutoff import issued_before_cutoff
 from core.auth.token_blacklist import is_token_revoked
 from core.cases.agent_closure import clear_http_actor, note_http_actor
 from core.config import get_settings
-from core.routing import UnitOfWorkSession
 from core.storage.models import User
+from core.storage.unit_of_work import unit_of_work
 
 logger = logging.getLogger(__name__)
 
@@ -88,11 +88,19 @@ def _get_dev_user(session: Session) -> User:
     return _dev_user
 
 
+def _no_session() -> Optional[Session]:
+    """Default FastAPI dependency for ``session`` so auth opens a short-lived
+    ``unit_of_work`` rather than holding a request-spanning ``UnitOfWorkSession``
+    open across the endpoint handler (#3660).
+    """
+    return None
+
+
 async def get_current_user(
     request: Request,
     authorization: Optional[str] = Header(None),
     *,
-    session: UnitOfWorkSession,
+    session: Optional[Session] = Depends(_no_session),
 ) -> User:
     """
     Resolve the authenticated user from either the access_token HttpOnly
@@ -122,7 +130,11 @@ async def get_current_user(
     # DEV MODE: Bypass authentication and return mock user
     if DEV_MODE:
         logger.debug("DEV_MODE: Bypassing authentication")
-        return _get_dev_user(session)
+        with unit_of_work(session) as db:
+            dev_user = _get_dev_user(db)
+            if session is None and dev_user in db:
+                db.expunge(dev_user)
+            return dev_user
 
     cookie = request.cookies.get(ACCESS_COOKIE_NAME)
     # The cookie wins when a bearer is also present.
@@ -196,13 +208,17 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Get user from database
-    user = session.query(User).filter(User.user_id == payload["user_id"]).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
-        )
+    # Get user from database inside a short-lived unit_of_work so the pooled
+    # connection is returned before the route handler runs (#3660).
+    with unit_of_work(session) as db:
+        user = db.query(User).filter(User.user_id == payload["user_id"]).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found",
+            )
+        if session is None and user in db:
+            db.expunge(user)
 
     if not user.is_active:
         raise HTTPException(

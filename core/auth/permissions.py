@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from fastapi import Depends, Header, HTTPException, Request, status
+from sqlalchemy.orm import Session
 
 from core.auth import current_user as current_user_module
 from core.auth.auth_cookies import ACCESS_COOKIE_NAME
@@ -23,7 +24,6 @@ from core.auth.current_user import get_current_user
 from core.auth.mcp_credential_service import looks_like_mcp_token
 from core.auth.tool_principal import current_claims
 from core.integrations.mcp.surface import current_caller
-from core.routing import UnitOfWorkSession
 from core.storage.models import User
 from core.storage.unit_of_work import unit_of_work
 
@@ -363,7 +363,7 @@ def reject_mcp_credential(request: Request, authorization: Optional[str]) -> Non
 
 async def resolve_signed_in_user(
     request: Request,
-    session: UnitOfWorkSession,
+    session: Optional[Session] = Depends(current_user_module._no_session),
     authorization: Optional[str] = Header(None),
 ) -> User:
     """The session user, after a credential has already been refused."""
