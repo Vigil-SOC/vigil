@@ -184,6 +184,12 @@ export interface RecalledSighting extends RecalledFrom {
   attacker_influenceable: boolean
   window: RecalledWindow
 }
+/** What a person on the team said about one entity: context, not a finding. */
+export interface RecalledNote extends RecalledFrom {
+  entity_key: string
+  statement: string
+  written_by: string
+}
 interface DroppedRows { per_key_cap: number; overall_cap: number }
 /** The journaled read. `unavailable` means it could not be served; empty lists mean
  *  it ran and found nothing, which is a fact about the entities rather than about
@@ -195,7 +201,9 @@ export interface HuntRecall {
   sightings?: RecalledSighting[]
   verdicts?: RecalledVerdict[]
   gaps?: RecalledGap[]
-  dropped?: { sightings: DroppedRows; verdicts: DroppedRows; gaps: DroppedRows }
+  /** Absent on a ledger journaled before notes. */
+  notes?: RecalledNote[]
+  dropped?: { sightings: DroppedRows; verdicts: DroppedRows; gaps: DroppedRows; notes?: DroppedRows }
 }
 
 export interface HuntHandoff {
