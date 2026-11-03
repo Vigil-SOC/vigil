@@ -400,8 +400,12 @@ class DecisionWriter:
                     conn.execute("ROLLBACK")
                 if _is_full(err) and not self._stop:
                     # The hard cap (or a full disk) beat the soft check.
-                    self._trip("cap")
+                    self._trip("full")
                     raise RecordHeld("the store is full; nothing was written") from err
+                if _is_full(err) and reserve:
+                    log.error(
+                        "The recording-stopped incident didn't fit: no room in the reserve"
+                    )
                 raise
             if released:
                 self._filler = False
@@ -500,11 +504,12 @@ class DecisionWriter:
             conn.execute(f"PRAGMA {n}").fetchone()[0]
             for n in ("page_count", "freelist_count")
         )
-        extra = sum(
-            (self.root / (DB_NAME + sfx)).stat().st_size
-            for sfx in ("-wal", "-shm")
-            if (self.root / (DB_NAME + sfx)).exists()
-        )
+        extra = 0
+        for sfx in ("-wal", "-shm"):
+            try:
+                extra += (self.root / (DB_NAME + sfx)).stat().st_size
+            except FileNotFoundError:
+                pass
         return (pages - free) * self._page_size(conn) + extra
 
     def _floor(self, usage: Any) -> int | None:
@@ -525,7 +530,7 @@ class DecisionWriter:
                 (self._reserve,),
             )
             conn.execute("COMMIT")
-        except sqlite3.OperationalError as err:
+        except BaseException as err:
             if conn.in_transaction:
                 conn.execute("ROLLBACK")
             if _is_full(err):
@@ -537,8 +542,12 @@ class DecisionWriter:
     def _assess(self, conn: sqlite3.Connection) -> None:
         """Decide recording / stopped before a write: free space first, then size.
         Stopped resumes only with room to spare, re-arming the reserve."""
-        du = self._disk_usage(self.root)
-        floor = self._floor(du)
+        try:
+            du = self._disk_usage(self.root)
+        except OSError as err:  # can't read free space: judge by size alone
+            log.error("Free space not read: %s", type(err).__name__)
+            du = None
+        floor = None if du is None else self._floor(du)
         live = self._live_bytes(conn)
         if live >= self._cap:
             live = self._live_bytes(conn, truncate=True)
@@ -557,7 +566,8 @@ class DecisionWriter:
             return
         if floor is not None and du.free < floor + self._reserve:
             return
-        if not self._filler and not self._arm(conn):
+        # A trip by SQLITE_FULL (a full disk) resumes only if the reserve fits again.
+        if (self._stop == "full" or not self._filler) and not self._arm(conn):
             return
         self._stop = None
         log.warning("Recording resumed")
