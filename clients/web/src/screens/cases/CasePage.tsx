@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { utcClock, utcDay, utcDayClock } from '../../shared/utc'
 import { Link } from 'react-router-dom'
-import { approvalsApi, auditApi, casesApi, workflowApi, type CaseRecordRow, type NeedsYouItem } from '../../services/api'
+import { analyticsApi, approvalsApi, auditApi, casesApi, workflowApi, type CaseRecordRow, type NeedsYouItem, type WorkflowAgreement } from '../../services/api'
 import { FilterChip } from '../../shared/FilterChip'
 import { InfoTip } from '../../shared/InfoTip'
 import { IN_FLIGHT, extendRun, useRunDetail, type Grant } from '../workflows/runRead'
@@ -27,7 +27,7 @@ import { EvidenceTrail, MergedEvidenceTrail } from './EvidenceTrail'
 import { RunNotes, RunTag } from './RunTag'
 import { BlindSpots, CheckedList, blindSpotsOf } from './RunChecks'
 import { EvidenceCard, IOCsCard } from './CaseSections'
-import { CloseCaseDialog } from './ClosureFields'
+import { CloseCaseDialog, type ClosureCategory } from './ClosureFields'
 import { CaseSide } from './CaseSide'
 import { caseCitations, evidenceInNote } from './caseCitations'
 import type { Citation } from '../../shell/citations'
@@ -104,9 +104,36 @@ function closedBy(closure: CaseClosureView | null): string {
 
 /** The whole Closed line, shared by the header reason and the Summary: time, closer, category, closer kind. */
 function closedLine(closure: CaseClosureView | null): string {
-  return [closedBy(closure), CLOSURE_CATEGORIES.find((item) => item.value === closure?.closure_category)?.label ?? closure?.closure_category, closure?.closed_by_kind]
+  const kind = closure?.closed_by_kind === 'agent' ? 'agent · awaiting your review' : closure?.closed_by_kind
+  return [closedBy(closure), CLOSURE_CATEGORIES.find((item) => item.value === closure?.closure_category)?.label ?? closure?.closure_category, kind]
     .filter(Boolean)
     .join(' · ')
+}
+
+/** "N reviews · X% agree" for a workflow with scored closures; null when nothing was scored. */
+function agreementText(row: WorkflowAgreement | undefined): { text: string; pct: number } | null {
+  const scored = row ? row.agreed + row.disagreed : 0
+  if (!row || !scored || row.agreement_rate == null) return null
+  const pct = Math.round(row.agreement_rate * 100)
+  return { text: `${plural(scored, 'review')} · ${pct}% agree`, pct }
+}
+
+/** The header's trust strip: how often this workflow's verdict matched a person's closure, last 30 days. */
+function TrustStrip({ row }: { row: WorkflowAgreement | undefined }) {
+  const shown = agreementText(row)
+  if (!shown) return <NotMeasured className="case-trust" />
+  return (
+    <span className="case-trust case-trust-on">
+      <span className="case-trust-bar" aria-hidden><span style={{ width: `${shown.pct}%` }} /></span>
+      {shown.text}
+      <InfoTip
+        label="How this is measured"
+        source="Cases closed in the last 30 days that a run of this workflow investigated."
+        calculation="A person's closure, resolved or false positive, scored against the investigation's verdict: the share where both said the same."
+        limit="Leaves out abstentions (inconclusive, needs review), closures without a determination (duplicate, unable to resolve, unspecified) and cases the agent closed alone."
+      />
+    </span>
+  )
 }
 
 function clock(value: string | null | undefined): string {
@@ -1049,6 +1076,11 @@ export function CasePage({
   const recStatusTicket = useRef(0)
   const [busy, setBusy] = useState(false)
   const [closing, setClosing] = useState(false)
+  const [disagreeing, setDisagreeing] = useState(false)
+  // This session's review of an agent's closure; the re-close makes the person the closer, so the buttons go.
+  const [assessed, setAssessed] = useState<'Agreed' | 'Disagreed' | null>(null)
+  const [agreement, setAgreement] = useState<WorkflowAgreement[]>([])
+  const [agreementKey, setAgreementKey] = useState(0)
   const canReadAudit = useAuth().hasPermission('audit.read')
   const [needsItems, setNeedsItems] = useState<NeedsYouItem[]>([])
   const [needsCount, setNeedsCount] = useState(0)
@@ -1101,8 +1133,16 @@ export function CasePage({
     setSeenCheckpoints((held) => new Set([...held, ...served]))
   }, [needsItems, seenCheckpoints])
 
+  // Read once per case open (not per poll), and again after a review.
+  useEffect(() => {
+    let live = true
+    analyticsApi.getAgreement('30d').then((rows) => { if (live) setAgreement(rows) }, () => { if (live) setAgreement([]) })
+    return () => { live = false }
+  }, [id, agreementKey])
+
   useEffect(() => {
     setTab('Summary')
+    setAssessed(null)
     setAskSeed(null)
     setFocusEvidence(null)
     setNote('')
@@ -1132,6 +1172,8 @@ export function CasePage({
   // The list maps every status other than open/investigating to closed, so a
   // `new` case must not use that fallback while the detail read is in flight.
   const closed = combinedState === 'closed' || (phase === 'ready' && !combinedState && c?.status === 'closed')
+  const workflowAgreement = latest ? agreement.find((row) => row.workflow_id === latest.workflow_id) : undefined
+  const reviewable = canWrite && closure?.closed_by_kind === 'agent' && !assessed
   const pill = combinedState || (phase === 'loading' ? '…' : c?.status || '—')
 
   // Every run on the case, the primary first, then the rest newest first. Each is read by its own
@@ -1441,9 +1483,28 @@ export function CasePage({
     setNote('')
     try {
       await casesApi.update(id, { status: 'open' })
+      setAssessed(null)
       onChanged()
     } catch (e) {
       setNote(errorDetail(e, 'Couldn’t reopen the case'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Agree: re-close with the standing category and nothing else, so the person becomes the closer
+  // and no write-up is touched.
+  const agree = async () => {
+    if (!closure) return
+    setBusy(true)
+    setNote('')
+    try {
+      await casesApi.closeCase(id, { closure_category: closure.closure_category as ClosureCategory })
+      setAssessed('Agreed')
+      setAgreementKey((k) => k + 1)
+      onChanged()
+    } catch (e) {
+      setNote(errorDetail(e, 'Couldn’t record your agreement'))
     } finally {
       setBusy(false)
     }
@@ -1597,7 +1658,7 @@ export function CasePage({
                   </>
                 )}
               </span>
-              <NotMeasured className="case-trust" />
+              <TrustStrip row={workflowAgreement} />
             </div>
           </>
         ) : (
@@ -1626,17 +1687,23 @@ export function CasePage({
                   <h3>{closure?.verdict || '—'}</h3>
                   {verdict && closureFlag(closure, verdict.word) && <VerdictBlock verdict={verdict} card={false} />}
                   <ClosedRows fold={fold} phase={foldPhase} />
-                  <div className="case-assess">
-                    <span>Your assessment</span>
-                    <button type="button" className="btn" disabled title={LATER_RELEASE}>Agree</button>
-                    <button type="button" className="btn" disabled title={LATER_RELEASE}>Disagree</button>
-                    <span className="case-assess-later">{LATER_RELEASE}</span>
-                    {canWrite && (
-                      <div className="case-actions">
-                        <button className="btn" onClick={reopen} disabled={busy}>Reopen</button>
-                      </div>
-                    )}
-                  </div>
+                  {(canWrite || assessed) && (
+                    <div className="case-assess">
+                      {(reviewable || assessed) && <span>Your assessment</span>}
+                      {reviewable && (
+                        <>
+                          <button type="button" className="btn primary" onClick={agree} disabled={busy}>Agree</button>
+                          <button type="button" className="btn" onClick={() => setDisagreeing(true)} disabled={busy}>Disagree</button>
+                        </>
+                      )}
+                      {assessed && <span className="case-assess-done">{[assessed, agreementText(workflowAgreement)?.text].filter(Boolean).join(' · ')}</span>}
+                      {canWrite && (
+                        <div className="case-actions">
+                          <button className="btn" onClick={reopen} disabled={busy}>Reopen</button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </section>
                 {startedCard}
                 {disagree}
@@ -1797,6 +1864,14 @@ export function CasePage({
           )}
           {tab === 'Summary' && note && <p className="muted">{note}</p>}
           <CloseCaseDialog open={closing} id={id} onClose={() => setClosing(false)} onClosed={() => { void loadNeeds(); onChanged() }} />
+          <CloseCaseDialog
+            open={disagreeing}
+            id={id}
+            initial={closure?.closure_category === 'false_positive' ? 'resolved' : 'false_positive'}
+            title="Disagree · close it as"
+            onClose={() => setDisagreeing(false)}
+            onClosed={() => { setAssessed('Disagreed'); setAgreementKey((k) => k + 1); onChanged() }}
+          />
         </div>
 
         <aside className="case-side" aria-label="Case details">
