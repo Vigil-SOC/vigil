@@ -203,7 +203,7 @@ class OpenSearchIngestion(SIEMIngestionService):
                 # The client returns None on any request failure.
                 raise RuntimeError(
                     f"OpenSearch findings search failed: {svc.index_pattern}"
-                )
+                ) from svc.last_search_error
 
             hits = result.get("hits", {}).get("hits", [])
             logger.info(f"Fetched {len(hits)} findings from {svc.index_pattern}")

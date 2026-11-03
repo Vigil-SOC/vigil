@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { isStructured, RECORD_MODES, type ConclusionSpec, type GuardSpec, type PluginManifest, type RecordMode, type SkillSpec } from "../contracts/plugin.js";
 import { SpecError } from "../core/spec.js";
-import { SEVERITIES } from "../contracts/events.js";
+import { CONFIDENCES, SEVERITIES } from "../contracts/events.js";
 
 // A plugin is a directory holding plugin.yaml; its skills come from the repo's one library,
 // core/skills/library, resolved against the package: dist/skills in the image, else three levels up.
@@ -106,10 +106,11 @@ function conclusionOf(value: unknown, where: string): ConclusionSpec {
   const citations_field = raw["citations_field"] === undefined ? undefined : text_(raw, "citations_field", `${where}: conclusion`);
   const open_questions_field = raw["open_questions_field"] === undefined ? undefined : text_(raw, "open_questions_field", `${where}: conclusion`);
   const severity_field = raw["severity_field"] === undefined ? undefined : text_(raw, "severity_field", `${where}: conclusion`);
+  const confidence_field = raw["confidence_field"] === undefined ? undefined : text_(raw, "confidence_field", `${where}: conclusion`);
   const disposition_field = raw["disposition_field"] === undefined ? undefined : text_(raw, "disposition_field", `${where}: conclusion`);
   const proposals_field = raw["proposals_field"] === undefined ? undefined : text_(raw, "proposals_field", `${where}: conclusion`);
   // A field the schema never asks for is one the run can never fill.
-  for (const field of [summary_field, citations_field, open_questions_field, severity_field, disposition_field, proposals_field]) {
+  for (const field of [summary_field, citations_field, open_questions_field, severity_field, confidence_field, disposition_field, proposals_field]) {
     if (field !== undefined && !(field in properties)) throw new SpecError(`${where}: conclusion names ${field}, which the schema does not declare`);
   }
   // Rated in case priorities, so the far side applies it without a mapping.
@@ -119,12 +120,19 @@ function conclusionOf(value: unknown, where: string): ConclusionSpec {
       throw new SpecError(`${where}: ${severity_field} must be an enum drawn from ${SEVERITIES.join(", ")}`);
     }
   }
+  if (confidence_field !== undefined) {
+    const allowed = (properties[confidence_field] as { enum?: unknown } | undefined)?.enum;
+    if (!Array.isArray(allowed) || !allowed.every((one) => (CONFIDENCES as readonly unknown[]).includes(one))) {
+      throw new SpecError(`${where}: ${confidence_field} must be an enum drawn from ${CONFIDENCES.join(", ")}`);
+    }
+  }
   return {
     schema: schema as Record<string, unknown>,
     summary_field,
     ...(citations_field === undefined ? {} : { citations_field }),
     ...(open_questions_field === undefined ? {} : { open_questions_field }),
     ...(severity_field === undefined ? {} : { severity_field }),
+    ...(confidence_field === undefined ? {} : { confidence_field }),
     ...(disposition_field === undefined ? {} : { disposition_field }),
     ...(proposals_field === undefined ? {} : { proposals_field }),
   };

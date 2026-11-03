@@ -37,6 +37,9 @@ class ElasticService:
 
         self._es_client: Optional[httpx.AsyncClient] = None
         self._kibana_client: Optional[httpx.AsyncClient] = None
+        # The exception behind the last search/fetch that returned None, so a
+        # caller that raises can chain it and the failure keeps its type.
+        self.last_search_error: Optional[BaseException] = None
 
     # ------------------------------------------------------------------
     # Client lifecycle
@@ -151,12 +154,14 @@ class ElasticService:
         if sort:
             body["sort"] = sort
         client = self.es_client
+        self.last_search_error = None
         try:
             resp = await client.post(f"/{target}/_search", json=body)
             resp.raise_for_status()
             return resp.json()
         except Exception as exc:
             logger.error(f"Elasticsearch search error: {exc}")
+            self.last_search_error = exc
             return None
 
     async def search_by_ip(
@@ -277,12 +282,14 @@ class ElasticService:
             "sort": [{sort_field: {"order": sort_order}}],
         }
         client = self.kibana_client
+        self.last_search_error = None
         try:
             resp = await client.post("/api/detection_engine/signals/search", json=body)
             resp.raise_for_status()
             return resp.json()
         except Exception as exc:
             logger.error(f"Error fetching detection alerts: {exc}")
+            self.last_search_error = exc
             return None
 
     async def update_alert_status(

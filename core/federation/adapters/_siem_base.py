@@ -79,7 +79,11 @@ class SIEMIngestionAdapter:
             return None
         # A configured source whose service cannot be built is failing, not
         # empty: let the error reach the runner so the cursor is kept.
-        self._service = self._service_factory()
+        try:
+            self._service = self._service_factory()
+        except Exception as e:
+            e.error_kind = "config"  # read by federation.error_kind
+            raise
         return self._service
 
     async def fetch(

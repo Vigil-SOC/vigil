@@ -118,6 +118,10 @@ helper. Prefer the Secret when both are set.
 - name: REDIS_URL
   value: {{ include "vigil.redis.url" . | quote }}
 {{- else if .Values.redis.enabled }}
+{{- /* An external URL given beside redis.enabled carries its own password, and REDIS_PASSWORD would replace it. */}}
+{{- if not .Values.redis.external.url }}
+{{- include "vigil.redis.auth.env" . | nindent 0 }}
+{{- end }}
 - name: REDIS_URL
   value: {{ include "vigil.redis.url" . | quote }}
 {{- else if .Values.redis.external.url }}

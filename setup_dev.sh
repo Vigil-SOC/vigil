@@ -33,6 +33,8 @@ ensure_jwt_secret
 ensure_agent_token
 # Bifrost's management API password. Same rule: fill an empty one, keep a set one.
 ensure_bifrost_admin_password
+# Redis requires a password; compose starts it with this one below.
+ensure_redis_password
 
 # Python
 ensure_venv

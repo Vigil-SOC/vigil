@@ -10,7 +10,7 @@ type GoSettings = ConsoleScreenProps['goSettings']
 
 function LimitsLink({ goSettings }: { goSettings: GoSettings }) {
   return (
-    <button type="button" className="btn ghost" onClick={() => goSettings('autoinvestigate')}>
+    <button type="button" className="btn primary" onClick={() => goSettings('autoinvestigate')}>
       Open Limits &amp; autonomy →
     </button>
   )
@@ -20,7 +20,7 @@ function LimitsLink({ goSettings }: { goSettings: GoSettings }) {
 export function AutoOpsOffBanner({ goSettings }: { goSettings: GoSettings }) {
   return (
     <div className="autoops-off" role="status">
-      <Icon name="alert" size={14} />
+      <Icon name="alert" size={17} />
       <span>
         <b>AutoOps is off.</b> Alerts are triaged but no agent picks them up until it is on.
       </span>
@@ -33,10 +33,10 @@ function HourlyPauseBanner({ cost, goSettings }: { cost: OrchestratorStatus['cos
   const spent = cost.hourly_cost_usd ?? 0
   const limit = cost.hourly_limit_usd ?? 0
   return (
-    <div className="autoops-off" role="status">
-      <Icon name="alert" size={14} />
+    <div className="autoops-off poor" role="status">
+      <Icon name="alert" size={17} />
       <span>
-        <b>Agents are paused at the hourly cost limit.</b>{' '}
+        <b>New agent launches are paused at the hourly cost limit.</b>{' '}
         {spent >= limit
           ? `${fmtCost(spent)} of ${fmtCost(limit)} spent in the last hour. Alerts stay in the queue until older spend leaves the hour.`
           : 'Spend in the last hour could not be read, so it counts as over the limit. Alerts stay in the queue.'}{' '}
@@ -64,8 +64,8 @@ function ParkedBanner({ status }: { status: OrchestratorStatus }) {
   const total = approvals + paused
   const parts = [approvals > 0 && `${approvals} on an approval`, paused > 0 && `${paused} paused`].filter(Boolean).join(', ')
   return (
-    <div className="autoops-off" role="status">
-      <Icon name="clock" size={14} />
+    <div className="autoops-off poor" role="status">
+      <Icon name="clock" size={17} />
       <span>
         <b>{total} run{total === 1 ? '' : 's'} waiting on a person.</b> {parts}
         {age !== null && `, the oldest for ${fmtAge(age)}`}.{' '}
@@ -75,7 +75,7 @@ function ParkedBanner({ status }: { status: OrchestratorStatus }) {
           calculation="A count of each, and the time since the oldest one's last activity."
         />
       </span>
-      <Link className="btn ghost no-underline" to="/cases">Open cases →</Link>
+      <Link className="btn primary no-underline" to="/cases">Open cases →</Link>
     </div>
   )
 }

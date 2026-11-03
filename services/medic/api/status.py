@@ -25,9 +25,7 @@ from services.medic.store.writer import StoreUsage
 
 API_VERSION = "1.0"
 
-# C4 §6.6 names for S2's usage() states. Over the cap the store is writing into
-# its 64 MB reserve (G3 enforces the cap; S2 only reports it).
-_STORE_STATES = {"ok": "ok", "near_cap": "near_cap", "over_cap": "on_reserve"}
+# The writer's usage().states are StoreHealth.states (medic-api.openapi.yaml).
 _NOT_RECORDING = {"recording_stopped", "migration_blocked"}
 
 
@@ -78,13 +76,12 @@ def read_chain(data_dir: Path) -> dict[str, Any]:
 
 
 def _store(usage: StoreUsage, decisions_lost: int, chain: dict[str, Any]) -> dict:
-    over = max(0, usage.used_bytes - usage.cap_bytes)
     return {
-        "states": [_STORE_STATES.get(usage.state, "ok")],
+        "states": list(usage.states),
         "backend": "sqlite",
         "bytes_used": usage.used_bytes,
         "cap_bytes": usage.cap_bytes,
-        "reserve_left_bytes": max(0, usage.reserve_bytes - over),
+        "reserve_left_bytes": usage.reserve_left_bytes,
         "disk_free_bytes": usage.free_bytes,
         "oldest_record_at": chain["oldest_at"],
         "newest_record_at": chain["newest_at"],

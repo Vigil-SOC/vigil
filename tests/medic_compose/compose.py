@@ -80,6 +80,9 @@ def clean_env(home: Path, **extra: str) -> dict[str, str]:
     # The CLI finds the Compose plugin (and its context) under the real config
     # dir, not the throwaway HOME.
     env["DOCKER_CONFIG"] = os.environ.get("DOCKER_CONFIG", str(Path.home() / ".docker"))
+    # The compose file requires one (`${REDIS_PASSWORD:?}`); this environment is
+    # built from scratch, so it never inherits an operator's.
+    env["REDIS_PASSWORD"] = "medic-test-redis-password"
     env.update(extra)
     return env
 

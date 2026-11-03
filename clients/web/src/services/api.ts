@@ -790,6 +790,25 @@ export const budgetsApi = {
   getQuota: () => api.get<BudgetQuotaResponse>('/analytics/budget/quota'),
 }
 
+/** One workflow's tally in `agent_agreement` (core/reporting/analytics_service.py). */
+export interface WorkflowAgreement {
+  workflow_id: string
+  agreed: number
+  disagreed: number
+  agreement_rate: number | null
+  abstained: number
+  closed_without_determination: number
+  closed_by_agent_alone: number
+}
+
+export const analyticsApi = {
+  /** The agent_agreement block of GET /analytics; the route returns an untyped dict, so only this part is typed. */
+  getAgreement: (timeRange: '24h' | '7d' | '30d' | 'all' = '30d') =>
+    api
+      .get<{ agent_agreement?: { by_workflow?: WorkflowAgreement[] } }>('/analytics', { params: { time_range: timeRange } })
+      .then((res) => res.data.agent_agreement?.by_workflow ?? []),
+}
+
 export const storageApi = {
   getStatus: () => api.get('/storage/status'),
   getHealth: () => api.get('/storage/health'),
