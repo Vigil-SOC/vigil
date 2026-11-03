@@ -49,8 +49,9 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 )
 
-// Coalesce concurrent 401 refresh attempts behind a single in-flight request
-// so single-use refresh token rotation does not revoke parallel callers.
+// One refresh serves every request that 401s while it is in flight. /refresh
+// is limited to 30 a minute per user across all tabs, and each tab's polling
+// expires together, so a refresh per failed request can exhaust it (429).
 let refreshPromise: Promise<unknown> | null = null
 
 function refreshSession(): Promise<unknown> {
