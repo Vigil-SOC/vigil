@@ -32,6 +32,7 @@ import DashboardScreen from '../screens/dashboard/DashboardScreen'
 import CasesScreen from '../screens/cases/CasesScreen'
 import MetricsScreen from '../screens/metrics/MetricsScreen'
 import WorkflowsScreen from '../screens/workflows/WorkflowsScreen'
+import MedicScreen from '../screens/medic/MedicScreen'
 import HealthScreen from '../screens/health/HealthScreen'
 import HomeScreen from '../screens/home/HomeScreen'
 import { HOME_SETUP_HREF, SETUP_HIDDEN_CHANGED, openSetupSteps, readSetupHidden } from '../screens/home/setupHidden'
@@ -55,7 +56,7 @@ import {
 const PRIMARY_KEYS = ['home', 'overview', 'triage', 'cases', 'workflows', 'settings']
 // a rule is drawn only between two groups that both have a visible item
 const NAV_GROUPS = [['home'], ['overview'], ['triage', 'cases'], ['workflows', 'settings']]
-const MORE_KEYS = ['dashboard', 'metrics']
+const MORE_KEYS = ['dashboard', 'metrics', 'medic']
 // When the bar runs out of width, screens fold into More from its right end,
 // so what stays on the bar is always its first few screens in order, whichever
 // screen is open. Home never folds.
@@ -73,6 +74,7 @@ const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Eleme
   metrics: MetricsScreen,
   workflows: WorkflowsScreen,
   health: HealthScreen,
+  medic: MedicScreen,
   settings: SettingsScreen,
 }
 
@@ -81,6 +83,7 @@ const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Eleme
 const SCREEN_PERMS: Partial<Record<ConsoleScreenKey, string>> = {
   cases: 'cases.read',
   home: HOME_PERM,
+  medic: 'medic.read',
 }
 
 /** What a widened dock leaves of the page beside it. */
