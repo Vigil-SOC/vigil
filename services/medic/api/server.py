@@ -1,6 +1,6 @@
 """Medic's API listener (X2): `GET /v1/status`, the decision log, incidents and
-sensors. The other operations are later G3 work: `/v1/pack` and the
-feedback POST are not routed (404).
+sensors, and the one write, `POST /v1/incidents/{id}/feedback`. `/v1/pack` is
+later G3 work and is not routed (404).
 
 stdlib only, like the gateway (SP1 ⚑5). Every request needs `X-Medic-Key`,
 compared in constant time with the key file, re-read on each request so a new
@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from services.medic.api.decisions import Problem, get_decision, list_page
+from services.medic.api.feedback import post_feedback
 from services.medic.api.incidents import get_incident, list_incidents
 from services.medic.api.status import API_VERSION, serve_view
 from services.medic.app.config import API_KEY_FILE_VAR
@@ -120,6 +121,7 @@ class Handler(BaseHTTPRequestHandler):
     board: StatusBoard
     wall: Callable[[], float]
     data_dir: Path | None = None
+    writer: Any = None  # the main loop's DecisionWriter, for the feedback POST
 
     def log_message(self, *args: Any) -> None:  # the access log would print targets
         pass
@@ -191,10 +193,11 @@ class Handler(BaseHTTPRequestHandler):
         self.rid = self._request_id()
         if not self._authorised():
             return self._problem(401, "unauthorized")
-        handler = self._handler()
-        if handler is None:
+        found = self._handler()
+        if found is None:
             return self._problem(404, "not_found")
-        if self.command != "GET":
+        method, handler = found
+        if self.command != method:
             return self._problem(405, "method_not_allowed")
         if not self.server.in_flight.acquire(blocking=False):
             return self._problem(503, "busy", retry_after_s=1)
@@ -203,36 +206,54 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             self.server.in_flight.release()
 
-    def _handler(self) -> Callable[[], None] | None:
-        """Status and sensors are exact targets. Decisions and incidents take a
-        query. Every other path, including `/v1/pack`, is not
-        this listener's."""
+    def _handler(self) -> tuple[str, Callable[[], None]] | None:
+        """`(method, handler)` for a known path. Status and sensors are exact
+        targets. Decisions and incidents take a query. Every other path,
+        including `/v1/pack`, is not this listener's."""
         path, _, query = self.raw_target.partition("?")
         if self.raw_target == STATUS_PATH:
-            return self._status
+            return "GET", self._status
         if self.raw_target == SENSORS_PATH:
-            return self._sensors
+            return "GET", self._sensors
         if path == "/v1/decisions":
-            return lambda: self._finish(list_page(self.data_dir, query))
+            return "GET", lambda: self._finish(list_page(self.data_dir, query))
         if path == "/v1/incidents":
-            return lambda: self._finish(list_incidents(self.data_dir, query))
+            return "GET", lambda: self._finish(list_incidents(self.data_dir, query))
         head, _, tail = path.rpartition("/")
         if head == "/v1/decisions" and tail:
-            return lambda: self._finish(get_decision(self.data_dir, tail, query))
+            return "GET", lambda: self._finish(get_decision(self.data_dir, tail, query))
         if head == "/v1/incidents" and tail:
-            return lambda: self._finish(get_incident(self.data_dir, tail, query))
+            return "GET", lambda: self._finish(get_incident(self.data_dir, tail, query))
+        parent, _, incident_id = head.rpartition("/")
+        if parent == "/v1/incidents" and incident_id and tail == "feedback":
+            return "POST", lambda: self._feedback(incident_id, query)
         return None
 
-    def _finish(self, result: dict | Problem) -> None:
+    def _feedback(self, incident_id: str, query: str) -> None:
+        result = post_feedback(
+            self.data_dir,
+            self.writer,
+            incident_id,
+            query,
+            content_type=self.headers.get("Content-Type"),
+            length=self.headers.get("Content-Length"),
+            admins=self.headers.get_all("X-Medic-Admin") or [],
+            read_body=self.rfile.read,
+        )
+        self._finish(result, status=201)
+
+    def _finish(self, result: dict | Problem, status: int = 200) -> None:
         if isinstance(result, Problem):
             extra: dict[str, Any] = {}
             if result.field:
                 extra["field"] = result.field
+            if result.reason:
+                extra["reason"] = result.reason
             if result.code == "busy":
                 extra["retry_after_s"] = 1
             self._problem(result.status, result.code, **extra)
             return
-        self._send(200, result, "application/json")
+        self._send(status, result, "application/json")
 
     def _status(self) -> None:
         current = self.board.read()
@@ -288,12 +309,14 @@ def make_server(
     board: StatusBoard,
     wall: Callable[[], float],
     data_dir: Path | None = None,
+    writer: Any = None,
 ) -> ThreadingHTTPServer:
     attrs = {
         "key_file": key_file,
         "board": board,
         "wall": staticmethod(wall),
         "data_dir": data_dir,
+        "writer": writer,
     }
     return _Server(bind, type("MedicApiHandler", (Handler,), attrs))
 
@@ -316,11 +339,12 @@ class Api:
         wall: Callable[[], float],
         monotonic: Callable[[], float],
         data_dir: Path | None = None,
+        writer: Any = None,
         bind_peer: str | None = None,
         retry_s: float = RETRY_MAX_S,
     ) -> None:
         self.bind, self.key_file, self.board = bind, key_file, board
-        self.data_dir = data_dir
+        self.data_dir, self.writer = data_dir, writer
         self.bind_peer = bind_peer
         self._wall, self._monotonic, self._retry_s = wall, monotonic, retry_s
         self._next_try: float | None = None
@@ -390,6 +414,7 @@ class Api:
                 board=self.board,
                 wall=self._wall,
                 data_dir=self.data_dir,
+                writer=self.writer,
             )
         except OSError as exc:
             self._say_once(

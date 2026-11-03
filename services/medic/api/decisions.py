@@ -56,6 +56,7 @@ class Problem:
     status: int
     code: str
     field: str | None = None
+    reason: str | None = None  # 409 not_rateable only
 
 
 class _Bad(Exception):

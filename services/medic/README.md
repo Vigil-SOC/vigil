@@ -46,8 +46,9 @@ with its own reason (`stopped`, `stalled`, `crash-looping`, unknown).
 publishes (never older than one 15 s tick; older than two and it answers `503
 busy`). Every request needs `X-Medic-Key`, compared in constant time with the
 key file, which is re-read per request; anything else is `401`, then `404` for
-any other path and `405` for any other method, as RFC 9457 problem JSON. The
-other X2 operations are G3's. A listener that can't start (no key, port taken)
+any other path and `405` for any other method, as RFC 9457 problem JSON. `POST /v1/incidents/{id}/feedback` is the one write: it appends through the
+main loop's writer, with `admin` from `X-Medic-Admin`. The other X2
+operations are G3's. A listener that can't start (no key, port taken)
 is logged once and retried every minute; it never stops Medic or fails `check`.
 
 On Helm, `run` first connects to the control (retried for up to a minute while
