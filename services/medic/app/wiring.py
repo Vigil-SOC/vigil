@@ -46,8 +46,7 @@ from services.medic.store import DecisionWriter, RecordHeld, StoreError
 log = logging.getLogger("services.medic")
 
 TICK_S = 15  # semantics.md §1
-DEV_RULES_DIR = Path(__file__).resolve().parents[1] / "rules" / "dev"
-DEV_SUPPRESSION = DEV_RULES_DIR / "suppression.yaml"
+PACK_DIR = Path(__file__).resolve().parents[1] / "packs" / "medic-core"
 # Several Helm series share this signal. Ungrouped, the newest read is
 # ambiguous_series and the rule never fires. Compose and host-native have no
 # pod label, so the file stays ungrouped and Helm adds the group at load.
@@ -58,24 +57,30 @@ RECORDING_STOPPED = "watcher.recording-stopped"
 HELD_MAX = 1000  # decisions kept in memory while recording is stopped
 
 
-def load_dev_rules(directory: Path = DEV_RULES_DIR) -> list[LoadedRule]:
-    """Dev-mode rules through the S4b loader. No pack loader, no signatures (F6)."""
-    return [
-        load_rule_file(p)
-        for p in sorted(directory.glob("*.yaml"))
-        if p.name != DEV_SUPPRESSION.name
+def load_medic_core(
+    shape: str, directory: Path = PACK_DIR
+) -> tuple[list[LoadedRule], list[dict[str, Any]], set[tuple[str, str]]]:
+    """The medic-core pack from the source tree (unsigned; #2025 swaps in the active
+    pack): its rules, suppression entries and (logger, template) catalogue.
+    Missing files or no rules raise; a bad rule raises RuleLoadError."""
+    pack_doc = yaml.safe_load((directory / "pack.yaml").read_text())["pack"]
+    pack = (pack_doc["id"], pack_doc["version"])
+    files = sorted((directory / "rules").glob("*.yaml"))
+    if not files:
+        raise FileNotFoundError(f"no rules in {directory / 'rules'}")
+    rules = [load_rule_file(p, pack=pack) for p in files]
+    if shape == "helm":
+        rules = [
+            _group_worker_by_pod(rule) if rule.id == WORKER_NOT_READY else rule
+            for rule in rules
+        ]
+    doc = yaml.safe_load((directory / "suppression.yaml").read_text())
+    # `why` is the pack's note to a human; the engine's shape check refuses it.
+    suppression = [
+        {k: v for k, v in e.items() if k != "why"} for e in doc["entries"] or []
     ]
-
-
-def rules_for_shape(shape: str, directory: Path = DEV_RULES_DIR) -> list[LoadedRule]:
-    """`load_dev_rules`, with the worker rule grouped by pod on Helm."""
-    rules = load_dev_rules(directory)
-    if shape != "helm":
-        return rules
-    return [
-        _group_worker_by_pod(rule) if rule.id == WORKER_NOT_READY else rule
-        for rule in rules
-    ]
+    entries = yaml.safe_load((directory / "catalog.yaml").read_text())["entries"]
+    return rules, suppression, {(e["logger"], e["template"]) for e in entries}
 
 
 def _group_worker_by_pod(loaded: LoadedRule) -> LoadedRule:
@@ -83,19 +88,6 @@ def _group_worker_by_pod(loaded: LoadedRule) -> LoadedRule:
     doc["signals"]["ready"]["sample"]["by"] = ["pod"]
     doc["group_by"] = ["pod"]
     return load_rule(doc, pack=loaded.pack)
-
-
-def load_dev_suppression(path: Path = DEV_SUPPRESSION) -> list[dict[str, Any]]:
-    """The dev set's suppression.yaml entries (E3 §6); the pack's, once F6 loads
-    packs. The engine shape-checks every entry and refuses a malformed one."""
-    if not path.exists():
-        return []
-    entries = yaml.safe_load(path.read_text())
-    if entries is None:
-        return []
-    if not isinstance(entries, list):
-        raise TypeError(f"{path.name}: expected a list of suppression entries")
-    return entries
 
 
 def grid_tick(clock: Clock) -> int:
