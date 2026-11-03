@@ -29,6 +29,7 @@ from services.medic.app.heartbeat import (
 )
 from services.medic.app.policy_probe import Policy, PolicyCheck, Verdict
 from services.medic.app.policy_probe import probe as policy_probe
+from services.medic.app.trace import TraceCapture, start_capture
 from services.medic.app.watchdog import Watchdog
 from services.medic.app.wiring import (
     TICK_S,
@@ -36,6 +37,7 @@ from services.medic.app.wiring import (
     PolicySensor,
     PolicyStartupSensor,
     RecordingSensor,
+    grid_tick,
     load_dev_suppression,
     load_engine_state,
     rules_for_shape,
@@ -211,6 +213,7 @@ def run(
             store_cap=store_cap,
             policy_check=policy_check,
             policy_refused_at=refused_at,
+            trace_id=config.trace_id(env),
         )
     finally:
         os.umask(old_umask)
@@ -342,6 +345,7 @@ def _run(
     store_cap: int = config.STORE_MAX_MB_DEFAULT * 2**20,
     policy_check: Callable[[], PolicyCheck] | None = None,
     policy_refused_at: float | None = None,
+    trace_id: str | None = None,
 ) -> int:
     started_at = clock.wall()
     try:
@@ -380,6 +384,13 @@ def _run(
                 [*sensors, *policy_sensors, RecordingSensor(writer)],
                 clock,
                 vigil_dev_mode=vigil_dev_mode,
+                capture=start_capture(
+                    data_dir,
+                    trace_id,
+                    shape=shape,
+                    instance_id=writer.instance_id,
+                    tick=grid_tick(clock),
+                ),
             )
         except Exception as exc:  # logged (redacted), exit 1
             log.exception("Medic can't start: %s", type(exc).__name__)
@@ -440,6 +451,7 @@ def _run(
         finally:
             watchdog.stop()
             status.stop()
+            medic.capture.close(clock.wall())  # the manifest, on a clean stop
         record_exit(data_dir, now=clock.wall(), code=code)
     # So `check` doesn't call a stopped Medic healthy for the next 120 s.
     try:
@@ -458,7 +470,14 @@ def _run(
 
 
 def _build(
-    writer, data_dir: Path, shape: str, sensors, clock, *, vigil_dev_mode: bool = False
+    writer,
+    data_dir: Path,
+    shape: str,
+    sensors,
+    clock,
+    *,
+    vigil_dev_mode: bool = False,
+    capture: TraceCapture | None = None,
 ) -> Medic:
     rules, suppression = rules_for_shape(shape), load_dev_suppression()
     state = load_engine_state(data_dir)
@@ -477,6 +496,7 @@ def _build(
             engine_state=state,
             suppression=suppression,
             vigil_dev_mode=vigil_dev_mode,
+            capture=capture,
         )
     except Exception as exc:  # any bad state: start fresh, never a crash loop
         if state is None:
@@ -490,6 +510,7 @@ def _build(
             shape=shape,
             suppression=suppression,
             vigil_dev_mode=vigil_dev_mode,
+            capture=capture,
         )
 
 
@@ -591,6 +612,7 @@ class _Status:
                 usage=self.medic.writer.usage(),
                 decisions_lost=self.medic.unstored,
                 chain=read_chain(self.data_dir),
+                trace=self.medic.capture.status(),
             )
             sensors = build_sensors(
                 self.medic.scheduler.sensor_states(),

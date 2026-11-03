@@ -25,6 +25,7 @@ from typing import Any
 import yaml
 
 from services.medic.app.policy_probe import Policy, PolicyCheck
+from services.medic.app.trace import TraceCapture
 from services.medic.engine import Engine, LoadedRule, load_rule, load_rule_file
 from services.medic.router import Router
 from services.medic.sensors import (
@@ -97,14 +98,33 @@ def load_dev_suppression(path: Path = DEV_SUPPRESSION) -> list[dict[str, Any]]:
     return entries
 
 
-class EngineSink:
-    """The pipeline's sink: every redacted, checked observation goes to the engine."""
+def grid_tick(clock: Clock) -> int:
+    """The 15 s grid tick the wall clock is in (semantics.md §1)."""
+    return int(clock.wall()) // TICK_S * TICK_S
 
-    def __init__(self, engine: Engine) -> None:
-        self.engine = engine
+
+class EngineSink:
+    """The pipeline's sink: every redacted, checked observation goes to the engine,
+    then to trace capture, which can't fail or hold up the engine."""
+
+    def __init__(
+        self,
+        engine: Engine,
+        capture: TraceCapture | None = None,
+        clock: Clock | None = None,
+    ) -> None:
+        self.engine, self.capture, self.clock = engine, capture, clock
 
     def write(self, observation: Mapping[str, Any]) -> None:
         self.engine.observe(dict(observation))
+        if self.capture is not None and self.clock is not None:
+            # `drain` runs just before `evaluate`: this is the tick it will see.
+            # If that tick was already evaluated (a quick restart, a clock step
+            # back), `evaluate` skips it and the engine sees this on the next.
+            tick, last = grid_tick(self.clock), self.engine.last_tick
+            if last is not None and tick <= last:
+                tick = int(last) + TICK_S
+            self.capture.write(observation, tick)
 
 
 class RecordingSensor:
@@ -202,8 +222,10 @@ class Medic:
         suppression: Sequence[Mapping[str, Any]] = (),
         group_cap: int = GROUP_CAP,
         vigil_dev_mode: bool = False,
+        capture: TraceCapture | None = None,
     ) -> None:
         self.writer, self.clock = writer, clock
+        self.capture = capture or TraceCapture()
         self.engine = Engine(
             list(rules),
             instance_id=writer.instance_id,
@@ -216,7 +238,7 @@ class Medic:
         self.bus = Bus(Stats())
         self.log_bus = Bus(self.bus.stats, LOG_CAPACITY)
         bind_log_tails(sensors, self.log_bus, clock)
-        self.sink = EngineSink(self.engine)
+        self.sink = EngineSink(self.engine, self.capture, clock)
         self.pipeline = Pipeline(self.bus, self.sink, log_bus=self.log_bus)
         self.scheduler = Scheduler(
             sensors,
@@ -239,7 +261,7 @@ class Medic:
 
     def evaluate(self) -> list[dict[str, Any]]:
         """Run the engine on the latest grid tick not yet evaluated; store its records."""
-        tick = int(self.clock.wall()) // TICK_S * TICK_S
+        tick = grid_tick(self.clock)
         last = self.engine.last_tick
         if last is not None and tick <= last:
             if tick < last - TICK_S and not self._stepped_back:
@@ -248,6 +270,7 @@ class Medic:
             return []  # same tick again, or the wall clock stepped back
         self._stepped_back = False
         self._resume()
+        self.capture.check_disk(self.writer.stop_reason)
         stored = []
         records = self.engine.tick(datetime.fromtimestamp(tick, UTC))
         status = self.engine.status()  # this tick's runtime_untrusted flags (R3)

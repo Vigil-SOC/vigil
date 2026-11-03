@@ -34,6 +34,11 @@ POLICY_CONTROL_VAR = "VIGIL_MEDIC_POLICY_CONTROL_ADDR"
 STORE_MAX_MB_VAR = "VIGIL_MEDIC_STORE_MAX_MB"
 STORE_MAX_MB_DEFAULT = 1024
 
+# A trace-id: Medic writes every observation the engine receives into
+# <data dir>/traces/<id>/ (D7). Unset is off. Checked against the trace schema
+# before it becomes a path (app/trace.py).
+TRACE_VAR = "VIGIL_MEDIC_TRACE"
+
 SHAPES = ("start_sh", "compose", "helm")
 DEFAULT_SHAPE = "compose"  # PROVISIONAL (S4-2): S6/S7/S8 set it per shape
 # Where the agent worker's /readyz listens (port 6990). Compose and host-native
@@ -107,6 +112,10 @@ def store_max_bytes(env: Mapping[str, str]) -> int:
             f"{STORE_MAX_MB_VAR} is not a whole number of MiB (value not shown)"
         )
     return int(value) * 2**20
+
+
+def trace_id(env: Mapping[str, str]) -> str | None:
+    return (env.get(TRACE_VAR) or "").strip() or None
 
 
 def _host_port(var: str, value: str) -> tuple[str, int]:
