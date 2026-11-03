@@ -97,7 +97,9 @@ def _match(m: dict, text) -> bool:
 
 
 def line_matches(spec: dict, obs: dict) -> bool:
-    log = obs["log"]
+    log = obs.get("log")
+    if log is None:  # a read error on a log signal (container absent) has no line
+        return False
     if spec.get("trusted_only", True) and log.get("template_trust") != "catalog":
         return False
     if "level" in spec and log.get("level") not in spec["level"]:

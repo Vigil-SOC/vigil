@@ -10,9 +10,10 @@ import signal
 import sqlite3
 import sys
 import time
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from services.medic.api.history import record_exit, record_start
 from services.medic.api.ready import check_ready
@@ -38,11 +39,11 @@ from services.medic.app.wiring import (
     PolicyStartupSensor,
     RecordingSensor,
     grid_tick,
-    load_dev_suppression,
     load_engine_state,
-    rules_for_shape,
+    load_medic_core,
     save_engine_state,
 )
+from services.medic.engine import LoadedRule
 from services.medic.redact import install_log_redaction
 from services.medic.sensors import Sensor
 from services.medic.sensors.containers import docker_containers
@@ -166,7 +167,12 @@ def run(
         return 0
     try:
         shape = config.install_shape(env)
-        sensors = sensors_for(env, shape)
+        try:
+            pack = load_medic_core(shape)
+        except Exception as exc:  # noqa: BLE001 (any bad pack file stops the start)
+            log.error("Medic can't start: medic-core did not load: %s", exc)
+            return 1
+        sensors = sensors_for(env, shape, pack[2])
         probe_target = config.policy_probe_addr(env, shape)
         probe_control = config.policy_control_addr(env, shape)
         policy_check = (
@@ -202,6 +208,7 @@ def run(
         return _run(
             data_dir,
             shape=shape,
+            pack=pack,
             sensors=sensors,
             clock=clock,
             sleep=sleep,
@@ -219,7 +226,9 @@ def run(
         os.umask(old_umask)
 
 
-def sensors_for(env: Mapping[str, str], shape: str) -> list[Sensor]:
+def sensors_for(
+    env: Mapping[str, str], shape: str, catalog: Collection[tuple[str, str]]
+) -> list[Sensor]:
     """The sensors this shape runs; raises ConfigError on an unusable address.
 
     Helm reads each agent-worker pod and follows pod logs. Compose and
@@ -238,10 +247,10 @@ def sensors_for(env: Mapping[str, str], shape: str) -> list[Sensor]:
         proxy = config.dockerproxy_addr(env, shape)
         if proxy is not None:
             sensors.append(docker_containers(host=proxy[0], port=proxy[1]))
-            sensors.extend(compose_log_sensors(proxy[0], proxy[1]))
+            sensors.extend(compose_log_sensors(proxy[0], proxy[1], catalog=catalog))
     if shape == "helm":
         sensors.append(kube_pods())
-        sensors.extend(helm_log_sensors())
+        sensors.extend(helm_log_sensors(catalog=catalog))
     daemon = config.daemon_addr(env, shape)
     if daemon is not None:
         sensors.extend(daemon_sensors(host=daemon[0], port=daemon[1]))
@@ -334,6 +343,7 @@ def _run(
     data_dir: Path,
     *,
     shape: str,
+    pack: tuple[list[LoadedRule], list[dict[str, Any]], Collection[tuple[str, str]]],
     sensors: Sequence[Sensor],
     clock: SystemClock,
     sleep: Callable[[float], Awaitable[None]],
@@ -381,6 +391,7 @@ def _run(
                 writer,
                 data_dir,
                 shape,
+                pack,
                 [*sensors, *policy_sensors, RecordingSensor(writer)],
                 clock,
                 vigil_dev_mode=vigil_dev_mode,
@@ -473,13 +484,14 @@ def _build(
     writer,
     data_dir: Path,
     shape: str,
+    pack,
     sensors,
     clock,
     *,
     vigil_dev_mode: bool = False,
     capture: TraceCapture | None = None,
 ) -> Medic:
-    rules, suppression = rules_for_shape(shape), load_dev_suppression()
+    rules, suppression, _ = pack  # the catalogue is already on the log tails
     state = load_engine_state(data_dir)
     last_tick = (state or {}).get("last_tick")
     if isinstance(last_tick, int | float) and last_tick > clock.wall() + TICK_S:

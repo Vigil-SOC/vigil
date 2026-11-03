@@ -1,7 +1,6 @@
-"""Dev-mode rule loading: one rule file or dict through the contract's rule_check.
-
-No pack loader here (F6 owns packs, signatures and last-known-good). Every
-rule_check error surfaces unchanged, code and message, in RuleLoadError.errors.
+"""Rule loading: one rule file or dict through the contract's rule_check, tagged with
+the pack it came from. Signed packs and last-known-good are F6's (packs/loader.py).
+Every rule_check error surfaces unchanged, code and message, in RuleLoadError.errors.
 """
 
 from __future__ import annotations
@@ -12,7 +11,6 @@ from pathlib import Path
 
 from services.medic.contracts import rule_check
 
-DEV_PACK = ("medic-dev", "0.0.0")  # records name this pack for dev-mode rules
 DEFAULT_FOR_S, DEFAULT_KEEP_S = 120, 300  # semantics.md §4
 
 
@@ -32,8 +30,8 @@ class LoadedRule:
     input_trust: str  # derived by rule_check (ENGINE_API.md §5)
     detection: str
     skipped: str | None  # set when the rule needs a newer engine minor
+    pack: tuple[str, str]  # (pack id, version): what each record names
     params: dict[str, float] = field(default_factory=dict)  # durations in seconds
-    pack: tuple[str, str] = DEV_PACK
 
     @property
     def id(self) -> str:
@@ -47,7 +45,7 @@ class LoadedRule:
 
 
 def load_rule(
-    rule: dict, *, params: dict | None = None, pack: tuple[str, str] = DEV_PACK
+    rule: dict, *, pack: tuple[str, str], params: dict | None = None
 ) -> LoadedRule:
     res = rule_check.check(rule)
     if not res.ok:
@@ -62,12 +60,14 @@ def load_rule(
     )
 
 
-def load_rule_file(path: Path | str, *, params: dict | None = None) -> LoadedRule:
+def load_rule_file(
+    path: Path | str, *, pack: tuple[str, str], params: dict | None = None
+) -> LoadedRule:
     raw = Path(path).read_bytes()[: rule_check.MAX_RULE_BYTES + 1]
     doc, res = rule_check.load(raw.decode("utf-8", errors="replace"))
     if doc is None:
         raise RuleLoadError(res.errors)
-    return load_rule(doc, params=params)
+    return load_rule(doc, pack=pack, params=params)
 
 
 def _resolve_params(specs: dict, overrides: dict) -> dict[str, float]:
