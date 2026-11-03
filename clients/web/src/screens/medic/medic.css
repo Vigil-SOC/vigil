@@ -96,3 +96,15 @@
 .mdc-evidence:first-of-type { border-top: 0; padding-top: 0; }
 /* a long timeline or evidence list scrolls in its card instead of stretching the page */
 .mdc-cols .mdc-card { max-height: 720px; overflow: auto; }
+
+/* your rating (UX-19…22) */
+.mdc-rate-box h3 { gap: 10px; }
+.mdc-rate-box h3 .mdc-quiet { font-weight: 500; }
+.mdc-rate-form { border: 0; margin: 0; padding: 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.mdc-rate-form:disabled { opacity: 0.6; }
+.mdc-rate-form .mdc-filters { gap: 6px 8px; }
+.mdc-comment-row { display: flex; gap: 10px; align-items: flex-end; }
+.mdc-comment-row textarea { flex: 1; min-width: 0; resize: vertical; }
+.mdc-save-failed { margin: 8px 0 0; font-size: 13px; color: var(--poor); }
+.mdc-saved { margin-top: 8px; }
+@media (max-width: 560px) { .mdc-comment-row { flex-direction: column; align-items: stretch; } }

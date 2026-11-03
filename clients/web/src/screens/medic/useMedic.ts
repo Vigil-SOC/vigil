@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import api from '../../services/api'
-import type { DecisionRecord, IncidentDetail, IncidentPage, StatusRead } from './medicTypes'
+import type { DecisionRecord, FeedbackBody, IncidentDetail, IncidentPage, StatusRead } from './medicTypes'
 
 export type Phase = 'loading' | 'ready' | 'error'
 
@@ -162,3 +162,7 @@ export function useIncidentDetail(id: string, enabled: boolean) {
   useVisiblePoll(read, enabled)
   return { detail, records, phase, code, reload: read }
 }
+
+/** POST /api/medic/incidents/{id}/feedback: the stored record. The admin is the session's, so the body names no user. */
+export const postFeedback = (id: string, body: FeedbackBody) =>
+  api.post<{ record: DecisionRecord }>(`/medic/incidents/${encodeURIComponent(id)}/feedback`, body).then((r) => r.data.record)
