@@ -2,4 +2,15 @@
 # child; keep each batch's entries under its heading when merging.
 apiVersion: medic.suppression/v1
 kind: Suppression
-entries: []
+entries:
+  # --- ingest (F7a) ---
+  - parent: {rule: ingest.processor-without-database}
+    children: {rule: ingest.source-polls-failing}
+    why: With no database every finding is dropped and federation records each tick as a failure. Show the database fault, not a credential fault per source.
+  - parent: {rule: ingest.processor-without-database}
+    children: {rule: ingest.processor-store-dropped}
+    why: Each dropped finding is a symptom of the processor having no database.
+  - parent: {rule: ingest.federation-integration-disabled}
+    children: {rule: ingest.federation-source-stalled}
+    match: [source]
+    why: A source whose integration is off is skipped, so its last success stalls with no error. Show the configuration fault.
