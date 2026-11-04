@@ -10,7 +10,13 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from core.agents.projections import read_projection
-from core.detections.gaps import gap_report, read_alert_labels
+from core.detections.gaps import (
+    FINDINGS_LIMIT,
+    gap_report,
+    missed_runs_report,
+    read_alert_labels,
+    read_ledger,
+)
 from core.detections.inventory import catalog
 from core.detections.lint import lint_sigma
 from core.detections.reconstruction import (
@@ -115,20 +121,40 @@ class SecurityDetectionsTools:
             return {"source": source_type, "count": counts.get(source_type, 0)}
         return {"total": sum(counts.values()), "by_source": counts}
 
-    async def identify_gaps(self, context: str = "") -> Dict:
-        """Techniques seen on stored alerts that no active rule declares, with what it cannot say.
+    async def identify_gaps(
+        self, context: str = "", since_days: int = 30, **_kwargs: object
+    ) -> Dict:
+        """Techniques seen on stored alerts that no active rule declares, with what it cannot say,
+        and the proven hunts and closed Cases no rule alerted on (``runs_rules_missed``).
 
         Args:
             context: A case id, an ATT&CK label to match, or empty for every stored alert.
+            since_days: How far back Verdicts are read for runs_rules_missed.
         """
-        return gap_report(
+        # A model may send "30"; keep the window within what timedelta can hold.
+        since_days = min(max(int(since_days), 0), 3650)
+        alerts = read_alert_labels(context)
+        rules_by_technique = catalog.rules_by_technique()
+        report = gap_report(
             context,
-            read_alert_labels(context),
-            catalog.rules_by_technique(),
+            alerts,
+            rules_by_technique,
             catalog.rules_by_tactic(),
             catalog.rule_counts(),
             catalog.siem_runs_by_technique(),
         )
+        data = DatabaseDataService()
+        report["runs_rules_missed"] = missed_runs_report(
+            context,
+            alerts.scope.startswith("case "),
+            read_ledger(since_days),
+            lambda start, end: data.get_findings(
+                limit=FINDINGS_LIMIT, timestamp_start=start, timestamp_end=end
+            ),
+            rules_by_technique,
+            since_days,
+        )
+        return report
 
     async def get_coverage_stats(self, source_type: Optional[str] = None) -> Dict:
         """

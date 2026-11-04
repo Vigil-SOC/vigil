@@ -71,14 +71,19 @@ SECURITY_DETECTION_TOOLS = [
     },
     {
         "name": "identify_gaps",
-        "description": "Compare the ATT&CK techniques seen on stored alerts with the detection rules actually loaded, and list techniques no rule declares. covered_on_paper_only lists techniques whose Kibana rules all fail Runs (each technique row has siem_runs). Reads stored data only and writes nothing. Read answer and unknown first: alerts that name a tactic and no technique cannot prove a gap, and answer is unknown when the data cannot say. Splunk saved searches and Wazuh rules are not read yet.",
+        "description": "Compare the ATT&CK techniques seen on stored alerts with the detection rules actually loaded, and list techniques no rule declares. covered_on_paper_only lists techniques whose Kibana rules all fail Runs (each technique row has siem_runs). Reads stored data only and writes nothing. Read answer and unknown first: alerts that name a tactic and no technique cannot prove a gap, and answer is unknown when the data cannot say. Splunk saved searches and Wazuh rules are not read yet. runs_rules_missed lists proven hunts and closed Cases (Verdicts from the last since_days) whose hosts, IPs and users drew no rule alert in their window (LogLM-only counts as missed), grouped by technique. Each group has its runs, how many a person confirmed, the active rules declaring the technique, and ruled_out: disproven / false_positive runs on it that a draft rule must not catch. Only groups with 2+ runs or 1+ confirmed are listed; the rest are counted. A run with no host, IP or user, or whose Findings read was cut off, is in its unknown, never missed.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "context": {
                     "type": "string",
-                    "description": "A case id, an ATT&CK label to match on stored alerts (e.g. 'T1021', 'lateral movement'), or empty for every stored alert. A threat name such as 'APT29' is not mapped to techniques.",
-                }
+                    "description": "A case id, an ATT&CK label to match on stored alerts (e.g. 'T1021', 'lateral movement'), or empty for every stored alert. A threat name such as 'APT29' is not mapped to techniques. For runs_rules_missed a case id gives that Case's run and a label its technique.",
+                },
+                "since_days": {
+                    "type": "integer",
+                    "description": "How many days of hunt and Case Verdicts runs_rules_missed reads (default: 30).",
+                    "default": 30,
+                },
             },
             "required": [],
         },
