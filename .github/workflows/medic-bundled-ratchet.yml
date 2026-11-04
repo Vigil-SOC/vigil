@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   ratchet:
@@ -39,5 +40,20 @@ jobs:
       - name: Install Medic's locked dependencies
         run: uv sync --project services/medic --frozen
 
+      # A missing bundled file only fails a PR that changes VERSION (a release). A PR
+      # that merely edits this check has nothing to ship, so it must not be blocked
+      # by the file not existing yet.
       - name: Check
-        run: scripts/medic/check_bundled_fresh.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          files=$(gh api --paginate "repos/$GH_REPO/pulls/$PR/files" --jq '.[].filename')
+          if grep -qxF VERSION <<<"$files"; then
+            MISSING_OK=0
+          else
+            MISSING_OK=1
+          fi
+          export MISSING_OK
+          scripts/medic/check_bundled_fresh.sh

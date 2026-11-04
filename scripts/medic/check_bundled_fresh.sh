@@ -9,9 +9,15 @@
 # release can't ship a pack whose Vigil range misses VERSION (P-VIGIL) or that is
 # about to expire (P-EXPIRED). NOW (ISO 8601, e.g. 2027-01-01T00:00:00Z) overrides
 # the clock; medic-pack-refresh.yml opens a refresh long before this bites.
+# MISSING_OK=1 turns a missing file into a notice: the workflow sets it for a PR that
+# does not change VERSION (a change to this check itself), where no release is at stake.
 set -euo pipefail
 
 file=${1:-services/medic/packs/bundled/medic-core.json}
+if [ ! -f "$file" ] && [ "${MISSING_OK:-}" = 1 ]; then
+  echo "::notice::$file is missing, but this change does not touch VERSION, so no release ships without it."
+  exit 0
+fi
 if [ ! -f "$file" ]; then
   echo "::error::$file is missing; a release without a bundled pack is the defect this check guards against. Merge the medic-core bundled-file PR first."
   exit 1
