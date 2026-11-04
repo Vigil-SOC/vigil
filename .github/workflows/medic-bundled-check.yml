@@ -1,0 +1,35 @@
+name: Medic bundled pack
+
+# Guards services/medic/packs/bundled/: the one file there must be the medic-core
+# Release asset, byte for byte. Deliberately no `paths:` filter: GitHub applies a path
+# filter to the whole workflow, so a required check behind one would never report on
+# a PR that doesn't touch the folder. The script passes at once with a notice then.
+# Make this a required status check on main (Settings, not this file).
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  bundled-file:
+    name: Bundled file matches its Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # Both sides of a rename count as changed.
+      - name: Check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh api --paginate "repos/$GH_REPO/pulls/$PR/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)' \
+            | scripts/medic/check_bundled.sh
