@@ -14,3 +14,37 @@ entries:
     children: {rule: ingest.federation-source-stalled}
     match: [source]
     why: A source whose integration is off is skipped, so its last success stalls with no error. Show the configuration fault.
+  # --- llm (F7b) ---
+  # The pipeline children these point at ship with the pipeline batches.
+  - parent: {class: llm}
+    children: {mode: P-4}
+    why: Triage stalls whenever the LLM path is down (B5 P-4.a). Show the LLM fault, not the stall.
+  - parent: {mode: L-5}
+    children: {cause: P-2.e}
+    why: A spent budget abandons runs (B5 P-2.e).
+  - parent: {mode: L-3}
+    children: {cause: P-2.e}
+    why: LLM jobs with no consumer stall runs (B5 P-2.e).
+  - parent: {rule: llm.provider-key-unusable}
+    children: {rule: llm.calls-failing}
+    why: Rejected-key errors are LLM call failures too. Show the key, not the generic failure count.
+  - parent: {rule: llm.model-unservable}
+    children: {rule: llm.calls-failing}
+    why: Unservable-model errors are LLM call failures too. Show the model, not the generic failure count.
+  - parent: {rule: llm.rate-limited}
+    children: {rule: llm.calls-failing}
+    why: Rate-limit errors are LLM call failures too. Show the quota, not the generic failure count.
+  - parent: {rule: llm.gateway-unreachable}
+    children: {rule: llm.calls-failing}
+    why: With Bifrost unreachable every call fails. Show the gateway, not the generic failure count.
+  # --- pipeline (F7c) ---
+  # processor-errors and triage-stalled (mode P-4) are already children of class llm above.
+  - parent: {mode: L-5}
+    children: {rule: pipeline.orchestrator-slots-held}
+    why: A spend cap or exhausted budget holds new runs too; show the budget fault.
+  - parent: {rule: ingest.processor-without-database}
+    children: {rule: pipeline.daemon-component-hung}
+    why: With no database nothing is processed while findings still arrive; show the database fault, not a hung processor.
+  - parent: {rule: ingest.processor-store-dropped}
+    children: {rule: pipeline.daemon-component-hung}
+    why: Findings that fail to store aren't processed; show the store fault, not a hung processor.

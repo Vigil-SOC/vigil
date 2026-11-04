@@ -23,7 +23,7 @@ from services.medic.app.heartbeat import STARTUP_GRACE_S
 from services.medic.store import StoreError, open_reader
 from services.medic.store.writer import StoreUsage
 
-API_VERSION = "1.1"
+API_VERSION = "1.2"
 
 # The writer's usage().states are StoreHealth.states (medic-api.openapi.yaml).
 _NOT_RECORDING = {"recording_stopped", "migration_blocked"}
@@ -111,9 +111,12 @@ def build_status(
     decisions_lost: int,
     chain: dict[str, Any],
     trace: dict[str, Any],
+    dev_mode: bool,
+    pack: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """`scheduler` is `Scheduler.status()`; `usage` is the writer's `usage()`;
-    `trace` is `TraceCapture.status()`."""
+    `trace` is `TraceCapture.status()`; `pack` is the active pack's PackFacts
+    (None: no verified pack, always so in dev mode)."""
     uptime_s = max(0, int(now - started_at))
     sensors = _sensors(scheduler)
     store = _store(usage, decisions_lost, chain)
@@ -134,11 +137,10 @@ def build_status(
         "uptime_s": uptime_s,
         "restarts_24h": history.restarts_since(now - DAY_S),
         "last_exit": history.last_exit,
-        # Unsigned dev rules until F6 loads signed packs (UX-9).
-        "dev_mode": True,
+        "dev_mode": dev_mode,
         "store": store,
         "sensors": sensors,
-        "pack": None,
+        "pack": pack,
         "chain_head": chain["head"],
         "trace": {"id": trace["id"], "state": trace["state"]},
     }

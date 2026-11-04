@@ -41,6 +41,9 @@ def _server():
     return mcp
 
 
+_cached_tools: Optional[List[Dict[str, Any]]] = None
+
+
 def list_tools() -> List[Dict[str, Any]]:
     """Vigil's tools, shaped the way ``MCPRegistry`` stores a connected server's.
 
@@ -48,17 +51,20 @@ def list_tools() -> List[Dict[str, Any]]:
     at import and does not change while the process runs, so there is nothing
     to await and no reason to make every caller of the registry async.
     """
-    # The manager's Tool carries the JSON schema as ``parameters``; the
-    # protocol Tool that a connected server would have sent calls the same
-    # thing ``input_schema``, which is the name the registry stores.
-    return [
-        {
-            "name": tool.name,
-            "description": tool.description or "",
-            "input_schema": tool.parameters or {},
-        }
-        for tool in _server()._tool_manager.list_tools()
-    ]
+    global _cached_tools
+    if _cached_tools is None:
+        # The manager's Tool carries the JSON schema as ``parameters``; the
+        # protocol Tool that a connected server would have sent calls the same
+        # thing ``input_schema``, which is the name the registry stores.
+        _cached_tools = [
+            {
+                "name": tool.name,
+                "description": tool.description or "",
+                "input_schema": tool.parameters or {},
+            }
+            for tool in _server()._tool_manager.list_tools()
+        ]
+    return _cached_tools
 
 
 def required_permission(name: str) -> Optional[str]:

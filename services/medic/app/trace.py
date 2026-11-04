@@ -20,13 +20,14 @@ import logging
 import os
 import re
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any, BinaryIO
 
 from services.medic.app.gap import iso
 from services.medic.contracts.trace_check import MANIFEST, validate
+from services.medic.engine import LoadedRule
 
 log = logging.getLogger("services.medic")
 
@@ -37,7 +38,7 @@ _TRACE_ID = re.compile(MANIFEST.schema["$defs"]["trace_id"]["pattern"])
 _SENSOR_FILE = re.compile(
     MANIFEST.schema["properties"]["sources"]["items"]["properties"]["file"]["pattern"]
 )
-PACK_ID = "dev"  # the app runs the dev rules, not a signed pack
+NO_PACK = ("none", "0.0.0")  # no rules loaded (no verified pack); the schema accepts it
 
 
 def medic_version() -> str:
@@ -48,13 +49,17 @@ def medic_version() -> str:
         return "0.0.0"
 
 
-def _medic_block(shape: str, instance_id: str) -> dict[str, Any]:
-    version = medic_version()
+def pack_of(rules: Sequence[LoadedRule]) -> tuple[str, str]:
+    """The (id, version) of the pack the rules came from."""
+    return rules[0].pack if rules else NO_PACK
+
+
+def _medic_block(shape: str, instance_id: str, pack: tuple[str, str]) -> dict[str, Any]:
     return {
-        "version": version,
+        "version": medic_version(),
         "install_shape": shape,
         "instance_id": instance_id,
-        "pack": {"id": PACK_ID, "version": version},
+        "pack": {"id": pack[0], "version": pack[1]},
     }
 
 
@@ -215,11 +220,12 @@ def start_capture(
     shape: str,
     instance_id: str,
     tick: int,
+    pack: tuple[str, str],
 ) -> TraceCapture:
     """Finalise any torn trace from a past run, then open `trace_id` if one is set.
     Never raises: a trace that can't start is logged and Medic runs without it."""
     capture = TraceCapture()
-    medic = _medic_block(shape, instance_id)
+    medic = _medic_block(shape, instance_id, pack)
     traces = data_dir / TRACES_DIR
     try:
         recover(traces, medic)

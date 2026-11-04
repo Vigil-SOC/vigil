@@ -410,12 +410,26 @@ class DatabaseDataService:
                 return False
         return False
 
-    def get_cases(self, limit: int = 10000) -> List[Dict]:
+    def get_cases(
+        self,
+        limit: int = 10000,
+        status: Optional[str] = None,
+        priority: Optional[str] = None,
+    ) -> List[Dict]:
         if self._demo_mode and self._demo_service:
-            return self._demo_service.get_cases(limit)
+            cases = self._demo_service.get_cases(
+                10000 if (status or priority) else limit
+            )
+            if status:
+                cases = [c for c in cases if c.get("status") == status]
+            if priority:
+                cases = [c for c in cases if c.get("priority") == priority]
+            return cases[:limit]
         if self._db_available:
             try:
-                cases = self._db_service.get_cases(limit=limit)
+                cases = self._db_service.get_cases(
+                    status=status, priority=priority, limit=limit
+                )
                 return CaseSchema.dump_many(cases)
             except Exception as e:
                 logger.error(f"Error getting cases from DB: {e}")
@@ -446,7 +460,9 @@ class DatabaseDataService:
             return self._demo_service.get_case(case_id)
         if self._db_available:
             try:
-                case = self._db_service.get_case(case_id, include_findings=True)
+                # CaseSchema reads only finding ids; full findings would load
+                # every finding's MITRE prediction rows for nothing (#3658).
+                case = self._db_service.get_case(case_id)
                 return CaseSchema.dump(case) if case else None
             except Exception as e:
                 logger.error(f"Error getting case from DB: {e}")
@@ -575,3 +591,14 @@ class DatabaseDataService:
                 logger.error(f"Error adding finding to case in DB: {e}")
                 return False
         return False
+
+
+_database_data_service: Optional[DatabaseDataService] = None
+
+
+def get_database_data_service() -> DatabaseDataService:
+    """Return the process-wide DatabaseDataService singleton (#3666)."""
+    global _database_data_service
+    if _database_data_service is None:
+        _database_data_service = DatabaseDataService()
+    return _database_data_service

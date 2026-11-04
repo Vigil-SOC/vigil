@@ -1,0 +1,37 @@
+# No LLM provider resolves for triage, so soc-daemon skips AI triage
+# (services/daemon/processor.py:831-837, #1689 pair). The cause is L-1.k (#2011, folded
+# in here). Set: the entry ERROR or its " (still failing, %d failures)" reminder. Clear:
+# "LLM provider configured; recovered after %d failures", or the bare line a process
+# logs on its first resolved provider. Reads templates only, so trusted; lane 2 because
+# B5 has no exact row for it (nearest L-1).
+apiVersion: medic.rules/v1
+kind: Rule
+id: llm.triage-no-provider
+title: No LLM provider is configured, so AI triage is skipped
+revision: 1
+fault: {class: llm, mode: L-1, causes: [L-1.k]}
+lane: 2
+detection: event
+signals:
+  missing:
+    log:
+      signal: log_soc_daemon
+      logger: {eq: services.daemon.processor}
+      level: [ERROR]
+      template: {re2: '^No LLM provider configured, AI triage is skipped until one is set up( \(still failing, %d failures\))?$'}
+  configured:
+    log:
+      signal: log_soc_daemon
+      logger: {eq: services.daemon.processor}
+      level: [INFO]
+      template: {re2: '^LLM provider configured(; recovered after %d failures)?$'}
+when: {fn: latch, set: missing, clear: configured}
+for: 2m
+keep_firing_for: 5m
+advice:
+  summary: soc-daemon found no active LLM provider, so new findings are stored without AI triage.
+  fix: >-
+    Open Settings, LLM providers. Add a provider with a working API key (or a
+    reachable Ollama), make sure it is active, and either make it the default or
+    assign it to triage in Settings, AI Config. AI triage resumes with the next
+    finding.

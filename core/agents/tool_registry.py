@@ -182,9 +182,9 @@ def _bad_state(state: Optional[str]) -> Optional[Args]:
 
 
 def _data():
-    from core.storage.database_data_service import DatabaseDataService
+    from core.storage.database_data_service import get_database_data_service
 
-    return DatabaseDataService()
+    return get_database_data_service()
 
 
 def _approvals():
@@ -413,20 +413,11 @@ def list_cases(
     priority: Optional[str] = None,
     limit: int = 50,
 ) -> Any:
-    # get_cases takes only a cap, so the filter runs after the full read.
-    # A cap applied first (limit*2) drops matches that sit past it.
-    cases = _data().get_cases()
-    if status:
-        cases = [case for case in cases if case.get("status") == status]
-    if severity:
-        cases = [
-            case
-            for case in cases
-            if case.get("severity") == severity or case.get("priority") == severity
-        ]
-    if priority:
-        cases = [case for case in cases if case.get("priority") == priority]
-    return cases[:limit]
+    # Cases have no severity column: severity names a priority, so both
+    # filters, and the cap, run in SQL. Two different priorities match nothing.
+    if severity and priority and severity != priority:
+        return []
+    return _data().get_cases(limit=limit, status=status, priority=priority or severity)
 
 
 def get_case(*, case_id: str) -> Any:

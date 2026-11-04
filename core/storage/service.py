@@ -17,11 +17,11 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import array as pg_array
 from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
-from sqlalchemy.orm import lazyload, selectinload
+from sqlalchemy.orm import lazyload, noload, selectinload
 
 from core.exceptions import default_on_error
 from core.storage import case_trail_hook
-from core.storage.case_repository import CaseRepository
+from core.storage.case_repository import CASE_FINDING_IDS_ONLY, CaseRepository
 from core.storage.connection import get_db_manager
 from core.storage.ip_exclusion_repository import exclusion_view_filter
 from core.storage.models import (
@@ -179,8 +179,13 @@ def merge_ai_enrichment(
     return {**kept, **{k: v for k, v in new.items() if owned(k)}}
 
 
-# ``FindingSchema`` reads the prediction rows, so detached findings carry them.
-_FINDING_READ_OPTIONS = (selectinload(Finding.mitre_prediction_rows),)
+# No read path or ``FindingSchema`` uses ``Finding.cases`` (#1439, #3658). It
+# lazy-loads on access, so on a detached finding it would raise; read paths
+# that hand back detached findings or dumps pin it empty with ``noload``.
+_FINDING_READ_OPTIONS = (
+    selectinload(Finding.mitre_prediction_rows),
+    noload(Finding.cases),
+)
 
 
 def technique_confidence_filter(min_confidence: float):
@@ -1160,9 +1165,9 @@ class DatabaseService:
             Case object or None if not found
         """
         with self.db_manager.session_scope() as session:
-            case = session.get(Case, case_id)
+            options = () if include_findings else (CASE_FINDING_IDS_ONLY,)
+            case = session.get(Case, case_id, options=options)
             if case:
-                # Force load findings if needed
                 if include_findings:
                     for linked in case.findings:
                         _ = linked.mitre_prediction_rows
