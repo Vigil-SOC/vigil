@@ -1,0 +1,77 @@
+name: Medic pack refresh
+
+# medic-core expires (pack.yaml expires_at), and the pack in the image is the one on
+# main under services/medic/packs/bundled/. When that file is within 75 days of
+# expiring, this opens a PR that edits only pack.yaml: PATCH version up, created_at
+# now, expires_at 180 days out (scripts/medic/pack_refresh.sh). Merging it is the
+# release: medic-pack-release.yml tags it and opens the bundled-file PR. This never
+# pushes to main and does nothing when a refresh is already in flight.
+# Only the canonical repo: forks lack the release-please App vars/secrets.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: medic-pack-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    if: github.repository == 'Vigil-SOC/vigil' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # An App token, not GITHUB_TOKEN: a PR opened with GITHUB_TOKEN doesn't
+      # trigger the required checks.
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.RELEASE_PLEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_PRIVATE_KEY }}
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # A PR from the refresh branch already open: it is in flight.
+      - name: Is a refresh already open?
+        id: open
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          n=$(gh pr list --repo "$REPO" --head medic-pack/refresh --state open --json number --jq length)
+          echo "open=$n" >>"$GITHUB_OUTPUT"
+          [ "$n" = 0 ] || echo "::notice::A refresh PR is already open; nothing to do."
+
+      # Edits pack.yaml only when the bundled pack is within 75 days of expiring and
+      # pack.yaml has no later expires_at already.
+      - name: Refresh pack.yaml
+        id: refresh
+        if: steps.open.outputs.open == '0'
+        run: scripts/medic/pack_refresh.sh
+
+      # A branch and a PR, never a push to main. The branch is the bot's own, so a
+      # leftover from an earlier merged refresh is overwritten.
+      - name: Open the refresh PR
+        if: steps.refresh.outputs.refresh == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ steps.refresh.outputs.version }}
+        run: |
+          set -euo pipefail
+          branch=medic-pack/refresh
+          git switch -c "$branch"
+          git add -- services/medic/packs/medic-core/pack.yaml
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "chore(medic): refresh medic-core expiry ($VERSION)"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "$branch"
+          gh pr create --repo "$REPO" --base main --head "$branch" \
+            --title "chore(medic): refresh medic-core expiry ($VERSION)" \
+            --body "The bundled medic-core pack is within 75 days of expiring. Bumps \`pack.yaml\` to $VERSION with a new \`created_at\` and an \`expires_at\` 180 days out; nothing else changes. Merging it is the release: \`medic-pack-release\` tags it and opens the bundled-file PR."
