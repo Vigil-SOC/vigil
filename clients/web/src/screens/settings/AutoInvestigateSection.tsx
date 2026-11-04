@@ -87,9 +87,10 @@ function lastChange(entry: WorkflowTier | undefined): string {
     // rounded down: the server drops below the exact floor, so 79.5% must not read as 80%
     return `Lowered by Vigil ${at}: ${rate == null ? 'Not measured' : `${Math.floor(rate * 100)}%`} under the ${entry.floor}% floor`
   }
-  if (entry.tier === 'assist') return `Set to Assist by ${entry.by} ${at}`
+  const who = entry.by_label || entry.by
+  if (entry.tier === 'assist') return `Set to Assist by ${who} ${at}`
   const over = entry.evidence ? entry.evidence.agreed + entry.evidence.disagreed : 0
-  return `Raised by ${entry.by} ${at} at ${rate == null ? 'Not measured' : `${pct(rate)} over ${over}`}`
+  return `Raised by ${who} ${at} at ${rate == null ? 'Not measured' : `${pct(rate)} over ${over}`}`
 }
 const TOOLS_SHOWN = 8
 

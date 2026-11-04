@@ -7,6 +7,8 @@ export interface WorkflowTier {
   evidence: { agreed: number; disagreed: number; agreement_rate: number | null; window_end: string } | null
   /** a principal id, or "system" when Vigil lowered it */
   by: string
+  /** that principal's name, read at request time; null when blank or erased */
+  by_label: string | null
   at: string
 }
 

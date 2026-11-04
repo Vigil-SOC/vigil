@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import text
 
 from core.auth.auth_service import _is_service_account
 from core.auth.permissions import deny_unless, permission_gate
@@ -36,6 +37,7 @@ from core.response.ceiling import (
     workflow_evidence,
 )
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
+from core.storage.connection import get_db_session
 from core.storage.models import ToolEffectClass, User
 from core.workflows.workflows_service import INVESTIGATE_RUN_KIND, WorkflowsService
 from services.api.middleware.auth import get_current_active_user
@@ -73,13 +75,36 @@ class CeilingResponse(BaseModel):
     propose: bool
     environment_locked: bool
     four_eyes: bool
-    # Workflow id to its own entry: tier, floor, evidence, by, at (#3624).
+    # Workflow id to its own entry: tier, floor, evidence, by, at (#3624),
+    # plus by_label, the principal's name read now (#3642).
     workflows: Dict[str, Dict[str, Any]] = {}
+
+
+def _labels(ids: set) -> Dict[str, str]:
+    """Principal id to its label; blank or erased labels are left out."""
+    if not ids:
+        return {}
+    with get_db_session() as session:
+        rows = session.execute(
+            text(
+                "SELECT principal_id, label FROM public.principals "
+                "WHERE principal_id = ANY(:ids)"
+            ),
+            {"ids": list(ids)},
+        ).all()
+    return {pid: label.strip() for pid, label in rows if label and label.strip()}
 
 
 def _view() -> CeilingResponse:
     stored = read_ceiling()
     view = ceiling_view(stored)
+    labels = _labels(
+        {
+            e.get("by")
+            for e in stored.workflows.values()
+            if e.get("by") not in (None, "system")
+        }
+    )
     return CeilingResponse(
         act_reversible=view.act_reversible,
         act_irreversible=view.act_irreversible,
@@ -89,7 +114,10 @@ def _view() -> CeilingResponse:
         propose=view.propose,
         environment_locked=view.environment_locked,
         four_eyes=view.four_eyes,
-        workflows={wid: dict(entry) for wid, entry in stored.workflows.items()},
+        workflows={
+            wid: {**entry, "by_label": labels.get(entry.get("by"))}
+            for wid, entry in stored.workflows.items()
+        },
     )
 
 
