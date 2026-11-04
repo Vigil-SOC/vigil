@@ -5,7 +5,7 @@ counted by detection_rules id. Stored labels are not all techniques: ingest keep
 whatever key a source sent, so a row may name a tactic or an unmapped class. Those
 cannot prove a gap, and the report says so rather than guessing which technique ran.
 
-A technique whose SIEM rules (read from Kibana) each fail Runs or Sees is covered
+A technique whose SIEM rules (read from Kibana and Wazuh) each fail Runs or Sees is covered
 on paper only: a rule declares it, and nothing that runs on arriving data does.
 A Blind spot is a data source SIEM rules read that has no events (or lacks their
 fields), with the rules it starves.
@@ -32,14 +32,14 @@ from core.storage.models import (
     case_findings,
 )
 
-RULE_SOURCES = ("sigma", "splunk", "elastic", "kql")
-# The rule formats that declare a tactic; Splunk and KQL rules name techniques only.
+RULE_SOURCES = ("sigma", "splunk", "elastic", "kql", "wazuh")
+# The rule formats that declare a tactic; Splunk, KQL and Wazuh rules name techniques only.
 TACTIC_RULE_SOURCES = ("sigma", "elastic")
 
 SIEMS_NOT_READ_NOTE = (
-    "Only Elastic (Kibana) rules are read from a SIEM. Splunk saved searches and "
-    "Wazuh rules are not read yet, so what those SIEMs run, and whether it runs, "
-    "is not part of this report."
+    "Elastic (Kibana) and Wazuh rules are read from a SIEM. Splunk saved searches "
+    "are not read yet, so what Splunk runs, and whether it runs, is not part of "
+    "this report."
 )
 
 TECHNIQUE_ID = re.compile(r"^T\d{4}(\.\d{3})?$", re.IGNORECASE)

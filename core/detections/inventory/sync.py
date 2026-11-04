@@ -1,4 +1,4 @@
-"""Bring the detection rule tables in line with every configured repo and Kibana.
+"""Bring the detection rule tables in line with every configured repo, Kibana and Wazuh.
 
 Each run reads every ready source in full, since a full list is the only way
 to see a deletion, and writes only what differs:
@@ -39,7 +39,7 @@ from typing import Any, Dict, Iterator, List, Optional
 
 from sqlalchemy import and_, bindparam, func, insert, or_, select, update
 
-from core.detections.inventory import kibana, readers, sees
+from core.detections.inventory import kibana, readers, sees, wazuh
 from core.detections.inventory.record import RuleRecord, fingerprint
 from core.storage.connection import get_db_manager
 from core.storage.models import DetectionRule, DetectionRuleStage, DetectionRuleVersion
@@ -291,7 +291,7 @@ def _remove_unconfigured(configured: List[str]) -> int:
 
 
 def sync_repos() -> List[Any]:
-    """Read every configured repo and Kibana, and sync each, then check Kibana rules' Sees.
+    """Read every configured repo, Kibana and Wazuh, and sync each, then check Kibana rules' Sees.
 
     One failing source skips only itself.
     """
@@ -311,6 +311,7 @@ def sync_repos() -> List[Any]:
         reports.append(elastic)
         if config is not None:
             reports.append(sees.sweep_elastic(config))
+        reports.append(_sync_wazuh())
     if removed:
         logger.info(
             "detection rules: %d rules of unconfigured sources removed", removed
@@ -387,6 +388,49 @@ def _sync_elastic() -> tuple[SourceReport, Optional[Dict[str, Any]]]:
         )
     logger.info("detection rules: %s", asdict(report))
     return report, config
+
+
+def _remove_wazuh() -> int:
+    with get_db_manager().session_scope() as session:
+        result = session.execute(
+            update(DetectionRule)
+            .where(
+                DetectionRule.source == wazuh.SOURCE,
+                DetectionRule.status != "removed",
+            )
+            .values(status="removed")
+        )
+        return int(getattr(result, "rowcount", 0) or 0)
+
+
+def _sync_wazuh() -> SourceReport:
+    """The Wazuh manager's loaded rules, with the wazuh integration's credentials.
+
+    Removed only when the integration config was read and wazuh is not enabled;
+    an unreadable config or an unreachable manager skips the source.
+    """
+    from core.config import load_integrations_config
+    from core.integrations._base.config import missing, resolve
+    from core.integrations.wazuh.descriptor import WAZUH, WAZUH_REQUIRED
+
+    try:
+        integrations = load_integrations_config()
+        if not integrations["configured"]:
+            return SourceReport(source=wazuh.SOURCE, skipped="no integration config")
+        if WAZUH.id not in integrations["enabled_integrations"]:
+            return SourceReport(
+                source=wazuh.SOURCE, removed=_remove_wazuh(), skipped="not enabled"
+            )
+        config = resolve(WAZUH)
+        absent = missing(config, *WAZUH_REQUIRED)
+        if absent:
+            return SourceReport(source=wazuh.SOURCE, skipped=f"no {absent[0]}")
+        report = sync_source(wazuh.SOURCE, wazuh.read_wazuh(config))
+    except Exception as exc:  # noqa: BLE001 -- unreachable is skipped, never removed
+        logger.warning("detection rules: syncing wazuh failed: %s", exc)
+        return SourceReport(source=wazuh.SOURCE, error=f"{type(exc).__name__}: {exc}")
+    logger.info("detection rules: %s", asdict(report))
+    return report
 
 
 def _link_same_id() -> tuple:
