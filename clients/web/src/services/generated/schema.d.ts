@@ -9110,6 +9110,10 @@ export interface components {
             data_source?: string | null;
             /** Description */
             description?: string | null;
+            /** Detection Rule */
+            detection_rule?: {
+                [key: string]: unknown;
+            } | null;
             entity_context?: components["schemas"]["EntityContext"] | null;
             /** Evidence Links */
             evidence_links?: unknown | null;

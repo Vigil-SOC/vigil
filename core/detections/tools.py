@@ -97,6 +97,7 @@ class SecurityDetectionsTools:
         runs: Optional[str] = None,
         stage: Optional[str] = None,
         sees: Optional[str] = None,
+        flagged: Optional[bool] = None,
     ) -> List[Dict]:
         """
         Search across all detection rules using keywords.
@@ -109,12 +110,16 @@ class SecurityDetectionsTools:
             runs: Optional filter by Runs result ("pass", "fail", "unknown")
             stage: Optional filter by current rollout stage ("shadow", "live", "off")
             sees: Optional filter by Sees result ("pass", "fail", "unknown")
+            flagged: Optional filter: rules with (True) or without (False) an open flag
 
         Returns:
-            List of matching detection rules, each with its status and checks;
-            an overlay rule also with its stage and stage rows
+            List of matching detection rules, each with its status, checks and
+            whether it is flagged; an overlay rule also with its stage and stage
+            rows; a single hit also carries its recent check changes
         """
-        return catalog.search(query or "", source_type, limit, tool, runs, stage, sees)
+        return catalog.search(
+            query or "", source_type, limit, tool, runs, stage, sees, flagged
+        )
 
     async def link_detection_rule(
         self,
@@ -153,7 +158,8 @@ class SecurityDetectionsTools:
         self, context: str = "", since_days: int = 30, **_kwargs: object
     ) -> Dict:
         """Techniques seen on stored alerts that no active rule declares, with what it cannot say,
-        and the proven hunts and closed Cases no rule alerted on (``runs_rules_missed``).
+        and the proven hunts and closed Cases no rule alerted on (``runs_rules_missed``),
+        and the SIEM rules that broke (``rule_health``).
 
         Args:
             context: A case id, an ATT&CK label to match, or empty for every stored alert.
@@ -183,6 +189,7 @@ class SecurityDetectionsTools:
             rules_by_technique,
             since_days,
         )
+        report["rule_health"] = catalog.rule_health()
         return report
 
     async def get_coverage_stats(self, source_type: Optional[str] = None) -> Dict:

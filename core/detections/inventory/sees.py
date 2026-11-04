@@ -205,11 +205,23 @@ def _active_rules() -> List[Tuple[RuleKey, Mapping[str, Any]]]:
 
 
 def _write(results: Dict[RuleKey, Dict[str, Any]]) -> int:
-    """Store each result that differs from the version's stored Sees; runs is kept."""
+    """Store each result that differs from the version's stored Sees; runs is kept.
+
+    A result or reason that differs from the rule's last recorded Sees, across
+    versions, is also appended to detection_rule_check_changes.
+    """
+    from core.detections.inventory.sync import (
+        _change,
+        _last_results,
+        _record_changes,
+    )
+
     if not results:
         return 0
     now = datetime.now(timezone.utc).isoformat()
     with get_db_manager().session_scope() as session:
+        last = _last_results(session, kibana.SOURCE)
+        changes = []
         rows = session.execute(
             select(
                 DetectionRuleVersion.rule_id,
@@ -224,6 +236,12 @@ def _write(results: Dict[RuleKey, Dict[str, Any]]) -> int:
         changed = []
         for rid, ver, checks in rows:
             new, old = results[(rid, ver)], (checks or {}).get("sees") or {}
+            seen = (new["result"], new["reason"])
+            before = last.get((rid, "sees"))
+            if before != seen:
+                changes.append(
+                    _change(rid, ver, "sees", before[0] if before else None, *seen)
+                )
             if all(old.get(k) == v for k, v in new.items()):
                 continue
             changed.append(
@@ -246,6 +264,7 @@ def _write(results: Dict[RuleKey, Dict[str, Any]]) -> int:
                 .values(checks=bindparam("new_checks")),
                 changed,
             )
+        _record_changes(session, changes, now)
     return len(changed)
 
 
