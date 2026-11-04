@@ -20,6 +20,7 @@ from services.medic.api.history import (
 )
 from services.medic.app.gap import iso
 from services.medic.app.heartbeat import STARTUP_GRACE_S
+from services.medic.contracts.pack_check import _ts
 from services.medic.store import StoreError, open_reader
 from services.medic.store.writer import StoreUsage
 
@@ -115,11 +116,23 @@ def build_status(
     pack: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """`scheduler` is `Scheduler.status()`; `usage` is the writer's `usage()`;
-    `trace` is `TraceCapture.status()`; `pack` is the active pack's PackFacts
-    (None: no verified pack, always so in dev mode)."""
+    `trace` is `TraceCapture.status()`; `pack` is the active pack's PackFacts,
+    emitted as a PackBrief (None: no verified pack, always so in dev mode)."""
     uptime_s = max(0, int(now - started_at))
     sensors = _sensors(scheduler)
     store = _store(usage, decisions_lost, chain)
+    brief = None
+    if pack is not None:
+        p = pack["pack"]  # the manifest's pack_identity
+        brief = {
+            "id": p["id"],
+            "version": p["version"],
+            "channel": p["channel"],
+            "expires_at": p["expires_at"],
+            # Derived each cycle, expired as the verifier sees it (pack_check P-EXPIRED).
+            "stale": _ts(p["expires_at"]).timestamp() <= now,
+            "in_vigil_range": pack["in_vigil_range"],
+        }
     return {
         "api_version": API_VERSION,
         "instance_id": instance_id,
@@ -140,7 +153,7 @@ def build_status(
         "dev_mode": dev_mode,
         "store": store,
         "sensors": sensors,
-        "pack": pack,
+        "pack": brief,
         "chain_head": chain["head"],
         "trace": {"id": trace["id"], "state": trace["state"]},
     }
