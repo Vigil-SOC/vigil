@@ -20,6 +20,7 @@ from core.detections.gaps import (
     read_ledger,
 )
 from core.detections.inventory import catalog
+from core.detections.inventory.links import link_rule
 from core.detections.lint import lint_sigma
 from core.detections.reconstruction import (
     coverage_report,
@@ -109,6 +110,24 @@ class SecurityDetectionsTools:
             List of matching detection rules, each with its status and checks
         """
         return catalog.search(query or "", source_type, limit, tool, runs, sees)
+
+    async def link_detection_rule(
+        self,
+        copy_rule_id: Any = None,
+        action: str = "",
+        reason: str = "",
+        origin_rule_id: Any = None,
+        **_kwargs: object,
+    ) -> Dict:
+        """Link, unlink or decline a SIEM copy and the repo rule it came from.
+
+        Args:
+            copy_rule_id: The SIEM rule's rule_id (a search_detections hit with tool != 'repo')
+            action: 'link', 'unlink' or 'decline'
+            reason: Why; required, and written to the audit log
+            origin_rule_id: The repo rule's rule_id; required to link or decline
+        """
+        return link_rule(copy_rule_id, action, reason, origin_rule_id)
 
     async def get_detection_count(self, source_type: Optional[str] = None) -> Dict:
         """
