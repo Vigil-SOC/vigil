@@ -1,0 +1,94 @@
+/* Settings › Navigation: the pages on the bar (#3709) */
+.nav-pref-labels {
+  margin-bottom: 12px;
+}
+
+.nav-pref-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--ln0);
+  border-radius: var(--radius-card-inner);
+  overflow: hidden;
+}
+
+/* on a narrow card the controls wrap under the page's name */
+.nav-pref-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  min-height: var(--size-button);
+  padding: 4px 6px 4px 10px;
+  background: var(--bg1);
+  color: var(--tx0);
+  font-size: 13px;
+}
+
+.nav-pref-row + .nav-pref-row {
+  border-top: 1px solid var(--ln0);
+}
+
+.nav-pref-row.off {
+  color: var(--tx2);
+}
+
+.nav-pref-row.dragging {
+  opacity: 0.5;
+}
+
+.nav-pref-grip {
+  display: inline-flex;
+  color: var(--tx2);
+  cursor: grab;
+}
+
+/* kept in the row so the columns line up */
+.nav-pref-hidden {
+  visibility: hidden;
+}
+
+.nav-pref-label {
+  min-width: 0;
+  flex: 1 1 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.nav-pref-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.nav-pref-pin {
+  color: var(--tx2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.nav-pref-show {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--tx1);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.nav-pref-show:has(input:disabled) {
+  cursor: default;
+}
+
+.nav-pref-row .btn.icon {
+  padding: 6px;
+}
+
+.nav-pref-row .btn.icon[aria-disabled='true'] {
+  color: var(--tx-faint);
+  cursor: not-allowed;
+}

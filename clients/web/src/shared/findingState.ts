@@ -5,6 +5,7 @@ export type TerminalState =
   | 'waiting'
   | 'scoring'
   | 'working'
+  | 'case_idle'
   | 'needs_you'
   | 'resolved_auto'
   | 'resolved_person'
@@ -19,6 +20,7 @@ export function stateWord(state: string | null | undefined, caseId?: string | nu
     case 'scoring':
       return 'Waiting for triage'
     case 'working':
+    case 'case_idle':
     case 'needs_you':
       return caseId ? `Case ${caseId}` : 'In a case'
     case 'resolved_auto':
@@ -38,6 +40,7 @@ export const STATE_RANK: Record<TerminalState, number> = {
   waiting: 0,
   scoring: 1,
   working: 2,
+  case_idle: 2,
   needs_you: 2,
   resolved_auto: 3,
   resolved_person: 3,

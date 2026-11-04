@@ -2017,6 +2017,26 @@
   "nullable": false,
   "type": "integer"
  },
+ "column detection_rules.link_kind": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column detection_rules.link_reason": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column detection_rules.linked_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp with time zone"
+ },
+ "column detection_rules.linked_by": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
  "column detection_rules.name": {
   "default": null,
   "nullable": false,
@@ -2026,6 +2046,11 @@
   "default": null,
   "nullable": false,
   "type": "text"
+ },
+ "column detection_rules.origin_rule_id": {
+  "default": null,
+  "nullable": true,
+  "type": "integer"
  },
  "column detection_rules.path": {
   "default": null,
@@ -4036,6 +4061,8 @@
  "constraint detection_rule_versions.detection_rule_versions_rule_id_fkey": "FOREIGN KEY (rule_id) REFERENCES detection_rules(id)",
  "constraint detection_rule_versions.detection_rule_versions_version_check": "CHECK ((version >= 1))",
  "constraint detection_rules.detection_rules_latest_version_check": "CHECK ((latest_version >= 1))",
+ "constraint detection_rules.detection_rules_link_kind_check": "CHECK ((((link_kind = ANY (ARRAY['same_id'::text, 'agent'::text, 'declined'::text])) AND (origin_rule_id IS NOT NULL)) OR ((link_kind IS NULL) AND (origin_rule_id IS NULL))))",
+ "constraint detection_rules.detection_rules_origin_rule_id_fkey": "FOREIGN KEY (origin_rule_id) REFERENCES detection_rules(id)",
  "constraint detection_rules.detection_rules_pkey": "PRIMARY KEY (id)",
  "constraint detection_rules.detection_rules_source_native_key": "UNIQUE (source, native_key)",
  "constraint detection_rules.detection_rules_status_check": "CHECK ((status = ANY (ARRAY['active'::text, 'disabled'::text, 'removed'::text])))",
@@ -4386,6 +4413,7 @@
  "index idx_custom_workflows_created_by": "CREATE INDEX idx_custom_workflows_created_by ON public.custom_workflows USING btree (created_by)",
  "index idx_custom_workflows_name": "CREATE INDEX idx_custom_workflows_name ON public.custom_workflows USING btree (name)",
  "index idx_detection_rule_stages_rule": "CREATE INDEX idx_detection_rule_stages_rule ON public.detection_rule_stages USING btree (rule_id, id)",
+ "index idx_detection_rules_origin_rule_id": "CREATE INDEX idx_detection_rules_origin_rule_id ON public.detection_rules USING btree (origin_rule_id)",
  "index idx_detection_rules_techniques": "CREATE INDEX idx_detection_rules_techniques ON public.detection_rules USING gin (techniques)",
  "index idx_episodic_gaps_investigation": "CREATE INDEX idx_episodic_gaps_investigation ON public.episodic_gaps USING btree (investigation_kind, investigation_id)",
  "index idx_episodic_gaps_recall": "CREATE INDEX idx_episodic_gaps_recall ON public.episodic_gaps USING btree (concluded_at DESC, id)",

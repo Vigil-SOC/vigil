@@ -6456,6 +6456,20 @@
       font-size: 12.5px;
    }
 
+   .coverage-caught {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      margin-top: 6px;
+      font-size: 12.5px;
+   }
+
+   /* above the missed-steps table */
+   .tech-findings>.coverage-caught:first-child {
+      margin: 0 0 8px;
+   }
+
    /* error-boundary fallback */
    .screen-error {
       display: flex;

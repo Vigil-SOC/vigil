@@ -73,7 +73,7 @@ function Row({ item, onOpen, openCase }: { item: OverviewFeedItem; onOpen: (id: 
   const full = item.title && item.description ? item.description : text
   const word = stateWord(item.terminal_state, item.case_id)
   // Only a live case is a link; a closed one reads Resolved.
-  const live = !!item.case_id && (item.terminal_state === 'working' || item.terminal_state === 'needs_you')
+  const live = !!item.case_id && (item.terminal_state === 'working' || item.terminal_state === 'case_idle' || item.terminal_state === 'needs_you')
   return (
     <div role="button" tabIndex={0} className="ov-row" onClick={() => onOpen(item.finding_id)} onKeyDown={onKey}>
       <div className="ov-row-1">

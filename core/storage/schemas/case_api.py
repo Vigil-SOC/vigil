@@ -141,6 +141,8 @@ class CaseDetailResponse(CaseSchema):
     investigations: list[CaseInvestigationRef] = []
     closure: Optional[CaseClosureView] = None
     linked_findings: list[CaseLinkedFinding] = []
+    # Merged after the case's newest run started, so that run did not read them.
+    alerts_since_last_run: int = 0
 
 
 class CaseRecordRow(BaseModel):
