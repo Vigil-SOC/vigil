@@ -304,11 +304,60 @@ function VerdictPanel({ verdict }: { verdict: TriageVerdict }) {
   )
 }
 
-function Expanded({ row, data }: { row: TriageRow; data: TriagePayload }) {
+function CaseDoor({ id, openCase }: { id: string; openCase: (id: string) => void }) {
+  return (
+    <Link
+      to={`/cases?case=${encodeURIComponent(id)}`}
+      onClick={(event) => {
+        event.stopPropagation()
+        if (event.metaKey || event.ctrlKey || event.shiftKey) return // new tab or window
+        event.preventDefault()
+        openCase(id)
+      }}
+    >
+      {id}
+    </Link>
+  )
+}
+
+/** Where the work on this row lives: its own run when it started one, else the case it joined. */
+function WorkDone({ row, openCase }: { row: TriageRow; openCase: (id: string) => void }) {
+  const { run_id: run, case_door: door } = row
+  if (!run && !door) return null
+  const started = row.state === 'launched'
+  return (
+    <>
+      <span className="tq-h">What Vigil did</span>
+      {!run && (
+        <p className="tq-reasoning">
+          {started
+            ? 'This alert started a run, but the record of that run is not available.'
+            : 'This alert started no run of its own. The runs on its case are listed on the case.'}
+        </p>
+      )}
+      <div className="tq-actions">
+        {run && door && (
+          <Link to={`/cases?case=${encodeURIComponent(door)}&tab=Checked&run=${encodeURIComponent(run)}`} onClick={(event) => event.stopPropagation()}>
+            What it checked
+          </Link>
+        )}
+        {run && (
+          <Link to={`/workflows?run=${encodeURIComponent(run)}`} onClick={(event) => event.stopPropagation()}>
+            Watch the run
+          </Link>
+        )}
+        {door && <span>{run || started ? 'Case' : 'Added to'} <CaseDoor id={door} openCase={openCase} /></span>}
+      </div>
+    </>
+  )
+}
+
+function Expanded({ row, data, openCase }: { row: TriageRow; data: TriagePayload; openCase: (id: string) => void }) {
   const tips = data.breakdown_info
   return (
     <div className="tq-panel" aria-label="Expanded row">
       {row.reason && <BreakdownRow label="Why it was not picked up">{row.reason}</BreakdownRow>}
+      <WorkDone row={row} openCase={openCase} />
       {row.triage && <VerdictPanel verdict={row.triage} />}
       <span className="tq-h">How the ranking was worked out</span>
       <BreakdownRow label="Severity band">{row.severity_band}</BreakdownRow>
@@ -458,19 +507,7 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
         const rest = groupedRest(row)
         return (
           <span className={`tq-why${row.reason ? ' reason' : ''}`} title={`${door ?? ''}${rest}`}>
-            {door && (
-              <Link
-                to={`/cases?case=${encodeURIComponent(door)}`}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  if (event.metaKey || event.ctrlKey || event.shiftKey) return // new tab or window
-                  event.preventDefault()
-                  openCase(door)
-                }}
-              >
-                {door}
-              </Link>
-            )}
+            {door && <CaseDoor id={door} openCase={openCase} />}
             {rest}
           </span>
         )
@@ -522,7 +559,7 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
               rowKey={(row) => String(row.id)}
               onRowClick={(row) => toggle(row.id)}
               expandedKey={openId === null ? null : String(openId)}
-              renderExpanded={(row) => <Expanded row={row} data={data} />}
+              renderExpanded={(row) => <Expanded row={row} data={data} openCase={openCase} />}
               emptyMessage={filtered ? 'Nothing in the queue matches these filters.' : 'Nothing in intake.'}
             />
           </div>
