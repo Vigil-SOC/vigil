@@ -5,9 +5,14 @@ export type NavLayout = 'vertical' | 'top'
 export interface NavPrefs {
   layout: NavLayout
   collapsed: boolean
+  /** screen keys on the bar, in order; Home is pinned first whatever is stored */
+  shown: string[]
+  iconsOnly: boolean
 }
 
-export const NAV_PREFS_DEFAULT: NavPrefs = { layout: 'vertical', collapsed: false }
+export const NAV_SHOWN_DEFAULT = ['home', 'overview', 'triage', 'cases', 'workflows', 'settings']
+
+export const NAV_PREFS_DEFAULT: NavPrefs = { layout: 'vertical', collapsed: false, shown: NAV_SHOWN_DEFAULT, iconsOnly: false }
 
 /** Fired on this tab when a write changes the prefs; other tabs hear `storage`. */
 export const NAV_PREFS_CHANGED = 'vigil:nav-prefs-changed'
@@ -31,6 +36,9 @@ export function readNavPrefs(userId: string | undefined): NavPrefs {
   return {
     layout: raw.layout === 'top' ? 'top' : 'vertical',
     collapsed: raw.collapsed === true,
+    shown:
+      Array.isArray(raw.shown) && raw.shown.every((key) => typeof key === 'string') ? raw.shown : NAV_SHOWN_DEFAULT,
+    iconsOnly: raw.iconsOnly === true,
   }
 }
 
