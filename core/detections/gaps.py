@@ -7,15 +7,28 @@ cannot prove a gap, and the report says so rather than guessing which technique 
 
 A technique whose SIEM rules (read from Kibana) all fail Runs is covered on paper
 only: a rule declares it, and nothing that runs does.
+
+A proven hunt or closed Case that no rule alerted on is a run rules missed. It is
+read from the Verdicts episodic memory already holds and correlated with
+``reconstruct`` against the Findings in its window; nothing is written.
 """
 
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any, Collection, Dict, List, Mapping, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable, Collection, Dict, List, Mapping, Optional, Tuple
 
+from core.detections.reconstruction import _entities_from_context, reconstruct
+from core.memory.entity_keys import normalise_keys
 from core.storage.connection import get_db_manager
-from core.storage.models import Case, Finding, FindingMitrePrediction, case_findings
+from core.storage.models import (
+    Case,
+    EpisodicVerdict,
+    Finding,
+    FindingMitrePrediction,
+    case_findings,
+)
 
 RULE_SOURCES = ("sigma", "splunk", "elastic", "kql")
 # The rule formats that declare a tactic; Splunk and KQL rules name techniques only.
@@ -242,4 +255,226 @@ def gap_report(
         "covered_on_paper_only": paper_only,
         "techniques": seen,
         "tactics": tactic_rows,
+    }
+
+
+# --- Runs rules missed -------------------------------------------------------
+
+LEDGER_KINDS = ("hunt", "case")
+RULED_OUT = ("disproven", "false_positive")
+# A Verdict's entity keys, as the reconstruction step spells them. Other key types
+# (hash, domain, url...) are not entities a Finding is joined on.
+_STEP_KEYS = {"host": "hostnames", "ip": "src_ips", "user": "users"}
+# One Findings read per Verdict window; a full read may have been cut off.
+FINDINGS_LIMIT = 10000
+
+FindingsReader = Callable[[datetime, datetime], List[Dict[str, Any]]]
+
+
+def _naive_utc(value: datetime) -> datetime:
+    return (
+        value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
+    )
+
+
+def read_ledger(since_days: int = 30) -> List[Dict[str, Any]]:
+    """Hunt and Case Verdicts concluded in the window, Case gaps filled from its Findings.
+
+    A Case Verdict carries no techniques and usually no subjects, so both are read
+    from the Case's own Findings here; nothing is written back to the Verdict.
+    """
+    since = datetime.now(timezone.utc) - timedelta(days=since_days)
+    with get_db_manager().session_scope() as session:
+        query = session.query(EpisodicVerdict).filter(
+            EpisodicVerdict.investigation_kind.in_(LEDGER_KINDS),
+            EpisodicVerdict.concluded_at >= since,
+        )
+        verdicts = [
+            {
+                "investigation_kind": v.investigation_kind,
+                "investigation_id": v.investigation_id,
+                "hypothesis_id": v.hypothesis_id,
+                "outcome": v.outcome,
+                "trust": v.trust,
+                "techniques": {t.strip().upper() for t in v.techniques or []},
+                "subjects": list(v.subject_entities or []),
+                "first_seen": _naive_utc(v.first_seen),
+                "last_seen": _naive_utc(v.last_seen),
+                "concluded_at": v.concluded_at,
+            }
+            for v in query.all()
+        ]
+        case_ids = {
+            v["investigation_id"] for v in verdicts if v["investigation_kind"] == "case"
+        }
+        labels: Dict[str, set] = {}
+        contexts: Dict[str, List[Dict[str, Any]]] = {}
+        if case_ids:
+            for case_id, label in (
+                session.query(
+                    case_findings.c.case_id, FindingMitrePrediction.technique_id
+                )
+                .join(
+                    FindingMitrePrediction,
+                    FindingMitrePrediction.finding_id == case_findings.c.finding_id,
+                )
+                .filter(case_findings.c.case_id.in_(case_ids))
+            ):
+                if TECHNIQUE_ID.match(label.strip()):
+                    labels.setdefault(case_id, set()).add(label.strip().upper())
+            for case_id, entity_context in (
+                session.query(case_findings.c.case_id, Finding.entity_context)
+                .join(Finding, Finding.finding_id == case_findings.c.finding_id)
+                .filter(case_findings.c.case_id.in_(case_ids))
+            ):
+                if isinstance(entity_context, dict):
+                    contexts.setdefault(case_id, []).append(entity_context)
+
+    for v in verdicts:
+        if v["investigation_kind"] != "case":
+            v["entities"] = _subject_entities(v["subjects"])
+            continue
+        case_id = v["investigation_id"]
+        v["techniques"] |= labels.get(case_id, set())
+        v["entities"] = _subject_entities(v["subjects"])
+        if not any(v["entities"].values()):
+            # Only when the Verdict names no subject: its own keys win.
+            for entity_context in contexts.get(case_id, []):
+                for key, values in _entities_from_context(entity_context).items():
+                    v["entities"][key] += values
+    return verdicts
+
+
+def _subject_entities(keys: List[str]) -> Dict[str, List[str]]:
+    entities: Dict[str, List[str]] = {key: [] for key in _STEP_KEYS.values()}
+    for key in normalise_keys(keys):
+        kind, _, value = key.partition(":")
+        if kind in _STEP_KEYS:
+            entities[_STEP_KEYS[kind]].append(value)
+    return entities
+
+
+def _run(v: Mapping[str, Any]) -> Tuple[str, str]:
+    return v["investigation_kind"], v["investigation_id"]
+
+
+def _run_row(run: Tuple[str, str]) -> Dict[str, str]:
+    return {"investigation_kind": run[0], "investigation_id": run[1]}
+
+
+def missed_runs_report(
+    context: str,
+    is_case: bool,
+    verdicts: List[Dict[str, Any]],
+    read_findings: FindingsReader,
+    rules_by_technique: Mapping[str, Collection[int]],
+    since_days: int,
+) -> Dict[str, Any]:
+    """Proven runs no rule alerted on, grouped by technique.
+
+    A run is listed in a group when one of its proven Verdicts on that technique
+    reconstructs as ``missed`` or ``loglm``. A Verdict that cannot be correlated
+    (no host/IP/user, or a Findings read that was cut off) is unknown, never missed.
+    """
+    # A case id scopes to that Case's Verdict, any other context to matching
+    # techniques. Ruled-out runs are read across the whole window either way.
+    wanted = normalize_label(context) if context and not is_case else ""
+
+    def in_scope(technique: str) -> bool:
+        return not wanted or wanted in normalize_label(technique)
+
+    proven = [
+        v
+        for v in verdicts
+        if v["outcome"] == "proven"
+        and (not is_case or _run(v) == ("case", context))
+        and (not wanted or any(in_scope(t) for t in v["techniques"]))
+    ]
+    unknown: List[Dict[str, Any]] = []
+    missed: List[Dict[str, Any]] = []
+    caught = 0
+    for v in proven:
+        reason = None
+        if not any(v["entities"].values()):
+            reason = "names no host, IP or user, so no Finding can be joined to it"
+        else:
+            findings = read_findings(v["first_seen"], v["last_seen"])
+            if len(findings) >= FINDINGS_LIMIT:
+                reason = (
+                    f"its window holds {FINDINGS_LIMIT}+ Findings and the read was "
+                    "cut off, so whether a rule alerted is unknown"
+                )
+        if reason:
+            unknown.append(
+                {
+                    **_run_row(_run(v)),
+                    "hypothesis_id": v["hypothesis_id"],
+                    "reason": reason,
+                }
+            )
+            continue
+        step = {
+            **v["entities"],
+            "started_at": v["first_seen"],
+            "ended_at": v["last_seen"],
+        }
+        # A probe is Vigil checking itself, not a rule alerting.
+        alerts = [f for f in findings if f.get("data_source") != "probe"]
+        verdict = reconstruct([step], alerts)["steps"][0]["verdict"]
+        if verdict in ("missed", "loglm"):
+            missed.append(v)
+        else:
+            caught += 1
+
+    groups: Dict[str, Dict[str, Any]] = {}
+    without_technique = set()
+    for v in missed:
+        if not v["techniques"]:
+            without_technique.add(_run(v))
+        for technique in v["techniques"]:
+            if not in_scope(technique):
+                continue
+            group = groups.setdefault(
+                technique, {"runs": {}, "confirmed": set(), "last": None}
+            )
+            group["runs"].setdefault(_run(v), v["concluded_at"])
+            group["runs"][_run(v)] = max(group["runs"][_run(v)], v["concluded_at"])
+            if v["trust"] == "analyst":
+                group["confirmed"].add(_run(v))
+    # Proven runs that also count a technique-less Verdict are not technique-less.
+    without_technique -= {_run(v) for v in missed if v["techniques"]}
+
+    ruled_out: Dict[str, set] = {}
+    for v in verdicts:
+        if v["outcome"] in RULED_OUT:
+            for technique in v["techniques"]:
+                ruled_out.setdefault(technique, set()).add((*_run(v), v["outcome"]))
+
+    rows = [
+        {
+            "technique": technique,
+            "runs": [_run_row(run) for run in sorted(group["runs"])],
+            "confirmed": len(group["confirmed"]),
+            "rules": len(set(rules_by_technique.get(technique, ()))),
+            "ruled_out": [
+                {**_run_row((kind, run_id)), "outcome": outcome}
+                for kind, run_id, outcome in sorted(ruled_out.get(technique, ()))
+            ],
+            "last_concluded_at": max(group["runs"].values()).isoformat(),
+        }
+        for technique, group in groups.items()
+    ]
+    rows.sort(key=lambda r: r["last_concluded_at"], reverse=True)
+    rows.sort(key=lambda r: (r["confirmed"], len(r["runs"])), reverse=True)
+    listed = [r for r in rows if len(r["runs"]) >= 2 or r["confirmed"] >= 1]
+
+    return {
+        "since_days": since_days,
+        "proven_verdicts": len(proven),
+        "verdicts_caught_by_rule": caught,
+        "missed_runs": len({_run(v) for v in missed}),
+        "missed_runs_without_technique": len(without_technique),
+        "groups": listed,
+        "groups_not_listed": len(rows) - len(listed),
+        "unknown": unknown,
     }

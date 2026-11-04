@@ -1662,7 +1662,21 @@ export function CasePage({
             </div>
             <div className="dh-meta">
               {latest && <span>{workflowNames[latest.workflow_id] || latest.workflow_name || latest.workflow_id}</span>}
-              {c.findings > 0 && <span>Combined from {c.findings} {c.findings === 1 ? 'alert' : 'alerts'}</span>}
+              {c.findings > 0 && (
+                <span>
+                  Combined from {c.findings} {c.findings === 1 ? 'alert' : 'alerts'}
+                  {c.alertsSinceLastRun > 0 && (
+                    <>
+                      , {c.alertsSinceLastRun} since last run{' '}
+                      <InfoTip
+                        label="How alerts since last run are counted"
+                        source="Intake rows merged into this case, and the case's newest run."
+                        calculation="The alerts merged after that run started. It did not read them. Alerts marked as noise are left out."
+                      />
+                    </>
+                  )}
+                </span>
+              )}
               <span>Opened {created}</span>
               <span>
                 <Icon name="clock" size={13} /> Resolve by {sla ? when(sla.due) : '—'}

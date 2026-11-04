@@ -119,6 +119,9 @@ def _verdict(hits: List[Dict[str, Any]]) -> Verdict:
 
 def _cite(finding: Dict[str, Any]) -> Dict[str, Any]:
     citation: Dict[str, Any] = {"finding_id": finding.get("finding_id") or ""}
+    data_source = finding.get("data_source")
+    if isinstance(data_source, str) and data_source:
+        citation["data_source"] = data_source
     description = finding.get("description")
     if isinstance(description, str) and description:
         citation["description"] = description
@@ -339,9 +342,21 @@ def coverage_report(trace: Any, reconstructed: Dict[str, Any]) -> Dict[str, Any]
                 ),
                 "steps": group["steps"],
                 "missed": group["missed"],
+                "caught_in": _caught_in(group["steps"]),
             }
         )
     return {"techniques": techniques}
+
+
+def _caught_in(steps: List[Dict[str, Any]]) -> List[str]:
+    """Distinct non-LogLM data_sources cited across a technique's steps."""
+    sources = {
+        cite.get("data_source")
+        for step in steps
+        for cite in step.get("citations") or []
+        if isinstance(cite, dict)
+    }
+    return sorted(s for s in sources if isinstance(s, str) and s and s != _LOG_LM)
 
 
 def _joined_record(

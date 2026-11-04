@@ -106,6 +106,7 @@ interface QueueCase {
   combined_state?: string | null
   finding_ids?: string[] | null
   findings_count?: number | null
+  alerts_since_last_run?: number | null
   workflow_id?: string | null
   iteration_count?: number | null
   cost_usd?: number | null
@@ -167,6 +168,7 @@ export function mapQueueCase(c: QueueCase): CaseRow {
     owner: initials(c.assignee ?? undefined),
     ownerName: c.assignee || 'unassigned',
     findings: c.findings_count ?? c.finding_ids?.length ?? 0,
+    alertsSinceLastRun: c.alerts_since_last_run ?? 0,
     tactic: c.mitre_techniques?.[0] || DASH,
     age: c.age_seconds != null ? formatSpan(c.age_seconds) : compactAge(c.created_at ?? undefined),
     sla: slaText(c.sla_seconds_left, c.health_status),

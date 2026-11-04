@@ -74,6 +74,7 @@ _LIVE_ORDER = (
     "resolved_auto",
     "resolved_person",
     "working",
+    "case_idle",
     "needs_you",
     "dismissed",
     "excluded",
@@ -118,7 +119,9 @@ def completion_level(sample: int, completed: int) -> Optional[str]:
 
 
 # These nodes open Cases, which lists cases; the node says how many its alerts are in.
-_CASE_STATES = frozenset({"needs_you", "working", "resolved_auto", "resolved_person"})
+_CASE_STATES = frozenset(
+    {"needs_you", "working", "case_idle", "resolved_auto", "resolved_person"}
+)
 
 
 def _expired_among(states: list[dict]) -> int:

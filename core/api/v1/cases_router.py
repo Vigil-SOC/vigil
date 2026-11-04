@@ -460,6 +460,10 @@ def get_case(case_id: str, session: OptionalUnitOfWorkSession):
             session, [run.run_id for run in runs]
         )
     case.update(detail_fields(case.get("status"), investigations, closure, runs, steps))
+    if session is not None:
+        case["alerts_since_last_run"] = case_records_service.alerts_since_last_run(
+            session, case_id
+        )
     if data_service.is_demo_mode():
         from core.findings.demo_reads import linked_findings, load_demo
 

@@ -304,7 +304,7 @@ For any report request (technical report, executive summary, board brief) call r
         "extra_principles": "- Use specific technique IDs (T1566.001)\n- Explain attacker objectives\n- Execute only via the gated Atomic Red Team tool; a call parks until a human approves\n- Memory: recall_entity on technique-linked entities; read-only, and it orients your search rather than deciding its outcome",
         "methodology": """<methodology>
 Given an environment_id and a goal, assess coverage, execute only via the gated tool, reconstruct, and report. Coverage, gaps, findings, reconstruction, and execute are available together — pick what the goal needs; there is no prescribed order.
-check_detection_candidate lints and replays a candidate Sigma rule against events already in hand.
+check_detection_candidate lints a candidate Sigma rule and replays it: fetch the events for the evidence window with your SIEM search tools, pass the proven ones as events and those from ruled-out runs as ruled_out_events.
 save_detection_rule keeps a drafted rule (Splunk and/or Elastic copy, optional Sigma form) in Vigil's overlay, where it enters shadow.
 </methodology>""",
     },

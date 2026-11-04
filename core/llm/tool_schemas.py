@@ -14,7 +14,7 @@ from core.skills.skill_library import READ_SKILL_TOOL
 SECURITY_DETECTION_TOOLS = [
     {
         "name": "analyze_coverage",
-        "description": "Analyze detection coverage for MITRE ATT&CK techniques, or report per-technique layer verdicts for a sanctioned run. Pass techniques for catalog counts (Sigma / Splunk / Elastic / KQL), with by_tool: active rules per tool ('repo', or a SIEM: 'elastic' for Kibana) and, for a SIEM, its Runs pass / fail / unknown / unchecked counts. Pass run_id or an action-trace steps list for the run report: reconstruct on read, group by technique_id, verdicts rule | loglm | both | missed. Do not mix the two.",
+        "description": "Analyze detection coverage for MITRE ATT&CK techniques, or report per-technique layer verdicts for a sanctioned run. Pass techniques for catalog counts (Sigma / Splunk / Elastic / KQL), with by_tool: active rules per tool ('repo', or a SIEM: 'elastic' for Kibana) and, for a SIEM, its Runs pass / fail / unknown / unchecked counts; repo_deployed: per SIEM, the repo rules' linked copies counted by state (pass / fail / unknown / unchecked / disabled) and the repo rules with no copy there ('not deployed'). Splunk saved searches and Wazuh rules are not read yet. Pass run_id or an action-trace steps list for the run report: reconstruct on read, group by technique_id, verdicts rule | loglm | both | missed. Do not mix the two.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -37,7 +37,7 @@ SECURITY_DETECTION_TOOLS = [
     },
     {
         "name": "search_detections",
-        "description": "Search the detection rules of every configured repo (Sigma, Splunk, Elastic, KQL), Vigil's own overlay of drafted rules, and the rules Kibana's detection engine runs, using keywords. Each hit carries its tool ('overlay', 'repo' or 'elastic'), its status ('active', or 'disabled' for a Kibana rule switched off) and checks.runs: whether the SIEM runs it ({result: pass|fail|unknown, reason, checked_at}; reason holds the SIEM's own error). Filter tool='elastic' with runs='fail' to answer which Elastic rules don't run and why. An overlay hit also carries stage (its current rollout stage: shadow, live or off; null for a Sigma copy) and stages (every stage row, oldest first: version, stage, proof, actor, reason, at). Splunk saved searches and Wazuh rules are not read yet.",
+        "description": "Search the detection rules of every configured repo (Sigma, Splunk, Elastic, KQL), Vigil's own overlay of drafted rules, and the rules Kibana's detection engine runs, using keywords. Each hit carries its tool ('overlay', 'repo' or 'elastic'), its status ('active', or 'disabled' for a Kibana rule switched off) and checks.runs: whether the SIEM runs it ({result: pass|fail|unknown, reason, checked_at}; reason holds the SIEM's own error). Filter tool='elastic' with runs='fail' to answer which Elastic rules don't run and why. A repo or overlay hit carries deployed: per SIEM, the copies linked to it (each with its state: pass / fail / unknown / unchecked / disabled) or 'not deployed'. A SIEM hit carries origin: its link to a repo or overlay rule (origin_rule_id, kind same_id | agent | declined, by, reason, at) or null. An overlay hit also carries stage (its current rollout stage: shadow, live or off; null for a Sigma copy) and stages (every stage row, oldest first: version, stage, proof, actor, reason, at). Splunk saved searches and Wazuh rules are not read yet.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -75,15 +75,46 @@ SECURITY_DETECTION_TOOLS = [
         },
     },
     {
+        "name": "link_detection_rule",
+        "description": "Record which repo rule a SIEM rule (a copy in Kibana) came from. The inventory sync links a copy by itself only when certain (same rule_id, same language); use this for the rest, after finding the candidates with search_detections. action 'link' sets the copy's origin; 'decline' records that the copy is not from that repo rule, so the sync never links it; 'unlink' clears a link or decline, handing the copy back to the sync. Every call is written to the audit log with you as the actor and your reason. Rule ids are search_detections' rule_id.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "copy_rule_id": {
+                    "type": "integer",
+                    "description": "rule_id of the SIEM rule (a hit whose tool is 'elastic').",
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["link", "unlink", "decline"],
+                },
+                "origin_rule_id": {
+                    "type": "integer",
+                    "description": "rule_id of the repo rule (tool 'repo' or 'overlay'). Required to link or decline; optional to unlink.",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why. Required, and written to the audit log.",
+                },
+            },
+            "required": ["copy_rule_id", "action", "reason"],
+        },
+    },
+    {
         "name": "identify_gaps",
-        "description": "Compare the ATT&CK techniques seen on stored alerts with the detection rules actually loaded, and list techniques no rule declares. covered_on_paper_only lists techniques whose Kibana rules all fail Runs (each technique row has siem_runs). Reads stored data only and writes nothing. Read answer and unknown first: alerts that name a tactic and no technique cannot prove a gap, and answer is unknown when the data cannot say. Splunk saved searches and Wazuh rules are not read yet.",
+        "description": "Compare the ATT&CK techniques seen on stored alerts with the detection rules actually loaded, and list techniques no rule declares. covered_on_paper_only lists techniques whose Kibana rules all fail Runs (each technique row has siem_runs). Reads stored data only and writes nothing. Read answer and unknown first: alerts that name a tactic and no technique cannot prove a gap, and answer is unknown when the data cannot say. Splunk saved searches and Wazuh rules are not read yet. runs_rules_missed lists proven hunts and closed Cases (Verdicts from the last since_days) whose hosts, IPs and users drew no rule alert in their window (LogLM-only counts as missed), grouped by technique. Each group has its runs, how many a person confirmed, the active rules declaring the technique, and ruled_out: disproven / false_positive runs on it that a draft rule must not catch. Only groups with 2+ runs or 1+ confirmed are listed; the rest are counted. A run with no host, IP or user, or whose Findings read was cut off, is in its unknown, never missed.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "context": {
                     "type": "string",
-                    "description": "A case id, an ATT&CK label to match on stored alerts (e.g. 'T1021', 'lateral movement'), or empty for every stored alert. A threat name such as 'APT29' is not mapped to techniques.",
-                }
+                    "description": "A case id, an ATT&CK label to match on stored alerts (e.g. 'T1021', 'lateral movement'), or empty for every stored alert. A threat name such as 'APT29' is not mapped to techniques. For runs_rules_missed a case id gives that Case's run and a label its technique.",
+                },
+                "since_days": {
+                    "type": "integer",
+                    "description": "How many days of hunt and Case Verdicts runs_rules_missed reads (default: 30).",
+                    "default": 30,
+                },
             },
             "required": [],
         },
@@ -135,7 +166,7 @@ SECURITY_DETECTION_TOOLS = [
     },
     {
         "name": "check_detection_candidate",
-        "description": "Lint a candidate Sigma rule and replay it against events the caller already has. Replay is one selection of field equality and |contains, AND-ed. Returns lint, replay, and candidate; candidate is set only when lint passed and an event matched. Does not query Findings or a SIEM and does not write a rule.",
+        "description": "Lint a candidate Sigma rule and replay its single-event detection against events the caller already has: named selections, conditions with and/or/not, brackets, 1 of/all of, null and keyword selections, the modifiers contains, startswith, endswith, all and re, case-insensitive with * and ? wildcards. Aggregations (| count()), correlation rules and unknown modifiers return replay.evaluated false with the reason. Pass ruled_out_events too: the draft must stay quiet on them. Returns lint, replay, and candidate; candidate is set only when lint passed, a proven event matched and no ruled-out event matched. Does not query Findings or a SIEM and does not write a rule.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -146,7 +177,12 @@ SECURITY_DETECTION_TOOLS = [
                 "events": {
                     "type": "array",
                     "items": {"type": "object"},
-                    "description": "Events already in hand. Field names are matched to event keys as written.",
+                    "description": "Proven events for the missed step, fetched from the SIEM for its window. Field names are matched to event keys as written.",
+                },
+                "ruled_out_events": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Events from runs whose explanation was ruled out. The candidate fails if the rule matches any of them.",
                 },
                 "technique_id": {
                     "type": "string",

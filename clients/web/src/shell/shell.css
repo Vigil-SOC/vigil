@@ -2084,7 +2084,10 @@ select.vg-side-input {
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
-  min-width: 232px;
+  width: 300px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - var(--vg-top) - 12px);
+  overflow-y: auto;
   padding: 6px;
   background: var(--bg2);
   border: 1px solid var(--ln1);
@@ -2108,6 +2111,76 @@ select.vg-side-input {
   background: var(--bg3);
   border-color: transparent;
   color: var(--tx0);
+}
+
+/* a More row: the page's label over its one-line description */
+.vg-more-menu .vg-nav-btn.has-desc {
+  height: auto;
+  min-height: 36px;
+  align-items: flex-start;
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.vg-more-menu .vg-nav-btn.has-desc > .vg-nav-ico {
+  margin-top: 2px;
+}
+
+.vg-nav-text {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  text-align: left;
+}
+
+.vg-nav-desc {
+  color: var(--tx2);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  white-space: normal;
+}
+
+.vg-more-note {
+  margin: 4px 9px 6px;
+  color: var(--tx2);
+  font-size: 12px;
+}
+
+.vg-more-menu .vg-more-customize {
+  margin-top: 4px;
+  border-top: 1px solid var(--ln0);
+  border-radius: 0 0 8px 8px;
+  color: var(--tx2);
+}
+
+.vg-nav-ico {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+/* Icons only: Home's needs-you count as a dot on its icon */
+.vg-nav-dot {
+  position: absolute;
+  top: -3px;
+  right: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-round);
+  background: var(--poor);
+  box-shadow: 0 0 0 2px var(--bg1);
+}
+
+/* Icons only on the top bar: square tabs, smaller than the labelled ones */
+.vg-nav.icons-only:not(.vertical) > .vg-nav-list > .vg-nav-btn,
+.vg-nav.icons-only:not(.vertical) > .vg-more > .vg-nav-btn {
+  width: var(--size-button-sm);
+  height: var(--size-button-sm);
+  padding: 0;
+  justify-content: center;
 }
 
 .vg-nav-end {
@@ -2452,6 +2525,7 @@ select.vg-side-input {
   top: auto;
   bottom: 0;
   left: calc(100% + 8px);
+  max-height: calc(100vh - 16px);
 }
 
 /* Collapsed: an icon tile with its label under it, the count on the icon's corner. */
@@ -2547,5 +2621,17 @@ select.vg-side-input {
 .vg-nav.vertical.collapsed .vg-nav-toggle {
   width: 100%;
   justify-content: center;
+  padding: 0;
+}
+
+/* Icons only in the vertical bar: icon rows, and in collapsed no short label under the tile */
+.vg-nav.vertical.icons-only > .vg-nav-list > .vg-nav-btn,
+.vg-nav.vertical.icons-only > .vg-more > .vg-nav-btn {
+  height: var(--size-button);
+  min-height: 0;
+}
+
+.vg-nav.vertical.collapsed.icons-only > .vg-nav-list > .vg-nav-btn,
+.vg-nav.vertical.collapsed.icons-only > .vg-more > .vg-nav-btn {
   padding: 0;
 }
