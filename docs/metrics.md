@@ -17,9 +17,10 @@ claims and anyone can tell us where the measures fall short.
 - A methodology note that defines each measure and its limits.
 - A self-contained dashboard that renders the files above offline.
 
-GitHub retains traffic data for fourteen days, so the record begins on
-2026-07-31, the earliest day available when collection started, and cannot
-reach further back.
+GitHub retains traffic data for fourteen days, so the traffic record begins
+on 2026-07-31, the earliest day available when collection started, and cannot
+reach further back. GitHub keeps no history of stars, forks, watchers, or open
+issues, so that series begins on 2026-08-14, the day it was added.
 
 ## What is withheld
 
