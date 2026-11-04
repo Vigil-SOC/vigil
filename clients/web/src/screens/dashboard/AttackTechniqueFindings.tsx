@@ -27,6 +27,17 @@ function stepHost(step: MissedStep): string {
   return step.hostname || step.host || step.computer_name || step.src_ip || '—'
 }
 
+// The SIEMs whose rule caught a step of this technique; nothing when none did.
+function CaughtIn({ sources }: { sources?: string[] }) {
+  if (!sources?.length) return null
+  return (
+    <div className="coverage-caught">
+      <span className="muted">caught in</span>
+      {sources.map((src) => <SourceChip key={src} source={src} />)}
+    </div>
+  )
+}
+
 export default function AttackTechniqueFindings({
   techniqueId,
   coverage,
@@ -77,11 +88,13 @@ export default function AttackTechniqueFindings({
       return (
         <div className="tech-findings muted">
           {coverage.verdict ? `${verdictLabel(coverage.verdict)} — no missed steps.` : 'No missed steps for this technique.'}
+          <CaughtIn sources={coverage.caught_in} />
         </div>
       )
     }
     return (
       <div className="tech-findings">
+        <CaughtIn sources={coverage.caught_in} />
         <table className="tbl">
           <thead>
             <tr>
@@ -105,6 +118,7 @@ export default function AttackTechniqueFindings({
                     : step.citations.map((cite) => (
                       <div key={cite.finding_id} className="coverage-cite">
                         <span className="id-cell">{cite.finding_id}</span>
+                        {cite.data_source ? <> <SourceChip source={cite.data_source} /></> : null}
                         {cite.rule_name ? <span> · {cite.rule_name}</span> : null}
                         {cite.description ? <span className="muted"> — {cite.description}</span> : null}
                       </div>
