@@ -103,6 +103,15 @@
       }
     },
 
+    "wazuh": {
+      "command": "python3",
+      "args": ["core/integrations/wazuh/tool.py"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "_setup_note": "Wazuh manager server API (port 55000), read-only: rules, agents' log collection, logtest. Configure in Settings (API URL, username/password, optional CA path). The tool reads via resolve(); there is no required env placeholder, so the server stays dormant until the API URL, username and password resolve. Alerts come from the Wazuh indexer through the Elastic or OpenSearch integration."
+      }
+    },
+
     "pagerduty": {
       "command": "uvx",
       "args": ["pagerduty-mcp==1.1.0", "--enable-write-tools"],

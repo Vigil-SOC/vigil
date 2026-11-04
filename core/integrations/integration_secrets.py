@@ -118,6 +118,7 @@ PROXY_SUPPORTED: frozenset[str] = frozenset(
         "elastic-siem",
         "opensearch",
         "misp",
+        "wazuh",
     }
 )
 

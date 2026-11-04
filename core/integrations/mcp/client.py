@@ -40,6 +40,7 @@ from core.integrations.mcp.runner import (
 from core.integrations.mcp.service import MCPService
 from core.integrations.opensearch.descriptor import OPENSEARCH, OPENSEARCH_REQUIRED
 from core.integrations.splunk.descriptor import SPLUNK, SPLUNK_SELFHOSTED_REQUIRED
+from core.integrations.wazuh.descriptor import WAZUH, WAZUH_REQUIRED
 from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ _DESCRIPTOR_GATED = {
     "splunk-selfhosted": (SPLUNK, SPLUNK_SELFHOSTED_REQUIRED),
     "elastic": (ELASTIC, ELASTIC_REQUIRED),
     "opensearch": (OPENSEARCH, OPENSEARCH_REQUIRED),
+    "wazuh": (WAZUH, WAZUH_REQUIRED),
 }
 
 
