@@ -37,7 +37,7 @@ DAYS = 7
 DEFAULT_PER_HOUR = 30
 INTEGRATION = ELASTIC.id
 
-Key = Tuple[Tuple[str, ...], str]  # (sorted patterns, timestamp field)
+Key = Tuple[Tuple[str, ...], str]  # (patterns, timestamp field)
 RuleKey = Tuple[int, int]  # (rule id, version)
 
 # Group -> monotonic time it was last searched. A restart re-sweeps.
@@ -131,16 +131,18 @@ async def _check(
         if why:
             results[key] = _unknown(why)
             continue
-        index = ",".join(sorted(patterns))
+        # An exclusion applies only to the patterns before it, so keep that order.
+        ordered = tuple(
+            patterns if any(p.startswith("-") for p in patterns) else sorted(patterns)
+        )
+        index = ",".join(ordered)
         try:
             validate_index(index)
         except ValueError as exc:
             results[key] = _unknown(str(exc), index)
             continue
         ts = content.get("timestamp_override") or "@timestamp"
-        groups.setdefault((tuple(sorted(patterns)), ts), []).append(
-            (key, _fields(content))
-        )
+        groups.setdefault((ordered, ts), []).append((key, _fields(content)))
     report.groups = len(groups)
 
     order = sorted(groups, key=lambda g: last_searched.get(g, float("-inf")))
