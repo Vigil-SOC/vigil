@@ -359,6 +359,7 @@ Guides live at **[vigilsoc.org/docs](https://vigilsoc.org/docs/)**:
 | [Operator endpoints](docs/operator-endpoints.md) | API routes with no console screen: secrets backend status, dotenv → encrypted migration, schema init |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting, supported versions, disclosure |
 | [VERSIONING.md](VERSIONING.md) | What is frozen, what is not, and how the contract changes |
+| [Adoption figures](docs/metrics.md) | Daily views, clones, stars, forks, and contributor history, published unaltered at [Vigil-SOC/metrics](https://github.com/Vigil-SOC/metrics) |
 
 ## Contributing
 
@@ -378,5 +379,6 @@ Apache 2.0. See [LICENSE](LICENSE).
 
 - [Vigil](https://vigilsoc.org/): project homepage
 - [DeepTempo](https://deeptempo.ai): Vigil sponsor; LogLM connects via MCP as an optional detection layer
+- [Vigil-SOC/metrics](https://github.com/Vigil-SOC/metrics): the project's adoption figures, published daily so anyone can check them
 - [Model Context Protocol](https://modelcontextprotocol.io/): MCP specification
 - [SOCBench](https://socbench.org): open benchmark for AI in cybersecurity operations
