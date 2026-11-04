@@ -27,6 +27,7 @@ import { markConsoleTourSeen, readConsoleTourSeen } from './consoleTourSeen'
 import ErrorBoundary from './ErrorBoundary'
 import { ToastProvider } from './toast'
 import { useDesktopNotifications } from './useDesktopNotifications'
+import { useNavPrefs, writeNavPrefs } from './navPrefs'
 import type { ChatSeed, ConsoleScreenGoOptions, ConsoleScreenProps, SeedDocument, SettingsSectionKey } from '../shared/types'
 import type { Schema } from '../services/apiTypes'
 import DashboardScreen from '../screens/dashboard/DashboardScreen'
@@ -58,6 +59,8 @@ const PRIMARY_KEYS = ['home', 'overview', 'triage', 'cases', 'workflows', 'setti
 // a rule is drawn only between two groups that both have a visible item
 const NAV_GROUPS = [['home'], ['overview'], ['triage', 'cases'], ['workflows', 'settings']]
 const MORE_KEYS = ['dashboard', 'metrics', 'medic']
+// what a collapsed vertical tile shows under its icon, where the full label would not fit
+const TILE_LABELS: Record<string, string> = { triage: 'Triage', metrics: 'Metrics', workflows: 'Agents' }
 // When the bar runs out of width, screens fold into More from its right end,
 // so what stays on the bar is always its first few screens in order, whichever
 // screen is open. Home never folds.
@@ -89,6 +92,12 @@ const SCREEN_PERMS: Partial<Record<ConsoleScreenKey, string>> = {
 
 /** What a widened dock leaves of the page beside it. */
 const PAGE_MIN = 320
+/** The vertical bar's widths; keep in step with .vg-nav.vertical in shell.css. */
+const NAV_W = 200
+const NAV_W_COLLAPSED = 64
+/** Below this the vertical bar renders collapsed; at or under TOP_MAX the top bar is used. */
+const NAV_COLLAPSE_BELOW = 1280
+const NAV_TOP_MAX = 600
 
 const setupTip = (left: number) =>
   `Finish setting up Vigil: ${left === 1 ? '1 step is' : `${left} steps are`} left. Opens the setup steps on Home.`
@@ -106,7 +115,7 @@ type NavItem = [IconName, string, string, NavGate?]
 
 function SocConsoleInner() {
   const navigate = useNavigate()
-  const { hasPermission } = useAuth()
+  const { hasPermission, user } = useAuth()
   const { screen } = useParams<{ screen?: string }>()
   const location = useLocation()
   const { mountPoints, enabledIntegrations, loading: extLoading } = useExtensions()
@@ -166,6 +175,8 @@ function SocConsoleInner() {
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window === 'undefined' ? 1440 : window.innerWidth,
   )
+  const userId = user?.user_id
+  const navPrefs = useNavPrefs(userId)
   const [chatSeed, setChatSeed] = useState<ChatSeed | null>(null)
   const [caseSeed, setCaseSeed] = useState<ChatSeed | null>(null)
   const drawerCase = heldCase(location.state)
@@ -201,6 +212,10 @@ function SocConsoleInner() {
   const [tourOn, setTourOn] = useState(() => !readConsoleTourSeen())
   const [tourIndex, setTourIndex] = useState(0)
   const [demoOn, setDemoOn] = useState(false)
+  // the stored choice yields to a narrow window and to the open dock, without being rewritten
+  const vertical = navPrefs.layout === 'vertical' && viewportWidth > NAV_TOP_MAX && !wallMode
+  const navCollapseForced = chatOpen || viewportWidth < NAV_COLLAPSE_BELOW
+  const navCollapsed = vertical && (navPrefs.collapsed || navCollapseForced)
 
   useDesktopNotifications()
   const [needsYou, setNeedsYou] = useState(0)
@@ -471,7 +486,8 @@ function SocConsoleInner() {
   const moreKeySet = new Set<string>(MORE_KEYS)
   const primaryKeySet = new Set<string>(PRIMARY_KEYS)
   const foldable = FOLD_ORDER.filter((key) => byKey.has(key))
-  const foldedKeys = new Set(foldable.slice(0, folded))
+  // the vertical bar scrolls instead of folding
+  const foldedKeys = new Set(vertical ? [] : foldable.slice(0, folded))
   const more = [
     ...primary.filter((item) => foldedKeys.has(item[2])),
     ...MORE_KEYS.map((key) => byKey.get(key)).filter((item): item is NavItem => Boolean(item)),
@@ -492,14 +508,14 @@ function SocConsoleInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useLayoutEffect(() => {
     const nav = navRef.current
-    if (nav && nav.scrollWidth > nav.clientWidth && folded < foldable.length) setFolded(folded + 1)
+    if (!vertical && nav && nav.scrollWidth > nav.clientWidth && folded < foldable.length) setFolded(folded + 1)
   })
   // A width change can make room again: start over and refold. The window
   // can also change width while the wall hides the bar, so refold on return.
   useEffect(() => {
     const nav = navRef.current
-    if (!nav) return
     setFolded(0)
+    if (!nav || vertical) return
     let width = nav.clientWidth
     const onResize = () => {
       if (nav.clientWidth !== width) {
@@ -514,9 +530,10 @@ function SocConsoleInner() {
     const observer = new ResizeObserver(onResize)
     observer.observe(nav)
     return () => observer.disconnect()
-  }, [wallMode])
+  }, [wallMode, vertical])
 
-  const navButton = (item: NavItem) => {
+  // tile: a collapsed vertical bar's tile, which shows the short label
+  const navButton = (item: NavItem, tile = false) => {
     const [icon, label, key] = item
     const count = key === 'home' ? needsYou : key === 'cases' ? openCases : 0
     const active = valid && key === current
@@ -526,14 +543,15 @@ function SocConsoleInner() {
         type="button"
         className={`vg-nav-btn${active ? ' active' : ''}`}
         aria-current={active ? 'page' : undefined}
+        title={tile ? label : undefined}
         aria-label={count ? `${label} (${count} ${key === 'cases' ? 'open' : 'waiting'})` : label}
         onClick={() => {
           setMoreOpen(false)
           go(key)
         }}
       >
-        <Icon name={icon} size={14} />
-        <span>{label}</span>
+        <Icon name={icon} size={vertical ? 16 : 14} />
+        <span className="vg-nav-label">{tile ? TILE_LABELS[key] ?? label : label}</span>
         {count > 0 && (
           <span className={`vg-nav-count${key === 'home' ? '' : ' quiet'}`}>{count > 99 ? '99+' : count}</span>
         )}
@@ -546,6 +564,7 @@ function SocConsoleInner() {
     scheme === 'light' ? 'vg-light' : 'vg-dark',
     chatOpen ? 'chat-active' : '',
     dock.dragging ? 'chat-resizing' : '',
+    vertical ? 'vg-vertical' : '',
   ].filter(Boolean).join(' ')
 
   // these draw their own heading; Home's headline is its heading
@@ -553,7 +572,8 @@ function SocConsoleInner() {
   const showHeading = valid && allowed && !ownsHeading && !wallMode && !viewFull
   // full screen covers the page rather than squeezing it to nothing
   const mainClass = ['main', chatOpen && !dockFull ? 'chat-open' : ''].filter(Boolean).join(' ')
-  const dockMax = Math.max(DOCK_MIN, viewportWidth - PAGE_MIN)
+  const navWidth = vertical ? (navCollapsed ? NAV_W_COLLAPSED : NAV_W) : 0
+  const dockMax = Math.max(DOCK_MIN, viewportWidth - navWidth - PAGE_MIN)
   const dockResizable = viewportWidth > 600 && !dockFull
   const effectiveChatWidth = dockResizable
     ? Math.min(dockMax, Math.max(DOCK_MIN, dock.width ?? DOCK_WIDTH))
@@ -626,13 +646,20 @@ function SocConsoleInner() {
             />
           </div>
         </header>}
-        {!wallMode && <nav ref={navRef} className="vg-nav" aria-label="Primary">
-          {navGroups.map((group, i) => (
-            <Fragment key={group[0][2]}>
-              {i > 0 && <span className="vg-nav-sep" aria-hidden="true" />}
-              {group.map(navButton)}
-            </Fragment>
-          ))}
+        {!wallMode && <nav
+          ref={navRef}
+          className={['vg-nav', vertical ? 'vertical' : '', navCollapsed ? 'collapsed' : ''].filter(Boolean).join(' ')}
+          aria-label="Primary"
+        >
+          {/* scrolls in the vertical bar; a plain run of buttons on the top bar */}
+          <div className="vg-nav-list">
+            {navGroups.map((group, i) => (
+              <Fragment key={group[0][2]}>
+                {i > 0 && <span className="vg-nav-sep" aria-hidden="true" />}
+                {group.map((item) => navButton(item, navCollapsed))}
+              </Fragment>
+            ))}
+          </div>
           {more.length > 0 && (
             <>
               {navGroups.length > 0 && <span className="vg-nav-sep" aria-hidden="true" />}
@@ -645,12 +672,12 @@ function SocConsoleInner() {
                   aria-label="More"
                   onClick={() => setMoreOpen((open) => !open)}
                 >
-                  <Icon name="more" size={14} />
-                  <span>More</span>
+                  <Icon name="more" size={vertical ? 16 : 14} />
+                  <span className="vg-nav-label">More</span>
                 </button>
                 {moreOpen && (
                   <div className="vg-more-menu" role="menu" aria-label="More screens">
-                    {more.map(navButton)}
+                    {more.map((item) => navButton(item))}
                   </div>
                 )}
               </div>
@@ -677,9 +704,22 @@ function SocConsoleInner() {
                 aria-label={setupTip(setupLeft)}
               >
                 <Icon name="check" size={13} />
-                Finish setup
-                <span className="vg-setup-count">{setupLeft} left</span>
+                <span className="vg-setup-text">Finish setup</span>
+                <span className="vg-setup-count">{setupLeft}<span className="vg-setup-left">{'\u00a0'}left</span></span>
               </Link>
+            )}
+            {/* hidden while the dock or a narrow window holds the bar collapsed: it could not expand */}
+            {vertical && !navCollapseForced && (
+              <button
+                type="button"
+                className="vg-nav-toggle"
+                aria-label={navCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+                title={navCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+                onClick={() => writeNavPrefs(userId, { collapsed: !navCollapsed })}
+              >
+                <Icon name={navCollapsed ? 'chevR' : 'chevL'} size={16} />
+                {!navCollapsed && <span>Collapse</span>}
+              </button>
             )}
           </div>
         </nav>}

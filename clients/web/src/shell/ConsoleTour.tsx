@@ -41,7 +41,15 @@ function cardPosition(stop: TourStopId, rect: DOMRect | null, floor: number, car
   const below = rect.bottom + GAP
   const above = rect.top - GAP - cardH
   switch (stop) {
+    // the vertical bar runs down the left: the card sits beside it, near its top
     case 'nav':
+      if (rect.height > rect.width) {
+        return {
+          top: Math.max(12, Math.min(rect.top + GAP, vh - cardH - 12)),
+          left: Math.min(rect.right + GAP + PAD.nav, Math.max(12, vw - CARD_W - 12)),
+        }
+      }
+      return { top: below + cardH < vh ? below : Math.max(12, above), left }
     case 'attention':
       return { top: below + cardH < vh ? below : Math.max(12, above), left }
     // Under the button. When it sits in the header, clear that bar's bottom edge.

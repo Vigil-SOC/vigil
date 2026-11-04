@@ -19,6 +19,7 @@ import { IntegrationsStateProvider, useIntegrationsState } from './IntegrationsS
 import SlaPoliciesSection, { SLA_DESC } from './SlaPoliciesSection'
 import DataUploadsSection from './DataUploadsSection'
 import AuditSection, { AUDIT_DESC } from './AuditSection'
+import NavigationSection from './NavigationSection'
 import { useAuth } from '../../contexts/AuthContext'
 import type { SectionProps } from './types'
 
@@ -33,6 +34,7 @@ type NavKey =
   | 'data'
   | 'audit'
   | 'system'
+  | 'navigation'
 
 type SystemTabKey = 'services' | 'system' | 'general' | 'dev' | 'users'
 
@@ -44,8 +46,8 @@ interface NavDef {
   Component: (props: SectionProps) => JSX.Element
   /** the section renders its own PageHead (it has head actions) */
   ownsHead?: boolean
-  /** shown only to holders of this permission */
-  perm: string
+  /** shown only to holders of this permission; absent, shown to everyone */
+  perm?: string
 }
 
 interface SystemTabDef {
@@ -101,13 +103,15 @@ const NAV: NavDef[] = [
   { key: 'data', label: 'Data & uploads', desc: 'Bring data in without a live connector, and manage the detection rules applied to it.', icon: 'upload', Component: DataUploadsSection, perm: 'platform.read' },
   { key: 'audit', label: 'Audit', desc: AUDIT_DESC, icon: 'shield', Component: AuditSection, ownsHead: true, perm: 'audit.read' },
   { key: 'system', label: 'System', desc: 'Service health, system information, general options and users.', icon: 'wrench', Component: SystemTabs, perm: 'platform.read' },
+  // a person's own view, not the platform's: ungated
+  { key: 'navigation', label: 'Navigation', desc: 'How the console’s navigation is laid out for you, in this browser.', icon: 'menu', Component: NavigationSection },
 ]
 
-function resolveNav(sectionParam: string | null, nav: NavDef[]): NavKey | null {
+function resolveNav(sectionParam: string | null, nav: NavDef[]): NavKey {
   // Old bookmarks for the panels that now live under System stay on that item.
   if (sectionParam && SYSTEM_KEYS.has(sectionParam)) return 'system'
   if (sectionParam && nav.some((item) => item.key === sectionParam)) return sectionParam as NavKey
-  return nav[0]?.key ?? null
+  return nav[0].key
 }
 
 export default function SettingsScreen(props: ConsoleScreenProps) {
@@ -122,7 +126,7 @@ function SettingsLayout({ setViewFull }: ConsoleScreenProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const sectionParam = searchParams.get('section')
   const { hasPermission } = useAuth()
-  const nav = NAV.filter((item) => hasPermission(item.perm))
+  const nav = NAV.filter((item) => !item.perm || hasPermission(item.perm))
   const active = resolveNav(sectionParam, nav)
   const { notify } = useToast()
   const { attention } = useIntegrationsState()
@@ -132,16 +136,8 @@ function SettingsLayout({ setViewFull }: ConsoleScreenProps) {
     return () => setViewFull(false)
   }, [setViewFull])
 
+  // Navigation is ungated, so there is always a section
   const current = nav.find((item) => item.key === active) ?? nav[0]
-  if (!current) {
-    return (
-      <div className="settings-wrap">
-        <div className="settings-content">
-          <PageHead title="Settings" description="Your role can't read any settings." />
-        </div>
-      </div>
-    )
-  }
   const Section = current.Component
 
   return (
