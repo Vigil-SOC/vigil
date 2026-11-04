@@ -1,10 +1,11 @@
 """
 Security-Detections tool integration - Pure Python implementation
 Answers from the detection rules every configured repo holds (Sigma, Splunk, Elastic, KQL)
-and the rules Kibana's detection engine runs, as core/detections/inventory syncs them
-into Postgres. Splunk saved searches and Wazuh rules are not read yet.
+and the rules Kibana's detection engine and the Wazuh manager run, as
+core/detections/inventory syncs them into Postgres. Splunk saved searches are not read yet.
 """
 
+import asyncio
 import fnmatch
 import re
 from typing import Any, Callable, Dict, List, NoReturn, Optional
@@ -20,7 +21,9 @@ from core.detections.gaps import (
     read_ledger,
 )
 from core.detections.inventory import catalog
+from core.detections.inventory.links import link_rule
 from core.detections.lint import lint_sigma
+from core.detections.overlay import save_rule
 from core.detections.reconstruction import (
     coverage_report,
     reconstruct,
@@ -92,6 +95,8 @@ class SecurityDetectionsTools:
         limit: int = 20,
         tool: Optional[str] = None,
         runs: Optional[str] = None,
+        stage: Optional[str] = None,
+        sees: Optional[str] = None,
         flagged: Optional[bool] = None,
     ) -> List[Dict]:
         """
@@ -99,17 +104,40 @@ class SecurityDetectionsTools:
 
         Args:
             query: Search query (e.g., "powershell base64", "lateral movement")
-            source_type: Optional filter by rule format ("sigma", "splunk", "elastic", "kql")
+            source_type: Optional filter by rule format ("sigma", "splunk", "elastic", "kql", "wazuh")
             limit: Maximum number of results
-            tool: Optional filter by where the rule was read ("repo", "elastic")
+            tool: Optional filter by where the rule was read ("overlay", "repo", "elastic", "wazuh")
             runs: Optional filter by Runs result ("pass", "fail", "unknown")
+            stage: Optional filter by current rollout stage ("shadow", "live", "off")
+            sees: Optional filter by Sees result ("pass", "fail", "unknown")
             flagged: Optional filter: rules with (True) or without (False) an open flag
 
         Returns:
             List of matching detection rules, each with its status, checks and
-            whether it is flagged; a single hit also carries its recent check changes
+            whether it is flagged; an overlay rule also with its stage and stage
+            rows; a single hit also carries its recent check changes
         """
-        return catalog.search(query or "", source_type, limit, tool, runs, flagged)
+        return catalog.search(
+            query or "", source_type, limit, tool, runs, stage, sees, flagged
+        )
+
+    async def link_detection_rule(
+        self,
+        copy_rule_id: Any = None,
+        action: str = "",
+        reason: str = "",
+        origin_rule_id: Any = None,
+        **_kwargs: object,
+    ) -> Dict:
+        """Link, unlink or decline a SIEM copy and the repo rule it came from.
+
+        Args:
+            copy_rule_id: The SIEM rule's rule_id (a search_detections hit with tool 'elastic')
+            action: 'link', 'unlink' or 'decline'
+            reason: Why; required, and written to the audit log
+            origin_rule_id: The repo or overlay rule's rule_id; required to link or decline
+        """
+        return link_rule(copy_rule_id, action, reason, origin_rule_id)
 
     async def get_detection_count(self, source_type: Optional[str] = None) -> Dict:
         """
@@ -147,7 +175,8 @@ class SecurityDetectionsTools:
             rules_by_technique,
             catalog.rules_by_tactic(),
             catalog.rule_counts(),
-            catalog.siem_runs_by_technique(),
+            catalog.siem_checks_by_technique(),
+            catalog.blind_spots(),
         )
         data = DatabaseDataService()
         report["runs_rules_missed"] = missed_runs_report(
@@ -232,6 +261,16 @@ class SecurityDetectionsTools:
                 "rule_yaml": rule_yaml,
             }
         return {"lint": lint, "replay": replay, "candidate": candidate}
+
+    async def save_detection_rule(
+        self,
+        splunk_yaml: Optional[str] = None,
+        elastic_toml: Optional[str] = None,
+        sigma_yaml: Optional[str] = None,
+        **_kwargs: object,
+    ) -> Dict:
+        """Save one rule's copies into Vigil's overlay; each enters shadow."""
+        return await asyncio.to_thread(save_rule, splunk_yaml, elastic_toml, sigma_yaml)
 
     async def reconstruct_run(self, steps: List[Dict], **_kwargs: object) -> Dict:
         """Correlate an action trace to ingested Findings; return per-step verdicts.

@@ -1481,6 +1481,8 @@ export interface TriageRow {
   pickup_seconds: number | null
   workflow_id: string
   case_door: string | null
+  /** The run this row started, when one is recorded. A merged alert has none of its own. */
+  run_id: string | null
   merge_note: string | null
   /** Why a not-picked-up alert was not picked up, when its latest intake row says. */
   reason: string | null

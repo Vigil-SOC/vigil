@@ -14,7 +14,7 @@ from core.skills.skill_library import READ_SKILL_TOOL
 SECURITY_DETECTION_TOOLS = [
     {
         "name": "analyze_coverage",
-        "description": "Analyze detection coverage for MITRE ATT&CK techniques, or report per-technique layer verdicts for a sanctioned run. Pass techniques for catalog counts (Sigma / Splunk / Elastic / KQL), with by_tool: active rules per tool ('repo', or a SIEM: 'elastic' for Kibana) and, for a SIEM, its Runs pass / fail / unknown / unchecked counts. Pass run_id or an action-trace steps list for the run report: reconstruct on read, group by technique_id, verdicts rule | loglm | both | missed. Do not mix the two.",
+        "description": "Analyze detection coverage for MITRE ATT&CK techniques, or report per-technique layer verdicts for a sanctioned run. Pass techniques for catalog counts (Sigma / Splunk / Elastic / KQL), with by_tool: active rules per tool ('repo', or a SIEM: 'elastic' for Kibana, 'wazuh') and, for a SIEM, its Runs and Sees pass / fail / unknown / unchecked counts (Sees: is the data the rule reads arriving); repo_deployed: per SIEM, the repo rules' linked copies counted by state (pass / fail / unknown / unchecked / disabled) and the repo rules with no copy there ('not deployed'). Splunk saved searches are not read yet. Pass run_id or an action-trace steps list for the run report: reconstruct on read, group by technique_id, verdicts rule | loglm | both | missed. Do not mix the two.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -37,7 +37,7 @@ SECURITY_DETECTION_TOOLS = [
     },
     {
         "name": "search_detections",
-        "description": "Search the detection rules of every configured repo (Sigma, Splunk, Elastic, KQL) and the rules Kibana's detection engine runs, using keywords. Each hit carries its tool ('repo' or 'elastic'), its status ('active', or 'disabled' for a Kibana rule switched off) and checks.runs: whether the SIEM runs it ({result: pass|fail|unknown, reason, checked_at}; reason holds the SIEM's own error). Filter tool='elastic' with runs='fail' to answer which Elastic rules don't run and why. Each hit has flagged: true when its latest Runs change went pass -> fail (it broke and has not recovered); filter flagged=true for those. When exactly one rule matches, its hit carries recent_changes: its last 10 recorded check changes (check runs|status, old -> new, changed_at, version, reason), newest first. Splunk saved searches and Wazuh rules are not read yet.",
+        "description": "Search the detection rules of every configured repo (Sigma, Splunk, Elastic, KQL), Vigil's own overlay of drafted rules, and the rules Kibana's detection engine and the Wazuh manager run, using keywords. Each hit carries its tool ('overlay', 'repo', 'elastic' or 'wazuh'), its status ('active', or 'disabled' for a Kibana rule switched off or a Wazuh rule excluded in ossec.conf) and checks.runs: whether the SIEM runs it ({result: pass|fail|unknown, reason, checked_at}; reason holds the SIEM's own error), and checks.sees: whether the data it reads is arriving ({result, reason, data_source, checked_at}; fail names the index with no events in 7d or the required fields missing from its mapping; unknown for ES|QL, ML or an unreadable source). Filter tool='elastic' with runs='fail' to answer which Elastic rules don't run and why, or sees='fail' for which are starved of data. A loaded Wazuh rule's Runs is pass ('loaded by the manager'); Wazuh rules get no Sees yet. A repo or overlay hit carries deployed: per SIEM, the copies linked to it (each with its state: pass / fail / unknown / unchecked / disabled) or 'not deployed'. A SIEM hit carries origin: its link to a repo or overlay rule (origin_rule_id, kind same_id | agent | declined, by, reason, at) or null. An overlay hit also carries stage (its current rollout stage: shadow, live or off; null for a Sigma copy) and stages (every stage row, oldest first: version, stage, proof, actor, reason, at). Each hit has flagged: true when its latest Runs or Sees change went pass -> fail (it broke and has not recovered); filter flagged=true for those. When exactly one rule matches, its hit carries recent_changes: its last 10 recorded check changes (check runs|sees|status, old -> new, changed_at, version, reason), newest first. Splunk saved searches are not read yet.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -47,22 +47,32 @@ SECURITY_DETECTION_TOOLS = [
                 },
                 "source_type": {
                     "type": "string",
-                    "enum": ["sigma", "splunk", "elastic", "kql"],
+                    "enum": ["sigma", "splunk", "elastic", "kql", "wazuh"],
                     "description": "Optional: Filter by detection format. 'elastic' covers repo tomls and Kibana rules alike. Omit to search all formats.",
                 },
                 "tool": {
                     "type": "string",
-                    "enum": ["repo", "elastic"],
-                    "description": "Optional: Filter by where the rule was read: a configured repo, or Kibana's detection engine.",
+                    "enum": ["overlay", "repo", "elastic", "wazuh"],
+                    "description": "Optional: Filter by where the rule was read: Vigil's overlay, a configured repo, Kibana's detection engine, or the Wazuh manager.",
                 },
                 "runs": {
                     "type": "string",
                     "enum": ["pass", "fail", "unknown"],
                     "description": "Optional: Keep rules whose latest version has this Runs result. Only SIEM rules have one.",
                 },
+                "stage": {
+                    "type": "string",
+                    "enum": ["shadow", "live", "off"],
+                    "description": "Optional: Keep rules whose current rollout stage is this. Only overlay rules have one.",
+                },
+                "sees": {
+                    "type": "string",
+                    "enum": ["pass", "fail", "unknown"],
+                    "description": "Optional: Keep rules whose latest version has this Sees result. Only SIEM rules have one.",
+                },
                 "flagged": {
                     "type": "boolean",
-                    "description": "Optional: true keeps rules whose Runs went pass -> fail and have not recovered; false keeps the rest.",
+                    "description": "Optional: true keeps rules whose Runs or Sees went pass -> fail and have not recovered; false keeps the rest.",
                 },
                 "limit": {
                     "type": "integer",
@@ -74,8 +84,34 @@ SECURITY_DETECTION_TOOLS = [
         },
     },
     {
+        "name": "link_detection_rule",
+        "description": "Record which repo rule a SIEM rule (a copy in Kibana) came from. The inventory sync links a copy by itself only when certain (same rule_id, same language); use this for the rest, after finding the candidates with search_detections. action 'link' sets the copy's origin; 'decline' records that the copy is not from that repo rule, so the sync never links it; 'unlink' clears a link or decline, handing the copy back to the sync. Every call is written to the audit log with you as the actor and your reason. Rule ids are search_detections' rule_id.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "copy_rule_id": {
+                    "type": "integer",
+                    "description": "rule_id of the SIEM rule (a hit whose tool is 'elastic').",
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["link", "unlink", "decline"],
+                },
+                "origin_rule_id": {
+                    "type": "integer",
+                    "description": "rule_id of the repo rule (tool 'repo' or 'overlay'). Required to link or decline; optional to unlink.",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why. Required, and written to the audit log.",
+                },
+            },
+            "required": ["copy_rule_id", "action", "reason"],
+        },
+    },
+    {
         "name": "identify_gaps",
-        "description": "Compare the ATT&CK techniques seen on stored alerts with the detection rules actually loaded, and list techniques no rule declares. covered_on_paper_only lists techniques whose Kibana rules all fail Runs (each technique row has siem_runs). Reads stored data only and writes nothing. Read answer and unknown first: alerts that name a tactic and no technique cannot prove a gap, and answer is unknown when the data cannot say. Splunk saved searches and Wazuh rules are not read yet. runs_rules_missed lists proven hunts and closed Cases (Verdicts from the last since_days) whose hosts, IPs and users drew no rule alert in their window (LogLM-only counts as missed), grouped by technique. Each group has its runs, how many a person confirmed, the active rules declaring the technique, and ruled_out: disproven / false_positive runs on it that a draft rule must not catch. Only groups with 2+ runs or 1+ confirmed are listed; the rest are counted. A run with no host, IP or user, or whose Findings read was cut off, is in its unknown, never missed. rule_health lists the open flags: SIEM rules whose latest Runs change went pass -> fail (a rule that never passed is no flag), each with rule_id, name, tool, status, check, old, new, since, version and reason (the SIEM's error); a flag clears when the rule passes again. opened and cleared count flags opened and cleared in the last 7 days. rule_health is not scoped by context.",
+        "description": "Compare the ATT&CK techniques seen on stored alerts with the detection rules actually loaded, and list techniques no rule declares. covered_on_paper_only lists techniques whose SIEM rules (Kibana and Wazuh) each fail Runs or Sees (each technique row has siem_runs and siem_sees). blind_spots lists each data source (index patterns) with no events in 7d or missing fields, and the active SIEM rules it starves, each with its reason. Reads stored data only and writes nothing. Read answer and unknown first: alerts that name a tactic and no technique cannot prove a gap, and answer is unknown when the data cannot say. Splunk saved searches are not read yet. runs_rules_missed lists proven hunts and closed Cases (Verdicts from the last since_days) whose hosts, IPs and users drew no rule alert in their window (LogLM-only counts as missed), grouped by technique. Each group has its runs, how many a person confirmed, the active rules declaring the technique, and ruled_out: disproven / false_positive runs on it that a draft rule must not catch. Only groups with 2+ runs or 1+ confirmed are listed; the rest are counted. A run with no host, IP or user, or whose Findings read was cut off, is in its unknown, never missed. rule_health lists the open flags: SIEM rules whose latest Runs or Sees change went pass -> fail (a check that never passed is no flag), each with rule_id, name, tool, status, check, old, new, since, version and reason; a flag clears when that check passes again. opened and cleared count flags opened and cleared in the last 7 days. rule_health is not scoped by context.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -100,7 +136,7 @@ SECURITY_DETECTION_TOOLS = [
             "properties": {
                 "source_type": {
                     "type": "string",
-                    "enum": ["sigma", "splunk", "elastic", "kql"],
+                    "enum": ["sigma", "splunk", "elastic", "kql", "wazuh"],
                     "description": "Optional: Get stats for specific source format only",
                 }
             },
@@ -114,7 +150,7 @@ SECURITY_DETECTION_TOOLS = [
             "properties": {
                 "source_type": {
                     "type": "string",
-                    "enum": ["sigma", "splunk", "elastic", "kql"],
+                    "enum": ["sigma", "splunk", "elastic", "kql", "wazuh"],
                     "description": "Optional: Count for specific source format",
                 }
             },
@@ -182,6 +218,28 @@ SECURITY_DETECTION_TOOLS = [
                 "started_at",
                 "ended_at",
             ],
+        },
+    },
+    {
+        "name": "save_detection_rule",
+        "description": "Save one drafted or changed detection rule into Vigil's overlay (a local rule source Vigil owns), then sync it into the rule inventory. Pass a Splunk copy (ESCU-style YAML with search), an Elastic copy (detection-rules TOML with a [rule] table), or both, plus an optional Sigma form. Each copy is written as its own file. A copy that does not parse, or a Sigma form that fails lint, refuses the whole save and writes nothing. A copy keeps the id it carries (ESCU id, Elastic rule_id, Sigma id): pass an existing rule's id to change that rule (a logic change is a new version); omit it for a new rule. Returns each saved copy's rule_id, id, version and stage: a new Splunk or Elastic rule or version enters shadow (nobody sees its alerts); a Sigma copy has no stage. Writes no SIEM.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "splunk_yaml": {
+                    "type": "string",
+                    "description": "Splunk copy: ESCU-style YAML with name, search and optionally id, mitre_attack_id, description.",
+                },
+                "elastic_toml": {
+                    "type": "string",
+                    "description": "Elastic copy: detection-rules TOML with a [rule] table (name, query, type, language, optionally rule_id).",
+                },
+                "sigma_yaml": {
+                    "type": "string",
+                    "description": "Optional Sigma form of the same rule, with a detection block; linted before saving.",
+                },
+            },
+            "required": [],
         },
     },
     {

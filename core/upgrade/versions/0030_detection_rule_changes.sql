@@ -1,6 +1,7 @@
 -- A row each time sync records a rule's check result differently (#3729):
--- check_key 'runs' (pass|fail|unknown, from the SIEM) or 'status'
--- (active|disabled|removed, SIEM rules only). old_result is the previous
+-- check_key 'runs' (pass|fail|unknown, from the SIEM), 'sees' (the same, from
+-- whether its data arrives) or 'status' (active|disabled|removed, SIEM rules
+-- only). old_result is the previous
 -- row's new_result for that (rule, check), any version; NULL on first sight.
 -- A flag is a (rule, check) whose latest row went pass -> fail; it is a query
 -- over this table, cleared by a later row back to pass.
@@ -32,15 +33,17 @@ COMMENT ON TABLE public.detection_rule_check_changes IS
     'Append-only: a row each time a detection rule''s check result changed.';
 
 -- Starting rows, so an existing install's first break reads pass -> fail:
--- each rule's Runs result on its latest version, and each SIEM rule's status.
+-- each rule's Runs and Sees results on its latest version, and each SIEM
+-- rule's status.
 INSERT INTO public.detection_rule_check_changes
     (rule_id, version, check_key, old_result, new_result, reason, changed_at)
-SELECT v.rule_id, v.version, 'runs', NULL,
-       v.checks->'runs'->>'result', v.checks->'runs'->>'reason',
-       COALESCE((v.checks->'runs'->>'checked_at')::timestamptz, now())
+SELECT v.rule_id, v.version, k.check_key, NULL,
+       v.checks->k.check_key->>'result', v.checks->k.check_key->>'reason',
+       COALESCE((v.checks->k.check_key->>'checked_at')::timestamptz, now())
 FROM public.detection_rule_versions v
 JOIN public.detection_rules r ON r.id = v.rule_id AND r.latest_version = v.version
-WHERE v.checks ? 'runs'
+CROSS JOIN (VALUES ('runs'), ('sees')) AS k (check_key)
+WHERE v.checks ? k.check_key
   AND NOT EXISTS (SELECT 1 FROM public.detection_rule_check_changes);
 
 INSERT INTO public.detection_rule_check_changes

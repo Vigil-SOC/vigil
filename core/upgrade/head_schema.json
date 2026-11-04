@@ -1964,6 +1964,46 @@
   "nullable": false,
   "type": "integer"
  },
+ "column detection_rule_stages.actor": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column detection_rule_stages.at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp with time zone"
+ },
+ "column detection_rule_stages.id": {
+  "default": "nextval('detection_rule_stages_id_seq'::regclass)",
+  "nullable": false,
+  "type": "bigint"
+ },
+ "column detection_rule_stages.proof": {
+  "default": "'{}'::jsonb",
+  "nullable": false,
+  "type": "jsonb"
+ },
+ "column detection_rule_stages.reason": {
+  "default": "''::text",
+  "nullable": false,
+  "type": "text"
+ },
+ "column detection_rule_stages.rule_id": {
+  "default": null,
+  "nullable": false,
+  "type": "integer"
+ },
+ "column detection_rule_stages.stage": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column detection_rule_stages.version": {
+  "default": null,
+  "nullable": false,
+  "type": "integer"
+ },
  "column detection_rule_versions.checks": {
   "acl": [
    "app:UPDATE"
@@ -2017,6 +2057,26 @@
   "nullable": false,
   "type": "integer"
  },
+ "column detection_rules.link_kind": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column detection_rules.link_reason": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column detection_rules.linked_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp with time zone"
+ },
+ "column detection_rules.linked_by": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
  "column detection_rules.name": {
   "default": null,
   "nullable": false,
@@ -2026,6 +2086,11 @@
   "default": null,
   "nullable": false,
   "type": "text"
+ },
+ "column detection_rules.origin_rule_id": {
+  "default": null,
+  "nullable": true,
+  "type": "integer"
  },
  "column detection_rules.path": {
   "default": null,
@@ -4030,10 +4095,16 @@
  "constraint custom_workflows.custom_workflows_pkey": "PRIMARY KEY (workflow_id)",
  "constraint detection_rule_check_changes.detection_rule_check_changes_pkey": "PRIMARY KEY (id)",
  "constraint detection_rule_check_changes.detection_rule_check_changes_rule_id_fkey": "FOREIGN KEY (rule_id) REFERENCES detection_rules(id)",
+ "constraint detection_rule_stages.detection_rule_stages_pkey": "PRIMARY KEY (id)",
+ "constraint detection_rule_stages.detection_rule_stages_rule_id_fkey": "FOREIGN KEY (rule_id) REFERENCES detection_rules(id)",
+ "constraint detection_rule_stages.detection_rule_stages_stage_check": "CHECK ((stage = ANY (ARRAY['shadow'::text, 'live'::text, 'off'::text])))",
+ "constraint detection_rule_stages.detection_rule_stages_version_check": "CHECK ((version >= 1))",
  "constraint detection_rule_versions.detection_rule_versions_pkey": "PRIMARY KEY (rule_id, version)",
  "constraint detection_rule_versions.detection_rule_versions_rule_id_fkey": "FOREIGN KEY (rule_id) REFERENCES detection_rules(id)",
  "constraint detection_rule_versions.detection_rule_versions_version_check": "CHECK ((version >= 1))",
  "constraint detection_rules.detection_rules_latest_version_check": "CHECK ((latest_version >= 1))",
+ "constraint detection_rules.detection_rules_link_kind_check": "CHECK ((((link_kind = ANY (ARRAY['same_id'::text, 'agent'::text, 'declined'::text])) AND (origin_rule_id IS NOT NULL)) OR ((link_kind IS NULL) AND (origin_rule_id IS NULL))))",
+ "constraint detection_rules.detection_rules_origin_rule_id_fkey": "FOREIGN KEY (origin_rule_id) REFERENCES detection_rules(id)",
  "constraint detection_rules.detection_rules_pkey": "PRIMARY KEY (id)",
  "constraint detection_rules.detection_rules_source_native_key": "UNIQUE (source, native_key)",
  "constraint detection_rules.detection_rules_status_check": "CHECK ((status = ANY (ARRAY['active'::text, 'disabled'::text, 'removed'::text])))",
@@ -4280,6 +4351,7 @@
  "index custom_agents_pkey": "CREATE UNIQUE INDEX custom_agents_pkey ON public.custom_agents USING btree (id)",
  "index custom_workflows_pkey": "CREATE UNIQUE INDEX custom_workflows_pkey ON public.custom_workflows USING btree (workflow_id)",
  "index detection_rule_check_changes_pkey": "CREATE UNIQUE INDEX detection_rule_check_changes_pkey ON public.detection_rule_check_changes USING btree (id)",
+ "index detection_rule_stages_pkey": "CREATE UNIQUE INDEX detection_rule_stages_pkey ON public.detection_rule_stages USING btree (id)",
  "index detection_rule_versions_pkey": "CREATE UNIQUE INDEX detection_rule_versions_pkey ON public.detection_rule_versions USING btree (rule_id, version)",
  "index detection_rules_pkey": "CREATE UNIQUE INDEX detection_rules_pkey ON public.detection_rules USING btree (id)",
  "index detection_rules_source_native_key": "CREATE UNIQUE INDEX detection_rules_source_native_key ON public.detection_rules USING btree (source, native_key)",
@@ -4384,6 +4456,8 @@
  "index idx_custom_workflows_created_by": "CREATE INDEX idx_custom_workflows_created_by ON public.custom_workflows USING btree (created_by)",
  "index idx_custom_workflows_name": "CREATE INDEX idx_custom_workflows_name ON public.custom_workflows USING btree (name)",
  "index idx_detection_rule_check_changes_latest": "CREATE INDEX idx_detection_rule_check_changes_latest ON public.detection_rule_check_changes USING btree (rule_id, check_key, changed_at DESC, id DESC)",
+ "index idx_detection_rule_stages_rule": "CREATE INDEX idx_detection_rule_stages_rule ON public.detection_rule_stages USING btree (rule_id, id)",
+ "index idx_detection_rules_origin_rule_id": "CREATE INDEX idx_detection_rules_origin_rule_id ON public.detection_rules USING btree (origin_rule_id)",
  "index idx_detection_rules_techniques": "CREATE INDEX idx_detection_rules_techniques ON public.detection_rules USING gin (techniques)",
  "index idx_episodic_gaps_investigation": "CREATE INDEX idx_episodic_gaps_investigation ON public.episodic_gaps USING btree (investigation_kind, investigation_id)",
  "index idx_episodic_gaps_recall": "CREATE INDEX idx_episodic_gaps_recall ON public.episodic_gaps USING btree (concluded_at DESC, id)",
@@ -5452,6 +5526,42 @@
   "sequence": null
  },
  "relation detection_rule_check_changes_id_seq": {
+  "acl": [
+   "app:SELECT",
+   "app:USAGE",
+   "owner:SELECT",
+   "owner:UPDATE",
+   "owner:USAGE"
+  ],
+  "kind": "S",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": "[\"bigint\", 1, 1, 1, 9223372036854775807, 1, false]"
+ },
+ "relation detection_rule_stages": {
+  "acl": [
+   "app:INSERT",
+   "app:SELECT",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation detection_rule_stages_id_seq": {
   "acl": [
    "app:SELECT",
    "app:USAGE",
