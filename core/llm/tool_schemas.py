@@ -222,7 +222,7 @@ SECURITY_DETECTION_TOOLS = [
     },
     {
         "name": "save_detection_rule",
-        "description": "Save one drafted or changed detection rule into Vigil's overlay (a local rule source Vigil owns), then sync it into the rule inventory. Pass a Splunk copy (ESCU-style YAML with search), an Elastic copy (detection-rules TOML with a [rule] table), or both, plus an optional Sigma form. Each copy is written as its own file. A copy that does not parse, or a Sigma form that fails lint, refuses the whole save and writes nothing. A copy keeps the id it carries (ESCU id, Elastic rule_id, Sigma id): pass an existing rule's id to change that rule (a logic change is a new version); omit it for a new rule. Returns each saved copy's rule_id, id, version and stage: a new Splunk or Elastic rule or version enters shadow (nobody sees its alerts); a Sigma copy has no stage. Writes no SIEM.",
+        "description": "Save one drafted or changed detection rule into Vigil's overlay (a local rule source Vigil owns), then sync it into the rule inventory. Pass a Splunk copy (ESCU-style YAML with search), an Elastic copy (detection-rules TOML with a [rule] table), or both, plus an optional Sigma form. Each copy is written as its own file. A copy that does not parse, or a Sigma form that fails lint, refuses the whole save and writes nothing. Pass proven_events (and ruled_out_events) to have the Sigma form replayed on them first: the save is refused, with the replay in the error, unless the Sigma form is given, can be replayed, matches a proven event and matches no ruled-out event. The result is stored as checks.replay on the Sigma copy's version (result not_run when no events are passed). A copy keeps the id it carries (ESCU id, Elastic rule_id, Sigma id): pass an existing rule's id to change that rule (a logic change is a new version); omit it for a new rule. Returns each saved copy's rule_id, id, version and stage: a new Splunk or Elastic rule or version enters shadow (nobody sees its alerts); a Sigma copy has no stage. Writes no SIEM.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -236,7 +236,17 @@ SECURITY_DETECTION_TOOLS = [
                 },
                 "sigma_yaml": {
                     "type": "string",
-                    "description": "Optional Sigma form of the same rule, with a detection block; linted before saving.",
+                    "description": "Optional Sigma form of the same rule, with a detection block; linted before saving. Required when events are passed.",
+                },
+                "proven_events": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Proven events the rule must catch, fetched from the SIEM for the missed step's window. The Sigma form must match at least one.",
+                },
+                "ruled_out_events": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Events from runs whose explanation was ruled out. The Sigma form must match none of them.",
                 },
             },
             "required": [],
