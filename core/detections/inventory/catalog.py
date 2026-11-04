@@ -1,15 +1,27 @@
-"""What the agent detection tools read: the active rules and their latest versions."""
+"""What the agent detection tools read: the active rules and their latest versions.
+
+A rule's tool is where it was read: 'repo' for a configured repo, else the SIEM
+(source 'elastic'). Only active rules count as deployed; search also finds the
+disabled ones, each hit saying so.
+"""
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, Iterable, List, Optional, Set
 
-from sqlalchemy import Text, and_, cast, func, select
+from sqlalchemy import Text, and_, case, cast, func, select
 
 from core.storage.connection import get_db_manager
 from core.storage.models import DetectionRule, DetectionRuleVersion
 
 ACTIVE = DetectionRule.status == "active"
+LISTED = DetectionRule.status.in_(("active", "disabled"))
+REPO_PREFIX = "repo:"
+TOOL = case(
+    (DetectionRule.source.startswith(REPO_PREFIX), "repo"), else_=DetectionRule.source
+)
+RUNS = DetectionRuleVersion.checks["runs"]["result"].astext
+RUNS_RESULTS = ("pass", "fail", "unknown")
 
 
 def _latest_join():
@@ -19,7 +31,13 @@ def _latest_join():
     )
 
 
-def _summary(rule: DetectionRule, content: Dict[str, Any], width: int) -> Dict:
+def tool_of(source: str) -> str:
+    return "repo" if source.startswith(REPO_PREFIX) else source
+
+
+def _summary(
+    rule: DetectionRule, content: Dict[str, Any], checks: Dict[str, Any], width: int
+) -> Dict:
     description = content.get("description") if isinstance(content, dict) else None
     return {
         "rule_id": rule.id,
@@ -27,10 +45,27 @@ def _summary(rule: DetectionRule, content: Dict[str, Any], width: int) -> Dict:
         "source": rule.language,
         "id": rule.native_key,
         "repo": rule.source,
+        "tool": tool_of(rule.source),
+        "status": rule.status,
         "version": rule.latest_version,
         "description": str(description or "")[:width],
         "file_path": rule.path,
+        "checks": checks or {},
     }
+
+
+def _by_tool(rows: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
+    """(tool, runs result, count) rows as rules per tool, and Runs for a SIEM's."""
+    out: Dict[str, Dict[str, Any]] = {}
+    for tool, result, count in rows:
+        entry = out.setdefault(tool, {"rules": 0})
+        entry["rules"] += count
+        if tool != "repo":
+            runs = entry.setdefault(
+                "runs", {**dict.fromkeys(RUNS_RESULTS, 0), "unchecked": 0}
+            )
+            runs[result if result in RUNS_RESULTS else "unchecked"] += count
+    return out
 
 
 def rule_counts() -> Dict[str, int]:
@@ -97,23 +132,70 @@ def rules_for_technique(technique: str, top: int = 5) -> Dict[str, Any]:
                 .group_by(DetectionRule.language)
             ).all()
         )
+        by_tool = _by_tool(
+            session.execute(
+                select(TOOL, RUNS, func.count())
+                .select_from(DetectionRule)
+                .join(DetectionRuleVersion, _latest_join())
+                .where(ACTIVE, declares)
+                .group_by(TOOL, RUNS)
+            ).all()
+        )
         first = session.execute(
-            select(DetectionRule, DetectionRuleVersion.content)
+            select(
+                DetectionRule, DetectionRuleVersion.content, DetectionRuleVersion.checks
+            )
             .join(DetectionRuleVersion, _latest_join())
             .where(ACTIVE, declares)
             .order_by(DetectionRule.id)
             .limit(top)
         ).all()
-        detections = [_summary(rule, content, 200) for rule, content in first]
+        detections = [
+            _summary(rule, content, checks, 200) for rule, content, checks in first
+        ]
     return {
         "count": sum(by_source.values()),
         "by_source": by_source,
+        "by_tool": by_tool,
         "detections": detections,
     }
 
 
-def search(query: str, language: Optional[str], limit: int) -> List[Dict]:
-    """Active rules whose format, path or parsed content contains ``query``."""
+def siem_runs_by_technique() -> Dict[str, Dict[str, int]]:
+    """Each technique an active SIEM rule declares: its rules' Runs results, counted.
+
+    A rule with no Runs result yet counts as 'unchecked'.
+    """
+    technique = func.unnest(DetectionRule.techniques).table_valued("t").alias("t")
+    with get_db_manager().session_scope() as session:
+        rows = session.execute(
+            select(technique.c.t, RUNS, func.count())
+            .select_from(DetectionRule)
+            .join(DetectionRuleVersion, _latest_join())
+            .join(technique, technique.c.t.isnot(None))
+            .where(ACTIVE, ~DetectionRule.source.startswith(REPO_PREFIX))
+            .group_by(technique.c.t, RUNS)
+        ).all()
+    out: Dict[str, Dict[str, int]] = {}
+    for t, result, count in rows:
+        key = result if result in RUNS_RESULTS else "unchecked"
+        bucket = out.setdefault(t, {})
+        bucket[key] = bucket.get(key, 0) + count
+    return out
+
+
+def search(
+    query: str,
+    language: Optional[str],
+    limit: int,
+    tool: Optional[str] = None,
+    runs: Optional[str] = None,
+) -> List[Dict]:
+    """Active and disabled rules whose format, path or parsed content contains ``query``.
+
+    ``tool`` is 'repo' or a SIEM source; ``runs`` keeps rules whose latest
+    version has that Runs result.
+    """
     escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     haystack = (
         DetectionRule.language
@@ -123,14 +205,18 @@ def search(query: str, language: Optional[str], limit: int) -> List[Dict]:
         + cast(DetectionRuleVersion.content, Text)
     )
     statement = (
-        select(DetectionRule, DetectionRuleVersion.content)
+        select(DetectionRule, DetectionRuleVersion.content, DetectionRuleVersion.checks)
         .join(DetectionRuleVersion, _latest_join())
-        .where(ACTIVE, haystack.ilike(f"%{escaped}%", escape="\\"))
+        .where(LISTED, haystack.ilike(f"%{escaped}%", escape="\\"))
         .order_by(DetectionRule.id)
         .limit(limit)
     )
     if language:
         statement = statement.where(DetectionRule.language == language)
+    if tool:
+        statement = statement.where(TOOL == tool)
+    if runs:
+        statement = statement.where(RUNS == runs)
     with get_db_manager().session_scope() as session:
         rows = session.execute(statement).all()
-        return [_summary(rule, content, 300) for rule, content in rows]
+        return [_summary(rule, content, checks, 300) for rule, content, checks in rows]

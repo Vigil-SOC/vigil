@@ -1,6 +1,7 @@
 """Detection rule ORM models.
 
-The schema is core/upgrade/versions/0025_detection_rules.sql; these models
+The schema is core/upgrade/versions/0025_detection_rules.sql and
+0026_detection_rule_checks.sql; these models
 mirror it for core/detections/inventory.
 """
 
@@ -22,7 +23,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from core.storage.models.base import Base
 
-DETECTION_RULE_STATUSES = ("active", "removed")
+# disabled: a SIEM rule that is listed but switched off.
+DETECTION_RULE_STATUSES = ("active", "disabled", "removed")
 
 
 class DetectionRule(Base):
@@ -34,7 +36,8 @@ class DetectionRule(Base):
             "source", "native_key", name="detection_rules_source_native_key"
         ),
         CheckConstraint(
-            "status IN ('active', 'removed')", name="detection_rules_status_check"
+            "status IN ('active', 'disabled', 'removed')",
+            name="detection_rules_status_check",
         ),
         CheckConstraint(
             "latest_version >= 1", name="detection_rules_latest_version_check"
@@ -61,7 +64,7 @@ class DetectionRule(Base):
 
 
 class DetectionRuleVersion(Base):
-    """One version of a rule's logic. Append-only."""
+    """One version of a rule's logic. Append-only but for ``checks``."""
 
     __tablename__ = "detection_rule_versions"
     __table_args__ = (
@@ -75,6 +78,10 @@ class DetectionRuleVersion(Base):
     fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
     query: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
+    # {"runs": {result, reason, checked_at}}; empty until a check is recorded.
+    checks: Mapped[Dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
     first_seen: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )

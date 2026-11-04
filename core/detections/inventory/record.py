@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 # SPL's comment syntax: ```anything```.
 _SPL_COMMENT = re.compile(r"```.*?```", re.DOTALL)
@@ -17,22 +17,27 @@ _WHITESPACE = re.compile(r"\s+")
 
 @dataclass
 class RuleRecord:
-    """A rule as one source file holds it.
+    """A rule as one source file or SIEM holds it.
 
     ``logic`` holds the fields besides the query that change what the rule fires
     on or how loud it is; it is fingerprinted with the query. ``content`` is the
     parsed rule, stored on the version and searched, never compared.
+
+    ``status`` is 'disabled' for a SIEM rule switched off. ``runs`` is the SIEM's
+    word on whether the rule runs, ``{result, reason}``, or None for no new word.
     """
 
     native_key: str
     name: str
     language: str
-    path: str
+    path: Optional[str]
     query: str = ""
     techniques: List[str] = field(default_factory=list)
     tactics: List[str] = field(default_factory=list)
     logic: Dict[str, Any] = field(default_factory=dict)
     content: Dict[str, Any] = field(default_factory=dict)
+    status: str = "active"
+    runs: Optional[Dict[str, Optional[str]]] = None
 
 
 def normalize_query(query: str, language: str) -> str:

@@ -1,4 +1,4 @@
-"""Bring the detection rule tables in line with every configured repo.
+"""Bring the detection rule tables in line with every configured repo and Kibana.
 
 Each run reads every ready source in full, since a full list is the only way
 to see a deletion, and writes only what differs:
@@ -6,10 +6,16 @@ to see a deletion, and writes only what differs:
 - a key never seen before is a new rule at version 1;
 - a key whose fingerprint differs from its latest version gets the next version;
 - a key the list no longer has is status 'removed', never deleted;
-- a name, path, technique or tactic change updates the rule row, no new version.
+- a name, path, technique or tactic change updates the rule row, no new version;
+- a SIEM rule switched off is status 'disabled', and carries no Runs result.
+
+A Runs result (checks['runs'] on the latest version) is written only when its
+result or reason differs from the stored one; a new version starts with none.
 
 A source that fails to read, or is configured but not ready, is skipped whole.
 A source no longer configured has its rules marked removed.
+
+Nothing is ever written to a SIEM.
 """
 
 from __future__ import annotations
@@ -17,12 +23,13 @@ from __future__ import annotations
 import logging
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
-from sqlalchemy import and_, func, insert, select, update
+from sqlalchemy import and_, bindparam, func, insert, select, update
 
-from core.detections.inventory import readers
+from core.detections.inventory import kibana, readers
 from core.detections.inventory.record import RuleRecord, fingerprint
 from core.storage.connection import get_db_manager
 from core.storage.models import DetectionRule, DetectionRuleVersion
@@ -43,6 +50,7 @@ class SourceReport:
     removed: int = 0
     restored: int = 0
     updated: int = 0
+    checked: int = 0
     error: Optional[str] = None
     skipped: Optional[str] = None
 
@@ -87,12 +95,29 @@ def _rule_fields(record: RuleRecord) -> Dict[str, Any]:
     }
 
 
+def _checks(stored: Dict[str, Any], record: RuleRecord, now: str) -> Dict[str, Any]:
+    """``stored`` with the record's Runs result, or itself when nothing changed."""
+    if record.status == "disabled":
+        return {k: v for k, v in stored.items() if k != "runs"}
+    runs, old = record.runs, stored.get("runs") or {}
+    if runs is None or (
+        old.get("result") == runs["result"] and old.get("reason") == runs["reason"]
+    ):
+        return stored
+    return {**stored, "runs": {**runs, "checked_at": now}}
+
+
 def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
     """Write the differences between ``records`` (all of ``source``) and the tables."""
     report = SourceReport(source=source, read=len(records))
+    now = datetime.now(timezone.utc).isoformat()
     with get_db_manager().session_scope() as session:
         latest = (
-            select(DetectionRule, DetectionRuleVersion.fingerprint)
+            select(
+                DetectionRule,
+                DetectionRuleVersion.fingerprint,
+                DetectionRuleVersion.checks,
+            )
             .join(
                 DetectionRuleVersion,
                 and_(
@@ -103,35 +128,45 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
             .where(DetectionRule.source == source)
         )
         existing = {
-            rule.native_key: (rule, fp) for rule, fp in session.execute(latest).all()
+            rule.native_key: (rule, fp, checks)
+            for rule, fp, checks in session.execute(latest).all()
         }
 
         new: List[tuple] = []
         versions: List[dict] = []
+        # (rule id, version, checks) to write once the versions exist.
+        checked: List[tuple] = []
         for record in records:
             fp = fingerprint(record)
             hit = existing.get(record.native_key)
             if hit is None:
                 new.append((record, fp))
                 continue
-            rule, latest_fp = hit
+            rule, latest_fp, stored = hit
             if fp != latest_fp:
                 rule.latest_version += 1
                 versions.append(_version_row(rule.id, rule.latest_version, record, fp))
                 report.versioned += 1
-            if rule.status != "active":
-                rule.status = "active"
-                report.restored += 1
+                stored = {}
             changed = {
                 k: v for k, v in _rule_fields(record).items() if getattr(rule, k) != v
             }
+            if rule.status != record.status:
+                if rule.status == "removed":
+                    report.restored += 1
+                else:
+                    changed["status"] = record.status
+                rule.status = record.status
             for key, value in changed.items():
                 setattr(rule, key, value)
             if changed and fp == latest_fp:
                 report.updated += 1
+            checks = _checks(stored, record, now)
+            if checks != stored:
+                checked.append((rule.id, rule.latest_version, checks))
 
         listed = {r.native_key for r in records}
-        for key, (rule, _) in existing.items():
+        for key, (rule, _, _) in existing.items():
             if key not in listed and rule.status != "removed":
                 rule.status = "removed"
                 report.removed += 1
@@ -145,19 +180,33 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
                     {
                         "source": source,
                         "native_key": r.native_key,
-                        "status": "active",
+                        "status": r.status,
                         "latest_version": 1,
                         **_rule_fields(r),
                     }
                     for r, _ in new
                 ],
             ).all()
-            versions.extend(
-                _version_row(rule_id, 1, r, fp) for rule_id, (r, fp) in zip(ids, new)
-            )
+            for rule_id, (r, fp) in zip(ids, new):
+                versions.append(_version_row(rule_id, 1, r, fp))
+                checks = _checks({}, r, now)
+                if checks:
+                    checked.append((rule_id, 1, checks))
             report.new = len(new)
         if versions:
             session.execute(insert(DetectionRuleVersion), versions)
+        if checked:
+            # checks is the one column of a version ever updated.
+            session.connection().execute(
+                update(DetectionRuleVersion)
+                .where(
+                    DetectionRuleVersion.rule_id == bindparam("rid"),
+                    DetectionRuleVersion.version == bindparam("ver"),
+                )
+                .values(checks=bindparam("new_checks")),
+                [{"rid": i, "ver": v, "new_checks": c} for i, v, c in checked],
+            )
+            report.checked = len(checked)
     return report
 
 
@@ -177,7 +226,7 @@ def _remove_unconfigured(configured: List[str]) -> int:
 
 
 def sync_repos() -> List[SourceReport]:
-    """Read every configured repo and sync it. One failing source skips only itself."""
+    """Read every configured repo and Kibana, and sync each. One failing source skips only itself."""
     from core.detections.detection_rules_service import DetectionRulesService
 
     with _sync_lock():
@@ -185,6 +234,7 @@ def sync_repos() -> List[SourceReport]:
         sources = service.list_sources()
         reports = [_sync_one(service, source) for source in sources]
         removed = _remove_unconfigured([readers.source_name(s) for s in sources])
+        reports.append(_sync_elastic())
     if removed:
         logger.info(
             "detection rules: %d rules of unconfigured sources removed", removed
@@ -204,5 +254,36 @@ def _sync_one(service: Any, source: Dict[str, Any]) -> SourceReport:
     except Exception as exc:  # noqa: BLE001 -- the other sources still sync
         logger.warning("detection rules: syncing %s failed: %s", name, exc)
         return SourceReport(source=name, error=f"{type(exc).__name__}: {exc}")
+    logger.info("detection rules: %s", asdict(report))
+    return report
+
+
+def _sync_elastic() -> SourceReport:
+    """Kibana's detection engine, with the elastic-siem integration's credentials."""
+    from core.integrations._base.config import missing, resolve
+    from core.integrations.elastic.descriptor import ELASTIC
+
+    config = resolve(ELASTIC)
+    if missing(config, "elasticsearch_url"):
+        with get_db_manager().session_scope() as session:
+            result = session.execute(
+                update(DetectionRule)
+                .where(
+                    DetectionRule.source == kibana.SOURCE,
+                    DetectionRule.status != "removed",
+                )
+                .values(status="removed")
+            )
+            removed = int(getattr(result, "rowcount", 0) or 0)
+        return SourceReport(
+            source=kibana.SOURCE, removed=removed, skipped="not configured"
+        )
+    if missing(config, "kibana_url"):
+        return SourceReport(source=kibana.SOURCE, skipped="no kibana_url")
+    try:
+        report = sync_source(kibana.SOURCE, kibana.read_kibana(config))
+    except Exception as exc:  # noqa: BLE001 -- unreachable is skipped, never removed
+        logger.warning("detection rules: syncing elastic failed: %s", exc)
+        return SourceReport(source=kibana.SOURCE, error=f"{type(exc).__name__}: {exc}")
     logger.info("detection rules: %s", asdict(report))
     return report
