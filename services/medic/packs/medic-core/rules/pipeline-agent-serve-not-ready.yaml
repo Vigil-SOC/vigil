@@ -1,0 +1,27 @@
+# medic-core rule (F7c-agents). The twin of pipeline.agent-worker-not-ready for
+# agent-serve: its /readyz is true only while a SELECT 1 on its own Postgres pool
+# succeeds (services/agent/serve.ts serveReady), so false means the chat and run
+# projection surface the backend calls is up but can't reach its ledger, or is not
+# answering at all (refused and timeout read false too). Which of those can't be
+# told from /readyz alone, so: lane 3. Helm reaches serve through its Service, one
+# series with no pod label, so no grouping. Silent where
+# VIGIL_MEDIC_AGENT_SERVE_ADDR isn't set (no agent_serve_readyz series).
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.agent-serve-not-ready
+title: The agent-serve service is running but not ready
+revision: 1
+fault: {class: pipeline, mode: P-1, causes: [P-1]}
+lane: 3
+detection: event
+signals:
+  ready: {sample: {signal: agent_serve_readyz, key: ready}}
+when: {fn: latest, signal: ready, op: "==", value: false}
+for: 2m
+keep_firing_for: 5m
+advice:
+  summary: The agent-serve service has reported not ready for 2 minutes, so chat and run status reads that go through it fail.
+  fix: >-
+    Report it as a Vigil defect with this incident. Check that agent-serve can
+    reach Postgres (its readiness is one query against it) and read its log for
+    the error. Record what you did.

@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from core.auth.permissions import permission_gate
 from core.routing import Auth, RouterMeta
-from core.storage.database_data_service import DatabaseDataService
+from core.storage.database_data_service import get_database_data_service
 
 router = APIRouter()
 router.dependencies.append(permission_gate("findings.read"))
@@ -93,7 +93,7 @@ async def get_timeline_range(
     Returns:
         Timeline events in the specified range
     """
-    data_service = DatabaseDataService()
+    data_service = get_database_data_service()
 
     start_time = _aware(start) if start else None
     end_time = _aware(end) if end else None

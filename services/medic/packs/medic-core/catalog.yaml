@@ -29,3 +29,44 @@ entries:
   - {logger: services.daemon.processor, template: 'Database service initialized'}
   # services/daemon/processor.py:628
   - {logger: services.daemon.processor, template: 'Dropped finding %s: database store failed'}
+  # --- llm (F7b) ---
+  # Outage helper (core/llm/outage.py): the reminder is "<literal> (still failing, %d
+  # failures)", the recovery "<literal>; recovered after %d failures", and the first
+  # healthy success logs the bare healthy literal.
+  # services/daemon/processor.py:781-790, 831-837, 852-865
+  - {logger: services.daemon.processor, template: 'Failed to connect LLM gateway, AI triage is skipped until it connects: %s'}
+  - {logger: services.daemon.processor, template: 'Failed to connect LLM gateway, AI triage is skipped until it connects: %s (still failing, %d failures)'}
+  - {logger: services.daemon.processor, template: 'LLM gateway connected for AI triage'}
+  - {logger: services.daemon.processor, template: 'LLM gateway connected for AI triage; recovered after %d failures'}
+  - {logger: services.daemon.processor, template: 'No LLM provider configured, AI triage is skipped until one is set up'}
+  - {logger: services.daemon.processor, template: 'No LLM provider configured, AI triage is skipped until one is set up (still failing, %d failures)'}
+  - {logger: services.daemon.processor, template: 'LLM provider configured'}
+  - {logger: services.daemon.processor, template: 'LLM provider configured; recovered after %d failures'}
+  - {logger: services.daemon.processor, template: 'LLM queue unreachable, AI triage is failing: %s'}
+  - {logger: services.daemon.processor, template: 'LLM queue unreachable, AI triage is failing: %s (still failing, %d failures)'}
+  - {logger: services.daemon.processor, template: 'LLM queue reachable, AI triage resumed'}
+  - {logger: services.daemon.processor, template: 'LLM queue reachable, AI triage resumed; recovered after %d failures'}
+  # services/api/main.py:326; core/llm/gateway/gateway.py:154
+  - {logger: services.api.main, template: 'LLM Gateway not available, LLM calls will fail until Redis and the ARQ worker are up: %s'}
+  - {logger: core.llm.gateway.gateway, template: 'LLMGateway initialized (connected to Redis)'}
+  # core/llm/bifrost/mirror.py:290-297
+  - {logger: core.llm.bifrost.mirror, template: 'Mirror reconcile skipped — Bifrost unreachable: %s'}
+  - {logger: core.llm.bifrost.mirror, template: 'Mirror reconcile skipped — Bifrost unreachable: %s (still failing, %d failures)'}
+  - {logger: core.llm.bifrost.mirror, template: 'Bifrost reachable for mirror reconcile'}
+  - {logger: core.llm.bifrost.mirror, template: 'Bifrost reachable for mirror reconcile; recovered after %d failures'}
+  # core/llm/bifrost/admin.py:180,238
+  - {logger: core.llm.bifrost.admin, template: 'Bifrost: provider %s key stored but reports status=%s (%s)'}
+  - {logger: core.llm.bifrost.admin, template: 'Bifrost: %s %s returned %s: %s'}
+  # services/worker/jobs.py:87,107-111,126,162,183
+  - {logger: services.worker.jobs, template: 'LLM budget spent (%s tier); AI calls are refused until it resets'}
+  - {logger: services.worker.jobs, template: 'LLM budget spent (%s tier); AI calls are refused until it resets (still failing, %d failures)'}
+  - {logger: services.worker.jobs, template: 'LLM budget available (%s tier)'}
+  - {logger: services.worker.jobs, template: 'LLM budget available (%s tier); recovered after %d failures'}
+  - {logger: services.worker.jobs, template: 'llm_call failed (returning error dict): %s'}
+  - {logger: services.worker.jobs, template: 'llm_call failed (returning error dict): Empty response (model=%s; ClaudeService returned None - is an API key configured?)'}
+  - {logger: services.worker.jobs, template: 'Provider %s not found; falling back to ClaudeService'}
+  # core/llm/target.py:71,82
+  - {logger: core.llm.target, template: "Provider %s cannot serve its own default_model %s — sending it anyway; the gateway's error is the only signal left"}
+  - {logger: core.llm.target, template: 'Provider %s cannot serve %s — falling back to %s'}
+  # core/llm/gateway_retry.py:108
+  - {logger: core.llm.gateway_retry, template: 'gateway retries exhausted: last status %s after %d attempts'}

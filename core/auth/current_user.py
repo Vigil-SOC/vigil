@@ -10,9 +10,10 @@ are unaffected.
 """
 
 import logging
-from typing import Optional
+from typing import Callable, Optional
 
 from fastapi import Header, HTTPException, Request, status
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from core.auth.auth_cookies import ACCESS_COOKIE_NAME
@@ -22,8 +23,8 @@ from core.auth.session_cutoff import issued_before_cutoff
 from core.auth.token_blacklist import is_token_revoked
 from core.cases.agent_closure import clear_http_actor, note_http_actor
 from core.config import get_settings
-from core.routing import UnitOfWorkSession
 from core.storage.models import User
+from core.storage.unit_of_work import unit_of_work
 
 logger = logging.getLogger(__name__)
 
@@ -88,11 +89,24 @@ def _get_dev_user(session: Session) -> User:
     return _dev_user
 
 
+def _detached(lookup: Callable[[Session], Optional[User]]) -> Optional[User]:
+    """Run ``lookup`` in a short session and detach its row.
+
+    Holding the request's session for the lookup kept its connection idle in
+    transaction for the whole handler (#3660). Callers run this in a worker
+    thread: a checkout waiting on a full pool must not block the event loop.
+    """
+    with unit_of_work() as db:
+        user = lookup(db)
+        # The transient dev fallback was never in the session.
+        if user is not None and user in db:
+            db.expunge(user)
+        return user
+
+
 async def get_current_user(
     request: Request,
     authorization: Optional[str] = Header(None),
-    *,
-    session: UnitOfWorkSession,
 ) -> User:
     """
     Resolve the authenticated user from either the access_token HttpOnly
@@ -105,10 +119,10 @@ async def get_current_user(
     Args:
         request: FastAPI request (used to read the access_token cookie).
         authorization: Authorization header (Bearer token fallback).
-        session: Database session.
 
     Returns:
-        Current User object.
+        Current User object, detached: the lookup's session closes before the
+        endpoint runs, so a writer must load its own copy into its session.
 
     Raises:
         HTTPException: If no token is present, validation fails, or the user
@@ -122,7 +136,7 @@ async def get_current_user(
     # DEV MODE: Bypass authentication and return mock user
     if DEV_MODE:
         logger.debug("DEV_MODE: Bypassing authentication")
-        return _get_dev_user(session)
+        return await run_in_threadpool(_detached, _get_dev_user)
 
     cookie = request.cookies.get(ACCESS_COOKIE_NAME)
     # The cookie wins when a bearer is also present.
@@ -197,7 +211,10 @@ async def get_current_user(
         )
 
     # Get user from database
-    user = session.query(User).filter(User.user_id == payload["user_id"]).first()
+    user = await run_in_threadpool(
+        _detached,
+        lambda db: db.query(User).filter(User.user_id == payload["user_id"]).first(),
+    )
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

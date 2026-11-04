@@ -56,6 +56,8 @@ class Problem:
     status: int
     code: str
     field: str | None = None
+    reason: str | None = None  # 409 not_rateable only
+    pack_code: str | None = None  # 409 pack_conflict, 422 pack_refused: a P-/S- code
 
 
 class _Bad(Exception):

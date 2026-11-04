@@ -773,59 +773,53 @@ class Orchestrator:
         """Main orchestrator entry point, called by SOCDaemon."""
         self._shutdown_event = shutdown_event
 
-        if not self._enabled:
-            logger.info(
-                "Orchestrator loaded (disabled) - waiting for enable via UI/API"
-            )
+        # The loops run whether AutoOps is on or off; only a launch reads the switch.
+        loops = {
+            "_intake_loop": self._intake_loop,
+            "_supervision_loop": self._supervision_loop,
+            "_distil_loop": self._distil_loop,
+        }
+        tasks = []
+        for name, loop in loops.items():
+            task = asyncio.create_task(loop(shutdown_event))
+            if self.watch_loop:
+                self.watch_loop(name, task, shutdown_event)
+            tasks.append(task)
 
+        was_enabled: Optional[bool] = None
         while not shutdown_event.is_set():
             self._sync_enabled_from_db()
 
-            if not self._enabled:
-                await self._sleep(shutdown_event, 5)
-                continue
+            if self._enabled != was_enabled:
+                was_enabled = self._enabled
+                if self._enabled:
+                    await self._on_enabled()
+                else:
+                    logger.info(
+                        "Orchestrator disabled - bookkeeping only, no launches until re-enabled"
+                    )
 
-            logger.info("Orchestrator starting...")
-            logger.info(f"  Max concurrent agents: {self.config.max_concurrent_agents}")
-            logger.info(
-                f"  Max cost/investigation: ${self.config.max_cost_per_investigation}"
-            )
-            logger.info(f"  Dry run: {self.config.dry_run}")
+            await self._sleep(shutdown_event, 5)
 
-            try:
-                await self._complete_legacy_review_rows()
-            except Exception as e:
-                logger.error(
-                    "Completing legacy review rows failed: %s", e, exc_info=True
-                )
-
-            loops = {
-                "_intake_loop": self._intake_loop,
-                "_supervision_loop": self._supervision_loop,
-                "_distil_loop": self._distil_loop,
-            }
-            tasks = []
-            for name, loop in loops.items():
-                task = asyncio.create_task(loop(shutdown_event))
-                if self.watch_loop:
-                    self.watch_loop(name, task, shutdown_event)
-                tasks.append(task)
-
-            while not shutdown_event.is_set() and self._enabled:
-                self._sync_enabled_from_db()
-                await self._sleep(shutdown_event, 5)
-
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-            if not shutdown_event.is_set():
-                logger.info(
-                    "Orchestrator disabled - loops stopped, waiting for re-enable"
-                )
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
         self._abandon_in_flight()
         logger.info("Orchestrator shutdown complete")
+
+    async def _on_enabled(self) -> None:
+        logger.info("Orchestrator starting...")
+        logger.info(f"  Max concurrent agents: {self.config.max_concurrent_agents}")
+        logger.info(
+            f"  Max cost/investigation: ${self.config.max_cost_per_investigation}"
+        )
+        logger.info(f"  Dry run: {self.config.dry_run}")
+
+        try:
+            await self._complete_legacy_review_rows()
+        except Exception as e:
+            logger.error("Completing legacy review rows failed: %s", e, exc_info=True)
 
     def _sync_enabled_from_db(self):
         """Read the enabled state from the single ``orchestrator.settings``
@@ -858,12 +852,9 @@ class Orchestrator:
         """Drain queued trigger rows and create new investigations."""
         while not shutdown_event.is_set():
             try:
-                if not self._enabled:
-                    await self._sleep(shutdown_event, 10)
-                    continue
-
                 await self._drain_intake(shutdown_event)
-                await self._pickup_assigned_investigations(shutdown_event)
+                if self._enabled:
+                    await self._pickup_assigned_investigations(shutdown_event)
 
             except asyncio.CancelledError:
                 break
@@ -873,7 +864,7 @@ class Orchestrator:
             await self._sleep(shutdown_event, self.config.loop_interval)
 
     async def _drain_intake(self, shutdown_event: asyncio.Event):
-        """Merge and expire every queued row, then launch in rank order while a slot is free."""
+        """Merge and expire every queued row, then, with AutoOps on, launch in rank order while a slot is free."""
         now = utcnow()
         launchable: List[Dict] = []
         for row in self._queued_intake_triggers():
@@ -891,10 +882,15 @@ class Orchestrator:
         )
         # Rows stay queued while the hour is at the cap; they launch once old
         # spend rolls out of the window.
-        if not self._hourly_budget_exhausted():
+        if self._enabled and not self._hourly_budget_exhausted():
             schedule_runs = self._schedule_runs_in_flight()
             for row in launchable:
-                if self._running() >= self.config.max_concurrent_agents:
+                # Read fresh: turning AutoOps off stops the next launch, not the next tick.
+                self._sync_enabled_from_db()
+                if (
+                    not self._enabled
+                    or self._running() >= self.config.max_concurrent_agents
+                ):
                     break
                 is_schedule = row.get("kind") == "schedule"
                 # Skipped, not a break: rows behind it may be detections.
@@ -957,7 +953,11 @@ class Orchestrator:
     def _resolve_intake_row(self, row: Dict, now: datetime) -> Optional[Dict]:
         """Expire or merge a queued row. Capacity does not wait on this pass."""
         if intake_age_seconds(row, now) >= self.config.intake_ttl_seconds:
-            self._decide_trigger(row.get("id"), state="expired", reason="ttl_expired")
+            self._decide_trigger(
+                row.get("id"),
+                state="expired",
+                reason="ttl_expired" if self._enabled else "ttl_expired_autoops_off",
+            )
             return None
         if row.get("kind") == "detection":
             finding = self._hydrate_detection_finding(row)
@@ -1337,7 +1337,12 @@ class Orchestrator:
             inv_id = inv.get("investigation_id")
             if not inv_id:
                 continue
-            if self._running() >= self.config.max_concurrent_agents:
+            # Read fresh: the loop outlives the switch, so off stops the next enqueue.
+            self._sync_enabled_from_db()
+            if (
+                not self._enabled
+                or self._running() >= self.config.max_concurrent_agents
+            ):
                 return
 
             self._update_investigation_status(inv_id, "assigned")
@@ -1351,10 +1356,6 @@ class Orchestrator:
         """Monitor running agents for stuck/runaway conditions."""
         while not shutdown_event.is_set():
             try:
-                if not self._enabled:
-                    await self._sleep(shutdown_event, 10)
-                    continue
-
                 # Before anything reads a row: the row is a copy of the ledger,
                 # and a supervisor deciding on a stale copy decides on nothing.
                 # Paused rows too: a resume or the park TTL's terminal reaches
@@ -1931,10 +1932,6 @@ class Orchestrator:
 
         while not shutdown_event.is_set():
             try:
-                if not self._enabled:
-                    await self._sleep(shutdown_event, 10)
-                    continue
-
                 # Both on this tick rather than in a loop of its own: neither is
                 # supervising anything, both poll for work already finished, and
                 # a second loop would be a second interval to keep in step.

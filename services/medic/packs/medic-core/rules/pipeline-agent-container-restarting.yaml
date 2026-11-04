@@ -1,0 +1,34 @@
+# medic-core rule (F7c-agents). Docker restarted an agent-worker or agent-serve
+# container on its own more than once in 5 minutes: a crash loop, usually from a
+# bad environment value, a missing dependency or an out-of-memory kill. The cause
+# isn't in the container's state, so lane 3.
+# RestartCount counts only Docker's own restarts (not docker restart or compose
+# up). The containers sensor gives each start its own counter epoch, so the engine
+# adds the whole count at each restart: a container with no history needs two
+# restarts to pass, one that restarted before needs only one.
+# Compose only; Helm reads pods (pipeline.agent-pod-restarting).
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.agent-container-restarting
+title: An agent container keeps restarting
+revision: 1
+fault: {class: pipeline, mode: P-1, causes: [P-1]}
+lane: 3
+detection: event
+shapes: [compose]
+signals:
+  worker: {sample: {signal: containers, key: restart_count, labels: {service: agent-worker}}}
+  serve: {sample: {signal: containers, key: restart_count, labels: {service: agent-serve}}}
+when:
+  any:
+    - {fn: increase, signal: worker, window: 5m, op: ">", value: 1}
+    - {fn: increase, signal: serve, window: 5m, op: ">", value: 1}
+for: 1m
+keep_firing_for: 5m
+advice:
+  summary: The agent-worker or agent-serve container was restarted by Docker more than once in the last 5 minutes, so runs or chat reads keep being interrupted.
+  fix: >-
+    Read the log of the container that keeps restarting (docker compose logs
+    agent-worker agent-serve), the last lines before each restart name the error,
+    and check that Redis and Postgres are up and its environment values are set.
+    Report it as a Vigil defect with this incident and the log. Record what you did.

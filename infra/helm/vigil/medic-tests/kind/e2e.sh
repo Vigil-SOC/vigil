@@ -162,7 +162,10 @@ if [[ $MODE == backend ]]; then
     --set secrets.vigilAppPassword="$(head -c 18 /dev/urandom | base64 | tr -dc A-Za-z0-9)"
     --set secrets.jwtSecretKey="$(head -c 32 /dev/urandom | base64 | tr -dc A-Za-z0-9)")
 else
+  # No backend runs here, so DEV_MODE only reaches Medic: it loads the medic-core
+  # source tree, as no signed pack ships in the image yet (#2025).
   vigil_set=(--set backend.replicaCount=0 --set upgrade.enabled=false
+    --set config.DEV_MODE=true
     --set postgresql.enabled=false --set postgresql.external.host=none
     --set redis.enabled=false --set redis.external.url=redis://none:6379/0
     --set secrets.postgresPassword=unused --set secrets.vigilAppPassword=unused-app)

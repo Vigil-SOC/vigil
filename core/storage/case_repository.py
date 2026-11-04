@@ -23,7 +23,7 @@ from sqlalchemy import (
     select,
     union_all,
 )
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from core.storage.models import (
     Case,
@@ -42,6 +42,12 @@ from core.storage.models.workflow import (
     RUN_LIVE_STATE,
 )
 from core.time import utcnow
+
+# CaseSchema reads only ``finding_ids``: load the links, not each finding's
+# MITRE prediction rows.
+CASE_FINDING_IDS_ONLY = selectinload(Case.findings).noload(
+    Finding.mitre_prediction_rows
+)
 
 # status / priority / assignee accept either a single value or a list.
 Filterable = Optional[Union[str, Sequence[str]]]
@@ -490,7 +496,12 @@ class CaseRepository:
         """Return matching cases (no total count)."""
         stmt = self._build(**filters)
         order_column = Case.created_at if order_by == "created_at" else Case.updated_at
-        stmt = stmt.order_by(order_column.desc()).limit(limit).offset(offset)
+        stmt = (
+            stmt.options(CASE_FINDING_IDS_ONLY)
+            .order_by(order_column.desc())
+            .limit(limit)
+            .offset(offset)
+        )
         return list(self.session.execute(stmt).scalars().all())
 
     def search(

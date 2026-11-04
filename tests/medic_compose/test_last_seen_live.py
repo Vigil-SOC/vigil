@@ -187,7 +187,7 @@ def test_enabled_reads_running_through_the_gateway(stack, running) -> None:
         timeout=180,
     )
     assert re.fullmatch(r"mi_[0-9a-f]{16}", snap["instance_id"])
-    assert snap["api_version"] == "1.1" and snap["cycle"] >= 0
+    assert snap["api_version"] == "1.3" and snap["cycle"] >= 0
     # S9-1: Medic listens only on medic-private, the gateway's network, never on
     # medic-net beside the agents (K1 §6 G3).
     medic_log = stack.compose("logs", "--no-color", "medic", medic=True).stdout

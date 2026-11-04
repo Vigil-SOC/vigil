@@ -32,10 +32,16 @@ class MCPRegistry:
             name: Server name (e.g., 'security-detections', 'vigil')
             tools: List of tool definitions (name, description, input_schema)
         """
+        already_registered = self._servers.get(name) is True and (
+            not tools or self._tools_cache.get(name) == tools
+        )
         self._servers[name] = True
         if tools:
             self._tools_cache[name] = tools
-        logger.info(f"Registered MCP server: {name} ({len(tools or [])} tools)")
+        if not already_registered:
+            logger.info(f"Registered MCP server: {name} ({len(tools or [])} tools)")
+        else:
+            logger.debug(f"Refreshed MCP server: {name} ({len(tools or [])} tools)")
 
     def get_active_servers(self) -> List[str]:
         """Get names of all active servers."""

@@ -1,0 +1,33 @@
+# medic-core rule (F7c-agents). The Helm twin of pipeline.agent-container-restarting:
+# an agent-worker or agent-serve pod's containers restarted more than once in 5
+# minutes (restartCount, for the pod's life: the sensor's epoch is the pod UID, so
+# the increase is exact). The cause isn't in the pod's state, so lane 3.
+# One series per pod (label pod): the rule groups by it, because without that several
+# series are ambiguous_series and it would never fire. wiring.py groups only
+# pipeline.agent-worker-not-ready at load, so the group is declared here.
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.agent-pod-restarting
+title: An agent pod keeps restarting
+revision: 1
+fault: {class: pipeline, mode: P-1, causes: [P-1]}
+lane: 3
+detection: event
+shapes: [helm]
+signals:
+  worker: {sample: {signal: pods, key: restart_count, labels: {service: agent-worker}, by: [pod]}}
+  serve: {sample: {signal: pods, key: restart_count, labels: {service: agent-serve}, by: [pod]}}
+group_by: [pod]
+when:
+  any:
+    - {fn: increase, signal: worker, window: 5m, op: ">", value: 1}
+    - {fn: increase, signal: serve, window: 5m, op: ">", value: 1}
+for: 1m
+keep_firing_for: 5m
+advice:
+  summary: An agent-worker or agent-serve pod restarted more than once in the last 5 minutes, so runs or chat reads keep being interrupted.
+  fix: >-
+    Read the previous log of the pod that keeps restarting (kubectl logs --previous
+    on it) and its events (kubectl describe pod); they name the error or an
+    out-of-memory kill. Check that Redis and Postgres are reachable. Report it as
+    a Vigil defect with this incident and the log. Record what you did.

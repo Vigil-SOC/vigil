@@ -11,7 +11,11 @@ import re
 from dataclasses import dataclass, field
 
 MAX_TARGET = 2048
-MAX_POST_BODY = 4096  # X2: feedback bodies are at most 4 KB
+MAX_POST_BODY = 4096  # X2: feedback bodies and the body-less pack POSTs
+MAX_IMPORT_BODY = 4 * 1024 * 1024 + 64 * 1024  # a signed pack: 4 MB + envelope
+# A pack write waits for Medic's main loop (up to its 20 s snapshot age), so it
+# outlasts the default upstream timeout.
+PACK_WRITE_TIMEOUT = 25.0
 # No '%', '+', ';', '#', '\\', '.', ' ' or non-ASCII in a path; no '%', '+', ';',
 # '/', '?' in a query. '.' is allowed in a query only for timestamps.
 PATH_RE = re.compile(r"/[A-Za-z0-9_\-/]*")
@@ -30,6 +34,8 @@ class Route:
     segs: dict = field(default_factory=dict)  # path parameter -> regex
     required: tuple = ()  # query names that must be present
     auth: bool = True  # outbound: send the gateway's Viewer token
+    max_body: int = MAX_POST_BODY  # POST only: the cap on Content-Length
+    timeout: float | None = None  # upstream total, if not the gateway's default
 
     def match_path(self, path: str) -> bool:
         want, got = self.path.split("/"), path.split("/")
@@ -123,6 +129,16 @@ INBOUND = [
     Route("GET", "/v1/decisions/{seq}", segs={"seq": SEQ}),
     Route("GET", "/v1/sensors"),
     Route("GET", "/v1/pack"),
+    Route(
+        "POST",
+        "/v1/pack/import",
+        {"override": BOOL},
+        max_body=MAX_IMPORT_BODY,
+        timeout=PACK_WRITE_TIMEOUT,
+    ),
+    Route("POST", "/v1/pack/revert", timeout=PACK_WRITE_TIMEOUT),
+    Route("POST", "/v1/pack/switch-to-bundled", timeout=PACK_WRITE_TIMEOUT),
+    Route("POST", "/v1/pack/acknowledge", timeout=PACK_WRITE_TIMEOUT),
 ]
 
 
@@ -171,7 +187,7 @@ def check_target(method: str, target: str, routes: list[Route]) -> tuple[Route, 
     return route, path + (("?" + query) if sep else "")
 
 
-def check_headers(method: str, headers) -> None:
+def check_headers(method: str, headers, route: Route) -> None:
     """Framing and override headers are refused outright: stripping hides smuggling."""
     if len(headers.get_all("Host") or []) > 1:
         raise Reject(400, "duplicate_host")
@@ -187,7 +203,7 @@ def check_headers(method: str, headers) -> None:
     if method == "POST":
         if len(cl) != 1 or not re.fullmatch("[0-9]{1,9}", cl[0]):
             raise Reject(400, "bad_content_length")
-        if int(cl[0]) > MAX_POST_BODY:
+        if int(cl[0]) > route.max_body:
             raise Reject(413, "body_too_large")
         if (headers.get("Content-Type") or "").split(";")[
             0

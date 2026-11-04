@@ -22,8 +22,13 @@ it its lane (the rule's, or lane 3 when a lane-1 rule fails the gate), and the s
 `medic.db`. Each cycle then saves
 the engine state and writes the heartbeat; a loop that stops cycling for 180 s
 is ended by the watchdog. On start, if the last heartbeat shows Medic was
-stalled or off, one `gap` record goes into the chain first. Rules and
-`suppression.yaml` are the dev-mode set in `rules/dev/` (no pack loader yet, F6).
+stalled or off, one `gap` record goes into the chain first. Rules,
+suppression and the log catalogue come from one rule pack, chosen at start:
+
+- **Dev mode** (`DEV_MODE` on): the unsigned `medic-core` source tree in `packs/medic-core/`. The pack lifecycle is not used and `/v1/status` shows `pack: null`.
+- **Otherwise**: the verified active pack in `<data dir>/packs/`. At start the lifecycle checks the image's trust root (`packs/bundled/trust-root.dsse.json`), falls back from a revoked pack, and seeds or upgrades from the image's bundled pack (`packs/bundled/medic-core.json`). Each pack event (`imported`, `rule_skipped`) goes into the decision log. `/v1/status.pack` describes the active pack.
+- **No verified pack** (and dev mode off): Medic logs one WARNING and starts with no rules. The built-in `watcher.*` rules still run, `check` stays healthy, and `pack` is null.
+
 `check` fails on any heartbeat state but `running` or `degraded` (C5 K-d), each
 with its own reason (`stopped`, `stalled`, `crash-looping`, unknown).
 
@@ -32,6 +37,7 @@ with its own reason (`stopped`, `stalled`, `crash-looping`, unknown).
 | `VIGIL_MEDIC_ENABLED` | off |
 | `VIGIL_MEDIC_DATA_DIR` | `/var/lib/vigil-medic` (macOS: `/Library/Application Support/vigil-medic`) |
 | `VIGIL_MEDIC_STORE_MAX_MB` | `1024`. The decision store's size cap in MiB (whole number, ≥ 1). At the cap, or below the free-space floor, Medic stops recording and says so on `/v1/status` and the heartbeat |
+| `VIGIL_MEDIC_TRACE` | Unset: trace capture off. A trace-id (`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`) writes every redacted observation the engine receives to `<data dir>/traces/<trace-id>/` (trace format v1, `contracts/trace_check.py`). An invalid id or an existing directory means no capture and one error log. Capture stops for the run at 256 MiB or when the store's free-space floor trips (`/v1/status` `trace.state` = `stopped_at_cap`); detection continues. A killed capture is finalised as `interrupted` at the next start. Replay one with `python -m services.medic.replay <trace-dir> --store <empty dir>` (validates, then runs the engine on the trace's own clock into a fresh store; prints the head to use as `replay_head`) |
 | `VIGIL_MEDIC_INSTALL_SHAPE` | `compose` (`start_sh`, `compose` or `helm`) |
 | `VIGIL_MEDIC_AGENT_WORKER_ADDR` | Compose: `agent-worker:6990`; host-native: `127.0.0.1:6990`. Helm ignores it and reads each agent-worker pod. `host:port` only |
 | `VIGIL_MEDIC_AGENT_SERVE_ADDR` | Compose: `agent-serve:6989`. Helm and host-native set it (the chart, `medic-loop`); unset registers no sensor. `host:port` only |
@@ -45,8 +51,9 @@ with its own reason (`stopped`, `stalled`, `crash-looping`, unknown).
 publishes (never older than one 15 s tick; older than two and it answers `503
 busy`). Every request needs `X-Medic-Key`, compared in constant time with the
 key file, which is re-read per request; anything else is `401`, then `404` for
-any other path and `405` for any other method, as RFC 9457 problem JSON. The
-other X2 operations are G3's. A listener that can't start (no key, port taken)
+any other path and `405` for any other method, as RFC 9457 problem JSON. `POST /v1/incidents/{id}/feedback` is the one write: it appends through the
+main loop's writer, with `admin` from `X-Medic-Admin`. The other X2
+operations are G3's. A listener that can't start (no key, port taken)
 is logged once and retried every minute; it never stops Medic or fails `check`.
 
 On Helm, `run` first connects to the control (retried for up to a minute while
