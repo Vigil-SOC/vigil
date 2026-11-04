@@ -301,6 +301,25 @@
 .state-pill.needs { color: var(--poor); background: var(--poor-bg); }
 .state-pill.needs .state-dot { animation: kit-blink 1.6s infinite; }
 
+/* A detection rule's check result: fail is a risk (severity critical), the rest neutral. */
+.check-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: var(--tx2);
+  background: var(--bg3);
+}
+.check-pill .state-dot { width: 7px; height: 7px; border-radius: 999px; background: currentColor; }
+.check-pill.pass { color: var(--good); background: var(--good-bg); }
+.check-pill.fail { color: var(--sev-crit); background: color-mix(in srgb, var(--sev-crit) 12%, transparent); }
+.check-pill.unchecked { color: var(--tx3); background: transparent; box-shadow: inset 0 0 0 1px var(--ln0); }
+
 .sev-mark {
   display: inline-flex;
   align-items: center;

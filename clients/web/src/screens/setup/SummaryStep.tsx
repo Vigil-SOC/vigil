@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { aiConfigApi, autonomyApi, configApi, llmProviderApi, workflowApi } from '../../services/api'
+import { anyActs } from '../../shared/autonomy'
 import { getAllIntegrations } from '../../config/integrations'
 import { matchesProfile, type InvestigationProfiles } from '../settings/useSettings'
 
@@ -64,9 +65,11 @@ export default function SummaryStep({ onChange }: { onChange: (target: SummaryTa
     })
     read('autonomy', async () => {
       const { data } = await autonomyApi.get()
-      return data.act_reversible && !data.stopped && !data.environment_locked
-        ? 'Act · reversible changes on its own'
-        : 'Assist · asks before changes'
+      // the header chip's rule: either act flag, or any workflow, means Act
+      if (!anyActs(data)) return 'Assist · asks before changes'
+      return data.act_irreversible
+        ? 'Act · reversible and irreversible changes on its own'
+        : 'Act · reversible changes on its own'
     })
     read('limits', async () => {
       const { data } = await orchestrator

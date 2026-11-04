@@ -23,10 +23,10 @@ export function actsByDefault(ceiling: Ceiling | null | undefined, id: string | 
   return entry ? entry.tier === 'act' : ceiling.act_reversible
 }
 
-/** The header chip's Act: the fleet, or any one workflow, may act and nothing is stopped or locked. */
+/** The header chip's Act: the fleet (either act flag), or any one workflow, may act and nothing is stopped or locked. */
 export function anyActs(ceiling: Ceiling): boolean {
   if (ceiling.stopped || ceiling.environment_locked) return false
-  return ceiling.act_reversible || Object.values(ceiling.workflows).some((e) => (e as Partial<WorkflowTier>).tier === 'act')
+  return ceiling.act_reversible || ceiling.act_irreversible || Object.values(ceiling.workflows).some((e) => (e as Partial<WorkflowTier>).tier === 'act')
 }
 
 /** "N reviews · X% agree" for a workflow with scored closures; null when nothing was scored. */

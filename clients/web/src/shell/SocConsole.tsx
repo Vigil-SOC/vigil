@@ -61,6 +61,7 @@ const TILE_LABELS: Record<string, string> = { triage: 'Triage', metrics: 'Metric
 
 const AUTONOMY_ACT = 'Act · reversible changes on its own'
 const AUTONOMY_ASSIST = 'Assist · asks before changes'
+const AUTONOMY_IRREVERSIBLE = 'Actions that cannot be undone also run on their own.'
 
 const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Element> = {
   overview: OverviewScreen,
@@ -131,6 +132,8 @@ function SocConsoleInner() {
   const [dockFull, setDockFull] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const [assist, setAssist] = useState<boolean | null>(null)
+  // the fleet's act_irreversible, shown in the chip's title while Act is shown
+  const [irreversible, setIrreversible] = useState(false)
   const [status, setStatus] = useState<StatusFold | null>(null)
   const [health, setHealth] = useState<HealthRead | null>(null)
   const bypassed = authBypassed(health)
@@ -360,7 +363,10 @@ function SocConsoleInner() {
         .get()
         .then(({ data }) => {
           // Act when the fleet or any workflow may act, and nothing is stopped or env-locked
-          if (live) setAssist(!anyActs(data))
+          if (!live) return
+          const acts = anyActs(data)
+          setAssist(!acts)
+          setIrreversible(acts && data.act_irreversible)
         })
         .catch(() => {})
     read()
@@ -607,15 +613,20 @@ function SocConsoleInner() {
                   type="button"
                   className="vg-autonomy-link"
                   aria-label={`Autonomy · ${assist ? AUTONOMY_ASSIST : AUTONOMY_ACT}`}
+                  title={!assist && irreversible ? AUTONOMY_IRREVERSIBLE : undefined}
                   onClick={() => goSettings('autoinvestigate')}
                 >
                   <span className="vg-autonomy-label">Autonomy</span>
-                  {assist ? AUTONOMY_ASSIST : AUTONOMY_ACT}
+                  {/* a phone keeps only the mode; the full sentence stays in aria-label */}
+                  <span>
+                    {assist ? 'Assist' : 'Act'}
+                    <span className="vg-autonomy-detail">{(assist ? AUTONOMY_ASSIST : AUTONOMY_ACT).replace(/^\S+/, '')}</span>
+                  </span>
                 </button>
                 <InfoTip
                   label="How autonomy is derived"
                   source="The autonomy ceiling: whether tools that change something may act on their own."
-                  calculation="Act when they may for the whole fleet or for any one investigation workflow; Assist when every one asks first, while autonomy is stopped, or while the environment locks Act off."
+                  calculation="Act when changes, reversible or not, may run on their own for the whole fleet or for any one investigation workflow; Assist when every one asks first, while autonomy is stopped, or while the environment locks Act off."
                   limit="Set in Settings › Limits & autonomy."
                 />
               </div>

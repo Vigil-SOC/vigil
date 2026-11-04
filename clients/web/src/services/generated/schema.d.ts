@@ -3184,6 +3184,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/detection-rules/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Health
+         * @description Whether each SIEM's rules can fire: per-tool check tallies, Blind spots,
+         *     the rules failing or unknown on a check (fails first, capped at ``limit``),
+         *     and the repo rules no SIEM has a copy of. Read-only.
+         */
+        get: operations["get_api_detection-rules_health"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/detection-rules/mcp-env": {
         parameters: {
             query?: never;
@@ -17330,6 +17352,39 @@ export interface operations {
             path: {
                 integration_id: string;
             };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_detection-rules_health": {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;

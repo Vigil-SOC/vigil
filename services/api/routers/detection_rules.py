@@ -5,12 +5,13 @@ import logging
 from dataclasses import asdict
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from core.auth.permissions import permission_gate
 from core.deps import provide_detection_rules, provide_mcp_client, provide_mcp_registry
 from core.detections.detection_rules_service import DetectionRulesService
+from core.detections.inventory import catalog
 from core.detections.inventory.sync import sync_repos
 from core.integrations.mcp.registry import MCPRegistry, register_connected
 from core.routing import Auth, RouterMeta
@@ -195,6 +196,23 @@ def get_stats(
     """
     stats = service.get_stats()
     return stats
+
+
+@router.get("/health")
+def get_health(limit: int = Query(200, ge=1, le=1000)):
+    """Whether each SIEM's rules can fire: per-tool check tallies, Blind spots,
+    the rules failing or unknown on a check (fails first, capped at ``limit``),
+    and the repo rules no SIEM has a copy of. Read-only."""
+    by_tool = catalog.rules_by_tool()
+    siems = [t for t in by_tool if t not in ("repo", catalog.OVERLAY)]
+    return {
+        "by_tool": by_tool,
+        "unchecked": catalog.unchecked(siems),
+        "not_read": catalog.NOT_READ,
+        "blind_spots": catalog.blind_spots(),
+        "not_passing": catalog.rules_not_passing(limit),
+        "repo": catalog.repo_coverage(),
+    }
 
 
 @router.get("/mcp-env")

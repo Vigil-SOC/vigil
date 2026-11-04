@@ -689,3 +689,40 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* A phone stacks the step rail above the step and gives each card the full width */
+@media (max-width: 600px) {
+  .su-body {
+    flex-direction: column;
+  }
+
+  .su-rail {
+    flex: 0 1 auto;
+    max-height: 30vh;
+    padding: 12px 16px;
+    border-right: 0;
+    border-bottom: 1px solid var(--ln0);
+  }
+
+  .su-main {
+    flex: 1 1 0;
+    min-height: 0;
+  }
+
+  .su-scroll {
+    padding: 20px 16px;
+  }
+
+  .su-foot {
+    padding: 0 16px;
+  }
+
+  .su-foot-note {
+    display: none;
+  }
+
+  .su-choices,
+  .su-choices.two {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
