@@ -2,6 +2,7 @@
 
 import logging
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 import httpx
 
@@ -252,6 +253,50 @@ class ElasticService:
             },
             index=index,
         )
+
+    async def any_event_since(
+        self, index: str, timestamp_field: str, days: int
+    ) -> bool:
+        """Whether ``index`` holds an event in the last ``days``: one size-0 search
+        that stops at the first hit. A missing index reads as no events; any
+        other failure raises."""
+        resp = await self.es_client.post(
+            f"/{validate_index(index)}/_search",
+            params={"ignore_unavailable": "true", "allow_no_indices": "true"},
+            json={
+                "size": 0,
+                "terminate_after": 1,
+                "track_total_hits": 1,
+                "query": {"range": {timestamp_field: {"gte": f"now-{int(days)}d"}}},
+            },
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        if (body.get("_shards") or {}).get("failed"):
+            raise RuntimeError(f"shard failures: {body['_shards'].get('failures')}")
+        total = (body.get("hits") or {}).get("total")
+        return int(total.get("value") if isinstance(total, dict) else total or 0) > 0
+
+    async def field_caps(self, index: str, fields: List[str]) -> set:
+        """Which of ``fields`` the mapping of ``index`` has. Metadata, not a search."""
+        resp = await self.es_client.get(
+            f"/{validate_index(index)}/_field_caps",
+            params={
+                "fields": ",".join(fields),
+                "ignore_unavailable": "true",
+                "allow_no_indices": "true",
+            },
+        )
+        resp.raise_for_status()
+        return set(resp.json().get("fields") or {})
+
+    async def get_data_view(self, data_view_id: str) -> Dict[str, Any]:
+        """A Kibana data view (its ``title`` holds the index patterns). Read-only."""
+        resp = await self.kibana_client.get(
+            f"/api/data_views/data_view/{quote(data_view_id, safe='')}"
+        )
+        resp.raise_for_status()
+        return resp.json().get("data_view") or {}
 
     async def get_indices(self) -> Optional[List[str]]:
         """List available indices."""
