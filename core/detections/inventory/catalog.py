@@ -33,12 +33,15 @@ RUNS = DetectionRuleVersion.checks["runs"]["result"].astext
 RUNS_RESULTS = ("pass", "fail", "unknown")
 CHANGE = DetectionRuleCheckChange
 RECENT_CHANGES = 10
+# A row that changed the result; a fail -> fail row only changed the reason.
+RESULT_CHANGED = CHANGE.old_result.is_distinct_from(CHANGE.new_result)
 
 
 def _latest_changes():
-    """The latest change row per (rule, check)."""
+    """The latest result-changing row per (rule, check)."""
     return (
         select(CHANGE)
+        .where(RESULT_CHANGED)
         .distinct(CHANGE.rule_id, CHANGE.check_key)
         .order_by(
             CHANGE.rule_id, CHANGE.check_key, CHANGE.changed_at.desc(), CHANGE.id.desc()
@@ -105,14 +108,21 @@ def _summary(
 def rule_health(days: int = 7) -> Dict[str, Any]:
     """The open flags, and how many flags opened and cleared in the last ``days``."""
     since = datetime.now(timezone.utc) - timedelta(days=days)
-    # Cleared: a change to pass whose previous change for that (rule, check) was pass -> fail.
+    # Cleared: a change to pass whose previous result change was pass -> fail.
     prev_old = func.lag(CHANGE.old_result).over(
         partition_by=(CHANGE.rule_id, CHANGE.check_key),
         order_by=(CHANGE.changed_at, CHANGE.id),
     )
-    history = select(
-        CHANGE.old_result, CHANGE.new_result, CHANGE.changed_at, prev_old.label("prev")
-    ).subquery()
+    history = (
+        select(
+            CHANGE.old_result,
+            CHANGE.new_result,
+            CHANGE.changed_at,
+            prev_old.label("prev"),
+        )
+        .where(RESULT_CHANGED)
+        .subquery()
+    )
     with get_db_manager().session_scope() as session:
         flags = [
             {
