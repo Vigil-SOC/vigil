@@ -90,6 +90,7 @@ class Stack:
             home,
             COMPOSE_PROJECT_NAME=self.project,
             MEDIC_EVAL_STUB_DIR=str(STUB_DIR),
+            MEDIC_EVAL_SITE=str(HERE / "sitecustomize.py"),
             VIGIL_UPGRADE_ACK_VERSION=(REPO / "VERSION").read_text().strip(),
             VIGIL_UPGRADE_ACK_REASON="medic fault injector live test",
             REDIS_PASSWORD="EVALREDIS" + token,
