@@ -38,6 +38,7 @@ from core.integrations.mcp.runner import (
     runner_url,
 )
 from core.integrations.mcp.service import MCPService
+from core.integrations.opencti.descriptor import OPENCTI, OPENCTI_REQUIRED
 from core.integrations.opensearch.descriptor import OPENSEARCH, OPENSEARCH_REQUIRED
 from core.integrations.splunk.descriptor import SPLUNK, SPLUNK_SELFHOSTED_REQUIRED
 from core.integrations.wazuh.descriptor import WAZUH, WAZUH_REQUIRED
@@ -53,6 +54,7 @@ _DESCRIPTOR_GATED = {
     "elastic": (ELASTIC, ELASTIC_REQUIRED),
     "opensearch": (OPENSEARCH, OPENSEARCH_REQUIRED),
     "wazuh": (WAZUH, WAZUH_REQUIRED),
+    "opencti": (OPENCTI, OPENCTI_REQUIRED),
 }
 
 

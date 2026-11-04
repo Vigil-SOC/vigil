@@ -232,7 +232,7 @@
     - Splunk
   notes: >
     Knowledge-graph approach to threat intel. Stronger on actor/campaign
-    tracking than MISP. Could complement Vigil's Threat Intel agent.
+    tracking than MISP. Vigil integrates it read-only via MCP server (#3756).
 
 # --- Detection Engineering ---
 

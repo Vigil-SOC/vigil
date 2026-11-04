@@ -7,7 +7,8 @@ description: Reputation and attribution for observables -- IPs, domains, URLs, h
 
 Look up observables -- IPs, domains, URLs, file hashes -- against Vigil's
 indicator database and whatever intelligence integrations this deployment
-carries.
+carries. When OpenCTI is connected, its tools also return the indicators,
+scores and linked actors, malware and techniques for an observable.
 
 A miss is not exoneration. The lookup answers for every value you ask about and
 marks the ones no feed carries: record "not in the feed" and let the hunt weigh

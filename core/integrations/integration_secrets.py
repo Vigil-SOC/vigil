@@ -119,6 +119,7 @@ PROXY_SUPPORTED: frozenset[str] = frozenset(
         "opensearch",
         "misp",
         "wazuh",
+        "opencti",
     }
 )
 

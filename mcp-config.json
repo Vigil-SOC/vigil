@@ -310,6 +310,15 @@
       }
     },
 
+    "opencti": {
+      "command": "python3",
+      "args": ["core/integrations/opencti/tool.py"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "_setup_note": "OpenCTI GraphQL API, read-only: observable, indicator and entity lookups. Configure in Settings (platform URL, API token, optional CA path). The tool reads via resolve(); there is no required env placeholder, so the server stays dormant until the URL and token resolve."
+      }
+    },
+
     "hybrid-analysis": {
       "command": "python3",
       "args": ["core/integrations/hybrid_analysis/tool.py"],

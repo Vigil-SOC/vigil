@@ -26,6 +26,7 @@ from core.integrations.azure_sentinel.descriptor import AZURE_SENTINEL
 from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
 from core.integrations.elastic.descriptor import ELASTIC
 from core.integrations.microsoft_defender.descriptor import MICROSOFT_DEFENDER
+from core.integrations.opencti.descriptor import OPENCTI, OPENCTI_REQUIRED
 from core.integrations.opensearch.descriptor import OPENSEARCH
 from core.integrations.splunk.descriptor import SPLUNK
 from core.integrations.wazuh.descriptor import WAZUH, WAZUH_REQUIRED
@@ -150,6 +151,28 @@ async def _wazuh() -> Outcome:
     try:
         # JWT login, then GET / on the manager API. A 401 and a connect error
         # come back as their own messages.
+        return await service.test_connection()
+    finally:
+        await service.close()
+
+
+async def _opencti() -> Outcome:
+    from core.integrations.opencti.client import OpenCTIService
+
+    config = resolve(OPENCTI)
+    absent = missing(config, *OPENCTI_REQUIRED)
+    if absent:
+        return _absent(absent)
+    verify = True if config.get("verify_ssl") is None else config["verify_ssl"]
+    service = OpenCTIService(
+        url=config["url"],
+        api_token=config["api_token"],
+        verify_ssl=verify,
+        ca_cert_path=config.get("ca_cert_path"),
+        timeout=_REQUEST_TIMEOUT,
+    )
+    try:
+        # about { version } with the token: a bad token and a wrong URL differ.
         return await service.test_connection()
     finally:
         await service.close()
@@ -380,6 +403,7 @@ _CHECKS: Dict[str, Callable[[], Awaitable[Outcome]]] = {
     ELASTIC.id: _elastic,
     OPENSEARCH.id: _opensearch,
     WAZUH.id: _wazuh,
+    OPENCTI.id: _opencti,
     AZURE_SENTINEL.id: _sentinel,
     AWS_SECURITY_HUB.id: _security_hub,
     MICROSOFT_DEFENDER.id: _defender,
