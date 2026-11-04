@@ -2,7 +2,7 @@
 
 The schema is core/upgrade/versions/0026_detection_rules.sql,
 0027_detection_rule_checks.sql, 0028_detection_rule_origin.sql,
-0029_detection_rule_stages.sql and 0030_detection_rule_changes.sql; these models
+0029_detection_rule_stages.sql and 0031_detection_rule_changes.sql; these models
 mirror it for core/detections/inventory.
 """
 

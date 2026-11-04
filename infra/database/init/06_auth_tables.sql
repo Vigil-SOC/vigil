@@ -64,7 +64,6 @@ INSERT INTO roles (role_id, name, description, permissions, is_system_role) VALU
     "cases.read": true,
     "integrations.read": false,
     "users.read": false,
-    "settings.read": false,
     "ai_chat.use": false,
     "ai_decisions.approve": false
 }', true),
@@ -79,8 +78,6 @@ INSERT INTO roles (role_id, name, description, permissions, is_system_role) VALU
     "integrations.read": true,
     "integrations.write": false,
     "users.read": false,
-    "settings.read": true,
-    "settings.write": false,
     "ai_chat.use": true,
     "ai_decisions.approve": false
 }', true),
@@ -95,8 +92,6 @@ INSERT INTO roles (role_id, name, description, permissions, is_system_role) VALU
     "integrations.read": true,
     "integrations.write": true,
     "users.read": true,
-    "settings.read": true,
-    "settings.write": false,
     "ai_chat.use": true,
     "ai_decisions.approve": true
 }', true),
@@ -113,8 +108,6 @@ INSERT INTO roles (role_id, name, description, permissions, is_system_role) VALU
     "users.read": true,
     "users.write": true,
     "users.delete": false,
-    "settings.read": true,
-    "settings.write": true,
     "ai_chat.use": true,
     "ai_decisions.approve": true
 }', true),
@@ -131,8 +124,6 @@ INSERT INTO roles (role_id, name, description, permissions, is_system_role) VALU
     "users.read": true,
     "users.write": true,
     "users.delete": true,
-    "settings.read": true,
-    "settings.write": true,
     "ai_chat.use": true,
     "ai_decisions.approve": true
 }', true)

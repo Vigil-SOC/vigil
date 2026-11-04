@@ -39,8 +39,8 @@ MEDIC_ADMIN_PERMISSION = "medic.admin"
 # A revision must not import this: its grants are frozen literals.
 # users.*, findings.*, cases.read/write/delete, audit.*, medic.*, loglm.view,
 # ai_chat.use, ai_decisions.approve and integrations.write stay as they are
-# and are not re-originated. settings.read and settings.write gate nothing;
-# they stay on the role JSON for a later revision that removes them.
+# and are not re-originated. settings.read and settings.write are gone:
+# 0030 removed them from every role; "split from" below records the origin.
 _SIGNED_IN_READ = "signed-in read"
 _NEW_CAPABILITY = "new capability"
 
@@ -65,7 +65,6 @@ CATALOG = {
         "cases.assign": _split_from("cases.write"),
         "roles.manage": _NEW_CAPABILITY,
         "ai_decisions.read": _SIGNED_IN_READ,
-        "settings.read": _SIGNED_IN_READ,
     },
     "builtins": {
         "role-admin": {
@@ -98,8 +97,6 @@ CATALOG = {
             "platform.read": True,
             "platform.write": True,
             "roles.manage": True,
-            "settings.read": True,
-            "settings.write": True,
             "users.delete": True,
             "users.read": True,
             "users.write": True,
@@ -122,8 +119,6 @@ CATALOG = {
             "integrations.write": False,
             "loglm.view": True,
             "platform.read": True,
-            "settings.read": True,
-            "settings.write": False,
             "users.read": False,
         },
         "role-manager": {
@@ -152,8 +147,6 @@ CATALOG = {
             "medic.read": True,
             "platform.read": True,
             "platform.write": True,
-            "settings.read": True,
-            "settings.write": True,
             "users.delete": False,
             "users.read": True,
             "users.write": True,
@@ -178,8 +171,6 @@ CATALOG = {
             "integrations.write": True,
             "loglm.view": True,
             "platform.read": True,
-            "settings.read": True,
-            "settings.write": False,
             "users.read": True,
         },
         "role-viewer": {
@@ -193,7 +184,6 @@ CATALOG = {
             "findings.read": True,
             "integrations.read": True,
             "platform.read": True,
-            "settings.read": True,
             "users.read": False,
         },
     },
@@ -220,7 +210,6 @@ PRESETS = {
         "permissions": _without(
             CATALOG["builtins"]["role-manager"],
             "platform.write",
-            "settings.write",
             "integrations.install",
             "ai_autonomy.write",
         ),

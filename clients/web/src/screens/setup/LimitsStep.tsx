@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react'
-import { autonomyApi, configApi, type Ceiling } from '../../services/api'
+import { configApi } from '../../services/api'
 import { fmtCost } from '../../shared/cost'
 import { Icon } from '../../shared/icons'
 import { ConfirmDialog } from '../../shared/ui'
 import {
   matchesProfile,
-  notifyAutonomyChanged,
   ORCHESTRATOR_DEFAULTS,
   raisesLimit,
   stripOrchestratorProfiles,
@@ -15,6 +14,7 @@ import {
   type OrchestratorConfig,
 } from '../settings/useSettings'
 import { errorText } from '../../shared/errorText'
+import ChoiceCard from './ChoiceCard'
 
 function fmtRuntime(seconds: number): string {
   if (seconds < 60) return `${seconds} s`
@@ -48,10 +48,6 @@ export default function LimitsStep() {
   const [pendingLimits, setPendingLimits] = useState<OrchestratorConfig | null>(null)
   const [savingLimits, setSavingLimits] = useState(false)
   const [profilesPhase, setProfilesPhase] = useState<LoadPhase>('loading')
-  // Assist is act_reversible off; Act is act_reversible on
-  const [ceiling, setCeiling] = useState<Ceiling | null>(null)
-  const [approvalPhase, setApprovalPhase] = useState<LoadPhase>('loading')
-  const [confirmAct, setConfirmAct] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -67,16 +63,6 @@ export default function LimitsStep() {
       })
       .catch(() => {
         if (live) setProfilesPhase('error')
-      })
-    autonomyApi
-      .get()
-      .then(({ data }) => {
-        if (!live) return
-        setCeiling(data)
-        setApprovalPhase('ready')
-      })
-      .catch(() => {
-        if (live) setApprovalPhase('error')
       })
     return () => {
       live = false
@@ -102,31 +88,7 @@ export default function LimitsStep() {
     else saveLimits(next)
   }
 
-  const saveAct = async (act: boolean) => {
-    setError(null)
-    try {
-      const { data } = await autonomyApi.update({ act_reversible: act })
-      setCeiling(data)
-      notifyAutonomyChanged()
-    } catch (err) {
-      setError(errorText(err, 'Could not save the response mode.'))
-    }
-  }
-
-  const actOn = Boolean(ceiling?.act_reversible)
-  const locked = Boolean(ceiling?.environment_locked)
-
-  const selectAssist = () => {
-    if (actOn) saveAct(false)
-  }
-
-  const selectAct = () => {
-    // A locked Act is sent anyway so the API's 409 explains why it was not saved
-    if (locked) saveAct(true)
-    else if (!actOn) setConfirmAct(true)
-  }
-
-  if (profilesPhase === 'loading' || approvalPhase === 'loading') {
+  if (profilesPhase === 'loading') {
     return <p className="text-tx-3 text-sm">Loading limits…</p>
   }
 
@@ -142,18 +104,20 @@ export default function LimitsStep() {
       ) : (
         <div className="flex flex-col gap-3">
           <div
-            role="radiogroup"
+            role="group"
             aria-label="Limits profile"
-            className="settings-grid-2"
+            className="su-choices"
             style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 150px), 1fr))' }}
           >
             {entries.map(([key, profile]) => (
-              <ProfileCard
+              <ChoiceCard
                 key={key}
-                profile={profile}
+                title={profile.label}
+                badge={profile.recommended ? <span className="su-chip ac">Recommended</span> : undefined}
+                body={`${profile.values.max_concurrent_agents} agents · ${fmtCost(profile.values.max_cost_per_investigation)} / case`}
                 selected={key === activeKey}
                 disabled={savingLimits}
-                onPick={() => pickProfile(profile)}
+                onSelect={() => pickProfile(profile)}
               />
             ))}
           </div>
@@ -177,41 +141,7 @@ export default function LimitsStep() {
         </div>
       )}
 
-      {approvalPhase === 'error' ? (
-        <p className="text-sm text-high">Could not read the response mode.</p>
-      ) : (
-        <>
-          {locked && (
-            <div className="settings-banner info">
-              <Icon name="info" size={14} />
-              <span>The environment wins. Act cannot be saved.</span>
-            </div>
-          )}
-          {error && <p className="text-sm text-high">{error}</p>}
-          <div className="settings-grid-2" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 150px), 1fr))' }}>
-            <button
-              type="button"
-              aria-pressed={!actOn}
-              onClick={selectAssist}
-              className={`card card-sq text-left p-3.5 ${actOn ? '' : 'border-accent-line bg-[var(--accent-dim)]'}`}
-            >
-              <div className="text-[13px] font-semibold text-tx">Assist</div>
-              <span className="text-xs text-tx-3">Force manual approval before a response runs.</span>
-            </button>
-            <button
-              type="button"
-              aria-pressed={actOn}
-              onClick={selectAct}
-              className={`card card-sq text-left p-3.5 ${actOn ? 'border-accent-line bg-[var(--accent-dim)]' : ''}`}
-            >
-              <div className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-tx">
-                Act <span className="chip">Recommended</span>
-              </div>
-              <span className="text-xs text-tx-3">Let autonomous response proceed without forcing approval.</span>
-            </button>
-          </div>
-        </>
-      )}
+      {error && <p className="text-sm text-high">{error}</p>}
 
       <ConfirmDialog
         open={pendingLimits !== null}
@@ -226,49 +156,7 @@ export default function LimitsStep() {
         }}
         onClose={() => setPendingLimits(null)}
       />
-      <ConfirmDialog
-        open={confirmAct}
-        title="Switch to Act?"
-        body="Act stops forcing manual approval, so autonomous response can proceed on its own."
-        confirmLabel="Save"
-        danger={false}
-        onConfirm={() => {
-          setConfirmAct(false)
-          saveAct(true)
-        }}
-        onClose={() => setConfirmAct(false)}
-      />
     </div>
   )
 }
 
-function ProfileCard({
-  profile,
-  selected,
-  disabled,
-  onPick,
-}: {
-  profile: InvestigationProfile
-  selected: boolean
-  disabled: boolean
-  onPick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      disabled={disabled}
-      onClick={onPick}
-      className={`card card-sq text-left p-3.5 flex flex-col items-start justify-start gap-1 ${selected ? 'border-accent-line bg-[var(--accent-dim)]' : ''}`}
-    >
-      <div className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-tx">
-        {profile.label}
-        {profile.recommended && <span className="chip">Recommended</span>}
-      </div>
-      <span className="text-xs text-tx-3">
-        {profile.values.max_concurrent_agents} agents · {fmtCost(profile.values.max_cost_per_investigation)} / case
-      </span>
-    </button>
-  )
-}

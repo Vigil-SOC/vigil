@@ -214,7 +214,12 @@ const KIND_LABEL: Record<string, string> = {
   adjudicate: 'Adjudication',
   compose: 'Playbook',
 }
-const TRIGGER_LABEL: Record<string, string> = { alerts: 'On alerts', schedule: 'Nightly', shadow: 'Runs alongside' }
+// shared with setup's workflow rows
+export const TRIGGER_LABEL: Record<string, string> = {
+  alerts: 'On alerts',
+  schedule: 'On a schedule',
+  shadow: 'Runs alongside',
+}
 
 type WfModal = { kind: 'run' | 'history' | 'edit' | 'delete'; wf: Workflow }
 
