@@ -258,29 +258,41 @@ def _sync_one(service: Any, source: Dict[str, Any]) -> SourceReport:
     return report
 
 
+def _remove_elastic() -> int:
+    with get_db_manager().session_scope() as session:
+        result = session.execute(
+            update(DetectionRule)
+            .where(
+                DetectionRule.source == kibana.SOURCE,
+                DetectionRule.status != "removed",
+            )
+            .values(status="removed")
+        )
+        return int(getattr(result, "rowcount", 0) or 0)
+
+
 def _sync_elastic() -> SourceReport:
-    """Kibana's detection engine, with the elastic-siem integration's credentials."""
+    """Kibana's detection engine, with the elastic-siem integration's credentials.
+
+    Its rules are removed only when the integration config was read and
+    elastic-siem is not enabled; a config that cannot be read skips the source.
+    """
+    from core.config import load_integrations_config
     from core.integrations._base.config import missing, resolve
     from core.integrations.elastic.descriptor import ELASTIC
 
-    config = resolve(ELASTIC)
-    if missing(config, "elasticsearch_url"):
-        with get_db_manager().session_scope() as session:
-            result = session.execute(
-                update(DetectionRule)
-                .where(
-                    DetectionRule.source == kibana.SOURCE,
-                    DetectionRule.status != "removed",
-                )
-                .values(status="removed")
-            )
-            removed = int(getattr(result, "rowcount", 0) or 0)
-        return SourceReport(
-            source=kibana.SOURCE, removed=removed, skipped="not configured"
-        )
-    if missing(config, "kibana_url"):
-        return SourceReport(source=kibana.SOURCE, skipped="no kibana_url")
     try:
+        integrations = load_integrations_config()
+        if not integrations["configured"]:
+            return SourceReport(source=kibana.SOURCE, skipped="no integration config")
+        if ELASTIC.id not in integrations["enabled_integrations"]:
+            return SourceReport(
+                source=kibana.SOURCE, removed=_remove_elastic(), skipped="not enabled"
+            )
+        config = resolve(ELASTIC)
+        absent = missing(config, "elasticsearch_url", "kibana_url")
+        if absent:
+            return SourceReport(source=kibana.SOURCE, skipped=f"no {absent[0]}")
         report = sync_source(kibana.SOURCE, kibana.read_kibana(config))
     except Exception as exc:  # noqa: BLE001 -- unreachable is skipped, never removed
         logger.warning("detection rules: syncing elastic failed: %s", exc)
