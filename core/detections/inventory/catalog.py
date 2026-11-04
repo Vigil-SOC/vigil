@@ -11,7 +11,8 @@ A SIEM copy may be linked to the repo rule it came from (origin_rule_id); an
 overlay rule counts as a repo rule here. A repo rule's state in a SIEM is its
 linked copies' (disabled, or their Runs result), or 'not deployed' when it has
 none there. Every SIEM Vigil reads (Kibana, 'elastic'; Splunk, 'splunk'; the
-Wazuh manager, 'wazuh') is listed. Only Kibana rules get a Sees check.
+Wazuh manager, 'wazuh') is listed. Kibana and Wazuh rules get a Sees check; a
+Wazuh rule's data source is its decoder.
 
 A flag is a (rule, check) whose latest recorded change went pass -> fail, on a
 rule not removed. Nothing to fail, or a change to unknown, is no flag; a later
@@ -58,7 +59,7 @@ CURRENT_STAGE = (
 )
 LINKED = DetectionRule.link_kind.in_(("same_id", "known_name", "agent"))
 NOT_DEPLOYED = "not deployed"
-NOT_READ = "Splunk and Wazuh rules get no Sees check yet"
+NOT_READ = "Splunk rules get no Sees check yet"
 CHANGE = DetectionRuleCheckChange
 RECENT_CHANGES = 10
 # A row that changed the result; a fail -> fail row only changed the reason.
