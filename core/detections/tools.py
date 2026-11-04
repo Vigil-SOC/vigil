@@ -92,6 +92,7 @@ class SecurityDetectionsTools:
         limit: int = 20,
         tool: Optional[str] = None,
         runs: Optional[str] = None,
+        flagged: Optional[bool] = None,
     ) -> List[Dict]:
         """
         Search across all detection rules using keywords.
@@ -102,11 +103,13 @@ class SecurityDetectionsTools:
             limit: Maximum number of results
             tool: Optional filter by where the rule was read ("repo", "elastic")
             runs: Optional filter by Runs result ("pass", "fail", "unknown")
+            flagged: Optional filter: rules with (True) or without (False) an open flag
 
         Returns:
-            List of matching detection rules, each with its status and checks
+            List of matching detection rules, each with its status, checks and
+            whether it is flagged; a single hit also carries its recent check changes
         """
-        return catalog.search(query or "", source_type, limit, tool, runs)
+        return catalog.search(query or "", source_type, limit, tool, runs, flagged)
 
     async def get_detection_count(self, source_type: Optional[str] = None) -> Dict:
         """
@@ -127,7 +130,8 @@ class SecurityDetectionsTools:
         self, context: str = "", since_days: int = 30, **_kwargs: object
     ) -> Dict:
         """Techniques seen on stored alerts that no active rule declares, with what it cannot say,
-        and the proven hunts and closed Cases no rule alerted on (``runs_rules_missed``).
+        and the proven hunts and closed Cases no rule alerted on (``runs_rules_missed``),
+        and the SIEM rules that broke (``rule_health``).
 
         Args:
             context: A case id, an ATT&CK label to match, or empty for every stored alert.
@@ -156,6 +160,7 @@ class SecurityDetectionsTools:
             rules_by_technique,
             since_days,
         )
+        report["rule_health"] = catalog.rule_health()
         return report
 
     async def get_coverage_stats(self, source_type: Optional[str] = None) -> Dict:

@@ -37,7 +37,7 @@ SECURITY_DETECTION_TOOLS = [
     },
     {
         "name": "search_detections",
-        "description": "Search the detection rules of every configured repo (Sigma, Splunk, Elastic, KQL) and the rules Kibana's detection engine runs, using keywords. Each hit carries its tool ('repo' or 'elastic'), its status ('active', or 'disabled' for a Kibana rule switched off) and checks.runs: whether the SIEM runs it ({result: pass|fail|unknown, reason, checked_at}; reason holds the SIEM's own error). Filter tool='elastic' with runs='fail' to answer which Elastic rules don't run and why. Splunk saved searches and Wazuh rules are not read yet.",
+        "description": "Search the detection rules of every configured repo (Sigma, Splunk, Elastic, KQL) and the rules Kibana's detection engine runs, using keywords. Each hit carries its tool ('repo' or 'elastic'), its status ('active', or 'disabled' for a Kibana rule switched off) and checks.runs: whether the SIEM runs it ({result: pass|fail|unknown, reason, checked_at}; reason holds the SIEM's own error). Filter tool='elastic' with runs='fail' to answer which Elastic rules don't run and why. Each hit has flagged: true when its latest Runs change went pass -> fail (it broke and has not recovered); filter flagged=true for those. When exactly one rule matches, its hit carries recent_changes: its last 10 recorded check changes (check runs|status, old -> new, changed_at, version, reason), newest first. Splunk saved searches and Wazuh rules are not read yet.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -60,6 +60,10 @@ SECURITY_DETECTION_TOOLS = [
                     "enum": ["pass", "fail", "unknown"],
                     "description": "Optional: Keep rules whose latest version has this Runs result. Only SIEM rules have one.",
                 },
+                "flagged": {
+                    "type": "boolean",
+                    "description": "Optional: true keeps rules whose Runs went pass -> fail and have not recovered; false keeps the rest.",
+                },
                 "limit": {
                     "type": "integer",
                     "description": "Maximum number of results to return (default: 20)",
@@ -71,7 +75,7 @@ SECURITY_DETECTION_TOOLS = [
     },
     {
         "name": "identify_gaps",
-        "description": "Compare the ATT&CK techniques seen on stored alerts with the detection rules actually loaded, and list techniques no rule declares. covered_on_paper_only lists techniques whose Kibana rules all fail Runs (each technique row has siem_runs). Reads stored data only and writes nothing. Read answer and unknown first: alerts that name a tactic and no technique cannot prove a gap, and answer is unknown when the data cannot say. Splunk saved searches and Wazuh rules are not read yet. runs_rules_missed lists proven hunts and closed Cases (Verdicts from the last since_days) whose hosts, IPs and users drew no rule alert in their window (LogLM-only counts as missed), grouped by technique. Each group has its runs, how many a person confirmed, the active rules declaring the technique, and ruled_out: disproven / false_positive runs on it that a draft rule must not catch. Only groups with 2+ runs or 1+ confirmed are listed; the rest are counted. A run with no host, IP or user, or whose Findings read was cut off, is in its unknown, never missed.",
+        "description": "Compare the ATT&CK techniques seen on stored alerts with the detection rules actually loaded, and list techniques no rule declares. covered_on_paper_only lists techniques whose Kibana rules all fail Runs (each technique row has siem_runs). Reads stored data only and writes nothing. Read answer and unknown first: alerts that name a tactic and no technique cannot prove a gap, and answer is unknown when the data cannot say. Splunk saved searches and Wazuh rules are not read yet. runs_rules_missed lists proven hunts and closed Cases (Verdicts from the last since_days) whose hosts, IPs and users drew no rule alert in their window (LogLM-only counts as missed), grouped by technique. Each group has its runs, how many a person confirmed, the active rules declaring the technique, and ruled_out: disproven / false_positive runs on it that a draft rule must not catch. Only groups with 2+ runs or 1+ confirmed are listed; the rest are counted. A run with no host, IP or user, or whose Findings read was cut off, is in its unknown, never missed. rule_health lists the open flags: SIEM rules whose latest Runs change went pass -> fail (a rule that never passed is no flag), each with rule_id, name, tool, status, check, old, new, since, version and reason (the SIEM's error); a flag clears when the rule passes again. opened and cleared count flags opened and cleared in the last 7 days. rule_health is not scoped by context.",
         "input_schema": {
             "type": "object",
             "properties": {

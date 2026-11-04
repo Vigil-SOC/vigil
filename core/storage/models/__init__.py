@@ -49,6 +49,7 @@ from core.storage.models.config import (
 from core.storage.models.detection_rule import (
     DETECTION_RULE_STATUSES,
     DetectionRule,
+    DetectionRuleCheckChange,
     DetectionRuleVersion,
 )
 from core.storage.models.episodic import (
@@ -108,6 +109,7 @@ __all__ = [
     "CustomWorkflow",
     "DETECTION_RULE_STATUSES",
     "DetectionRule",
+    "DetectionRuleCheckChange",
     "DetectionRuleVersion",
     "EpisodicDistilFailure",
     "EpisodicDistilMarker",

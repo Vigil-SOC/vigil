@@ -3,16 +3,25 @@
 A rule's tool is where it was read: 'repo' for a configured repo, else the SIEM
 (source 'elastic'). Only active rules count as deployed; search also finds the
 disabled ones, each hit saying so.
+
+A flag is a (rule, check) whose latest recorded change went pass -> fail, on a
+rule not removed. Nothing to fail, or a change to unknown, is no flag; a later
+change back to pass clears it. It is a query over detection_rule_check_changes.
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Set
 
 from sqlalchemy import Text, and_, case, cast, func, select
 
 from core.storage.connection import get_db_manager
-from core.storage.models import DetectionRule, DetectionRuleVersion
+from core.storage.models import (
+    DetectionRule,
+    DetectionRuleCheckChange,
+    DetectionRuleVersion,
+)
 
 ACTIVE = DetectionRule.status == "active"
 LISTED = DetectionRule.status.in_(("active", "disabled"))
@@ -22,6 +31,45 @@ TOOL = case(
 )
 RUNS = DetectionRuleVersion.checks["runs"]["result"].astext
 RUNS_RESULTS = ("pass", "fail", "unknown")
+CHANGE = DetectionRuleCheckChange
+RECENT_CHANGES = 10
+
+
+def _latest_changes():
+    """The latest change row per (rule, check)."""
+    return (
+        select(CHANGE)
+        .distinct(CHANGE.rule_id, CHANGE.check_key)
+        .order_by(
+            CHANGE.rule_id, CHANGE.check_key, CHANGE.changed_at.desc(), CHANGE.id.desc()
+        )
+        .subquery()
+    )
+
+
+def _flags():
+    """(latest change, rule) for every open flag."""
+    latest = _latest_changes()
+    return (
+        select(latest, DetectionRule)
+        .join(DetectionRule, DetectionRule.id == latest.c.rule_id)
+        .where(
+            latest.c.old_result == "pass",
+            latest.c.new_result == "fail",
+            DetectionRule.status != "removed",
+        )
+    )
+
+
+def _change_row(c: Any) -> Dict[str, Any]:
+    return {
+        "check": c.check_key,
+        "old": c.old_result,
+        "new": c.new_result,
+        "changed_at": c.changed_at.isoformat(),
+        "version": c.version,
+        "reason": c.reason,
+    }
 
 
 def _latest_join():
@@ -52,6 +100,64 @@ def _summary(
         "file_path": rule.path,
         "checks": checks or {},
     }
+
+
+def rule_health(days: int = 7) -> Dict[str, Any]:
+    """The open flags, and how many flags opened and cleared in the last ``days``."""
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    # Cleared: a change to pass whose previous change for that (rule, check) was pass -> fail.
+    prev_old = func.lag(CHANGE.old_result).over(
+        partition_by=(CHANGE.rule_id, CHANGE.check_key),
+        order_by=(CHANGE.changed_at, CHANGE.id),
+    )
+    history = select(
+        CHANGE.old_result, CHANGE.new_result, CHANGE.changed_at, prev_old.label("prev")
+    ).subquery()
+    with get_db_manager().session_scope() as session:
+        flags = [
+            {
+                "rule_id": row.rule_id,
+                "name": row.DetectionRule.name,
+                "tool": tool_of(row.DetectionRule.source),
+                "status": row.DetectionRule.status,
+                **_change_row(row),
+                "since": row.changed_at.isoformat(),
+            }
+            for row in session.execute(_flags()).all()
+        ]
+        flags.sort(key=lambda f: f["since"], reverse=True)
+        opened, cleared = session.execute(
+            select(
+                func.count().filter(
+                    history.c.old_result == "pass", history.c.new_result == "fail"
+                ),
+                func.count().filter(
+                    history.c.new_result == "pass",
+                    history.c.old_result == "fail",
+                    history.c.prev == "pass",
+                ),
+            ).where(history.c.changed_at >= since)
+        ).one()
+    for flag in flags:
+        del flag["changed_at"]
+    return {
+        "flags": flags,
+        "days": days,
+        "opened": opened,
+        "cleared": cleared,
+    }
+
+
+def recent_changes(rule_id: int, limit: int = RECENT_CHANGES) -> List[Dict[str, Any]]:
+    """A rule's latest recorded check changes, newest first."""
+    with get_db_manager().session_scope() as session:
+        rows = session.scalars(
+            select(CHANGE)
+            .where(CHANGE.rule_id == rule_id)
+            .order_by(CHANGE.changed_at.desc(), CHANGE.id.desc())
+            .limit(limit)
+        ).all()
+        return [_change_row(c) for c in rows]
 
 
 def _by_tool(rows: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
@@ -190,11 +296,14 @@ def search(
     limit: int,
     tool: Optional[str] = None,
     runs: Optional[str] = None,
+    flagged: Optional[bool] = None,
 ) -> List[Dict]:
     """Active and disabled rules whose format, path or parsed content contains ``query``.
 
     ``tool`` is 'repo' or a SIEM source; ``runs`` keeps rules whose latest
-    version has that Runs result.
+    version has that Runs result; ``flagged`` keeps rules with (or without) an
+    open flag. Each hit says whether it is flagged; a single hit carries its
+    recent check changes.
     """
     escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     haystack = (
@@ -217,6 +326,25 @@ def search(
         statement = statement.where(TOOL == tool)
     if runs:
         statement = statement.where(RUNS == runs)
+    flags = _flags().subquery()
+    if flagged is not None:
+        is_flagged = DetectionRule.id.in_(select(flags.c.rule_id))
+        statement = statement.where(is_flagged if flagged else ~is_flagged)
     with get_db_manager().session_scope() as session:
         rows = session.execute(statement).all()
-        return [_summary(rule, content, checks, 300) for rule, content, checks in rows]
+        ids = [rule.id for rule, _, _ in rows]
+        flagged_ids = set(
+            session.scalars(
+                select(flags.c.rule_id).where(flags.c.rule_id.in_(ids))
+            ).all()
+        )
+        hits = [
+            {
+                **_summary(rule, content, checks, 300),
+                "flagged": rule.id in flagged_ids,
+            }
+            for rule, content, checks in rows
+        ]
+    if len(hits) == 1:
+        hits[0]["recent_changes"] = recent_changes(hits[0]["rule_id"])
+    return hits
