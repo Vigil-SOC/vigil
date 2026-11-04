@@ -25,12 +25,13 @@ const ENGINE_R = 52
 const ENGINE_MAX = 1.6 // the engine grows with the diagram's height, up to this scale
 
 // The nodes that open Cases: Overview counts alerts there, Cases lists cases, so the sub-line says how many.
-const CASE_NODES = new Set(['resolved_auto', 'resolved_person', 'working', 'needs_you'])
+const CASE_NODES = new Set(['resolved_auto', 'resolved_person', 'working', 'case_idle', 'needs_you'])
 const cases = (n: number) => `in ${n.toLocaleString('en-US')} case${n === 1 ? '' : 's'}`
 const OUTCOME_COLOR: Record<string, string> = {
   resolved_auto: 'var(--good)',
   resolved_person: 'var(--vio)',
   working: 'var(--ac)',
+  case_idle: 'var(--fair)',
   needs_you: 'var(--poor)',
   dismissed: 'var(--tx3)',
   excluded: 'var(--tx3)',
@@ -43,6 +44,7 @@ const OUTCOME_LINK: Record<string, [string, string]> = {
   resolved_auto: ['/cases?state=closed&closed_by=agent', 'Opens the cases closed without a person'],
   resolved_person: ['/cases?state=closed&closed_by=person', 'Opens the cases a person closed'],
   working: ['/cases?working=1', 'Opens the open cases that do not need you'],
+  case_idle: ['/cases?working=1', 'Opens the open cases that do not need you'],
   needs_you: ['/cases?needs_you=1', 'Opens the cases that need you'],
   dismissed: ['/triage?state=dismissed', 'Opens the Triage queue at alerts dismissed as noise'],
   excluded: ['/triage?state=excluded', 'Opens the Triage queue at alerts naming an excluded IP'],

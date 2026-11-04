@@ -7,14 +7,15 @@ router owns the status code.
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple
 
-from sqlalchemy import func
+from sqlalchemy import distinct, func
 from sqlalchemy.orm import Session
 
 from core.cases import case_trail
 from core.storage.models import (
     LIVE_INVESTIGATION_STATUSES,
+    RUN_LIVE_STATE,
     AIDecisionLog,
     Case,
     CaseAttachment,
@@ -30,6 +31,8 @@ from core.storage.models import (
     CaseSLA,
     CaseTask,
     CaseWatcher,
+    Finding,
+    IntakeTrigger,
     Investigation,
     SketchMapping,
     WorkflowRun,
@@ -74,6 +77,64 @@ def list_case_investigations(session: Session, case_id: str) -> List[Investigati
             Investigation.created_at.desc(), Investigation.investigation_id.desc()
         )
         .all()
+    )
+
+
+def run_liveness(session: Session, case_ids: Iterable[str]) -> Dict[str, bool]:
+    """``{case_id: whether a run on it is live}``; a case no run ever touched is absent."""
+    ids = list(case_ids)
+    live: Dict[str, bool] = {}
+    if not ids:
+        return live
+    for case_id, status in session.query(
+        Investigation.case_id, Investigation.status
+    ).filter(Investigation.case_id.in_(ids)):
+        live[case_id] = live.get(case_id, False) or (
+            status in LIVE_INVESTIGATION_STATUSES
+        )
+    run_case = WorkflowRun.trigger_context["case_id"].astext
+    for case_id, status in session.query(run_case, WorkflowRun.status).filter(
+        run_case.in_(ids), WorkflowRun.deleted_at.is_(None)
+    ):
+        live[case_id] = live.get(case_id, False) or status in RUN_LIVE_STATE
+    return live
+
+
+def alerts_since_last_run(session: Session, case_id: str) -> int:
+    """Alerts merged after a case's newest run started, so that run did not read them.
+
+    Read from the intake ledger rather than kept as a count, so a restart or a merge
+    during a live run needs no bookkeeping. A case with no run has no last run and
+    reads 0. Noise-marked alerts do not count. An alert merged twice counts once. A
+    person-started run has a ``WorkflowRun`` and no ``Investigation``, and it counts
+    as the case's last run all the same.
+    """
+    starts = [
+        session.query(func.max(Investigation.created_at))
+        .filter(Investigation.case_id == case_id)
+        .scalar(),
+        session.query(func.max(WorkflowRun.started_at))
+        .filter(
+            WorkflowRun.trigger_context["case_id"].astext == case_id,
+            WorkflowRun.deleted_at.is_(None),
+        )
+        .scalar(),
+    ]
+    starts = [at for at in starts if at is not None]
+    if not starts:
+        return 0
+    return (
+        session.query(func.count(distinct(IntakeTrigger.finding_id)))
+        .join(Finding, Finding.finding_id == IntakeTrigger.finding_id)
+        .join(case_findings, case_findings.c.finding_id == IntakeTrigger.finding_id)
+        .filter(
+            case_findings.c.case_id == case_id,
+            IntakeTrigger.merged_into == case_id,
+            IntakeTrigger.state == "merged",
+            IntakeTrigger.decided_at > max(starts),
+            Finding.noise_marked_at.is_(None),
+        )
+        .scalar()
     )
 
 

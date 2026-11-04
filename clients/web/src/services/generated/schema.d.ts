@@ -7561,6 +7561,11 @@ export interface components {
              * @default []
              */
             activities: unknown[];
+            /**
+             * Alerts Since Last Run
+             * @default 0
+             */
+            alerts_since_last_run: number;
             /** Assignee */
             assignee?: string | null;
             /** Case Id */

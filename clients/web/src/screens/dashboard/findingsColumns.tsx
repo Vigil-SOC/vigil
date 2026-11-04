@@ -12,7 +12,7 @@ const SEV_RANK: Record<Finding['sev'], number> = {
 }
 // the .status pill tones
 const STATE_TONE: Record<TerminalState, string> = {
-  waiting: 'open', scoring: 'open', working: 'investigating', needs_you: 'investigating',
+  waiting: 'open', scoring: 'open', working: 'investigating', case_idle: 'open', needs_you: 'investigating',
   resolved_auto: 'closed', resolved_person: 'closed', dismissed: 'dropped', excluded: 'dropped',
 }
 
