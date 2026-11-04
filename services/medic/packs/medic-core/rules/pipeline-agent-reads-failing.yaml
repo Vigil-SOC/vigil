@@ -1,19 +1,19 @@
-# P-1: reads of the agent service fail (core/agents/projections.py:45-57). The ERROR
-# is logged once when reads start failing; later failures are DEBUG until the INFO
-# "agent service reads recovered". The backend (workflows_router, case_brief,
+# P-1: reads of the agent service fail (core/agents/projections.py, _note_read). The
+# ERROR is logged once when reads start failing; later failures are DEBUG until the
+# INFO "agent service reads recovered", which is logged on a process's first
+# successful read as well as on a success after a failure, so a restart after the
+# fix clears the incident. The backend (workflows_router, case_brief,
 # learning_episodes) and soc-daemon (distil_once -> read_distil) both import that
 # module and each keeps its own _read_failing, so two latches: one per stream.
 # Both failing-read templates are %-style catalog entries; the recovery is a
-# constant-text catalog line. Latch-only. The recovery line is logged only by the
-# process that saw the failure (_read_failing is per process), so a latch clears on
-# that process's next successful read, which on an idle install is the next run
-# lookup. A process that restarts while its latch is set never logs the recovery,
-# so the incident stays open until that stream fails and recovers again.
+# constant-text catalog line. Latch-only. A latch clears on that process's next
+# successful read, which on an idle install is the next run lookup. A healthy start
+# logs one recovery with no earlier failure; a clear with no set leaves the latch false.
 apiVersion: medic.rules/v1
 kind: Rule
 id: pipeline.agent-reads-failing
 title: Vigil can't read run status from the agent service
-revision: 1
+revision: 2
 fault: {class: pipeline, mode: P-1, causes: [P-1]}
 lane: 3
 detection: event
@@ -56,7 +56,6 @@ advice:
     (Compose: the agent-serve container; Helm: the agent Service). If a not-ready
     incident for agent-serve is open, fix that first. Otherwise report it as a
     Vigil defect with this incident and attach the backend log, which names the
-    error. The alert clears when the service that logged the failure next reads
-    successfully, so it can outlast the fix on an idle install, and it stays open if
-    that service was restarted first: then confirm in its log that run reads work
-    again.
+    error. The incident clears on the first successful read of
+    the service that logged the failure, including right after a restart, so on an
+    idle install it can outlast the fix until the next run lookup.
