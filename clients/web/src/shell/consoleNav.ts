@@ -17,7 +17,7 @@ export const SCREEN_PERMS: Partial<Record<ConsoleScreenKey, string>> = {
 export type NavItem = [IconName, string, string, NavGate?]
 
 /** Every screen with its title and permission, extension mounts included, and
- *  the nav items this operator may open. The bar and Settings › Navigation
+ *  the nav items this operator may open. The bar and Settings › System › Appearance
  *  both read this, so neither filters on its own. Must sit under ExtensionProvider. */
 export function useConsoleNav() {
   const { hasPermission } = useAuth()

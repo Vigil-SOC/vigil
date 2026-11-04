@@ -5,8 +5,10 @@ counted by detection_rules id. Stored labels are not all techniques: ingest keep
 whatever key a source sent, so a row may name a tactic or an unmapped class. Those
 cannot prove a gap, and the report says so rather than guessing which technique ran.
 
-A technique whose SIEM rules (read from Kibana and Wazuh) all fail Runs is covered on paper
-only: a rule declares it, and nothing that runs does.
+A technique whose SIEM rules (read from Kibana and Wazuh) each fail Runs or Sees is covered
+on paper only: a rule declares it, and nothing that runs on arriving data does.
+A Blind spot is a data source SIEM rules read that has no events (or lacks their
+fields), with the rules it starves.
 
 A proven hunt or closed Case that no rule alerted on is a run rules missed. It is
 read from the Verdicts episodic memory already holds and correlated with
@@ -151,7 +153,8 @@ def gap_report(
     rules_by_technique: Mapping[str, Collection[int]],
     rules_by_tactic: Mapping[str, int],
     rule_counts: Mapping[str, int],
-    siem_runs: Optional[Mapping[str, Mapping[str, int]]] = None,
+    siem_checks: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    blind_spots: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     techniques, tactics, kinds = _classify(alerts)
     loaded = sum(rule_counts.values())
@@ -164,14 +167,18 @@ def gap_report(
             "alerts": count,
             "rules": len(set(rules_by_technique.get(technique, ()))),
             "related_rules": _related_rules(technique, rules_by_technique),
-            # Runs results of the SIEM rules declaring it, counted.
-            "siem_runs": dict((siem_runs or {}).get(technique, {})),
+            # Runs and Sees results of the SIEM rules declaring it, counted.
+            "siem_runs": dict((siem_checks or {}).get(technique, {}).get("runs", {})),
+            "siem_sees": dict((siem_checks or {}).get(technique, {}).get("sees", {})),
+            # Every deployed SIEM rule on it fails Runs or Sees.
+            "covered_on_paper_only": bool(
+                (checks := (siem_checks or {}).get(technique))
+                and checks["rules"]
+                and checks["failing"] == checks["rules"]
+            ),
         }
         for technique, count in techniques.items()
     ]
-    for row in seen:
-        runs = row["siem_runs"]
-        row["covered_on_paper_only"] = bool(runs) and set(runs) == {"fail"}
     seen.sort(key=lambda row: (row["rules"], row["related_rules"], -row["alerts"]))
     tactic_rows: List[Dict[str, Any]] = [
         {
@@ -253,6 +260,7 @@ def gap_report(
         "gaps_identified": len(gaps),
         "gaps": gaps,
         "covered_on_paper_only": paper_only,
+        "blind_spots": blind_spots or [],
         "techniques": seen,
         "tactics": tactic_rows,
     }

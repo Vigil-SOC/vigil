@@ -7,10 +7,12 @@ to see a deletion, and writes only what differs:
 - a key whose fingerprint differs from its latest version gets the next version;
 - a key the list no longer has is status 'removed', never deleted;
 - a name, path, technique or tactic change updates the rule row, no new version;
-- a SIEM rule switched off is status 'disabled', and carries no Runs result.
+- a SIEM rule switched off is status 'disabled', and carries no Runs or Sees result.
 
 A Runs result (checks['runs'] on the latest version) is written only when its
 result or reason differs from the stored one; a new version starts with none.
+After Kibana syncs, ``sees`` checks whether each active Kibana rule's data is
+arriving and writes checks['sees'] the same way.
 
 After the sources, each Kibana rule is linked to the repo rule it came from when
 that is certain (``same_id``: one active repo Elastic rule with its rule_id). A
@@ -33,7 +35,7 @@ from typing import Any, Dict, Iterator, List, Optional
 
 from sqlalchemy import and_, bindparam, func, insert, or_, select, update
 
-from core.detections.inventory import kibana, readers, wazuh
+from core.detections.inventory import kibana, readers, sees, wazuh
 from core.detections.inventory.record import RuleRecord, fingerprint
 from core.storage.connection import get_db_manager
 from core.storage.models import DetectionRule, DetectionRuleVersion
@@ -104,7 +106,7 @@ def _rule_fields(record: RuleRecord) -> Dict[str, Any]:
 def _checks(stored: Dict[str, Any], record: RuleRecord, now: str) -> Dict[str, Any]:
     """``stored`` with the record's Runs result, or itself when nothing changed."""
     if record.status == "disabled":
-        return {k: v for k, v in stored.items() if k != "runs"}
+        return {k: v for k, v in stored.items() if k not in ("runs", "sees")}
     runs, old = record.runs, stored.get("runs") or {}
     if runs is None or (
         old.get("result") == runs["result"] and old.get("reason") == runs["reason"]
@@ -231,8 +233,11 @@ def _remove_unconfigured(configured: List[str]) -> int:
         return int(getattr(result, "rowcount", 0) or 0)
 
 
-def sync_repos() -> List[SourceReport]:
-    """Read every configured repo, Kibana and Wazuh, and sync each. One failing source skips only itself."""
+def sync_repos() -> List[Any]:
+    """Read every configured repo, Kibana and Wazuh, and sync each, then check Kibana rules' Sees.
+
+    One failing source skips only itself.
+    """
     from core.detections.detection_rules_service import DetectionRulesService
 
     with _sync_lock():
@@ -240,13 +245,15 @@ def sync_repos() -> List[SourceReport]:
         sources = service.list_sources()
         reports = [_sync_one(service, source) for source in sources]
         removed = _remove_unconfigured([readers.source_name(s) for s in sources])
-        elastic = _sync_elastic()
+        elastic, config = _sync_elastic()
         try:
             elastic.linked, elastic.unlinked = _link_same_id()
         except Exception as exc:  # noqa: BLE001 -- the next sync links again
             logger.warning("detection rules: linking Kibana rules failed: %s", exc)
             elastic.error = elastic.error or f"linking: {type(exc).__name__}: {exc}"
         reports.append(elastic)
+        if config is not None:
+            reports.append(sees.sweep_elastic(config))
         reports.append(_sync_wazuh())
     if removed:
         logger.info(
@@ -284,11 +291,12 @@ def _remove_elastic() -> int:
         return int(getattr(result, "rowcount", 0) or 0)
 
 
-def _sync_elastic() -> SourceReport:
+def _sync_elastic() -> tuple[SourceReport, Optional[Dict[str, Any]]]:
     """Kibana's detection engine, with the elastic-siem integration's credentials.
 
     Its rules are removed only when the integration config was read and
     elastic-siem is not enabled; a config that cannot be read skips the source.
+    The config comes back only when the sync succeeded, for the Sees sweep.
     """
     from core.config import load_integrations_config
     from core.integrations._base.config import missing, resolve
@@ -297,21 +305,32 @@ def _sync_elastic() -> SourceReport:
     try:
         integrations = load_integrations_config()
         if not integrations["configured"]:
-            return SourceReport(source=kibana.SOURCE, skipped="no integration config")
+            return (
+                SourceReport(source=kibana.SOURCE, skipped="no integration config"),
+                None,
+            )
         if ELASTIC.id not in integrations["enabled_integrations"]:
-            return SourceReport(
-                source=kibana.SOURCE, removed=_remove_elastic(), skipped="not enabled"
+            return (
+                SourceReport(
+                    source=kibana.SOURCE,
+                    removed=_remove_elastic(),
+                    skipped="not enabled",
+                ),
+                None,
             )
         config = resolve(ELASTIC)
         absent = missing(config, "elasticsearch_url", "kibana_url")
         if absent:
-            return SourceReport(source=kibana.SOURCE, skipped=f"no {absent[0]}")
+            return SourceReport(source=kibana.SOURCE, skipped=f"no {absent[0]}"), None
         report = sync_source(kibana.SOURCE, kibana.read_kibana(config))
     except Exception as exc:  # noqa: BLE001 -- unreachable is skipped, never removed
         logger.warning("detection rules: syncing elastic failed: %s", exc)
-        return SourceReport(source=kibana.SOURCE, error=f"{type(exc).__name__}: {exc}")
+        return (
+            SourceReport(source=kibana.SOURCE, error=f"{type(exc).__name__}: {exc}"),
+            None,
+        )
     logger.info("detection rules: %s", asdict(report))
-    return report
+    return report, config
 
 
 def _remove_wazuh() -> int:
