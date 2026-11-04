@@ -3437,6 +3437,26 @@
   "nullable": false,
   "type": "character varying(500)"
  },
+ "column siem_searches.id": {
+  "default": "nextval('siem_searches_id_seq'::regclass)",
+  "nullable": false,
+  "type": "bigint"
+ },
+ "column siem_searches.integration_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column siem_searches.search_key": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column siem_searches.searched_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp with time zone"
+ },
  "column sign_ins.end_reason": {
   "default": null,
   "nullable": true,
@@ -4174,6 +4194,7 @@
  "constraint roles.roles_pkey": "PRIMARY KEY (role_id)",
  "constraint shared_iocs.shared_iocs_investigation_id_fkey": "FOREIGN KEY (investigation_id) REFERENCES investigations(investigation_id) ON DELETE CASCADE",
  "constraint shared_iocs.shared_iocs_pkey": "PRIMARY KEY (id)",
+ "constraint siem_searches.siem_searches_pkey": "PRIMARY KEY (id)",
  "constraint sign_ins.sign_ins_end_reason_check": "CHECK (((end_reason)::text = ANY ((ARRAY['sign_out'::character varying, 'expiry'::character varying, 'revoked'::character varying])::text[])))",
  "constraint sign_ins.sign_ins_pkey": "PRIMARY KEY (sign_in_id)",
  "constraint sign_ins.sign_ins_principal_id_fkey": "FOREIGN KEY (principal_id) REFERENCES principals(principal_id) ON DELETE RESTRICT",
@@ -4511,6 +4532,7 @@
  "index idx_shared_ioc_investigation": "CREATE INDEX idx_shared_ioc_investigation ON public.shared_iocs USING btree (investigation_id)",
  "index idx_shared_ioc_type": "CREATE INDEX idx_shared_ioc_type ON public.shared_iocs USING btree (ioc_type)",
  "index idx_shared_ioc_value": "CREATE INDEX idx_shared_ioc_value ON public.shared_iocs USING btree (value)",
+ "index idx_siem_searches_window": "CREATE INDEX idx_siem_searches_window ON public.siem_searches USING btree (integration_id, searched_at)",
  "index idx_sign_ins_principal": "CREATE INDEX idx_sign_ins_principal ON public.sign_ins USING btree (principal_id)",
  "index idx_sketch_case_id": "CREATE INDEX idx_sketch_case_id ON public.sketch_mappings USING btree (case_id)",
  "index idx_sketch_finding_id": "CREATE INDEX idx_sketch_finding_id ON public.sketch_mappings USING btree (finding_id)",
@@ -4553,6 +4575,7 @@
  "index roles_name_key": "CREATE UNIQUE INDEX roles_name_key ON public.roles USING btree (name)",
  "index roles_pkey": "CREATE UNIQUE INDEX roles_pkey ON public.roles USING btree (role_id)",
  "index shared_iocs_pkey": "CREATE UNIQUE INDEX shared_iocs_pkey ON public.shared_iocs USING btree (id)",
+ "index siem_searches_pkey": "CREATE UNIQUE INDEX siem_searches_pkey ON public.siem_searches USING btree (id)",
  "index sign_ins_pkey": "CREATE UNIQUE INDEX sign_ins_pkey ON public.sign_ins USING btree (sign_in_id)",
  "index sketch_mappings_pkey": "CREATE UNIQUE INDEX sketch_mappings_pkey ON public.sketch_mappings USING btree (id)",
  "index skill_reads_pkey": "CREATE UNIQUE INDEX skill_reads_pkey ON public.skill_reads USING btree (id)",
@@ -6344,6 +6367,43 @@
    false
   ],
   "sequence": "[\"integer\", 1, 1, 1, 2147483647, 1, false]"
+ },
+ "relation siem_searches": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation siem_searches_id_seq": {
+  "acl": [
+   "app:SELECT",
+   "app:USAGE",
+   "owner:SELECT",
+   "owner:UPDATE",
+   "owner:USAGE"
+  ],
+  "kind": "S",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": "[\"bigint\", 1, 1, 1, 9223372036854775807, 1, false]"
  },
  "relation sign_ins": {
   "acl": [
