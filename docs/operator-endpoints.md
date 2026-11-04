@@ -5,12 +5,11 @@ A few API routes exist for operators and have no screen in the console. Log line
 | Route | Permission | Changes |
 |---|---|---|
 | `GET /api/config/secrets/status` | any signed-in user | nothing |
-| `POST /api/config/secrets/migrate-to-encrypted` | `settings.write` | `secrets.enc` and the State Directory `.env` |
-| `POST /api/storage/init-schema` | `settings.write` | creates tables in the connected database |
+| `POST /api/config/secrets/migrate-to-encrypted` | `platform.write` | `secrets.enc` and the State Directory `.env` |
 
-The seeded **Manager** and **Admin** roles hold `settings.write`. Under `DEV_MODE=true` every request runs as an admin with every permission.
+The seeded **Manager** and **Admin** roles hold `platform.write`. Under `DEV_MODE=true` every request runs as an admin with every permission.
 
-Only `migrate-to-encrypted` writes an audit record (config type `secrets`, key `SECRETS_MIGRATE_TO_ENCRYPTED`, naming the keys it touched and never their values). The other two write none.
+Only `migrate-to-encrypted` writes an audit record (config type `secrets`, key `SECRETS_MIGRATE_TO_ENCRYPTED`, naming the keys it touched and never their values). `secrets/status` writes none.
 
 ## Calling them with curl
 
@@ -123,24 +122,3 @@ Side effects and limits:
 - If `secrets.enc` exists but cannot be decrypted (wrong or missing `master.key`), Vigil refuses to write to it. Each key is reported under `errors`, the response is `500`, and the `.env` is not changed.
 - With `VIGIL_DISABLE_DOTENV` set, the State Directory `.env` is not read, so there is nothing to move.
 - Every call writes one audit record naming the keys in `migrated`, `already_present`, `conflicts` and `errors`, and the `remove_from_dotenv` value. Secret values are never recorded.
-
-## `POST /api/storage/init-schema`
-
-Creates Vigil's tables in the database the API is connected to, when that database has none of them yet. It is the step after `POST /api/storage/reconnect` reports `requires_schema_init: true`.
-
-No request body. It first compares the database with the ORM models:
-
-| State | Meaning | Result |
-|---|---|---|
-| `empty` | none of Vigil's tables exist | creates the tables, `200 {"success": true, "message": "Schema created", ...}` |
-| `ok` | every table and column is present | changes nothing, `200 {"success": true, "message": "Schema already up to date", ...}` |
-| `drifted` | some tables or columns are missing, or a column is `NOT NULL` where the model allows null | `409`; run `python -m core.upgrade` as the database owner instead (see [upgrading](upgrading.md)) |
-| `unknown` | the schema could not be inspected | `409` |
-
-A `200` response also carries the schema report: `state`, `missing_tables`, `missing_columns` and `not_null_columns`.
-
-Things to know:
-
-- `empty` means no table with a Vigil name. Tables with other names do not count. A database that holds only another application's tables is `empty`, and Vigil's tables are created next to them. Check the target before you call this.
-- Your login and permission are checked against the same database. If it has no Vigil tables, it has no `users` table either, and the request can fail before the handler runs. For a brand-new database, `python -m core.upgrade` as the database owner is what creates the schema. See [upgrading](upgrading.md).
-- The `drifted` error message lists missing columns only. Call `POST /api/storage/reconnect` to see `missing_tables` too.
