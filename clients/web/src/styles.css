@@ -6360,6 +6360,23 @@
       cursor: default;
    }
 
+   /* The table scrolls sideways inside its card when the screen is narrow; the expanded
+      panel stays in the visible part of the card and wraps, rather than spanning every column. */
+   .tq-card {
+      container-type: inline-size;
+   }
+
+   .tq-table tbody tr.row-expanded>td {
+      overflow: visible;
+   }
+
+   .tq-table .tq-panel {
+      position: sticky;
+      left: 16px;
+      box-sizing: border-box;
+      max-width: calc(100cqi - 32px);
+   }
+
    .tq-h {
       font-size: 11px;
       font-weight: 700;

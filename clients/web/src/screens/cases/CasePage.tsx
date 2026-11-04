@@ -1267,7 +1267,7 @@ export function CasePage({
   useEffect(() => {
     // no runs yet means the case is still loading, not that the run left it
     if (runFilter && !filter && runs.length > 0) setRunFilter(null)
-  }, [runFilter, filter])
+  }, [runFilter, filter, runs.length])
 
   // A case refresh that moves another run on the case (a hunt's root-cause follow-up) re-reads the record in place.
   const otherRuns = investigations.filter((item) => !item.primary).map((item) => `${item.run_id}:${item.status}`).join(' ')
