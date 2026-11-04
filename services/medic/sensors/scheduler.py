@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -49,6 +50,10 @@ BLIND_AFTER = 3  # failed cycles in a row
 STOPPED_AFTER = 3  # intervals without a finished cycle
 BACKOFF_MAX_S = 300
 FRAMEWORK_ID = "medic.framework"
+DROP_WINDOW_S = 3600
+# A sensor covering this reads through a bounded buffer (logtail.OVERFLOW_SIGNAL;
+# not imported: logtail imports this module).
+_BUFFERED = "log_overflow"
 
 
 _OFF_REASONS = {"vigil_dev_mode": "disabled_by_config"}
@@ -95,6 +100,9 @@ class _State:
     off_reason: str | None = None
     view: str | None = None  # the API state (`sensor_states`) last reported
     since: str | None = None  # when `view` last changed
+    # (monotonic, cumulative `dropped`) once per tick, last hour only; None
+    # for a sensor without a bounded buffer
+    drops: deque[tuple[float, int]] | None = None
 
 
 class Scheduler:
@@ -116,6 +124,8 @@ class Scheduler:
             if sensor.id in self._states or sensor.id == FRAMEWORK_ID:
                 raise ValueError(f"duplicate sensor id {sensor.id!r}")
             st = _State(sensor=sensor, next_due=now, last_done=now)
+            if _BUFFERED in sensor.covers:
+                st.drops = deque([(now, bus.stats[sensor.id].dropped)])
             if ctx.vigil_dev_mode and sensor.uses_vigil_api:
                 # K1 T-37: on a DEV_MODE install every request is an admin, so the
                 # API sensors stay off, with the reason on /status.
@@ -161,6 +171,12 @@ class Scheduler:
                     "since": st.since,
                     "last_good_at": st.last_ok_at,
                     "reason": reason,
+                    # null means not measured, never 0
+                    "dropped_last_hour": (
+                        None
+                        if st.drops is None
+                        else self.bus.stats[st.sensor.id].dropped - st.drops[0][1]
+                    ),
                 }
             )
         return out
@@ -180,6 +196,10 @@ class Scheduler:
     async def tick(self) -> None:
         now = self.clock.monotonic()
         for st in self._states.values():
+            if st.drops is not None:
+                st.drops.append((now, self.bus.stats[st.sensor.id].dropped))
+                while st.drops[0][0] < now - DROP_WINDOW_S:
+                    st.drops.popleft()
             if st.off_reason is not None:
                 continue
             if st.task is not None and not st.task.done():

@@ -24,7 +24,7 @@ from services.medic.contracts.pack_check import _ts
 from services.medic.store import StoreError, open_reader
 from services.medic.store.writer import StoreUsage
 
-API_VERSION = "1.2"
+API_VERSION = "1.3"
 
 # The writer's usage().states are StoreHealth.states (medic-api.openapi.yaml).
 _NOT_RECORDING = {"recording_stopped", "migration_blocked"}
