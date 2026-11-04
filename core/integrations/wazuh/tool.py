@@ -99,9 +99,9 @@ async def handle_list_tools():
                 "type": "object",
                 "properties": {
                     "rule_ids": {
-                        "type": "array",
-                        "items": {"type": "integer"},
-                        "description": "Only these rule ids",
+                        "type": ["array", "integer", "string"],
+                        "items": {"type": ["integer", "string"]},
+                        "description": "Only these rule ids: a list, one id, or '5716,5712'",
                     },
                     "level": {
                         "type": "string",
