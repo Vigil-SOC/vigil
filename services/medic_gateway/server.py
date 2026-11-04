@@ -48,11 +48,19 @@ class Upstream:
         self.host, self.port, self.prefix = host, port, prefix
         self.max_body, self.timeout = max_body, timeout
 
-    def request(self, method: str, target: str, headers: dict, body: bytes = b""):
-        deadline = time.monotonic() + self.timeout
-        conn = http.client.HTTPConnection(self.host, self.port, timeout=self.timeout)
+    def request(
+        self,
+        method: str,
+        target: str,
+        headers: dict,
+        body: bytes = b"",
+        timeout: float | None = None,
+    ):
+        timeout = timeout or self.timeout  # a route may need longer
+        deadline = time.monotonic() + timeout
+        conn = http.client.HTTPConnection(self.host, self.port, timeout=timeout)
         # The total deadline: a socket timeout alone resets on every byte.
-        timer = threading.Timer(self.timeout, lambda: conn.sock and _cut(conn.sock))
+        timer = threading.Timer(timeout, lambda: conn.sock and _cut(conn.sock))
         timer.start()
         try:
             conn.connect()
@@ -194,7 +202,7 @@ class Handler(BaseHTTPRequestHandler):
             self.raw_method, self.raw_target, self.routes
         )
         self.route = route
-        policy.check_headers(self.raw_method, self.headers)
+        policy.check_headers(self.raw_method, self.headers, route)
         fwd = self._forward_headers()
         body = b""
         if self.raw_method == "POST":
@@ -204,7 +212,7 @@ class Handler(BaseHTTPRequestHandler):
             status, headers, data = self._authed(route.method, target, fwd)
         else:
             status, headers, data = self.upstream.request(
-                route.method, target, fwd, body
+                route.method, target, fwd, body, route.timeout
             )
         return self._relay(status, headers, data)
 

@@ -42,7 +42,7 @@ from services.medic.sensors import (
     Value,
 )
 from services.medic.sensors.base import Clock
-from services.medic.sensors.logtail import LOG_CAPACITY, bind_log_tails
+from services.medic.sensors.logtail import LOG_CAPACITY, LogStream, bind_log_tails
 from services.medic.store import DecisionWriter, RecordHeld, StoreError
 
 log = logging.getLogger("services.medic")
@@ -62,6 +62,15 @@ RECORDING_STOPPED = "watcher.recording-stopped"
 HELD_MAX = 1000  # decisions kept in memory while recording is stopped
 
 
+class PackContext(NamedTuple):
+    """What the start-up's pack lifecycle settled on, for every later admin
+    operation: the trust root in force, the image's bundled bytes, Vigil's version."""
+
+    root: dict[str, Any]
+    bundled: bytes | None
+    vigil: str
+
+
 class Loaded(NamedTuple):
     """What the engine and sensors take from a rule pack."""
 
@@ -70,6 +79,7 @@ class Loaded(NamedTuple):
     catalog: set[tuple[str, str]]
     facts: dict[str, Any] | None = None  # PackFacts of the active pack; None in dev
     events: Sequence[dict[str, Any]] = ()  # pack_event bodies for the decision log
+    context: PackContext | None = None  # None in dev mode: no lifecycle
 
 
 def load_pack(
@@ -146,12 +156,26 @@ def _load_active(
     )  # fmt: skip
     for code, message in started.errors:
         log.error("pack start-up: %s %s", code, message)
+    context = PackContext(root, bundled, vigil)
+    return reload_active(shape, data_dir, now, context, started.events)
+
+
+def reload_active(
+    shape: str,
+    data_dir: Path,
+    now: datetime,
+    context: PackContext,
+    events: Sequence[dict[str, Any]] = (),
+) -> Loaded:
+    """The active pack, loaded again (start-up, and after an admin swap). Never
+    raises: `events` are already owed, and a bad pack never crash-loops Medic."""
     try:
-        return _from_active(shape, data_dir, now, vigil, root, bundled, started.events)
-    except Exception as exc:  # noqa: BLE001 (the events are already owed)
-        return _no_pack(
-            f"loading it failed ({type(exc).__name__}: {exc})", started.events
+        loaded = _from_active(
+            shape, data_dir, now, context.vigil, context.root, context.bundled, events
         )
+    except Exception as exc:  # noqa: BLE001
+        loaded = _no_pack(f"loading it failed ({type(exc).__name__}: {exc})", events)
+    return loaded._replace(context=context)
 
 
 def _from_active(shape, data_dir, now, vigil, root, bundled, events) -> Loaded:
@@ -319,6 +343,7 @@ class Medic:
         capture: TraceCapture | None = None,
     ) -> None:
         self.writer, self.clock = writer, clock
+        self.shape, self.group_cap = shape, group_cap
         self.capture = capture or TraceCapture()
         self.engine = Engine(
             list(rules),
@@ -333,6 +358,7 @@ class Medic:
         self.log_bus = Bus(self.bus.stats, LOG_CAPACITY)
         bind_log_tails(sensors, self.log_bus, clock)
         self.sink = EngineSink(self.engine, self.capture, clock)
+        self.sensors = list(sensors)
         self.pipeline = Pipeline(self.bus, self.sink, log_bus=self.log_bus)
         self.scheduler = Scheduler(
             sensors,
@@ -346,6 +372,26 @@ class Medic:
         self.held: list[dict[str, Any]] = []
         self._reserved: set[str] = set()
         self._stepped_back = False
+
+    def swap(self, pack: Loaded) -> None:
+        """Run a new pack from the next tick. Called between cycles. The engine
+        keeps its state, so a rule the pack dropped ends its open incidents as
+        `rule_retired` on the next tick; the sensors stay, the log tails get the
+        new catalogue."""
+        old = self.engine
+        self.engine = Engine(
+            list(pack.rules),
+            instance_id=self.writer.instance_id,
+            install_shape=self.shape,
+            state=old.state(),
+            suppression=[dict(e) for e in pack.suppression],
+            group_cap=self.group_cap,
+        )
+        self.engine.pending = old.pending  # read, not yet ticked
+        self.router = Router(pack.rules)
+        self.sink.engine = self.engine
+        for tail in {s.tail for s in self.sensors if isinstance(s, LogStream)}:
+            tail.catalog = pack.catalog
 
     async def cycle(self) -> list[dict[str, Any]]:
         """Start due sensors, hand finished reads to the engine, evaluate the tick."""

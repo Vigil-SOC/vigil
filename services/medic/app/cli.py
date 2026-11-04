@@ -28,6 +28,7 @@ from services.medic.app.heartbeat import (
     read_heartbeat,
     write_heartbeat,
 )
+from services.medic.app.pack_admin import PackAdmin
 from services.medic.app.policy_probe import Policy, PolicyCheck, Verdict
 from services.medic.app.policy_probe import probe as policy_probe
 from services.medic.app.trace import TraceCapture, pack_of, start_capture
@@ -435,6 +436,12 @@ def _run(
             log.error("cannot write to the data dir %s: %s", data_dir, exc)
             return 1
         log.info("Medic running; data dir %s, shape %s", data_dir, shape)
+        # Dev mode and a start with no usable trust root have no lifecycle.
+        admin = (
+            PackAdmin(pack, shape=shape, data_dir=data_dir, clock=clock)
+            if pack.context is not None
+            else None
+        )
         status = _Status(
             medic,
             data_dir,
@@ -443,7 +450,7 @@ def _run(
             started_at,
             record_start(data_dir, now=started_at, previous_beat=previous_beat),
             dev_mode=vigil_dev_mode,
-            pack=pack.facts,
+            admin=admin,
         )
         status.publish(cycle=0)
         watchdog = Watchdog(
@@ -465,6 +472,7 @@ def _run(
                     started_at,
                     max_cycles,
                     status.publish,
+                    admin,
                 )
             )
         # Logged here, through Medic's redaction, rather than as Python's own
@@ -549,6 +557,7 @@ async def _loop(
     started_at: float,
     max_cycles: int | None,
     after_cycle: Callable[..., None] = lambda **_: None,
+    admin: PackAdmin | None = None,
 ) -> int:
     """Run 15 s cycles until stopped; return the last completed cycle number."""
     stop = asyncio.Event()
@@ -577,7 +586,13 @@ async def _loop(
             # The loop is alive, so the watchdog keeps quiet; `check` goes stale and
             # the probe reports it.
             log.error("cannot write the heartbeat: %s", exc)
-        after_cycle(cycle=cycle)
+        if admin is not None:  # the cycle boundary: the one place the pack swaps
+            admin.apply_pending(medic)
+        try:
+            after_cycle(cycle=cycle)
+        finally:
+            if admin is not None:  # only now: the snapshot already shows the swap
+                admin.release()
         watchdog.beat()
         # To the next grid boundary, so a cycle's own run time never skips a tick.
         sleeper = asyncio.ensure_future(sleep(TICK_S - clock.wall() % TICK_S))
@@ -606,10 +621,10 @@ class _Status:
     retries on its own."""
 
     def __init__(
-        self, medic, data_dir, api, clock, started_at, history, *, dev_mode, pack
+        self, medic, data_dir, api, clock, started_at, history, *, dev_mode, admin
     ) -> None:
         self.medic, self.data_dir, self.clock = medic, data_dir, clock
-        self.dev_mode, self.pack = dev_mode, pack  # fixed at start
+        self.dev_mode, self.admin = dev_mode, admin
         self.started_at, self.history = started_at, history
         self.board = StatusBoard()
         self.api = None
@@ -622,12 +637,28 @@ class _Status:
                 monotonic=clock.monotonic,
                 data_dir=data_dir,
                 writer=medic.writer,
+                bridge=admin.bridge if admin else None,
                 bind_peer=api.bind_peer,
             )
-        self._failing = self._api_failed = False
+        self._failing = self._api_failed = self._pack_failing = False
+
+    def _pack_state(self, now: float) -> dict | None:
+        """The `PackState` for this snapshot; None (so `busy`) if it can't be built."""
+        if self.admin is None:
+            return None
+        try:
+            state = self.admin.state(datetime.fromtimestamp(now, UTC))
+            self._pack_failing = False
+            return state
+        except Exception as exc:  # noqa: BLE001 (never the loop's problem)
+            if not self._pack_failing:
+                log.error("Pack state not built: %s", type(exc).__name__)
+            self._pack_failing = True
+            return None
 
     def publish(self, *, cycle: int) -> None:
         now = self.clock.wall()
+        pack_state = self._pack_state(now)
         try:
             # The last beat actually written, not this cycle's attempt.
             beat = read_heartbeat(self.data_dir)
@@ -644,7 +675,7 @@ class _Status:
                 chain=read_chain(self.data_dir),
                 trace=self.medic.capture.status(),
                 dev_mode=self.dev_mode,
-                pack=self.pack,
+                pack=self.admin.facts if self.admin else None,
             )
             sensors = build_sensors(
                 self.medic.scheduler.sensor_states(),
@@ -658,7 +689,11 @@ class _Status:
         else:
             self._failing = False
             self.board.publish(
-                snapshot, started_at=self.started_at, taken_at=now, sensors=sensors
+                snapshot,
+                started_at=self.started_at,
+                taken_at=now,
+                sensors=sensors,
+                pack=pack_state,
             )
         if self.api is not None:
             try:
