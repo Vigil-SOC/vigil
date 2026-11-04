@@ -1,7 +1,8 @@
 """
 Security-Detections tool integration - Pure Python implementation
-Answers from the detection rules every configured repo holds (Sigma, Splunk, Elastic, KQL),
-as core/detections/inventory syncs them into Postgres.
+Answers from the detection rules every configured repo holds (Sigma, Splunk, Elastic, KQL)
+and the rules Kibana's detection engine runs, as core/detections/inventory syncs them
+into Postgres. Splunk saved searches and Wazuh rules are not read yet.
 """
 
 from typing import Any, Dict, List, Optional
@@ -77,20 +78,27 @@ class SecurityDetectionsTools:
         return report
 
     async def search_detections(
-        self, query: str, source_type: Optional[str] = None, limit: int = 20
+        self,
+        query: str = "",
+        source_type: Optional[str] = None,
+        limit: int = 20,
+        tool: Optional[str] = None,
+        runs: Optional[str] = None,
     ) -> List[Dict]:
         """
         Search across all detection rules using keywords.
 
         Args:
             query: Search query (e.g., "powershell base64", "lateral movement")
-            source_type: Optional filter by source ("sigma", "splunk", "elastic", "kql")
+            source_type: Optional filter by rule format ("sigma", "splunk", "elastic", "kql")
             limit: Maximum number of results
+            tool: Optional filter by where the rule was read ("repo", "elastic")
+            runs: Optional filter by Runs result ("pass", "fail", "unknown")
 
         Returns:
-            List of matching detection rules
+            List of matching detection rules, each with its status and checks
         """
-        return catalog.search(query, source_type, limit)
+        return catalog.search(query or "", source_type, limit, tool, runs)
 
     async def get_detection_count(self, source_type: Optional[str] = None) -> Dict:
         """
@@ -119,6 +127,7 @@ class SecurityDetectionsTools:
             catalog.rules_by_technique(),
             catalog.rules_by_tactic(),
             catalog.rule_counts(),
+            catalog.siem_runs_by_technique(),
         )
 
     async def get_coverage_stats(self, source_type: Optional[str] = None) -> Dict:

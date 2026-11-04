@@ -14,7 +14,7 @@ from core.skills.skill_library import READ_SKILL_TOOL
 SECURITY_DETECTION_TOOLS = [
     {
         "name": "analyze_coverage",
-        "description": "Analyze detection coverage for MITRE ATT&CK techniques, or report per-technique layer verdicts for a sanctioned run. Pass techniques for catalog counts (Sigma / Splunk / Elastic / KQL). Pass run_id or an action-trace steps list for the run report: reconstruct on read, group by technique_id, verdicts rule | loglm | both | missed. Do not mix the two.",
+        "description": "Analyze detection coverage for MITRE ATT&CK techniques, or report per-technique layer verdicts for a sanctioned run. Pass techniques for catalog counts (Sigma / Splunk / Elastic / KQL), with by_tool: active rules per tool ('repo', or a SIEM: 'elastic' for Kibana) and, for a SIEM, its Runs pass / fail / unknown / unchecked counts. Pass run_id or an action-trace steps list for the run report: reconstruct on read, group by technique_id, verdicts rule | loglm | both | missed. Do not mix the two.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -37,18 +37,28 @@ SECURITY_DETECTION_TOOLS = [
     },
     {
         "name": "search_detections",
-        "description": "Search the detection rules of every configured repo (Sigma, Splunk, Elastic, KQL) using keywords. Returns matching detection rules with metadata. Use this to find relevant detections for specific attack patterns or tools.",
+        "description": "Search the detection rules of every configured repo (Sigma, Splunk, Elastic, KQL) and the rules Kibana's detection engine runs, using keywords. Each hit carries its tool ('repo' or 'elastic'), its status ('active', or 'disabled' for a Kibana rule switched off) and checks.runs: whether the SIEM runs it ({result: pass|fail|unknown, reason, checked_at}; reason holds the SIEM's own error). Filter tool='elastic' with runs='fail' to answer which Elastic rules don't run and why. Splunk saved searches and Wazuh rules are not read yet.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Search query - keywords or phrases (e.g., 'powershell base64', 'lateral movement', 'mimikatz')",
+                    "description": "Search query - keywords or phrases (e.g., 'powershell base64', 'lateral movement', 'mimikatz'). Empty matches every rule the filters keep.",
                 },
                 "source_type": {
                     "type": "string",
                     "enum": ["sigma", "splunk", "elastic", "kql"],
-                    "description": "Optional: Filter by detection format. Omit to search all formats.",
+                    "description": "Optional: Filter by detection format. 'elastic' covers repo tomls and Kibana rules alike. Omit to search all formats.",
+                },
+                "tool": {
+                    "type": "string",
+                    "enum": ["repo", "elastic"],
+                    "description": "Optional: Filter by where the rule was read: a configured repo, or Kibana's detection engine.",
+                },
+                "runs": {
+                    "type": "string",
+                    "enum": ["pass", "fail", "unknown"],
+                    "description": "Optional: Keep rules whose latest version has this Runs result. Only SIEM rules have one.",
                 },
                 "limit": {
                     "type": "integer",
@@ -56,12 +66,12 @@ SECURITY_DETECTION_TOOLS = [
                     "default": 20,
                 },
             },
-            "required": ["query"],
+            "required": [],
         },
     },
     {
         "name": "identify_gaps",
-        "description": "Compare the ATT&CK techniques seen on stored alerts with the detection rules actually loaded, and list techniques no rule declares. Reads stored data only and writes nothing. Read answer and unknown first: alerts that name a tactic and no technique cannot prove a gap, and answer is unknown when the data cannot say.",
+        "description": "Compare the ATT&CK techniques seen on stored alerts with the detection rules actually loaded, and list techniques no rule declares. covered_on_paper_only lists techniques whose Kibana rules all fail Runs (each technique row has siem_runs). Reads stored data only and writes nothing. Read answer and unknown first: alerts that name a tactic and no technique cannot prove a gap, and answer is unknown when the data cannot say. Splunk saved searches and Wazuh rules are not read yet.",
         "input_schema": {
             "type": "object",
             "properties": {

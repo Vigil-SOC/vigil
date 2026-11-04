@@ -292,6 +292,45 @@ class ElasticService:
             self.last_search_error = exc
             return None
 
+    async def list_detection_rules(self, per_page: int = 100) -> List[Dict[str, Any]]:
+        """Every detection engine rule, paged through ``_find``. Read-only.
+
+        Raises unless the list is whole: as many rules as the response's
+        ``total``, no ``rule_id`` twice. A caller treating a short list as
+        complete would read the missing rules as deleted.
+        """
+        rules: List[Dict[str, Any]] = []
+        total: Optional[int] = None
+        page = 1
+        while total is None or len(rules) < total:
+            resp = await self.kibana_client.get(
+                "/api/detection_engine/rules/_find",
+                params={
+                    "page": page,
+                    "per_page": per_page,
+                    # created_at ascending: a rule added mid-list lands last.
+                    "sort_field": "created_at",
+                    "sort_order": "asc",
+                },
+            )
+            resp.raise_for_status()
+            body = resp.json()
+            data = body.get("data") or []
+            if total is None:
+                total = int(body.get("total") or 0)
+            elif int(body.get("total") or 0) != total:
+                raise RuntimeError("rule count changed while paging _find")
+            if not data:
+                break
+            rules.extend(data)
+            page += 1
+        if len(rules) != total:
+            raise RuntimeError(f"_find listed {len(rules)} rules of total {total}")
+        ids = [rule.get("rule_id") for rule in rules]
+        if None in ids or len(set(ids)) != len(ids):
+            raise RuntimeError("_find listed a rule_id twice, or a rule without one")
+        return rules
+
     async def update_alert_status(
         self,
         signal_ids: List[str],

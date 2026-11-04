@@ -4,12 +4,15 @@ A gap is a technique seen on a stored alert that no active rule declares; rules 
 counted by detection_rules id. Stored labels are not all techniques: ingest keeps
 whatever key a source sent, so a row may name a tactic or an unmapped class. Those
 cannot prove a gap, and the report says so rather than guessing which technique ran.
+
+A technique whose SIEM rules (read from Kibana) all fail Runs is covered on paper
+only: a rule declares it, and nothing that runs does.
 """
 
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any, Collection, Dict, List, Mapping
+from typing import Any, Collection, Dict, List, Mapping, Optional
 
 from core.storage.connection import get_db_manager
 from core.storage.models import Case, Finding, FindingMitrePrediction, case_findings
@@ -17,6 +20,12 @@ from core.storage.models import Case, Finding, FindingMitrePrediction, case_find
 RULE_SOURCES = ("sigma", "splunk", "elastic", "kql")
 # The rule formats that declare a tactic; Splunk and KQL rules name techniques only.
 TACTIC_RULE_SOURCES = ("sigma", "elastic")
+
+SIEMS_NOT_READ_NOTE = (
+    "Only Elastic (Kibana) rules are read from a SIEM. Splunk saved searches and "
+    "Wazuh rules are not read yet, so what those SIEMs run, and whether it runs, "
+    "is not part of this report."
+)
 
 TECHNIQUE_ID = re.compile(r"^T\d{4}(\.\d{3})?$", re.IGNORECASE)
 
@@ -129,6 +138,7 @@ def gap_report(
     rules_by_technique: Mapping[str, Collection[int]],
     rules_by_tactic: Mapping[str, int],
     rule_counts: Mapping[str, int],
+    siem_runs: Optional[Mapping[str, Mapping[str, int]]] = None,
 ) -> Dict[str, Any]:
     techniques, tactics, kinds = _classify(alerts)
     loaded = sum(rule_counts.values())
@@ -141,9 +151,14 @@ def gap_report(
             "alerts": count,
             "rules": len(set(rules_by_technique.get(technique, ()))),
             "related_rules": _related_rules(technique, rules_by_technique),
+            # Runs results of the SIEM rules declaring it, counted.
+            "siem_runs": dict((siem_runs or {}).get(technique, {})),
         }
         for technique, count in techniques.items()
     ]
+    for row in seen:
+        runs = row["siem_runs"]
+        row["covered_on_paper_only"] = bool(runs) and set(runs) == {"fail"}
     seen.sort(key=lambda row: (row["rules"], row["related_rules"], -row["alerts"]))
     tactic_rows: List[Dict[str, Any]] = [
         {
@@ -160,6 +175,7 @@ def gap_report(
         if loaded
         else []
     )
+    paper_only = [row["technique"] for row in seen if row["covered_on_paper_only"]]
 
     unknown: List[str] = []
     missing = [source for source in RULE_SOURCES if not rule_counts.get(source)]
@@ -194,6 +210,7 @@ def gap_report(
         )
     if unlabelled:
         unknown.append(f"{unlabelled} alert(s) carry no ATT&CK label at all.")
+    unknown.append(SIEMS_NOT_READ_NOTE)
     if tactics and not tactic_rules_known:
         unknown.append(
             "Tactic rule counts are unknown: only Sigma and Elastic rules declare a "
@@ -202,7 +219,7 @@ def gap_report(
 
     if not loaded or not seen:
         answer = "unknown"
-    elif gaps:
+    elif gaps or paper_only:
         answer = "gaps_found"
     else:
         answer = "no_gaps_found"
@@ -222,6 +239,7 @@ def gap_report(
         "techniques_analyzed": len(seen),
         "gaps_identified": len(gaps),
         "gaps": gaps,
+        "covered_on_paper_only": paper_only,
         "techniques": seen,
         "tactics": tactic_rows,
     }
