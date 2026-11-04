@@ -1,21 +1,24 @@
 """The pack lifecycle (F6): every way the active pack changes besides a plain load.
 
-Built on loader.py (verify, check, persist) and, like it, a set of functions with
+Built on loader.py (check, persist) and, like it, a set of functions with
 everything as a parameter: no env, no clock, no config, no decision log, no engine.
 Each operation returns an Outcome: refusal codes, or the `pack_event` dicts
 (decision-record.schema.json) for the caller to record.
 
-    start()               trust root update, revocation fallback, bundled seed/upgrade
+    start()               bundled seed/upgrade
     import_pack()         admin import; a withdrawn version needs `override`
     revert()              last-known-good becomes active
     switch_to_bundled()   the release's bundled pack becomes active
     pack_state()          the API's PackState (minus suppression_7d), the one place it is computed
-    acknowledge_revoked_notice()
 
-On disk, next to loader.py's active.json / last-known-good.json, under <data_dir>/packs/ (0600):
-    trust-root.dsse.json  DSSE bytes of the newest trust root seen (image or update)
-    state.json            withdrawn, revoked_notice, and per-pack provenance (source,
-                          imported_by, activated_at) keyed by the sha256 of the pack file
+Every pack is held to pack_check, on start, revert and switch as on import; a stored
+pack is not re-hashed against anything. On disk, next to loader.py's active.json /
+last-known-good.json, under <data_dir>/packs/ (0600):
+    state.json            withdrawn, and per-pack provenance (source, imported_by,
+                          activated_at) keyed by the sha256 of the pack file
+A pre-2.0 install may leave a trust-root.dsse.json there, a revoked_notice in
+state.json and a medic.signed-pack/v1 active file: the first two are ignored, and the
+last reads as no active pack, so the bundled pack seeds.
 
 Provenance is keyed by file hash, so after a crash between a swap and its state write an
 entry that no longer matches is simply not found: source is then derived by comparing the
@@ -23,7 +26,7 @@ file with the bundled bytes, imported_by is null, and activated_at is the file's
 Every write is temp -> fsync -> replace -> fsync-dir. State is written before the swap it
 describes, so every crash point leaves a loadable active pack and loses no withdrawn entry.
 A crash in switch_to_bundled between the swap and the last-known-good unlink leaves that
-(unwithdrawn, still verified) file as a revert target. A crash between the state write and the swap of a revert/switch leaves the still-active
+(unwithdrawn, still checked) file as a revert target. A crash between the state write and the swap of a revert/switch leaves the still-active
 pack listed as withdrawn; _load_state() ignores withdrawn entries matching the active pack
 and every operation re-reads state before it swaps, so the entry never comes back.
 """
@@ -38,7 +41,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from services.medic.contracts import trust_check
 from services.medic.contracts.pack_check import Lineage, check_pack
 from services.medic.packs import loader
 from services.medic.packs.loader import (
@@ -55,7 +57,6 @@ from services.medic.packs.loader import (
 
 log = logging.getLogger("services.medic")
 
-ROOT_FILE = "trust-root.dsse.json"
 STATE_FILE = "state.json"
 TOLERATED = frozenset({"P-EXPIRED", "P-VIGIL"})  # all the bundled pack may be let off
 WITHDRAWN_CAP = 50
@@ -64,6 +65,7 @@ WITHDRAWN = "P-WITHDRAWN"
 NO_TARGET = "P-NO-TARGET"
 NO_ACTIVE = "P-NO-ACTIVE"
 BUNDLED_ACTIVE = "P-BUNDLED-ACTIVE"
+SIGNED_PACK = "medic.signed-pack/v1"  # pre-2.0 active file: read as no active pack
 
 
 @dataclass
@@ -153,8 +155,8 @@ def _load_state(data_dir: Path) -> dict:
         log.error("pack state file unreadable; starting from empty state")
         raw = {}
     st = {
+        **raw,  # keys this version doesn't read (a pre-2.0 revoked_notice) are kept
         "withdrawn": list(raw.get("withdrawn") or []),
-        "revoked_notice": raw.get("revoked_notice"),
         "packs": dict(raw.get("packs") or {}),
     }
     active = read_active(data_dir)
@@ -193,131 +195,36 @@ def _provenance(data: bytes, st: dict, bundled: bytes | None, path: Path) -> dic
     return {"source": src, "imported_by": None, "activated_at": at}
 
 
-# ---- trust root ----------------------------------------------------------------
-
-
-def _sync_trust_root(d: Path, image_bytes: bytes, now: datetime) -> dict:
-    """The root to verify with: the stored one, advanced to the image's when that is newer."""
-    image = trust_check.load_root(image_bytes, now=now)  # a broken image is a build bug
-    try:
-        stored = trust_check.load_root((d / ROOT_FILE).read_bytes(), now=now)
-    except FileNotFoundError:
-        _replace(d, ROOT_FILE, image_bytes)
-        return image
-    except (OSError, ValueError) as exc:
-        log.error(
-            "stored trust root unusable (%s); using the image's, file left as is", exc
-        )
-        return image
-    if image["version"] <= stored["version"]:
-        return stored  # an older or equal image root changes nothing (not an error)
-    res = trust_check.update_trust_root(stored, image_bytes, now=now)
-    # An expired stored root can't vouch for anything, so it can't vouch for its successor;
-    # the image is the trust anchor then (still never un-revoking a key).
-    expired = trust_check._ts(stored["expires_at"]) <= now
-    if (
-        not res.ok
-        and expired
-        and set(stored["revoked_keyids"]) <= set(image["revoked_keyids"])
-    ):
-        res = trust_check.Verified()
-    if not res.ok:
-        log.error("image trust root v%s not applied: %s", image["version"], res.errors)
-        return stored
-    _replace(d, ROOT_FILE, image_bytes)
-    log.info("trust root updated v%s -> v%s", stored["version"], image["version"])
-    return image
-
-
-# ---- startup: revocation fallback, seed, upgrade ---------------------------------
+# ---- startup: seed, upgrade ------------------------------------------------------
 
 
 def start(
-    *,
-    data_dir: Path,
-    image_trust_root: bytes,
-    bundled: bytes | None,
-    vigil_version: str,
-    dev_mode: bool,
-    now: datetime,
-) -> tuple[dict, Outcome]:
-    """Run once at startup. Returns (trust root to use from here on, Outcome)."""
+    *, data_dir: Path, bundled: bytes | None, vigil_version: str, now: datetime
+) -> Outcome:
+    """Run once at startup. Errors are why the bundled pack was not seeded or
+    upgraded; the active pack, or only the watcher.* rules, keep running."""
     d = _dir(data_dir)
     for tmp in d.glob(".pack.*"):  # temp files a crash left behind
         tmp.unlink(missing_ok=True)
-    root = _sync_trust_root(d, image_trust_root, now)
+    if _is_signed_pack(d / ACTIVE):
+        log.warning("active pack is a pre-2.0 signed pack; read as no active pack")
     out = Outcome()
-    kw = {"vigil_version": vigil_version, "dev_mode": dev_mode, "now": now}
-    _revocation_fallback(data_dir, root, bundled, out, **kw)
-    lkg = read_last_known_good(data_dir)
-    if lkg and "S-REVOKED" in _verify(lkg.data, root, dev_mode, now).codes:
-        (d / LAST_KNOWN_GOOD).unlink(
-            missing_ok=True
-        )  # a revoked key's pack is no revert target
-        _fsync_dir(d)
-    if not out.errors:  # (bundled just failed as the fallback; seeding would repeat it)
-        _seed_or_upgrade(data_dir, root, bundled, out, **kw)
-    return root, out
+    _seed_or_upgrade(data_dir, bundled, out, vigil_version=vigil_version, now=now)
+    for code in dict.fromkeys(out.codes):  # once per code
+        msg = next(m for c, m in out.errors if c == code)
+        log.error("bundled pack not seeded: %s %s", code, msg)
+    return out
 
 
-def _verify(data: bytes, root: dict, dev_mode: bool, now: datetime):
-    return trust_check.verify_envelope(
-        data,
-        root,
-        expected={trust_check.PACK, trust_check.PACK_DEV},
-        now=now,
-        dev_mode=dev_mode,
-    )
+def _is_signed_pack(path: Path) -> bool:
+    try:
+        doc = json.loads(path.read_bytes())
+    except (OSError, ValueError, RecursionError):
+        return False
+    return isinstance(doc, dict) and doc.get("format") == SIGNED_PACK
 
 
-def _revocation_fallback(
-    data_dir, root, bundled, out, *, vigil_version, dev_mode, now
-) -> None:
-    active = read_active(data_dir)
-    # Only a revoked key counts: an expired pack is `stale`, a key out of scope is not revoked.
-    if not active or "S-REVOKED" not in _verify(active.data, root, dev_mode, now).codes:
-        return
-    d = _dir(data_dir)
-    removed = _ref(active.lineage)
-    if bundled is None:
-        errors, res = [("P-NO-BUNDLED", "this release has no bundled pack")], None
-    else:
-        errors, _, res = vet_pack(
-            bundled, trust_root=root, vigil_version=vigil_version, dev_mode=dev_mode,
-            now=now, lineage=None, tolerate=TOLERATED,
-        )  # fmt: skip
-    if errors:
-        # Bundled can't take over: the revoked pack still goes, and there is no active pack.
-        # revoked_notice.running is required by the contract, so no notice is written.
-        log.error(
-            "active pack %s revoked and bundled cannot take over: %s", removed, errors
-        )
-        (d / ACTIVE).unlink(missing_ok=True)
-        _fsync_dir(d)
-        out.errors += errors
-        return
-    running = _ref(res.manifest["pack"])
-    st = _load_state(data_dir)
-    st["revoked_notice"] = {"removed": removed, "running": running, "at": _iso(now)}
-    st["packs"][_sha(bundled)] = {
-        "source": "bundled",
-        "imported_by": None,
-        "activated_at": _iso(now),
-    }
-    _save_state(data_dir, st, bundled)  # state first, then the swap
-    _replace(
-        d, ACTIVE, bundled
-    )  # one replace: the revoked pack is not kept as last-known-good
-    log.warning("active pack %s revoked; running bundled %s", removed, running)
-    out.events.append(
-        {"event": "imported", "pack": running, "previous": removed, "source": "bundled"}
-    )
-    out.events += _skipped(running, res.skipped_rules)
-
-
-def _seed_or_upgrade(
-    data_dir, root, bundled, out, *, vigil_version, dev_mode, now
-) -> None:
+def _seed_or_upgrade(data_dir, bundled, out, *, vigil_version, now) -> None:
     if bundled is None:
         return
     active = read_active(data_dir)
@@ -334,8 +241,8 @@ def _seed_or_upgrade(
             log.info("bundled %s is withdrawn on this site; not upgrading", _ref(b))
             return
     res = load_pack(
-        bundled, data_dir=data_dir, trust_root=root, vigil_version=vigil_version,
-        dev_mode=dev_mode, now=now, tolerate=TOLERATED,
+        bundled, data_dir=data_dir, vigil_version=vigil_version, now=now,
+        tolerate=TOLERATED,
     )  # fmt: skip
     if not res.ok:
         out.errors += res.errors
@@ -370,9 +277,7 @@ def import_pack(
     data: bytes,
     *,
     data_dir: Path,
-    trust_root: dict,
     vigil_version: str,
-    dev_mode: bool,
     now: datetime,
     by: str,
     override: bool = False,
@@ -389,8 +294,8 @@ def import_pack(
         )
     previous = read_active(data_dir)
     res = load_pack(
-        data, data_dir=data_dir, trust_root=trust_root, vigil_version=vigil_version,
-        dev_mode=dev_mode, now=now, override_lineage=withdrawn,
+        data, data_dir=data_dir, vigil_version=vigil_version, now=now,
+        override_lineage=withdrawn,
     )  # fmt: skip
     if not res.ok:
         return Outcome(errors=res.errors)
@@ -418,14 +323,12 @@ def import_pack(
 def revert(
     *,
     data_dir: Path,
-    trust_root: dict,
     bundled: bytes | None,
     vigil_version: str,
-    dev_mode: bool,
     now: datetime,
     by: str,
 ) -> Outcome:
-    """Last-known-good becomes active (re-verified against the current root, strictly);
+    """Last-known-good becomes active (re-checked with pack_check, strictly);
     the version reverted away from is withdrawn; last-known-good is left empty."""
     active, target = read_active(data_dir), read_last_known_good(data_dir)
     if active is None:
@@ -434,9 +337,9 @@ def revert(
         target is None or target.data == active.data
     ):  # (a crashed import can leave a copy)
         return _refuse(NO_TARGET, "no last-known-good pack to revert to")
-    errors, _, res = vet_pack(
-        target.data, trust_root=trust_root, vigil_version=vigil_version, dev_mode=dev_mode,
-        now=now, lineage=None, override_lineage=True,
+    errors, res = vet_pack(
+        target.data, vigil_version=vigil_version, now=now, lineage=None,
+        override_lineage=True,
     )  # fmt: skip
     if errors:
         return _refuse_all(errors)
@@ -456,14 +359,12 @@ def revert(
 def switch_to_bundled(
     *,
     data_dir: Path,
-    trust_root: dict,
     bundled: bytes | None,
     vigil_version: str,
-    dev_mode: bool,
     now: datetime,
     by: str,
 ) -> Outcome:
-    """The bundled pack becomes active (re-verified, with its exception); the version
+    """The bundled pack becomes active (re-checked, with its exception); the version
     switched away from is withdrawn; last-known-good is left empty."""
     active = read_active(data_dir)
     if bundled is None:
@@ -472,9 +373,9 @@ def switch_to_bundled(
         return _refuse(NO_ACTIVE, "no active pack to switch from")
     if active.data == bundled:
         return _refuse(BUNDLED_ACTIVE, "the bundled pack is already active")
-    errors, _, res = vet_pack(
-        bundled, trust_root=trust_root, vigil_version=vigil_version, dev_mode=dev_mode,
-        now=now, lineage=None, override_lineage=True, tolerate=TOLERATED,
+    errors, res = vet_pack(
+        bundled, vigil_version=vigil_version, now=now, lineage=None,
+        override_lineage=True, tolerate=TOLERATED,
     )  # fmt: skip
     if errors:
         return _refuse_all(errors)
@@ -505,32 +406,17 @@ def _switched(res, outgoing: loader.StoredPack, by: str) -> Outcome:
     return Outcome(events=[ev, *_skipped(pack, res.skipped_rules)])
 
 
-def acknowledge_revoked_notice(data_dir: Path) -> dict | None:
-    """Clear the revoked notice (writes nothing to the chain). Returns what was cleared."""
-    st = _load_state(data_dir)
-    notice = st["revoked_notice"]
-    if notice is not None:
-        st["revoked_notice"] = None
-        _save_state(data_dir, st)
-    return notice
-
-
 # ---- PackState -------------------------------------------------------------------
 
 
 def _facts(data: bytes, prov: dict, vigil_version: str, now: datetime) -> dict | None:
     """PackFacts from a stored file; stale / in_vigil_range / rules_skipped are derived now."""
     try:
-        doc = json.loads(data)
-        pack = (
-            doc["pack"].encode()
-            if doc.get("format") == trust_check.SIGNED_PACK
-            else data
-        )
-        m = json.loads(pack)["manifest"]
-        res = check_pack(pack, vigil_version=vigil_version, now=now)
+        m = json.loads(data)["manifest"]
+        res = check_pack(data, vigil_version=vigil_version, now=now)
         return {
             "pack": m["pack"],
+            "sha256": _sha(data),
             "vigil": m["vigil"],
             "source": prov["source"],
             "imported_by": prov["imported_by"],
@@ -547,7 +433,6 @@ def _facts(data: bytes, prov: dict, vigil_version: str, now: datetime) -> dict |
 def pack_state(
     *,
     data_dir: Path,
-    trust_root: dict,
     bundled: bytes | None,
     vigil_version: str,
     now: datetime,
@@ -579,9 +464,4 @@ def pack_state(
         "previous": stored(read_last_known_good(data_dir), LAST_KNOWN_GOOD),
         "bundled": bundled_facts,
         "withdrawn": st["withdrawn"][-WITHDRAWN_CAP:],
-        "revoked_notice": st["revoked_notice"],
-        "trust_root": {
-            "version": trust_root["version"],
-            "expires_at": trust_root["expires_at"],
-        },
     }
