@@ -33,4 +33,4 @@ advice:
   fix: >-
     Check that Postgres is running and reachable from soc-daemon with the
     configured credentials, then restart soc-daemon. If Vigil runs its own
-    bundled Postgres and it is healthy, send this incident to DeepTempo Support.
+    bundled Postgres and it is healthy, report it as a Vigil defect with this incident.

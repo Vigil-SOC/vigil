@@ -48,3 +48,7 @@ entries:
   - parent: {rule: ingest.processor-store-dropped}
     children: {rule: pipeline.daemon-component-hung}
     why: Findings that fail to store aren't processed; show the store fault, not a hung processor.
+  # --- pipeline: agent and run queue (F7c-agents) ---
+  - parent: {rule: pipeline.agent-serve-not-ready}
+    children: {rule: pipeline.agent-reads-failing}
+    why: When agent-serve reports not ready, the backend's reads of it fail too. Show the service fault, not the failed reads.

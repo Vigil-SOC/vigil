@@ -17,6 +17,6 @@ keep_firing_for: 15m
 advice:
   summary: Some alerts from this source were dropped because they carry no identifier Vigil can store them under.
   fix: >-
-    Send this incident to DeepTempo Support with the evidence report. Dropped
+    Report it as a Vigil defect with this incident. Dropped
     alerts are not retried; check the source's console for alerts in this period
     that are missing from Vigil.
