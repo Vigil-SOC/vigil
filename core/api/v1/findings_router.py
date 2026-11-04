@@ -24,6 +24,7 @@ from pydantic import (
 )
 
 from core.auth.permissions import permission_gate
+from core.detections.inventory.catalog import rule_for_finding
 from core.findings.alert_outcomes import TERMINAL_LABELS, stored_finding_states
 from core.findings.exclusions import current_active_ips, excluded_ips_of
 from core.findings.source_evidence import (
@@ -163,6 +164,8 @@ class FindingRecord(FindingSchema):
     terminal_state: Optional[str] = None
     terminal_label: Optional[str] = None
     case_id: Optional[str] = None
+    # core.detections.inventory.catalog.rule_for_finding; single-finding reads only
+    detection_rule: Optional[Dict[str, Any]] = None
 
 
 class FindingListResponse(BaseModel):
@@ -272,6 +275,7 @@ def get_finding(finding_id: str):
     finding = _annotate_exclusions(
         normalize_finding_source_evidence(finding), current_active_ips()
     )
+    finding["detection_rule"] = rule_for_finding(finding)
     return _annotate_states([finding])[0]
 
 

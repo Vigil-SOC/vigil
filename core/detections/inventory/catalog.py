@@ -4,7 +4,8 @@ A rule's tool is where it was read: 'overlay' for Vigil's own overlay source,
 'repo' for any other configured repo, else the SIEM (source 'elastic' or
 'wazuh'). Only active rules count as deployed; search also finds the disabled
 ones, each hit saying so. An overlay hit also carries its rollout stage and
-stage history.
+stage history. ``rule_for_finding`` names the rule and version that fired a
+finding.
 
 A SIEM copy may be linked to the repo rule it came from (origin_rule_id); an
 overlay rule counts as a repo rule here. A repo rule's state in a SIEM is its
@@ -19,8 +20,9 @@ change back to pass clears it. It is a query over detection_rule_check_changes.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional, Set
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Set
 
 from sqlalchemy import Text, and_, case, cast, func, select
 
@@ -32,6 +34,8 @@ from core.storage.models import (
     DetectionRuleStage,
     DetectionRuleVersion,
 )
+
+logger = logging.getLogger(__name__)
 
 ACTIVE = DetectionRule.status == "active"
 LISTED = DetectionRule.status.in_(("active", "disabled"))
@@ -562,3 +566,110 @@ def _stage_rows(session: Any, rule_ids: List[int]) -> Dict[int, List[Dict]]:
             }
         )
     return out
+
+
+def _dig(value: Any, *keys: str) -> Any:
+    for key in keys:
+        value = value.get(key) if isinstance(value, dict) else None
+    return value
+
+
+def _kibana_rule_id(record: Any) -> Optional[str]:
+    """The Kibana rule_id an alert document names, flat-dotted or nested."""
+    source = _dig(record, "_source") or record
+    for value in (
+        _dig(source, "kibana.alert.rule.rule_id"),
+        _dig(source, "kibana", "alert", "rule", "rule_id"),
+        _dig(source, "signal", "rule", "rule_id"),
+    ):
+        if value and isinstance(value, (str, int)):
+            return str(value)
+    return None
+
+
+def _when(value: Any) -> Optional[datetime]:
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if not isinstance(value, datetime):
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _unknown(reason: str) -> Dict[str, Any]:
+    return {"resolved": False, "reason": reason}
+
+
+def rule_for_finding(finding: Mapping[str, Any]) -> Dict[str, Any]:
+    """The inventory rule and version that fired a finding, or why it is unknown.
+
+    Read from the stored alert (entity_context.source_evidence), never matched
+    on name. The version is the latest one first seen at or before the alert.
+    Only Kibana (source 'elastic') rules resolve today.
+    """
+    source = finding.get("data_source")
+    if source == "splunk":
+        return _unknown("Splunk rules are not in the inventory yet")
+    if source != "elastic":
+        return _unknown(f"only Kibana rules resolve; this finding is from {source}")
+    context = finding.get("entity_context")
+    evidence = context.get("source_evidence") if isinstance(context, dict) else None
+    records = evidence.get("records") if isinstance(evidence, dict) else None
+    key = next(filter(None, map(_kibana_rule_id, records or [])), None)
+    if key is None:
+        return _unknown("the alert names no Kibana detection rule")
+    fired = _when(finding.get("timestamp"))
+    if fired is None:
+        return _unknown("the finding has no alert time to pick a version by")
+    try:
+        return _resolve(key, fired)
+    except Exception:  # a finding read must not fail on the inventory
+        logger.exception("Could not resolve Kibana rule %s", key)
+        return _unknown("the rule inventory could not be read")
+
+
+def _resolve(key: str, fired: datetime) -> Dict[str, Any]:
+    with get_db_manager().session_scope() as session:
+        rule = session.scalar(
+            select(DetectionRule).where(
+                DetectionRule.source == "elastic", DetectionRule.native_key == key
+            )
+        )
+        if rule is None:
+            return _unknown(f"Kibana rule {key} is not in the inventory")
+        versions = select(DetectionRuleVersion).where(
+            DetectionRuleVersion.rule_id == rule.id
+        )
+        version = session.scalar(
+            versions.where(DetectionRuleVersion.first_seen <= fired)
+            .order_by(DetectionRuleVersion.version.desc())
+            .limit(1)
+        )
+        if version is None:
+            first = session.scalar(
+                select(func.min(DetectionRuleVersion.first_seen)).where(
+                    DetectionRuleVersion.rule_id == rule.id
+                )
+            )
+            return _unknown(
+                f"the alert predates the first sync of Kibana rule {key}"
+                + (
+                    f" ({first.astimezone(timezone.utc):%Y-%m-%d %H:%M} UTC)"
+                    if first
+                    else ""
+                )
+            )
+        return {
+            "resolved": True,
+            "rule_id": rule.id,
+            "source": rule.source,
+            "native_key": rule.native_key,
+            "name": rule.name,
+            "status": rule.status,
+            "version": version.version,
+            "query": version.query,
+            "first_seen": version.first_seen.isoformat(),
+            "checks": version.checks or {},
+        }
