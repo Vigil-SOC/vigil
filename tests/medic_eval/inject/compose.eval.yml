@@ -47,6 +47,10 @@ services:
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
       # Empty is the I-5.a fault: the daemon then refuses every push with 503.
       DAEMON_WEBHOOK_TOKEN: ${MEDIC_EVAL_WEBHOOK_TOKEN-}
+      # sitecustomize.py (below): SIGUSR1 cancels the scheduler task (P-3.a).
+      PYTHONPATH: /app:/eval-site
+    volumes:
+      - ${MEDIC_EVAL_SITE:?}:/eval-site/sitecustomize.py:ro
 
   agent-serve:
     container_name: !reset null
@@ -109,7 +113,8 @@ services:
     environment: !override
       STUB_ROLE: bifrost
 
-  # The Elastic the daemon polls in I-4.b: no alerts, and it logs every request.
+  # The Elastic the daemon polls (I-3, I-4.b): no alerts unless a cell writes
+  # /tmp/elastic-hits.json, and it logs every request.
   siem-stub:
     image: python:3.12-slim
     pull_policy: missing

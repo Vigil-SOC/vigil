@@ -26,6 +26,8 @@ ELASTIC = register_descriptor(
             IntegrationField("ca_cert_path"),
             # Searches Vigil's rule checks may send Elasticsearch per hour.
             IntegrationField("max_searches_per_hour", value_type="int", default=30),
+            # Quiet fails a rule averaging more alerts per day than this.
+            IntegrationField("quiet_max_alerts_per_day", value_type="int", default=50),
         ),
     )
 )
