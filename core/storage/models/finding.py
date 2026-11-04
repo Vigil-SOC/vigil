@@ -95,6 +95,8 @@ class Finding(Base):
     )
 
     # Relationships
+    # Plain lazy: a linked case row (all of its JSONB) loads only when read.
+    # selectin loaded it on every Finding query and the reads discarded it (#3656).
     cases: Mapped[List["Case"]] = relationship(
         "Case", secondary=case_findings, back_populates="findings", lazy="select"
     )
