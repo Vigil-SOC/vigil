@@ -31,4 +31,3 @@ def spend(integration_id: str, per_hour: int, now: Optional[float] = None) -> bo
             return False
         window.append(now)
         return True
-
