@@ -7,12 +7,15 @@ to see a deletion, and writes only what differs:
 - a key whose fingerprint differs from its latest version gets the next version;
 - a key the list no longer has is status 'removed', never deleted;
 - a name, path, technique or tactic change updates the rule row, no new version;
-- a SIEM rule switched off is status 'disabled', and carries no Runs or Sees result.
+- a SIEM rule switched off is status 'disabled', and carries no Runs, Sees or
+  Accurate result.
 
 A Runs result (checks['runs'] on the latest version) is written only when its
 result or reason differs from the stored one; a new version starts with none.
 After Kibana syncs, ``sees`` checks whether each active Kibana rule's data is
-arriving and writes checks['sees'] the same way.
+arriving and writes checks['sees'] the same way. Last, ``accurate`` judges each
+active Kibana and Wazuh rule's latest version from the stored findings' verdicts
+and writes checks['accurate'] the same way (local SQL only).
 
 After the sources, each SIEM rule is linked to the repo rule it came from when
 that is certain: a Kibana rule by ``same_id`` (one active repo Elastic rule with
@@ -47,7 +50,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional
 
 from sqlalchemy import and_, bindparam, func, insert, or_, select, update
 
-from core.detections.inventory import kibana, readers, sees, splunk, wazuh
+from core.detections.inventory import accurate, kibana, readers, sees, splunk, wazuh
 from core.detections.inventory.record import RuleRecord, fingerprint
 from core.storage.connection import get_db_manager
 from core.storage.models import (
@@ -136,7 +139,9 @@ def _rule_fields(record: RuleRecord) -> Dict[str, Any]:
 def _checks(stored: Dict[str, Any], record: RuleRecord, now: str) -> Dict[str, Any]:
     """``stored`` with the record's Runs result, or itself when nothing changed."""
     if record.status == "disabled":
-        return {k: v for k, v in stored.items() if k not in ("runs", "sees")}
+        return {
+            k: v for k, v in stored.items() if k not in ("runs", "sees", "accurate")
+        }
     runs, old = record.runs, stored.get("runs") or {}
     if runs is None or (
         old.get("result") == runs["result"] and old.get("reason") == runs["reason"]
@@ -394,7 +399,8 @@ def _remove_unconfigured(configured: List[str]) -> int:
 
 
 def sync_repos() -> List[Any]:
-    """Read every configured repo, Kibana, Splunk and Wazuh, and sync each, then check Kibana rules' Sees.
+    """Read every configured repo, Kibana, Splunk and Wazuh, and sync each, then
+    check Kibana rules' Sees and Kibana and Wazuh rules' Accurate.
 
     One failing source skips only itself.
     """
@@ -411,6 +417,7 @@ def sync_repos() -> List[Any]:
             reports.append(sees.sweep_elastic(config))
         reports.append(_linked(_sync_splunk(), _link_known_name))
         reports.append(_sync_wazuh())
+        reports.append(accurate.sweep())
     if removed:
         logger.info(
             "detection rules: %d rules of unconfigured sources removed", removed

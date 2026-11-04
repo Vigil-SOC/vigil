@@ -11,7 +11,8 @@ A SIEM copy may be linked to the repo rule it came from (origin_rule_id); an
 overlay rule counts as a repo rule here. A repo rule's state in a SIEM is its
 linked copies' (disabled, or their Runs result), or 'not deployed' when it has
 none there. Every SIEM Vigil reads (Kibana, 'elastic'; Splunk, 'splunk'; the
-Wazuh manager, 'wazuh') is listed. Only Kibana rules get a Sees check.
+Wazuh manager, 'wazuh') is listed. Only Kibana rules get a Sees check; Kibana
+and Wazuh rules get an Accurate one (``accurate``).
 
 A flag is a (rule, check) whose latest recorded change went pass -> fail, on a
 rule not removed. Nothing to fail, or a change to unknown, is no flag; a later
@@ -24,7 +25,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set
 
-from sqlalchemy import Text, and_, case, cast, func, select
+from sqlalchemy import Text, and_, case, cast, func, or_, select, tuple_
+from sqlalchemy.orm import defer
 
 from core.detections.inventory.readers import OVERLAY_SOURCE
 from core.storage.connection import get_db_manager
@@ -48,6 +50,7 @@ TOOL = case(
 )
 RUNS = DetectionRuleVersion.checks["runs"]["result"].astext
 SEES = DetectionRuleVersion.checks["sees"]["result"].astext
+ACCURATE = DetectionRuleVersion.checks["accurate"]["result"].astext
 RUNS_RESULTS = ("pass", "fail", "unknown")
 # Each rule's current stage: its latest stage row.
 CURRENT_STAGE = (
@@ -60,6 +63,7 @@ LINKED = DetectionRule.link_kind.in_(("same_id", "known_name", "agent"))
 NOT_DEPLOYED = "not deployed"
 NOT_READ = "Splunk and Wazuh rules get no Sees check yet"
 SEES_TOOLS = ("elastic",)
+ACCURATE_TOOLS = ("elastic", "wazuh")
 CHANGE = DetectionRuleCheckChange
 RECENT_CHANGES = 10
 # A row that changed the result; a fail -> fail row only changed the reason.
@@ -250,6 +254,7 @@ def _copies(session: Any, origins: Iterable[int]) -> Dict[int, Dict[str, List[Di
                 "title": copy.name,
                 "state": _state(copy.status, checks),
                 "runs": (checks or {}).get("runs"),
+                "accurate": (checks or {}).get("accurate"),
                 "link": copy.link_kind,
             }
         )
@@ -282,13 +287,18 @@ def _with_links(session: Any, hits: List[Dict], rules: List[DetectionRule]) -> N
 
 
 def _by_tool(rows: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
-    """(tool, runs, sees, count) rows as rules per tool, and Runs and Sees for a SIEM's."""
+    """(tool, runs, sees, accurate, count) rows as rules per tool, and each
+    check's results for a SIEM's."""
     out: Dict[str, Dict[str, Any]] = {}
-    for tool, runs, sees, count in rows:
+    for tool, runs, sees, accurate, count in rows:
         entry = out.setdefault(tool, {"rules": 0})
         entry["rules"] += count
         if tool not in ("repo", OVERLAY):
-            for check, result in (("runs", runs), ("sees", sees)):
+            for check, result in (
+                ("runs", runs),
+                ("sees", sees),
+                ("accurate", accurate),
+            ):
                 bucket = entry.setdefault(
                     check, {**dict.fromkeys(RUNS_RESULTS, 0), "unchecked": 0}
                 )
@@ -362,11 +372,11 @@ def rules_for_technique(technique: str, top: int = 5) -> Dict[str, Any]:
         )
         by_tool = _by_tool(
             session.execute(
-                select(TOOL, RUNS, SEES, func.count())
+                select(TOOL, RUNS, SEES, ACCURATE, func.count())
                 .select_from(DetectionRule)
                 .join(DetectionRuleVersion, _latest_join())
                 .where(ACTIVE, declares)
-                .group_by(TOOL, RUNS, SEES)
+                .group_by(TOOL, RUNS, SEES, ACCURATE)
             ).all()
         )
         first = session.execute(
@@ -472,23 +482,22 @@ def blind_spots() -> List[Dict[str, Any]]:
     ]
 
 
-def _any_result(result: str) -> Any:
-    """A latest version with ``result`` on any of its checks."""
-    return func.jsonb_path_exists(
-        DetectionRuleVersion.checks, f'$.* ? (@.result == "{result}")'
-    )
+def _firing_result(result: str) -> Any:
+    """A latest version with ``result`` on a check of whether it can fire (Runs or
+    Sees). Accurate is not one: a rule failing it fires, on nothing."""
+    return or_(*(func.coalesce(c == result, False) for c in (RUNS, SEES)))
 
 
 def rules_by_tool() -> Dict[str, Dict[str, Any]]:
-    """Active rules per tool across the estate, with each SIEM's Runs and Sees."""
+    """Active rules per tool across the estate, with each SIEM's Runs, Sees and Accurate."""
     with get_db_manager().session_scope() as session:
         return _by_tool(
             session.execute(
-                select(TOOL, RUNS, SEES, func.count())
+                select(TOOL, RUNS, SEES, ACCURATE, func.count())
                 .select_from(DetectionRule)
                 .join(DetectionRuleVersion, _latest_join())
                 .where(ACTIVE)
-                .group_by(TOOL, RUNS, SEES)
+                .group_by(TOOL, RUNS, SEES, ACCURATE)
             ).all()
         )
 
@@ -503,18 +512,22 @@ def unchecked(siems: Iterable[str]) -> Dict[str, Dict[str, Any]]:
             "tools": [t for t in siems if t in SEES_TOOLS],
             "reason": "waiting for the query budget",
         },
+        "accurate": {
+            "tools": [t for t in siems if t in ACCURATE_TOOLS],
+            "reason": "not judged since the last sync",
+        },
     }
 
 
 def rules_not_passing(limit: int = 200) -> Dict[str, Any]:
-    """Active SIEM rules failing or unknown on any check, fails first: the first
+    """Active SIEM rules failing or unknown on Runs or Sees, fails first: the first
     ``limit`` with their checks as stored, how many there are, and per tool how
     many are not passing and how many fail (can't fire)."""
-    fails = _any_result("fail")
+    fails = _firing_result("fail")
     where = (
         ACTIVE,
         ~DetectionRule.source.startswith(REPO_PREFIX),
-        fails | _any_result("unknown"),
+        fails | _firing_result("unknown"),
     )
     latest = (
         select().select_from(DetectionRule).join(DetectionRuleVersion, _latest_join())
@@ -581,11 +594,12 @@ def search(
     stage: Optional[str] = None,
     sees: Optional[str] = None,
     flagged: Optional[bool] = None,
+    accurate: Optional[str] = None,
 ) -> List[Dict]:
     """Active and disabled rules whose format, path or parsed content contains ``query``.
 
-    ``tool`` is 'overlay', 'repo' or a SIEM source; ``runs`` and ``sees`` keep
-    rules whose latest version has that Runs or Sees result; ``stage`` keeps
+    ``tool`` is 'overlay', 'repo' or a SIEM source; ``runs``, ``sees`` and
+    ``accurate`` keep rules whose latest version has that check result; ``stage`` keeps
     rules currently there; ``flagged`` keeps rules with (or without) an open
     flag. Each hit says whether it is flagged; a single hit carries its recent
     check changes.
@@ -617,6 +631,8 @@ def search(
         ).where(CURRENT_STAGE.c.stage == stage)
     if sees:
         statement = statement.where(SEES == sees)
+    if accurate:
+        statement = statement.where(ACCURATE == accurate)
     flags = _flags().subquery()
     if flagged is not None:
         is_flagged = DetectionRule.id.in_(select(flags.c.rule_id))
@@ -703,74 +719,148 @@ def _unknown(reason: str) -> Dict[str, Any]:
     return {"resolved": False, "reason": reason}
 
 
+def _wazuh_rule_id(record: Any) -> Optional[str]:
+    """The Wazuh rule id an alert document names, nested or flat-dotted.
+
+    A Wazuh alert's rule always has a level; an ECS rule.id alone is not Wazuh's.
+    """
+    source = _dig(record, "_source") or record
+    for value, level in (
+        (_dig(source, "rule", "id"), _dig(source, "rule", "level")),
+        (_dig(source, "rule.id"), _dig(source, "rule.level")),
+    ):
+        if (
+            value not in (None, "")
+            and isinstance(value, (str, int))
+            and level is not None
+        ):
+            return str(value)
+    return None
+
+
+# Inventory source -> the SIEM a reason names.
+SIEM_NAMES = {"elastic": "Kibana", "wazuh": "Wazuh"}
+# The key readers, in order: a Kibana rule wins over a Wazuh one.
+KEY_READERS = (("elastic", _kibana_rule_id), ("wazuh", _wazuh_rule_id))
+
+
+def _rule_ref(finding: Mapping[str, Any]) -> Any:
+    """(inventory source, native key, alert time) the finding names, or why it is unknown."""
+    source = finding.get("data_source")
+    if source == "splunk":
+        return _unknown("Splunk findings do not name their saved search yet")
+    if source != "elastic":
+        return _unknown(
+            f"only Kibana and Wazuh rules resolve; this finding is from {source}"
+        )
+    context = finding.get("entity_context")
+    evidence = context.get("source_evidence") if isinstance(context, dict) else None
+    records = evidence.get("records") if isinstance(evidence, dict) else None
+    for siem, read in KEY_READERS:
+        key = next(filter(None, map(read, records or [])), None)
+        if key is not None:
+            break
+    else:
+        return _unknown("the alert names no Kibana or Wazuh detection rule")
+    fired = _when(finding.get("timestamp"))
+    if fired is None:
+        return _unknown("the finding has no alert time to pick a version by")
+    return siem, key, fired
+
+
 def rule_for_finding(finding: Mapping[str, Any]) -> Dict[str, Any]:
     """The inventory rule and version that fired a finding, or why it is unknown.
 
     Read from the stored alert (entity_context.source_evidence), never matched
     on name. The version is the latest one first seen at or before the alert.
-    Only Kibana (source 'elastic') rules resolve today.
+    Kibana (source 'elastic') and Wazuh (source 'wazuh') rules resolve.
     """
-    source = finding.get("data_source")
-    if source == "splunk":
-        return _unknown("Splunk findings do not name their saved search yet")
-    if source != "elastic":
-        return _unknown(f"only Kibana rules resolve; this finding is from {source}")
-    context = finding.get("entity_context")
-    evidence = context.get("source_evidence") if isinstance(context, dict) else None
-    records = evidence.get("records") if isinstance(evidence, dict) else None
-    key = next(filter(None, map(_kibana_rule_id, records or [])), None)
-    if key is None:
-        return _unknown("the alert names no Kibana detection rule")
-    fired = _when(finding.get("timestamp"))
-    if fired is None:
-        return _unknown("the finding has no alert time to pick a version by")
     try:
-        return _resolve(key, fired)
+        with get_db_manager().session_scope() as session:
+            return resolve_findings(session, {0: finding})[0]
     except Exception:  # a finding read must not fail on the inventory
-        logger.exception("Could not resolve Kibana rule %s", key)
+        logger.exception("Could not resolve the rule of a finding")
         return _unknown("the rule inventory could not be read")
 
 
-def _resolve(key: str, fired: datetime) -> Dict[str, Any]:
-    with get_db_manager().session_scope() as session:
-        rule = session.scalar(
-            select(DetectionRule).where(
-                DetectionRule.source == "elastic", DetectionRule.native_key == key
-            )
-        )
-        if rule is None:
-            return _unknown(f"Kibana rule {key} is not in the inventory")
-        versions = select(DetectionRuleVersion).where(
-            DetectionRuleVersion.rule_id == rule.id
-        )
-        version = session.scalar(
-            versions.where(DetectionRuleVersion.first_seen <= fired)
-            .order_by(DetectionRuleVersion.version.desc())
-            .limit(1)
-        )
-        if version is None:
-            first = session.scalar(
-                select(func.min(DetectionRuleVersion.first_seen)).where(
-                    DetectionRuleVersion.rule_id == rule.id
+def resolve_findings(
+    session: Any, findings: Mapping[Any, Mapping[str, Any]], full: bool = True
+) -> Dict[Any, Dict[str, Any]]:
+    """``rule_for_finding`` for many findings in one session: the one mapping.
+
+    ``full`` False leaves out the version's query and checks.
+    """
+    refs = {k: _rule_ref(f) for k, f in findings.items()}
+    wanted = {r[:2] for r in refs.values() if isinstance(r, tuple)}
+    rules: Dict[tuple, DetectionRule] = {}
+    versions: Dict[int, List[DetectionRuleVersion]] = {}
+    if wanted:
+        rules = {
+            (r.source, r.native_key): r
+            for r in session.scalars(
+                select(DetectionRule).where(
+                    tuple_(DetectionRule.source, DetectionRule.native_key).in_(wanted)
                 )
             )
-            return _unknown(
-                f"the alert predates the first sync of Kibana rule {key}"
-                + (
-                    f" ({first.astimezone(timezone.utc):%Y-%m-%d %H:%M} UTC)"
-                    if first
-                    else ""
-                )
-            )
-        return {
-            "resolved": True,
-            "rule_id": rule.id,
-            "source": rule.source,
-            "native_key": rule.native_key,
-            "name": rule.name,
-            "status": rule.status,
-            "version": version.version,
-            "query": version.query,
-            "first_seen": version.first_seen.isoformat(),
-            "checks": version.checks or {},
         }
+        loads = [defer(DetectionRuleVersion.content)]
+        if not full:
+            loads += [
+                defer(DetectionRuleVersion.query),
+                defer(DetectionRuleVersion.checks),
+            ]
+        for v in session.scalars(
+            select(DetectionRuleVersion)
+            .options(*loads)
+            .where(DetectionRuleVersion.rule_id.in_([r.id for r in rules.values()]))
+            .order_by(DetectionRuleVersion.rule_id, DetectionRuleVersion.version.desc())
+        ):
+            versions.setdefault(v.rule_id, []).append(v)
+    out: Dict[Any, Dict[str, Any]] = {}
+    for k, ref in refs.items():
+        if not isinstance(ref, tuple):
+            out[k] = ref
+            continue
+        siem, key, fired = ref
+        rule = rules.get((siem, key))
+        out[k] = (
+            _unknown(f"{SIEM_NAMES[siem]} rule {key} is not in the inventory")
+            if rule is None
+            else _pick(rule, versions.get(rule.id, []), fired, full)
+        )
+    return out
+
+
+def _pick(
+    rule: DetectionRule,
+    versions: List[DetectionRuleVersion],
+    fired: datetime,
+    full: bool,
+) -> Dict[str, Any]:
+    """The latest of ``versions`` (newest first) first seen at or before ``fired``."""
+    version = next((v for v in versions if v.first_seen <= fired), None)
+    if version is None:
+        first = min((v.first_seen for v in versions), default=None)
+        return _unknown(
+            f"the alert predates the first sync of {SIEM_NAMES[rule.source]} rule "
+            f"{rule.native_key}"
+            + (
+                f" ({first.astimezone(timezone.utc):%Y-%m-%d %H:%M} UTC)"
+                if first
+                else ""
+            )
+        )
+    out = {
+        "resolved": True,
+        "rule_id": rule.id,
+        "source": rule.source,
+        "native_key": rule.native_key,
+        "name": rule.name,
+        "status": rule.status,
+        "version": version.version,
+        "latest_version": rule.latest_version,
+        "first_seen": version.first_seen.isoformat(),
+    }
+    if full:
+        out.update(query=version.query, checks=version.checks or {})
+    return out

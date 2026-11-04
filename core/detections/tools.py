@@ -98,6 +98,7 @@ class SecurityDetectionsTools:
         stage: Optional[str] = None,
         sees: Optional[str] = None,
         flagged: Optional[bool] = None,
+        accurate: Optional[str] = None,
     ) -> List[Dict]:
         """
         Search across all detection rules using keywords.
@@ -111,6 +112,8 @@ class SecurityDetectionsTools:
             stage: Optional filter by current rollout stage ("shadow", "live", "off")
             sees: Optional filter by Sees result ("pass", "fail", "unknown")
             flagged: Optional filter: rules with (True) or without (False) an open flag
+            accurate: Optional filter by Accurate result ("pass", "fail", "unknown"):
+                whether a Kibana or Wazuh rule's judged alerts are mostly real
 
         Returns:
             List of matching detection rules, each with its status, checks and
@@ -118,7 +121,7 @@ class SecurityDetectionsTools:
             rows; a single hit also carries its recent check changes
         """
         return catalog.search(
-            query or "", source_type, limit, tool, runs, stage, sees, flagged
+            query or "", source_type, limit, tool, runs, stage, sees, flagged, accurate
         )
 
     async def link_detection_rule(
