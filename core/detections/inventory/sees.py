@@ -43,7 +43,6 @@ Key = Tuple[Tuple[str, ...], str]  # (patterns, timestamp field)
 RuleKey = Tuple[int, int]  # (rule id, version)
 
 
-
 def _budget_key(group: Key) -> str:
     """The group as its spend rows name it, for the shared oldest-first order."""
     return f"{','.join(group[0])}|{group[1]}"
