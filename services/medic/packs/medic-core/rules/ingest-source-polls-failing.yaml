@@ -3,7 +3,7 @@
 # I-1.a lands here too since #1605 (a CrowdStrike client that can't be built raises),
 # and I-1.g (a failed Splunk query fails the tick). With federation switched off
 # globally the runner idles and the error count freezes, so the rule needs the
-# global switch from the federation sensor (requires: D6 global.enabled).
+# global switch from the federation sensor.
 apiVersion: medic.rules/v1
 kind: Rule
 id: ingest.source-polls-failing

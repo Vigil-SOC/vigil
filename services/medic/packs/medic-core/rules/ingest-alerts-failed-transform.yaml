@@ -21,6 +21,6 @@ keep_firing_for: 15m
 advice:
   summary: Vigil skipped some alerts from a source because it couldn't read their format; they won't be fetched again.
   fix: >-
-    Send this incident to DeepTempo Support with the evidence report: the
+    Report it as a Vigil defect with this incident: the
     vendor's alert format has likely changed. If you can, include one sample
     alert from the source's console for this period.

@@ -34,5 +34,5 @@ advice:
   summary: This enabled source has had neither a successful nor a failed poll for an hour, so Vigil has stopped polling it.
   fix: >-
     Restart soc-daemon; polling should resume within one interval. If it stops
-    again, or never starts, send this incident to DeepTempo Support with the
-    evidence report and the soc-daemon log from its start-up.
+    again, or never starts, report it as a Vigil defect with this incident and
+    the soc-daemon log from its start-up.
