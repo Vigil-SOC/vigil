@@ -1,5 +1,8 @@
 """Sees: whether the data each active Kibana rule reads is arriving.
 
+Wazuh rules get theirs from ``wazuh_sees``, which writes through ``_write``;
+Splunk rules get none yet.
+
 A rule's data source is its ``index`` patterns (or its data view's) and the
 timestamp field its 7-day range runs on. Rules on one source share one search:
 a size-0 ``_search`` that stops at the first event, the only call counted
@@ -204,9 +207,10 @@ def _active_rules() -> List[Tuple[RuleKey, Mapping[str, Any]]]:
     return [((rid, ver), content or {}) for rid, ver, content in rows]
 
 
-def _write(results: Dict[RuleKey, Dict[str, Any]]) -> int:
+def _write(results: Dict[RuleKey, Dict[str, Any]], source: str = kibana.SOURCE) -> int:
     """Store each result that differs from the version's stored Sees; runs is kept.
 
+    ``source`` is the rules' (Kibana's, or Wazuh's for ``wazuh_sees``).
     A result or reason that differs from the rule's last recorded Sees, across
     versions, is also appended to detection_rule_check_changes.
     """
@@ -220,7 +224,7 @@ def _write(results: Dict[RuleKey, Dict[str, Any]]) -> int:
         return 0
     now = datetime.now(timezone.utc).isoformat()
     with get_db_manager().session_scope() as session:
-        last = _last_results(session, kibana.SOURCE)
+        last = _last_results(session, source)
         changes = []
         rows = session.execute(
             select(
