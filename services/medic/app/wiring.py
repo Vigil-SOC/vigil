@@ -77,7 +77,8 @@ class Loaded(NamedTuple):
     rules: list[LoadedRule]
     suppression: list[dict[str, Any]]
     catalog: set[tuple[str, str]]
-    facts: dict[str, Any] | None = None  # PackFacts of the active pack; None in dev
+    # The active pack's PackFacts (status maps them to a PackBrief); None in dev.
+    facts: dict[str, Any] | None = None
     events: Sequence[dict[str, Any]] = ()  # pack_event bodies for the decision log
     context: PackContext | None = None  # None in dev mode: no lifecycle
 
