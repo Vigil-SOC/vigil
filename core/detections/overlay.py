@@ -148,6 +148,9 @@ def _record_replay(sigma_key: str, replay: Dict[str, Any]) -> None:
             DetectionRuleVersion.version == rule.latest_version
         )
         checks = session.scalar(select(DetectionRuleVersion.checks).where(version))
+        # A re-save without events leaves an unchanged version's earlier replay standing.
+        if replay["result"] == "not_run" and (checks or {}).get("replay"):
+            return
         session.execute(
             update(DetectionRuleVersion)
             .where(version)
