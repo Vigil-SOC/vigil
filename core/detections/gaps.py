@@ -5,7 +5,7 @@ counted by detection_rules id. Stored labels are not all techniques: ingest keep
 whatever key a source sent, so a row may name a tactic or an unmapped class. Those
 cannot prove a gap, and the report says so rather than guessing which technique ran.
 
-A technique whose SIEM rules (read from Kibana) all fail Runs is covered on paper
+A technique whose SIEM rules (read from Kibana and Splunk) all fail Runs is covered on paper
 only: a rule declares it, and nothing that runs does.
 
 A proven hunt or closed Case that no rule alerted on is a run rules missed. It is
@@ -35,9 +35,9 @@ RULE_SOURCES = ("sigma", "splunk", "elastic", "kql")
 TACTIC_RULE_SOURCES = ("sigma", "elastic")
 
 SIEMS_NOT_READ_NOTE = (
-    "Only Elastic (Kibana) rules are read from a SIEM. Splunk saved searches and "
-    "Wazuh rules are not read yet, so what those SIEMs run, and whether it runs, "
-    "is not part of this report."
+    "Only Elastic (Kibana) rules and Splunk saved searches are read from a SIEM. "
+    "Wazuh rules are not read yet, so what Wazuh runs, and whether it runs, is "
+    "not part of this report."
 )
 
 TECHNIQUE_ID = re.compile(r"^T\d{4}(\.\d{3})?$", re.IGNORECASE)

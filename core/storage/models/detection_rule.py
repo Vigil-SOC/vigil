@@ -1,7 +1,8 @@
 """Detection rule ORM models.
 
 The schema is core/upgrade/versions/0026_detection_rules.sql,
-0027_detection_rule_checks.sql and 0028_detection_rule_origin.sql; these models
+0027_detection_rule_checks.sql, 0028_detection_rule_origin.sql and
+0029_detection_rule_known_name.sql; these models
 mirror it for core/detections/inventory.
 """
 
@@ -25,8 +26,8 @@ from core.storage.models.base import Base
 
 # disabled: a SIEM rule that is listed but switched off.
 DETECTION_RULE_STATUSES = ("active", "disabled", "removed")
-# How a SIEM copy's origin was decided; only 'same_id' is the sync's own.
-LINK_KINDS = ("same_id", "agent", "declined")
+# How a SIEM copy's origin was decided; 'same_id' and 'known_name' are the sync's own.
+LINK_KINDS = ("same_id", "known_name", "agent", "declined")
 
 
 class DetectionRule(Base):
@@ -45,7 +46,7 @@ class DetectionRule(Base):
             "latest_version >= 1", name="detection_rules_latest_version_check"
         ),
         CheckConstraint(
-            "(link_kind IN ('same_id', 'agent', 'declined')"
+            "(link_kind IN ('same_id', 'known_name', 'agent', 'declined')"
             " AND origin_rule_id IS NOT NULL)"
             " OR (link_kind IS NULL AND origin_rule_id IS NULL)",
             name="detection_rules_link_kind_check",

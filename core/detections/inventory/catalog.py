@@ -1,13 +1,13 @@
 """What the agent detection tools read: the active rules and their latest versions.
 
 A rule's tool is where it was read: 'repo' for a configured repo, else the SIEM
-(source 'elastic'). Only active rules count as deployed; search also finds the
+(source 'elastic' for Kibana, 'splunk' for Splunk saved searches). Only active rules count as deployed; search also finds the
 disabled ones, each hit saying so.
 
 A SIEM copy may be linked to the repo rule it came from (origin_rule_id). A repo
 rule's state in a SIEM is its linked copies' (disabled, or their Runs result),
-or 'not deployed' when it has none there. Only SIEMs Vigil reads (today Kibana,
-'elastic') are listed: Splunk saved searches and Wazuh rules are not read yet.
+or 'not deployed' when it has none there. Only SIEMs Vigil reads (Kibana and
+Splunk) are listed: Wazuh rules are not read yet.
 """
 
 from __future__ import annotations
@@ -27,9 +27,9 @@ TOOL = case(
 )
 RUNS = DetectionRuleVersion.checks["runs"]["result"].astext
 RUNS_RESULTS = ("pass", "fail", "unknown")
-LINKED = DetectionRule.link_kind.in_(("same_id", "agent"))
+LINKED = DetectionRule.link_kind.in_(("same_id", "known_name", "agent"))
 NOT_DEPLOYED = "not deployed"
-NOT_READ = "Splunk saved searches and Wazuh rules are not read yet"
+NOT_READ = "Wazuh rules are not read yet"
 
 
 def _latest_join():

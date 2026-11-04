@@ -4,6 +4,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 import httpx
@@ -395,3 +396,87 @@ class SplunkService:
             f'OR dest="{hostname}") | head 1000'
         )
         return self.search(query, earliest_time=self._earliest_from_hours(hours))
+
+    def _get_json(self, path: str, **params: object) -> dict:
+        """One authenticated REST GET (not a search). Raises on any refusal."""
+        if not self.session_key and not self.authenticate():
+            raise SplunkSearchError("Splunk login failed; check the credentials")
+        response = self._request(
+            "GET", f"{self.server_url}{path}", params={"output_mode": "json", **params}
+        )
+        if response.status_code != 200:
+            raise SplunkSearchError(f"GET {path} refused: {_refusal(response)}")
+        return response.json()
+
+    def list_saved_searches(self, search: str, per_page: int = 500) -> List[Dict]:
+        """Every saved search in every app and owner matching ``search``. Read-only.
+
+        Raises unless the list is whole: as many entries as Splunk's paging
+        total, no key twice. The key is app/name, plus @owner for a private
+        search, so a private copy of a shared search's name is its own row.
+        """
+        entries: List[Dict] = []
+        total: Optional[int] = None
+        while total is None or len(entries) < total:
+            body = self._get_json(
+                "/servicesNS/-/-/saved/searches",
+                search=search,
+                count=per_page,
+                offset=len(entries),
+                sort_key="name",
+            )
+            page_total = _as_int((body.get("paging") or {}).get("total"))
+            if page_total is None:
+                raise RuntimeError("saved/searches gave no paging total")
+            if total is None:
+                total = page_total
+            elif page_total != total:
+                raise RuntimeError("saved search count changed while paging")
+            page = body.get("entry") or []
+            if not page:
+                break
+            entries.extend(page)
+        if len(entries) != total:
+            raise RuntimeError(f"saved/searches listed {len(entries)} of total {total}")
+        keys = [saved_search_key(e) for e in entries]
+        if len(set(keys)) != len(keys):
+            raise RuntimeError("saved/searches listed a key twice")
+        return entries
+
+    def started_at(self) -> Optional[datetime]:
+        """When splunkd last started, from server/info; None when not given."""
+        content = self._get_json("/services/server/info")["entry"][0]["content"]
+        epoch = _as_int(content.get("startup_time"))
+        return datetime.fromtimestamp(epoch, timezone.utc) if epoch else None
+
+    def can_search_index(self, index: str) -> Optional[bool]:
+        """Whether this user's roles may search ``index``; None when Splunk won't say.
+
+        REST reads only. ``*`` covers no internal (``_``) index, as in Splunk.
+        """
+        import fnmatch
+
+        try:
+            context = self._get_json("/services/authentication/current-context")
+            roles = (context["entry"][0]["content"] or {}).get("roles") or []
+            patterns: List[str] = []
+            for role in roles:
+                content = self._get_json(f"/services/authorization/roles/{role}")[
+                    "entry"
+                ][0]["content"]
+                for field_name in ("srchIndexesAllowed", "imported_srchIndexesAllowed"):
+                    patterns.extend(content.get(field_name) or [])
+        except (SplunkSearchError, KeyError, IndexError, *_HTTP_ERRORS) as e:
+            logger.info("Splunk index access unreadable: %s", e)
+            return None
+        return any(
+            fnmatch.fnmatchcase(index, p)
+            and not (index.startswith("_") and not p.startswith("_"))
+            for p in patterns
+        )
+
+
+def saved_search_key(entry: Dict) -> str:
+    acl = entry.get("acl") or {}
+    key = f"{acl.get('app')}/{entry.get('name')}"
+    return f"{key}@{acl.get('owner')}" if acl.get("sharing") == "user" else key
