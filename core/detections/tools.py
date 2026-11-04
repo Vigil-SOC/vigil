@@ -92,6 +92,7 @@ class SecurityDetectionsTools:
         limit: int = 20,
         tool: Optional[str] = None,
         runs: Optional[str] = None,
+        sees: Optional[str] = None,
     ) -> List[Dict]:
         """
         Search across all detection rules using keywords.
@@ -102,11 +103,12 @@ class SecurityDetectionsTools:
             limit: Maximum number of results
             tool: Optional filter by where the rule was read ("repo", "elastic")
             runs: Optional filter by Runs result ("pass", "fail", "unknown")
+            sees: Optional filter by Sees result ("pass", "fail", "unknown")
 
         Returns:
             List of matching detection rules, each with its status and checks
         """
-        return catalog.search(query or "", source_type, limit, tool, runs)
+        return catalog.search(query or "", source_type, limit, tool, runs, sees)
 
     async def get_detection_count(self, source_type: Optional[str] = None) -> Dict:
         """
@@ -143,7 +145,8 @@ class SecurityDetectionsTools:
             rules_by_technique,
             catalog.rules_by_tactic(),
             catalog.rule_counts(),
-            catalog.siem_runs_by_technique(),
+            catalog.siem_checks_by_technique(),
+            catalog.blind_spots(),
         )
         data = DatabaseDataService()
         report["runs_rules_missed"] = missed_runs_report(
