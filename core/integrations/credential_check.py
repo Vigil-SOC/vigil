@@ -28,6 +28,7 @@ from core.integrations.elastic.descriptor import ELASTIC
 from core.integrations.microsoft_defender.descriptor import MICROSOFT_DEFENDER
 from core.integrations.opensearch.descriptor import OPENSEARCH
 from core.integrations.splunk.descriptor import SPLUNK
+from core.integrations.wazuh.descriptor import WAZUH, WAZUH_REQUIRED
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +126,30 @@ async def _opensearch() -> Outcome:
     )
     try:
         # GET / on OpenSearch (and /api/status on Dashboards when one is set)
+        return await service.test_connection()
+    finally:
+        await service.close()
+
+
+async def _wazuh() -> Outcome:
+    from core.integrations.wazuh.client import WazuhService
+
+    config = resolve(WAZUH)
+    absent = missing(config, *WAZUH_REQUIRED)
+    if absent:
+        return _absent(absent)
+    verify = True if config.get("verify_ssl") is None else config["verify_ssl"]
+    service = WazuhService(
+        api_url=config["api_url"],
+        username=config["username"],
+        password=config["password"],
+        verify_ssl=verify,
+        ca_cert_path=config.get("ca_cert_path"),
+        timeout=_REQUEST_TIMEOUT,
+    )
+    try:
+        # JWT login, then GET / on the manager API. A 401 and a connect error
+        # come back as their own messages.
         return await service.test_connection()
     finally:
         await service.close()
@@ -354,6 +379,7 @@ _CHECKS: Dict[str, Callable[[], Awaitable[Outcome]]] = {
     SPLUNK.id: _splunk,
     ELASTIC.id: _elastic,
     OPENSEARCH.id: _opensearch,
+    WAZUH.id: _wazuh,
     AZURE_SENTINEL.id: _sentinel,
     AWS_SECURITY_HUB.id: _security_hub,
     MICROSOFT_DEFENDER.id: _defender,
