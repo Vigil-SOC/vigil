@@ -1,14 +1,16 @@
 """What the agent detection tools read: the active rules and their latest versions.
 
-A rule's tool is where it was read: 'repo' for a configured repo, else the SIEM
-(source 'elastic' or 'wazuh'). Only active rules count as deployed; search also finds the
-disabled ones, each hit saying so.
+A rule's tool is where it was read: 'overlay' for Vigil's own overlay source,
+'repo' for any other configured repo, else the SIEM (source 'elastic' or
+'wazuh'). Only active rules count as deployed; search also finds the disabled
+ones, each hit saying so. An overlay hit also carries its rollout stage and
+stage history.
 
-A SIEM copy may be linked to the repo rule it came from (origin_rule_id). A repo
-rule's state in a SIEM is its linked copies' (disabled, or their Runs result),
-or 'not deployed' when it has none there. Only SIEMs Vigil reads (today Kibana,
-'elastic', and the Wazuh manager, 'wazuh') are listed: Splunk saved searches are not
-read yet.
+A SIEM copy may be linked to the repo rule it came from (origin_rule_id); an
+overlay rule counts as a repo rule here. A repo rule's state in a SIEM is its
+linked copies' (disabled, or their Runs result), or 'not deployed' when it has
+none there. Only SIEMs Vigil reads (today Kibana, 'elastic', and the Wazuh
+manager, 'wazuh') are listed: Splunk saved searches are not read yet.
 """
 
 from __future__ import annotations
@@ -17,18 +19,29 @@ from typing import Any, Dict, Iterable, List, Optional, Set
 
 from sqlalchemy import Text, and_, case, cast, func, select
 
+from core.detections.inventory.readers import OVERLAY_SOURCE
 from core.storage.connection import get_db_manager
-from core.storage.models import DetectionRule, DetectionRuleVersion
+from core.storage.models import DetectionRule, DetectionRuleStage, DetectionRuleVersion
 
 ACTIVE = DetectionRule.status == "active"
 LISTED = DetectionRule.status.in_(("active", "disabled"))
 REPO_PREFIX = "repo:"
+OVERLAY = "overlay"
 TOOL = case(
-    (DetectionRule.source.startswith(REPO_PREFIX), "repo"), else_=DetectionRule.source
+    (DetectionRule.source == OVERLAY_SOURCE, OVERLAY),
+    (DetectionRule.source.startswith(REPO_PREFIX), "repo"),
+    else_=DetectionRule.source,
 )
 RUNS = DetectionRuleVersion.checks["runs"]["result"].astext
 SEES = DetectionRuleVersion.checks["sees"]["result"].astext
 RUNS_RESULTS = ("pass", "fail", "unknown")
+# Each rule's current stage: its latest stage row.
+CURRENT_STAGE = (
+    select(DetectionRuleStage.rule_id, DetectionRuleStage.stage)
+    .distinct(DetectionRuleStage.rule_id)
+    .order_by(DetectionRuleStage.rule_id, DetectionRuleStage.id.desc())
+    .subquery("current_stage")
+)
 LINKED = DetectionRule.link_kind.in_(("same_id", "agent"))
 NOT_DEPLOYED = "not deployed"
 NOT_READ = "Splunk saved searches are not read yet"
@@ -41,7 +54,14 @@ def _latest_join():
     )
 
 
+def in_repo(source: str) -> bool:
+    """A repo-side rule (a configured repo or Vigil's overlay), not a SIEM copy."""
+    return source.startswith(REPO_PREFIX)
+
+
 def tool_of(source: str) -> str:
+    if source == OVERLAY_SOURCE:
+        return OVERLAY
     return "repo" if source.startswith(REPO_PREFIX) else source
 
 
@@ -128,11 +148,11 @@ def _link(rule: DetectionRule) -> Optional[Dict[str, Any]]:
 
 def _with_links(session: Any, hits: List[Dict], rules: List[DetectionRule]) -> None:
     """A repo hit gets ``deployed`` per SIEM; a SIEM hit its ``origin`` link."""
-    repo = [r.id for r in rules if tool_of(r.source) == "repo"]
+    repo = [r.id for r in rules if in_repo(r.source)]
     copies = _copies(session, repo)
     tools = _siem_tools(session) if repo else []
     for hit, rule in zip(hits, rules):
-        if tool_of(rule.source) == "repo":
+        if in_repo(rule.source):
             mine = copies.get(rule.id, {})
             hit["deployed"] = {t: mine.get(t) or NOT_DEPLOYED for t in tools}
         else:
@@ -145,7 +165,7 @@ def _by_tool(rows: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
     for tool, runs, sees, count in rows:
         entry = out.setdefault(tool, {"rules": 0})
         entry["rules"] += count
-        if tool != "repo":
+        if tool not in ("repo", OVERLAY):
             for check, result in (("runs", runs), ("sees", sees)):
                 bucket = entry.setdefault(
                     check, {**dict.fromkeys(RUNS_RESULTS, 0), "unchecked": 0}
@@ -336,12 +356,14 @@ def search(
     limit: int,
     tool: Optional[str] = None,
     runs: Optional[str] = None,
+    stage: Optional[str] = None,
     sees: Optional[str] = None,
 ) -> List[Dict]:
     """Active and disabled rules whose format, path or parsed content contains ``query``.
 
-    ``tool`` is 'repo' or a SIEM source; ``runs`` and ``sees`` keep rules whose
-    latest version has that Runs or Sees result.
+    ``tool`` is 'overlay', 'repo' or a SIEM source; ``runs`` and ``sees`` keep
+    rules whose latest version has that Runs or Sees result; ``stage`` keeps
+    rules currently there.
     """
     escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     haystack = (
@@ -364,10 +386,41 @@ def search(
         statement = statement.where(TOOL == tool)
     if runs:
         statement = statement.where(RUNS == runs)
+    if stage:
+        statement = statement.join(
+            CURRENT_STAGE, CURRENT_STAGE.c.rule_id == DetectionRule.id
+        ).where(CURRENT_STAGE.c.stage == stage)
     if sees:
         statement = statement.where(SEES == sees)
     with get_db_manager().session_scope() as session:
         rows = session.execute(statement).all()
         hits = [_summary(rule, content, checks, 300) for rule, content, checks in rows]
         _with_links(session, hits, [rule for rule, _, _ in rows])
+        overlay = [hit for hit in hits if hit["tool"] == OVERLAY]
+        if overlay:
+            history = _stage_rows(session, [hit["rule_id"] for hit in overlay])
+            for hit in overlay:
+                hit["stages"] = history.get(hit["rule_id"], [])
+                hit["stage"] = hit["stages"][-1]["stage"] if hit["stages"] else None
         return hits
+
+
+def _stage_rows(session: Any, rule_ids: List[int]) -> Dict[int, List[Dict]]:
+    """Every stage row of ``rule_ids``, oldest first, by rule."""
+    out: Dict[int, List[Dict]] = {}
+    for row in session.scalars(
+        select(DetectionRuleStage)
+        .where(DetectionRuleStage.rule_id.in_(rule_ids))
+        .order_by(DetectionRuleStage.rule_id, DetectionRuleStage.id)
+    ):
+        out.setdefault(row.rule_id, []).append(
+            {
+                "version": row.version,
+                "stage": row.stage,
+                "proof": row.proof,
+                "actor": row.actor,
+                "reason": row.reason,
+                "at": row.at.isoformat(),
+            }
+        )
+    return out

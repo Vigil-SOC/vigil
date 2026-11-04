@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.config import _safe_home, get_settings, vigil_path
+from core.detections.inventory.readers import OVERLAY_ID
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,7 @@ class DetectionRulesService:
         self.config_path = vigil_path(_CONFIG_FILENAME)
         self.base_dir = _safe_home() / "security-detections"
         self.sources: List[Dict[str, Any]] = []
+        self._overlay_removed = False
         self._load_config()
 
     def _load_config(self):
@@ -207,11 +209,27 @@ class DetectionRulesService:
     def _save_config(self):
         # Resolved here, not in __init__: write=True creates the directory, and
         # this service is constructed on the API startup path (#695).
+        self._keep_overlay()
         try:
             with open(vigil_path(_CONFIG_FILENAME, write=True), "w") as f:
                 json.dump({"sources": self.sources, "version": 1}, f, indent=2)
         except Exception as e:
             logger.error(f"Error saving detection sources config: {e}")
+
+    def _keep_overlay(self):
+        """Carry over the overlay source another instance saved since this one loaded.
+
+        The agent's save creates it out of band; a long-lived instance writing
+        its older list would drop it, and the next sync would turn its rules off.
+        """
+        if self._overlay_removed or self.get_source(OVERLAY_ID) is not None:
+            return
+        try:
+            with open(self.config_path, "r") as f:
+                saved = json.load(f).get("sources", [])
+        except (OSError, ValueError, AttributeError):
+            return
+        self.sources.extend(s for s in saved if s.get("id") == OVERLAY_ID)
 
     @staticmethod
     def _under(base: str, rel: str = "") -> str:
@@ -276,6 +294,38 @@ class DetectionRulesService:
     def list_sources(self) -> List[Dict[str, Any]]:
         """Return all registered rule sources with metadata."""
         return self.sources
+
+    def overlay_source(self) -> Dict[str, Any]:
+        """Vigil's overlay source, created under the State Directory on first use.
+
+        Not added through add_source: VIGIL_DIR may sit outside every allowed
+        local root, and the overlay is Vigil's own directory, not a user's path.
+        """
+        root = vigil_path("detections", OVERLAY_ID, write=True)
+        root.mkdir(exist_ok=True)
+        source = self.get_source(OVERLAY_ID)
+        if source is None:
+            source = {
+                "id": OVERLAY_ID,
+                "name": "Vigil overlay",
+                "type": "local",
+                "git_url": "",
+                "format": "auto",
+                "subdirectory": "",
+                "story_subdirectory": "",
+                "clone_name": OVERLAY_ID,
+                "local_path": str(root),
+                "rule_count": 0,
+                "last_updated": None,
+                "status": "ready",
+            }
+            self.sources.append(source)
+        source["local_path"] = str(root)
+        source["rule_count"] = self._count_rules(root, "auto")
+        source["last_updated"] = datetime.now().isoformat()
+        source["status"] = "ready"
+        self._save_config()
+        return source
 
     def get_source(self, source_id: str) -> Optional[Dict[str, Any]]:
         """Get a single source by ID."""
@@ -450,6 +500,7 @@ class DetectionRulesService:
                     logger.error(f"Failed to delete {clone_dir}: {e}")
 
         self.sources = [s for s in self.sources if s["id"] != source_id]
+        self._overlay_removed = self._overlay_removed or source_id == OVERLAY_ID
         self._save_config()
         logger.info(f"Removed source: {source['name']}")
         return True

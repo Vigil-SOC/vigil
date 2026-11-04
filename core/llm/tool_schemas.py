@@ -37,7 +37,7 @@ SECURITY_DETECTION_TOOLS = [
     },
     {
         "name": "search_detections",
-        "description": "Search the detection rules of every configured repo (Sigma, Splunk, Elastic, KQL) and the rules Kibana's detection engine and the Wazuh manager run, using keywords. Each hit carries its tool ('repo', 'elastic' or 'wazuh'), its status ('active', or 'disabled' for a Kibana rule switched off or a Wazuh rule excluded in ossec.conf) and checks.runs: whether the SIEM runs it ({result: pass|fail|unknown, reason, checked_at}; reason holds the SIEM's own error), and checks.sees: whether the data it reads is arriving ({result, reason, data_source, checked_at}; fail names the index with no events in 7d or the required fields missing from its mapping; unknown for ES|QL, ML or an unreadable source). Filter tool='elastic' with runs='fail' to answer which Elastic rules don't run and why, or sees='fail' for which are starved of data. A loaded Wazuh rule's Runs is pass ('loaded by the manager'); Wazuh rules get no Sees yet. A repo hit carries deployed: per SIEM, the copies linked to it (each with its state: pass / fail / unknown / unchecked / disabled) or 'not deployed'. A SIEM hit carries origin: its link to a repo rule (origin_rule_id, kind same_id | agent | declined, by, reason, at) or null. Splunk saved searches are not read yet.",
+        "description": "Search the detection rules of every configured repo (Sigma, Splunk, Elastic, KQL), Vigil's own overlay of drafted rules, and the rules Kibana's detection engine and the Wazuh manager run, using keywords. Each hit carries its tool ('overlay', 'repo', 'elastic' or 'wazuh'), its status ('active', or 'disabled' for a Kibana rule switched off or a Wazuh rule excluded in ossec.conf) and checks.runs: whether the SIEM runs it ({result: pass|fail|unknown, reason, checked_at}; reason holds the SIEM's own error), and checks.sees: whether the data it reads is arriving ({result, reason, data_source, checked_at}; fail names the index with no events in 7d or the required fields missing from its mapping; unknown for ES|QL, ML or an unreadable source). Filter tool='elastic' with runs='fail' to answer which Elastic rules don't run and why, or sees='fail' for which are starved of data. A loaded Wazuh rule's Runs is pass ('loaded by the manager'); Wazuh rules get no Sees yet. A repo or overlay hit carries deployed: per SIEM, the copies linked to it (each with its state: pass / fail / unknown / unchecked / disabled) or 'not deployed'. A SIEM hit carries origin: its link to a repo or overlay rule (origin_rule_id, kind same_id | agent | declined, by, reason, at) or null. An overlay hit also carries stage (its current rollout stage: shadow, live or off; null for a Sigma copy) and stages (every stage row, oldest first: version, stage, proof, actor, reason, at). Splunk saved searches are not read yet.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -52,13 +52,18 @@ SECURITY_DETECTION_TOOLS = [
                 },
                 "tool": {
                     "type": "string",
-                    "enum": ["repo", "elastic", "wazuh"],
-                    "description": "Optional: Filter by where the rule was read: a configured repo, Kibana's detection engine, or the Wazuh manager.",
+                    "enum": ["overlay", "repo", "elastic", "wazuh"],
+                    "description": "Optional: Filter by where the rule was read: Vigil's overlay, a configured repo, Kibana's detection engine, or the Wazuh manager.",
                 },
                 "runs": {
                     "type": "string",
                     "enum": ["pass", "fail", "unknown"],
                     "description": "Optional: Keep rules whose latest version has this Runs result. Only SIEM rules have one.",
+                },
+                "stage": {
+                    "type": "string",
+                    "enum": ["shadow", "live", "off"],
+                    "description": "Optional: Keep rules whose current rollout stage is this. Only overlay rules have one.",
                 },
                 "sees": {
                     "type": "string",
@@ -82,7 +87,7 @@ SECURITY_DETECTION_TOOLS = [
             "properties": {
                 "copy_rule_id": {
                     "type": "integer",
-                    "description": "rule_id of the SIEM rule (a hit whose tool is not 'repo').",
+                    "description": "rule_id of the SIEM rule (a hit whose tool is 'elastic').",
                 },
                 "action": {
                     "type": "string",
@@ -90,7 +95,7 @@ SECURITY_DETECTION_TOOLS = [
                 },
                 "origin_rule_id": {
                     "type": "integer",
-                    "description": "rule_id of the repo rule. Required to link or decline; optional to unlink.",
+                    "description": "rule_id of the repo rule (tool 'repo' or 'overlay'). Required to link or decline; optional to unlink.",
                 },
                 "reason": {
                     "type": "string",
@@ -209,6 +214,28 @@ SECURITY_DETECTION_TOOLS = [
                 "started_at",
                 "ended_at",
             ],
+        },
+    },
+    {
+        "name": "save_detection_rule",
+        "description": "Save one drafted or changed detection rule into Vigil's overlay (a local rule source Vigil owns), then sync it into the rule inventory. Pass a Splunk copy (ESCU-style YAML with search), an Elastic copy (detection-rules TOML with a [rule] table), or both, plus an optional Sigma form. Each copy is written as its own file. A copy that does not parse, or a Sigma form that fails lint, refuses the whole save and writes nothing. A copy keeps the id it carries (ESCU id, Elastic rule_id, Sigma id): pass an existing rule's id to change that rule (a logic change is a new version); omit it for a new rule. Returns each saved copy's rule_id, id, version and stage: a new Splunk or Elastic rule or version enters shadow (nobody sees its alerts); a Sigma copy has no stage. Writes no SIEM.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "splunk_yaml": {
+                    "type": "string",
+                    "description": "Splunk copy: ESCU-style YAML with name, search and optionally id, mitre_attack_id, description.",
+                },
+                "elastic_toml": {
+                    "type": "string",
+                    "description": "Elastic copy: detection-rules TOML with a [rule] table (name, query, type, language, optionally rule_id).",
+                },
+                "sigma_yaml": {
+                    "type": "string",
+                    "description": "Optional Sigma form of the same rule, with a detection block; linted before saving.",
+                },
+            },
+            "required": [],
         },
     },
     {
