@@ -36,6 +36,29 @@ class WazuhAuthError(WazuhError):
     """The manager refused the username and password."""
 
 
+def _rule_ids_param(rule_ids: Any) -> Optional[str]:
+    """``rule_ids`` as the manager's comma list: an int, a list of ints or digit
+    strings, or a comma-separated string. None / "" / [] mean no filter."""
+    if rule_ids is None:
+        return None
+    if isinstance(rule_ids, str):
+        items: List[Any] = [p.strip() for p in rule_ids.split(",") if p.strip()]
+    elif isinstance(rule_ids, (list, tuple)):
+        items = list(rule_ids)
+    else:
+        items = [rule_ids]
+    ids = []
+    for item in items:
+        # bool is an int in Python; refuse it with floats and the rest.
+        if isinstance(item, int) and not isinstance(item, bool) and item >= 0:
+            ids.append(str(item))
+        elif isinstance(item, str) and re.fullmatch(r"[0-9]+", item.strip()):
+            ids.append(item.strip())
+        else:
+            raise WazuhError(f"Invalid rule id {item!r} in rule_ids {rule_ids!r}")
+    return ",".join(ids) or None
+
+
 class WazuhService:
     def __init__(
         self,
@@ -164,7 +187,7 @@ class WazuhService:
 
     async def list_rules(
         self,
-        rule_ids: Optional[List[int]] = None,
+        rule_ids: Any = None,
         level: Optional[str] = None,
         group: Optional[str] = None,
         search: Optional[str] = None,
@@ -172,8 +195,9 @@ class WazuhService:
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Every rule matching the filters, paged until ``total_affected_items``."""
         params: Dict[str, Any] = {"limit": PAGE_LIMIT}
-        if rule_ids:
-            params["rule_ids"] = ",".join(str(r) for r in rule_ids)
+        ids = _rule_ids_param(rule_ids)
+        if ids:
+            params["rule_ids"] = ids
         for key, value in (
             ("level", level),
             ("group", group),
