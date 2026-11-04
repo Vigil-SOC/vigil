@@ -382,6 +382,14 @@ jobs:
     name: Setup Path (${{ matrix.os }})
     if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ${{ matrix.os }}
+    # GitHub's hosted macOS arm64 pool is capacity-constrained: on 3-4 Nov 2026,
+    # 44 of 200 macOS jobs here were never acquired by a runner and were
+    # cancelled after 15 minutes ("The job was not acquired by Runner of type
+    # hosted even after multiple attempts"), turning otherwise-green runs red.
+    # The row is not a required check, so it never blocked a merge, but it
+    # reads as a failure. A capacity miss on macOS must not fail the run; a
+    # real failure still shows on the job and in the matrix. Linux stays strict.
+    continue-on-error: ${{ matrix.os == 'macos-latest' }}
     strategy:
       # One OS failing should not hide the result on the others.
       fail-fast: false
