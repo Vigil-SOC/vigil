@@ -13,6 +13,7 @@ import FindingPopup from './FindingPopup'
 import ExclusionsSection from './ExclusionsSection'
 import type { ExclusionView } from '../../services/api'
 import AttackTechniqueFindings from './AttackTechniqueFindings'
+import RulesTab from './RulesTab'
 import { SEV_COLOR, TL_MONTHS, type TimelineEvent } from './attackData'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { useToast } from '../../shell/toast'
@@ -23,7 +24,7 @@ import {
   saveFindingsViewPreferences,
 } from './findingsPreferences'
 
-type DashTab = 'findings' | 'attack' | 'timeline'
+type DashTab = 'findings' | 'attack' | 'timeline' | 'rules'
 
 export default function DashboardScreen({ openChat, goSettings }: ConsoleScreenProps) {
   const [tab, setTab] = useState<DashTab>('findings')
@@ -31,6 +32,7 @@ export default function DashboardScreen({ openChat, goSettings }: ConsoleScreenP
     ['findings', 'Findings'],
     ['attack', 'ATT&CK'],
     ['timeline', 'Timeline'],
+    ['rules', 'Rules'],
   ]
   return (
     <>
@@ -52,6 +54,7 @@ export default function DashboardScreen({ openChat, goSettings }: ConsoleScreenP
       {tab === 'findings' && <FindingsTab openChat={openChat} goSettings={goSettings} />}
       {tab === 'attack' && <AttackTab />}
       {tab === 'timeline' && <TimelineTab />}
+      {tab === 'rules' && <RulesTab />}
     </>
   )
 }

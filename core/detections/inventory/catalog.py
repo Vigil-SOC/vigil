@@ -59,6 +59,7 @@ CURRENT_STAGE = (
 LINKED = DetectionRule.link_kind.in_(("same_id", "known_name", "agent"))
 NOT_DEPLOYED = "not deployed"
 NOT_READ = "Splunk and Wazuh rules get no Sees check yet"
+SEES_TOOLS = ("elastic",)
 CHANGE = DetectionRuleCheckChange
 RECENT_CHANGES = 10
 # A row that changed the result; a fail -> fail row only changed the reason.
@@ -469,6 +470,106 @@ def blind_spots() -> List[Dict[str, Any]]:
         {"data_source": source, "rules": rules}
         for source, rules in sorted(spots.items(), key=lambda kv: -len(kv[1]))
     ]
+
+
+def _any_result(result: str) -> Any:
+    """A latest version with ``result`` on any of its checks."""
+    return func.jsonb_path_exists(
+        DetectionRuleVersion.checks, f'$.* ? (@.result == "{result}")'
+    )
+
+
+def rules_by_tool() -> Dict[str, Dict[str, Any]]:
+    """Active rules per tool across the estate, with each SIEM's Runs and Sees."""
+    with get_db_manager().session_scope() as session:
+        return _by_tool(
+            session.execute(
+                select(TOOL, RUNS, SEES, func.count())
+                .select_from(DetectionRule)
+                .join(DetectionRuleVersion, _latest_join())
+                .where(ACTIVE)
+                .group_by(TOOL, RUNS, SEES)
+            ).all()
+        )
+
+
+def unchecked(siems: Iterable[str]) -> Dict[str, Dict[str, Any]]:
+    """Per check, the SIEMs it runs on and what a missing result means there.
+    A SIEM not listed under a check gets no such check yet."""
+    siems = sorted(siems)
+    return {
+        "runs": {"tools": siems, "reason": "no run recorded for this version yet"},
+        "sees": {
+            "tools": [t for t in siems if t in SEES_TOOLS],
+            "reason": "waiting for the query budget",
+        },
+    }
+
+
+def rules_not_passing(limit: int = 200) -> Dict[str, Any]:
+    """Active SIEM rules failing or unknown on any check, fails first: the first
+    ``limit`` with their checks as stored, how many there are, and per tool how
+    many are not passing and how many fail (can't fire)."""
+    fails = _any_result("fail")
+    where = (
+        ACTIVE,
+        ~DetectionRule.source.startswith(REPO_PREFIX),
+        fails | _any_result("unknown"),
+    )
+    latest = (
+        select().select_from(DetectionRule).join(DetectionRuleVersion, _latest_join())
+    )
+    with get_db_manager().session_scope() as session:
+        by_tool = {
+            tool: {"not_passing": count, "failing": failing}
+            for tool, count, failing in session.execute(
+                latest.add_columns(TOOL, func.count(), func.count().filter(fails))
+                .where(*where)
+                .group_by(TOOL)
+            ).all()
+        }
+        rows = session.execute(
+            latest.add_columns(DetectionRule, DetectionRuleVersion.checks)
+            .where(*where)
+            .order_by(fails.desc(), DetectionRule.source, DetectionRule.name)
+            .limit(limit)
+        ).all()
+        rules = [
+            {
+                "rule_id": rule.id,
+                "id": rule.native_key,
+                "title": rule.name,
+                "tool": tool_of(rule.source),
+                "version": rule.latest_version,
+                "checks": checks or {},
+            }
+            for rule, checks in rows
+        ]
+    return {
+        "rules": rules,
+        "total": sum(t["not_passing"] for t in by_tool.values()),
+        "limit": limit,
+        "by_tool": by_tool,
+    }
+
+
+def repo_coverage() -> Dict[str, int]:
+    """Active repo and overlay rules, and how many have no linked copy in any SIEM."""
+    with get_db_manager().session_scope() as session:
+        ids = session.scalars(
+            select(DetectionRule.id).where(
+                ACTIVE, DetectionRule.source.startswith(REPO_PREFIX)
+            )
+        ).all()
+        copies = _copies(session, ids)
+        tools = _siem_tools(session)
+    deployed = sum(1 for i in ids if copies.get(i))
+    return {
+        "rules": len(ids),
+        "deployed": deployed,
+        "not_deployed": len(ids) - deployed,
+        "siems": len(tools),
+    }
 
 
 def search(
