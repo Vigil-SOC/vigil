@@ -1,14 +1,15 @@
 """What the agent detection tools read: the active rules and their latest versions.
 
 A rule's tool is where it was read: 'repo' for a configured repo, else the SIEM
-(source 'elastic'). Only active rules count as deployed; search also finds the
-disabled ones, each hit saying so. ``rule_for_finding`` names the rule and
-version that fired a finding.
+(source 'elastic' or 'wazuh'). Only active rules count as deployed; search also
+finds the disabled ones, each hit saying so. ``rule_for_finding`` names the rule
+and version that fired a finding.
 
 A SIEM copy may be linked to the repo rule it came from (origin_rule_id). A repo
 rule's state in a SIEM is its linked copies' (disabled, or their Runs result),
 or 'not deployed' when it has none there. Only SIEMs Vigil reads (today Kibana,
-'elastic') are listed: Splunk saved searches and Wazuh rules are not read yet.
+'elastic', and the Wazuh manager, 'wazuh') are listed: Splunk saved searches are not
+read yet.
 """
 
 from __future__ import annotations
@@ -31,10 +32,11 @@ TOOL = case(
     (DetectionRule.source.startswith(REPO_PREFIX), "repo"), else_=DetectionRule.source
 )
 RUNS = DetectionRuleVersion.checks["runs"]["result"].astext
+SEES = DetectionRuleVersion.checks["sees"]["result"].astext
 RUNS_RESULTS = ("pass", "fail", "unknown")
 LINKED = DetectionRule.link_kind.in_(("same_id", "agent"))
 NOT_DEPLOYED = "not deployed"
-NOT_READ = "Splunk saved searches and Wazuh rules are not read yet"
+NOT_READ = "Splunk saved searches are not read yet"
 
 
 def _latest_join():
@@ -65,6 +67,11 @@ def _summary(
         "file_path": rule.path,
         "checks": checks or {},
     }
+
+
+def _tally(bucket: Dict[str, int], result: Optional[str], count: int) -> None:
+    key = result if result in RUNS_RESULTS else "unchecked"
+    bucket[key] = bucket.get(key, 0) + count
 
 
 def _siem_tools(session: Any) -> List[str]:
@@ -138,16 +145,17 @@ def _with_links(session: Any, hits: List[Dict], rules: List[DetectionRule]) -> N
 
 
 def _by_tool(rows: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
-    """(tool, runs result, count) rows as rules per tool, and Runs for a SIEM's."""
+    """(tool, runs, sees, count) rows as rules per tool, and Runs and Sees for a SIEM's."""
     out: Dict[str, Dict[str, Any]] = {}
-    for tool, result, count in rows:
+    for tool, runs, sees, count in rows:
         entry = out.setdefault(tool, {"rules": 0})
         entry["rules"] += count
         if tool != "repo":
-            runs = entry.setdefault(
-                "runs", {**dict.fromkeys(RUNS_RESULTS, 0), "unchecked": 0}
-            )
-            runs[result if result in RUNS_RESULTS else "unchecked"] += count
+            for check, result in (("runs", runs), ("sees", sees)):
+                bucket = entry.setdefault(
+                    check, {**dict.fromkeys(RUNS_RESULTS, 0), "unchecked": 0}
+                )
+                _tally(bucket, result, count)
     return out
 
 
@@ -217,11 +225,11 @@ def rules_for_technique(technique: str, top: int = 5) -> Dict[str, Any]:
         )
         by_tool = _by_tool(
             session.execute(
-                select(TOOL, RUNS, func.count())
+                select(TOOL, RUNS, SEES, func.count())
                 .select_from(DetectionRule)
                 .join(DetectionRuleVersion, _latest_join())
                 .where(ACTIVE, declares)
-                .group_by(TOOL, RUNS)
+                .group_by(TOOL, RUNS, SEES)
             ).all()
         )
         first = session.execute(
@@ -273,27 +281,58 @@ def _repo_deployed(session: Any, declares: Any) -> Dict[str, Dict[str, int]]:
     return out
 
 
-def siem_runs_by_technique() -> Dict[str, Dict[str, int]]:
-    """Each technique an active SIEM rule declares: its rules' Runs results, counted.
+def siem_checks_by_technique() -> Dict[str, Dict[str, Any]]:
+    """Each technique an active SIEM rule declares: its rules' Runs and Sees results
+    counted, how many rules, and how many fail either.
 
-    A rule with no Runs result yet counts as 'unchecked'.
+    A rule with no result yet counts as 'unchecked'.
     """
     technique = func.unnest(DetectionRule.techniques).table_valued("t").alias("t")
     with get_db_manager().session_scope() as session:
         rows = session.execute(
-            select(technique.c.t, RUNS, func.count())
+            select(technique.c.t, RUNS, SEES, func.count())
             .select_from(DetectionRule)
             .join(DetectionRuleVersion, _latest_join())
             .join(technique, technique.c.t.isnot(None))
             .where(ACTIVE, ~DetectionRule.source.startswith(REPO_PREFIX))
-            .group_by(technique.c.t, RUNS)
+            .group_by(technique.c.t, RUNS, SEES)
         ).all()
-    out: Dict[str, Dict[str, int]] = {}
-    for t, result, count in rows:
-        key = result if result in RUNS_RESULTS else "unchecked"
-        bucket = out.setdefault(t, {})
-        bucket[key] = bucket.get(key, 0) + count
+    out: Dict[str, Dict[str, Any]] = {}
+    for t, runs, sees, count in rows:
+        entry = out.setdefault(t, {"runs": {}, "sees": {}, "rules": 0, "failing": 0})
+        _tally(entry["runs"], runs, count)
+        _tally(entry["sees"], sees, count)
+        entry["rules"] += count
+        if "fail" in (runs, sees):
+            entry["failing"] += count
     return out
+
+
+def blind_spots() -> List[Dict[str, Any]]:
+    """Each data source an active SIEM rule fails Sees on, and the rules it starves."""
+    with get_db_manager().session_scope() as session:
+        rows = session.execute(
+            select(DetectionRule, DetectionRuleVersion.checks["sees"])
+            .join(DetectionRuleVersion, _latest_join())
+            .where(ACTIVE, SEES == "fail")
+            .order_by(DetectionRule.id)
+        ).all()
+        spots: Dict[str, List[Dict[str, Any]]] = {}
+        for rule, sees in rows:
+            spots.setdefault(sees.get("data_source") or "unknown", []).append(
+                {
+                    "rule_id": rule.id,
+                    "id": rule.native_key,
+                    "title": rule.name,
+                    "tool": tool_of(rule.source),
+                    "reason": sees.get("reason"),
+                    "checked_at": sees.get("checked_at"),
+                }
+            )
+    return [
+        {"data_source": source, "rules": rules}
+        for source, rules in sorted(spots.items(), key=lambda kv: -len(kv[1]))
+    ]
 
 
 def search(
@@ -302,11 +341,12 @@ def search(
     limit: int,
     tool: Optional[str] = None,
     runs: Optional[str] = None,
+    sees: Optional[str] = None,
 ) -> List[Dict]:
     """Active and disabled rules whose format, path or parsed content contains ``query``.
 
-    ``tool`` is 'repo' or a SIEM source; ``runs`` keeps rules whose latest
-    version has that Runs result.
+    ``tool`` is 'repo' or a SIEM source; ``runs`` and ``sees`` keep rules whose
+    latest version has that Runs or Sees result.
     """
     escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     haystack = (
@@ -329,6 +369,8 @@ def search(
         statement = statement.where(TOOL == tool)
     if runs:
         statement = statement.where(RUNS == runs)
+    if sees:
+        statement = statement.where(SEES == sees)
     with get_db_manager().session_scope() as session:
         rows = session.execute(statement).all()
         hits = [_summary(rule, content, checks, 300) for rule, content, checks in rows]

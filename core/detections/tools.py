@@ -1,8 +1,8 @@
 """
 Security-Detections tool integration - Pure Python implementation
 Answers from the detection rules every configured repo holds (Sigma, Splunk, Elastic, KQL)
-and the rules Kibana's detection engine runs, as core/detections/inventory syncs them
-into Postgres. Splunk saved searches and Wazuh rules are not read yet.
+and the rules Kibana's detection engine and the Wazuh manager run, as
+core/detections/inventory syncs them into Postgres. Splunk saved searches are not read yet.
 """
 
 import fnmatch
@@ -93,21 +93,23 @@ class SecurityDetectionsTools:
         limit: int = 20,
         tool: Optional[str] = None,
         runs: Optional[str] = None,
+        sees: Optional[str] = None,
     ) -> List[Dict]:
         """
         Search across all detection rules using keywords.
 
         Args:
             query: Search query (e.g., "powershell base64", "lateral movement")
-            source_type: Optional filter by rule format ("sigma", "splunk", "elastic", "kql")
+            source_type: Optional filter by rule format ("sigma", "splunk", "elastic", "kql", "wazuh")
             limit: Maximum number of results
-            tool: Optional filter by where the rule was read ("repo", "elastic")
+            tool: Optional filter by where the rule was read ("repo", "elastic", "wazuh")
             runs: Optional filter by Runs result ("pass", "fail", "unknown")
+            sees: Optional filter by Sees result ("pass", "fail", "unknown")
 
         Returns:
             List of matching detection rules, each with its status and checks
         """
-        return catalog.search(query or "", source_type, limit, tool, runs)
+        return catalog.search(query or "", source_type, limit, tool, runs, sees)
 
     async def link_detection_rule(
         self,
@@ -162,7 +164,8 @@ class SecurityDetectionsTools:
             rules_by_technique,
             catalog.rules_by_tactic(),
             catalog.rule_counts(),
-            catalog.siem_runs_by_technique(),
+            catalog.siem_checks_by_technique(),
+            catalog.blind_spots(),
         )
         data = DatabaseDataService()
         report["runs_rules_missed"] = missed_runs_report(
