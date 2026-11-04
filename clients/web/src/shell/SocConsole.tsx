@@ -665,7 +665,7 @@ function SocConsoleInner() {
                   className="vg-nav-btn vg-more-customize"
                   onClick={() => {
                     setMoreOpen(false)
-                    goSettings('navigation')
+                    goSettings('appearance')
                   }}
                 >
                   <span className="vg-nav-ico">

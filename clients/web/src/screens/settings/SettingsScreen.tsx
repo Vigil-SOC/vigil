@@ -34,9 +34,8 @@ type NavKey =
   | 'data'
   | 'audit'
   | 'system'
-  | 'navigation'
 
-type SystemTabKey = 'services' | 'system' | 'general' | 'dev' | 'users'
+type SystemTabKey = 'services' | 'system' | 'general' | 'dev' | 'users' | 'appearance'
 
 interface NavDef {
   key: NavKey
@@ -54,32 +53,40 @@ interface SystemTabDef {
   key: SystemTabKey
   label: string
   devOnly?: boolean
+  /** shown only to holders of this permission; absent, shown to everyone */
+  perm?: string
   Component: (props: SectionProps) => JSX.Element
 }
 
 const SYSTEM_TAB_DEFS: SystemTabDef[] = [
-  { key: 'services', label: 'Services', Component: ServicesSection },
-  { key: 'system', label: 'System', Component: SystemSection },
-  { key: 'general', label: 'General', Component: GeneralSection },
-  { key: 'dev', label: 'Developer', devOnly: true, Component: DeveloperSection },
-  { key: 'users', label: 'Users', Component: UsersSection },
+  { key: 'services', label: 'Services', perm: 'platform.read', Component: ServicesSection },
+  { key: 'system', label: 'System', perm: 'platform.read', Component: SystemSection },
+  { key: 'general', label: 'General', perm: 'platform.read', Component: GeneralSection },
+  { key: 'dev', label: 'Developer', devOnly: true, perm: 'platform.read', Component: DeveloperSection },
+  { key: 'users', label: 'Users', perm: 'platform.read', Component: UsersSection },
+  // a person's own view of the console, not the platform's: ungated
+  { key: 'appearance', label: 'Appearance', Component: NavigationSection },
 ]
 const SYSTEM_TABS = SYSTEM_TAB_DEFS.filter((tab) => !tab.devOnly || IS_DEV_MODE)
 
-const SYSTEM_KEYS = new Set<string>(SYSTEM_TABS.map((tab) => tab.key))
+// 'navigation' is the old Settings item the Appearance tab replaced
+const SYSTEM_KEYS = new Set<string>([...SYSTEM_TABS.map((tab) => tab.key), 'navigation'])
 
 function SystemTabs({ notify }: SectionProps) {
   const [searchParams, setSearchParams] = useSearchParams()
-  const sectionParam = searchParams.get('section')
-  const tab: SystemTabKey =
-    sectionParam && SYSTEM_KEYS.has(sectionParam) ? (sectionParam as SystemTabKey) : 'system'
-  const current = SYSTEM_TABS.find((item) => item.key === tab) ?? SYSTEM_TABS.find((item) => item.key === 'system')!
+  const { hasPermission } = useAuth()
+  const tabs = SYSTEM_TABS.filter((item) => !item.perm || hasPermission(item.perm))
+  const param = searchParams.get('section')
+  const fallback = tabs.find((item) => item.key === 'system') ?? tabs.find((item) => item.key === 'appearance')!
+  const current = tabs.find((item) => item.key === (param === 'navigation' ? 'appearance' : param)) ?? fallback
+  const tab = current.key
   const Panel = current.Component
 
   return (
     <>
-      <div className="tabs" style={{ gap: 4 }}>
-        {SYSTEM_TABS.map((item) => (
+      {/* wraps on a narrow window so every tab stays reachable */}
+      <div className="tabs" style={{ gap: '18px 4px', flexWrap: 'wrap' }}>
+        {tabs.map((item) => (
           <button
             key={item.key}
             className={`tab${item.key === tab ? ' active' : ''}`}
@@ -102,9 +109,8 @@ const NAV: NavDef[] = [
   { key: 'autoinvestigate', label: 'Limits & autonomy', desc: 'How much Vigil may do without you: whether agents start on their own, how many run at once, what they may spend, and which tools may act alone.', icon: 'bolt', Component: AutoInvestigateSection, perm: 'ai_autonomy.read' },
   { key: 'data', label: 'Data & uploads', desc: 'Bring data in without a live connector, and manage the detection rules applied to it.', icon: 'upload', Component: DataUploadsSection, perm: 'platform.read' },
   { key: 'audit', label: 'Audit', desc: AUDIT_DESC, icon: 'shield', Component: AuditSection, ownsHead: true, perm: 'audit.read' },
-  { key: 'system', label: 'System', desc: 'Service health, system information, general options and users.', icon: 'wrench', Component: SystemTabs, perm: 'platform.read' },
-  // a person's own view, not the platform's: ungated
-  { key: 'navigation', label: 'Navigation', desc: 'How the console’s navigation is laid out for you, in this browser.', icon: 'menu', Component: NavigationSection },
+  // ungated for the Appearance tab; its admin tabs gate themselves
+  { key: 'system', label: 'System', desc: 'Service health, system information, general options, users, and how the console looks for you.', icon: 'wrench', Component: SystemTabs },
 ]
 
 function resolveNav(sectionParam: string | null, nav: NavDef[]): NavKey {
@@ -136,7 +142,7 @@ function SettingsLayout({ setViewFull }: ConsoleScreenProps) {
     return () => setViewFull(false)
   }, [setViewFull])
 
-  // Navigation is ungated, so there is always a section
+  // System is ungated, so there is always a section
   const current = nav.find((item) => item.key === active) ?? nav[0]
   const Section = current.Component
 

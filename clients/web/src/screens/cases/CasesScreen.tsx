@@ -156,7 +156,7 @@ export default function CasesScreen({ setViewFull, viewFull, openCase, caseSeed,
   }, [setViewFull, viewFull])
 
   return selected ? (
-    <CasesDetail id={selected} onBack={backToList} onClose={leave} onCollapse={collapse} pageKey="cases" seed={caseSeed} onSeedConsumed={onCaseSeedConsumed} />
+    <CasesDetail id={selected} openTab={searchParams.get('tab')} openRun={searchParams.get('run')} onBack={backToList} onClose={leave} onCollapse={collapse} pageKey="cases" seed={caseSeed} onSeedConsumed={onCaseSeedConsumed} />
   ) : (
     <CasesTable filters={filters} onFilters={setFilters} onSelect={openCase} />
   )
@@ -1009,6 +1009,8 @@ function MergeCaseDialog({ open, c, onClose, onMerged }: { open: boolean; c: Cas
 
 export function CasesDetail({
   id,
+  openTab,
+  openRun,
   onBack,
   onExpand,
   onClose,
@@ -1018,6 +1020,9 @@ export function CasesDetail({
   onSeedConsumed,
 }: {
   id: string
+  /** Full page only: the ?tab= and ?run= a link landed on. */
+  openTab?: string | null
+  openRun?: string | null
   /** Leave the case: back to the list, or close the drawer. */
   onBack: () => void
   /** Set only in the drawer. */
@@ -1044,6 +1049,8 @@ export function CasesDetail({
     <>
       <CasePage
         id={id}
+        openTab={openTab}
+        openRun={openRun}
         c={c}
         created={created}
         combinedState={combinedState}
