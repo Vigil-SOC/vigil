@@ -49,6 +49,7 @@ export const SERVER_DISPLAY_NAMES = new Map(Object.entries({
   loglm: 'LogLM',
   'gcp-scc': 'GCP Security Command Center',
   'splunk-selfhosted': 'Splunk (Self-Hosted)',
+  opencti: 'OpenCTI',
 }))
 
 interface McpCategory {

@@ -2,8 +2,8 @@
 
 from core.upgrade.revision import run_sql
 
-revision = "0031_opencti_tool_classes"
-down_revision = "0030_drop_settings_keys"
+revision = "0032_opencti_tool_classes"
+down_revision = "0031_detection_rule_changes"
 
 
 def upgrade() -> None:

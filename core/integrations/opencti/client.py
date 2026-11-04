@@ -207,11 +207,11 @@ class OpenCTIService:
         if not _ID.match(entity_id or ""):
             raise OpenCTIError(f"Invalid entity id {entity_id!r}")
         data = await self._query(
-            "query($id: StixRef, $n: Int) { stixCoreRelationships(fromId: $id, first: $n) {"
+            "query($id: [String], $n: Int) { stixCoreRelationships(fromId: $id, first: $n) {"
             " edges { node { relationship_type confidence"
-            " to { ... on StixDomainObject { entity_type name }"
-            " ... on StixCyberObservable { entity_type observable_value } } } } } }",
-            {"id": entity_id, "n": _limit(limit)},
+            " to { ... on StixDomainObject { id entity_type representative { main } }"
+            " ... on StixCyberObservable { id entity_type observable_value } } } } } }",
+            {"id": [entity_id], "n": _limit(limit)},
         )
         relationships = _nodes(data.get("stixCoreRelationships"))
         return {

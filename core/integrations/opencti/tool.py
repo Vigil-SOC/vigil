@@ -103,7 +103,11 @@ async def handle_list_tools():
         ),
         types.Tool(
             name="opencti_get_related",
-            description="List the relationships going out of an OpenCTI entity (uses, targets, attributed-to, ...), capped.",
+            description=(
+                "List the relationships going out of an OpenCTI entity (uses, targets, "
+                "attributed-to, ...), capped. entity_id is the id another OpenCTI tool "
+                "returned (a STIX id matches nothing); each target carries its own id."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
