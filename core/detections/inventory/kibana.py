@@ -88,12 +88,12 @@ def record_of(rule: Mapping[str, Any]) -> RuleRecord:
     )
 
 
-def read_kibana(config: Mapping[str, Any]) -> List[RuleRecord]:
-    """Every rule Kibana lists, or raise: a short list must not reach sync."""
+def service_of(config: Mapping[str, Any]) -> Any:
+    """An ElasticService on the elastic-siem integration's resolved config."""
     from core.integrations.elastic.client import ElasticService
 
     verify = True if config.get("verify_ssl") is None else config["verify_ssl"]
-    service = ElasticService(
+    return ElasticService(
         elasticsearch_url=config["elasticsearch_url"],
         kibana_url=config.get("kibana_url"),
         api_key=config.get("api_key"),
@@ -102,6 +102,11 @@ def read_kibana(config: Mapping[str, Any]) -> List[RuleRecord]:
         verify_ssl=verify,
         ca_cert_path=config.get("ca_cert_path"),
     )
+
+
+def read_kibana(config: Mapping[str, Any]) -> List[RuleRecord]:
+    """Every rule Kibana lists, or raise: a short list must not reach sync."""
+    service = service_of(config)
 
     async def _list() -> List[Dict[str, Any]]:
         try:

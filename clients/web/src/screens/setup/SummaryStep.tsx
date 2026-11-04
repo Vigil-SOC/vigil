@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { aiConfigApi, autonomyApi, configApi, llmProviderApi, workflowApi } from '../../services/api'
+import { getAllIntegrations } from '../../config/integrations'
 import { matchesProfile, type InvestigationProfiles } from '../settings/useSettings'
 
 export type SummaryTarget = 'data' | 'ai' | 'workflows' | 'limits'
@@ -10,7 +11,7 @@ const ROWS: { key: string; label: string; target: SummaryTarget }[] = [
   { key: 'data', label: 'Data', target: 'data' },
   { key: 'ai', label: 'AI', target: 'ai' },
   { key: 'workflows', label: 'Workflows', target: 'workflows' },
-  { key: 'autonomy', label: 'On their own', target: 'limits' },
+  { key: 'autonomy', label: 'On their own', target: 'workflows' },
   { key: 'limits', label: 'Limits', target: 'limits' },
 ]
 
@@ -29,8 +30,10 @@ export default function SummaryStep({ onChange }: { onChange: (target: SummaryTa
 
     read('data', async () => {
       const { data } = await configApi.getIntegrations()
-      const names = (data?.enabled_integrations ?? []) as string[]
-      return names.length ? names.join(', ') : 'Nothing connected yet'
+      const ids = (data?.enabled_integrations ?? []) as string[]
+      // catalog names, falling back to the id for one the catalog does not know
+      const catalog = new Map(getAllIntegrations().map((i) => [i.id, i.name]))
+      return ids.length ? ids.map((id) => catalog.get(id) ?? id).join(', ') : 'Nothing connected yet'
     })
     read('ai', async () => {
       // Mirrors ModelRegistry.resolve_model_for_component('chat_default'). A failed

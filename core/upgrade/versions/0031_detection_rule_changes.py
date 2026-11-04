@@ -1,9 +1,9 @@
-"""A Splunk ESCU saved search's link to its repo rule by name (#3717)."""
+"""Every change of a detection rule's check results, append-only (#3729)."""
 
 from core.upgrade.revision import run_sql
 
-revision = "0029_detection_rule_known_name"
-down_revision = "0028_detection_rule_origin"
+revision = "0031_detection_rule_changes"
+down_revision = "0030_drop_settings_keys"
 
 
 def upgrade() -> None:

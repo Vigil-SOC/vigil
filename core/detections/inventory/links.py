@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional
 
 from core.auth.tool_principal import current_claims
 from core.cases.agent_closure import CALLER_UNAUTHENTICATED
-from core.detections.inventory.catalog import tool_of
+from core.detections.inventory.catalog import in_repo
 from core.integrations.mcp.surface import current_caller
 from core.storage.config_service import ConfigService
 from core.storage.connection import get_db_manager
@@ -76,13 +76,13 @@ def link_rule(
         copy = session.get(DetectionRule, copy_id, with_for_update=True)
         if copy is None:
             return {"error": f"No detection rule {copy_id}"}
-        if tool_of(copy.source) == "repo":
+        if in_repo(copy.source):
             return {"error": f"Rule {copy_id} is a repo rule, not a SIEM copy"}
         if origin_id is not None:
             origin = session.get(DetectionRule, origin_id)
             if origin is None:
                 return {"error": f"No detection rule {origin_id}"}
-            if tool_of(origin.source) != "repo":
+            if not in_repo(origin.source):
                 return {"error": f"Rule {origin_id} is not a repo rule"}
             if action == "link" and origin.status == "removed":
                 return {"error": f"Repo rule {origin_id} is removed"}
