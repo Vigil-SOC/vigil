@@ -307,3 +307,7 @@ index.scip.stamp
 
 # Throwaway env written by the live connector scripts (tests/live/ci/).
 tests/live/ci/.env.*
+
+# Case evidence uploaded at runtime (core/cases/case_evidence_service.py stores
+# it under vigil_path("evidence")): customer files, never committed.
+/evidence/
