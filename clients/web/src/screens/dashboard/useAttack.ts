@@ -10,6 +10,7 @@ interface CoverageCitation {
   finding_id: string
   description?: string
   rule_name?: string
+  data_source?: string
 }
 
 export interface MissedStep {
@@ -35,6 +36,8 @@ export interface AttackTechnique {
   total: number
   verdict?: LayerVerdict
   missed?: MissedStep[]
+  /** non-LogLM data_sources whose Findings caught a step of this technique */
+  caught_in?: string[]
 }
 
 interface RollupRow {
@@ -45,6 +48,8 @@ interface RollupRow {
   severities?: { critical?: number; high?: number; medium?: number; low?: number }
   verdict?: LayerVerdict
   missed?: MissedStep[]
+  /** non-LogLM data_sources whose Findings caught a step of this technique */
+  caught_in?: string[]
 }
 
 interface AttackData {
@@ -96,6 +101,7 @@ export function useAttack(minConfidence: number, timeRange: string, runId: strin
             total: r.count ?? 0,
             ...(isLayerVerdict(r.verdict) ? { verdict: r.verdict } : {}),
             ...(Array.isArray(r.missed) ? { missed: r.missed } : {}),
+            ...(Array.isArray(r.caught_in) ? { caught_in: r.caught_in } : {}),
           }
         })
         const sum = (k: keyof AttackTechnique) => techniques.reduce((a, t) => a + (t[k] as number), 0)

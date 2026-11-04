@@ -12,6 +12,10 @@ to see a deletion, and writes only what differs:
 A Runs result (checks['runs'] on the latest version) is written only when its
 result or reason differs from the stored one; a new version starts with none.
 
+After the sources, each Kibana rule is linked to the repo rule it came from when
+that is certain (``same_id``: one active repo Elastic rule with its rule_id). A
+link or decline an agent or person made is never touched.
+
 A source that fails to read, or is configured but not ready, is skipped whole.
 A source no longer configured has its rules marked removed.
 
@@ -27,7 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
-from sqlalchemy import and_, bindparam, func, insert, select, update
+from sqlalchemy import and_, bindparam, func, insert, or_, select, update
 
 from core.detections.inventory import kibana, readers, wazuh
 from core.detections.inventory.record import RuleRecord, fingerprint
@@ -51,6 +55,8 @@ class SourceReport:
     restored: int = 0
     updated: int = 0
     checked: int = 0
+    linked: int = 0
+    unlinked: int = 0
     error: Optional[str] = None
     skipped: Optional[str] = None
 
@@ -234,7 +240,13 @@ def sync_repos() -> List[SourceReport]:
         sources = service.list_sources()
         reports = [_sync_one(service, source) for source in sources]
         removed = _remove_unconfigured([readers.source_name(s) for s in sources])
-        reports.append(_sync_elastic())
+        elastic = _sync_elastic()
+        try:
+            elastic.linked, elastic.unlinked = _link_same_id()
+        except Exception as exc:  # noqa: BLE001 -- the next sync links again
+            logger.warning("detection rules: linking Kibana rules failed: %s", exc)
+            elastic.error = elastic.error or f"linking: {type(exc).__name__}: {exc}"
+        reports.append(elastic)
         reports.append(_sync_wazuh())
     if removed:
         logger.info(
@@ -343,3 +355,51 @@ def _sync_wazuh() -> SourceReport:
         return SourceReport(source=wazuh.SOURCE, error=f"{type(exc).__name__}: {exc}")
     logger.info("detection rules: %s", asdict(report))
     return report
+
+
+def _link_same_id() -> tuple:
+    """Link each Kibana rule to the one active repo Elastic rule with its rule_id.
+
+    Only rows the sync owns (no link, or a same_id one) are written, and only
+    when the origin differs. A rule_id more than one repo carries links nothing.
+    Returns (linked, unlinked).
+    """
+    linked = unlinked = 0
+    now = datetime.now(timezone.utc)
+    with get_db_manager().session_scope() as session:
+        origins: Dict[str, List[int]] = {}
+        for rule_id, key in session.execute(
+            select(DetectionRule.id, DetectionRule.native_key).where(
+                DetectionRule.source.startswith(REPO_PREFIX),
+                DetectionRule.language == "elastic",
+                DetectionRule.status == "active",
+            )
+        ):
+            origins.setdefault(key, []).append(rule_id)
+        copies = session.scalars(
+            select(DetectionRule).where(
+                DetectionRule.source == kibana.SOURCE,
+                or_(
+                    DetectionRule.link_kind.is_(None),
+                    DetectionRule.link_kind == "same_id",
+                ),
+            )
+            # An agent's decision on a copy commits before or after this, not between.
+            .with_for_update()
+        ).all()
+        for copy in copies:
+            ids = origins.get(copy.native_key, []) if copy.language == "elastic" else []
+            target = ids[0] if len(ids) == 1 else None
+            if target == copy.origin_rule_id:
+                continue
+            if target is None:
+                copy.origin_rule_id = copy.link_kind = copy.linked_by = None
+                copy.link_reason = copy.linked_at = None
+                unlinked += 1
+                continue
+            copy.origin_rule_id, copy.link_kind = target, "same_id"
+            copy.linked_by = "system"
+            copy.link_reason = f"same elastic rule_id {copy.native_key}"
+            copy.linked_at = now
+            linked += 1
+    return linked, unlinked

@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type JSX } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type JSX } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import '../../../../docs/design/console/tokens/tokens.css'
@@ -6,11 +6,11 @@ import '../styles.css'
 import './shell.css'
 import { useAuth } from '../contexts/AuthContext'
 import { approvalsApi, autonomyApi, casesApi, configApi, consoleApi, federationApi, mcpApi } from '../services/api'
-import { Icon, type IconName } from '../shared/icons'
+import { Icon } from '../shared/icons'
 import { InfoTip } from '../shared/InfoTip'
 import { anyActs } from '../shared/autonomy'
 import { PageHead } from '../shared/PageHead'
-import { NAV, TITLES, type ConsoleScreenKey, type NavGate } from '../data/data'
+import type { ConsoleScreenKey } from '../data/data'
 import { ExtensionProvider, useExtensions } from '../extensions/ExtensionProvider'
 import ExtensionHost from '../extensions/ExtensionHost'
 import { useColorScheme } from '../contexts/ColorSchemeContext'
@@ -21,13 +21,14 @@ import { DOCK_MIN, DOCK_WIDTH, useDockWidth } from './useDockWidth'
 import CommandBar from './CommandBar'
 import DevModeWarning from './DevModeWarning'
 import UserMenu from './UserMenu'
-import { HOME_PERM, landingScreen } from './landing'
+import { landingScreen } from './landing'
 import ConsoleTour, { type TourStopId } from './ConsoleTour'
 import { markConsoleTourSeen, readConsoleTourSeen } from './consoleTourSeen'
 import ErrorBoundary from './ErrorBoundary'
 import { ToastProvider } from './toast'
 import { useDesktopNotifications } from './useDesktopNotifications'
 import { useNavPrefs, writeNavPrefs } from './navPrefs'
+import { SCREEN_PERMS, splitNav, useConsoleNav, type NavItem } from './consoleNav'
 import type { ChatSeed, ConsoleScreenGoOptions, ConsoleScreenProps, SeedDocument, SettingsSectionKey } from '../shared/types'
 import type { Schema } from '../services/apiTypes'
 import DashboardScreen from '../screens/dashboard/DashboardScreen'
@@ -55,16 +56,8 @@ import {
   type StatusFold,
 } from './statusLine'
 
-const PRIMARY_KEYS = ['home', 'overview', 'triage', 'cases', 'workflows', 'settings']
-// a rule is drawn only between two groups that both have a visible item
-const NAV_GROUPS = [['home'], ['overview'], ['triage', 'cases'], ['workflows', 'settings']]
-const MORE_KEYS = ['dashboard', 'metrics', 'medic']
 // what a collapsed vertical tile shows under its icon, where the full label would not fit
 const TILE_LABELS: Record<string, string> = { triage: 'Triage', metrics: 'Metrics', workflows: 'Agents' }
-// When the bar runs out of width, screens fold into More from its right end,
-// so what stays on the bar is always its first few screens in order, whichever
-// screen is open. Home never folds.
-const FOLD_ORDER = PRIMARY_KEYS.filter((key) => key !== 'home').reverse()
 
 const AUTONOMY_ACT = 'Act · reversible changes on its own'
 const AUTONOMY_ASSIST = 'Assist · asks before changes'
@@ -80,14 +73,6 @@ const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Eleme
   health: HealthScreen,
   medic: MedicScreen,
   settings: SettingsScreen,
-}
-
-/** The only permission check in the app; ProtectedRoute handles auth alone.
- *  Screens absent here are ungated, and DEV_MODE grants everything. */
-const SCREEN_PERMS: Partial<Record<ConsoleScreenKey, string>> = {
-  cases: 'cases.read',
-  home: HOME_PERM,
-  medic: 'medic.read',
 }
 
 /** What a widened dock leaves of the page beside it. */
@@ -110,41 +95,24 @@ export default function SocConsole() {
   )
 }
 
-/** key is a plain string, so extension screens can join the nav row */
-type NavItem = [IconName, string, string, NavGate?]
-
 function SocConsoleInner() {
   const navigate = useNavigate()
   const { hasPermission, user } = useAuth()
   const { screen } = useParams<{ screen?: string }>()
   const location = useLocation()
-  const { mountPoints, enabledIntegrations, loading: extLoading } = useExtensions()
+  const { mountPoints, loading: extLoading } = useExtensions()
+  const { titles, screenPerms, visibleNav } = useConsoleNav()
 
   // built-ins win, so an extension can't shadow a core screen
-  const { screens, navItems, titles, screenPerms } = useMemo(() => {
+  const screens = useMemo(() => {
     const screens: Record<string, (p: ConsoleScreenProps) => JSX.Element> = { ...SCREENS }
-    const titles: Record<string, [string, string]> = { ...TITLES }
-    const screenPerms: Record<string, string | undefined> = { ...SCREEN_PERMS }
-    const navItems: NavItem[] = [...(NAV as NavItem[])]
-    const extNav: NavItem[] = []
     for (const { ext, mount } of mountPoints) {
       if (screens[mount.key]) continue
       screens[mount.key] = (p: ConsoleScreenProps) => (
         <ExtensionHost {...p} ext={ext} mount={mount} />
       )
-      titles[mount.key] = [mount.title, mount.subtitle ?? '']
-      if (mount.permission) screenPerms[mount.key] = mount.permission
-      extNav.push([
-        (mount.icon || 'brain') as IconName,
-        mount.navLabel,
-        mount.key,
-        mount.gate?.integration ? { integration: mount.gate.integration } : undefined,
-      ])
     }
-    // extension tabs slot above the pinned Settings entry
-    const settingsIdx = navItems.findIndex(([, , key]) => key === 'settings')
-    navItems.splice(settingsIdx === -1 ? navItems.length : settingsIdx, 0, ...extNav)
-    return { screens, navItems, titles, screenPerms }
+    return screens
   }, [mountPoints])
 
   // while manifests load, a deep-linked extension tab shows loading rather than
@@ -476,42 +444,43 @@ function SocConsoleInner() {
   const [title, sub] = valid ? titles[current] : ['Page not found', 'This page doesn’t exist']
   const Screen = screens[current]
 
-  const visibleNav = navItems.filter(([, , key, gate]) => {
-    const perm = screenPerms[key]
-    if (perm && !hasPermission(perm)) return false
-    return !gate?.integration || enabledIntegrations.includes(gate.integration)
-  })
-  const byKey = new Map(visibleNav.map((item) => [item[2], item]))
-  const primary = PRIMARY_KEYS.map((key) => byKey.get(key)).filter((item): item is NavItem => Boolean(item))
-  const moreKeySet = new Set<string>(MORE_KEYS)
-  const primaryKeySet = new Set<string>(PRIMARY_KEYS)
-  const foldable = FOLD_ORDER.filter((key) => byKey.has(key))
-  // the vertical bar scrolls instead of folding
+  const { iconsOnly } = navPrefs
+  const { bar, rest } = splitNav(visibleNav, navPrefs.shown)
+  // When the top bar runs out of width, screens fold into More from its right
+  // end, so what stays is always its first few screens in order, whichever is
+  // open. Home never folds; the vertical bar scrolls instead.
+  const foldable = bar.map((item) => item[2]).filter((key) => key !== 'home').reverse()
   const foldedKeys = new Set(vertical ? [] : foldable.slice(0, folded))
-  const more = [
-    ...primary.filter((item) => foldedKeys.has(item[2])),
-    ...MORE_KEYS.map((key) => byKey.get(key)).filter((item): item is NavItem => Boolean(item)),
-    ...visibleNav.filter((item) => {
-      const key = item[2]
-      return !primaryKeySet.has(key) && !moreKeySet.has(key)
-    }),
-  ]
+  const barShown = bar.filter((item) => !foldedKeys.has(item[2]))
+  const more = [...bar.filter((item) => foldedKeys.has(item[2])), ...rest]
   const moreCurrent = more.some((item) => valid && item[2] === current)
-  const navGroups = NAV_GROUPS.map((keys) =>
-    keys.filter((key) => !foldedKeys.has(key)).map((key) => byKey.get(key)).filter((item): item is NavItem => Boolean(item)),
-  ).filter((group) => group.length > 0)
 
   // Fold one more screen into More each pass until the bar fits its width.
   // Opening a screen never refolds: a folded screen stays in More, which
   // shows as active, rather than swapping places with one on the bar. No deps:
   // any render can change what the bar holds (a status or setup chip appears).
+  // The open menu is left out: it would count toward the width.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useLayoutEffect(() => {
     const nav = navRef.current
-    if (!vertical && nav && nav.scrollWidth > nav.clientWidth && folded < foldable.length) setFolded(folded + 1)
+    if (!vertical && !moreOpen && nav && nav.scrollWidth > nav.clientWidth && folded < foldable.length) setFolded(folded + 1)
   })
+  // The open menu shifts as far as it needs to stay inside the window: left on
+  // the top bar, down beside the vertical one, where it rises from More.
+  useLayoutEffect(() => {
+    const menu = moreRef.current?.querySelector<HTMLElement>('.vg-more-menu')
+    if (!menu) return
+    menu.style.left = ''
+    menu.style.bottom = ''
+    const box = menu.getBoundingClientRect()
+    if (vertical && box.top < 8) menu.style.bottom = `${box.top - 8}px`
+    const over = box.right - (window.innerWidth - 12)
+    if (!vertical && over > 0) menu.style.left = `${-over}px`
+  }, [moreOpen, vertical, folded])
+  const barKey = `${bar.map((item) => item[2]).join()}|${iconsOnly}`
   // A width change can make room again: start over and refold. The window
-  // can also change width while the wall hides the bar, so refold on return.
+  // can also change width while the wall hides the bar, so refold on return,
+  // and a change to what the bar holds refolds too.
   useEffect(() => {
     const nav = navRef.current
     setFolded(0)
@@ -530,29 +499,42 @@ function SocConsoleInner() {
     const observer = new ResizeObserver(onResize)
     observer.observe(nav)
     return () => observer.disconnect()
-  }, [wallMode, vertical])
+  }, [wallMode, vertical, barKey])
 
-  // tile: a collapsed vertical bar's tile, which shows the short label
-  const navButton = (item: NavItem, tile = false) => {
+  // inMenu: a More row, which carries its page's description and never goes icons-only
+  const navButton = (item: NavItem, inMenu = false) => {
     const [icon, label, key] = item
     const count = key === 'home' ? needsYou : key === 'cases' ? openCases : 0
     const active = valid && key === current
+    const bare = iconsOnly && !inMenu
+    const desc = inMenu ? titles[key]?.[1] : ''
     return (
       <button
         key={key}
         type="button"
-        className={`vg-nav-btn${active ? ' active' : ''}`}
+        className={`vg-nav-btn${active ? ' active' : ''}${desc ? ' has-desc' : ''}`}
         aria-current={active ? 'page' : undefined}
-        title={tile ? label : undefined}
+        title={inMenu ? undefined : label}
         aria-label={count ? `${label} (${count} ${key === 'cases' ? 'open' : 'waiting'})` : label}
         onClick={() => {
           setMoreOpen(false)
           go(key)
         }}
       >
-        <Icon name={icon} size={vertical ? 16 : 14} />
-        <span className="vg-nav-label">{tile ? TILE_LABELS[key] ?? label : label}</span>
-        {count > 0 && (
+        {/* icons-only: Home's count becomes a dot on the icon, Cases' is dropped */}
+        <span className="vg-nav-ico">
+          <Icon name={icon} size={vertical ? 16 : 14} />
+          {bare && key === 'home' && count > 0 && <span className="vg-nav-dot" aria-hidden="true" />}
+        </span>
+        {!bare && (desc ? (
+          <span className="vg-nav-text">
+            <span className="vg-nav-label">{label}</span>
+            <span className="vg-nav-desc">{desc}</span>
+          </span>
+        ) : (
+          <span className="vg-nav-label">{navCollapsed && !inMenu ? TILE_LABELS[key] ?? label : label}</span>
+        ))}
+        {!bare && count > 0 && (
           <span className={`vg-nav-count${key === 'home' ? '' : ' quiet'}`}>{count > 99 ? '99+' : count}</span>
         )}
       </button>
@@ -579,7 +561,7 @@ function SocConsoleInner() {
     ? Math.min(dockMax, Math.max(DOCK_MIN, dock.width ?? DOCK_WIDTH))
     : viewportWidth
   const consoleStyle = { '--chat-w': `${effectiveChatWidth}px` } as CSSProperties
-  const commandBoards = [...primary.filter((item) => !foldedKeys.has(item[2])), ...more].map((item) => {
+  const commandBoards = [...barShown, ...more].map((item) => {
     const key = item[2]
     return { key, label: item[1], icon: item[0], desc: titles[key]?.[1] ?? '' }
   })
@@ -648,41 +630,52 @@ function SocConsoleInner() {
         </header>}
         {!wallMode && <nav
           ref={navRef}
-          className={['vg-nav', vertical ? 'vertical' : '', navCollapsed ? 'collapsed' : ''].filter(Boolean).join(' ')}
+          className={['vg-nav', vertical ? 'vertical' : '', navCollapsed ? 'collapsed' : '', iconsOnly ? 'icons-only' : '']
+            .filter(Boolean)
+            .join(' ')}
           aria-label="Primary"
         >
           {/* scrolls in the vertical bar; a plain run of buttons on the top bar */}
           <div className="vg-nav-list">
-            {navGroups.map((group, i) => (
-              <Fragment key={group[0][2]}>
-                {i > 0 && <span className="vg-nav-sep" aria-hidden="true" />}
-                {group.map((item) => navButton(item, navCollapsed))}
-              </Fragment>
-            ))}
+            {barShown.map((item) => navButton(item))}
           </div>
-          {more.length > 0 && (
-            <>
-              {navGroups.length > 0 && <span className="vg-nav-sep" aria-hidden="true" />}
-              <div className="vg-more" ref={moreRef}>
+          {/* always drawn: it holds the way to customize the bar */}
+          {barShown.length > 0 && <span className="vg-nav-sep" aria-hidden="true" />}
+          <div className="vg-more" ref={moreRef}>
+            <button
+              type="button"
+              className={`vg-nav-btn${moreOpen || moreCurrent ? ' active' : ''}`}
+              aria-haspopup="menu"
+              aria-expanded={moreOpen}
+              aria-label="More"
+              title="More"
+              onClick={() => setMoreOpen((open) => !open)}
+            >
+              <span className="vg-nav-ico">
+                <Icon name="more" size={vertical ? 16 : 14} />
+              </span>
+              {!iconsOnly && <span className="vg-nav-label">More</span>}
+            </button>
+            {moreOpen && (
+              <div className="vg-more-menu" role="menu" aria-label="More screens">
+                {more.map((item) => navButton(item, true))}
+                {more.length === 0 && <p className="vg-more-note">Every page is on the bar.</p>}
                 <button
                   type="button"
-                  className={`vg-nav-btn${moreOpen || moreCurrent ? ' active' : ''}`}
-                  aria-haspopup="menu"
-                  aria-expanded={moreOpen}
-                  aria-label="More"
-                  onClick={() => setMoreOpen((open) => !open)}
+                  className="vg-nav-btn vg-more-customize"
+                  onClick={() => {
+                    setMoreOpen(false)
+                    goSettings('navigation')
+                  }}
                 >
-                  <Icon name="more" size={vertical ? 16 : 14} />
-                  <span className="vg-nav-label">More</span>
+                  <span className="vg-nav-ico">
+                    <Icon name="edit" size={vertical ? 16 : 14} />
+                  </span>
+                  <span className="vg-nav-label">Customize navigation bar</span>
                 </button>
-                {moreOpen && (
-                  <div className="vg-more-menu" role="menu" aria-label="More screens">
-                    {more.map((item) => navButton(item))}
-                  </div>
-                )}
               </div>
-            </>
-          )}
+            )}
+          </div>
           <div className="vg-nav-end">
             {status && (
               <div
