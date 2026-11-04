@@ -70,3 +70,10 @@ entries:
   - {logger: core.llm.target, template: 'Provider %s cannot serve %s — falling back to %s'}
   # core/llm/gateway_retry.py:108
   - {logger: core.llm.gateway_retry, template: 'gateway retries exhausted: last status %s after %d attempts'}
+  # --- pipeline: agent and run queue (F7c-agents) ---
+  # services/daemon/orchestrator.py:1631 (the run enqueue; :1656 is the shadow adjudication, a different line)
+  - {logger: services.daemon.orchestrator, template: 'could not enqueue %s: %s'}
+  # core/agents/projections.py:45-77, imported by the backend and soc-daemon
+  - {logger: core.agents.projections, template: 'could not read the %s for %s: %s'}
+  - {logger: core.agents.projections, template: '%s for %s answered %s'}
+  - {logger: core.agents.projections, template: 'agent service reads recovered'}

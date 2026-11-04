@@ -1,0 +1,34 @@
+# P-1: the daemon's run enqueue is refused (services/daemon/orchestrator.py:1631), so
+# the hunt or investigation never starts and its run is marked failed. The enqueue
+# is a BullMQ add on Redis (core/agents/queue.py), so an unreachable Redis or a wrong
+# Redis password lands here, and so does any other error from the queue call. A
+# %-style line, so a catalog template: trusted. Matches this template only; "could
+# not enqueue shadow adjudication for %s: %s" (:1656) is a different line and not a
+# run. Lane 3: the cause can't be told from the line.
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.run-enqueue-failed
+title: The daemon can't start agent runs
+revision: 1
+fault: {class: pipeline, mode: P-1, causes: [P-1]}
+lane: 3
+detection: event
+signals:
+  failed:
+    log:
+      signal: log_soc_daemon
+      logger: {eq: services.daemon.orchestrator}
+      level: [ERROR]
+      template: {eq: 'could not enqueue %s: %s'}
+when: {fn: count, signal: failed, window: 10m, op: ">=", value: 1}
+for: 2m
+keep_firing_for: 10m
+advice:
+  summary: soc-daemon was refused when it tried to queue an agent run, so that run never started and was marked failed.
+  fix: >-
+    Check that Redis is running and reachable from soc-daemon (Compose: the redis
+    container; Helm: the Redis service; host-native: the local Redis), and that
+    REDIS_URL and the Redis password on soc-daemon match the ones the agent worker
+    uses. If both look right, report it as a Vigil defect with this incident and
+    attach the soc-daemon log, which names the error. Re-run the affected
+    investigation once it is fixed.

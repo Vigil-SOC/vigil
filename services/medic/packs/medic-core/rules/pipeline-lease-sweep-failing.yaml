@@ -1,0 +1,33 @@
+# P-1: the agent worker's lease sweeper (services/agent/worker.ts:759) logs
+# "sweep failed" at WARNING each tick (VIGIL_SWEEP_MS, default 30 s) while it can't
+# read the lease table, so runs whose worker died are never reclaimed. An agent_json
+# line, so the msg is untrusted and not in catalog.yaml. >= 10 in 10 min assumes a
+# sweep interval <= 60 s. Lane 3: the table lives in Postgres or Redis, which the
+# operator may or may not own.
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.lease-sweep-failing
+title: The agent worker can't sweep for abandoned runs
+revision: 1
+fault: {class: pipeline, mode: P-1, causes: [P-1]}
+lane: 3
+detection: event
+input_trust: untrusted
+signals:
+  failed:
+    log:
+      signal: log_agent_worker
+      logger: {eq: agent.worker}
+      level: [WARNING]
+      template: {eq: sweep failed}
+      trusted_only: false
+when: {fn: count, signal: failed, window: 10m, op: ">=", value: 10}
+for: 5m
+keep_firing_for: 10m
+advice:
+  summary: The agent worker's lease sweep fails on every pass, so runs whose worker died are never reclaimed and stay stuck as running.
+  fix: >-
+    Report it as a Vigil defect with this incident and attach the agent-worker
+    log, which names the error. Check that the agent worker can reach its lease
+    store (Postgres and Redis). Until it is fixed, cancel runs that have been
+    executing for a long time by hand in the console.

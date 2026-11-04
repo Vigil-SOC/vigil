@@ -1,7 +1,7 @@
 """Detection rule ORM models.
 
-The schema is core/upgrade/versions/0025_detection_rules.sql and
-0026_detection_rule_checks.sql; these models
+The schema is core/upgrade/versions/0026_detection_rules.sql and
+0027_detection_rule_checks.sql; these models
 mirror it for core/detections/inventory.
 """
 

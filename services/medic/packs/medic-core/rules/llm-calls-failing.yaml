@@ -30,6 +30,6 @@ keep_firing_for: 10m
 advice:
   summary: Possible LLM path fault. Many LLM calls have failed for 10 minutes or more, with errors Medic has no specific rule for.
   fix: >-
-    Send this incident to DeepTempo Support with the evidence report. As a
+    Report it as a Vigil defect with this incident. As a
     workaround, assign triage and chat_default to a different model or provider in
     Settings, AI Config and see whether the failures stop. Record what you did.

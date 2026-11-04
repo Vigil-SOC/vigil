@@ -1,0 +1,39 @@
+# P-1: the agent worker started without VIGIL_RUNS_URL (services/agent/worker.ts:792),
+# so run progress isn't mirrored to the backend and checkpoints can't be answered.
+# The ERROR is logged ONCE per start, and "agent worker started" follows it whether
+# the mirror is on or off, so no line clears it. agent_json, so untrusted and not in
+# catalog.yaml. The count holds the incident open for the 1h window plus
+# keep_firing_for 24h (about 25 h) after a start with the URL unset, then it
+# resolves on its own even if the worker is still running unfixed: nothing logs
+# again until the next start. A restart with the URL set does not clear it early;
+# a restart without it logs again and extends the hold. Lane 2: the fix is in the
+# operator's environment.
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.runs-url-unset
+title: The agent worker was started without VIGIL_RUNS_URL
+revision: 1
+fault: {class: pipeline, mode: P-1, causes: [P-1]}
+lane: 2
+detection: event
+input_trust: untrusted
+signals:
+  unset:
+    log:
+      signal: log_agent_worker
+      logger: {eq: agent.worker}
+      level: [ERROR]
+      template: {prefix: 'VIGIL_RUNS_URL is unset'}
+      trusted_only: false
+when: {fn: count, signal: unset, window: 1h, op: ">=", value: 1}
+for: 0s
+keep_firing_for: 24h
+advice:
+  summary: The agent worker started without VIGIL_RUNS_URL, so the console doesn't see run progress and runs that ask for a checkpoint can't be answered.
+  fix: >-
+    Set VIGIL_RUNS_URL on the agent worker to the backend's runs address
+    (Compose: the agent-worker service environment; Helm: the agent worker's
+    values; host-native: the shell that starts it), then restart the agent worker.
+    Medic can't see the fix: this incident resolves about 25 hours after the
+    worker's start line, whether or not you fixed it, so check the worker's
+    start-up log for the "VIGIL_RUNS_URL is unset" line to confirm.
