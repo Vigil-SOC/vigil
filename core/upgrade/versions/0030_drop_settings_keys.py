@@ -10,8 +10,8 @@ from sqlalchemy import text
 
 from core.upgrade.revision import run_sql, stash_report
 
-revision = "0029_drop_settings_keys"
-down_revision = "0028_detection_rule_origin"
+revision = "0030_drop_settings_keys"
+down_revision = "0029_detection_rule_stages"
 
 
 def upgrade() -> None:

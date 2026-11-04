@@ -40,7 +40,7 @@ MEDIC_ADMIN_PERMISSION = "medic.admin"
 # users.*, findings.*, cases.read/write/delete, audit.*, medic.*, loglm.view,
 # ai_chat.use, ai_decisions.approve and integrations.write stay as they are
 # and are not re-originated. settings.read and settings.write are gone:
-# 0029 removed them from every role; "split from" below records the origin.
+# 0030 removed them from every role; "split from" below records the origin.
 _SIGNED_IN_READ = "signed-in read"
 _NEW_CAPABILITY = "new capability"
 

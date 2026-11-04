@@ -5,7 +5,7 @@ The grants are literals in the SQL beside this file. They are not read from
 revision writes on a fresh install. ``BUILTINS`` is that catalog's built-in
 definitions, frozen here for the same reason.
 
-``settings.read`` and ``settings.write`` stay here. 0029_drop_settings_keys
+``settings.read`` and ``settings.write`` stay here. 0030_drop_settings_keys
 deletes them from every role.
 """
 
