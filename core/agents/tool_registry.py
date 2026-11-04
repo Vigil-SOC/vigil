@@ -57,6 +57,7 @@ TOOL_PERMISSIONS: Dict[str, str] = {
     "get_detection_count": "detections.read",
     "lint_detections": "detections.read",
     "check_detection_candidate": "detections.read",
+    "save_detection_rule": "detections.write",
     "reconstruct_run": "detections.read",
     "link_detection_rule": "detections.write",
     "list_findings": "findings.read",
@@ -806,6 +807,7 @@ _SECURITY_TOOLS = frozenset(
         "get_detection_count",
         "lint_detections",
         "check_detection_candidate",
+        "save_detection_rule",
         "reconstruct_run",
         "link_detection_rule",
     }

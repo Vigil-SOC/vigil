@@ -1,42 +1,106 @@
 """What the agent detection tools read: the active rules and their latest versions.
 
-A rule's tool is where it was read: 'repo' for a configured repo, else the SIEM
-(source 'elastic' or 'wazuh'). Only active rules count as deployed; search also
-finds the disabled ones, each hit saying so. ``rule_for_finding`` names the rule
-and version that fired a finding.
+A rule's tool is where it was read: 'overlay' for Vigil's own overlay source,
+'repo' for any other configured repo, else the SIEM (source 'elastic' or
+'wazuh'). Only active rules count as deployed; search also finds the disabled
+ones, each hit saying so. An overlay hit also carries its rollout stage and
+stage history. ``rule_for_finding`` names the rule and version that fired a
+finding.
 
-A SIEM copy may be linked to the repo rule it came from (origin_rule_id). A repo
-rule's state in a SIEM is its linked copies' (disabled, or their Runs result),
-or 'not deployed' when it has none there. Only SIEMs Vigil reads (today Kibana,
-'elastic', and the Wazuh manager, 'wazuh') are listed: Splunk saved searches are not
-read yet.
+A SIEM copy may be linked to the repo rule it came from (origin_rule_id); an
+overlay rule counts as a repo rule here. A repo rule's state in a SIEM is its
+linked copies' (disabled, or their Runs result), or 'not deployed' when it has
+none there. Only SIEMs Vigil reads (today Kibana, 'elastic', and the Wazuh
+manager, 'wazuh') are listed: Splunk saved searches are not read yet.
+
+A flag is a (rule, check) whose latest recorded change went pass -> fail, on a
+rule not removed. Nothing to fail, or a change to unknown, is no flag; a later
+change back to pass clears it. It is a query over detection_rule_check_changes.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set
 
 from sqlalchemy import Text, and_, case, cast, func, select
 
+from core.detections.inventory.readers import OVERLAY_SOURCE
 from core.storage.connection import get_db_manager
-from core.storage.models import DetectionRule, DetectionRuleVersion
+from core.storage.models import (
+    DetectionRule,
+    DetectionRuleCheckChange,
+    DetectionRuleStage,
+    DetectionRuleVersion,
+)
 
 logger = logging.getLogger(__name__)
 
 ACTIVE = DetectionRule.status == "active"
 LISTED = DetectionRule.status.in_(("active", "disabled"))
 REPO_PREFIX = "repo:"
+OVERLAY = "overlay"
 TOOL = case(
-    (DetectionRule.source.startswith(REPO_PREFIX), "repo"), else_=DetectionRule.source
+    (DetectionRule.source == OVERLAY_SOURCE, OVERLAY),
+    (DetectionRule.source.startswith(REPO_PREFIX), "repo"),
+    else_=DetectionRule.source,
 )
 RUNS = DetectionRuleVersion.checks["runs"]["result"].astext
 SEES = DetectionRuleVersion.checks["sees"]["result"].astext
 RUNS_RESULTS = ("pass", "fail", "unknown")
+# Each rule's current stage: its latest stage row.
+CURRENT_STAGE = (
+    select(DetectionRuleStage.rule_id, DetectionRuleStage.stage)
+    .distinct(DetectionRuleStage.rule_id)
+    .order_by(DetectionRuleStage.rule_id, DetectionRuleStage.id.desc())
+    .subquery("current_stage")
+)
 LINKED = DetectionRule.link_kind.in_(("same_id", "agent"))
 NOT_DEPLOYED = "not deployed"
 NOT_READ = "Splunk saved searches are not read yet"
+CHANGE = DetectionRuleCheckChange
+RECENT_CHANGES = 10
+# A row that changed the result; a fail -> fail row only changed the reason.
+RESULT_CHANGED = CHANGE.old_result.is_distinct_from(CHANGE.new_result)
+
+
+def _latest_changes():
+    """The latest result-changing row per (rule, check)."""
+    return (
+        select(CHANGE)
+        .where(RESULT_CHANGED)
+        .distinct(CHANGE.rule_id, CHANGE.check_key)
+        .order_by(
+            CHANGE.rule_id, CHANGE.check_key, CHANGE.changed_at.desc(), CHANGE.id.desc()
+        )
+        .subquery()
+    )
+
+
+def _flags():
+    """(latest change, rule) for every open flag."""
+    latest = _latest_changes()
+    return (
+        select(latest, DetectionRule)
+        .join(DetectionRule, DetectionRule.id == latest.c.rule_id)
+        .where(
+            latest.c.old_result == "pass",
+            latest.c.new_result == "fail",
+            DetectionRule.status != "removed",
+        )
+    )
+
+
+def _change_row(c: Any) -> Dict[str, Any]:
+    return {
+        "check": c.check_key,
+        "old": c.old_result,
+        "new": c.new_result,
+        "changed_at": c.changed_at.isoformat(),
+        "version": c.version,
+        "reason": c.reason,
+    }
 
 
 def _latest_join():
@@ -46,7 +110,14 @@ def _latest_join():
     )
 
 
+def in_repo(source: str) -> bool:
+    """A repo-side rule (a configured repo or Vigil's overlay), not a SIEM copy."""
+    return source.startswith(REPO_PREFIX)
+
+
 def tool_of(source: str) -> str:
+    if source == OVERLAY_SOURCE:
+        return OVERLAY
     return "repo" if source.startswith(REPO_PREFIX) else source
 
 
@@ -67,6 +138,71 @@ def _summary(
         "file_path": rule.path,
         "checks": checks or {},
     }
+
+
+def rule_health(days: int = 7) -> Dict[str, Any]:
+    """The open flags, and how many flags opened and cleared in the last ``days``."""
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    # Cleared: a change to pass whose previous result change was pass -> fail.
+    prev_old = func.lag(CHANGE.old_result).over(
+        partition_by=(CHANGE.rule_id, CHANGE.check_key),
+        order_by=(CHANGE.changed_at, CHANGE.id),
+    )
+    history = (
+        select(
+            CHANGE.old_result,
+            CHANGE.new_result,
+            CHANGE.changed_at,
+            prev_old.label("prev"),
+        )
+        .where(RESULT_CHANGED)
+        .subquery()
+    )
+    with get_db_manager().session_scope() as session:
+        flags = [
+            {
+                "rule_id": row.rule_id,
+                "name": row.DetectionRule.name,
+                "tool": tool_of(row.DetectionRule.source),
+                "status": row.DetectionRule.status,
+                **_change_row(row),
+                "since": row.changed_at.isoformat(),
+            }
+            for row in session.execute(_flags()).all()
+        ]
+        flags.sort(key=lambda f: f["since"], reverse=True)
+        opened, cleared = session.execute(
+            select(
+                func.count().filter(
+                    history.c.old_result == "pass", history.c.new_result == "fail"
+                ),
+                func.count().filter(
+                    history.c.new_result == "pass",
+                    history.c.old_result == "fail",
+                    history.c.prev == "pass",
+                ),
+            ).where(history.c.changed_at >= since)
+        ).one()
+    for flag in flags:
+        del flag["changed_at"]
+    return {
+        "flags": flags,
+        "days": days,
+        "opened": opened,
+        "cleared": cleared,
+    }
+
+
+def recent_changes(rule_id: int, limit: int = RECENT_CHANGES) -> List[Dict[str, Any]]:
+    """A rule's latest recorded check changes, newest first."""
+    with get_db_manager().session_scope() as session:
+        rows = session.scalars(
+            select(CHANGE)
+            .where(CHANGE.rule_id == rule_id)
+            .order_by(CHANGE.changed_at.desc(), CHANGE.id.desc())
+            .limit(limit)
+        ).all()
+        return [_change_row(c) for c in rows]
 
 
 def _tally(bucket: Dict[str, int], result: Optional[str], count: int) -> None:
@@ -133,11 +269,11 @@ def _link(rule: DetectionRule) -> Optional[Dict[str, Any]]:
 
 def _with_links(session: Any, hits: List[Dict], rules: List[DetectionRule]) -> None:
     """A repo hit gets ``deployed`` per SIEM; a SIEM hit its ``origin`` link."""
-    repo = [r.id for r in rules if tool_of(r.source) == "repo"]
+    repo = [r.id for r in rules if in_repo(r.source)]
     copies = _copies(session, repo)
     tools = _siem_tools(session) if repo else []
     for hit, rule in zip(hits, rules):
-        if tool_of(rule.source) == "repo":
+        if in_repo(rule.source):
             mine = copies.get(rule.id, {})
             hit["deployed"] = {t: mine.get(t) or NOT_DEPLOYED for t in tools}
         else:
@@ -150,7 +286,7 @@ def _by_tool(rows: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
     for tool, runs, sees, count in rows:
         entry = out.setdefault(tool, {"rules": 0})
         entry["rules"] += count
-        if tool != "repo":
+        if tool not in ("repo", OVERLAY):
             for check, result in (("runs", runs), ("sees", sees)):
                 bucket = entry.setdefault(
                     check, {**dict.fromkeys(RUNS_RESULTS, 0), "unchecked": 0}
@@ -341,12 +477,17 @@ def search(
     limit: int,
     tool: Optional[str] = None,
     runs: Optional[str] = None,
+    stage: Optional[str] = None,
     sees: Optional[str] = None,
+    flagged: Optional[bool] = None,
 ) -> List[Dict]:
     """Active and disabled rules whose format, path or parsed content contains ``query``.
 
-    ``tool`` is 'repo' or a SIEM source; ``runs`` and ``sees`` keep rules whose
-    latest version has that Runs or Sees result.
+    ``tool`` is 'overlay', 'repo' or a SIEM source; ``runs`` and ``sees`` keep
+    rules whose latest version has that Runs or Sees result; ``stage`` keeps
+    rules currently there; ``flagged`` keeps rules with (or without) an open
+    flag. Each hit says whether it is flagged; a single hit carries its recent
+    check changes.
     """
     escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     haystack = (
@@ -369,13 +510,62 @@ def search(
         statement = statement.where(TOOL == tool)
     if runs:
         statement = statement.where(RUNS == runs)
+    if stage:
+        statement = statement.join(
+            CURRENT_STAGE, CURRENT_STAGE.c.rule_id == DetectionRule.id
+        ).where(CURRENT_STAGE.c.stage == stage)
     if sees:
         statement = statement.where(SEES == sees)
+    flags = _flags().subquery()
+    if flagged is not None:
+        is_flagged = DetectionRule.id.in_(select(flags.c.rule_id))
+        statement = statement.where(is_flagged if flagged else ~is_flagged)
     with get_db_manager().session_scope() as session:
         rows = session.execute(statement).all()
-        hits = [_summary(rule, content, checks, 300) for rule, content, checks in rows]
+        ids = [rule.id for rule, _, _ in rows]
+        flagged_ids = set(
+            session.scalars(
+                select(flags.c.rule_id).where(flags.c.rule_id.in_(ids))
+            ).all()
+        )
+        hits = [
+            {
+                **_summary(rule, content, checks, 300),
+                "flagged": rule.id in flagged_ids,
+            }
+            for rule, content, checks in rows
+        ]
         _with_links(session, hits, [rule for rule, _, _ in rows])
-        return hits
+        overlay = [hit for hit in hits if hit["tool"] == OVERLAY]
+        if overlay:
+            history = _stage_rows(session, [hit["rule_id"] for hit in overlay])
+            for hit in overlay:
+                hit["stages"] = history.get(hit["rule_id"], [])
+                hit["stage"] = hit["stages"][-1]["stage"] if hit["stages"] else None
+    if len(hits) == 1:
+        hits[0]["recent_changes"] = recent_changes(hits[0]["rule_id"])
+    return hits
+
+
+def _stage_rows(session: Any, rule_ids: List[int]) -> Dict[int, List[Dict]]:
+    """Every stage row of ``rule_ids``, oldest first, by rule."""
+    out: Dict[int, List[Dict]] = {}
+    for row in session.scalars(
+        select(DetectionRuleStage)
+        .where(DetectionRuleStage.rule_id.in_(rule_ids))
+        .order_by(DetectionRuleStage.rule_id, DetectionRuleStage.id)
+    ):
+        out.setdefault(row.rule_id, []).append(
+            {
+                "version": row.version,
+                "stage": row.stage,
+                "proof": row.proof,
+                "actor": row.actor,
+                "reason": row.reason,
+                "at": row.at.isoformat(),
+            }
+        )
+    return out
 
 
 def _dig(value: Any, *keys: str) -> Any:

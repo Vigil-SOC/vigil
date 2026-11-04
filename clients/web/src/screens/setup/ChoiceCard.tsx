@@ -10,6 +10,7 @@ export default function ChoiceCard({
   chipTone = 'ac',
   badge,
   selected,
+  disabled,
   onSelect,
 }: {
   title: string
@@ -21,12 +22,15 @@ export default function ChoiceCard({
   /** shown at the right of the title line */
   badge?: ReactNode
   selected: boolean
+  /** read-only or busy: shows the choice but takes no click */
+  disabled?: boolean
   onSelect: () => void
 }) {
   return (
     <button
       type="button"
       aria-pressed={selected}
+      disabled={disabled}
       className={`su-choice${selected ? ' on' : ''}`}
       onClick={onSelect}
     >
