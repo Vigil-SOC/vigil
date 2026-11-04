@@ -2,8 +2,8 @@
 
 from core.upgrade.revision import run_sql
 
-revision = "0025_detection_rules"
-down_revision = "0024_triage_intake_indexes"
+revision = "0026_detection_rules"
+down_revision = "0025_wazuh_tool_classes"
 
 
 def upgrade() -> None:
