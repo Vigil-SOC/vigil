@@ -1,6 +1,7 @@
 /* The embedded VStrike NetworkContextPanel is deliberately not ported: it needs
    the VStrike provider, which isn't mounted under the console shell. */
 import { useEffect, useRef, useState } from 'react'
+import { format } from 'date-fns'
 import { exclusionsApi, findingsApi } from '../../services/api'
 import { findingIps } from '../../data/findingIps'
 import { useToast } from '../../shell/toast'
@@ -17,10 +18,37 @@ import type { Phase } from '../cases/useCases'
 import { parseSourceEvidence } from '../../data/sourceEvidence'
 import { SourceEvidenceSection } from './SourceEvidenceSection'
 
+/** core.detections.inventory.catalog.rule_for_finding */
+interface DetectionRuleRef {
+  resolved: boolean
+  reason?: string
+  name?: string
+  version?: number
+  first_seen?: string
+  checks?: { runs?: { result?: string } }
+}
+
 interface RawFinding extends ApiFinding {
   description?: string
   cluster_id?: string | null
   ai_enrichment?: Enrichment | null
+  detection_rule?: DetectionRuleRef | null
+}
+
+// One line: the rule and version that fired the finding, or why it is unknown.
+function RuleLine({ rule }: { rule: DetectionRuleRef }) {
+  if (!rule.resolved) return <span style={{ color: 'var(--tx-2)' }}>Unknown: {rule.reason}</span>
+  const seen = rule.first_seen ? new Date(rule.first_seen) : null
+  const runs = rule.checks?.runs?.result
+  return (
+    <span>
+      {rule.name} <span className="mono">v{rule.version}</span>
+      <span style={{ color: 'var(--tx-2)' }}>
+        {seen && !Number.isNaN(seen.getTime()) && <> · first seen {format(seen, 'MMM d, HH:mm')}</>}
+        {' · '}Runs {runs ?? 'unchecked'}
+      </span>
+    </span>
+  )
 }
 
 const ENRICHMENT_PROGRESS = [
@@ -329,6 +357,9 @@ export default function FindingPopup({
 
           <div className="kv-grid fp-grid">
             <span className="k">Source</span><span className="v"><SourceChip source={f.src} /></span>
+            {raw.detection_rule && (
+              <><span className="k">Rule</span><span className="v"><RuleLine rule={raw.detection_rule} /></span></>
+            )}
             <span className="k">Host</span><span className="v mono">{f.host}</span>
             <span className="k">User</span><span className="v mono">{f.user}</span>
             <span className="k">Time</span><span className="v">{f.time}</span>

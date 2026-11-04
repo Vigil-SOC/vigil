@@ -369,7 +369,7 @@ DEEPTEMPO_FINDING_TOOLS = [
     },
     {
         "name": "get_finding",
-        "description": "Get detailed information about a specific finding by ID. Returns the finding's title, severity, data source, scores and predicted techniques first, then the daemon's stored triage under triage (severity, confidence, category, recommended_action, reasoning) when there is one, then entity_context with every entity it names. The raw source record under entity_context.source_evidence is a sample of its records (records_shown says how many of how many); for a NetFlow finding entity_context.netflow_digest counts every flow by host pair. A null confidence in mitre_predictions means the source named the technique and gave no confidence: it is unknown, not 0.",
+        "description": "Get detailed information about a specific finding by ID. Returns the finding's title, severity, data source, scores and predicted techniques first, then the daemon's stored triage under triage (severity, confidence, category, recommended_action, reasoning) when there is one, then entity_context with every entity it names. The raw source record under entity_context.source_evidence is a sample of its records (records_shown says how many of how many); for a NetFlow finding entity_context.netflow_digest counts every flow by host pair. A null confidence in mitre_predictions means the source named the technique and gave no confidence: it is unknown, not 0. detection_rule names the inventory rule and version that fired it (rule_id, name, version, query, first_seen, checks such as runs), or resolved false with the reason it is unknown; only Kibana rules resolve today.",
         "input_schema": {
             "type": "object",
             "properties": {
