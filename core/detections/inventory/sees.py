@@ -1,6 +1,6 @@
 """Sees: whether the data each active Kibana rule reads is arriving.
 
-Wazuh rules get theirs from ``wazuh_sees``, which writes through ``_write``;
+Wazuh rules get theirs from ``wazuh_sees``, which writes through ``write_check``;
 Splunk rules get none yet.
 
 A rule's data source is its ``index`` patterns (or its data view's) and the
@@ -23,7 +23,7 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from sqlalchemy import and_, bindparam, select, tuple_, update
 
@@ -207,12 +207,23 @@ def _active_rules() -> List[Tuple[RuleKey, Mapping[str, Any]]]:
     return [((rid, ver), content or {}) for rid, ver, content in rows]
 
 
-def _write(results: Dict[RuleKey, Dict[str, Any]], source: str = kibana.SOURCE) -> int:
-    """Store each result that differs from the version's stored Sees; runs is kept.
+def _logged(new: Mapping[str, Any], before: Optional[tuple]) -> bool:
+    return before != (new["result"], new["reason"])
 
+
+def write_check(
+    key: str,
+    results: Dict[RuleKey, Dict[str, Any]],
+    logged: Callable[[Mapping[str, Any], Optional[tuple]], bool] = _logged,
+    source: str = kibana.SOURCE,
+) -> int:
+    """Store each result that differs from the version's stored checks[key]; the
+    other checks are kept.
+
+    A result for which ``logged(new, last recorded (result, reason))`` holds,
+    across versions, is also appended to detection_rule_check_changes, in the
+    same transaction. By default: a result or reason that differs.
     ``source`` is the rules' (Kibana's, or Wazuh's for ``wazuh_sees``).
-    A result or reason that differs from the rule's last recorded Sees, across
-    versions, is also appended to detection_rule_check_changes.
     """
     from core.detections.inventory.sync import (
         _change,
@@ -239,12 +250,18 @@ def _write(results: Dict[RuleKey, Dict[str, Any]], source: str = kibana.SOURCE) 
         ).all()
         changed = []
         for rid, ver, checks in rows:
-            new, old = results[(rid, ver)], (checks or {}).get("sees") or {}
-            seen = (new["result"], new["reason"])
-            before = last.get((rid, "sees"))
-            if before != seen:
+            new, old = results[(rid, ver)], (checks or {}).get(key) or {}
+            before = last.get((rid, key))
+            if logged(new, before):
                 changes.append(
-                    _change(rid, ver, "sees", before[0] if before else None, *seen)
+                    _change(
+                        rid,
+                        ver,
+                        key,
+                        before[0] if before else None,
+                        new["result"],
+                        new["reason"],
+                    )
                 )
             if all(old.get(k) == v for k, v in new.items()):
                 continue
@@ -254,7 +271,7 @@ def _write(results: Dict[RuleKey, Dict[str, Any]], source: str = kibana.SOURCE) 
                     "ver": ver,
                     "new_checks": {
                         **(checks or {}),
-                        "sees": {**new, "checked_at": now},
+                        key: {**new, "checked_at": now},
                     },
                 }
             )
@@ -288,7 +305,7 @@ def sweep_elastic(config: Mapping[str, Any]) -> SeesReport:
             finally:
                 await service.close()
 
-        report.written = _write(asyncio.run(_run()))
+        report.written = write_check("sees", asyncio.run(_run()))
     except Exception as exc:  # noqa: BLE001 -- the sync's own report stands
         logger.warning("detection rules: Sees sweep failed: %s", exc)
         report.error = f"{type(exc).__name__}: {exc}"

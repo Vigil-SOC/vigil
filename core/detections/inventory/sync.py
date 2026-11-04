@@ -7,14 +7,16 @@ to see a deletion, and writes only what differs:
 - a key whose fingerprint differs from its latest version gets the next version;
 - a key the list no longer has is status 'removed', never deleted;
 - a name, path, technique or tactic change updates the rule row, no new version;
-- a SIEM rule switched off is status 'disabled', and carries no Runs or Sees result.
+- a SIEM rule switched off is status 'disabled', and carries no Runs, Sees or Quiet result.
 
 A Runs result (checks['runs'] on the latest version) is written only when its
 result or reason differs from the stored one; a new version starts with none.
 After Wazuh syncs, ``wazuh_sees`` checks whether each active Wazuh rule's
 decoder gets events (read from the elastic-siem indexer); after Kibana syncs,
-``sees`` checks whether each active Kibana rule's data is arriving. Both write
-checks['sees'] the same way.
+``quiet`` counts each active Kibana rule's alerts against a per-day threshold
+(checks['quiet']), then ``sees`` checks whether each active Kibana rule's data
+is arriving. Both Sees checks write checks['sees']; each check is written the
+same way.
 
 After the sources, each SIEM rule is linked to the repo rule it came from when
 that is certain: a Kibana rule by ``same_id`` (one active repo Elastic rule with
@@ -51,6 +53,7 @@ from sqlalchemy import and_, bindparam, func, insert, or_, select, update
 
 from core.detections.inventory import (
     kibana,
+    quiet,
     readers,
     sees,
     splunk,
@@ -145,7 +148,7 @@ def _rule_fields(record: RuleRecord) -> Dict[str, Any]:
 def _checks(stored: Dict[str, Any], record: RuleRecord, now: str) -> Dict[str, Any]:
     """``stored`` with the record's Runs result, or itself when nothing changed."""
     if record.status == "disabled":
-        return {k: v for k, v in stored.items() if k not in ("runs", "sees")}
+        return {k: v for k, v in stored.items() if k not in ("runs", "sees", "quiet")}
     runs, old = record.runs, stored.get("runs") or {}
     if runs is None or (
         old.get("result") == runs["result"] and old.get("reason") == runs["reason"]
@@ -403,7 +406,7 @@ def _remove_unconfigured(configured: List[str]) -> int:
 
 
 def sync_repos() -> List[Any]:
-    """Read every configured repo, Wazuh, Kibana and Splunk, and sync each, checking Wazuh and Kibana rules' Sees.
+    """Read every configured repo, Wazuh, Kibana and Splunk, and sync each, checking Wazuh rules' Sees and Kibana rules' Quiet and Sees.
 
     One failing source skips only itself.
     """
@@ -422,6 +425,8 @@ def sync_repos() -> List[Any]:
         elastic, config = _sync_elastic()
         reports.append(_linked(elastic, _link_same_id))
         if config is not None:
+            # Quiet first: its one search is spent before Sees' groups.
+            reports.append(quiet.sweep_elastic(config))
             reports.append(sees.sweep_elastic(config))
         reports.append(_linked(_sync_splunk(), _link_known_name))
     if removed:
@@ -502,7 +507,7 @@ def _sync_elastic() -> tuple[SourceReport, Optional[Dict[str, Any]]]:
 
     Its rules are removed only when the integration config was read and
     elastic-siem is not enabled; a config that cannot be read skips the source.
-    The config comes back only when the sync succeeded, for the Sees sweep.
+    The config comes back only when the sync succeeded, for Quiet and Sees.
     """
     from core.config import load_integrations_config
     from core.integrations._base.config import missing, resolve
