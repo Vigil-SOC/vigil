@@ -202,7 +202,7 @@ function AutonomyChoice() {
   const { hasPermission } = useAuth()
   // raising to Act needs ai_autonomy.write; without it the choice is shown read-only
   const canWrite = hasPermission('ai_autonomy.write')
-  // Assist is act_reversible off; Act is act_reversible on
+  // Assist is both act flags off; Act is either on. Act writes only act_reversible; act_irreversible is Settings' call
   const [ceiling, setCeiling] = useState<Ceiling | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
   const [confirmAct, setConfirmAct] = useState(false)
@@ -228,7 +228,7 @@ function AutonomyChoice() {
   const saveAct = async (act: boolean) => {
     setError(null)
     try {
-      const { data } = await autonomyApi.update({ act_reversible: act })
+      const { data } = await autonomyApi.update(act ? { act_reversible: true } : { act_reversible: false, act_irreversible: false })
       setCeiling(data)
       notifyAutonomyChanged()
     } catch (err) {
@@ -236,7 +236,9 @@ function AutonomyChoice() {
     }
   }
 
-  const actOn = Boolean(ceiling?.act_reversible)
+  const reversibleOn = Boolean(ceiling?.act_reversible)
+  const irreversibleOn = Boolean(ceiling?.act_irreversible)
+  const actOn = reversibleOn || irreversibleOn
   const locked = Boolean(ceiling?.environment_locked)
 
   const selectAssist = () => {
@@ -246,7 +248,8 @@ function AutonomyChoice() {
   const selectAct = () => {
     // A locked Act is sent anyway so the API's 409 explains why it was not saved
     if (locked) saveAct(true)
-    else if (!actOn) setConfirmAct(true)
+    // irreversible alone shows Act selected, but reversible still needs writing
+    else if (!reversibleOn) setConfirmAct(true)
   }
 
   return (
@@ -287,7 +290,9 @@ function AutonomyChoice() {
             />
           </div>
           <p className="text-xs text-tx-3">
-            Actions that cannot be undone still ask first unless they are allowed in{' '}
+            {irreversibleOn
+              ? 'Actions that cannot be undone also run on their own, as set in '
+              : 'Actions that cannot be undone still ask first unless they are allowed in '}
             <Link className="text-accent-2 underline" to="/settings?section=autoinvestigate">
               Settings › Limits &amp; autonomy
             </Link>
@@ -298,7 +303,9 @@ function AutonomyChoice() {
       <ConfirmDialog
         open={confirmAct}
         title="Switch to Act?"
-        body="Act lets Vigil make changes that can be undone without asking first, then tells you what it did. Changes that cannot be undone still ask."
+        body={`Act lets Vigil make changes that can be undone without asking first, then tells you what it did. ${
+          irreversibleOn ? 'Changes that cannot be undone already run on their own.' : 'Changes that cannot be undone still ask.'
+        }`}
         confirmLabel="Save"
         danger={false}
         onConfirm={() => {
