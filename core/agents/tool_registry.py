@@ -22,6 +22,7 @@ from core.cases.case_status import (
     status_change,
 )
 from core.cases.linked_entities import finding_entity_summary
+from core.detections.inventory.catalog import rule_for_finding
 from core.findings.anomaly_score import stored_anomaly_score
 from core.llm.tool_schemas import ALL_TOOLS as BACKEND_TOOLS
 from core.llm.tool_schemas import (
@@ -295,7 +296,11 @@ _TRIAGE_KEYS = (
 
 def get_finding(*, finding_id: str) -> Any:
     finding = _data().get_finding(finding_id)
-    return _for_agent(finding) if isinstance(finding, dict) else finding
+    if not isinstance(finding, dict):
+        return finding
+    shaped = _for_agent(finding)
+    shaped["detection_rule"] = rule_for_finding(finding)
+    return shaped
 
 
 def _for_agent(finding: Args) -> Args:

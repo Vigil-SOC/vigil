@@ -2251,6 +2251,18 @@
             ],
             "title": "Description"
           },
+          "detection_rule": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detection Rule"
+          },
           "entity_context": {
             "anyOf": [
               {
