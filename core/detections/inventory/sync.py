@@ -18,6 +18,11 @@ After the sources, each Kibana rule is linked to the repo rule it came from when
 that is certain (``same_id``: one active repo Elastic rule with its rule_id). A
 link or decline an agent or person made is never touched.
 
+Every change of a check result is also appended to detection_rule_check_changes
+(``_record_changes``): a Runs result that differs from the rule's last recorded
+one, across versions, and a SIEM rule's status moving between active, disabled
+and removed. Repo rules have no checks and get no rows.
+
 A source that fails to read, or is configured but not ready, is skipped whole.
 A source no longer configured has its rules marked removed.
 
@@ -42,7 +47,12 @@ from sqlalchemy import and_, bindparam, func, insert, or_, select, update
 from core.detections.inventory import kibana, readers, sees, wazuh
 from core.detections.inventory.record import RuleRecord, fingerprint
 from core.storage.connection import get_db_manager
-from core.storage.models import DetectionRule, DetectionRuleStage, DetectionRuleVersion
+from core.storage.models import (
+    DetectionRule,
+    DetectionRuleCheckChange,
+    DetectionRuleStage,
+    DetectionRuleVersion,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -130,10 +140,64 @@ def _checks(stored: Dict[str, Any], record: RuleRecord, now: str) -> Dict[str, A
     return {**stored, "runs": {**runs, "checked_at": now}}
 
 
+def _change(
+    rule_id: int,
+    version: int,
+    key: str,
+    old: Optional[str],
+    new: Optional[str],
+    reason: Optional[str] = None,
+) -> dict:
+    return {
+        "rule_id": rule_id,
+        "version": version,
+        "check_key": key,
+        "old_result": old,
+        "new_result": new,
+        "reason": reason,
+    }
+
+
+def _last_results(session: Any, source: str) -> Dict[tuple, tuple]:
+    """(rule id, check key) -> (result, reason) last recorded, for ``source``'s rules."""
+    c = DetectionRuleCheckChange
+    rows = session.execute(
+        select(c.rule_id, c.check_key, c.new_result, c.reason)
+        .join(DetectionRule, DetectionRule.id == c.rule_id)
+        .where(DetectionRule.source == source)
+        .distinct(c.rule_id, c.check_key)
+        .order_by(c.rule_id, c.check_key, c.changed_at.desc(), c.id.desc())
+    ).all()
+    return {(r, k): (new, reason) for r, k, new, reason in rows}
+
+
+def _runs_change(
+    rule_id: int, version: int, record: RuleRecord, last: Dict[tuple, tuple]
+) -> Optional[dict]:
+    """A Runs row when the record's result or reason differs from the last recorded."""
+    if record.status == "disabled" or record.runs is None:
+        return None  # a disabled rule's change is its status row
+    new = (record.runs["result"], record.runs["reason"])
+    old = last.get((rule_id, "runs"))
+    if old == new:
+        return None
+    return _change(rule_id, version, "runs", old[0] if old else None, *new)
+
+
+def _record_changes(session: Any, rows: List[dict], now: str) -> None:
+    """Append check result changes, in the caller's transaction. Every writer uses it."""
+    if rows:
+        session.execute(
+            insert(DetectionRuleCheckChange),
+            [{**r, "changed_at": datetime.fromisoformat(now)} for r in rows],
+        )
+
+
 def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
     """Write the differences between ``records`` (all of ``source``) and the tables."""
     report = SourceReport(source=source, read=len(records))
     now = datetime.now(timezone.utc).isoformat()
+    siem = not source.startswith(REPO_PREFIX)
     stages: List[dict] = []
 
     def stage(rule_id: int, version: int, language: str, to: str, reason: str):
@@ -160,6 +224,8 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
             rule.native_key: (rule, fp, checks)
             for rule, fp, checks in session.execute(latest).all()
         }
+        last = _last_results(session, source) if siem else {}
+        changes: List[dict] = []
 
         new: List[tuple] = []
         versions: List[dict] = []
@@ -188,6 +254,16 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
                 k: v for k, v in _rule_fields(record).items() if getattr(rule, k) != v
             }
             if rule.status != record.status:
+                if siem:
+                    changes.append(
+                        _change(
+                            rule.id,
+                            rule.latest_version,
+                            "status",
+                            rule.status,
+                            record.status,
+                        )
+                    )
                 if rule.status == "removed":
                     report.restored += 1
                     if fp == latest_fp:
@@ -209,10 +285,25 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
             checks = _checks(stored, record, now)
             if checks != stored:
                 checked.append((rule.id, rule.latest_version, checks))
+            if siem:
+                runs = _runs_change(rule.id, rule.latest_version, record, last)
+                if runs:
+                    changes.append(runs)
 
         listed = {r.native_key for r in records}
         for key, (rule, _, _) in existing.items():
             if key not in listed and rule.status != "removed":
+                if siem:
+                    changes.append(
+                        _change(
+                            rule.id,
+                            rule.latest_version,
+                            "status",
+                            rule.status,
+                            "removed",
+                            f"no longer listed by {source}",
+                        )
+                    )
                 rule.status = "removed"
                 report.removed += 1
                 stage(rule.id, rule.latest_version, rule.language, "off", "removed")
@@ -239,6 +330,12 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
                 checks = _checks({}, r, now)
                 if checks:
                     checked.append((rule_id, 1, checks))
+                if siem:
+                    # First sight: none -> its status and Runs result, never a flag.
+                    changes.append(_change(rule_id, 1, "status", None, r.status))
+                    runs = _runs_change(rule_id, 1, r, {})
+                    if runs:
+                        changes.append(runs)
             report.new = len(new)
         if versions:
             session.execute(insert(DetectionRuleVersion), versions)
@@ -256,6 +353,7 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
                 [{"rid": i, "ver": v, "new_checks": c} for i, v, c in checked],
             )
             report.checked = len(checked)
+        _record_changes(session, changes, now)
     return report
 
 
@@ -335,17 +433,42 @@ def _sync_one(service: Any, source: Dict[str, Any]) -> SourceReport:
     return report
 
 
-def _remove_elastic() -> int:
+def _remove_siem(source: str, integration: str) -> int:
+    """Mark a SIEM source's rules removed, with a status row for each."""
+    now = datetime.now(timezone.utc).isoformat()
     with get_db_manager().session_scope() as session:
-        result = session.execute(
-            update(DetectionRule)
-            .where(
-                DetectionRule.source == kibana.SOURCE,
+        # Read under the sync lock, so the statuses read are the ones replaced.
+        rows = session.execute(
+            select(
+                DetectionRule.id, DetectionRule.latest_version, DetectionRule.status
+            ).where(
+                DetectionRule.source == source,
                 DetectionRule.status != "removed",
             )
+        ).all()
+        if not rows:
+            return 0
+        session.execute(
+            update(DetectionRule)
+            .where(DetectionRule.id.in_([r.id for r in rows]))
             .values(status="removed")
         )
-        return int(getattr(result, "rowcount", 0) or 0)
+        _record_changes(
+            session,
+            [
+                _change(
+                    r.id,
+                    r.latest_version,
+                    "status",
+                    r.status,
+                    "removed",
+                    f"{integration} integration not enabled",
+                )
+                for r in rows
+            ],
+            now,
+        )
+        return len(rows)
 
 
 def _sync_elastic() -> tuple[SourceReport, Optional[Dict[str, Any]]]:
@@ -370,7 +493,7 @@ def _sync_elastic() -> tuple[SourceReport, Optional[Dict[str, Any]]]:
             return (
                 SourceReport(
                     source=kibana.SOURCE,
-                    removed=_remove_elastic(),
+                    removed=_remove_siem(kibana.SOURCE, "elastic-siem"),
                     skipped="not enabled",
                 ),
                 None,
@@ -390,19 +513,6 @@ def _sync_elastic() -> tuple[SourceReport, Optional[Dict[str, Any]]]:
     return report, config
 
 
-def _remove_wazuh() -> int:
-    with get_db_manager().session_scope() as session:
-        result = session.execute(
-            update(DetectionRule)
-            .where(
-                DetectionRule.source == wazuh.SOURCE,
-                DetectionRule.status != "removed",
-            )
-            .values(status="removed")
-        )
-        return int(getattr(result, "rowcount", 0) or 0)
-
-
 def _sync_wazuh() -> SourceReport:
     """The Wazuh manager's loaded rules, with the wazuh integration's credentials.
 
@@ -419,7 +529,9 @@ def _sync_wazuh() -> SourceReport:
             return SourceReport(source=wazuh.SOURCE, skipped="no integration config")
         if WAZUH.id not in integrations["enabled_integrations"]:
             return SourceReport(
-                source=wazuh.SOURCE, removed=_remove_wazuh(), skipped="not enabled"
+                source=wazuh.SOURCE,
+                removed=_remove_siem(wazuh.SOURCE, "wazuh"),
+                skipped="not enabled",
             )
         config = resolve(WAZUH)
         absent = missing(config, *WAZUH_REQUIRED)

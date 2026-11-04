@@ -1,8 +1,8 @@
 """Detection rule ORM models.
 
 The schema is core/upgrade/versions/0026_detection_rules.sql,
-0027_detection_rule_checks.sql, 0028_detection_rule_origin.sql and
-0029_detection_rule_stages.sql; these models
+0027_detection_rule_checks.sql, 0028_detection_rule_origin.sql,
+0029_detection_rule_stages.sql and 0031_detection_rule_changes.sql; these models
 mirror it for core/detections/inventory.
 """
 
@@ -134,5 +134,37 @@ class DetectionRuleStage(Base):
     actor: Mapped[str] = mapped_column(Text, nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
     at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+
+class DetectionRuleCheckChange(Base):
+    """A rule's check result as sync recorded it changing. Append-only.
+
+    ``check_key`` is 'runs', 'sees' or 'status'; ``old_result`` is the previous row's
+    ``new_result`` for that rule and check, any version, or None on first sight.
+    """
+
+    __tablename__ = "detection_rule_check_changes"
+    __table_args__ = (
+        Index(
+            "idx_detection_rule_check_changes_latest",
+            "rule_id",
+            "check_key",
+            text("changed_at DESC"),
+            text("id DESC"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    rule_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("detection_rules.id"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    check_key: Mapped[str] = mapped_column(Text, nullable=False)
+    old_result: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    new_result: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    changed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
