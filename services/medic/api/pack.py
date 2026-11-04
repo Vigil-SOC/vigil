@@ -57,6 +57,7 @@ _SUPPRESSED = (
     " WHERE json_extract(record, '$.type') = 'incident_opened'"
     " OR (json_extract(record, '$.type') = 'incident_updated'"
     " AND json_extract(record, '$.body.change') = 'suppressed')"
+    " ORDER BY seq"  # the latest parent a child names wins
 )
 
 

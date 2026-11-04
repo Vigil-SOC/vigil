@@ -387,7 +387,11 @@ class Medic:
             suppression=[dict(e) for e in pack.suppression],
             group_cap=self.group_cap,
         )
-        self.engine.pending = old.pending  # read, not yet ticked
+        # What the old engine has seen (rule-independent) goes with it: the sensors
+        # aren't re-read until their next interval, so a fresh history would leave
+        # every window empty until then. `state()` above carried the rest.
+        for part in ("pending", "history", "upgrade", "_status"):
+            setattr(self.engine, part, getattr(old, part))
         self.router = Router(pack.rules)
         self.sink.engine = self.engine
         for tail in {s.tail for s in self.sensors if isinstance(s, LogStream)}:

@@ -260,6 +260,16 @@ class Handler(BaseHTTPRequestHandler):
         )
         self._finish(result, status=201)
 
+    def _read_body(self, n: int) -> bytes:
+        """A pack is up to 4 MB: the whole read gets the request deadline `do_any`
+        lifted (one byte every few seconds must not hold a slot)."""
+        timer = threading.Timer(self.timeout, _cut, (self.connection,))
+        timer.start()
+        try:
+            return self.rfile.read(n)
+        finally:
+            timer.cancel()
+
     def _pack_write(self, op: str, query: str) -> None:
         result = post_pack(
             op,
@@ -269,7 +279,7 @@ class Handler(BaseHTTPRequestHandler):
             content_type=self.headers.get("Content-Type"),
             length=self.headers.get("Content-Length"),
             admins=self.headers.get_all("X-Medic-Admin") or [],
-            read_body=self.rfile.read,
+            read_body=self._read_body,
             timeout=SNAPSHOT_MAX_AGE_S,
         )
         self._finish(result)
