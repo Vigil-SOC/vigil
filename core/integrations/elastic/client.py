@@ -277,6 +277,42 @@ class ElasticService:
         total = (body.get("hits") or {}).get("total")
         return int(total.get("value") if isinstance(total, dict) else total or 0) > 0
 
+    async def terms_since(
+        self, index: str, fields: List[str], days: int, size: int = 10000
+    ) -> Dict[str, Any]:
+        """One size-0 search over the last ``days`` of ``index`` (on @timestamp)
+        with a terms aggregation per field: ``{"total": hits, field: {"values":
+        set, "other": docs past the size}}``. A missing index reads as no events;
+        any other failure raises."""
+        resp = await self.es_client.post(
+            f"/{validate_index(index)}/_search",
+            params={"ignore_unavailable": "true", "allow_no_indices": "true"},
+            json={
+                "size": 0,
+                "track_total_hits": 1,
+                "query": {"range": {"@timestamp": {"gte": f"now-{int(days)}d"}}},
+                "aggs": {f: {"terms": {"field": f, "size": size}} for f in fields},
+            },
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        if (body.get("_shards") or {}).get("failed"):
+            raise RuntimeError(f"shard failures: {body['_shards'].get('failures')}")
+        if body.get("timed_out"):
+            raise RuntimeError("the search timed out: its buckets are partial")
+        total = (body.get("hits") or {}).get("total")
+        out: Dict[str, Any] = {
+            "total": int(total.get("value") if isinstance(total, dict) else total or 0)
+        }
+        aggs = body.get("aggregations") or {}
+        for f in fields:
+            agg = aggs.get(f) or {}
+            out[f] = {
+                "values": {str(b["key"]) for b in agg.get("buckets") or []},
+                "other": int(agg.get("sum_other_doc_count") or 0),
+            }
+        return out
+
     async def field_caps(self, index: str, fields: List[str]) -> set:
         """Which of ``fields`` the mapping of ``index`` has. Metadata, not a search."""
         resp = await self.es_client.get(
@@ -299,14 +335,16 @@ class ElasticService:
         return resp.json().get("data_view") or {}
 
     async def get_indices(self) -> Optional[List[str]]:
-        """List available indices."""
+        """List available indices, or None with the error in ``last_indices_error``."""
         client = self.es_client
+        self.last_indices_error: Optional[str] = None
         try:
             resp = await client.get("/_cat/indices?format=json")
             resp.raise_for_status()
             return [idx["index"] for idx in resp.json() if "index" in idx]
         except Exception as exc:
             logger.error(f"Error listing indices: {exc}")
+            self.last_indices_error = f"{type(exc).__name__}: {exc}"
             return None
 
     # ------------------------------------------------------------------

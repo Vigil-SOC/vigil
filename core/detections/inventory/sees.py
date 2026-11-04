@@ -1,5 +1,8 @@
 """Sees: whether the data each active Kibana rule reads is arriving.
 
+Wazuh rules get theirs from ``wazuh_sees``, which writes through ``write_check``;
+Splunk rules get none yet.
+
 A rule's data source is its ``index`` patterns (or its data view's) and the
 timestamp field its 7-day range runs on. Rules on one source share one search:
 a size-0 ``_search`` that stops at the first event, the only call counted
@@ -212,6 +215,7 @@ def write_check(
     key: str,
     results: Dict[RuleKey, Dict[str, Any]],
     logged: Callable[[Mapping[str, Any], Optional[tuple]], bool] = _logged,
+    source: str = kibana.SOURCE,
 ) -> int:
     """Store each result that differs from the version's stored checks[key]; the
     other checks are kept.
@@ -219,6 +223,7 @@ def write_check(
     A result for which ``logged(new, last recorded (result, reason))`` holds,
     across versions, is also appended to detection_rule_check_changes, in the
     same transaction. By default: a result or reason that differs.
+    ``source`` is the rules' (Kibana's, or Wazuh's for ``wazuh_sees``).
     """
     from core.detections.inventory.sync import (
         _change,
@@ -230,7 +235,7 @@ def write_check(
         return 0
     now = datetime.now(timezone.utc).isoformat()
     with get_db_manager().session_scope() as session:
-        last = _last_results(session, kibana.SOURCE)
+        last = _last_results(session, source)
         changes = []
         rows = session.execute(
             select(
