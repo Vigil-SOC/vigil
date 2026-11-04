@@ -56,7 +56,10 @@ jobs:
     name: Medic contracts
     runs-on: ubuntu-latest
     steps:
+      # Full history: the pack diff needs the medic-core-v* tags and the merge base.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
@@ -76,6 +79,32 @@ jobs:
       # command and the others are cheap.
       - name: Import fence
         run: uv run --project services/medic --frozen lint-imports
+
+      # What a medic-core change does and the version bump it needs (F5), against
+      # the last medic-core-v* tag or, before the first tag, the merge base. The
+      # report goes to the job summary (a fork PR's token can't comment); the step
+      # fails when pack.yaml's version is below the bump.
+      - name: Pack diff
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          pack=services/medic/packs/medic-core
+          tag=$(git tag --list 'medic-core-v*' --sort=-v:refname | sed -n 1p)
+          ref=${tag:-$(git merge-base "origin/$BASE_REF" HEAD)}
+          mkdir -p "$RUNNER_TEMP/base"
+          git archive "$ref" "$pack" | tar -x -C "$RUNNER_TEMP/base"
+          set +e
+          uv run --project services/medic --frozen python -m services.medic.packs.diff \
+            "$RUNNER_TEMP/base/$pack" "$pack" >"$RUNNER_TEMP/pack-diff.md"
+          code=$?
+          set -e
+          {
+            echo "Baseline: \`${tag:-merge base}\` (\`$ref\`)"
+            echo
+            cat "$RUNNER_TEMP/pack-diff.md"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "$code"
 
   medic-image:
     name: Medic image
