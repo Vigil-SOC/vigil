@@ -15,6 +15,7 @@ from typing import Optional, Sequence
 from sqlalchemy import and_, case, exists, literal
 from sqlalchemy.orm import aliased
 
+from core.cases.case_records_service import run_liveness
 from core.cases.closure import closed_by_person
 from core.findings.arrival_counts import utc_day_bounds
 from core.response.approval_service import needs_you_case_ids
@@ -35,6 +36,7 @@ TERMINAL_LABELS = {
     "resolved_auto": "Resolved automatically",
     "resolved_person": "Closed by a person",
     "working": "Still working",
+    "case_idle": "On a case, no run going",
     "scoring": "Waiting for triage",
     "waiting": "Not picked up",
 }
@@ -83,8 +85,18 @@ def alert_group():
     )
 
 
-def _state(group: str, linked: Optional[_LinkedCase], needs_you_ids: set[str]) -> str:
-    """Overview's state: the group, with ``on_case`` split by what the case needs."""
+def _state(
+    group: str,
+    linked: Optional[_LinkedCase],
+    needs_you_ids: set[str],
+    runs_live: dict[str, bool],
+) -> str:
+    """Overview's state: the group, with ``on_case`` split by what the case needs.
+
+    An open case whose runs have all ended is not being worked, however many alerts
+    join it. One no run ever touched stays ``working``: nothing says it stopped, and
+    a person or a linking hunt may have it.
+    """
     if group != "on_case":
         return group
     if linked is None:  # the case went between the two reads
@@ -95,6 +107,8 @@ def _state(group: str, linked: Optional[_LinkedCase], needs_you_ids: set[str]) -
         if closed_by_person(linked.close_channel):
             return "resolved_person"
         return "resolved_auto"
+    if runs_live.get(linked.case_id) is False:
+        return "case_idle"
     return "working"
 
 
@@ -156,11 +170,15 @@ def finding_states(finding_ids: Sequence[str]) -> dict[str, tuple[str, Optional[
                     Finding.finding_id.in_(chunk)
                 )
             )
+        runs_live = run_liveness(session, {c.case_id for c in cases.values()})
     return {
         finding_id: (
             # an id with no finding row is in no group
             _state(
-                groups.get(finding_id, "waiting"), cases.get(finding_id), needs_you_ids
+                groups.get(finding_id, "waiting"),
+                cases.get(finding_id),
+                needs_you_ids,
+                runs_live,
             ),
             cases[finding_id].case_id if finding_id in cases else None,
         )

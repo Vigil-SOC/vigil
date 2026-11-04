@@ -369,6 +369,11 @@
             "title": "Activities",
             "type": "array"
           },
+          "alerts_since_last_run": {
+            "default": 0,
+            "title": "Alerts Since Last Run",
+            "type": "integer"
+          },
           "assignee": {
             "anyOf": [
               {

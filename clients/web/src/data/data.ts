@@ -85,6 +85,8 @@ export interface CaseRow {
   owner: string
   ownerName: string
   findings: number
+  /** Read on the case page only; the queue reads 0. */
+  alertsSinceLastRun: number
   tactic: string
   age: string
   sla: string
