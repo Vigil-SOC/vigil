@@ -1,6 +1,6 @@
 """How many searches an integration's SIEM has been sent in the last hour, per process.
 
-Every check that searches a SIEM (Sees today; Quiet and Wazuh Sees on the
+Every check that searches a SIEM (Sees and Quiet today; Wazuh Sees on the
 elastic-siem budget later) calls ``spend`` before each search, with the limit
 its descriptor's ``max_searches_per_hour`` resolves to. Listing rules and
 metadata calls (``_find``, ``_field_caps``) are not searches and do not spend.
