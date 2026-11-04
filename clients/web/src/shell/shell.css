@@ -48,6 +48,27 @@
   min-height: 0;
 }
 
+/* Where fixed panels start: below the header and the top bar (52 + 46), or the
+   header alone when the nav runs down the left. */
+.soc-console {
+  --vg-top: 98px;
+}
+
+.soc-console.vg-vertical {
+  --vg-top: 52px;
+}
+
+/* Vertical layout: the header keeps the full width; the nav and the page sit side by side below it. */
+.soc-console.vg-vertical .vg-shell {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.soc-console.vg-vertical .vg-shell > .vg-header {
+  grid-column: 1 / -1;
+}
+
 .soc-console .demo-banner {
   flex: 0 0 auto;
   padding: 8px 22px;
@@ -60,7 +81,7 @@
 /* The dock is position:fixed from the viewport top. Drop it below the header
    and nav so it neither covers the chip and avatar nor sits under the nav bar. */
 .soc-console .chat {
-  top: 98px;
+  top: var(--vg-top);
   /* Above the case drawer scrim, so Open in Vigil and /ask stay reachable. */
   z-index: 46;
   transition: transform .26s cubic-bezier(.4, 0, .2, 1), width .26s cubic-bezier(.4, 0, .2, 1);
@@ -68,6 +89,11 @@
 
 .soc-console .chat.full {
   width: 100vw;
+}
+
+/* beside the vertical bar, which the open dock holds collapsed */
+.soc-console.vg-vertical .chat.full {
+  width: calc(100vw - 64px);
 }
 
 /* A drag follows the pointer; the slide and the page's margin would trail it. */
@@ -1367,7 +1393,7 @@
 
 .vg-drawer-scrim {
   position: fixed;
-  top: 98px; /* below the header and nav, as the dock and the side drawers are */
+  top: var(--vg-top); /* below the header and nav, as the dock and the side drawers are */
   right: 0;
   bottom: 0;
   left: 0;
@@ -1396,7 +1422,7 @@
 /* Right-hand drawers (skill, agent) */
 .vg-side-scrim {
   position: fixed;
-  top: 98px; /* below the header and nav, as the board's drawer sits under the nav */
+  top: var(--vg-top); /* below the header and nav, as the board's drawer sits under the nav */
   right: 0;
   bottom: 0;
   left: 0;
@@ -1985,6 +2011,10 @@ select.vg-side-input {
   z-index: 47;
 }
 
+.vg-nav-list {
+  display: contents;
+}
+
 .vg-nav-btn {
   height: 32px;
   box-sizing: border-box;
@@ -2361,4 +2391,161 @@ select.vg-side-input {
 
 .console-tour-spacer {
   flex: 1;
+}
+
+/* ---------- vertical nav ---------- */
+/* Widths match NAV_W / NAV_W_COLLAPSED in SocConsole.tsx. */
+.vg-nav.vertical {
+  width: 200px;
+  height: auto;
+  min-height: 0;
+  flex: none;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 10px 8px;
+  border-bottom: 0;
+  border-right: 1px solid var(--ln0);
+}
+
+.vg-nav.vertical.collapsed {
+  width: 64px;
+  padding: 10px 4px;
+}
+
+.vg-nav.vertical > .vg-nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.vg-nav.vertical .vg-nav-sep {
+  width: auto;
+  height: 1px;
+  margin: 4px 6px;
+}
+
+.vg-nav.vertical > .vg-nav-list > .vg-nav-btn,
+.vg-nav.vertical > .vg-more > .vg-nav-btn {
+  width: 100%;
+  height: 36px;
+  gap: 10px;
+  padding: 0 10px;
+}
+
+.vg-nav.vertical .vg-nav-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+
+.vg-nav.vertical .vg-more {
+  flex-shrink: 0;
+}
+
+/* beside the bar, rising from the More button, so it stays on screen */
+.vg-nav.vertical .vg-more-menu {
+  top: auto;
+  bottom: 0;
+  left: calc(100% + 8px);
+}
+
+/* Collapsed: an icon tile with its label under it, the count on the icon's corner. */
+.vg-nav.vertical.collapsed > .vg-nav-list > .vg-nav-btn,
+.vg-nav.vertical.collapsed > .vg-more > .vg-nav-btn {
+  position: relative;
+  height: auto;
+  min-height: 50px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  padding: 6px 0;
+}
+
+.vg-nav.vertical.collapsed > .vg-nav-list > .vg-nav-btn > .vg-nav-label,
+.vg-nav.vertical.collapsed > .vg-more > .vg-nav-btn > .vg-nav-label {
+  flex: none;
+  max-width: 100%;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 11px;
+  line-height: 13px;
+  text-align: center;
+  white-space: normal;
+}
+
+.vg-nav.vertical.collapsed > .vg-nav-list > .vg-nav-btn > .vg-nav-count {
+  position: absolute;
+  top: 2px;
+  left: calc(50% + 4px);
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+}
+
+.vg-nav.vertical .vg-nav-end {
+  flex-direction: column;
+  align-items: stretch;
+  flex-shrink: 0;
+  margin: auto 0 0;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--ln0);
+}
+
+.vg-nav.vertical .vg-status-chip {
+  min-width: 0;
+  max-width: none;
+}
+
+.vg-nav.vertical .vg-setup-text {
+  flex: 1;
+}
+
+.vg-nav.vertical.collapsed .vg-nav-end {
+  align-items: center;
+}
+
+/* the status as its dot alone; Finish setup as its icon and count */
+.vg-nav.vertical.collapsed .vg-status-chip {
+  width: 28px;
+  justify-content: center;
+  padding: 0;
+}
+
+.vg-nav.vertical.collapsed .vg-status-text,
+.vg-nav.vertical.collapsed .vg-setup-text,
+.vg-nav.vertical.collapsed .vg-setup-left {
+  display: none;
+}
+
+.vg-nav-toggle {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-button);
+  color: var(--tx2);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.vg-nav-toggle:hover {
+  background: var(--bg3);
+  color: var(--tx0);
+}
+
+.vg-nav.vertical.collapsed .vg-nav-toggle {
+  width: 100%;
+  justify-content: center;
+  padding: 0;
 }
