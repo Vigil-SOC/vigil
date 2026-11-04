@@ -14,7 +14,7 @@ from core.skills.skill_library import READ_SKILL_TOOL
 SECURITY_DETECTION_TOOLS = [
     {
         "name": "analyze_coverage",
-        "description": "Analyze detection coverage for MITRE ATT&CK techniques, or report per-technique layer verdicts for a sanctioned run. Pass techniques for catalog counts (Sigma / Splunk / Elastic / KQL), with by_tool: active rules per tool ('repo', or a SIEM: 'elastic' for Kibana) and, for a SIEM, its Runs pass / fail / unknown / unchecked counts. Pass run_id or an action-trace steps list for the run report: reconstruct on read, group by technique_id, verdicts rule | loglm | both | missed. Do not mix the two.",
+        "description": "Analyze detection coverage for MITRE ATT&CK techniques, or report per-technique layer verdicts for a sanctioned run. Pass techniques for catalog counts (Sigma / Splunk / Elastic / KQL), with by_tool: active rules per tool ('repo', or a SIEM: 'elastic' for Kibana) and, for a SIEM, its Runs pass / fail / unknown / unchecked counts; repo_deployed: per SIEM, the repo rules' linked copies counted by state (pass / fail / unknown / unchecked / disabled) and the repo rules with no copy there ('not deployed'). Splunk saved searches and Wazuh rules are not read yet. Pass run_id or an action-trace steps list for the run report: reconstruct on read, group by technique_id, verdicts rule | loglm | both | missed. Do not mix the two.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -37,7 +37,7 @@ SECURITY_DETECTION_TOOLS = [
     },
     {
         "name": "search_detections",
-        "description": "Search the detection rules of every configured repo (Sigma, Splunk, Elastic, KQL) and the rules Kibana's detection engine runs, using keywords. Each hit carries its tool ('repo' or 'elastic'), its status ('active', or 'disabled' for a Kibana rule switched off) and checks.runs: whether the SIEM runs it ({result: pass|fail|unknown, reason, checked_at}; reason holds the SIEM's own error). Filter tool='elastic' with runs='fail' to answer which Elastic rules don't run and why. Splunk saved searches and Wazuh rules are not read yet.",
+        "description": "Search the detection rules of every configured repo (Sigma, Splunk, Elastic, KQL) and the rules Kibana's detection engine runs, using keywords. Each hit carries its tool ('repo' or 'elastic'), its status ('active', or 'disabled' for a Kibana rule switched off) and checks.runs: whether the SIEM runs it ({result: pass|fail|unknown, reason, checked_at}; reason holds the SIEM's own error). Filter tool='elastic' with runs='fail' to answer which Elastic rules don't run and why. A repo hit carries deployed: per SIEM, the copies linked to it (each with its state: pass / fail / unknown / unchecked / disabled) or 'not deployed'. A SIEM hit carries origin: its link to a repo rule (origin_rule_id, kind same_id | agent | declined, by, reason, at) or null. Splunk saved searches and Wazuh rules are not read yet.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -67,6 +67,32 @@ SECURITY_DETECTION_TOOLS = [
                 },
             },
             "required": [],
+        },
+    },
+    {
+        "name": "link_detection_rule",
+        "description": "Record which repo rule a SIEM rule (a copy in Kibana) came from. The inventory sync links a copy by itself only when certain (same rule_id, same language); use this for the rest, after finding the candidates with search_detections. action 'link' sets the copy's origin; 'decline' records that the copy is not from that repo rule, so the sync never links it; 'unlink' clears a link or decline, handing the copy back to the sync. Every call is written to the audit log with you as the actor and your reason. Rule ids are search_detections' rule_id.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "copy_rule_id": {
+                    "type": "integer",
+                    "description": "rule_id of the SIEM rule (a hit whose tool is not 'repo').",
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["link", "unlink", "decline"],
+                },
+                "origin_rule_id": {
+                    "type": "integer",
+                    "description": "rule_id of the repo rule. Required to link or decline; optional to unlink.",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why. Required, and written to the audit log.",
+                },
+            },
+            "required": ["copy_rule_id", "action", "reason"],
         },
     },
     {

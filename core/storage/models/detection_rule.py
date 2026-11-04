@@ -1,7 +1,7 @@
 """Detection rule ORM models.
 
-The schema is core/upgrade/versions/0026_detection_rules.sql and
-0027_detection_rule_checks.sql; these models
+The schema is core/upgrade/versions/0026_detection_rules.sql,
+0027_detection_rule_checks.sql and 0028_detection_rule_origin.sql; these models
 mirror it for core/detections/inventory.
 """
 
@@ -25,6 +25,8 @@ from core.storage.models.base import Base
 
 # disabled: a SIEM rule that is listed but switched off.
 DETECTION_RULE_STATUSES = ("active", "disabled", "removed")
+# How a SIEM copy's origin was decided; only 'same_id' is the sync's own.
+LINK_KINDS = ("same_id", "agent", "declined")
 
 
 class DetectionRule(Base):
@@ -42,7 +44,14 @@ class DetectionRule(Base):
         CheckConstraint(
             "latest_version >= 1", name="detection_rules_latest_version_check"
         ),
+        CheckConstraint(
+            "(link_kind IN ('same_id', 'agent', 'declined')"
+            " AND origin_rule_id IS NOT NULL)"
+            " OR (link_kind IS NULL AND origin_rule_id IS NULL)",
+            name="detection_rules_link_kind_check",
+        ),
         Index("idx_detection_rules_techniques", "techniques", postgresql_using="gin"),
+        Index("idx_detection_rules_origin_rule_id", "origin_rule_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -61,6 +70,16 @@ class DetectionRule(Base):
     )
     latest_version: Mapped[int] = mapped_column(Integer, nullable=False)
     path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # A SIEM copy's repo rule. With link_kind 'declined' it is the pair refused.
+    origin_rule_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("detection_rules.id"), nullable=True
+    )
+    link_kind: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    linked_by: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    link_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    linked_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class DetectionRuleVersion(Base):
