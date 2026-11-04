@@ -1,24 +1,16 @@
 """
 Security-Detections tool integration - Pure Python implementation
-Provides access to 7,200+ detection rules across Sigma, Splunk, Elastic, and KQL formats
+Answers from the detection rules every configured repo holds (Sigma, Splunk, Elastic, KQL),
+as core/detections/inventory syncs them into Postgres.
 """
 
-import os
-import re
-from collections import defaultdict
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
 
 from core.agents.projections import read_projection
-from core.config import _safe_home
-from core.detections.gaps import (
-    TACTICS,
-    gap_report,
-    normalize_label,
-    read_alert_labels,
-)
+from core.detections.gaps import gap_report, read_alert_labels
+from core.detections.inventory import catalog
 from core.detections.lint import lint_sigma
 from core.detections.reconstruction import (
     coverage_report,
@@ -28,212 +20,12 @@ from core.detections.reconstruction import (
 )
 from core.storage.database_data_service import DatabaseDataService
 
-# ``id = "T1219"`` under [[rule.threat.technique]] and its subtechnique tables.
-ELASTIC_TECHNIQUE_ID = re.compile(r'^id\s*=\s*"(T\d{4}(?:\.\d{3})?)"', re.MULTILINE)
-ELASTIC_TACTIC_NAME = re.compile(
-    r'^\[rule\.threat\.tactic\]\s*^id\s*=\s*"[^"]*"\s*^name\s*=\s*"([^"]+)"',
-    re.MULTILINE,
-)
-
 
 class SecurityDetectionsTools:
     """
     Main class for security detection tools integration.
-    Loads and indexes detection rules from multiple formats.
-
-    Paths are resolved dynamically from DetectionRulesService when available,
-    falling back to environment variables and then default paths.
+    Reads the detection_rules tables; the inventory sync keeps them current.
     """
-
-    def __init__(self):
-        """Initialize with detection rule paths from dynamic service or environment."""
-        # Try to get paths dynamically from DetectionRulesService
-        paths = self._get_dynamic_paths()
-
-        self.sigma_path = Path(
-            paths.get(
-                "sigma",
-                os.getenv(
-                    "SIGMA_PATHS", str(_safe_home() / "security-detections/sigma/rules")
-                ),
-            )
-        )
-        self.splunk_path = Path(
-            paths.get(
-                "splunk",
-                os.getenv(
-                    "SPLUNK_PATHS",
-                    str(
-                        _safe_home() / "security-detections/security_content/detections"
-                    ),
-                ),
-            )
-        )
-        self.elastic_path = Path(
-            paths.get(
-                "elastic",
-                os.getenv(
-                    "ELASTIC_PATHS",
-                    str(_safe_home() / "security-detections/detection-rules/rules"),
-                ),
-            )
-        )
-        self.kql_path = Path(
-            paths.get(
-                "kql",
-                os.getenv(
-                    "KQL_PATHS",
-                    str(
-                        _safe_home()
-                        / "security-detections/Hunting-Queries-Detection-Rules"
-                    ),
-                ),
-            )
-        )
-
-        self.detections = []
-        self.detections_by_technique = defaultdict(list)
-        self.detections_by_source = defaultdict(list)
-        self._loaded = False
-
-    def _get_dynamic_paths(self) -> Dict:
-        """Get paths from DetectionRulesService if available."""
-        try:
-            from core.detections.detection_rules_service import DetectionRulesService
-
-            env_vars = DetectionRulesService().get_mcp_env_vars()
-
-            paths = {}
-            if "SIGMA_PATHS" in env_vars:
-                # Take only the first path if multiple are comma-separated
-                paths["sigma"] = env_vars["SIGMA_PATHS"].split(",")[0]
-            if "SPLUNK_PATHS" in env_vars:
-                paths["splunk"] = env_vars["SPLUNK_PATHS"].split(",")[0]
-            if "ELASTIC_PATHS" in env_vars:
-                paths["elastic"] = env_vars["ELASTIC_PATHS"].split(",")[0]
-            if "KQL_PATHS" in env_vars:
-                paths["kql"] = env_vars["KQL_PATHS"].split(",")[0]
-
-            return paths
-        except Exception:
-            return {}
-
-    def reload(self):
-        """Reload detection rules (clears cache and re-reads from sources)."""
-        self._loaded = False
-        self.detections = []
-        self.detections_by_technique = defaultdict(list)
-        self.detections_by_source = defaultdict(list)
-
-        # Refresh paths from dynamic service
-        paths = self._get_dynamic_paths()
-        if paths.get("sigma"):
-            self.sigma_path = Path(paths["sigma"])
-        if paths.get("splunk"):
-            self.splunk_path = Path(paths["splunk"])
-        if paths.get("elastic"):
-            self.elastic_path = Path(paths["elastic"])
-        if paths.get("kql"):
-            self.kql_path = Path(paths["kql"])
-
-        self._load_detections()
-
-    def _load_detections(self):
-        """Load all detection files (lazy loading)"""
-        if self._loaded:
-            return
-
-        print("Loading detection rules...")
-
-        # Load Sigma rules
-        if self.sigma_path.exists():
-            for file_path in self.sigma_path.rglob("*.yml"):
-                try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        detection = yaml.safe_load(f)
-                        if detection and isinstance(detection, dict):
-                            detection["_source"] = "sigma"
-                            detection["_file_path"] = str(file_path)
-                            self.detections.append(detection)
-                            self.detections_by_source["sigma"].append(detection)
-
-                            self._index_techniques(detection)
-                except Exception:
-                    pass  # Skip malformed files
-
-        # Load Splunk ESCU rules
-        if self.splunk_path.exists():
-            for file_path in self.splunk_path.rglob("*.yml"):
-                try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        detection = yaml.safe_load(f)
-                        if detection and isinstance(detection, dict):
-                            detection["_source"] = "splunk"
-                            detection["_file_path"] = str(file_path)
-                            self.detections.append(detection)
-                            self.detections_by_source["splunk"].append(detection)
-
-                            self._index_techniques(detection)
-                except Exception:
-                    pass
-
-        # Load Elastic rules
-        if self.elastic_path.exists():
-            for file_path in self.elastic_path.rglob("*.toml"):
-                try:
-                    # Simple TOML parsing for threat section
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        content = f.read()
-                        detection = {
-                            "_source": "elastic",
-                            "_file_path": str(file_path),
-                            "_content": content,
-                        }
-                        self.detections.append(detection)
-                        self.detections_by_source["elastic"].append(detection)
-
-                        self._index_techniques(detection)
-                except Exception:
-                    pass
-
-        # Load KQL rules (.yaml and .md files)
-        if self.kql_path.exists():
-            # Load .yaml KQL rules (if any exist)
-            for file_path in self.kql_path.rglob("*.yaml"):
-                try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        detection = yaml.safe_load(f)
-                        if detection and isinstance(detection, dict):
-                            detection["_source"] = "kql"
-                            detection["_file_path"] = str(file_path)
-                            self.detections.append(detection)
-                            self.detections_by_source["kql"].append(detection)
-
-                            self._index_techniques(detection)
-                except Exception:
-                    pass
-
-            # Load .md KQL rules (Hunting-Queries-Detection-Rules format)
-            for file_path in self.kql_path.rglob("*.md"):
-                # Skip README files and templates
-                if file_path.name.lower() in ("readme.md", "detectiontemplate.md"):
-                    continue
-                try:
-                    detection = self._parse_kql_markdown(file_path)
-                    if detection:
-                        self.detections.append(detection)
-                        self.detections_by_source["kql"].append(detection)
-
-                        self._index_techniques(detection)
-                except Exception:
-                    pass
-
-        self._loaded = True
-        print(f"Loaded {len(self.detections)} detection rules")
-        print(f"  Sigma: {len(self.detections_by_source['sigma'])}")
-        print(f"  Splunk: {len(self.detections_by_source['splunk'])}")
-        print(f"  Elastic: {len(self.detections_by_source['elastic'])}")
-        print(f"  KQL: {len(self.detections_by_source['kql'])}")
 
     async def analyze_coverage(
         self,
@@ -259,33 +51,10 @@ class SecurityDetectionsTools:
                 "error": "techniques is required unless run_id or steps is provided"
             }
 
-        self._load_detections()
-
-        coverage = {}
-        for technique in techniques:
-            technique_upper = technique.upper()
-            matching = self.detections_by_technique.get(technique_upper, [])
-
-            # Count by source
-            by_source = defaultdict(int)
-            for detection in matching:
-                by_source[detection["_source"]] += 1
-
-            coverage[technique] = {
-                "count": len(matching),
-                "by_source": dict(by_source),
-                "detections": [
-                    {
-                        "title": d.get("title") or d.get("name", "Untitled"),
-                        "source": d["_source"],
-                        "id": d.get("id", ""),
-                        "description": d.get("description", "")[:200],
-                    }
-                    for d in matching[:5]  # Top 5
-                ],
-            }
-
-        return coverage
+        return {
+            technique: catalog.rules_for_technique(technique.upper())
+            for technique in techniques
+        }
 
     async def _run_coverage(self, run_id: Optional[str], steps: Any) -> Dict:
         if isinstance(steps, list) and steps:
@@ -321,34 +90,7 @@ class SecurityDetectionsTools:
         Returns:
             List of matching detection rules
         """
-        self._load_detections()
-
-        query_lower = query.lower()
-        results = []
-
-        detections_to_search = self.detections
-        if source_type:
-            detections_to_search = self.detections_by_source.get(source_type, [])
-
-        for detection in detections_to_search:
-            # Search in title, description, tags
-            searchable = str(detection).lower()
-            if query_lower in searchable:
-                results.append(
-                    {
-                        "title": detection.get("title")
-                        or detection.get("name", "Untitled"),
-                        "source": detection["_source"],
-                        "id": detection.get("id", ""),
-                        "description": detection.get("description", "")[:300],
-                        "file_path": detection["_file_path"],
-                    }
-                )
-
-                if len(results) >= limit:
-                    break
-
-        return results
+        return catalog.search(query, source_type, limit)
 
     async def get_detection_count(self, source_type: Optional[str] = None) -> Dict:
         """
@@ -360,57 +102,24 @@ class SecurityDetectionsTools:
         Returns:
             Count information
         """
-        self._load_detections()
-
+        counts = catalog.rule_counts()
         if source_type:
-            return {
-                "source": source_type,
-                "count": len(self.detections_by_source.get(source_type, [])),
-            }
-
-        return {
-            "total": len(self.detections),
-            "by_source": {
-                source: len(detections)
-                for source, detections in self.detections_by_source.items()
-            },
-        }
+            return {"source": source_type, "count": counts.get(source_type, 0)}
+        return {"total": sum(counts.values()), "by_source": counts}
 
     async def identify_gaps(self, context: str = "") -> Dict:
-        """Techniques seen on stored alerts that no loaded rule declares, with what it cannot say.
+        """Techniques seen on stored alerts that no active rule declares, with what it cannot say.
 
         Args:
             context: A case id, an ATT&CK label to match, or empty for every stored alert.
         """
-        self._load_detections()
         return gap_report(
             context,
             read_alert_labels(context),
-            self.detections_by_technique,
-            self._rules_by_tactic(),
-            {source: len(rules) for source, rules in self.detections_by_source.items()},
+            catalog.rules_by_technique(),
+            catalog.rules_by_tactic(),
+            catalog.rule_counts(),
         )
-
-    def _rules_by_tactic(self) -> Dict[str, int]:
-        counts: Dict[str, int] = defaultdict(int)
-        for detection in self.detections:
-            for tactic in self._declared_tactics(detection):
-                counts[tactic] += 1
-        return counts
-
-    def _declared_tactics(self, detection: Dict) -> set:
-        if detection["_source"] == "sigma":
-            tags = detection.get("tags") or []
-            names = [
-                tag[len("attack.") :]
-                for tag in tags
-                if isinstance(tag, str) and tag.startswith("attack.")
-            ]
-        elif detection["_source"] == "elastic":
-            names = ELASTIC_TACTIC_NAME.findall(detection["_content"])
-        else:
-            return set()
-        return {normalize_label(name) for name in names} & TACTICS
 
     async def get_coverage_stats(self, source_type: Optional[str] = None) -> Dict:
         """
@@ -422,119 +131,19 @@ class SecurityDetectionsTools:
         Returns:
             Coverage statistics
         """
-        self._load_detections()
-
-        stats = {
-            "total_detections": len(self.detections),
-            "techniques_covered": len(self.detections_by_technique),
-            "by_source": {
-                source: {
-                    "count": len(detections),
-                    "techniques": len(
-                        set(
-                            tech
-                            for det in detections
-                            for tech in self._extract_techniques(det)
-                        )
-                    ),
-                }
-                for source, detections in self.detections_by_source.items()
-            },
+        counts = catalog.rule_counts()
+        techniques = catalog.techniques_per_language()
+        by_source = {
+            source: {"count": count, "techniques": techniques.get(source, 0)}
+            for source, count in counts.items()
         }
-
-        if source_type and source_type in self.detections_by_source:
-            return {"source": source_type, **stats["by_source"][source_type]}
-
-        return stats
-
-    def _parse_kql_markdown(self, file_path: Path) -> Optional[Dict]:
-        """
-        Parse a KQL markdown file from the Hunting-Queries-Detection-Rules repo.
-
-        Expected format:
-            # Title
-            ## Query Information
-            #### MITRE ATT&CK Technique(s)
-            | Technique ID | Title | Link |
-            | --- | --- | --- |
-            | T1210 | Exploitation of Remote Services | ... |
-            #### Description
-            Description text...
-            ## Defender XDR / Sentinel
-            ```KQL
-            ...query...
-            ```
-        """
-        with open(file_path, "r", encoding="utf-8") as f:
-            content = f.read()
-
-        if not content.strip():
-            return None
-
-        # Extract title from first markdown heading
-        title_match = re.search(r"^#\s+(.+)", content, re.MULTILINE)
-        title = title_match.group(1).strip() if title_match else file_path.stem
-
-        # Extract description from #### Description section
-        desc_match = re.search(
-            r"####\s+Description\s*\n(.*?)(?=\n####|\n##|\n```|\Z)", content, re.DOTALL
-        )
-        description = desc_match.group(1).strip() if desc_match else ""
-
-        # Extract MITRE technique IDs from the table or anywhere in the doc
-        mitre_techniques = list(set(re.findall(r"(T\d{4}(?:\.\d{3})?)", content)))
-
-        # Extract KQL queries from code blocks
-        kql_blocks = re.findall(r"```(?:KQL|kql)\s*\n(.*?)```", content, re.DOTALL)
-        query = (
-            "\n---\n".join(block.strip() for block in kql_blocks) if kql_blocks else ""
-        )
-
-        # Determine category from parent directory
-        category = (
-            file_path.parent.name if file_path.parent != self.kql_path else "General"
-        )
-
-        detection = {
-            "_source": "kql",
-            "_file_path": str(file_path),
-            "title": title,
-            "name": title,
-            "description": description,
-            "query": query,
-            "category": category,
-            "mitre": mitre_techniques,
-            "id": f"kql-{file_path.stem}",
+        if source_type and source_type in by_source:
+            return {"source": source_type, **by_source[source_type]}
+        return {
+            "total_detections": sum(counts.values()),
+            "techniques_covered": len(catalog.rules_by_technique()),
+            "by_source": by_source,
         }
-
-        return detection
-
-    def _extract_techniques(self, detection: Dict) -> List[str]:
-        """The distinct MITRE techniques a detection declares."""
-        source = detection["_source"]
-        if source == "sigma":
-            tags = detection.get("tags") or []
-            named = [
-                tag.replace("attack.", "")
-                for tag in tags
-                if isinstance(tag, str) and tag.startswith("attack.t")
-            ]
-        elif source == "splunk":
-            # ESCU moved this to the top level; older clones keep it under tags.
-            tags = detection.get("tags")
-            nested = tags.get("mitre_attack_id") if isinstance(tags, dict) else None
-            named = detection.get("mitre_attack_id") or nested or []
-        elif source == "elastic":
-            named = ELASTIC_TECHNIQUE_ID.findall(detection["_content"])
-        else:
-            named = detection.get("mitre") or []
-        if not isinstance(named, list):
-            return []
-        return list(dict.fromkeys(t.upper() for t in named if isinstance(t, str)))
-
-    def _index_techniques(self, detection: Dict) -> None:
-        for technique in self._extract_techniques(detection):
-            self.detections_by_technique[technique].append(detection)
 
     async def lint_detections(
         self,

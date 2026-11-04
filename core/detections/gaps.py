@@ -1,15 +1,15 @@
-"""Which ATT&CK labels stored alerts carry, set against the rules actually loaded.
+"""Which ATT&CK labels stored alerts carry, set against the active detection rules.
 
-A gap is a technique seen on a stored alert that no loaded rule declares. Stored
-labels are not all techniques: ingest keeps whatever key a source sent, so a row may
-name a tactic or an unmapped class. Those cannot prove a gap, and the report says so
-rather than guessing which technique ran.
+A gap is a technique seen on a stored alert that no active rule declares; rules are
+counted by detection_rules id. Stored labels are not all techniques: ingest keeps
+whatever key a source sent, so a row may name a tactic or an unmapped class. Those
+cannot prove a gap, and the report says so rather than guessing which technique ran.
 """
 
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any, Collection, Dict, List, Mapping, Sequence
+from typing import Any, Collection, Dict, List, Mapping
 
 from core.storage.connection import get_db_manager
 from core.storage.models import Case, Finding, FindingMitrePrediction, case_findings
@@ -110,15 +110,15 @@ def _classify(alerts: AlertLabels) -> tuple[Counter, Counter, Dict[str, int]]:
 
 
 def _related_rules(
-    technique: str, rules_by_technique: Mapping[str, Sequence[Any]]
+    technique: str, rules_by_technique: Mapping[str, Collection[int]]
 ) -> int:
     """Rules on its parent or subtechniques: they touch it without declaring it."""
     base = technique.split(".")[0]
     related = {
-        id(rule)
-        for key, rules in rules_by_technique.items()
+        rule_id
+        for key, rule_ids in rules_by_technique.items()
         if key != technique and (key == base or key.startswith(f"{technique}."))
-        for rule in rules
+        for rule_id in rule_ids
     }
     return len(related)
 
@@ -126,7 +126,7 @@ def _related_rules(
 def gap_report(
     context: str,
     alerts: AlertLabels,
-    rules_by_technique: Mapping[str, Sequence[Any]],
+    rules_by_technique: Mapping[str, Collection[int]],
     rules_by_tactic: Mapping[str, int],
     rule_counts: Mapping[str, int],
 ) -> Dict[str, Any]:
@@ -139,7 +139,7 @@ def gap_report(
         {
             "technique": technique,
             "alerts": count,
-            "rules": len({id(rule) for rule in rules_by_technique.get(technique, ())}),
+            "rules": len(set(rules_by_technique.get(technique, ()))),
             "related_rules": _related_rules(technique, rules_by_technique),
         }
         for technique, count in techniques.items()

@@ -46,6 +46,11 @@ from core.storage.models.config import (
     ThreatIndicator,
     UserPreference,
 )
+from core.storage.models.detection_rule import (
+    DETECTION_RULE_STATUSES,
+    DetectionRule,
+    DetectionRuleVersion,
+)
 from core.storage.models.episodic import (
     EpisodicDistilFailure,
     EpisodicDistilMarker,
@@ -101,6 +106,9 @@ __all__ = [
     "Conversation",
     "CustomAgent",
     "CustomWorkflow",
+    "DETECTION_RULE_STATUSES",
+    "DetectionRule",
+    "DetectionRuleVersion",
     "EpisodicDistilFailure",
     "EpisodicDistilMarker",
     "EpisodicGap",

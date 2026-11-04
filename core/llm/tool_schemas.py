@@ -37,7 +37,7 @@ SECURITY_DETECTION_TOOLS = [
     },
     {
         "name": "search_detections",
-        "description": "Search across 7,200+ detection rules (Sigma, Splunk, Elastic, KQL) using keywords. Returns matching detection rules with metadata. Use this to find relevant detections for specific attack patterns or tools.",
+        "description": "Search the detection rules of every configured repo (Sigma, Splunk, Elastic, KQL) using keywords. Returns matching detection rules with metadata. Use this to find relevant detections for specific attack patterns or tools.",
         "input_schema": {
             "type": "object",
             "properties": {

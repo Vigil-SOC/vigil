@@ -1924,6 +1924,86 @@
   "nullable": false,
   "type": "character varying(100)"
  },
+ "column detection_rule_versions.content": {
+  "default": null,
+  "nullable": false,
+  "type": "jsonb"
+ },
+ "column detection_rule_versions.fingerprint": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column detection_rule_versions.first_seen": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp with time zone"
+ },
+ "column detection_rule_versions.query": {
+  "default": "''::text",
+  "nullable": false,
+  "type": "text"
+ },
+ "column detection_rule_versions.rule_id": {
+  "default": null,
+  "nullable": false,
+  "type": "integer"
+ },
+ "column detection_rule_versions.version": {
+  "default": null,
+  "nullable": false,
+  "type": "integer"
+ },
+ "column detection_rules.id": {
+  "default": "nextval('detection_rules_id_seq'::regclass)",
+  "nullable": false,
+  "type": "integer"
+ },
+ "column detection_rules.language": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column detection_rules.latest_version": {
+  "default": null,
+  "nullable": false,
+  "type": "integer"
+ },
+ "column detection_rules.name": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column detection_rules.native_key": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column detection_rules.path": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column detection_rules.source": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column detection_rules.status": {
+  "default": "'active'::text",
+  "nullable": false,
+  "type": "text"
+ },
+ "column detection_rules.tactics": {
+  "default": "'{}'::text[]",
+  "nullable": false,
+  "type": "text[]"
+ },
+ "column detection_rules.techniques": {
+  "default": "'{}'::text[]",
+  "nullable": false,
+  "type": "text[]"
+ },
  "column enabled_integrations.config": {
   "default": null,
   "nullable": true,
@@ -3900,6 +3980,13 @@
  "constraint conversations.conversations_pkey": "PRIMARY KEY (id)",
  "constraint custom_agents.custom_agents_pkey": "PRIMARY KEY (id)",
  "constraint custom_workflows.custom_workflows_pkey": "PRIMARY KEY (workflow_id)",
+ "constraint detection_rule_versions.detection_rule_versions_pkey": "PRIMARY KEY (rule_id, version)",
+ "constraint detection_rule_versions.detection_rule_versions_rule_id_fkey": "FOREIGN KEY (rule_id) REFERENCES detection_rules(id)",
+ "constraint detection_rule_versions.detection_rule_versions_version_check": "CHECK ((version >= 1))",
+ "constraint detection_rules.detection_rules_latest_version_check": "CHECK ((latest_version >= 1))",
+ "constraint detection_rules.detection_rules_pkey": "PRIMARY KEY (id)",
+ "constraint detection_rules.detection_rules_source_native_key": "UNIQUE (source, native_key)",
+ "constraint detection_rules.detection_rules_status_check": "CHECK ((status = ANY (ARRAY['active'::text, 'removed'::text])))",
  "constraint episodic_distil_failures.episodic_distil_failures_attempts_check": "CHECK ((attempts > 0))",
  "constraint episodic_distil_failures.episodic_distil_failures_investigation_kind_check": "CHECK ((investigation_kind = ANY (ARRAY['hunt'::text, 'case'::text, 'analyst'::text])))",
  "constraint episodic_distil_failures.episodic_distil_failures_pkey": "PRIMARY KEY (investigation_kind, failure_key)",
@@ -4142,6 +4229,9 @@
  "index conversations_pkey": "CREATE UNIQUE INDEX conversations_pkey ON public.conversations USING btree (id)",
  "index custom_agents_pkey": "CREATE UNIQUE INDEX custom_agents_pkey ON public.custom_agents USING btree (id)",
  "index custom_workflows_pkey": "CREATE UNIQUE INDEX custom_workflows_pkey ON public.custom_workflows USING btree (workflow_id)",
+ "index detection_rule_versions_pkey": "CREATE UNIQUE INDEX detection_rule_versions_pkey ON public.detection_rule_versions USING btree (rule_id, version)",
+ "index detection_rules_pkey": "CREATE UNIQUE INDEX detection_rules_pkey ON public.detection_rules USING btree (id)",
+ "index detection_rules_source_native_key": "CREATE UNIQUE INDEX detection_rules_source_native_key ON public.detection_rules USING btree (source, native_key)",
  "index episodic_distil_failures_pkey": "CREATE UNIQUE INDEX episodic_distil_failures_pkey ON public.episodic_distil_failures USING btree (investigation_kind, failure_key)",
  "index episodic_distil_markers_pkey": "CREATE UNIQUE INDEX episodic_distil_markers_pkey ON public.episodic_distil_markers USING btree (investigation_kind, investigation_id)",
  "index episodic_gaps_pkey": "CREATE UNIQUE INDEX episodic_gaps_pkey ON public.episodic_gaps USING btree (id)",
@@ -4242,6 +4332,7 @@
  "index idx_custom_workflows_active": "CREATE INDEX idx_custom_workflows_active ON public.custom_workflows USING btree (is_active)",
  "index idx_custom_workflows_created_by": "CREATE INDEX idx_custom_workflows_created_by ON public.custom_workflows USING btree (created_by)",
  "index idx_custom_workflows_name": "CREATE INDEX idx_custom_workflows_name ON public.custom_workflows USING btree (name)",
+ "index idx_detection_rules_techniques": "CREATE INDEX idx_detection_rules_techniques ON public.detection_rules USING gin (techniques)",
  "index idx_episodic_gaps_investigation": "CREATE INDEX idx_episodic_gaps_investigation ON public.episodic_gaps USING btree (investigation_kind, investigation_id)",
  "index idx_episodic_gaps_recall": "CREATE INDEX idx_episodic_gaps_recall ON public.episodic_gaps USING btree (concluded_at DESC, id)",
  "index idx_episodic_gaps_subjects": "CREATE INDEX idx_episodic_gaps_subjects ON public.episodic_gaps USING gin (subject_entities)",
@@ -5287,6 +5378,64 @@
    false
   ],
   "sequence": null
+ },
+ "relation detection_rule_versions": {
+  "acl": [
+   "app:INSERT",
+   "app:SELECT",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation detection_rules": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation detection_rules_id_seq": {
+  "acl": [
+   "app:SELECT",
+   "app:USAGE",
+   "owner:SELECT",
+   "owner:UPDATE",
+   "owner:USAGE"
+  ],
+  "kind": "S",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": "[\"integer\", 1, 1, 1, 2147483647, 1, false]"
  },
  "relation enabled_integrations": {
   "acl": [
