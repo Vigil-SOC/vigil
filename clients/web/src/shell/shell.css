@@ -1969,6 +1969,18 @@ select.vg-side-input {
   font-weight: 500;
 }
 
+/* A phone's header holds logo, mode and avatar; the brand's floor and the chip's words give way */
+@media (max-width: 600px) {
+  .vg-header {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .vg-autonomy-label,
+  .vg-autonomy-detail {
+    display: none;
+  }
+}
+
 .vg-autonomy-link:focus-visible {
   outline: 2px solid var(--ac);
   outline-offset: 3px;
