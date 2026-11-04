@@ -5,6 +5,7 @@ and the rules Kibana's detection engine runs, as core/detections/inventory syncs
 into Postgres. Splunk saved searches and Wazuh rules are not read yet.
 """
 
+import asyncio
 from typing import Any, Dict, List, Optional
 
 import yaml
@@ -13,6 +14,7 @@ from core.agents.projections import read_projection
 from core.detections.gaps import gap_report, read_alert_labels
 from core.detections.inventory import catalog
 from core.detections.lint import lint_sigma
+from core.detections.overlay import save_rule
 from core.detections.reconstruction import (
     coverage_report,
     reconstruct,
@@ -84,6 +86,7 @@ class SecurityDetectionsTools:
         limit: int = 20,
         tool: Optional[str] = None,
         runs: Optional[str] = None,
+        stage: Optional[str] = None,
     ) -> List[Dict]:
         """
         Search across all detection rules using keywords.
@@ -92,13 +95,15 @@ class SecurityDetectionsTools:
             query: Search query (e.g., "powershell base64", "lateral movement")
             source_type: Optional filter by rule format ("sigma", "splunk", "elastic", "kql")
             limit: Maximum number of results
-            tool: Optional filter by where the rule was read ("repo", "elastic")
+            tool: Optional filter by where the rule was read ("overlay", "repo", "elastic")
             runs: Optional filter by Runs result ("pass", "fail", "unknown")
+            stage: Optional filter by current rollout stage ("shadow", "live", "off")
 
         Returns:
-            List of matching detection rules, each with its status and checks
+            List of matching detection rules, each with its status and checks;
+            an overlay rule also with its stage and stage rows
         """
-        return catalog.search(query or "", source_type, limit, tool, runs)
+        return catalog.search(query or "", source_type, limit, tool, runs, stage)
 
     async def get_detection_count(self, source_type: Optional[str] = None) -> Dict:
         """
@@ -193,6 +198,16 @@ class SecurityDetectionsTools:
                 "rule_yaml": rule_yaml,
             }
         return {"lint": lint, "replay": replay, "candidate": candidate}
+
+    async def save_detection_rule(
+        self,
+        splunk_yaml: Optional[str] = None,
+        elastic_toml: Optional[str] = None,
+        sigma_yaml: Optional[str] = None,
+        **_kwargs: object,
+    ) -> Dict:
+        """Save one rule's copies into Vigil's overlay; each enters shadow."""
+        return await asyncio.to_thread(save_rule, splunk_yaml, elastic_toml, sigma_yaml)
 
     async def reconstruct_run(self, steps: List[Dict], **_kwargs: object) -> Dict:
         """Correlate an action trace to ingested Findings; return per-step verdicts.

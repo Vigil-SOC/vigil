@@ -1,7 +1,7 @@
 """Detection rule ORM models.
 
-The schema is core/upgrade/versions/0026_detection_rules.sql and
-0027_detection_rule_checks.sql; these models
+The schema is core/upgrade/versions/0026_detection_rules.sql,
+0027_detection_rule_checks.sql and 0028_detection_rule_stages.sql; these models
 mirror it for core/detections/inventory.
 """
 
@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -25,6 +26,7 @@ from core.storage.models.base import Base
 
 # disabled: a SIEM rule that is listed but switched off.
 DETECTION_RULE_STATUSES = ("active", "disabled", "removed")
+DETECTION_RULE_STAGES = ("shadow", "live", "off")
 
 
 class DetectionRule(Base):
@@ -83,5 +85,34 @@ class DetectionRuleVersion(Base):
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
     first_seen: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+
+class DetectionRuleStage(Base):
+    """One stage an overlay rule entered. Append-only; the latest row is current."""
+
+    __tablename__ = "detection_rule_stages"
+    __table_args__ = (
+        CheckConstraint(
+            "stage IN ('shadow', 'live', 'off')",
+            name="detection_rule_stages_stage_check",
+        ),
+        CheckConstraint("version >= 1", name="detection_rule_stages_version_check"),
+        Index("idx_detection_rule_stages_rule", "rule_id", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    rule_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("detection_rules.id"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    stage: Mapped[str] = mapped_column(Text, nullable=False)
+    proof: Mapped[Dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    actor: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
+    at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )

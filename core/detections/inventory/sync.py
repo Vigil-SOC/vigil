@@ -15,6 +15,10 @@ result or reason differs from the stored one; a new version starts with none.
 A source that fails to read, or is configured but not ready, is skipped whole.
 A source no longer configured has its rules marked removed.
 
+Vigil's overlay source alone has rollout stages, for its splunk and elastic
+copies (nothing runs a Sigma copy): a new rule or version, or a removed one
+back unchanged, appends 'shadow'; a removed one appends 'off'.
+
 Nothing is ever written to a SIEM.
 """
 
@@ -32,13 +36,14 @@ from sqlalchemy import and_, bindparam, func, insert, select, update
 from core.detections.inventory import kibana, readers
 from core.detections.inventory.record import RuleRecord, fingerprint
 from core.storage.connection import get_db_manager
-from core.storage.models import DetectionRule, DetectionRuleVersion
+from core.storage.models import DetectionRule, DetectionRuleStage, DetectionRuleVersion
 
 logger = logging.getLogger(__name__)
 
 # Serialises whole syncs across the daemon and API workers.
 SYNC_LOCK_KEY = 0x7669_6769_6C52_554C  # "vigilRUL"
 REPO_PREFIX = "repo:"
+STAGED_LANGUAGES = ("splunk", "elastic")
 
 
 @dataclass
@@ -85,6 +90,16 @@ def _version_row(rule_id: int, version: int, record: RuleRecord, fp: str) -> dic
     }
 
 
+def _stage_row(rule_id: int, version: int, stage: str, reason: str) -> dict:
+    return {
+        "rule_id": rule_id,
+        "version": version,
+        "stage": stage,
+        "actor": "system",
+        "reason": reason,
+    }
+
+
 def _rule_fields(record: RuleRecord) -> Dict[str, Any]:
     return {
         "name": record.name,
@@ -111,6 +126,12 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
     """Write the differences between ``records`` (all of ``source``) and the tables."""
     report = SourceReport(source=source, read=len(records))
     now = datetime.now(timezone.utc).isoformat()
+    stages: List[dict] = []
+
+    def stage(rule_id: int, version: int, language: str, to: str, reason: str):
+        if source == readers.OVERLAY_SOURCE and language in STAGED_LANGUAGES:
+            stages.append(_stage_row(rule_id, version, to, reason))
+
     with get_db_manager().session_scope() as session:
         latest = (
             select(
@@ -148,12 +169,28 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
                 versions.append(_version_row(rule.id, rule.latest_version, record, fp))
                 report.versioned += 1
                 stored = {}
+                stage(
+                    rule.id,
+                    rule.latest_version,
+                    record.language,
+                    "shadow",
+                    "new version",
+                )
             changed = {
                 k: v for k, v in _rule_fields(record).items() if getattr(rule, k) != v
             }
             if rule.status != record.status:
                 if rule.status == "removed":
                     report.restored += 1
+                    if fp == latest_fp:
+                        # Back unchanged: an active copy never sits at 'off'.
+                        stage(
+                            rule.id,
+                            rule.latest_version,
+                            record.language,
+                            "shadow",
+                            "restored",
+                        )
                 else:
                     changed["status"] = record.status
                 rule.status = record.status
@@ -170,6 +207,7 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
             if key not in listed and rule.status != "removed":
                 rule.status = "removed"
                 report.removed += 1
+                stage(rule.id, rule.latest_version, rule.language, "off", "removed")
 
         if new:
             ids = session.scalars(
@@ -189,12 +227,15 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
             ).all()
             for rule_id, (r, fp) in zip(ids, new):
                 versions.append(_version_row(rule_id, 1, r, fp))
+                stage(rule_id, 1, r.language, "shadow", "new rule")
                 checks = _checks({}, r, now)
                 if checks:
                     checked.append((rule_id, 1, checks))
             report.new = len(new)
         if versions:
             session.execute(insert(DetectionRuleVersion), versions)
+        if stages:
+            session.execute(insert(DetectionRuleStage), stages)
         if checked:
             # checks is the one column of a version ever updated.
             session.connection().execute(
@@ -211,9 +252,12 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
 
 
 def _remove_unconfigured(configured: List[str]) -> int:
-    """Mark removed every repo rule whose source is no longer configured."""
+    """Mark removed every repo rule whose source is no longer configured.
+
+    An overlay copy with a stage gets 'off', as sync_source gives a removed one.
+    """
     with get_db_manager().session_scope() as session:
-        result = session.execute(
+        removed = session.execute(
             update(DetectionRule)
             .where(
                 DetectionRule.source.startswith(REPO_PREFIX),
@@ -221,8 +265,21 @@ def _remove_unconfigured(configured: List[str]) -> int:
                 DetectionRule.status != "removed",
             )
             .values(status="removed")
-        )
-        return int(getattr(result, "rowcount", 0) or 0)
+            .returning(
+                DetectionRule.id,
+                DetectionRule.latest_version,
+                DetectionRule.source,
+                DetectionRule.language,
+            )
+        ).all()
+        stages = [
+            _stage_row(rule_id, version, "off", "source removed")
+            for rule_id, version, source, language in removed
+            if source == readers.OVERLAY_SOURCE and language in STAGED_LANGUAGES
+        ]
+        if stages:
+            session.execute(insert(DetectionRuleStage), stages)
+        return len(removed)
 
 
 def sync_repos() -> List[SourceReport]:

@@ -296,6 +296,7 @@ For any report request (technical report, executive summary, board brief) call r
             "search_findings",
             "reconstruct_run",
             "check_detection_candidate",
+            "save_detection_rule",
         ],
         "max_tokens": 16384,
         "enable_thinking": True,
@@ -304,6 +305,7 @@ For any report request (technical report, executive summary, board brief) call r
         "methodology": """<methodology>
 Given an environment_id and a goal, assess coverage, execute only via the gated tool, reconstruct, and report. Coverage, gaps, findings, reconstruction, and execute are available together — pick what the goal needs; there is no prescribed order.
 check_detection_candidate lints and replays a candidate Sigma rule against events already in hand.
+save_detection_rule keeps a drafted rule (Splunk and/or Elastic copy, optional Sigma form) in Vigil's overlay, where it enters shadow.
 </methodology>""",
     },
     {

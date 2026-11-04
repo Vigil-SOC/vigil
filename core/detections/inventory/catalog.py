@@ -1,8 +1,9 @@
 """What the agent detection tools read: the active rules and their latest versions.
 
-A rule's tool is where it was read: 'repo' for a configured repo, else the SIEM
-(source 'elastic'). Only active rules count as deployed; search also finds the
-disabled ones, each hit saying so.
+A rule's tool is where it was read: 'overlay' for Vigil's own overlay source,
+'repo' for any other configured repo, else the SIEM (source 'elastic'). Only
+active rules count as deployed; search also finds the disabled ones, each hit
+saying so. An overlay hit also carries its rollout stage and stage history.
 """
 
 from __future__ import annotations
@@ -11,17 +12,28 @@ from typing import Any, Dict, Iterable, List, Optional, Set
 
 from sqlalchemy import Text, and_, case, cast, func, select
 
+from core.detections.inventory.readers import OVERLAY_SOURCE
 from core.storage.connection import get_db_manager
-from core.storage.models import DetectionRule, DetectionRuleVersion
+from core.storage.models import DetectionRule, DetectionRuleStage, DetectionRuleVersion
 
 ACTIVE = DetectionRule.status == "active"
 LISTED = DetectionRule.status.in_(("active", "disabled"))
 REPO_PREFIX = "repo:"
+OVERLAY = "overlay"
 TOOL = case(
-    (DetectionRule.source.startswith(REPO_PREFIX), "repo"), else_=DetectionRule.source
+    (DetectionRule.source == OVERLAY_SOURCE, OVERLAY),
+    (DetectionRule.source.startswith(REPO_PREFIX), "repo"),
+    else_=DetectionRule.source,
 )
 RUNS = DetectionRuleVersion.checks["runs"]["result"].astext
 RUNS_RESULTS = ("pass", "fail", "unknown")
+# Each rule's current stage: its latest stage row.
+CURRENT_STAGE = (
+    select(DetectionRuleStage.rule_id, DetectionRuleStage.stage)
+    .distinct(DetectionRuleStage.rule_id)
+    .order_by(DetectionRuleStage.rule_id, DetectionRuleStage.id.desc())
+    .subquery("current_stage")
+)
 
 
 def _latest_join():
@@ -32,6 +44,8 @@ def _latest_join():
 
 
 def tool_of(source: str) -> str:
+    if source == OVERLAY_SOURCE:
+        return OVERLAY
     return "repo" if source.startswith(REPO_PREFIX) else source
 
 
@@ -60,7 +74,7 @@ def _by_tool(rows: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
     for tool, result, count in rows:
         entry = out.setdefault(tool, {"rules": 0})
         entry["rules"] += count
-        if tool != "repo":
+        if tool not in ("repo", OVERLAY):
             runs = entry.setdefault(
                 "runs", {**dict.fromkeys(RUNS_RESULTS, 0), "unchecked": 0}
             )
@@ -190,11 +204,12 @@ def search(
     limit: int,
     tool: Optional[str] = None,
     runs: Optional[str] = None,
+    stage: Optional[str] = None,
 ) -> List[Dict]:
     """Active and disabled rules whose format, path or parsed content contains ``query``.
 
-    ``tool`` is 'repo' or a SIEM source; ``runs`` keeps rules whose latest
-    version has that Runs result.
+    ``tool`` is 'overlay', 'repo' or a SIEM source; ``runs`` keeps rules whose
+    latest version has that Runs result; ``stage`` keeps rules currently there.
     """
     escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     haystack = (
@@ -217,6 +232,38 @@ def search(
         statement = statement.where(TOOL == tool)
     if runs:
         statement = statement.where(RUNS == runs)
+    if stage:
+        statement = statement.join(
+            CURRENT_STAGE, CURRENT_STAGE.c.rule_id == DetectionRule.id
+        ).where(CURRENT_STAGE.c.stage == stage)
     with get_db_manager().session_scope() as session:
         rows = session.execute(statement).all()
-        return [_summary(rule, content, checks, 300) for rule, content, checks in rows]
+        hits = [_summary(rule, content, checks, 300) for rule, content, checks in rows]
+        overlay = [hit for hit in hits if hit["tool"] == OVERLAY]
+        if overlay:
+            history = _stage_rows(session, [hit["rule_id"] for hit in overlay])
+            for hit in overlay:
+                hit["stages"] = history.get(hit["rule_id"], [])
+                hit["stage"] = hit["stages"][-1]["stage"] if hit["stages"] else None
+        return hits
+
+
+def _stage_rows(session: Any, rule_ids: List[int]) -> Dict[int, List[Dict]]:
+    """Every stage row of ``rule_ids``, oldest first, by rule."""
+    out: Dict[int, List[Dict]] = {}
+    for row in session.scalars(
+        select(DetectionRuleStage)
+        .where(DetectionRuleStage.rule_id.in_(rule_ids))
+        .order_by(DetectionRuleStage.rule_id, DetectionRuleStage.id)
+    ):
+        out.setdefault(row.rule_id, []).append(
+            {
+                "version": row.version,
+                "stage": row.stage,
+                "proof": row.proof,
+                "actor": row.actor,
+                "reason": row.reason,
+                "at": row.at.isoformat(),
+            }
+        )
+    return out

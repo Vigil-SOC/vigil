@@ -263,8 +263,15 @@ def _files(root: Path, suffixes: tuple) -> List[Path]:
     return sorted(found)
 
 
+# Vigil's own source: the rules it drafts, as plain files the customer owns.
+OVERLAY_ID = "overlay"
+
+
 def source_name(source: Dict[str, Any]) -> str:
     return f"repo:{source['id']}"
+
+
+OVERLAY_SOURCE = source_name({"id": OVERLAY_ID})
 
 
 def read_source(source: Dict[str, Any], root: Path) -> List[RuleRecord]:
