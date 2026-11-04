@@ -1,7 +1,7 @@
 """What the agent detection tools read: the active rules and their latest versions.
 
 A rule's tool is where it was read: 'repo' for a configured repo, else the SIEM
-(source 'elastic'). Only active rules count as deployed; search also finds the
+(source 'elastic' or 'wazuh'). Only active rules count as deployed; search also finds the
 disabled ones, each hit saying so.
 """
 

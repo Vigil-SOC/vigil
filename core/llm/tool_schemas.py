@@ -14,7 +14,7 @@ from core.skills.skill_library import READ_SKILL_TOOL
 SECURITY_DETECTION_TOOLS = [
     {
         "name": "analyze_coverage",
-        "description": "Analyze detection coverage for MITRE ATT&CK techniques, or report per-technique layer verdicts for a sanctioned run. Pass techniques for catalog counts (Sigma / Splunk / Elastic / KQL), with by_tool: active rules per tool ('repo', or a SIEM: 'elastic' for Kibana) and, for a SIEM, its Runs pass / fail / unknown / unchecked counts. Pass run_id or an action-trace steps list for the run report: reconstruct on read, group by technique_id, verdicts rule | loglm | both | missed. Do not mix the two.",
+        "description": "Analyze detection coverage for MITRE ATT&CK techniques, or report per-technique layer verdicts for a sanctioned run. Pass techniques for catalog counts (Sigma / Splunk / Elastic / KQL), with by_tool: active rules per tool ('repo', or a SIEM: 'elastic' for Kibana, 'wazuh') and, for a SIEM, its Runs pass / fail / unknown / unchecked counts. Pass run_id or an action-trace steps list for the run report: reconstruct on read, group by technique_id, verdicts rule | loglm | both | missed. Do not mix the two.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -37,7 +37,7 @@ SECURITY_DETECTION_TOOLS = [
     },
     {
         "name": "search_detections",
-        "description": "Search the detection rules of every configured repo (Sigma, Splunk, Elastic, KQL) and the rules Kibana's detection engine runs, using keywords. Each hit carries its tool ('repo' or 'elastic'), its status ('active', or 'disabled' for a Kibana rule switched off) and checks.runs: whether the SIEM runs it ({result: pass|fail|unknown, reason, checked_at}; reason holds the SIEM's own error). Filter tool='elastic' with runs='fail' to answer which Elastic rules don't run and why. Splunk saved searches and Wazuh rules are not read yet.",
+        "description": "Search the detection rules of every configured repo (Sigma, Splunk, Elastic, KQL) and the rules Kibana's detection engine and the Wazuh manager run, using keywords. Each hit carries its tool ('repo', 'elastic' or 'wazuh'), its status ('active', or 'disabled' for a Kibana rule switched off or a Wazuh rule excluded in ossec.conf) and checks.runs: whether the SIEM runs it ({result: pass|fail|unknown, reason, checked_at}; reason holds the SIEM's own error). Filter tool='elastic' with runs='fail' to answer which Elastic rules don't run and why. A loaded Wazuh rule's Runs is pass ('loaded by the manager'). Splunk saved searches are not read yet.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -47,13 +47,13 @@ SECURITY_DETECTION_TOOLS = [
                 },
                 "source_type": {
                     "type": "string",
-                    "enum": ["sigma", "splunk", "elastic", "kql"],
+                    "enum": ["sigma", "splunk", "elastic", "kql", "wazuh"],
                     "description": "Optional: Filter by detection format. 'elastic' covers repo tomls and Kibana rules alike. Omit to search all formats.",
                 },
                 "tool": {
                     "type": "string",
-                    "enum": ["repo", "elastic"],
-                    "description": "Optional: Filter by where the rule was read: a configured repo, or Kibana's detection engine.",
+                    "enum": ["repo", "elastic", "wazuh"],
+                    "description": "Optional: Filter by where the rule was read: a configured repo, Kibana's detection engine, or the Wazuh manager.",
                 },
                 "runs": {
                     "type": "string",
@@ -71,7 +71,7 @@ SECURITY_DETECTION_TOOLS = [
     },
     {
         "name": "identify_gaps",
-        "description": "Compare the ATT&CK techniques seen on stored alerts with the detection rules actually loaded, and list techniques no rule declares. covered_on_paper_only lists techniques whose Kibana rules all fail Runs (each technique row has siem_runs). Reads stored data only and writes nothing. Read answer and unknown first: alerts that name a tactic and no technique cannot prove a gap, and answer is unknown when the data cannot say. Splunk saved searches and Wazuh rules are not read yet. runs_rules_missed lists proven hunts and closed Cases (Verdicts from the last since_days) whose hosts, IPs and users drew no rule alert in their window (LogLM-only counts as missed), grouped by technique. Each group has its runs, how many a person confirmed, the active rules declaring the technique, and ruled_out: disproven / false_positive runs on it that a draft rule must not catch. Only groups with 2+ runs or 1+ confirmed are listed; the rest are counted. A run with no host, IP or user, or whose Findings read was cut off, is in its unknown, never missed.",
+        "description": "Compare the ATT&CK techniques seen on stored alerts with the detection rules actually loaded, and list techniques no rule declares. covered_on_paper_only lists techniques whose SIEM rules all fail Runs (each technique row has siem_runs). Reads stored data only and writes nothing. Read answer and unknown first: alerts that name a tactic and no technique cannot prove a gap, and answer is unknown when the data cannot say. Splunk saved searches are not read yet. runs_rules_missed lists proven hunts and closed Cases (Verdicts from the last since_days) whose hosts, IPs and users drew no rule alert in their window (LogLM-only counts as missed), grouped by technique. Each group has its runs, how many a person confirmed, the active rules declaring the technique, and ruled_out: disproven / false_positive runs on it that a draft rule must not catch. Only groups with 2+ runs or 1+ confirmed are listed; the rest are counted. A run with no host, IP or user, or whose Findings read was cut off, is in its unknown, never missed.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -96,7 +96,7 @@ SECURITY_DETECTION_TOOLS = [
             "properties": {
                 "source_type": {
                     "type": "string",
-                    "enum": ["sigma", "splunk", "elastic", "kql"],
+                    "enum": ["sigma", "splunk", "elastic", "kql", "wazuh"],
                     "description": "Optional: Get stats for specific source format only",
                 }
             },
@@ -110,7 +110,7 @@ SECURITY_DETECTION_TOOLS = [
             "properties": {
                 "source_type": {
                     "type": "string",
-                    "enum": ["sigma", "splunk", "elastic", "kql"],
+                    "enum": ["sigma", "splunk", "elastic", "kql", "wazuh"],
                     "description": "Optional: Count for specific source format",
                 }
             },
