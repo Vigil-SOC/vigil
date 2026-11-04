@@ -775,6 +775,9 @@ def rule_for_finding(finding: Mapping[str, Any]) -> Dict[str, Any]:
     on name. The version is the latest one first seen at or before the alert.
     Kibana (source 'elastic') and Wazuh (source 'wazuh') rules resolve.
     """
+    ref = _rule_ref(finding)
+    if not isinstance(ref, tuple):
+        return ref  # unknown without reading the inventory
     try:
         with get_db_manager().session_scope() as session:
             return resolve_findings(session, {0: finding})[0]
