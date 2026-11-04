@@ -5,8 +5,8 @@ The grants are literals in the SQL beside this file. They are not read from
 revision writes on a fresh install. ``BUILTINS`` is that catalog's built-in
 definitions, frozen here for the same reason.
 
-``settings.read`` and ``settings.write`` stay. #2916 deletes them when it
-moves the last gate off them.
+``settings.read`` and ``settings.write`` stay here. 0029_drop_settings_keys
+deletes them from every role.
 """
 
 from __future__ import annotations

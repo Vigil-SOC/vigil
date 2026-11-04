@@ -149,7 +149,7 @@ const SetupWizard = () => {
   const done = step === 'done'
   const last = index === DONE - 1
 
-  const canWrite = hasPermission('settings.write')
+  const canWrite = hasPermission('platform.write')
 
   // pick up where another admin or browser left off; a lost read keeps this browser's copy
   useEffect(() => {
