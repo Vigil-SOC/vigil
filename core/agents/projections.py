@@ -19,8 +19,9 @@ logger = logging.getLogger(__name__)
 
 READ_TIMEOUT_S = 10
 
-# True while reads are failing, so an outage logs one ERROR and one recovery line.
-_read_failing = False
+# None = no read yet, True = failing, False = ok. An outage logs one ERROR; the
+# first success after it, or a process's first read of all, logs one recovery line.
+_read_failing: Optional[bool] = None
 
 # An investigation id is ours and is not a uuid; a run id is. Derived rather than
 # stored so the same investigation always addresses the same run.
@@ -43,10 +44,11 @@ def _headers() -> Dict[str, str]:
 
 
 def _note_read(ok: bool, message: str, *args: Any) -> None:
-    """ERROR when reads start failing, DEBUG while they keep failing, INFO on recovery."""
+    """ERROR when reads start failing, DEBUG while they keep failing, INFO on the first
+    success (a process's first read, or one after a failure)."""
     global _read_failing
     if ok:
-        if _read_failing:
+        if _read_failing is not False:
             logger.info("agent service reads recovered")
         _read_failing = False
     elif _read_failing:
