@@ -1,17 +1,17 @@
 """What the agent detection tools read: the active rules and their latest versions.
 
 A rule's tool is where it was read: 'overlay' for Vigil's own overlay source,
-'repo' for any other configured repo, else the SIEM (source 'elastic' or
-'wazuh'). Only active rules count as deployed; search also finds the disabled
-ones, each hit saying so. An overlay hit also carries its rollout stage and
-stage history. ``rule_for_finding`` names the rule and version that fired a
-finding.
+'repo' for any other configured repo, else the SIEM (source 'elastic' for Kibana,
+'splunk' for Splunk saved searches, or 'wazuh'). Only active rules count as
+deployed; search also finds the disabled ones, each hit saying so. An overlay hit
+also carries its rollout stage and stage history. ``rule_for_finding`` names the
+rule and version that fired a finding.
 
 A SIEM copy may be linked to the repo rule it came from (origin_rule_id); an
 overlay rule counts as a repo rule here. A repo rule's state in a SIEM is its
 linked copies' (disabled, or their Runs result), or 'not deployed' when it has
-none there. Only SIEMs Vigil reads (today Kibana, 'elastic', and the Wazuh
-manager, 'wazuh') are listed: Splunk saved searches are not read yet.
+none there. Every SIEM Vigil reads (Kibana, 'elastic'; Splunk, 'splunk'; the
+Wazuh manager, 'wazuh') is listed. Only Kibana rules get a Sees check.
 
 A flag is a (rule, check) whose latest recorded change went pass -> fail, on a
 rule not removed. Nothing to fail, or a change to unknown, is no flag; a later
@@ -56,9 +56,9 @@ CURRENT_STAGE = (
     .order_by(DetectionRuleStage.rule_id, DetectionRuleStage.id.desc())
     .subquery("current_stage")
 )
-LINKED = DetectionRule.link_kind.in_(("same_id", "agent"))
+LINKED = DetectionRule.link_kind.in_(("same_id", "known_name", "agent"))
 NOT_DEPLOYED = "not deployed"
-NOT_READ = "Splunk saved searches are not read yet"
+NOT_READ = "Splunk and Wazuh rules get no Sees check yet"
 CHANGE = DetectionRuleCheckChange
 RECENT_CHANGES = 10
 # A row that changed the result; a fail -> fail row only changed the reason.
@@ -611,7 +611,7 @@ def rule_for_finding(finding: Mapping[str, Any]) -> Dict[str, Any]:
     """
     source = finding.get("data_source")
     if source == "splunk":
-        return _unknown("Splunk rules are not in the inventory yet")
+        return _unknown("Splunk findings do not name their saved search yet")
     if source != "elastic":
         return _unknown(f"only Kibana rules resolve; this finding is from {source}")
     context = finding.get("entity_context")

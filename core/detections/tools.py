@@ -1,8 +1,8 @@
 """
 Security-Detections tool integration - Pure Python implementation
 Answers from the detection rules every configured repo holds (Sigma, Splunk, Elastic, KQL)
-and the rules Kibana's detection engine and the Wazuh manager run, as
-core/detections/inventory syncs them into Postgres. Splunk saved searches are not read yet.
+and the rules Kibana's detection engine, Splunk's saved searches and the Wazuh
+manager run, as core/detections/inventory syncs them into Postgres.
 """
 
 import asyncio
@@ -106,7 +106,7 @@ class SecurityDetectionsTools:
             query: Search query (e.g., "powershell base64", "lateral movement")
             source_type: Optional filter by rule format ("sigma", "splunk", "elastic", "kql", "wazuh")
             limit: Maximum number of results
-            tool: Optional filter by where the rule was read ("overlay", "repo", "elastic", "wazuh")
+            tool: Optional filter by where the rule was read ("overlay", "repo", "elastic", "splunk", "wazuh")
             runs: Optional filter by Runs result ("pass", "fail", "unknown")
             stage: Optional filter by current rollout stage ("shadow", "live", "off")
             sees: Optional filter by Sees result ("pass", "fail", "unknown")

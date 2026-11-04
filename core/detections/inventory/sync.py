@@ -1,4 +1,4 @@
-"""Bring the detection rule tables in line with every configured repo, Kibana and Wazuh.
+"""Bring the detection rule tables in line with every configured repo, Kibana, Splunk and Wazuh.
 
 Each run reads every ready source in full, since a full list is the only way
 to see a deletion, and writes only what differs:
@@ -14,9 +14,11 @@ result or reason differs from the stored one; a new version starts with none.
 After Kibana syncs, ``sees`` checks whether each active Kibana rule's data is
 arriving and writes checks['sees'] the same way.
 
-After the sources, each Kibana rule is linked to the repo rule it came from when
-that is certain (``same_id``: one active repo Elastic rule with its rule_id). A
-link or decline an agent or person made is never touched.
+After the sources, each SIEM rule is linked to the repo rule it came from when
+that is certain: a Kibana rule by ``same_id`` (one active repo Elastic rule with
+its rule_id), a Splunk saved search by ``known_name`` ('ESCU - <name> - Rule' and
+one active repo Splunk rule named <name>). A link or decline an agent or person
+made is never touched.
 
 Every change of a check result is also appended to detection_rule_check_changes
 (``_record_changes``): a Runs result that differs from the rule's last recorded
@@ -36,15 +38,16 @@ Nothing is ever written to a SIEM.
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 from sqlalchemy import and_, bindparam, func, insert, or_, select, update
 
-from core.detections.inventory import kibana, readers, sees, wazuh
+from core.detections.inventory import kibana, readers, sees, splunk, wazuh
 from core.detections.inventory.record import RuleRecord, fingerprint
 from core.storage.connection import get_db_manager
 from core.storage.models import (
@@ -59,6 +62,8 @@ logger = logging.getLogger(__name__)
 # Serialises whole syncs across the daemon and API workers.
 SYNC_LOCK_KEY = 0x7669_6769_6C52_554C  # "vigilRUL"
 REPO_PREFIX = "repo:"
+# How ESCU names the saved search it ships for a detection.
+ESCU_NAME = re.compile(r"^ESCU - (.+) - Rule$")
 STAGED_LANGUAGES = ("splunk", "elastic")
 
 
@@ -389,7 +394,7 @@ def _remove_unconfigured(configured: List[str]) -> int:
 
 
 def sync_repos() -> List[Any]:
-    """Read every configured repo, Kibana and Wazuh, and sync each, then check Kibana rules' Sees.
+    """Read every configured repo, Kibana, Splunk and Wazuh, and sync each, then check Kibana rules' Sees.
 
     One failing source skips only itself.
     """
@@ -401,20 +406,28 @@ def sync_repos() -> List[Any]:
         reports = [_sync_one(service, source) for source in sources]
         removed = _remove_unconfigured([readers.source_name(s) for s in sources])
         elastic, config = _sync_elastic()
-        try:
-            elastic.linked, elastic.unlinked = _link_same_id()
-        except Exception as exc:  # noqa: BLE001 -- the next sync links again
-            logger.warning("detection rules: linking Kibana rules failed: %s", exc)
-            elastic.error = elastic.error or f"linking: {type(exc).__name__}: {exc}"
-        reports.append(elastic)
+        reports.append(_linked(elastic, _link_same_id))
         if config is not None:
             reports.append(sees.sweep_elastic(config))
+        reports.append(_linked(_sync_splunk(), _link_known_name))
         reports.append(_sync_wazuh())
     if removed:
         logger.info(
             "detection rules: %d rules of unconfigured sources removed", removed
         )
     return reports
+
+
+def _linked(report: SourceReport, link: Callable[[], tuple]) -> SourceReport:
+    """Link a SIEM source's rules after its sync; a failure only marks the report."""
+    try:
+        report.linked, report.unlinked = link()
+    except Exception as exc:  # noqa: BLE001 -- the next sync links again
+        logger.warning(
+            "detection rules: linking %s rules failed: %s", report.source, exc
+        )
+        report.error = report.error or f"linking: {type(exc).__name__}: {exc}"
+    return report
 
 
 def _sync_one(service: Any, source: Dict[str, Any]) -> SourceReport:
@@ -545,11 +558,80 @@ def _sync_wazuh() -> SourceReport:
     return report
 
 
-def _link_same_id() -> tuple:
-    """Link each Kibana rule to the one active repo Elastic rule with its rule_id.
+def _sync_splunk() -> SourceReport:
+    """Splunk's saved searches, with the splunk integration's credentials.
 
-    Only rows the sync owns (no link, or a same_id one) are written, and only
-    when the origin differs. A rule_id more than one repo carries links nothing.
+    The same config handling as _sync_elastic: removed only when the config was
+    read and splunk is not enabled; an unreadable config or Splunk is skipped.
+    """
+    from core.config import load_integrations_config
+    from core.integrations._base.config import missing, resolve
+    from core.integrations.splunk.descriptor import SPLUNK, SPLUNK_SELFHOSTED_REQUIRED
+
+    try:
+        integrations = load_integrations_config()
+        if not integrations["configured"]:
+            return SourceReport(source=splunk.SOURCE, skipped="no integration config")
+        if SPLUNK.id not in integrations["enabled_integrations"]:
+            return SourceReport(
+                source=splunk.SOURCE,
+                removed=_remove_siem(splunk.SOURCE, "splunk"),
+                skipped="not enabled",
+            )
+        config = resolve(SPLUNK)
+        absent = missing(config, *SPLUNK_SELFHOSTED_REQUIRED)
+        if absent:
+            return SourceReport(source=splunk.SOURCE, skipped=f"no {absent[0]}")
+        report = sync_source(splunk.SOURCE, splunk.read_splunk(config))
+    except Exception as exc:  # noqa: BLE001 -- unreachable is skipped, never removed
+        logger.warning("detection rules: syncing splunk failed: %s", exc)
+        return SourceReport(source=splunk.SOURCE, error=f"{type(exc).__name__}: {exc}")
+    logger.info("detection rules: %s", asdict(report))
+    return report
+
+
+def _link_same_id() -> tuple:
+    """Link each Kibana rule to the one active repo Elastic rule with its rule_id."""
+    return _link(
+        kibana.SOURCE,
+        "elastic",
+        "same_id",
+        lambda copy: copy.native_key,
+        DetectionRule.native_key,
+        "same elastic rule_id {}",
+    )
+
+
+def _link_known_name() -> tuple:
+    """Link each 'ESCU - <name> - Rule' search to the one active repo Splunk rule named <name>."""
+
+    def name_of(copy: DetectionRule) -> Optional[str]:
+        match = ESCU_NAME.match(copy.name or "")
+        return match.group(1) if match else None
+
+    return _link(
+        splunk.SOURCE,
+        "splunk",
+        "known_name",
+        name_of,
+        DetectionRule.name,
+        "ESCU saved search of the repo rule named {!r}",
+    )
+
+
+def _link(
+    source: str,
+    language: str,
+    kind: str,
+    key_of: Callable[[DetectionRule], Optional[str]],
+    origin_key: Any,
+    reason: str,
+) -> tuple:
+    """Link each ``source`` rule to the one active repo ``language`` rule whose
+    ``origin_key`` is ``key_of(copy)``.
+
+    Only rows the sync owns (no link, or a ``kind`` one) are written, and only
+    when the origin differs. A key more than one repo rule carries links nothing.
     Returns (linked, unlinked).
     """
     linked = unlinked = 0
@@ -557,26 +639,27 @@ def _link_same_id() -> tuple:
     with get_db_manager().session_scope() as session:
         origins: Dict[str, List[int]] = {}
         for rule_id, key in session.execute(
-            select(DetectionRule.id, DetectionRule.native_key).where(
+            select(DetectionRule.id, origin_key).where(
                 DetectionRule.source.startswith(REPO_PREFIX),
-                DetectionRule.language == "elastic",
+                DetectionRule.language == language,
                 DetectionRule.status == "active",
             )
         ):
             origins.setdefault(key, []).append(rule_id)
         copies = session.scalars(
             select(DetectionRule).where(
-                DetectionRule.source == kibana.SOURCE,
+                DetectionRule.source == source,
                 or_(
                     DetectionRule.link_kind.is_(None),
-                    DetectionRule.link_kind == "same_id",
+                    DetectionRule.link_kind == kind,
                 ),
             )
             # An agent's decision on a copy commits before or after this, not between.
             .with_for_update()
         ).all()
         for copy in copies:
-            ids = origins.get(copy.native_key, []) if copy.language == "elastic" else []
+            key = key_of(copy) if copy.language == language else None
+            ids = origins.get(key, []) if key is not None else []
             target = ids[0] if len(ids) == 1 else None
             if target == copy.origin_rule_id:
                 continue
@@ -585,9 +668,9 @@ def _link_same_id() -> tuple:
                 copy.link_reason = copy.linked_at = None
                 unlinked += 1
                 continue
-            copy.origin_rule_id, copy.link_kind = target, "same_id"
+            copy.origin_rule_id, copy.link_kind = target, kind
             copy.linked_by = "system"
-            copy.link_reason = f"same elastic rule_id {copy.native_key}"
+            copy.link_reason = reason.format(key)
             copy.linked_at = now
             linked += 1
     return linked, unlinked

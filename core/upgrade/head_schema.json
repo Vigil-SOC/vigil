@@ -4103,7 +4103,7 @@
  "constraint detection_rule_versions.detection_rule_versions_rule_id_fkey": "FOREIGN KEY (rule_id) REFERENCES detection_rules(id)",
  "constraint detection_rule_versions.detection_rule_versions_version_check": "CHECK ((version >= 1))",
  "constraint detection_rules.detection_rules_latest_version_check": "CHECK ((latest_version >= 1))",
- "constraint detection_rules.detection_rules_link_kind_check": "CHECK ((((link_kind = ANY (ARRAY['same_id'::text, 'agent'::text, 'declined'::text])) AND (origin_rule_id IS NOT NULL)) OR ((link_kind IS NULL) AND (origin_rule_id IS NULL))))",
+ "constraint detection_rules.detection_rules_link_kind_check": "CHECK ((((link_kind = ANY (ARRAY['same_id'::text, 'known_name'::text, 'agent'::text, 'declined'::text])) AND (origin_rule_id IS NOT NULL)) OR ((link_kind IS NULL) AND (origin_rule_id IS NULL))))",
  "constraint detection_rules.detection_rules_origin_rule_id_fkey": "FOREIGN KEY (origin_rule_id) REFERENCES detection_rules(id)",
  "constraint detection_rules.detection_rules_pkey": "PRIMARY KEY (id)",
  "constraint detection_rules.detection_rules_source_native_key": "UNIQUE (source, native_key)",

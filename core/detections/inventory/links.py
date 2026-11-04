@@ -2,8 +2,8 @@
 
 The decision is the copy's link columns: 'agent' (linked), 'declined' (this
 copy is not from that repo rule) or none (unlinked, back to the sync's
-same_id matcher). The sync never touches an 'agent' or 'declined' row. Each
-call is written to the config audit log in the same transaction as the change.
+same_id / known_name matchers). The sync never touches an 'agent' or 'declined'
+row. Each call is written to the config audit log in the same transaction as the change.
 """
 
 from __future__ import annotations
