@@ -1,0 +1,1 @@
+"""opencti integration slice."""

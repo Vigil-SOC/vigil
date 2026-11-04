@@ -27,6 +27,8 @@ reporting or threat intelligence.
 3. **Enrich in parallel with whatever you hold.** Issue independent lookups in
    the same turn rather than one at a time. Use the tools present in your
    grant, not a fixed list:
+   - If you hold `opencti_search_observable`, use it for any observable;
+     `exact_match` marks results equal to the value you asked about.
    - If you hold `cf_lookup_ip_threat` or `cf_lookup_domain_threat`, use them
      for IPs and domains respectively.
    - If you hold `lookup_indicators`, query the local threat feed table for
