@@ -23,7 +23,7 @@ from services.medic.app.heartbeat import STARTUP_GRACE_S
 from services.medic.store import StoreError, open_reader
 from services.medic.store.writer import StoreUsage
 
-API_VERSION = "1.1"
+API_VERSION = "1.2"
 
 # The writer's usage().states are StoreHealth.states (medic-api.openapi.yaml).
 _NOT_RECORDING = {"recording_stopped", "migration_blocked"}

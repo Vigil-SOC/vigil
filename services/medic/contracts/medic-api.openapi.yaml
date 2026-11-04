@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Medic API
-  version: "1.1.0"
-  summary: Medic's read-only API, plus one admin write (decision feedback).
+  version: "1.2.0"
+  summary: "Medic's API: reads, plus admin writes (decision feedback and the content pack)."
   description: |
     Contract X2 (2026-10-07). G3 builds this API inside the Medic process; H3 (the backend
     proxy) is its only caller. ADR: outputs/X2-medic-api-adr.md.
@@ -236,7 +236,7 @@ components:
                 code: not_found
                 request_id: 0b6f2a8e-6c0e-4d1e-9b0c-4d3f1a2b3c4d
     TooLarge:
-      description: Request body over 4 KB
+      description: Request body over the operation's limit (4 KB; a pack import 4 MB + 64 KB)
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -280,7 +280,7 @@ components:
                 field: X-Medic-Admin
                 request_id: 0b6f2a8e-6c0e-4d1e-9b0c-4d3f1a2b3c4d
     Busy:
-      description: Medic is shedding load (more than 4 requests in flight, or a read hit its statement timeout; T-29)
+      description: Medic is shedding load (more than 4 requests in flight, or a read hit its statement timeout; T-29). A pack write is also answered `busy` when the main loop doesn't reach it within the snapshot age (20 s); it is then dropped, never applied later.
       headers:
         Retry-After:
           schema: { type: integer, minimum: 1 }
@@ -295,8 +295,49 @@ components:
                 code: busy
                 retry_after_s: 2
                 request_id: 0b6f2a8e-6c0e-4d1e-9b0c-4d3f1a2b3c4d
+    PackRefused:
+      description: |
+        The pack file failed verification or its checks (or, for revert and switch-to-bundled,
+        the stored target no longer does). `pack_code` says which check; nothing was changed
+        and no `pack_event` was written. 422 also carries `missing_admin_identity` and, on an
+        operation that takes no body, `invalid_body`, as on feedback.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            bad_signature:
+              value:
+                type: "urn:medic:error:pack_refused"
+                status: 422
+                code: pack_refused
+                pack_code: S-SIG
+                request_id: 0b6f2a8e-6c0e-4d1e-9b0c-4d3f1a2b3c4d
+    PackConflict:
+      description: |
+        The operation doesn't fit this install's pack state: `P-WITHDRAWN` (re-import of a
+        withdrawn version without `override`), `P-NO-TARGET` (no last-known-good, or no bundled
+        pack), `P-NO-ACTIVE`, `P-BUNDLED-ACTIVE` or `P-NO-BUNDLED`. Nothing was changed.
+        Or (`pack_unavailable`) Medic has no pack lifecycle to operate on: dev mode, which runs
+        the unsigned source pack, or a start where the image's trust root was unreadable.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            withdrawn:
+              value:
+                type: "urn:medic:error:pack_conflict"
+                status: 409
+                code: pack_conflict
+                pack_code: P-WITHDRAWN
+                request_id: 0b6f2a8e-6c0e-4d1e-9b0c-4d3f1a2b3c4d
+            dev_mode:
+              value:
+                type: "urn:medic:error:pack_unavailable"
+                status: 409
+                code: pack_unavailable
+                request_id: 0b6f2a8e-6c0e-4d1e-9b0c-4d3f1a2b3c4d
     NotRecording:
-      description: The store can't take writes (`recording_stopped` or `migration_blocked`, C4 §6.6), or Medic is busy
+      description: The store can't take writes (`recording_stopped` or `migration_blocked`, C4 §6.6), or Medic is busy. A pack write is refused then too, so a pack is never swapped without its `pack_event`.
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -320,8 +361,8 @@ components:
         input, and the console maps `code` (and `reason`) to its own words. Each code has one
         status: unauthorized 401 · not_found 404 · method_not_allowed 405 · invalid_parameter 400 ·
         invalid_cursor 400 · invalid_body 422 · missing_admin_identity 422 · not_rateable 409 ·
-        payload_too_large 413 · unsupported_media_type 415 · busy 503 · store_not_recording 503 ·
-        internal 500.
+        pack_refused 422 · pack_conflict 409 · pack_unavailable 409 · payload_too_large 413 ·
+        unsupported_media_type 415 · busy 503 · store_not_recording 503 · internal 500.
       type: object
       required: [type, status, code, request_id]
       additionalProperties: false
@@ -345,6 +386,9 @@ components:
             - invalid_body
             - missing_admin_identity
             - not_rateable
+            - pack_refused
+            - pack_conflict
+            - pack_unavailable
             - payload_too_large
             - unsupported_media_type
             - busy
@@ -352,14 +396,62 @@ components:
             - internal
           x-medic-type: enum
         field:
-          description: The offending query parameter, header name, or body JSON Pointer.
+          description: The offending query parameter (`override` on a pack import), header name, or body JSON Pointer.
           type: string
           pattern: "^[A-Za-z0-9_/.-]{1,64}$"
           x-medic-type: id
         reason:
-          description: For not_rateable only.
+          description: For not_rateable only. A pack refusal carries `pack_code` instead.
           type: string
           enum: [suppressed, closed_quietly, not_routed, value_not_offered]
+          x-medic-type: enum
+        pack_code:
+          description: |
+            For pack_refused and pack_conflict only: the check that refused. `S-*` are the
+            envelope and trust checks (signature, key, scope, channel, size), `P-*` the pack
+            checks and the lifecycle's own refusals (`P-WITHDRAWN`, `P-NO-TARGET`, `P-NO-ACTIVE`,
+            `P-BUNDLED-ACTIVE`, `P-NO-BUNDLED`). A closed set the console maps to its own words.
+          type: string
+          enum:
+            - S-CHANNEL
+            - S-DEV
+            - S-DIGEST
+            - S-ENVELOPE
+            - S-FORMAT
+            - S-JSON
+            - S-KEY-EXPIRED
+            - S-REVOKED
+            - S-ROOT-EXPIRED
+            - S-SCOPE
+            - S-SIG
+            - S-SIZE
+            - S-STATEMENT
+            - S-THRESHOLD
+            - S-TYPE
+            - S-UNSIGNED
+            - P-BUNDLED-ACTIVE
+            - P-CATALOG
+            - P-COUNTS
+            - P-DATES
+            - P-DOWNGRADE
+            - P-ENGINE
+            - P-EXPIRED
+            - P-FILES
+            - P-HASH
+            - P-JSON
+            - P-LINEAGE
+            - P-NO-ACTIVE
+            - P-NO-BUNDLED
+            - P-NO-TARGET
+            - P-PATH
+            - P-RULE
+            - P-RULE-DUP
+            - P-RUNBOOK
+            - P-SCHEMA
+            - P-SIZE
+            - P-SUPPRESSION
+            - P-VIGIL
+            - P-WITHDRAWN
           x-medic-type: enum
         retry_after_s:
           type: integer
@@ -878,7 +970,7 @@ paths:
               examples:
                 degraded:
                   value:
-                    api_version: "1.1"
+                    api_version: "1.2"
                     instance_id: mi_3f9a2c1b0d4e5f60
                     state: degraded
                     now: "2026-12-07T14:02:31Z"
@@ -1200,8 +1292,10 @@ paths:
       tags: [pack]
       summary: Content pack facts for the Content pack tab (UX-25, UX-26, UX-28)
       description: |
-        Read-only. Import, revert, switch-to-bundled and the revoked-key acknowledgement are
-        **not** in this contract (X2 ⚑3): they are added under `/v1/pack/` by F6.
+        Read-only; the writes are the four operations under `/v1/pack/` (F6, 1.2.0). Served from
+        the main loop's snapshot, with the same staleness rule as `/v1/status` (older than the
+        snapshot age: 503 `busy`). `suppression_7d` is refreshed about once a minute and after
+        every pack write.
       x-medic-permission: read
       responses:
         "200":
@@ -1251,4 +1345,161 @@ paths:
                     suppression_7d:
                       - { rule: llm.key-rejected, suppressed: 2 }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/PackConflict" }
+        "503": { $ref: "#/components/responses/Busy" }
+
+  /v1/pack/import:
+    post:
+      operationId: importPack
+      tags: [pack]
+      summary: Import a signed content pack and run it
+      description: |
+        The body is the `medic.signed-pack/v1` document, `application/json`, at most
+        4 MB + 64 KB (size is checked from `Content-Length` before the body is read). It is
+        verified on the listener thread first, so a bad pack never reaches the loop; the loop
+        verifies again as it activates it. A version on `withdrawn` is refused (409,
+        `P-WITHDRAWN`) unless `override=true`, which does nothing for any other version.
+        Writes `imported` (or `override`, for a withdrawn version), then one `rule_skipped` per
+        rule the engine is too old for. The outgoing pack becomes `previous`.
+        Runs in Medic's main loop at its next cycle boundary (up to ~20 s), so the response
+        is slow by design; the rules, suppression list and log catalogue change before the
+        next tick. Not idempotent: H3 must not retry it. Needs `X-Medic-Admin`. Writes the
+        `pack_event` below to the decision log. A refusal writes nothing there (it is logged
+        and returned).
+      x-medic-permission: admin
+      parameters:
+        - name: X-Medic-Admin
+          in: header
+          required: true
+          description: Set by H3 from the session (`user:<Vigil user id>`); never from the client.
+          schema: { $ref: "./decision-record.schema.json#/$defs/id" }
+        - name: override
+          in: query
+          required: false
+          description: Re-import a version that was withdrawn here by a revert (UX-27). Default false.
+          schema: { type: boolean, default: false }
+      requestBody:
+        required: true
+        description: A signed pack, `application/json`. Not the console's to parse; H3 relays it as is.
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true, x-medic-type: admin_input }
+      responses:
+        "200":
+          description: The `PackState` after the operation (what `GET /v1/pack` serves next)
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PackState" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/PackConflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/PackRefused" }
+        "503": { $ref: "#/components/responses/NotRecording" }
+
+  /v1/pack/revert:
+    post:
+      operationId: revertPack
+      tags: [pack]
+      summary: Make the previous (last-known-good) pack active again
+      description: |
+        Re-verifies last-known-good against the current trust root and makes it active. The
+        version reverted away from goes on `withdrawn`; `previous` is left empty. Refused
+        (409) with `P-NO-ACTIVE` or `P-NO-TARGET`. Writes `reverted`. No request body.
+        Runs in Medic's main loop at its next cycle boundary (up to ~20 s), so the response
+        is slow by design; the rules, suppression list and log catalogue change before the
+        next tick. Not idempotent: H3 must not retry it. Needs `X-Medic-Admin`. Writes the
+        `pack_event` below to the decision log. A refusal writes nothing there (it is logged
+        and returned).
+      x-medic-permission: admin
+      parameters:
+        - name: X-Medic-Admin
+          in: header
+          required: true
+          description: Set by H3 from the session (`user:<Vigil user id>`); never from the client.
+          schema: { $ref: "./decision-record.schema.json#/$defs/id" }
+      responses:
+        "200":
+          description: The `PackState` after the operation (what `GET /v1/pack` serves next)
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PackState" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/PackConflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "422": { $ref: "#/components/responses/PackRefused" }
+        "503": { $ref: "#/components/responses/NotRecording" }
+
+  /v1/pack/switch-to-bundled:
+    post:
+      operationId: switchToBundledPack
+      tags: [pack]
+      summary: Make the release's bundled pack active
+      description: |
+        Re-verifies the bundled pack (stale or out-of-range is let through, as at start-up) and
+        makes it active. The version switched away from goes on `withdrawn`; `previous` is
+        left empty. Refused (409) with `P-NO-BUNDLED`/`P-NO-TARGET`, `P-NO-ACTIVE` or
+        `P-BUNDLED-ACTIVE`. Writes `reverted`. No request body.
+        Runs in Medic's main loop at its next cycle boundary (up to ~20 s), so the response
+        is slow by design; the rules, suppression list and log catalogue change before the
+        next tick. Not idempotent: H3 must not retry it. Needs `X-Medic-Admin`. Writes the
+        `pack_event` below to the decision log. A refusal writes nothing there (it is logged
+        and returned).
+      x-medic-permission: admin
+      parameters:
+        - name: X-Medic-Admin
+          in: header
+          required: true
+          description: Set by H3 from the session (`user:<Vigil user id>`); never from the client.
+          schema: { $ref: "./decision-record.schema.json#/$defs/id" }
+      responses:
+        "200":
+          description: The `PackState` after the operation (what `GET /v1/pack` serves next)
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PackState" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/PackConflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "422": { $ref: "#/components/responses/PackRefused" }
+        "503": { $ref: "#/components/responses/NotRecording" }
+
+  /v1/pack/acknowledge:
+    post:
+      operationId: acknowledgeRevokedNotice
+      tags: [pack]
+      summary: Acknowledge the revoked-key notice (UX-28)
+      description: |
+        Clears `revoked_notice`. With no notice set it succeeds and changes nothing. Writes
+        **no** decision-log record (only a log line). No request body. Runs through the same
+        queue as the other writes, so it is also answered after the next cycle boundary.
+      x-medic-permission: admin
+      parameters:
+        - name: X-Medic-Admin
+          in: header
+          required: true
+          description: Set by H3 from the session (`user:<Vigil user id>`); never from the client.
+          schema: { $ref: "./decision-record.schema.json#/$defs/id" }
+      responses:
+        "200":
+          description: The `PackState` after the operation (what `GET /v1/pack` serves next)
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PackState" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/PackConflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "422": { $ref: "#/components/responses/InvalidBody" }
         "503": { $ref: "#/components/responses/Busy" }

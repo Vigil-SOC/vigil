@@ -1,6 +1,6 @@
-"""Medic's API listener (X2): `GET /v1/status`, the decision log, incidents and
-sensors, and the one write, `POST /v1/incidents/{id}/feedback`. `/v1/pack` is
-later G3 work and is not routed (404).
+"""Medic's API listener (X2): `GET /v1/status`, the decision log, incidents,
+sensors and the pack, and the writes: `POST /v1/incidents/{id}/feedback` and the
+four pack operations under `/v1/pack/` (queued to the main loop, api/pack.py).
 
 stdlib only, like the gateway (SP1 ⚑5). Every request needs `X-Medic-Key`,
 compared in constant time with the key file, re-read on each request so a new
@@ -32,6 +32,8 @@ from typing import Any
 from services.medic.api.decisions import Problem, get_decision, list_page
 from services.medic.api.feedback import post_feedback
 from services.medic.api.incidents import get_incident, list_incidents
+from services.medic.api.pack import OPS as PACK_OPS
+from services.medic.api.pack import PackBridge, post_pack
 from services.medic.api.status import API_VERSION, serve_view
 from services.medic.app.config import API_KEY_FILE_VAR
 
@@ -39,6 +41,7 @@ log = logging.getLogger("services.medic")
 
 STATUS_PATH = "/v1/status"
 SENSORS_PATH = "/v1/sensors"
+PACK_PATH = "/v1/pack"
 # The main loop's tick (wiring.TICK_S, semantics.md §1); keep the two equal.
 # Not imported, so the listener stays light.
 TICK_S = 15
@@ -64,6 +67,7 @@ class StatusBoard:
         self._lock = threading.Lock()
         self._current: tuple[dict[str, Any], float, float] | None = None
         self._sensors: dict[str, Any] | None = None
+        self._pack: dict[str, Any] | None = None
 
     def publish(
         self,
@@ -72,12 +76,14 @@ class StatusBoard:
         started_at: float,
         taken_at: float,
         sensors: dict[str, Any] | None = None,
+        pack: dict[str, Any] | None = None,
     ) -> None:
-        """`sensors` is the `SensorList` body, published with the status it
-        was taken with (so it goes stale with it)."""
+        """`sensors` is the `SensorList` body and `pack` the `PackState`, each
+        published with the status it was taken with (so it goes stale with it)."""
         with self._lock:
             self._current = (snapshot, started_at, taken_at)
             self._sensors = sensors
+            self._pack = pack
 
     def read(self) -> tuple[dict[str, Any], float, float] | None:
         with self._lock:
@@ -88,6 +94,12 @@ class StatusBoard:
             if self._current is None:
                 return None
             return self._sensors, self._current[2]
+
+    def read_pack(self) -> tuple[dict[str, Any] | None, float] | None:
+        with self._lock:
+            if self._current is None:
+                return None
+            return self._pack, self._current[2]
 
 
 def read_key(path: Path) -> bytes | None:
@@ -122,6 +134,7 @@ class Handler(BaseHTTPRequestHandler):
     wall: Callable[[], float]
     data_dir: Path | None = None
     writer: Any = None  # the main loop's DecisionWriter, for the feedback POST
+    bridge: PackBridge | None = None  # to the main loop, for the pack writes
 
     def log_message(self, *args: Any) -> None:  # the access log would print targets
         pass
@@ -208,13 +221,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handler(self) -> tuple[str, Callable[[], None]] | None:
         """`(method, handler)` for a known path. Status and sensors are exact
-        targets. Decisions and incidents take a query. Every other path,
-        including `/v1/pack`, is not this listener's."""
+        targets. Decisions and incidents take a query, and so does the pack
+        import (`override`). Every other path is not this listener's."""
         path, _, query = self.raw_target.partition("?")
         if self.raw_target == STATUS_PATH:
             return "GET", self._status
         if self.raw_target == SENSORS_PATH:
             return "GET", self._sensors
+        if self.raw_target == PACK_PATH:
+            return "GET", self._pack
+        head, _, op = path.rpartition("/")
+        if head == PACK_PATH and op in PACK_OPS:
+            return "POST", lambda: self._pack_write(op, query)
         if path == "/v1/decisions":
             return "GET", lambda: self._finish(list_page(self.data_dir, query))
         if path == "/v1/incidents":
@@ -242,6 +260,30 @@ class Handler(BaseHTTPRequestHandler):
         )
         self._finish(result, status=201)
 
+    def _read_body(self, n: int) -> bytes:
+        """A pack is up to 4 MB: the whole read gets the request deadline `do_any`
+        lifted (one byte every few seconds must not hold a slot)."""
+        timer = threading.Timer(self.timeout, _cut, (self.connection,))
+        timer.start()
+        try:
+            return self.rfile.read(n)
+        finally:
+            timer.cancel()
+
+    def _pack_write(self, op: str, query: str) -> None:
+        result = post_pack(
+            op,
+            self.bridge,
+            self.wall,
+            query,
+            content_type=self.headers.get("Content-Type"),
+            length=self.headers.get("Content-Length"),
+            admins=self.headers.get_all("X-Medic-Admin") or [],
+            read_body=self._read_body,
+            timeout=SNAPSHOT_MAX_AGE_S,
+        )
+        self._finish(result)
+
     def _finish(self, result: dict | Problem, status: int = 200) -> None:
         if isinstance(result, Problem):
             extra: dict[str, Any] = {}
@@ -249,6 +291,8 @@ class Handler(BaseHTTPRequestHandler):
                 extra["field"] = result.field
             if result.reason:
                 extra["reason"] = result.reason
+            if result.pack_code:
+                extra["pack_code"] = result.pack_code
             if result.code == "busy":
                 extra["retry_after_s"] = 1
             self._problem(result.status, result.code, **extra)
@@ -266,6 +310,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def _sensors(self) -> None:
         current = self.board.read_sensors()
+        if current is None or current[0] is None:
+            return self._problem(503, "busy", retry_after_s=RETRY_AFTER_S)
+        doc, taken_at = current
+        if self.wall() - taken_at > SNAPSHOT_MAX_AGE_S:
+            return self._problem(503, "busy", retry_after_s=RETRY_AFTER_S)
+        self._send(200, doc, "application/json")
+
+    def _pack(self) -> None:
+        if self.bridge is None or not self.bridge.available:
+            return self._problem(409, "pack_unavailable")  # dev mode: no lifecycle
+        current = self.board.read_pack()
         if current is None or current[0] is None:
             return self._problem(503, "busy", retry_after_s=RETRY_AFTER_S)
         doc, taken_at = current
@@ -310,6 +365,7 @@ def make_server(
     wall: Callable[[], float],
     data_dir: Path | None = None,
     writer: Any = None,
+    bridge: PackBridge | None = None,
 ) -> ThreadingHTTPServer:
     attrs = {
         "key_file": key_file,
@@ -317,6 +373,7 @@ def make_server(
         "wall": staticmethod(wall),
         "data_dir": data_dir,
         "writer": writer,
+        "bridge": bridge,
     }
     return _Server(bind, type("MedicApiHandler", (Handler,), attrs))
 
@@ -340,11 +397,12 @@ class Api:
         monotonic: Callable[[], float],
         data_dir: Path | None = None,
         writer: Any = None,
+        bridge: PackBridge | None = None,
         bind_peer: str | None = None,
         retry_s: float = RETRY_MAX_S,
     ) -> None:
         self.bind, self.key_file, self.board = bind, key_file, board
-        self.data_dir, self.writer = data_dir, writer
+        self.data_dir, self.writer, self.bridge = data_dir, writer, bridge
         self.bind_peer = bind_peer
         self._wall, self._monotonic, self._retry_s = wall, monotonic, retry_s
         self._next_try: float | None = None
@@ -415,6 +473,7 @@ class Api:
                 wall=self._wall,
                 data_dir=self.data_dir,
                 writer=self.writer,
+                bridge=self.bridge,
             )
         except OSError as exc:
             self._say_once(
