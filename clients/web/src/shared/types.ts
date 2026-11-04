@@ -15,7 +15,7 @@ export type SettingsSectionKey =
   | 'dev'
   | 'data'
   | 'audit'
-  | 'navigation'
+  | 'appearance'
 
 /** A file the command bar already read, handed to Ask Vigil with the question. */
 export interface SeedDocument {
