@@ -22,6 +22,7 @@ from core.detections.inventory.record import RuleRecord
 
 logger = logging.getLogger(__name__)
 
+# The C build of SafeLoader when present: same safe subset, much faster.
 _YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 
 # ``id = "T1219"`` under [[rule.threat.technique]] and its subtechnique tables.
@@ -228,7 +229,7 @@ def parse_file(fmt: str, path: Path, rel: str, text: str) -> Optional[RuleRecord
         return _kql_markdown(text, rel)
     if suffix == ".kql":
         return _kql_file(text, rel)
-    doc = yaml.load(text, Loader=_YAML_LOADER)
+    doc = yaml.load(text, Loader=_YAML_LOADER)  # nosec B506
     if not isinstance(doc, dict):
         return None
     if fmt == "auto":
