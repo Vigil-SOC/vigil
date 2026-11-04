@@ -2,14 +2,16 @@
 
 import asyncio
 import logging
+from dataclasses import asdict
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 
 from core.auth.permissions import permission_gate
 from core.deps import provide_detection_rules, provide_mcp_client, provide_mcp_registry
 from core.detections.detection_rules_service import DetectionRulesService
+from core.detections.inventory.sync import sync_repos
 from core.integrations.mcp.registry import MCPRegistry, register_connected
 from core.routing import Auth, RouterMeta
 
@@ -77,6 +79,7 @@ def get_source(
 @router.post("/sources", dependencies=_SETTINGS_WRITE)
 def add_source(
     request: AddSourceRequest,
+    background: BackgroundTasks,
     service: DetectionRulesService = Depends(provide_detection_rules),
 ):
     """
@@ -98,6 +101,7 @@ def add_source(
             subdirectory=request.subdirectory,
             story_subdirectory=request.story_subdirectory,
         )
+        background.add_task(_sync_detection_rules)
         return {"success": True, "source": source}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -106,6 +110,7 @@ def add_source(
 @router.delete("/sources/{source_id}", dependencies=_SETTINGS_WRITE)
 def remove_source(
     source_id: str,
+    background: BackgroundTasks,
     delete_files: bool = False,
     service: DetectionRulesService = Depends(provide_detection_rules),
 ):
@@ -122,12 +127,14 @@ def remove_source(
     success = service.remove_source(source_id, delete_files=delete_files)
     if not success:
         raise HTTPException(status_code=404, detail=f"Source not found: {source_id}")
+    background.add_task(_sync_detection_rules)
     return {"success": True}
 
 
 @router.post("/sources/{source_id}/update", dependencies=_SETTINGS_WRITE)
 async def update_source(
     source_id: str,
+    background: BackgroundTasks,
     service: DetectionRulesService = Depends(provide_detection_rules),
     mcp_client=Depends(provide_mcp_client),
     registry: MCPRegistry = Depends(provide_mcp_registry),
@@ -147,6 +154,7 @@ async def update_source(
 
         # After updating, restart the security-detections MCP server to rebuild index
         await _restart_security_detections_mcp(mcp_client, service, registry)
+        background.add_task(_sync_detection_rules)
 
         return {"success": True, "source": source}
     except ValueError as e:
@@ -155,6 +163,7 @@ async def update_source(
 
 @router.post("/update-all", dependencies=_SETTINGS_WRITE)
 async def update_all_sources(
+    background: BackgroundTasks,
     service: DetectionRulesService = Depends(provide_detection_rules),
     mcp_client=Depends(provide_mcp_client),
     registry: MCPRegistry = Depends(provide_mcp_registry),
@@ -169,6 +178,7 @@ async def update_all_sources(
 
     # After updating all, restart the security-detections MCP server
     await _restart_security_detections_mcp(mcp_client, service, registry)
+    background.add_task(_sync_detection_rules)
 
     return {"success": True, "results": results}
 
@@ -208,19 +218,33 @@ async def reload_service(
     registry: MCPRegistry = Depends(provide_mcp_registry),
 ):
     """
-    Reload the detection rules service (re-reads config and rescans all sources).
-    Also restarts the security-detections MCP server.
+    Reload the detection rules service (re-reads config and rescans all sources),
+    syncs every source into the detection rule tables, and restarts the
+    security-detections MCP server.
 
     Returns:
-        Success status with updated stats
+        Success status with updated stats and what the sync wrote per source
     """
     await asyncio.to_thread(service.reload)
+    reports = await asyncio.to_thread(sync_repos)
 
     # Restart the MCP server
     await _restart_security_detections_mcp(mcp_client, service, registry)
 
     stats = await asyncio.to_thread(service.get_stats)
-    return {"success": True, "stats": stats}
+    return {
+        "success": True,
+        "stats": stats,
+        "sync": [asdict(report) for report in reports],
+    }
+
+
+def _sync_detection_rules() -> None:
+    """Sync after a source changed. Runs after the response; a failure is only logged."""
+    try:
+        sync_repos()
+    except Exception as e:  # noqa: BLE001 -- the hourly daemon sync retries
+        logger.warning(f"Detection rule sync failed: {e}")
 
 
 async def _restart_security_detections_mcp(
