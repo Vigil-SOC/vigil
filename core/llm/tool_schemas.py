@@ -130,7 +130,7 @@ SECURITY_DETECTION_TOOLS = [
     },
     {
         "name": "check_detection_candidate",
-        "description": "Lint a candidate Sigma rule and replay it against events the caller already has. Replay is one selection of field equality and |contains, AND-ed. Returns lint, replay, and candidate; candidate is set only when lint passed and an event matched. Does not query Findings or a SIEM and does not write a rule.",
+        "description": "Lint a candidate Sigma rule and replay its single-event detection against events the caller already has: named selections, conditions with and/or/not, brackets, 1 of/all of, null and keyword selections, the modifiers contains, startswith, endswith, all and re, case-insensitive with * and ? wildcards. Aggregations (| count()), correlation rules and unknown modifiers return replay.evaluated false with the reason. Pass ruled_out_events too: the draft must stay quiet on them. Returns lint, replay, and candidate; candidate is set only when lint passed, a proven event matched and no ruled-out event matched. Does not query Findings or a SIEM and does not write a rule.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -141,7 +141,12 @@ SECURITY_DETECTION_TOOLS = [
                 "events": {
                     "type": "array",
                     "items": {"type": "object"},
-                    "description": "Events already in hand. Field names are matched to event keys as written.",
+                    "description": "Proven events for the missed step, fetched from the SIEM for its window. Field names are matched to event keys as written.",
+                },
+                "ruled_out_events": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Events from runs whose explanation was ruled out. The candidate fails if the rule matches any of them.",
                 },
                 "technique_id": {
                     "type": "string",
