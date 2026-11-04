@@ -17,7 +17,7 @@ import logging
 import os
 import sqlite3
 import tempfile
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -81,6 +81,8 @@ class Loaded(NamedTuple):
     facts: dict[str, Any] | None = None
     events: Sequence[dict[str, Any]] = ()  # pack_event bodies for the decision log
     context: PackContext | None = None  # None in dev mode: no lifecycle
+    # Lane-1 rule id -> {id, verify_after_s}: what the router copies onto an incident.
+    runbooks: Mapping[str, dict[str, Any]] = {}
 
 
 def load_pack(
@@ -108,6 +110,13 @@ def load_pack(
             [load_rule_file(p, pack=pack) for p in files],
             yaml.safe_load((PACK_DIR / "suppression.yaml").read_text()),
             yaml.safe_load((PACK_DIR / "catalog.yaml").read_text()),
+            runbooks=_runbook_map(
+                shape,
+                [
+                    yaml.safe_load(p.read_text())
+                    for p in sorted((PACK_DIR / "runbooks").glob("*.yaml"))
+                ],
+            ),
         )
     try:
         return _load_active(shape, data_dir, now, vigil_version)
@@ -121,6 +130,18 @@ def _no_pack(reason: str, events: Sequence[dict[str, Any]] = ()) -> Loaded:
         "Medic has no rule pack (%s): only the built-in watcher.* rules run", reason
     )
     return Loaded([], [], set(), events=events)
+
+
+def _runbook_map(shape: str, descriptors: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """Rule id -> {id, verify_after_s}, one entry per rule a descriptor applies to.
+    The record's runbook object takes nothing else. A stop_stale_listener runbook
+    is only for start_sh, so a later pack carrying one stays out of other shapes."""
+    return {
+        rid: {"id": rb["id"], "verify_after_s": rb["verify_after_s"]}
+        for rb in descriptors
+        if rb["action"]["type"] != "stop_stale_listener" or shape == "start_sh"
+        for rid in rb["applies_to"]
+    }
 
 
 def _assemble(shape, pack, rules, suppression_doc, catalog_doc, **extra) -> Loaded:
@@ -207,6 +228,10 @@ def _from_active(shape, data_dir, now, vigil, root, bundled, events) -> Loaded:
         yaml.safe_load(files.get("suppression.yaml", "entries: []")),
         yaml.safe_load(files.get("catalog.yaml", "entries: []")),
         facts=state["active"], events=events,
+        runbooks=_runbook_map(shape, [
+            yaml.safe_load(text) for path, text in sorted(files.items())
+            if path.startswith("runbooks/")
+        ]),
     )  # fmt: skip
 
 
@@ -342,6 +367,7 @@ class Medic:
         group_cap: int = GROUP_CAP,
         vigil_dev_mode: bool = False,
         capture: TraceCapture | None = None,
+        runbooks: Mapping[str, dict[str, Any]] | None = None,
     ) -> None:
         self.writer, self.clock = writer, clock
         self.shape, self.group_cap = shape, group_cap
@@ -354,7 +380,7 @@ class Medic:
             suppression=[dict(e) for e in suppression],
             group_cap=group_cap,
         )
-        self.router = Router(rules)
+        self.router = Router(rules, runbooks=runbooks)
         self.bus = Bus(Stats())
         self.log_bus = Bus(self.bus.stats, LOG_CAPACITY)
         bind_log_tails(sensors, self.log_bus, clock)
@@ -393,7 +419,7 @@ class Medic:
         # every window empty until then. `state()` above carried the rest.
         for part in ("pending", "history", "upgrade", "_status"):
             setattr(self.engine, part, getattr(old, part))
-        self.router = Router(pack.rules)
+        self.router = Router(pack.rules, runbooks=pack.runbooks)
         self.sink.engine = self.engine
         for tail in {s.tail for s in self.sensors if isinstance(s, LogStream)}:
             tail.catalog = pack.catalog

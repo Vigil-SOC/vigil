@@ -1,0 +1,13 @@
+# Descriptor only: Phase 0 runs nothing. The router copies {id, verify_after_s} onto
+# a lane-1 incident for each rule in applies_to, and would_have names this runbook.
+apiVersion: medic.runbooks/v1
+kind: Runbook
+id: restart-llm-worker
+title: Restart the llm-worker container
+applies_to: [llm.worker-wedged]
+action: {type: restart_service, service: llm-worker}
+verify_after_s: 300
+description: >-
+  Restarts the llm-worker container so it takes LLM jobs from the queue again.
+  Medic checks five minutes later that the worker passes its health check; if it
+  is still unhealthy, the incident stays open for an admin.

@@ -9,7 +9,7 @@
 # write-health signal (redis_queues, D2-12) should be added before a runbook attaches.
 # If the agent-worker is down, redis_ok is never true and a wedge goes unreported.
 # Compose only: Helm's probes restart the pod themselves (#1499); host-native has no
-# health check. runbook: none until G4's vocabulary lands (wants restart_service llm-worker).
+# health check. Runbook: restart-llm-worker (runbooks/restart-llm-worker.yaml) is attached.
 apiVersion: medic.rules/v1
 kind: Rule
 id: llm.worker-wedged

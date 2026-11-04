@@ -531,6 +531,7 @@ def _build(
             suppression=suppression,
             vigil_dev_mode=vigil_dev_mode,
             capture=capture,
+            runbooks=pack.runbooks,
         )
     except Exception as exc:  # any bad state: start fresh, never a crash loop
         if state is None:
@@ -545,6 +546,7 @@ def _build(
             suppression=suppression,
             vigil_dev_mode=vigil_dev_mode,
             capture=capture,
+            runbooks=pack.runbooks,
         )
 
 
