@@ -30,7 +30,7 @@ class LoadedRule:
     input_trust: str  # derived by rule_check (ENGINE_API.md §5)
     detection: str
     skipped: str | None  # set when the rule needs a newer engine minor
-    pack: tuple[str, str]  # (pack id, version): what each record names
+    pack: tuple[str, str, str]  # (pack id, channel, version): what each record names
     params: dict[str, float] = field(default_factory=dict)  # durations in seconds
 
     @property
@@ -45,7 +45,7 @@ class LoadedRule:
 
 
 def load_rule(
-    rule: dict, *, pack: tuple[str, str], params: dict | None = None
+    rule: dict, *, pack: tuple[str, str, str], params: dict | None = None
 ) -> LoadedRule:
     res = rule_check.check(rule)
     if not res.ok:
@@ -61,7 +61,7 @@ def load_rule(
 
 
 def load_rule_file(
-    path: Path | str, *, pack: tuple[str, str], params: dict | None = None
+    path: Path | str, *, pack: tuple[str, str, str], params: dict | None = None
 ) -> LoadedRule:
     raw = Path(path).read_bytes()[: rule_check.MAX_RULE_BYTES + 1]
     doc, res = rule_check.load(raw.decode("utf-8", errors="replace"))

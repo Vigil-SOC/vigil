@@ -99,7 +99,7 @@ def _sv(v: str) -> tuple[int, ...]:
 
 def _ref(lin: Lineage | dict) -> dict:
     g = (lambda k: lin[k]) if isinstance(lin, dict) else (lambda k: getattr(lin, k))
-    return {"id": g("id"), "version": g("version")}
+    return {"id": g("id"), "channel": g("channel"), "version": g("version")}
 
 
 def _refuse_all(errors: list[tuple[str, str]]) -> Outcome:
@@ -162,6 +162,10 @@ def _load_state(data_dir: Path) -> dict:
     active = read_active(data_dir)
     if active:  # see the module docstring: the active pack is never withdrawn
         st["withdrawn"] = [w for w in st["withdrawn"] if w != _ref(active.lineage)]
+    # an entry without a channel (an old state file) can match nothing: dropped
+    st["withdrawn"] = [
+        w for w in st["withdrawn"] if isinstance(w, dict) and "channel" in w
+    ]
     return st
 
 
@@ -262,9 +266,9 @@ def _activated(
     res: loader.LoadResult, source: str, by: str | None = None
 ) -> list[dict]:
     i = res.imported
-    pack = {"id": i["id"], "version": i["version"]}
+    pack = {"id": i["id"], "channel": i["channel"], "version": i["version"]}
     ev = {"event": "imported", "pack": pack, "previous": i["previous"] and _ref(i["previous"]),
-          "source": source}  # fmt: skip
+          "source": source, "sha256": i["sha256"], "publisher": i["publisher"]}  # fmt: skip
     if by is not None:
         ev["by"] = by
     return [ev, *_skipped(pack, res.rule_skipped)]
@@ -282,20 +286,26 @@ def import_pack(
     by: str,
     override: bool = False,
 ) -> Outcome:
-    """Admin import. A version on `withdrawn` is refused unless `override`, which does
-    nothing for a version that isn't withdrawn."""
+    """Admin import. A version on `withdrawn` is refused unless `override`; so is a
+    pack of another (id, channel) than the active one (P-LINEAGE, from the check).
+    `override` does nothing else: an older version on the same line is P-DOWNGRADE."""
     st = _load_state(data_dir)
     lin = loader._lineage(data)
     withdrawn = lin is not None and _ref(lin) in st["withdrawn"]
+    previous = read_active(data_dir)
+    line_change = (
+        lin is not None
+        and previous is not None
+        and (lin.id, lin.channel) != (previous.lineage.id, previous.lineage.channel)
+    )
     if withdrawn and not override:
         return _refuse(
             WITHDRAWN,
             f"{lin.id} {lin.version} was withdrawn here; override to re-import",
         )
-    previous = read_active(data_dir)
     res = load_pack(
         data, data_dir=data_dir, vigil_version=vigil_version, now=now,
-        override_lineage=withdrawn,
+        override_lineage=withdrawn or (line_change and override),
     )  # fmt: skip
     if not res.ok:
         return Outcome(errors=res.errors)
@@ -308,13 +318,15 @@ def import_pack(
         st["withdrawn"].remove(_ref(lin))
     _save_state(data_dir, st)
     events = _activated(res, "admin_import", by)
-    if withdrawn and previous:
+    if withdrawn or line_change:  # (override is set: it was refused or P-LINEAGE else)
         # `override` has no `source`, and `previous` is required (never null) there.
         ev = events[0]
         events[0] = {
             "event": "override",
             "pack": ev["pack"],
             "previous": ev["previous"],
+            "sha256": ev["sha256"],
+            "publisher": ev["publisher"],
             "by": by,
         }
     return Outcome(events=events)
@@ -353,7 +365,7 @@ def revert(
         d / LAST_KNOWN_GOOD, d / ACTIVE
     )  # one rename: always a loadable active pack
     _fsync_dir(d)
-    return _switched(res, active, by)
+    return _switched(res, target.data, active, by)
 
 
 def switch_to_bundled(
@@ -391,15 +403,17 @@ def switch_to_bundled(
     _replace(d, ACTIVE, bundled)
     (d / LAST_KNOWN_GOOD).unlink(missing_ok=True)
     _fsync_dir(d)
-    return _switched(res, active, by)
+    return _switched(res, bundled, active, by)
 
 
-def _switched(res, outgoing: loader.StoredPack, by: str) -> Outcome:
+def _switched(res, data: bytes, outgoing: loader.StoredPack, by: str) -> Outcome:
     pack = _ref(res.manifest["pack"])
     ev = {
         "event": "reverted",
         "pack": pack,
         "previous": _ref(outgoing.lineage),
+        "sha256": _sha(data),
+        "publisher": res.manifest["pack"]["publisher"],
         "by": by,
     }
     log.info("pack reverted: %s -> %s", ev["previous"], pack)

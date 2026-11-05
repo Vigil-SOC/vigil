@@ -208,6 +208,7 @@ config.json
 *_config.json
 !mcp-config.json
 !infra/docker/bifrost/config.json
+!infra/helm/vigil/files/bifrost/config.json
 
 # Bifrost's runtime state, written when the gateway runs outside Docker.
 # config.db is its config store and holds provider API keys -- in plaintext

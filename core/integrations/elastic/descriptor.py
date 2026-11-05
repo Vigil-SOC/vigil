@@ -28,6 +28,14 @@ ELASTIC = register_descriptor(
             IntegrationField("max_searches_per_hour", value_type="int", default=30),
             # Quiet fails a rule averaging more alerts per day than this.
             IntegrationField("quiet_max_alerts_per_day", value_type="int", default=50),
+            # Noisy fails a rule with this many alerts today and this multiple of
+            # its daily mean over the 29 days before.
+            IntegrationField("noisy_min_alerts", value_type="int", default=100),
+            IntegrationField("noisy_multiple", value_type="int", default=10),
+            # Silent fails a rule with no alert in this many days that had alerts
+            # on this many distinct days of the rest of the 30.
+            IntegrationField("silent_days", value_type="int", default=7),
+            IntegrationField("silent_min_active_days", value_type="int", default=5),
         ),
     )
 )

@@ -38,7 +38,8 @@ _TRACE_ID = re.compile(MANIFEST.schema["$defs"]["trace_id"]["pattern"])
 _SENSOR_FILE = re.compile(
     MANIFEST.schema["properties"]["sources"]["items"]["properties"]["file"]["pattern"]
 )
-NO_PACK = ("none", "0.0.0")  # no rules loaded (no verified pack); the schema accepts it
+# No rules loaded (no verified pack); the schema accepts it.
+NO_PACK = ("none", "stable", "0.0.0")
 
 
 def medic_version() -> str:
@@ -49,17 +50,19 @@ def medic_version() -> str:
         return "0.0.0"
 
 
-def pack_of(rules: Sequence[LoadedRule]) -> tuple[str, str]:
-    """The (id, version) of the pack the rules came from."""
+def pack_of(rules: Sequence[LoadedRule]) -> tuple[str, str, str]:
+    """The (id, channel, version) of the pack the rules came from."""
     return rules[0].pack if rules else NO_PACK
 
 
-def _medic_block(shape: str, instance_id: str, pack: tuple[str, str]) -> dict[str, Any]:
+def _medic_block(
+    shape: str, instance_id: str, pack: tuple[str, str, str]
+) -> dict[str, Any]:
     return {
         "version": medic_version(),
         "install_shape": shape,
         "instance_id": instance_id,
-        "pack": {"id": pack[0], "version": pack[1]},
+        "pack": {"id": pack[0], "channel": pack[1], "version": pack[2]},
     }
 
 
@@ -220,7 +223,7 @@ def start_capture(
     shape: str,
     instance_id: str,
     tick: int,
-    pack: tuple[str, str],
+    pack: tuple[str, str, str],
 ) -> TraceCapture:
     """Finalise any torn trace from a past run, then open `trace_id` if one is set.
     Never raises: a trace that can't start is logged and Medic runs without it."""

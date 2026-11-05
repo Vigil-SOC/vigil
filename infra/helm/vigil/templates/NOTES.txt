@@ -53,13 +53,21 @@ the Secret to rotate, then restart the gateway:
          python -m core.auth.service_account ensure {{ $user }}
 {{- end }}
 
-{{- if not .Values.secrets.anthropicApiKey }}
+{{- if not .Values.bifrost.enabled }}
+
+Bifrost is not deployed (bifrost.enabled=false). Every model call goes through a
+gateway, so config.BIFROST_URL must point at one that is reachable from the pods
+(now: {{ .Values.config.BIFROST_URL | default "http://bifrost:8080" }}). If it has an admin password, set secrets.bifrostAdminPassword.
+{{- end }}
+{{- if not (or .Values.secrets.anthropicApiKey .Values.secrets.openaiApiKey .Values.secrets.geminiApiKey) }}
 {{- if and (not .Values.secrets.existingSecret) (not .Values.secrets.externalSecret.enabled) }}
 
-⚠️  WARNING: secrets.anthropicApiKey is empty. The AI-powered features of Vigil
-   will return errors until you set it (either via --set secrets.anthropicApiKey=…,
-   by pointing secrets.existingSecret at a pre-created Secret, or by configuring
-   secrets.externalSecret for the ExternalSecrets Operator).
+⚠️  WARNING: no LLM provider is configured. The AI-powered features of Vigil will
+   return errors until there is one. Either:
+     - set a key: secrets.anthropicApiKey, secrets.openaiApiKey or
+       secrets.geminiApiKey (--set secrets.anthropicApiKey=…), or
+     - point config.OLLAMA_URL at an Ollama server (now: {{ .Values.config.OLLAMA_URL }}).
+   Keys can also come from secrets.existingSecret or secrets.externalSecret.
 {{- end }}
 {{- end }}
 

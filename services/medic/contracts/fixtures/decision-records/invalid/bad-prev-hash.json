@@ -12,6 +12,7 @@
       "id": "ingest.integration-config-incomplete",
       "revision": 1,
       "pack_id": "medic-core",
+      "pack_channel": "stable",
       "pack_version": "0.1.0",
       "engine_api": "1.0",
       "input_trust": "untrusted"
@@ -64,5 +65,5 @@
   },
   "seq": 0,
   "prev": "abc",
-  "hash": "4df3941d81577f2a8854b6c834ede3472d9dcd6c3899b6849c57a460a2138f33"
+  "hash": "298e1cee580206b571dc3521d8b77cc234722c8e02be4b69573d8c0ee6491d47"
 }

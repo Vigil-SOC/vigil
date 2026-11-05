@@ -1,0 +1,14 @@
+{{- if .Values.bifrost.enabled }}
+{{- /* Bootstrap config for the gateway: a copy of infra/docker/bifrost/config.json
+       (Helm cannot read outside the chart). CI fails if the two differ. */ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "vigil.bifrost.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.componentLabels" (dict "context" . "component" "bifrost") | nindent 4 }}
+data:
+  config.json: |
+    {{- .Files.Get "files/bifrost/config.json" | nindent 4 }}
+{{- end }}

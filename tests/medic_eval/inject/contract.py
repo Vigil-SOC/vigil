@@ -38,10 +38,12 @@ class Cell:
     actions: tuple[str, ...]  # what inject did, for injection.actions
     undo: tuple[str, ...]  # what revert did, for recovery_action.actions
     may_fire: tuple[str, ...] = ()
+    # For a cause whose rule's mode is not its prefix (I-1.g is mode I-2).
+    mode_override: str | None = None
 
     @property
     def mode(self) -> str:
-        return self.cause.split(".")[0]
+        return self.mode_override or self.cause.split(".")[0]
 
 
 def _ts(t: datetime) -> str:

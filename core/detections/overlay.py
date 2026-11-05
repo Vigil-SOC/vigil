@@ -7,6 +7,9 @@ copy is parsed with the inventory readers, and the Sigma form linted, before
 any file is written; one bad part writes nothing. A copy keeps the id it
 carries, so a change to a rule lands on that rule as a new version; a copy
 without one gets a fresh uuid. The sync appends the 'shadow' stage rows.
+
+Evidence passed with the save is replayed on the Sigma form before anything is
+written (#3755); the result lands as ``checks.replay`` on the Sigma version.
 """
 
 from __future__ import annotations
@@ -16,18 +19,24 @@ import re
 import tomllib
 import uuid
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from core.detections.detection_rules_service import DetectionRulesService
 from core.detections.inventory import readers, rollout, sync
 from core.detections.inventory.record import RuleRecord
 from core.detections.lint import lint_sigma
+from core.detections.replay import replay_sigma
 from core.storage.connection import get_db_manager
-from core.storage.models import DetectionRule, DetectionRuleStage
+from core.storage.models import (
+    DetectionRule,
+    DetectionRuleStage,
+    DetectionRuleVersion,
+)
 
 # Copy language: (overlay subdirectory, file suffix).
 LAYOUT = {
@@ -94,6 +103,59 @@ def _parse(language: str, text: str) -> RuleRecord:
     if record.native_key == f"draft{suffix}":
         raise Refused(f"{language} copy's id could not be read or set")
     return record
+
+
+def _evidence(
+    sigma: Optional[str], proven: Optional[list], ruled_out: Optional[list]
+) -> Dict[str, Any]:
+    """``checks.replay`` for the Sigma form; Refused when the evidence does not hold it up."""
+    if not proven and not ruled_out:
+        return {"result": "not_run"}
+    if not sigma:
+        raise Refused(
+            "events were passed, but there is no sigma form to replay them on"
+        )
+    replay = replay_sigma(sigma, proven or [], ruled_out or [])
+    if not replay["evaluated"]:
+        raise Refused(
+            f"sigma form could not be replayed: {replay['reason']}", replay=replay
+        )
+    if replay["ruled_out_matched"]:
+        raise Refused("sigma form matched a ruled-out event", replay=replay)
+    if not replay["matched"]:
+        raise Refused("sigma form matched no proven event", replay=replay)
+    return {
+        "result": "pass",
+        **replay,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "proven_events": len(proven or []),
+        "ruled_out_events": len(ruled_out or []),
+    }
+
+
+def _record_replay(sigma_key: str, replay: Dict[str, Any]) -> None:
+    """Merge ``replay`` into the checks of the Sigma copy's latest version."""
+    with get_db_manager().session_scope() as session:
+        rule = session.execute(
+            select(DetectionRule.id, DetectionRule.latest_version).where(
+                DetectionRule.source == readers.OVERLAY_SOURCE,
+                DetectionRule.native_key == sigma_key,
+            )
+        ).first()
+        if rule is None:
+            return
+        version = (DetectionRuleVersion.rule_id == rule.id) & (
+            DetectionRuleVersion.version == rule.latest_version
+        )
+        checks = session.scalar(select(DetectionRuleVersion.checks).where(version))
+        # A re-save without events leaves an unchanged version's earlier replay standing.
+        if replay["result"] == "not_run" and (checks or {}).get("replay"):
+            return
+        session.execute(
+            update(DetectionRuleVersion)
+            .where(version)
+            .values(checks={**(checks or {}), "replay": replay})
+        )
 
 
 def _prepare(copies: Dict[str, str]) -> List[Tuple[str, str, RuleRecord]]:
@@ -201,6 +263,8 @@ def save_rule(
     splunk_yaml: Optional[str] = None,
     elastic_toml: Optional[str] = None,
     sigma_yaml: Optional[str] = None,
+    proven_events: Optional[list] = None,
+    ruled_out_events: Optional[list] = None,
 ) -> Dict[str, Any]:
     """Write each copy into the overlay and sync it; refuse the lot if any part fails."""
     copies = {
@@ -214,6 +278,7 @@ def save_rule(
     }
     try:
         prepared = _prepare(copies)
+        replay = _evidence(copies.get("sigma"), proven_events, ruled_out_events)
     except Refused as exc:
         return {"error": str(exc), "saved": [], **exc.detail}
     keys = [record.native_key for _, _, record in prepared]
@@ -229,6 +294,11 @@ def save_rule(
             _write(source["local_path"], rel, text)
         source = service.overlay_source()  # recounted with the new files
         report = sync._sync_one(service, source)
+        sigma_key = next(
+            (r.native_key for lang, _, r in prepared if lang == "sigma"), None
+        )
+        if sigma_key and not report.error:
+            _record_replay(sigma_key, replay)
     result: Dict[str, Any] = {"saved": _saved(keys), "sync": asdict(report)}
     if report.error:
         result["error"] = f"written, but the overlay sync failed: {report.error}"
