@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { errorText } from '../../shared/errorText'
@@ -123,6 +123,10 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   const [more, setMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [open, setOpen] = useState<number | null>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const endRef = useRef<HTMLDivElement>(null)
+  // Bumped per view, so a page asked for under the last view is dropped.
+  const generation = useRef(0)
 
   useEffect(() => {
     const t = window.setTimeout(() => setQ(typed.trim()), 250)
@@ -134,7 +138,9 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   // Each view, SIEM and search asks the server: the listing is capped, so narrowing capped rows here would miss rules.
   useEffect(() => {
     let live = true
+    generation.current += 1
     setLoading(true)
+    setMore(false)
     detectionRulesApi.rules({ health: view === 'all' ? undefined : view, tool: siem === 'all' ? undefined : siem, q: q || undefined })
       .then((res) => {
         if (!live) return
@@ -142,6 +148,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
         setReport(data)
         setRows(data.rules)
         setOpen(null)
+        listRef.current?.scrollTo({ top: 0 })
         setError(null)
       })
       .catch((e) => { if (live) setError(errorText(e, 'Rule health did not load.')) })
@@ -149,13 +156,26 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
     return () => { live = false }
   }, [view, siem, q])
 
-  const loadMore = () => {
-    setMore(true)
-    detectionRulesApi.rules({ ...params, offset: rows.length })
-      .then((res) => setRows((prev) => [...prev, ...(res.data as RulesReport).rules]))
-      .catch((e) => setError(errorText(e, 'More rules did not load.')))
-      .finally(() => setMore(false))
-  }
+  const matched = report?.matched ?? 0
+  const hasMore = !loading && rows.length < matched
+  // The next page loads as the list's end nears, inside the list's own scroll.
+  useEffect(() => {
+    const root = listRef.current
+    const end = endRef.current
+    if (!root || !end || !hasMore || more) return
+    const watch = new IntersectionObserver((seen) => {
+      if (!seen.some((e) => e.isIntersecting)) return
+      watch.disconnect()
+      const asked = generation.current
+      setMore(true)
+      detectionRulesApi.rules({ ...params, offset: rows.length })
+        .then((res) => { if (asked === generation.current) setRows((prev) => [...prev, ...(res.data as RulesReport).rules]) })
+        .catch((e) => { if (asked === generation.current) setError(errorText(e, 'More rules did not load.')) })
+        .finally(() => { if (asked === generation.current) setMore(false) })
+    }, { root, rootMargin: '0px 0px 600px 0px' })
+    watch.observe(end)
+    return () => watch.disconnect()
+  })
 
   if (error && !report) return <Failure>{error}</Failure>
   if (!report) return <span className="x1-muted">Reading the inventory…</span>
@@ -318,7 +338,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
 
         {error && <div className="de-pad"><Failure>{error}</Failure></div>}
 
-        <div className={`de-table list-scroll${loading ? ' loading' : ''}`} data-testid="de-rules">
+        <div ref={listRef} className={`de-table list-scroll${loading ? ' loading' : ''}`} data-testid="de-rules">
           <div className="de-tr de-th">
             <span>Rule</span><span>Health ↓</span><span>Why</span><span className="de-right">Action</span>
           </div>
@@ -358,12 +378,10 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
           {rows.length === 0 && !loading && (
             <div className="de-empty">{q ? `No rules match “${q}”.` : 'No rules in this view.'}</div>
           )}
+          <div ref={endRef} className="de-end" aria-hidden="true">{more ? 'Loading more rules…' : hasMore ? '' : rows.length ? 'End of the list' : ''}</div>
         </div>
         <div className="de-foot">
-          <span>Showing {n(rows.length)} of {n(report.matched)}</span>
-          {rows.length < report.matched && (
-            <button type="button" className="btn ghost de-act" disabled={more} onClick={loadMore}>{more ? 'Loading…' : 'Load more'}</button>
-          )}
+          <span aria-live="polite">Showing {n(rows.length)} of {n(report.matched)}{more ? ' · loading more…' : ''}</span>
         </div>
       </section>
 
