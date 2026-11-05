@@ -9,7 +9,11 @@ is counted once. An Elastic copy runs against the elastic-siem Elasticsearch:
 EQL through ``_eql/search``, ES|QL through ``_query``, Lucene through
 ``_search``. A Splunk copy runs its SPL (the ESCU YAML's ``search``) against the
 splunk integration; its hit count is the result rows (an index Vigil's Splunk
-user cannot search is Splunk Sees' unknown, which holds promotion). Each run
+user cannot search is Splunk Sees' unknown). A copy whose checks['sees'] reads
+unknown because Vigil's user cannot read its index (Splunk's "cannot search
+index=…", Elastic's "lacks read on …") is held: not searched, nothing spent,
+Runs unknown with Sees' reason, its stage and last successful run left as they
+are, so it resumes over the gap once Sees reads again. Each run
 spends one search of its SIEM's budget (key ``overlay:<rule id>``), least
 recently run first; once the hour's budget is spent the rest wait. A copy an
 active SIEM copy linked to it now runs (``handed_off``) is neither searched nor
@@ -599,10 +603,26 @@ def _hand_off(copies: List[Copy], now: datetime) -> None:
         _record_changes(session, changes, now.isoformat())
 
 
+def _held(copies: List[Copy]) -> List[Tuple[Copy, str]]:
+    """Copies Sees says sit on an index Vigil's user can't read, with its reason."""
+    return [
+        (c, str(sees_.get("reason") or "Vigil's user cannot read its index"))
+        for c in copies
+        if (sees_ := c.checks.get("sees") or {}).get("unreadable")
+        and sees_.get("result") == "unknown"
+    ]
+
+
 def _write_unrunnable(copies: List[Tuple[Copy, str]], now: datetime) -> int:
-    """checks['runs'] unknown for copies the runner cannot run, once per reason."""
+    """checks['runs'] unknown for copies the runner cannot run, once per reason.
+
+    Its other fields stay: last_success is where a held copy resumes."""
     results = {
-        (c.rule_id, c.version): {"result": "unknown", "reason": why}
+        (c.rule_id, c.version): {
+            **(c.checks.get("runs") or {}),
+            "result": "unknown",
+            "reason": why,
+        }
         for c, why in copies
         if (c.checks.get("runs") or {}).get("reason") != why
     }
@@ -895,7 +915,9 @@ def _run_elastic_copies(
     per_hour = config.get("max_searches_per_hour")
     per_hour = sees.DEFAULT_PER_HOUR if per_hour is None else max(int(per_hour), 0)
     blocked = [(c, why) for c in copies if (why := runnable(c.rule))]
-    ready = [c for c in copies if not runnable(c.rule)]
+    blocked += _held([c for c in copies if not runnable(c.rule)])
+    held = {id(c) for c, _ in blocked}
+    ready = [c for c in copies if id(c) not in held]
     results = asyncio.run(_run_elastic(config, ready, per_hour, now, report))
     report.written += _write_unrunnable(blocked, now)
     _finish(ready, results, now, report)
@@ -910,7 +932,9 @@ def _run_splunk_copies(
         return
     why = "a splunk copy needs a search: add search: <SPL> to its YAML"
     blocked = [(c, why) for c in copies if not str(c.rule.get("search") or "").strip()]
-    ready = [c for c in copies if str(c.rule.get("search") or "").strip()]
+    blocked += _held([c for c in copies if str(c.rule.get("search") or "").strip()])
+    held = {id(c) for c, _ in blocked}
+    ready = [c for c in copies if id(c) not in held]
     results = asyncio.run(
         _run_all(
             splunk.SOURCE,

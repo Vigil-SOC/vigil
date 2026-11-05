@@ -205,11 +205,14 @@ async def _check(
                 logger.debug("sees: read privilege check of %s failed: %s", index, exc)
         for key, fields in members:
             if denied:
-                results[key] = _unknown(
-                    f"Vigil's Elastic user lacks read on {', '.join(denied)}, "
-                    "so whether its events arrive can't be seen",
-                    index,
-                )
+                results[key] = {
+                    **_unknown(
+                        f"Vigil's Elastic user lacks read on {', '.join(denied)}, "
+                        "so whether its events arrive can't be seen",
+                        index,
+                    ),
+                    "unreadable": True,  # rollout holds an overlay copy's runs
+                }
             elif not seen:
                 unmapped = present is not None and ts not in present
                 results[key] = {
