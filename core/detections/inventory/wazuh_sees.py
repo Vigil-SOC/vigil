@@ -170,10 +170,13 @@ async def indices(
     service: Any, patterns: Tuple[str, ...]
 ) -> Tuple[Optional[str], Dict[str, bool]]:
     """(why the indexer could not be listed, or None; whether each pattern has an
-    index). Listing is metadata and spends no search."""
-    names = await service.get_indices()
-    if names is None:
-        return f"the indexer could not be read: {service.last_indices_error}", {}
+    index). Field caps are metadata: they spend no search and need only ``read``."""
+    try:
+        names = await service.indices_matching(",".join(patterns))
+    except Exception as exc:  # noqa: BLE001 -- every rule reads unknown
+        # First line only: httpx appends "For more information check: <url>".
+        first = (str(exc).splitlines() or [""])[0]
+        return f"the indexer could not be read: {type(exc).__name__}: {first}", {}
     return None, {p: any(n.startswith(p.rstrip("*")) for n in names) for p in patterns}
 
 
