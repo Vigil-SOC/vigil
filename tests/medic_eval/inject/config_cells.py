@@ -1,7 +1,9 @@
 """The configuration and environment fault cells (SW I2).
 
 Each fault is made the way an operator would make it, on the stack in
-compose.eval.yml, and verified by reading Vigil, never Medic.
+compose.eval.yml, and verified by reading Vigil, never Medic. The verify
+functions are shared with the Helm cells (helm_cells.py), which run them on a
+HelmStack that offers the same methods.
 
 `detect_within_s` is the rule's `for:` where a merged rule has one (I-1.b). The
 I-4, I-5, P-1 and L-1 rules are still drafts (#2732-#2736); those cells use 300
@@ -198,7 +200,7 @@ def p1c_verify(s: Stack, faulted: bool) -> None:
     _expect(
         s.node(
             "agent-worker",
-            "http://backend:6987/internal/pricing/rates?model_id=x&provider_type=ollama",
+            f"http://{s.backend_host}:6987/internal/pricing/rates?model_id=x&provider_type=ollama",
         ),
         401 if faulted else 200,
         "backend /internal from agent-worker",
