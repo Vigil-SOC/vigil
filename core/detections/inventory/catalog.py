@@ -11,10 +11,10 @@ A SIEM copy may be linked to the repo rule it came from (origin_rule_id); an
 overlay rule counts as a repo rule here. A repo rule's state in a SIEM is its
 linked copies' (disabled, or their Runs result, each beside its Quiet), or
 'not deployed' when it has none there. Every SIEM Vigil reads (Kibana,
-'elastic'; Splunk, 'splunk'; the Wazuh manager, 'wazuh') is listed. Kibana and
-Wazuh rules get a Sees check; a Wazuh rule's data source is its decoder. Kibana
-and Wazuh rules get a Quiet check and an Accurate one (``accurate``); only
-Kibana rules get Noisy and Silent.
+'elastic'; Splunk, 'splunk'; the Wazuh manager, 'wazuh') is listed. Kibana,
+Wazuh and Splunk rules get a Sees check; a Wazuh rule's data source is its
+decoder, a Splunk search's its index/sourcetype or data model. Kibana
+and Wazuh rules get a Quiet check and an Accurate one (``accurate``); only Kibana rules get Noisy and Silent.
 
 A linked Kibana or Splunk copy also carries checks['drift']: fail when it was
 disabled, removed or edited in the SIEM while its repo rule stayed the same.
@@ -75,10 +75,10 @@ CURRENT_STAGE = (
 LINKED = DetectionRule.link_kind.in_(("same_id", "known_name", "agent"))
 NOT_DEPLOYED = "not deployed"
 NOT_READ = (
-    "Splunk rules get no Sees, Quiet or Accurate check, and Splunk and Wazuh rules "
-    "no Noisy or Silent check (nor a never-firing count), yet"
+    "Splunk rules get no Quiet or Accurate check, and Splunk and Wazuh rules no Noisy "
+    "or Silent check (nor a never-firing count), yet"
 )
-SEES_TOOLS = ("elastic", "wazuh")
+SEES_TOOLS = ("elastic", "wazuh", "splunk")
 QUIET_TOOLS = ("elastic", "wazuh")
 ACCURATE_TOOLS = ("elastic", "wazuh")
 # Noisy, Silent and the never-firing count read a rule's own history.
