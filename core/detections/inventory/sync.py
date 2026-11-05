@@ -18,8 +18,8 @@ open flag on it.
 A Runs result (checks['runs'] on the latest version) is written only when its
 result or reason differs from the stored one; a new version starts with none.
 After Wazuh syncs, ``quiet`` counts each active Wazuh rule's alerts against a
-per-day threshold (checks['quiet'], from ``wazuh-alerts-*`` on the elastic-siem
-indexer), then ``wazuh_sees`` checks whether each one's decoder gets events;
+per-day threshold and the rule's own 30 days (checks['quiet'], checks['noisy'],
+checks['silent'], from ``wazuh-alerts-*`` on the elastic-siem indexer), then ``wazuh_sees`` checks whether each one's decoder gets events;
 after Kibana syncs, ``quiet`` counts each active Kibana rule's alerts the same
 way and against the rule's own 30 days (checks['noisy'], checks['silent']),
 then ``sees`` checks whether each active Kibana rule's data is arriving; after
@@ -561,6 +561,9 @@ def sync_repos() -> List[Any]:
             # Quiet first: its one search is spent before Sees' groups.
             reports.append(quiet.sweep_elastic(config))
             reports.append(sees.sweep_elastic(config))
+        elif (es_config := _overlay_elastic_config()) is not None:
+            # No Kibana sync: Vigil's overlay copies still need Sees to promote.
+            reports.append(sees.sweep_elastic(es_config, kibana_rules=False))
         splunk_report, splunk_config = _sync_splunk()
         reports.append(_drifted(_linked(splunk_report, _link_known_name)))
         if splunk_config is not None:
@@ -574,6 +577,17 @@ def sync_repos() -> List[Any]:
             "detection rules: %d rules of unconfigured sources removed", removed
         )
     return reports
+
+
+def _overlay_elastic_config() -> Optional[Dict[str, Any]]:
+    """elastic-siem's config as the overlay runner reads it (no kibana_url needed)."""
+    from core.detections.inventory.rollout import _elastic_config
+
+    try:
+        return _elastic_config()
+    except Exception as exc:  # noqa: BLE001 -- the Elastic sync's report stands
+        logger.warning("detection rules: elastic-siem config unread: %s", exc)
+        return None
 
 
 def _linked(report: SourceReport, link: Callable[[], tuple]) -> SourceReport:

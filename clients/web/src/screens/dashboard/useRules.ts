@@ -38,8 +38,8 @@ export interface RulesHealth {
     rules: RuleRow[]
     total: number
     limit: number
-    /** per SIEM: rules failing or unknown on a check, and those failing one (can't fire) */
-    by_tool: Record<string, { not_passing: number; failing: number }>
+    /** per SIEM: rules failing or unknown on a check; broken (Runs fails) and starved (Sees fails, Runs doesn't) can't fire */
+    by_tool: Record<string, { not_passing: number; broken: number; starved: number }>
   }
   repo: { rules: number; deployed: number; not_deployed: number; siems: number }
 }

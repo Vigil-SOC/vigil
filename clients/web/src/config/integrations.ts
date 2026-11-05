@@ -676,7 +676,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
         required: false,
         default: 100,
         placeholder: '100',
-        helpText: 'A Kibana rule fails its Noisy check when today (UTC, so far) has at least this many alerts and the multiple below of its daily mean over the 29 days before.',
+        helpText: 'A Kibana or Wazuh rule fails its Noisy check when today (UTC, so far) has at least this many alerts and the multiple below of its daily mean over the 29 days before.',
       },
       {
         name: 'noisy_multiple',
@@ -685,7 +685,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
         required: false,
         default: 10,
         placeholder: '10',
-        helpText: 'How many times its own daily mean a Kibana rule\'s alerts today must reach to fail Noisy.',
+        helpText: 'How many times its own daily mean a Kibana or Wazuh rule\'s alerts today must reach to fail Noisy.',
       },
       {
         name: 'silent_days',
@@ -694,7 +694,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
         required: false,
         default: 7,
         placeholder: '7',
-        helpText: 'A Kibana rule with no alert in this many days fails its Silent check, if it fired on enough days of the rest of the 30.',
+        helpText: 'A Kibana or Wazuh rule with no alert in this many days fails its Silent check, if it fired on enough days of the rest of the 30.',
       },
       {
         name: 'silent_min_active_days',
@@ -703,7 +703,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
         required: false,
         default: 5,
         placeholder: '5',
-        helpText: 'How many distinct days with alerts, before the silent days, a Kibana rule needs to fail Silent. A rule that rarely fires is never silent.',
+        helpText: 'How many distinct days with alerts, before the silent days, a Kibana or Wazuh rule needs to fail Silent. A rule that rarely fires is never silent.',
       },
     ],
     docs_url: 'https://www.elastic.co/guide/en/security/current/index.html',
