@@ -23,6 +23,11 @@ const UNBOUND_IN_WORDS: Readonly<Record<string, string>> = {
   findings_search: "Vigil's findings could not be searched, so the hunt could not read what detection already scored",
   get_finding: "Vigil's findings could not be opened, so the hunt could not read an alert's raw record",
   entity_recall: "Episodic memory is not available, so the hunt could not recall what earlier investigations saw",
+  // Optional needs, so never journalled as a gap; worded for any reader that names one.
+  intel_observable: "No threat-intel platform is connected, so the hunt could not look up an observable's indicators",
+  intel_indicator: "No threat-intel platform is connected, so the hunt could not read an indicator's detail",
+  intel_entities: "No threat-intel platform is connected, so the hunt could not look up actors, malware or campaigns",
+  intel_relationships: "No threat-intel platform is connected, so the hunt could not follow what an actor or malware is linked to",
 };
 
 export function unboundInWords(capability: string): string {

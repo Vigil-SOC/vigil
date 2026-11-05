@@ -17,6 +17,7 @@ from core.workflows.playbook_resolver import (
     CAPABILITIES,
     HUNT_CAPABILITIES,
     INVESTIGATE_CAPABILITIES,
+    OPTIONAL_HUNT_CAPABILITIES,
     UnknownPlaybook,
 )
 from core.workflows.workflows_service import (
@@ -56,7 +57,7 @@ def capabilities(
         return capability_report(registry, needs or HUNT_CAPABILITIES)
     except Exception as exc:  # noqa: BLE001
         logger.debug("could not read bound capabilities: %s", exc)
-        return {"bound": [], "unbound": []}
+        return {"bound": [], "unbound": [], "absent": []}
 
 
 # What the run will be charged at, and how confidently. An unpriced model is
@@ -117,7 +118,13 @@ def _roles(definition: WorkflowDefinition) -> Tuple[Dict[str, Any], Optional[str
     kind = definition.run_kind
     # A hunt is one agent and a critic: the plugin's, not the definition's.
     if is_hunt_like(kind):
-        tools = list(HUNT_CAPABILITIES) + list(LEAD_TOOLS[kind])
+        # Adjudicate's plugin does not take the optional intel needs.
+        needs = [
+            c
+            for c in HUNT_CAPABILITIES
+            if kind == HUNT_RUN_KIND or c not in OPTIONAL_HUNT_CAPABILITIES
+        ]
+        tools = needs + list(LEAD_TOOLS[kind])
         lead = {"name": LEAD_NAMES[kind], "tools": tools}
         return {
             "lead": lead,
@@ -194,6 +201,10 @@ def _permissions(
         }
         if name in report["unbound"]:
             row["bound"] = False
+        elif name in report.get("absent", []):
+            # Not connected, and the run counts nothing against it.
+            row["bound"] = False
+            row["optional"] = True
         elif name in report["bound"]:
             row["bound"] = True
         rows.append(row)
@@ -291,7 +302,7 @@ def preflight(
     elif investigate:
         report = capabilities(registry, INVESTIGATE_CAPABILITIES)
     else:
-        report = {"bound": [], "unbound": []}
+        report = {"bound": [], "unbound": [], "absent": []}
     roles, roles_note = _roles(definition)
     model, model_source = _model()
     skills, skills_note = _skills(roles, definition.run_kind)

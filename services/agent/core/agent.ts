@@ -214,9 +214,15 @@ export function pluginGrants(
   return { [AGENT_ROLE]: [...new Set([...bound.map((tool) => tool.id), ...own, ...loader])], [REVIEW_ROLE]: [] };
 }
 
+// Needs whose absence is a blind spot: every need but the optional ones.
+export function requiredNeeds(plugin: PluginManifest): string[] {
+  const optional = new Set(plugin.optional ?? []);
+  return plugin.needs.filter((need) => !optional.has(need));
+}
+
 // Needs this deployment answers with nothing. Declaration order, so a replay reads the same.
 export function unboundNeeds(plugin: PluginManifest, tools: readonly ToolSpec[]): string[] {
-  return unboundCapabilities(plugin.needs, tools);
+  return unboundCapabilities(requiredNeeds(plugin), tools);
 }
 
 // Progressive disclosure: the system prompt carries each skill's name and one

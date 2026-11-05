@@ -3,7 +3,7 @@ import { forPeople, guardedRef, guardsOn, readOf, runValues, typeSafe, valuesBeh
 import { recalledPayloadOf } from "../../contracts/memory.js";
 import { isStructured } from "../../contracts/plugin.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../../contracts/tool.js";
-import { agentCalls, callsIn, childOrdinal, runChild, severityOf, SKILL_TOOL, type Early, type Ending, type Parked, type PluginContext, type PluginHooks } from "../../core/agent.js";
+import { agentCalls, callsIn, childOrdinal, requiredNeeds, runChild, severityOf, SKILL_TOOL, type Early, type Ending, type Parked, type PluginContext, type PluginHooks } from "../../core/agent.js";
 import { classOf, okWith, RECORD_TOOLS, refusedWith, type RecordBackend } from "../../core/record.js";
 import type { Harness } from "../../core/loop.js";
 import { errorFields, logger } from "../../core/log.js";
@@ -136,7 +136,7 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
         huntSpec(kernelSpec(base.spec as RunSpec)),
         base.started_by,
         ctx.options.run_kind,
-        ctx.options.plugin.needs,
+        requiredNeeds(ctx.options.plugin),
         base.principal,
         base.origin,
       );

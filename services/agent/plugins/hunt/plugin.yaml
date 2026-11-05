@@ -11,7 +11,14 @@ description: Test a hunt's hypotheses against the estate's telemetry, to a suppo
 
 # get_finding opens one alert's raw record: a page of findings names each one's hosts
 # and users, and this is for the few worth reading in full.
-needs: [findings_search, get_finding, telemetry_search, indicator_lookup, entity_recall]
+# The intel_* needs are OpenCTI's graph: observables, indicators, named entities and
+# their relationships. Mirrors HUNT_CAPABILITIES in core/workflows/playbook_resolver.py.
+needs: [findings_search, get_finding, telemetry_search, indicator_lookup, entity_recall,
+        intel_observable, intel_indicator, intel_entities, intel_relationships]
+# Held when connected; when not, the hunt goes without and journals no blind spot, so
+# an opt-in intel platform never counts against a verdict. Mirrors
+# OPTIONAL_HUNT_CAPABILITIES.
+optional: [intel_observable, intel_indicator, intel_entities, intel_relationships]
 
 # The record is required, and the hunt's own: link_evidence, propose_hypothesis
 # and open_question write the hunt's hypothesis, link and question events.

@@ -489,7 +489,8 @@ function StartedPreview({ detail }: { detail: WfRunDetail | null }) {
 
 /** Pre-run facts: what a hunt costs at most, and what this deployment cannot answer. */
 interface WfLimits {
-  capabilities?: { bound: string[]; unbound: string[] }
+  /** absent: optional needs nothing answers. The run goes without them and records no gap. */
+  capabilities?: { bound: string[]; unbound: string[]; absent?: string[] }
   budgets?: { max_iterations: number; max_cost_usd: number }
   /** set when a phase's agent is turned off: the server will refuse the run. */
   roles_note?: string | null
@@ -521,6 +522,16 @@ function Blindness({ unbound, investigation = false }: { unbound: string[]; inve
           ? 'Without telemetry_search the investigation can read findings and indicators but not the SIEM, and will record the gap.'
           : 'Without telemetry_search the hunt cannot query a SIEM, so it can corroborate nothing and will report that nothing was proven — a fact about this deployment, not about your estate.'
         : `The roles that need it will run without it, and the ${noun} will record the gap.`}
+    </div>
+  )
+}
+
+/** An opt-in source that is not connected: told, but not as a blind spot. */
+function Absent({ absent }: { absent: string[] }) {
+  if (!absent.some((name) => name.startsWith('intel_'))) return null
+  return (
+    <div className="text-[12.5px] leading-[1.5] text-tx-3">
+      No threat-intel platform such as OpenCTI is connected, so the hunt will not read its actors, indicators or relationships. That is not counted against any verdict.
     </div>
   )
 }
@@ -1000,6 +1011,7 @@ export function RunModal({ wf, agent = false, onStarted, onWatch, onClose }: {
         {(isHuntLike || isInvestigate) && (
           <Blindness unbound={limits?.capabilities?.unbound ?? []} investigation={isInvestigate} />
         )}
+        {isHuntLike && <Absent absent={limits?.capabilities?.absent ?? []} />}
         <ComboField label="Finding ID" value={findingId} onChange={setFindingId} placeholder="f-20260614-3b5c585e" options={findingOpts} hint={findingOpts.length ? `${findingOpts.length} recent findings — start typing to filter.` : undefined} />
         <ComboField label="Case ID" value={caseId} onChange={setCaseId} placeholder="case-2026-0142" options={caseOpts} />
         <Field label="Context" value={context} onChange={setContext} placeholder="Active ransomware on HOST-42…" textarea />
