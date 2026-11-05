@@ -26,7 +26,9 @@ PROVIDER = "eval-stub-provider"
 CALLS = 3  # llm-provider-key-unusable.yaml's `calls`
 CHAT = "/v1/chat/completions"
 
-# Submit n calls through the gateway and print how each ended.
+# Submit n calls through the gateway and print how each ended: "error" for an
+# error dict, "ok" for an answer with content (the router path's result carries no
+# "type"), "none" for no answer.
 SUBMIT = r"""
 import asyncio, json, sys
 from core.llm.gateway.gateway import get_llm_gateway
@@ -36,7 +38,10 @@ async def main(provider_id, n):
     results = await asyncio.gather(
         *[gw.submit("ping", provider_id=provider_id, model="eval-model", timeout=60) for _ in range(int(n))]
     )
-    print(json.dumps([(r or {}).get("type", "none") for r in results]))
+    print(json.dumps([
+        "error" if (r or {}).get("type") == "error" else "ok" if (r or {}).get("content") else "none"
+        for r in results
+    ]))
     await gw.close()
 
 asyncio.run(main(*sys.argv[1:3]))
@@ -96,7 +101,7 @@ def _llm_revert(s: Stack, cause: str) -> None:
     # A call that gets through is what clears the budget latch (jobs.py), so make one.
     _stub_mode(s, "")
     _add_provider(s)
-    _expect(_calls(s, 1), ["text"], "the recovery call")
+    _expect(_calls(s, 1), ["ok"], "the recovery call")
     s.sql(f"DELETE FROM llm_provider_configs WHERE provider_id = '{PROVIDER}'")
     s.active.discard(cause)
 
