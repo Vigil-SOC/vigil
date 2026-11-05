@@ -771,19 +771,40 @@ def _drift_of(
     fp: str,
     origin: Any,
     siem: str,
+    linked_fp: Optional[str] = None,
+    switched_off: Optional[datetime] = None,
+    prebuilt: bool = False,
 ) -> tuple:
-    """(result, reason) of a linked copy against its origin's latest version."""
+    """(result, reason) of a linked copy against its origin's latest version.
+
+    Drift means the copy moved after the link (#3728 decision 4). ``linked_fp``
+    is the fingerprint of its latest version first seen at or before the link;
+    ``switched_off`` when its status last left active; ``prebuilt``
+    an uncustomized Elastic prebuilt rule whose latest version is Elastic's.
+    """
     repo = f"repo rule {origin.id} v{origin.latest_version}"
     mine = f"{siem} v{copy.latest_version}"
     if origin.status != "active":
         return "pass", f"origin not active: repo rule {origin.id} is {origin.status}"
     if copy.status != "active":
+        # Only switching it off after the link counts; prebuilt rules install disabled.
         where = "removed from" if copy.status == "removed" else "disabled in"
-        return "fail", f"{where} {siem}; repo rule {origin.id} still active"
+        if switched_off is not None and (
+            copy.linked_at is None or switched_off > copy.linked_at
+        ):
+            return "fail", (
+                f"{where} {siem} {_at(switched_off)}; repo rule {origin.id} still active"
+            )
+        return "pass", f"{where} {siem}; never switched on since linked"
     moved = copy.linked_at is None or seen > copy.linked_at
+    if linked_fp is not None and fp == linked_fp:
+        how = "back to what it was when" if moved else "unchanged since"
+        return "pass", f"{mine} {how} linked"
     if copy.link_kind == "same_id":
         if fp == origin.fingerprint:
             return "pass", f"{mine} matches {repo}"
+        if prebuilt:
+            return "pass", f"{mine} is an Elastic prebuilt upgrade, not customized"
         if moved and seen > origin.first_seen:
             return "fail", (
                 f"{mine} first seen {_at(seen)}; {repo} unchanged since "
@@ -819,20 +840,63 @@ def _drift(source: str) -> int:
     with get_db_manager().session_scope() as session:
         last = _last_results(session, source)
         copies = session.execute(
-            select(DetectionRule, v.fingerprint, v.first_seen, v.checks)
+            select(
+                DetectionRule,
+                v.fingerprint,
+                v.first_seen,
+                v.checks,
+                v.content["version"].astext,
+                # Uncustomized Elastic prebuilt: Kibana's own record of it.
+                and_(
+                    v.content["immutable"].astext == "true",
+                    func.coalesce(
+                        v.content["rule_source"]["is_customized"].astext, "false"
+                    )
+                    != "true",
+                ),
+            )
             .join(v, latest)
             .where(DetectionRule.source == source)
             # A link decision commits before or after this, not between.
             .with_for_update(of=DetectionRule)
         ).all()
-        prev = dict(
-            session.execute(
-                select(v.rule_id, v.first_seen)
+        prev = {
+            r: (seen, pkg)
+            for r, seen, pkg in session.execute(
+                select(v.rule_id, v.first_seen, v.content["version"].astext)
                 .join(DetectionRule, DetectionRule.id == v.rule_id)
                 .where(
                     DetectionRule.source == source,
                     v.version == DetectionRule.latest_version - 1,
                 )
+            )
+        }
+        # Each copy's fingerprint at link time: its latest version seen by then.
+        linked_fps = dict(
+            session.execute(
+                select(v.rule_id, v.fingerprint)
+                .join(DetectionRule, DetectionRule.id == v.rule_id)
+                .where(
+                    DetectionRule.source == source,
+                    v.first_seen <= DetectionRule.linked_at,
+                )
+                .distinct(v.rule_id)
+                .order_by(v.rule_id, v.version.desc())
+            ).all()
+        )
+        # When each copy last left active: for a copy off now, its last switch-off.
+        ch = DetectionRuleCheckChange
+        switched_off = dict(
+            session.execute(
+                select(ch.rule_id, ch.changed_at)
+                .join(DetectionRule, DetectionRule.id == ch.rule_id)
+                .where(
+                    DetectionRule.source == source,
+                    ch.check_key == "status",
+                    ch.old_result == "active",
+                )
+                .distinct(ch.rule_id)
+                .order_by(ch.rule_id, ch.changed_at.desc(), ch.id.desc())
             ).all()
         )
         origin_ids = {c.origin_rule_id for c, *_ in copies if c.origin_rule_id}
@@ -852,7 +916,7 @@ def _drift(source: str) -> int:
         }
         changes: List[dict] = []
         checked: List[tuple] = []
-        for copy, fp, seen, checks in copies:
+        for copy, fp, seen, checks, pkg, prebuilt in copies:
             checks = checks or {}
             before = last.get((copy.id, "drift"))
             origin = origins.get(copy.origin_rule_id)
@@ -872,7 +936,22 @@ def _drift(source: str) -> int:
                     rest = {k: x for k, x in checks.items() if k != "drift"}
                     checked.append((copy.id, copy.latest_version, rest))
                 continue
-            new = _drift_of(copy, seen, prev.get(copy.id), fp, origin, siem)
+            prev_seen, prev_pkg = prev.get(copy.id, (None, None))
+            new = _drift_of(
+                copy,
+                seen,
+                prev_seen,
+                fp,
+                origin,
+                siem,
+                linked_fps.get(copy.id),
+                switched_off.get(copy.id),
+                # Kibana 8.17 leaves is_customized false on an edit, but only an
+                # Elastic upgrade changes the rule's own version.
+                source == kibana.SOURCE
+                and bool(prebuilt)
+                and (prev_seen is None or pkg != prev_pkg),
+            )
             if before != new:
                 changes.append(
                     _change(
