@@ -2,16 +2,19 @@
 
 Each daemon sync tick, before ``sync_repos`` (so Sees spends only what is left),
 every active overlay copy whose current stage (its latest stage row) is shadow
-or live is run from its last successful run (or the last hour) up to now. An
-Elastic copy runs against the elastic-siem Elasticsearch: EQL through
-``_eql/search``, ES|QL through ``_query``, Lucene through ``_search``. A Splunk
-copy runs its SPL (the ESCU YAML's ``search``) against the splunk integration;
-its hit count is the result rows; a Splunk copy whose first clause names an index
-Vigil's Splunk user cannot search is not run, and its Runs reads unknown (no pass,
-so it does not promote). Each run spends one search of its SIEM's
-budget (key ``overlay:<rule id>``), least recently run first; once the hour's
-budget is spent the rest wait. A copy an active SIEM copy linked to it now runs
-(``handed_off``) is neither searched nor spent for, and its stage is left as is.
+or live is run over a window that runs ``LAG`` behind now: from where its last
+successful run stopped (or an hour before that) up to now - LAG, so an event
+stamped earlier but indexed late still lands in a window not yet searched, and
+is counted once. An Elastic copy runs against the elastic-siem Elasticsearch:
+EQL through ``_eql/search``, ES|QL through ``_query``, Lucene through
+``_search``. A Splunk copy runs its SPL (the ESCU YAML's ``search``) against the
+splunk integration; its hit count is the result rows; a Splunk copy whose first
+clause names an index Vigil's Splunk user cannot search is not run, and its Runs
+reads unknown (no pass, so it does not promote). Each run spends one search of
+its SIEM's budget (key ``overlay:<rule id>``), least recently run first; once
+the hour's budget is spent the rest wait. A copy an active SIEM copy linked to
+it now runs (``handed_off``) is neither searched nor spent for, its stage is
+left as is, and its Runs is dropped (a NULL row closes its flag).
 
 A run writes checks['runs'] on the latest version (result, reason, last
 successful run, consecutive failures, per-day pass/fail), recording a changed
@@ -79,6 +82,7 @@ logger = logging.getLogger(__name__)
 INTEGRATION = ELASTIC.id
 LANGUAGES = ("eql", "esql", "lucene")
 FIRST_WINDOW = timedelta(hours=1)
+LAG = timedelta(minutes=30)  # how late an event may be indexed and still be seen
 MAX_DOCS = 100  # documents fetched per run; the count is the full total
 SAMPLE = 3
 SAMPLE_CHARS = 500
@@ -376,11 +380,20 @@ def _trimmed(days: Dict[str, Any], today: str) -> Dict[str, Any]:
     return {d: v for d, v in sorted(days.items()) if d >= cutoff}
 
 
+def _window(copy: Copy, now: datetime) -> Tuple[datetime, datetime]:
+    """[start, end) a run searches: from the last window's end to now - LAG."""
+    end = now - LAG
+    since = (copy.checks.get("runs") or {}).get("last_success")
+    start = datetime.fromisoformat(since) if since else end - FIRST_WINDOW
+    return start, max(start, end)  # never moves back over a searched window
+
+
 def _ran(
     checks: Dict[str, Any],
     stage: str,
     end: datetime,
     outcome: Tuple[Optional[int], List[Dict], Optional[str]],
+    searched_to: datetime,
 ) -> Dict[str, Any]:
     """``checks`` after one run: Runs, and the stage's per-day hits on a pass."""
     total, docs, error = outcome
@@ -400,7 +413,7 @@ def _ran(
         tally["fail"] += 1
     else:
         runs.update(result="pass", reason=None, failures=0)
-        runs["last_success"] = end.isoformat()
+        runs["last_success"] = searched_to.isoformat()  # the next window's start
         tally["pass"] += 1
     days[day] = tally
     runs.update(days=_trimmed(days, day), checked_at=end.isoformat())
@@ -495,10 +508,8 @@ async def _run_all(
             report.deferred += len(order) - n
             break
         report.searched += 1
-        since = (copy.checks.get("runs") or {}).get("last_success")
-        start = datetime.fromisoformat(since) if since else now - FIRST_WINDOW
         try:
-            total, docs = await query(service, copy, start, now)
+            total, docs = await query(service, copy, *_window(copy, now))
             results[copy.rule_id] = (total, docs, None)
         except Exception as exc:  # noqa: BLE001 -- the run fails with its message
             results[copy.rule_id] = (None, [], str(exc)[:500] or type(exc).__name__)
@@ -546,7 +557,9 @@ def _write_runs(copies: List[Copy], results: Dict[int, tuple], now: datetime) ->
             copy = by_id[rid]
             if ver != copy.version:
                 continue
-            new = _ran(checks or {}, copy.stage, now, results[rid])
+            new = _ran(
+                checks or {}, copy.stage, now, results[rid], _window(copy, now)[1]
+            )
             runs = new["runs"]
             before = last.get((rid, "runs"))
             if before != (runs["result"], runs["reason"]):
@@ -573,6 +586,36 @@ def _write_runs(copies: List[Copy], results: Dict[int, tuple], now: datetime) ->
             )
         _record_changes(session, changes, stamp)
     return len(changed)
+
+
+def _hand_off(copies: List[Copy], now: datetime) -> None:
+    """Copies their SIEM runs now stop carrying Runs: a NULL row closes their flag."""
+    from core.detections.inventory.sync import (
+        _dropped,
+        _last_results,
+        _record_changes,
+        _write_checks,
+    )
+
+    if not copies:
+        return
+    with get_db_manager().session_scope() as session:
+        last = _last_results(session, readers.OVERLAY_SOURCE)
+        changes, checked = [], []
+        for c in copies:
+            rows, checks = _dropped(
+                c.rule_id,
+                c.version,
+                c.checks,
+                ("runs",),
+                last,
+                "run by Splunk" if c.language == "splunk" else "run by Kibana",
+            )
+            changes += rows
+            if checks != c.checks:
+                checked.append((c.rule_id, c.version, checks))
+        _write_checks(session, checked)
+        _record_changes(session, changes, now.isoformat())
 
 
 def _write_unrunnable(copies: List[Tuple[Copy, str]], now: datetime) -> int:
@@ -802,6 +845,7 @@ def run_copies(live: bool) -> RolloutReport:
             c for c in _copies() if c.stage == "shadow" or (c.stage == "live" and live)
         ]
         skip = handed_off(copies)
+        _hand_off([c for c in copies if c.rule_id in skip], now)
     except Exception as exc:  # noqa: BLE001 -- the sync still runs
         logger.warning("detection rules: reading overlay copies failed: %s", exc)
         report.error = f"{type(exc).__name__}: {exc}"
