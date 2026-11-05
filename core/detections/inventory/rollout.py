@@ -24,6 +24,10 @@ row is written while Stop is set, or while the ceiling cannot be read. A move
 to live, when a git source is marked ``deploy_target`` for elastic, queues one
 ``agent-run-mitre_analyst`` run that opens a pull request adding the rule there.
 
+While Stop is set (or the ceiling cannot be read) no copy is run: no search,
+no checks written, no findings. Its last successful run stays put, so the stopped
+period is searched on the first run after Stop lifts.
+
 A copy an active Kibana rule now runs (one linked to the overlay rule, or to a
 repo rule with its rule_id) is handed off: the runner skips it, its stage stays.
 
@@ -689,6 +693,11 @@ def run(live: bool) -> RolloutReport:
 
 
 def _run_copies(live: bool, now: datetime, report: RolloutReport) -> None:
+    # Overlay searches and findings are Vigil's own activity: Stop halts them all.
+    # Nothing is written, so last_success stays and the next run covers the gap.
+    if _stopped():
+        report.skipped = "stopped"
+        return
     config = _elastic_config()
     if config is None:
         report.skipped = "elastic-siem not enabled or has no elasticsearch_url"
