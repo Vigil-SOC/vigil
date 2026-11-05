@@ -30,10 +30,11 @@ holding the numbers) for each move that is due: shadow -> live after a quiet,
 passing week with checks['sees'] pass (at most ``LIVE_PER_DAY`` a day across
 all rules), live -> shadow on noise, a loud day or a Sees fail (its data
 stopped), shadow -> off after ``OFF_AFTER_FAILURES`` failed runs in a row. No
-stage row is written while Stop is set, or while the ceiling cannot be read. An
-Elastic copy's move to live, when a git source is marked ``deploy_target`` for
-elastic, queues one ``agent-run-mitre_analyst`` run that opens a pull request
-adding the rule there.
+stage row is written while Stop is set, or while the ceiling cannot be read. A
+copy's move to live, when a git source is marked ``deploy_target`` for its
+format (elastic or splunk), queues one ``agent-run-mitre_analyst`` run that
+opens a pull request adding the rule there: the overlay TOML or ESCU YAML file
+exactly as stored.
 
 Nothing is written to Elasticsearch, Kibana or Splunk.
 """
@@ -757,7 +758,10 @@ def sweep(now: datetime, report: RolloutReport) -> None:
     skip = handed_off([c.rule_id for c in copies])
     copies = [c for c in copies if c.rule_id not in skip]
     stopped = _stopped()
-    target = _deploy_target()
+    targets = _deploy_targets()
+    if targets.get("splunk"):
+        # Off disk before the transaction: a read must not roll back stage rows.
+        _read_splunk_files([c for c in copies if c.stage == "shadow"])
     with get_db_manager().session_scope() as session:
         live_24h = session.scalar(
             select(func.count())
@@ -791,7 +795,7 @@ def sweep(now: datetime, report: RolloutReport) -> None:
         if rows:
             session.execute(insert(DetectionRuleStage), rows)
             # In the same transaction: a promotion and its PR run land together.
-            for trigger in _deploy_runs(promoted, target):
+            for trigger in _deploy_runs(promoted, targets):
                 session.add(trigger)
                 session.flush()
                 report.queued.append(trigger.id)
@@ -800,27 +804,66 @@ def sweep(now: datetime, report: RolloutReport) -> None:
 DEPLOY_WORKFLOW = "agent-run-mitre_analyst"
 
 
-def _deploy_target() -> Optional[Dict[str, Any]]:
-    """The elastic deploy target, read before the stage transaction opens."""
-    from core.detections.detection_rules_service import read_deploy_target
+def _deploy_targets() -> Dict[str, Dict[str, Any]]:
+    """Each format's deploy target, read before the stage transaction opens."""
+    from core.detections.detection_rules_service import (
+        DEPLOY_FORMATS,
+        read_deploy_target,
+    )
 
-    try:
-        return read_deploy_target("elastic")
-    except (
-        Exception
-    ) as exc:  # noqa: BLE001 -- an unread target must not hold a promotion
-        logger.warning("detection rules: deploy target unread: %s", exc)
-        return None
+    targets = {}
+    for fmt in DEPLOY_FORMATS:
+        try:
+            target = read_deploy_target(fmt)
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 -- an unread target must not hold a promotion
+            logger.warning("detection rules: %s deploy target unread: %s", fmt, exc)
+            continue
+        if target:
+            targets[fmt] = target
+    return targets
+
+
+def _read_splunk_files(copies: List[Copy]) -> None:
+    """Fill each Splunk copy's ``toml`` with its overlay YAML file as stored."""
+    from core.config import vigil_path
+
+    root = vigil_path("detections", readers.OVERLAY_ID)
+    for copy in copies:
+        if copy.language != "splunk":
+            continue
+        try:
+            copy.toml = (root / copy.path).read_text() if copy.path else ""
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning(
+                "detection rules: overlay file of rule %s unread: %s", copy.rule_id, exc
+            )
+        if not copy.toml:
+            logger.warning(
+                "detection rules: rule %s has no overlay file; no deploy PR",
+                copy.rule_id,
+            )
+
+
+def _deploy_brief(copy: Copy, target: Dict[str, Any]) -> str:
+    where = target.get("subdirectory") or "the repository root"
+    splunk = copy.language == "splunk"
+    return (
+        f"Open a pull request adding the live Vigil rule {copy.name!r} "
+        f"({'ESCU id' if splunk else 'rule_id'} {copy.key}, "
+        f"Vigil detection rule {copy.rule_id}) to "
+        f"{target['git_url']} under {where}, with the attached "
+        f"{'ESCU YAML' if splunk else 'TOML'} "
+        f"(Vigil's {copy.path or 'overlay file'}) as its file content "
+        "exactly as given, and record the pull request's link on this Case."
+    )
 
 
 def _deploy_runs(
-    promoted: List[Copy], target: Optional[Dict[str, Any]]
+    promoted: List[Copy], targets: Mapping[str, Dict[str, Any]]
 ) -> List[IntakeTrigger]:
-    """A queued mitre_analyst run per promoted Elastic copy, when a target is set."""
-    promoted = [c for c in promoted if c.language == "elastic"]
-    if not promoted or target is None:
-        return []
-    where = target.get("subdirectory") or "the repository root"
+    """A queued mitre_analyst run per promoted copy whose format has a target."""
     return [
         IntakeTrigger(
             kind="schedule",
@@ -831,18 +874,14 @@ def _deploy_runs(
                 # Not "scheduled": the daily gaps run reads its clock off those.
                 "trigger_type": "rollout",
                 "finding_ids": [],
-                "hypothesis": (
-                    f"Open a pull request adding the live Vigil rule {copy.name!r} "
-                    f"(rule_id {copy.key}, Vigil detection rule {copy.rule_id}) to "
-                    f"{target['git_url']} under {where}, with the attached TOML "
-                    f"(Vigil's {copy.path or 'overlay file'}) as its file content "
-                    "exactly as given, and record the pull request's link on this Case."
-                ),
+                "hypothesis": _deploy_brief(copy, targets[copy.language]),
                 # The overlay file whole, exclusions included; the brief carries it.
                 "document": copy.toml,
             },
         )
         for copy in promoted
+        # A Splunk copy whose file went unread has nothing to attach.
+        if targets.get(copy.language) and (copy.language == "elastic" or copy.toml)
     ]
 
 
