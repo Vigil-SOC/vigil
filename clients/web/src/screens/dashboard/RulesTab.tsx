@@ -41,13 +41,14 @@ function ToolKpi({ tool, h }: { tool: string; h: RulesHealth }) {
       </div>
     )
   }
-  const failing = h.not_passing.by_tool[tool]?.failing ?? 0
+  const { broken = 0, starved = 0 } = h.not_passing.by_tool[tool] ?? {}
   return (
     <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-b border-line-soft min-w-0">
       <span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">{cap(tool)} · {plural(t.rules, 'rule')}</span>
-      <div className="flex items-baseline gap-2.5">
-        <span className={`text-[30px] font-semibold tracking-[-0.02em] leading-[1.1]${failing ? ' text-crit' : ''}`}>{failing}</span>
-        <span className="text-xs text-tx-3">can’t fire</span>
+      <div className="flex flex-wrap items-baseline gap-x-2.5">
+        <span className={`text-[30px] font-semibold tracking-[-0.02em] leading-[1.1]${broken ? ' text-crit' : ''}`}>{broken}</span>
+        <span className="text-xs text-tx-3">broken</span>
+        {starved > 0 && <span className="text-xs text-tx-2" title="Sees fails: the data these rules read isn’t arriving">{starved} starved · data not arriving</span>}
       </div>
       {checkKeys(t).map((k) => {
         const line = tallyLine(t[k] as CheckTally, uncheckedReason(h, k, tool))
@@ -125,10 +126,10 @@ function NotPassingCard({ h }: { h: RulesHealth }) {
   return (
     <div className="bg-panel border border-line rounded-lg shadow-panel overflow-hidden">
       <div className="flex items-center gap-2.5 px-[18px] py-[15px] border-b border-line-soft">
-        <h3 className="text-[14.5px]">Rules that can’t fire</h3>
+        <h3 className="text-[14.5px]">Rules not passing</h3>
         <span className="flex-1" />
         <span className="text-xs text-tx-3">
-          {total > rules.length ? `first ${rules.length} of ${total}` : plural(total, 'rule')} failing or unknown on a check · fails first
+          {total > rules.length ? `first ${rules.length} of ${total}` : plural(total, 'rule')} failing or unknown on a check · broken, then starved, first
         </span>
       </div>
       {rules.length === 0 ? (
@@ -139,7 +140,7 @@ function NotPassingCard({ h }: { h: RulesHealth }) {
             <thead>
               <tr>
                 <th className="w-[90px]">Tool</th>
-                <th className="w-[26%]">Rule</th>
+                <th className="w-[18%]">Rule</th>
                 <th className="w-[72px]">Version</th>
                 {checks.map((k) => <th key={k}>{cap(k)}</th>)}
               </tr>

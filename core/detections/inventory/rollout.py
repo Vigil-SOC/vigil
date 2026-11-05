@@ -26,10 +26,11 @@ total): a live copy past that in one run is over the daily hit limit and
 reverts in the same tick.
 
 The sweep (after ``sync_repos``) then writes a stage row (actor 'system', proof
-holding the numbers) for each move that is due: shadow -> live after a quiet, passing week (at most
-``LIVE_PER_DAY`` a day across all rules), live -> shadow on noise or a loud
-day, shadow -> off after ``OFF_AFTER_FAILURES`` failed runs in a row. No stage
-row is written while Stop is set, or while the ceiling cannot be read. An
+holding the numbers) for each move that is due: shadow -> live after a quiet,
+passing week with checks['sees'] pass (at most ``LIVE_PER_DAY`` a day across
+all rules), live -> shadow on noise, a loud day or a Sees fail (its data
+stopped), shadow -> off after ``OFF_AFTER_FAILURES`` failed runs in a row. No
+stage row is written while Stop is set, or while the ceiling cannot be read. An
 Elastic copy's move to live, when a git source is marked ``deploy_target`` for
 elastic, queues one ``agent-run-mitre_analyst`` run that opens a pull request
 adding the rule there.
@@ -230,8 +231,8 @@ def _splunk_config() -> Optional[Dict[str, Any]]:
     return None if missing(config, *SPLUNK_SELFHOSTED_REQUIRED) else config
 
 
-def handed_off(copies: List[Copy]) -> Set[int]:
-    """Rule ids of the overlay copies an active SIEM copy runs instead.
+def handed_off(rule_ids: List[int]) -> Set[int]:
+    """Of these overlay rule ids, those an active SIEM copy runs instead.
 
     That is a Splunk saved search (for a Splunk copy) or a Kibana rule (for an
     Elastic one) linked by the sync (same_id / known_name) or an agent to the
@@ -239,7 +240,7 @@ def handed_off(copies: List[Copy]) -> Set[int]:
     (rule_id). A Splunk copy also matches a repo rule by name, since ESCU links
     by name (known_name); an Elastic copy matches by rule_id only.
     """
-    if not copies:
+    if not rule_ids:
         return set()
     o, r, s = aliased(DetectionRule), aliased(DetectionRule), aliased(DetectionRule)
     same_rule = (
@@ -263,7 +264,7 @@ def handed_off(copies: List[Copy]) -> Set[int]:
     )
     with get_db_manager().session_scope() as session:
         ids = session.scalars(
-            select(o.id).where(o.id.in_([c.rule_id for c in copies]), linked)
+            select(o.id).where(o.id.in_(list(rule_ids)), linked)
         ).all()
     return set(ids)
 
@@ -664,6 +665,10 @@ def _due(
 ) -> Optional[Tuple[str, str, Dict[str, Any]]]:
     """(stage, reason, proof) of the move due for ``copy``, or None."""
     runs = copy.checks.get("runs") or {}
+    sees_check = copy.checks.get("sees") or {}
+    seen = {
+        k: sees_check.get(k) for k in ("result", "reason", "data_source", "checked_at")
+    }
     since = copy.stage_at.isoformat()
     if copy.stage == "shadow":
         failures = int(runs.get("failures") or 0)
@@ -690,17 +695,20 @@ def _due(
             return None
         if any(v["hits"] > MAX_HITS_PER_DAY for v in days.values()):
             return None
+        if seen.get("result") != "pass":  # its data must be shown to arrive
+            return None
         if live_24h >= LIVE_PER_DAY:
             return None
         return (
             "live",
             f"{SHADOW_DAYS} days in shadow, every day's runs passed, no day "
-            f"above {MAX_HITS_PER_DAY} hits",
+            f"above {MAX_HITS_PER_DAY} hits, Sees passed",
             {
                 "shadow_since": since,
                 "days": days,
                 "max_hits_per_day": max(v["hits"] for v in days.values()),
                 "live_rows_last_24h": live_24h,
+                "sees": seen,
             },
         )
     # live: only what happened since it went live counts.
@@ -716,6 +724,12 @@ def _due(
             "shadow",
             f"a live day above {MAX_HITS_PER_DAY} hits",
             {"live_since": since, "loud_days": loud},
+        )
+    if seen["result"] == "fail":  # lost data; unknown changes nothing
+        return (
+            "shadow",
+            f"Sees: {seen['reason'] or 'fail'}",
+            {"live_since": since, "sees": seen},
         )
     total, noise = _noise(session, copy)
     if total >= REVERT_MIN_FINDINGS and noise >= total * REVERT_NOISE_SHARE:
@@ -740,7 +754,7 @@ def sweep(now: datetime, report: RolloutReport) -> None:
 
     copies = [c for c in _copies() if c.stage in ("shadow", "live")]
     # A handed-off copy keeps its stage: Vigil no longer runs it.
-    skip = handed_off(copies)
+    skip = handed_off([c.rule_id for c in copies])
     copies = [c for c in copies if c.rule_id not in skip]
     stopped = _stopped()
     target = _deploy_target()
@@ -844,7 +858,7 @@ def run_copies(live: bool) -> RolloutReport:
         copies = [
             c for c in _copies() if c.stage == "shadow" or (c.stage == "live" and live)
         ]
-        skip = handed_off(copies)
+        skip = handed_off([c.rule_id for c in copies])
         _hand_off([c for c in copies if c.rule_id in skip], now)
     except Exception as exc:  # noqa: BLE001 -- the sync still runs
         logger.warning("detection rules: reading overlay copies failed: %s", exc)

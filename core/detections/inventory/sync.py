@@ -18,8 +18,8 @@ open flag on it.
 A Runs result (checks['runs'] on the latest version) is written only when its
 result or reason differs from the stored one; a new version starts with none.
 After Wazuh syncs, ``quiet`` counts each active Wazuh rule's alerts against a
-per-day threshold (checks['quiet'], from ``wazuh-alerts-*`` on the elastic-siem
-indexer), then ``wazuh_sees`` checks whether each one's decoder gets events;
+per-day threshold and the rule's own 30 days (checks['quiet'], checks['noisy'],
+checks['silent'], from ``wazuh-alerts-*`` on the elastic-siem indexer), then ``wazuh_sees`` checks whether each one's decoder gets events;
 after Kibana syncs, ``quiet`` counts each active Kibana rule's alerts the same
 way and against the rule's own 30 days (checks['noisy'], checks['silent']),
 then ``sees`` checks whether each active Kibana rule's data is arriving; after
@@ -27,7 +27,9 @@ Splunk syncs, ``splunk_sees`` checks each active saved search's data the same
 way. All three Sees checks write checks['sees']; each check is written the
 same way. Last, ``accurate`` judges each active Kibana, Wazuh and Splunk rule's
 latest version from the stored findings' verdicts and writes checks['accurate']
-the same way (local SQL only).
+the same way (local SQL only). Then, at most once a day, ``caught`` credits each
+rule version cited on a matching compose-run step or proven Verdict
+(checks['caught'], pass only, never cleared; a disabled rule keeps it).
 
 After the sources, each SIEM rule is linked to the repo rule it came from when
 that is certain: a Kibana rule by ``same_id`` (one active repo Elastic rule with
@@ -74,6 +76,7 @@ from sqlalchemy import and_, bindparam, func, insert, or_, select, tuple_, updat
 
 from core.detections.inventory import (
     accurate,
+    caught,
     kibana,
     quiet,
     readers,
@@ -533,7 +536,8 @@ def _remove_unconfigured(configured: List[str]) -> int:
 
 def sync_repos() -> List[Any]:
     """Read every configured repo, Wazuh, Kibana and Splunk, and sync each, checking
-    Wazuh, Kibana and Splunk rules' Quiet and Sees, then their Accurate.
+    Wazuh, Kibana and Splunk rules' Quiet and Sees, then their Accurate and
+    Caught.
 
     One failing source skips only itself.
     """
@@ -556,6 +560,9 @@ def sync_repos() -> List[Any]:
             # Quiet first: its one search is spent before Sees' groups.
             reports.append(quiet.sweep_elastic(config))
             reports.append(sees.sweep_elastic(config))
+        elif (es_config := _overlay_elastic_config()) is not None:
+            # No Kibana sync: Vigil's overlay copies still need Sees to promote.
+            reports.append(sees.sweep_elastic(es_config, kibana_rules=False))
         splunk_report, splunk_config = _sync_splunk()
         reports.append(_drifted(_linked(splunk_report, _link_known_name)))
         if splunk_config is not None:
@@ -563,11 +570,23 @@ def sync_repos() -> List[Any]:
             reports.append(quiet.sweep_splunk(splunk_config))
             reports.append(splunk_sees.sweep(splunk_config))
         reports.append(accurate.sweep())
+        reports.append(caught.sweep())  # at most once a day; local reads only
     if removed:
         logger.info(
             "detection rules: %d rules of unconfigured sources removed", removed
         )
     return reports
+
+
+def _overlay_elastic_config() -> Optional[Dict[str, Any]]:
+    """elastic-siem's config as the overlay runner reads it (no kibana_url needed)."""
+    from core.detections.inventory.rollout import _elastic_config
+
+    try:
+        return _elastic_config()
+    except Exception as exc:  # noqa: BLE001 -- the Elastic sync's report stands
+        logger.warning("detection rules: elastic-siem config unread: %s", exc)
+        return None
 
 
 def _linked(report: SourceReport, link: Callable[[], tuple]) -> SourceReport:

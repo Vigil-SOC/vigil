@@ -230,7 +230,8 @@ async def _score(run: Mapping[str, Any], projection: Any) -> Optional[Dict[str, 
     }
 
 
-async def _emulation_episodes(start: datetime, end: datetime) -> List[Dict[str, Any]]:
+async def emulation_episodes(start: datetime, end: datetime) -> List[Dict[str, Any]]:
+    """Compose runs finished in [start, end] with an execute trace, each scored."""
     runs = _compose_runs(start, end)
     projections = await asyncio.gather(*(read_projection(r["run_id"]) for r in runs))
     episodes: List[Dict[str, Any]] = []
@@ -267,7 +268,7 @@ async def list_episodes(
     if start > end:
         raise _refuse(LIST_TOOL, "start must be at or before end")
     distil, marker_total = _distil_page(start, end, limit, session)
-    emulations = await _emulation_episodes(start, end)
+    emulations = await emulation_episodes(start, end)
     # The newest ``limit`` markers plus every emulation in the window is enough
     # for the merged page: any marker older than that page is older than
     # ``limit`` markers, so it cannot enter the top of the union.
