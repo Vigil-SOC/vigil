@@ -5,7 +5,11 @@
 # soc-daemon, agent-serve and agent-worker, since the faults live in those
 # services (compose.v1.yml has a real backend only, compose.test.yml none).
 # Stand-ins: Bifrost, the backup, mcp-runner and the Elastic and Splunk the daemon polls.
-# Medic itself is not here: every verify reads Vigil directly.
+# Medic, its gateway and its Docker proxy join once the stack is up: Stack
+# runs scripts/medic/enable-compose.sh with this file as
+# VIGIL_MEDIC_COMPOSE_OVERRIDE, so they come from the shipped overlay and
+# `--profile medic`. Every verify still reads Vigil directly.
+# Auth is on (DEV_MODE off, the shipped CSRF): Stack.api signs in.
 #
 # Names and host ports are reset so it runs beside a developer's deeptempo-*
 # stack, under its own project (medic-eval-*). Written out per service:
@@ -31,9 +35,14 @@ services:
       dockerfile: infra/docker/Dockerfile.backend
     ports: !reset []
     restart: "no"
-    environment:
-      # The injectors save settings through the API without a browser's cookie pair.
-      VIGIL_CSRF_ENABLED: "false"
+
+  # Medic: images are the ones enable-compose.sh builds (vigil-medic*:local).
+  medic:
+    container_name: !reset null
+  medic-gateway:
+    container_name: !reset null
+  medic-dockerproxy:
+    container_name: !reset null
 
   soc-daemon:
     container_name: !reset null
@@ -43,7 +52,7 @@ services:
     restart: "no"
     environment:
       # docker-compose.yml gives the daemon no JWT_SECRET_KEY, and it exits at
-      # start without one (auth_service imports it) unless DEV_MODE is on.
+      # start without one (auth_service imports it) with DEV_MODE off.
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
       # Empty is the I-5.a fault: the daemon then refuses every push with 503.
       DAEMON_WEBHOOK_TOKEN: ${MEDIC_EVAL_WEBHOOK_TOKEN-}
