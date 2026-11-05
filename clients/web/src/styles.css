@@ -4831,9 +4831,10 @@
    .data-table th:nth-child(1) { width: 24%; }
    .data-table:not(.data-rules) th:nth-child(3) { width: 150px; }
    .data-table:not(.data-rules) th:nth-child(4) { width: 90px; }
-   .data-rules th:nth-child(2) { width: 110px; }
-   .data-rules th:nth-child(4) { width: 90px; }
-   .data-rules th:nth-child(5) { width: 150px; }
+   .data-rules th:nth-child(2) { width: 120px; }
+   .data-rules th:nth-child(3) { width: 110px; }
+   .data-rules th:nth-child(5) { width: 90px; }
+   .data-rules th:nth-child(6) { width: 150px; }
 
    .data-act {
       text-align: right;

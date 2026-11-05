@@ -88,8 +88,34 @@ FORMAT_ENV_VARS = {
     "kql": "KQL_PATHS",
 }
 
+# Formats whose live overlay rules Vigil offers to a customer repo by pull request.
+DEPLOY_FORMATS = ("splunk", "elastic")
+
 
 _CONFIG_FILENAME = "detection_sources.json"
+
+
+def _deploy_target_of(sources: List[Dict[str, Any]], fmt: str) -> Optional[Dict]:
+    return next(
+        (
+            s
+            for s in sources
+            if s.get("deploy_target")
+            and s.get("type") == "git"
+            and s.get("format") == fmt
+        ),
+        None,
+    )
+
+
+def read_deploy_target(fmt: str) -> Optional[Dict[str, Any]]:
+    """The ``fmt`` deploy target as saved, without the service's rescan; raises
+    when the file is unreadable."""
+    path = vigil_path(_CONFIG_FILENAME)
+    if not path.exists():
+        return None
+    with open(path, "r") as f:
+        return _deploy_target_of(json.load(f).get("sources", []), fmt)
 
 
 class DetectionRulesService:
@@ -363,6 +389,7 @@ class DetectionRulesService:
         path: Optional[str] = None,
         subdirectory: str = "",
         story_subdirectory: str = "",
+        deploy_target: bool = False,
     ) -> Dict[str, Any]:
         """
         Add a new detection rule source.
@@ -375,6 +402,7 @@ class DetectionRulesService:
             path: Local directory path (required for type='local')
             subdirectory: Subdirectory within the repo/path containing rules
             story_subdirectory: Subdirectory for Splunk stories (optional)
+            deploy_target: Where Vigil's live rules of this format go (git, splunk/elastic)
         """
         source_id = str(uuid.uuid4())[:8]
 
@@ -405,6 +433,10 @@ class DetectionRulesService:
         # Idempotent on (resolved rules directory, format): re-registering the same
         # directory refreshes the existing entry instead of appending a duplicate.
         existing = self._find_existing(local_path, subdirectory, format)
+        if deploy_target:
+            self._check_deploy_target(
+                existing or {"type": source_type, "format": format}
+            )
         if existing is not None:
             if not Path(local_path).exists():
                 if source_type != "git":
@@ -415,6 +447,8 @@ class DetectionRulesService:
             )
             existing["last_updated"] = datetime.now().isoformat()
             existing["status"] = "ready"
+            if deploy_target:
+                existing["deploy_target"] = True
             self._save_config()
             logger.info(
                 f"Source already registered as {existing['name']!r} "
@@ -435,6 +469,7 @@ class DetectionRulesService:
             "rule_count": 0,
             "last_updated": None,
             "status": "not_cloned" if source_type == "git" else "unknown",
+            "deploy_target": bool(deploy_target),
         }
 
         # If git, clone the repo
@@ -504,6 +539,35 @@ class DetectionRulesService:
         self._save_config()
         logger.info(f"Removed source: {source['name']}")
         return True
+
+    def _check_deploy_target(self, source: Dict[str, Any]) -> None:
+        """Raise unless ``source`` may be its format's deploy target."""
+        fmt = source.get("format")
+        if source.get("type") != "git" or fmt not in DEPLOY_FORMATS:
+            raise ValueError(
+                "Only a git source whose format is splunk or elastic can be a deploy target"
+            )
+        other = self.deploy_target(fmt)
+        if other is not None and other.get("id") != source.get("id"):
+            raise ValueError(
+                f"{other['name']!r} is already the {fmt} deploy target; clear it first"
+            )
+
+    def set_deploy_target(self, source_id: str, on: bool) -> Dict[str, Any]:
+        """Set or clear the source's deploy_target flag (at most one per format)."""
+        source = self.get_source(source_id)
+        if not source:
+            raise LookupError(f"Source not found: {source_id}")
+        if on:
+            self._check_deploy_target(source)
+        source["deploy_target"] = bool(on)
+        self._save_config()
+        logger.info(f"Deploy target {'set' if on else 'cleared'}: {source['name']}")
+        return source
+
+    def deploy_target(self, fmt: str) -> Optional[Dict[str, Any]]:
+        """The git source marked to receive Vigil's live ``fmt`` rules, if any."""
+        return _deploy_target_of(self.sources, fmt)
 
     def update_source(self, source_id: str) -> Dict[str, Any]:
         """Update a single source (git pull or rescan)."""

@@ -1410,6 +1410,8 @@ export interface DetectionSource {
   rule_count: number
   last_updated: string | null
   status: string
+  /** Vigil opens pull requests for its live rules of this format here */
+  deploy_target?: boolean
 }
 
 interface DetectionStats {
@@ -1426,6 +1428,7 @@ export interface AddSourcePayload {
   path?: string
   subdirectory?: string
   story_subdirectory?: string
+  deploy_target?: boolean
 }
 
 export function useDetectionRules() {
@@ -1470,6 +1473,10 @@ export function useDetectionRules() {
     (id: string) => detectionRulesApi.updateSource(id).then(() => reload()),
     [reload],
   )
+  const setDeployTarget = useCallback(
+    (id: string, on: boolean) => detectionRulesApi.setDeployTarget(id, on).then(() => reload()),
+    [reload],
+  )
   const updateAll = useCallback(
     () =>
       detectionRulesApi.updateAll().then((res) => {
@@ -1479,7 +1486,7 @@ export function useDetectionRules() {
     [reload],
   )
 
-  return { sources, stats, phase, error, reload, addSource, removeSource, updateSource, updateAll }
+  return { sources, stats, phase, error, reload, addSource, removeSource, updateSource, updateAll, setDeployTarget }
 }
 
 const JOB_POLL_MS = 1000

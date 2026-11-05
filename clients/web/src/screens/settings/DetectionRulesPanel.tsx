@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Icon } from '../../shared/icons'
-import { EmptyState, Field, Popup, Select, SettingsCard, TextInput } from '../../shared/ui'
+import { EmptyState, Field, Popup, Select, SettingsCard, TextInput, Toggle, ToggleRow } from '../../shared/ui'
 import { useDetectionRules, type AddSourcePayload, type DetectionSource } from './useSettings'
 import type { SectionProps } from './types'
 
@@ -31,12 +31,17 @@ const EMPTY_SOURCE: AddSourcePayload = {
   path: '',
   subdirectory: '',
   story_subdirectory: '',
+  deploy_target: false,
 }
 
 const fmtNum = (n: number) => n.toLocaleString()
 
+// Formats whose live overlay rules Vigil offers to a customer git repo by pull request.
+const DEPLOY_FORMATS = ['splunk', 'elastic']
+const deployable = (s: DetectionSource) => s.type === 'git' && DEPLOY_FORMATS.includes(s.format)
+
 export default function DetectionRulesPanel({ notify }: SectionProps) {
-  const { sources, stats, phase, error, reload, addSource, removeSource, updateSource, updateAll } =
+  const { sources, stats, phase, error, reload, addSource, removeSource, updateSource, updateAll, setDeployTarget } =
     useDetectionRules()
   const [updating, setUpdating] = useState<string | null>(null)
   const [addOpen, setAddOpen] = useState(false)
@@ -82,6 +87,18 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
     }
   }
 
+  const onDeployTarget = async (s: DetectionSource, on: boolean) => {
+    setUpdating(`target:${s.id}`)
+    try {
+      await setDeployTarget(s.id, on)
+      notify('ok', on ? `${s.name} is the ${formatName(s.format)} deploy target.` : `${s.name} is no longer a deploy target.`)
+    } catch (e) {
+      notify('err', (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to change the deploy target.')
+    } finally {
+      setUpdating(null)
+    }
+  }
+
   const onAdd = async () => {
     setSaving(true)
     try {
@@ -93,6 +110,7 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
         path: form.source_type === 'local' ? form.path : undefined,
         subdirectory: form.subdirectory,
         story_subdirectory: form.story_subdirectory,
+        deploy_target: formDeployable && !!form.deploy_target,
       })
       notify('ok', `Added source: ${form.name}.`)
       setAddOpen(false)
@@ -115,6 +133,7 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
     }
   }
 
+  const formDeployable = form.source_type === 'git' && DEPLOY_FORMATS.includes(form.format)
   const addValid = !!form.name && (form.source_type === 'git' ? !!form.url : !!form.path)
 
   return (
@@ -144,7 +163,7 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
         ) : (
           <table className="tbl data-table data-rules">
             <thead>
-              <tr><th>Rule source</th><th>Format</th><th>Where</th><th>Rules</th><th aria-label="Actions" /></tr>
+              <tr><th>Rule source</th><th>Format</th><th>Deploy target</th><th>Where</th><th>Rules</th><th aria-label="Actions" /></tr>
             </thead>
             <tbody>
               {sources.map((s) => {
@@ -161,6 +180,16 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
                       )}
                     </td>
                     <td>{formatName(s.format)}</td>
+                    <td title={deployable(s) ? `When one of Vigil's ${formatName(s.format)} rules goes live, an agent opens a pull request adding it here; it waits for approval.` : undefined}>
+                      {deployable(s) && (
+                        <Toggle
+                          checked={!!s.deploy_target}
+                          disabled={!!updating}
+                          label={`${s.name}: deploy target for ${formatName(s.format)} rules`}
+                          onChange={(on) => onDeployTarget(s, on)}
+                        />
+                      )}
+                    </td>
                     <td className="data-clip font-mono" title={s.git_url || undefined}>{where || '—'}</td>
                     <td>{fmtNum(s.rule_count)}</td>
                     <td className="data-act">
@@ -212,6 +241,14 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
             <Field label="Story Subdirectory (optional)" hint="Subdirectory for Splunk story files.">
               <TextInput value={form.story_subdirectory} placeholder="e.g. stories" onChange={(e) => setForm({ ...form, story_subdirectory: e.target.value })} />
             </Field>
+          )}
+          {formDeployable && (
+            <ToggleRow
+              label="Deploy target"
+              hint={`When one of Vigil's ${formatName(form.format)} rules goes live, an agent opens a pull request adding it here.`}
+              checked={!!form.deploy_target}
+              onChange={(v) => setForm({ ...form, deploy_target: v })}
+            />
           )}
           <div className="flex justify-end gap-2.5 mt-1">
             <button className="btn ghost" onClick={() => setAddOpen(false)} disabled={saving}>Cancel</button>
