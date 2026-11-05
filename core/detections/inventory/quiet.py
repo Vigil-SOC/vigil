@@ -1,10 +1,18 @@
-"""Quiet, Noisy and Silent: each active Kibana rule's alert volume, against a
-threshold and against its own history.
+"""Quiet, Noisy and Silent: each active Kibana or Wazuh rule's alert volume,
+against a threshold, and (Kibana only) against its own history.
 
-One size-0 search per sync through Kibana's signals route counts alerts per
-rule per UTC day over the last 30 days, building blocks excluded. It is spent
-against elastic-siem's ``max_searches_per_hour`` before Sees; when the budget
-is spent Quiet is skipped and nothing is written. Never a second search.
+Per SIEM, one size-0 search per sync counts alerts per rule per UTC day over
+the last 30 days: for Kibana through its signals route, building blocks
+excluded; for Wazuh on ``wazuh-alerts-*`` on the indexer behind elastic-siem
+(no Kibana needed), by ``rule.id``. Each is spent against elastic-siem's
+``max_searches_per_hour`` (Kibana's before Sees, Wazuh's before Wazuh Sees);
+when the budget is spent Quiet is skipped and nothing is written. Never a
+second search. Both use elastic-siem's ``quiet_max_alerts_per_day``.
+
+Wazuh shares Wazuh Sees' gate: when elastic-siem is off, has no
+``elasticsearch_url``, or the indexer lists no ``wazuh-alerts-*`` index, every
+active Wazuh rule reads ``unknown`` with that reason, and nothing is spent. A
+Wazuh rule below the manager's alert level never alerts and reads ``pass``.
 
 A rule's window runs from its latest version's first_seen day (capped at 30
 days) to now; under 24 h it reads ``unknown`` ("version too new"). Over
@@ -16,9 +24,9 @@ with its error.
 The result goes under checks['quiet'] ({result, reason, count, days,
 checked_at}), written only when it changed. Since the count moves the reason,
 a change is recorded in detection_rule_check_changes only when the result
-changes (or an unknown's reason). Nothing is written to Kibana.
+changes (or an unknown's reason). Nothing is written to Kibana or the indexer.
 
-Noisy and Silent read the same per-rule daily UTC buckets, never another search.
+Noisy and Silent (Kibana rules only, yet) read the same per-rule daily UTC buckets, never another search.
 "Today" is the current UTC day's bucket so far (partial, so a spike reads late,
 never early); "the last N d" is today and the N - 1 whole days before it.
 
@@ -45,7 +53,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import aliased
 
-from core.detections.inventory import kibana
+from core.detections.inventory import kibana, wazuh, wazuh_sees
 from core.detections.inventory.sees import INTEGRATION, RuleKey, write_check
 from core.integrations._base import search_budget
 from core.storage.connection import get_db_manager
@@ -215,7 +223,7 @@ def _history_unknown(reason: str) -> Dict[str, Any]:
     return {"result": "unknown", "reason": reason}
 
 
-def _active_rules() -> List[Rule]:
+def _active_rules(source: str) -> List[Rule]:
     # The rule's first sighting in the inventory: its earliest version's.
     first = aliased(DetectionRuleVersion)
     rule_seen = (
@@ -239,9 +247,7 @@ def _active_rules() -> List[Rule]:
                     DetectionRuleVersion.version == DetectionRule.latest_version,
                 ),
             )
-            .where(
-                DetectionRule.source == kibana.SOURCE, DetectionRule.status == "active"
-            )
+            .where(DetectionRule.source == source, DetectionRule.status == "active")
             .order_by(DetectionRule.id)
         ).all()
     return [
@@ -260,6 +266,17 @@ def _int(value: Any, default: int) -> int:
     return default if value is None else max(int(value), 0)
 
 
+def _failed(
+    rules: List[Rule], exc: Exception, now: datetime
+) -> Dict[RuleKey, Dict[str, Any]]:
+    """A failed search: every rule reads unknown with its error, or 'version too new'."""
+    reason = f"alert count failed: {exc}"
+    return {
+        key: _unknown(TOO_NEW if now - seen < timedelta(hours=24) else reason)
+        for key, _, seen, _ in rules
+    }
+
+
 def sweep_elastic(config: Mapping[str, Any]) -> QuietReport:
     """Count every active Kibana rule's alerts in one search, if the budget allows,
     and write Quiet, Noisy and Silent from it."""
@@ -268,7 +285,7 @@ def sweep_elastic(config: Mapping[str, Any]) -> QuietReport:
         per_hour = _int(config.get("max_searches_per_hour"), DEFAULT_PER_HOUR)
         max_per_day = _int(config.get("quiet_max_alerts_per_day"), DEFAULT_MAX_PER_DAY)
         cfg = {k: _int(config.get(k), v) for k, v in DEFAULTS.items()}
-        rules = _active_rules()
+        rules = _active_rules(kibana.SOURCE)
         report.rules = len(rules)
         if not rules:
             return report
@@ -293,13 +310,13 @@ def sweep_elastic(config: Mapping[str, Any]) -> QuietReport:
             results = _results(rules, days_of, truncated, max_per_day, now)
             noisy, silent = _history(rules, days_of, truncated, cfg, now)
         except Exception as exc:  # noqa: BLE001 -- every rule reads unknown
-            reason = f"alert count failed: {exc}"
-            results = {
-                key: _unknown(TOO_NEW if now - seen < timedelta(hours=24) else reason)
-                for key, _, seen, _ in rules
-            }
+            results = _failed(rules, exc, now)
             noisy = {
-                key: _history_unknown(RULE_TOO_NEW if now - seen < MIN_AGE else reason)
+                key: _history_unknown(
+                    RULE_TOO_NEW
+                    if now - seen < MIN_AGE
+                    else f"alert count failed: {exc}"
+                )
                 for key, _, _, seen in rules
             }
             silent = dict(noisy)
@@ -311,4 +328,65 @@ def sweep_elastic(config: Mapping[str, Any]) -> QuietReport:
         logger.warning("detection rules: Quiet failed: %s", exc)
         report.error = f"{type(exc).__name__}: {exc}"
     logger.info("detection rules: Quiet %s", report)
+    return report
+
+
+def sweep_wazuh() -> QuietReport:
+    """Count every active Wazuh rule's alerts in one indexer search, if Wazuh
+    Sees' gate passes and the budget allows."""
+    report = QuietReport(source="wazuh:quiet")
+    try:
+        rules = _active_rules(wazuh.SOURCE)
+        report.rules = len(rules)
+        if not rules:
+            return report
+        why, config = wazuh_sees.indexer()
+        results: Dict[RuleKey, Dict[str, Any]] = {}
+        if why is None:
+            per_hour = _int(config.get("max_searches_per_hour"), DEFAULT_PER_HOUR)
+            max_per_day = _int(
+                config.get("quiet_max_alerts_per_day"), DEFAULT_MAX_PER_DAY
+            )
+            service = kibana.service_of(config)
+
+            async def _run() -> Tuple[Optional[str], Optional[Mapping[str, Any]]]:
+                """(why not read, or None; the aggregation, or None when skipped)."""
+                try:
+                    err, exists = await wazuh_sees.indices(
+                        service, (wazuh_sees.ALERTS,)
+                    )
+                    if err or not exists[wazuh_sees.ALERTS]:
+                        return (
+                            err or f"no {wazuh_sees.ALERTS} index on the indexer",
+                            None,
+                        )
+                    if not search_budget.spend(INTEGRATION, per_hour):
+                        return None, None
+                    report.searched = 1
+                    # Few of the thousands of rules a manager loads alert: no include list.
+                    return None, await service.alerts_per_rule_id_per_day(
+                        wazuh_sees.ALERTS, DAYS, min(len(rules), MAX_RULES)
+                    )
+                finally:
+                    await service.close()
+
+            now = datetime.now(timezone.utc)
+            try:
+                why, agg = asyncio.run(_run())
+            except Exception as exc:  # noqa: BLE001 -- every rule reads unknown
+                results = _failed(rules, exc, now)
+            else:
+                if why is None and agg is None:
+                    report.skipped = "search budget spent"
+                    return report
+                if agg is not None:
+                    days_of, truncated = _days(agg)
+                    results = _results(rules, days_of, truncated, max_per_day, now)
+        if why:
+            results = {key: _unknown(why) for key, _, _, _ in rules}
+        report.written = write_check("quiet", results, _logged, source=wazuh.SOURCE)
+    except Exception as exc:  # noqa: BLE001 -- the sync's own report stands
+        logger.warning("detection rules: Wazuh Quiet failed: %s", exc)
+        report.error = f"{type(exc).__name__}: {exc}"
+    logger.info("detection rules: Wazuh Quiet %s", report)
     return report

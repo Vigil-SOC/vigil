@@ -12,8 +12,8 @@ overlay rule counts as a repo rule here. A repo rule's state in a SIEM is its
 linked copies' (disabled, or their Runs result, each beside its Quiet), or
 'not deployed' when it has none there. Every SIEM Vigil reads (Kibana,
 'elastic'; Splunk, 'splunk'; the Wazuh manager, 'wazuh') is listed. Kibana and
-Wazuh rules get a Sees check; a Wazuh rule's data source is its decoder. Only
-Kibana rules get Quiet, Noisy and Silent checks.
+Wazuh rules get a Sees check; a Wazuh rule's data source is its decoder. Kibana
+and Wazuh rules get a Quiet check; only Kibana rules get Noisy and Silent.
 
 A linked Kibana or Splunk copy also carries checks['drift']: fail when it was
 disabled, removed or edited in the SIEM while its repo rule stayed the same.
@@ -72,11 +72,13 @@ CURRENT_STAGE = (
 LINKED = DetectionRule.link_kind.in_(("same_id", "known_name", "agent"))
 NOT_DEPLOYED = "not deployed"
 NOT_READ = (
-    "Splunk rules get no Sees check, and Splunk and Wazuh rules no Quiet, Noisy "
+    "Splunk rules get no Sees or Quiet check, and Splunk and Wazuh rules no Noisy "
     "or Silent check (nor a never-firing count), yet"
 )
 SEES_TOOLS = ("elastic", "wazuh")
-QUIET_TOOLS = ("elastic",)
+QUIET_TOOLS = ("elastic", "wazuh")
+# Noisy, Silent and the never-firing count read a rule's own history.
+HISTORY_TOOLS = ("elastic",)
 CHANGE = DetectionRuleCheckChange
 RECENT_CHANGES = 10
 # A row that changed the result; a fail -> fail row only changed the reason.
@@ -302,7 +304,7 @@ def _with_links(session: Any, hits: List[Dict], rules: List[DetectionRule]) -> N
 
 def _by_tool(rows: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
     """(TALLIED..., count) rows as rules per tool, and for a SIEM's its Runs, Sees,
-    Quiet, Noisy and Silent, and (where Quiet runs) its never-firing rules."""
+    Quiet, Noisy and Silent, and (where Noisy and Silent run) its never-firing rules."""
     out: Dict[str, Dict[str, Any]] = {}
     for tool, runs, sees, quiet, noisy, silent, never, count in rows:
         entry = out.setdefault(tool, {"rules": 0})
@@ -319,7 +321,7 @@ def _by_tool(rows: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
                     check, {**dict.fromkeys(RUNS_RESULTS, 0), "unchecked": 0}
                 )
                 _tally(bucket, result, count)
-            if tool in QUIET_TOOLS:
+            if tool in HISTORY_TOOLS:
                 entry["never_firing"] = entry.get("never_firing", 0) + (
                     count if never else 0
                 )
@@ -537,12 +539,16 @@ def unchecked(siems: Iterable[str]) -> Dict[str, Dict[str, Any]]:
             "tools": [t for t in siems if t in SEES_TOOLS],
             "reason": "waiting for the query budget",
         },
+        "quiet": {
+            "tools": [t for t in siems if t in QUIET_TOOLS],
+            "reason": "waiting for the query budget",
+        },
         **{
             check: {
-                "tools": [t for t in siems if t in QUIET_TOOLS],
+                "tools": [t for t in siems if t in HISTORY_TOOLS],
                 "reason": "waiting for the query budget",
             }
-            for check in ("quiet", "noisy", "silent")
+            for check in ("noisy", "silent")
         },
     }
 

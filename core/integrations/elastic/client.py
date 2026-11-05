@@ -313,6 +313,48 @@ class ElasticService:
             }
         return out
 
+    async def alerts_per_rule_id_per_day(
+        self, index: str, days: int, size: int
+    ) -> Dict[str, Any]:
+        """Alerts per ``rule.id`` per UTC day in ``index`` (e.g. ``wazuh-alerts-*``)
+        since ``days`` - 1 days ago midnight: one size-0 search on the indexer.
+        Returns the ``rules`` terms aggregation, shaped as
+        :meth:`alerts_per_rule_per_day`'s; a missing index reads as no alerts,
+        any other failure raises."""
+        resp = await self.es_client.post(
+            f"/{validate_index(index)}/_search",
+            params={"ignore_unavailable": "true", "allow_no_indices": "true"},
+            json={
+                "size": 0,
+                "track_total_hits": False,
+                "query": {"range": {"@timestamp": {"gte": f"now-{int(days) - 1}d/d"}}},
+                "aggs": {
+                    "rules": {
+                        "terms": {"field": "rule.id", "size": size},
+                        "aggs": {
+                            "days": {
+                                "date_histogram": {
+                                    "field": "@timestamp",
+                                    "calendar_interval": "1d",
+                                    "time_zone": "UTC",
+                                    "min_doc_count": 1,
+                                }
+                            }
+                        },
+                    }
+                },
+            },
+        )
+        if resp.is_error:  # the indexer's own message says why, e.g. too many buckets
+            raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:500]}")
+        body = resp.json()
+        if (body.get("_shards") or {}).get("failed"):
+            raise RuntimeError(f"shard failures: {body['_shards'].get('failures')}")
+        if body.get("timed_out"):
+            raise RuntimeError("the search timed out: its buckets are partial")
+        # No index matched: no aggregation, and no alerts.
+        return (body.get("aggregations") or {}).get("rules") or {"buckets": []}
+
     async def field_caps(self, index: str, fields: List[str]) -> set:
         """Which of ``fields`` the mapping of ``index`` has. Metadata, not a search."""
         resp = await self.es_client.get(
