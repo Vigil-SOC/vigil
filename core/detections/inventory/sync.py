@@ -13,8 +13,8 @@ to see a deletion, and writes only what differs:
 A Runs result (checks['runs'] on the latest version) is written only when its
 result or reason differs from the stored one; a new version starts with none.
 After Wazuh syncs, ``quiet`` counts each active Wazuh rule's alerts against a
-per-day threshold (checks['quiet'], from ``wazuh-alerts-*`` on the elastic-siem
-indexer), then ``wazuh_sees`` checks whether each one's decoder gets events;
+per-day threshold and the rule's own 30 days (checks['quiet'], checks['noisy'],
+checks['silent'], from ``wazuh-alerts-*`` on the elastic-siem indexer), then ``wazuh_sees`` checks whether each one's decoder gets events;
 after Kibana syncs, ``quiet`` counts each active Kibana rule's alerts the same
 way and against the rule's own 30 days (checks['noisy'], checks['silent']),
 then ``sees`` checks whether each active Kibana rule's data is arriving; after
