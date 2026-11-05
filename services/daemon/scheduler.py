@@ -418,7 +418,22 @@ class TaskScheduler:
         return await ThreatFeedPoller().run_once()
 
     async def _run_detection_rules_sync(self):
-        """Record new, changed and removed rules from every configured repo."""
+        """Record new, changed and removed rules from every configured repo, then
+        run the Elastic overlay copies and move their stages (rollout)."""
+        from core.detections.inventory import rollout
         from core.detections.inventory.sync import sync_repos
 
         await asyncio.to_thread(sync_repos)
+        queue = self._processor_queue
+        report = await asyncio.to_thread(rollout.run, queue is not None)
+        # Put on this event loop, never from the worker thread.
+        for finding in report.findings:
+            await queue.put(
+                {
+                    "type": "finding",
+                    "source": "elastic",
+                    "data": finding,
+                    "timestamp": utcnow().isoformat(),
+                }
+            )
+        return report
