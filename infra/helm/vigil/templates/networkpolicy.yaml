@@ -230,6 +230,30 @@ spec:
           port: 6991
 ---
 {{- end }}
+{{- if .Values.bifrost.enabled }}
+{{- /* In-namespace pods only, never the ingress controller: its inference route
+       takes no credential, and /api/* holds the provider keys. */ -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "vigil.fullname" . }}-bifrost
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.componentLabels" (dict "context" . "component" "bifrost") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "bifrost") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8080
+    {{- include "vigil.networkPolicy.probeRule" (dict "context" . "port" 8080) | nindent 4 }}
+---
+{{- end }}
 {{- /* NetworkPolicy for MVP Postgres only. Bitnami's chart has its own
        networkPolicy.* config — enable that there instead. */ -}}
 {{- if and .Values.postgresql.enabled (not .Values.postgresql.bitnami.enabled) }}

@@ -264,8 +264,8 @@ print(current_status().value)'
   ok "Medic back: running"
 
   # Checks 7 and 11 run only here: calico mode has no Postgres or Redis, and its
-  # backend is a stub. Bifrost is not a target: the chart ships no Bifrost
-  # object, only BIFROST_URL, so a probe to it would fail DNS and prove nothing.
+  # backend is a stub. Bifrost is not a target: it is deployed, but
+  # these checks are about the data stores and the backend.
   say "check 7: no route from Medic to Postgres, Redis, the backend, or the internet"
   pg_ip=$($K -n "$NS" get pod -l app.kubernetes.io/component=postgres -o jsonpath='{.items[0].status.podIP}')
   rd_ip=$($K -n "$NS" get pod -l app.kubernetes.io/component=redis -o jsonpath='{.items[0].status.podIP}')

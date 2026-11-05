@@ -1,0 +1,77 @@
+{
+  "$schema": "https://www.getbifrost.ai/schema",
+  "client": {
+    "enable_logging": true,
+    "disable_content_logging": true,
+    "enforce_auth_on_inference": false,
+    "allowed_origins": []
+  },
+  "governance": {
+    "auth_config": {
+      "is_enabled": true,
+      "admin_username": "vigil",
+      "admin_password": "env.BIFROST_ADMIN_PASSWORD"
+    }
+  },
+  "logs_store": {
+    "enabled": true,
+    "type": "sqlite",
+    "config": {
+      "path": "/app/data/logs.db"
+    }
+  },
+  "providers": {
+    "anthropic": {
+      "network_config": {
+        "default_request_timeout_in_seconds": 1800,
+        "stream_idle_timeout_in_seconds": 300,
+        "max_retries": 0
+      },
+      "keys": []
+    },
+    "openai": {
+      "network_config": {
+        "default_request_timeout_in_seconds": 1800,
+        "stream_idle_timeout_in_seconds": 300,
+        "max_retries": 0
+      },
+      "keys": []
+    },
+    "gemini": {
+      "network_config": {
+        "default_request_timeout_in_seconds": 1800,
+        "stream_idle_timeout_in_seconds": 300,
+        "max_retries": 0
+      },
+      "keys": []
+    },
+    "ollama": {
+      "network_config": {
+        "default_request_timeout_in_seconds": 1800,
+        "allow_private_network": true,
+        "stream_idle_timeout_in_seconds": 300,
+        "max_retries": 0
+      },
+      "keys": [
+        {
+          "name": "default-ollama-url",
+          "weight": 1,
+          "ollama_key_config": {
+            "url": "env.OLLAMA_URL"
+          },
+          "models": [
+            "*"
+          ]
+        }
+      ]
+    },
+    "vertex": {
+      "network_config": {
+        "default_request_timeout_in_seconds": 1800,
+        "stream_idle_timeout_in_seconds": 300,
+        "max_retries": 0
+      },
+      "keys": []
+    }
+  }
+}

@@ -446,6 +446,62 @@ redis:
         size: 5Gi
 
 # -----------------------------------------------------------------------------
+# Bifrost LLM gateway
+# -----------------------------------------------------------------------------
+# Every model call goes through Bifrost (Anthropic, OpenAI, Gemini, Ollama). One
+# replica and a ClusterIP Service, reached at config.BIFROST_URL. Left empty, that
+# is this Service; the backend, daemon, llm-worker, agent-worker and agent-serve
+# all get it. The backend pushes providers and keys into Bifrost at runtime;
+# files/bifrost/config.json (a copy of infra/docker/bifrost/config.json) is only
+# the bootstrap. A provider key set under secrets.* reaches Bifrost too, and the
+# Ollama server is config.OLLAMA_URL (an Ollama outside the cluster needs only that).
+#
+# enabled=false renders none of this: run your own gateway and set
+# config.BIFROST_URL, plus secrets.bifrostAdminPassword if it has one.
+bifrost:
+  enabled: true
+  image:
+    repository: maximhq/bifrost
+    # Same tag as docker-compose's BIFROST_IMAGE_TAG default.
+    tag: "v2.2.1"
+    pullPolicy: IfNotPresent
+  service:
+    port: 8080
+  # /app/data holds what Bifrost is told at runtime (provider edits made in its UI)
+  # and logs.db. With persistence off that is an emptyDir: both are lost whenever
+  # the pod restarts. The backend re-pushes providers and keys on its next start,
+  # but the request log history is gone.
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClassName: ""
+    accessModes:
+      - ReadWriteOnce
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  # Admin password for Bifrost's /api/*; the backend presents the same one.
+  # Bifrost answers 401 on an empty value, so the chart always supplies one. It is
+  # kept in <release>-bifrost-auth and generated on first install, then read back
+  # with lookup so it stays put across upgrades. lookup sees nothing under
+  # `helm template` or a GitOps controller, which would draw a new one each render:
+  # set secrets.bifrostAdminPassword there. With secrets.existingSecret or
+  # externalSecret this Secret is still rendered; set existingSecret below to
+  # supply your own (key existingSecretKey, default BIFROST_ADMIN_PASSWORD),
+  # in which case the chart renders none.
+  auth:
+    existingSecret: ""
+    existingSecretKey: BIFROST_ADMIN_PASSWORD
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# -----------------------------------------------------------------------------
 # Schema upgrade (docs/upgrading.md)
 # -----------------------------------------------------------------------------
 # `python -m core.upgrade` from the backend image, as the database owner, is the
@@ -699,6 +755,12 @@ secrets:
 
   # Multi-provider LLM (issue #88 / post-merge additions)
   openaiApiKey: ""
+  geminiApiKey: ""
+
+  # Admin password of the Bifrost gateway (see bifrost.auth). Empty lets the chart
+  # generate and keep one. Also rendered into this Secret so a gateway you run
+  # yourself (bifrost.enabled=false) can be given its password.
+  bifrostAdminPassword: ""
 
 # -----------------------------------------------------------------------------
 # Non-secret config (rendered into a ConfigMap)
@@ -864,7 +926,11 @@ config:
 
   # Multi-provider LLM (non-secret defaults; per-provider config is stored
   # per-row in llm_provider_configs after first boot).
-  BIFROST_URL: "http://bifrost:8080"
+  # Empty: the in-chart Bifrost Service (bifrost.enabled), else http://bifrost:8080.
+  # Set it to use a gateway of your own.
+  BIFROST_URL: ""
+  # The Ollama server Bifrost forwards to. The in-chart Bifrost reads this value, so
+  # for an Ollama outside the cluster set it here and nowhere else.
   OLLAMA_URL: "http://ollama:11434"
 
 # Additional ad-hoc env entries merged into every pod. Useful for site-specific
