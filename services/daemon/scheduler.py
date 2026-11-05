@@ -255,9 +255,11 @@ class TaskScheduler:
         )
 
     async def _run_detection_gaps(self):
-        """Queue a mitre_analyst run on the gaps identify_gaps lists; none when it lists none.
+        """Queue a mitre_analyst run on the gaps identify_gaps lists; none when it lists
+        none, unless OpenCTI is configured: then recent intel is checked every day.
 
-        A schedule intake with no case_id mints a Case, so an empty report queues nothing.
+        A schedule intake with no case_id mints a Case, so an empty report with no
+        intel to read queues nothing.
         """
         if not is_enabled(DETECTION_GAPS_WORKFLOW):
             logger.info(
@@ -274,7 +276,20 @@ class TaskScheduler:
         missed = [g["technique"] for g in report["runs_rules_missed"]["groups"]]
         paper = list(report["covered_on_paper_only"])
         blind = [s["data_source"] for s in report["blind_spots"]]
-        if not (missed or paper or blind):
+        from core.integrations.mcp.client import process_mcp_client
+
+        # Connecting is the configured check (enabled, set up, credentials), and
+        # binds OpenCTI's tools to the run queued below: the daemon dials nothing else.
+        client = process_mcp_client()
+        try:
+            # Bounded: a wedged server must not hold up every other scheduled task.
+            intel = bool(client) and await asyncio.wait_for(
+                client.connect_to_server("opencti"), timeout=30
+            )
+        except asyncio.TimeoutError:
+            logger.warning("OpenCTI did not answer; the gaps run skips threat intel")
+            intel = False
+        if not (missed or paper or blind or intel):
             logger.info("Daily detection gaps run: no gaps listed, nothing queued")
             return
 
@@ -289,9 +304,18 @@ class TaskScheduler:
         ]
         hypothesis = (
             "Turn the detection gaps identify_gaps lists into Cases with checked "
-            "rule drafts, so each real gap is tracked and has a rule in shadow. "
-            + "; ".join(listed)
+            "rule drafts, so each real gap is tracked and has a rule in shadow."
         )
+        if listed:
+            hypothesis += " " + "; ".join(listed)
+        if intel:
+            hypothesis += (
+                " Threat intel: with opencti_opencti_search_entities (empty query, newest "
+                "first) read the intrusion sets and reports OpenCTI updated most "
+                "recently, pass the techniques they use or name to "
+                "identify_gaps(techniques=...), and treat each id in "
+                "techniques_checked.gaps as a gap."
+            )
         from services.daemon.orchestrator import insert_intake_trigger
 
         insert_intake_trigger(
