@@ -167,7 +167,8 @@ async def _call(
     try:
         async with httpx.AsyncClient(
             timeout=_PACK_TIMEOUT_S if pack and method == "POST" else _TIMEOUT_S,
-            follow_redirects=False, trust_env=False
+            follow_redirects=False,
+            trust_env=False,
         ) as client:
             r = await client.request(
                 method, base + path, params=params, headers=headers, content=content
