@@ -9,14 +9,19 @@ rule and version that fired a finding.
 
 A SIEM copy may be linked to the repo rule it came from (origin_rule_id); an
 overlay rule counts as a repo rule here. A repo rule's state in a SIEM is its
-linked copies' (disabled, or their Runs result), or 'not deployed' when it has
-none there. Every SIEM Vigil reads (Kibana, 'elastic'; Splunk, 'splunk'; the
-Wazuh manager, 'wazuh') is listed. Kibana and Wazuh rules get a Sees check; a
-Wazuh rule's data source is its decoder.
+linked copies' (disabled, or their Runs result, each beside its Quiet), or
+'not deployed' when it has none there. Every SIEM Vigil reads (Kibana,
+'elastic'; Splunk, 'splunk'; the Wazuh manager, 'wazuh') is listed. Kibana and
+Wazuh rules get a Sees check; a Wazuh rule's data source is its decoder. Only
+Kibana rules get a Quiet check.
+
+A linked Kibana or Splunk copy also carries checks['drift']: fail when it was
+disabled, removed or edited in the SIEM while its repo rule stayed the same.
 
 A flag is a (rule, check) whose latest recorded change went pass -> fail, on a
-rule not removed. Nothing to fail, or a change to unknown, is no flag; a later
-change back to pass clears it. It is a query over detection_rule_check_changes.
+rule not removed (a drift flag stays on a removed copy). Nothing to fail, or a
+change to unknown, is no flag; a later change back to pass clears it. It is a
+query over detection_rule_check_changes.
 """
 
 from __future__ import annotations
@@ -25,7 +30,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set
 
-from sqlalchemy import Text, and_, case, cast, func, select
+from sqlalchemy import Text, and_, case, cast, func, or_, select
 
 from core.detections.inventory.readers import OVERLAY_SOURCE
 from core.storage.connection import get_db_manager
@@ -49,6 +54,7 @@ TOOL = case(
 )
 RUNS = DetectionRuleVersion.checks["runs"]["result"].astext
 SEES = DetectionRuleVersion.checks["sees"]["result"].astext
+QUIET = DetectionRuleVersion.checks["quiet"]["result"].astext
 RUNS_RESULTS = ("pass", "fail", "unknown")
 # Each rule's current stage: its latest stage row.
 CURRENT_STAGE = (
@@ -59,8 +65,11 @@ CURRENT_STAGE = (
 )
 LINKED = DetectionRule.link_kind.in_(("same_id", "known_name", "agent"))
 NOT_DEPLOYED = "not deployed"
-NOT_READ = "Splunk rules get no Sees check yet"
+NOT_READ = (
+    "Splunk rules get no Sees check, and Splunk and Wazuh rules no Quiet check, yet"
+)
 SEES_TOOLS = ("elastic", "wazuh")
+QUIET_TOOLS = ("elastic",)
 CHANGE = DetectionRuleCheckChange
 RECENT_CHANGES = 10
 # A row that changed the result; a fail -> fail row only changed the reason.
@@ -89,7 +98,8 @@ def _flags():
         .where(
             latest.c.old_result == "pass",
             latest.c.new_result == "fail",
-            DetectionRule.status != "removed",
+            # A deleted copy whose repo rule is still active is drift that matters.
+            or_(DetectionRule.status != "removed", latest.c.check_key == "drift"),
         )
     )
 
@@ -251,6 +261,7 @@ def _copies(session: Any, origins: Iterable[int]) -> Dict[int, Dict[str, List[Di
                 "title": copy.name,
                 "state": _state(copy.status, checks),
                 "runs": (checks or {}).get("runs"),
+                "quiet": (checks or {}).get("quiet"),
                 "link": copy.link_kind,
             }
         )
@@ -283,13 +294,14 @@ def _with_links(session: Any, hits: List[Dict], rules: List[DetectionRule]) -> N
 
 
 def _by_tool(rows: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
-    """(tool, runs, sees, count) rows as rules per tool, and Runs and Sees for a SIEM's."""
+    """(tool, runs, sees, quiet, count) rows as rules per tool, and Runs, Sees and
+    Quiet for a SIEM's."""
     out: Dict[str, Dict[str, Any]] = {}
-    for tool, runs, sees, count in rows:
+    for tool, runs, sees, quiet, count in rows:
         entry = out.setdefault(tool, {"rules": 0})
         entry["rules"] += count
         if tool not in ("repo", OVERLAY):
-            for check, result in (("runs", runs), ("sees", sees)):
+            for check, result in (("runs", runs), ("sees", sees), ("quiet", quiet)):
                 bucket = entry.setdefault(
                     check, {**dict.fromkeys(RUNS_RESULTS, 0), "unchecked": 0}
                 )
@@ -363,11 +375,11 @@ def rules_for_technique(technique: str, top: int = 5) -> Dict[str, Any]:
         )
         by_tool = _by_tool(
             session.execute(
-                select(TOOL, RUNS, SEES, func.count())
+                select(TOOL, RUNS, SEES, QUIET, func.count())
                 .select_from(DetectionRule)
                 .join(DetectionRuleVersion, _latest_join())
                 .where(ACTIVE, declares)
-                .group_by(TOOL, RUNS, SEES)
+                .group_by(TOOL, RUNS, SEES, QUIET)
             ).all()
         )
         first = session.execute(
@@ -474,22 +486,26 @@ def blind_spots() -> List[Dict[str, Any]]:
 
 
 def _any_result(result: str) -> Any:
-    """A latest version with ``result`` on any of its checks."""
+    """A latest version with ``result`` on Runs, Sees or Quiet (drift is not
+    can't-fire)."""
     return func.jsonb_path_exists(
-        DetectionRuleVersion.checks, f'$.* ? (@.result == "{result}")'
+        DetectionRuleVersion.checks,
+        f'$ ? (@.runs.result == "{result}" || @.sees.result == "{result}"'
+        f' || @.quiet.result == "{result}")',
     )
 
 
 def rules_by_tool() -> Dict[str, Dict[str, Any]]:
-    """Active rules per tool across the estate, with each SIEM's Runs and Sees."""
+    """Active rules per tool across the estate, with each SIEM's Runs, Sees and
+    Quiet."""
     with get_db_manager().session_scope() as session:
         return _by_tool(
             session.execute(
-                select(TOOL, RUNS, SEES, func.count())
+                select(TOOL, RUNS, SEES, QUIET, func.count())
                 .select_from(DetectionRule)
                 .join(DetectionRuleVersion, _latest_join())
                 .where(ACTIVE)
-                .group_by(TOOL, RUNS, SEES)
+                .group_by(TOOL, RUNS, SEES, QUIET)
             ).all()
         )
 
@@ -504,11 +520,15 @@ def unchecked(siems: Iterable[str]) -> Dict[str, Dict[str, Any]]:
             "tools": [t for t in siems if t in SEES_TOOLS],
             "reason": "waiting for the query budget",
         },
+        "quiet": {
+            "tools": [t for t in siems if t in QUIET_TOOLS],
+            "reason": "waiting for the query budget",
+        },
     }
 
 
 def rules_not_passing(limit: int = 200) -> Dict[str, Any]:
-    """Active SIEM rules failing or unknown on any check, fails first: the first
+    """Active SIEM rules failing or unknown on Runs, Sees or Quiet, fails first: the first
     ``limit`` with their checks as stored, how many there are, and per tool how
     many are not passing and how many fail (can't fire)."""
     fails = _any_result("fail")
@@ -542,7 +562,8 @@ def rules_not_passing(limit: int = 200) -> Dict[str, Any]:
                 "title": rule.name,
                 "tool": tool_of(rule.source),
                 "version": rule.latest_version,
-                "checks": checks or {},
+                # The console makes a column of each key; drift is not can't-fire.
+                "checks": {k: v for k, v in (checks or {}).items() if k != "drift"},
             }
             for rule, checks in rows
         ]
@@ -582,11 +603,12 @@ def search(
     stage: Optional[str] = None,
     sees: Optional[str] = None,
     flagged: Optional[bool] = None,
+    quiet: Optional[str] = None,
 ) -> List[Dict]:
     """Active and disabled rules whose format, path or parsed content contains ``query``.
 
-    ``tool`` is 'overlay', 'repo' or a SIEM source; ``runs`` and ``sees`` keep
-    rules whose latest version has that Runs or Sees result; ``stage`` keeps
+    ``tool`` is 'overlay', 'repo' or a SIEM source; ``runs``, ``sees`` and
+    ``quiet`` keep rules whose latest version has that Runs, Sees or Quiet result; ``stage`` keeps
     rules currently there; ``flagged`` keeps rules with (or without) an open
     flag. Each hit says whether it is flagged; a single hit carries its recent
     check changes.
@@ -618,6 +640,8 @@ def search(
         ).where(CURRENT_STAGE.c.stage == stage)
     if sees:
         statement = statement.where(SEES == sees)
+    if quiet:
+        statement = statement.where(QUIET == quiet)
     flags = _flags().subquery()
     if flagged is not None:
         is_flagged = DetectionRule.id.in_(select(flags.c.rule_id))

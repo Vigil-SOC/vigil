@@ -298,7 +298,7 @@ def sweep() -> WazuhSeesReport:
                 report.left += 1
             else:
                 results[key] = verdict
-        report.written = sees._write(results, wazuh.SOURCE)
+        report.written = sees.write_check("sees", results, source=wazuh.SOURCE)
     except Exception as exc:  # noqa: BLE001 -- the sync's own report stands
         logger.warning("detection rules: Wazuh Sees sweep failed: %s", exc)
         report.error = f"{type(exc).__name__}: {exc}"

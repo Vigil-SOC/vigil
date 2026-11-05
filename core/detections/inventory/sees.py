@@ -1,6 +1,6 @@
 """Sees: whether the data each active Kibana rule reads is arriving.
 
-Wazuh rules get theirs from ``wazuh_sees``, which writes through ``_write``;
+Wazuh rules get theirs from ``wazuh_sees``, which writes through ``write_check``;
 Splunk rules get none yet.
 
 A rule's data source is its ``index`` patterns (or its data view's) and the
@@ -8,8 +8,8 @@ timestamp field its 7-day range runs on. Rules on one source share one search:
 a size-0 ``_search`` that stops at the first event, the only call counted
 against elastic-siem's ``max_searches_per_hour``. ``_field_caps`` then says
 whether the rule's ``required_fields`` are mapped. Groups are searched one at a
-time, the least recently searched first; when the hour's budget is spent the
-rest wait for the next sweep.
+time, the least recently searched by any Vigil process first (never searched
+before all); when the hour's budget is spent the rest wait for the next sweep.
 
 The result goes under checks['sees'] on the latest version, written only when
 it changed. ES|QL, ML and rules with no index read ``unknown``, never ``pass``.
@@ -20,10 +20,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from sqlalchemy import and_, bindparam, select, tuple_, update
 
@@ -43,8 +42,10 @@ INTEGRATION = ELASTIC.id
 Key = Tuple[Tuple[str, ...], str]  # (patterns, timestamp field)
 RuleKey = Tuple[int, int]  # (rule id, version)
 
-# Group -> monotonic time it was last searched. A restart re-sweeps.
-last_searched: Dict[Key, float] = {}
+
+def _budget_key(group: Key) -> str:
+    """The group as its spend rows name it, for the shared oldest-first order."""
+    return f"{','.join(group[0])}|{group[1]}"
 
 
 @dataclass
@@ -148,13 +149,14 @@ async def _check(
         groups.setdefault((ordered, ts), []).append((key, _fields(content)))
     report.groups = len(groups)
 
-    order = sorted(groups, key=lambda g: last_searched.get(g, float("-inf")))
+    last = search_budget.last_spent(INTEGRATION, map(_budget_key, groups))
+    never = datetime.min.replace(tzinfo=timezone.utc)
+    order = sorted(groups, key=lambda g: last.get(_budget_key(g), never))
     for n, group in enumerate(order):
-        if not search_budget.spend(INTEGRATION, per_hour):
+        if not search_budget.spend(INTEGRATION, per_hour, _budget_key(group)):
             report.deferred = len(order) - n
             break
         report.searched += 1
-        last_searched[group] = time.monotonic()
         index, ts = ",".join(group[0]), group[1]
         members = groups[group]
         try:
@@ -207,12 +209,23 @@ def _active_rules() -> List[Tuple[RuleKey, Mapping[str, Any]]]:
     return [((rid, ver), content or {}) for rid, ver, content in rows]
 
 
-def _write(results: Dict[RuleKey, Dict[str, Any]], source: str = kibana.SOURCE) -> int:
-    """Store each result that differs from the version's stored Sees; runs is kept.
+def _logged(new: Mapping[str, Any], before: Optional[tuple]) -> bool:
+    return before != (new["result"], new["reason"])
 
+
+def write_check(
+    key: str,
+    results: Dict[RuleKey, Dict[str, Any]],
+    logged: Callable[[Mapping[str, Any], Optional[tuple]], bool] = _logged,
+    source: str = kibana.SOURCE,
+) -> int:
+    """Store each result that differs from the version's stored checks[key]; the
+    other checks are kept.
+
+    A result for which ``logged(new, last recorded (result, reason))`` holds,
+    across versions, is also appended to detection_rule_check_changes, in the
+    same transaction. By default: a result or reason that differs.
     ``source`` is the rules' (Kibana's, or Wazuh's for ``wazuh_sees``).
-    A result or reason that differs from the rule's last recorded Sees, across
-    versions, is also appended to detection_rule_check_changes.
     """
     from core.detections.inventory.sync import (
         _change,
@@ -239,12 +252,18 @@ def _write(results: Dict[RuleKey, Dict[str, Any]], source: str = kibana.SOURCE) 
         ).all()
         changed = []
         for rid, ver, checks in rows:
-            new, old = results[(rid, ver)], (checks or {}).get("sees") or {}
-            seen = (new["result"], new["reason"])
-            before = last.get((rid, "sees"))
-            if before != seen:
+            new, old = results[(rid, ver)], (checks or {}).get(key) or {}
+            before = last.get((rid, key))
+            if logged(new, before):
                 changes.append(
-                    _change(rid, ver, "sees", before[0] if before else None, *seen)
+                    _change(
+                        rid,
+                        ver,
+                        key,
+                        before[0] if before else None,
+                        new["result"],
+                        new["reason"],
+                    )
                 )
             if all(old.get(k) == v for k, v in new.items()):
                 continue
@@ -254,7 +273,7 @@ def _write(results: Dict[RuleKey, Dict[str, Any]], source: str = kibana.SOURCE) 
                     "ver": ver,
                     "new_checks": {
                         **(checks or {}),
-                        "sees": {**new, "checked_at": now},
+                        key: {**new, "checked_at": now},
                     },
                 }
             )
@@ -288,7 +307,7 @@ def sweep_elastic(config: Mapping[str, Any]) -> SeesReport:
             finally:
                 await service.close()
 
-        report.written = _write(asyncio.run(_run()))
+        report.written = write_check("sees", asyncio.run(_run()))
     except Exception as exc:  # noqa: BLE001 -- the sync's own report stands
         logger.warning("detection rules: Sees sweep failed: %s", exc)
         report.error = f"{type(exc).__name__}: {exc}"
