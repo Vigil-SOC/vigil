@@ -258,6 +258,7 @@ Confidence scoring:
         "specialization": "Reporting & Communication",
         "recommended_tools": [
             "get_case",
+            "read_case_evidence",
             "list_cases",
             "list_findings",
             "search_findings",
