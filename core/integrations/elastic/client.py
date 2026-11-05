@@ -313,6 +313,99 @@ class ElasticService:
             }
         return out
 
+    # Rule queries (the overlay runner): each returns (total hits, hits as
+    # documents) and raises with Elasticsearch's own reason on a failure.
+
+    async def _rule_post(self, path: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        resp = await self.es_client.post(path, json=body)
+        if resp.status_code >= 400:
+            try:
+                error = resp.json().get("error") or {}
+            except ValueError:
+                error = {}
+            cause = (error.get("root_cause") or [error])[0] if error else {}
+            reason = cause.get("reason") if isinstance(cause, dict) else None
+            raise RuntimeError(reason or f"HTTP {resp.status_code}")
+        body = resp.json()
+        if (body.get("_shards") or {}).get("failed"):
+            raise RuntimeError(f"shard failures: {body['_shards'].get('failures')}")
+        return body
+
+    @staticmethod
+    def _total(hits: Dict[str, Any], fallback: int) -> int:
+        total = hits.get("total")
+        if isinstance(total, dict):
+            return int(total.get("value") or 0)
+        return int(total) if total is not None else fallback
+
+    async def eql_search(
+        self, index: str, query: str, time_range: Dict[str, Any], size: int
+    ) -> Tuple[int, List[Dict[str, Any]]]:
+        """``POST /<index>/_eql/search``; a sequence comes back as one hit holding its events."""
+        body = await self._rule_post(
+            f"/{validate_index(index)}/_eql/search",
+            {
+                "query": query,
+                "filter": {"range": time_range},
+                "size": size,
+                # The range is on the rule's timestamp field; EQL orders by it too.
+                "timestamp_field": next(iter(time_range)),
+            },
+        )
+        hits = body.get("hits") or {}
+        docs = list(hits.get("events") or [])
+        for seq in hits.get("sequences") or []:
+            events = seq.get("events") or []
+            docs.append(
+                {
+                    "_id": "+".join(str(e.get("_id")) for e in events),
+                    "_index": ",".join(sorted({str(e.get("_index")) for e in events})),
+                    "_source": {"sequence": [e.get("_source") for e in events]},
+                }
+            )
+        return self._total(hits, len(docs)), docs
+
+    async def esql_query(
+        self, query: str, time_range: Dict[str, Any]
+    ) -> Tuple[int, List[Dict[str, Any]]]:
+        """``POST /_query`` with the time range as a filter; each row becomes a document."""
+        body = await self._rule_post(
+            "/_query", {"query": query, "filter": {"range": time_range}}
+        )
+        names = [c.get("name") for c in body.get("columns") or []]
+        docs = []
+        for row in body.get("values") or []:
+            source = dict(zip(names, row))
+            docs.append(
+                {
+                    "_id": source.pop("_id", None),
+                    "_index": source.pop("_index", None),
+                    "_source": source,
+                }
+            )
+        return len(docs), docs
+
+    async def lucene_search(
+        self, index: str, query: str, time_range: Dict[str, Any], size: int
+    ) -> Tuple[int, List[Dict[str, Any]]]:
+        """``POST /<index>/_search`` with ``query_string``."""
+        body = await self._rule_post(
+            f"/{validate_index(index)}/_search",
+            {
+                "size": size,
+                "track_total_hits": True,
+                "query": {
+                    "bool": {
+                        "must": [{"query_string": {"query": query}}],
+                        "filter": [{"range": time_range}],
+                    }
+                },
+            },
+        )
+        hits = body.get("hits") or {}
+        docs = list(hits.get("hits") or [])
+        return self._total(hits, len(docs)), docs
+
     async def alerts_per_rule_id_per_day(
         self, index: str, days: int, size: int
     ) -> Dict[str, Any]:

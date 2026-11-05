@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Set
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
 from sqlalchemy import Text, and_, case, cast, func, or_, select, tuple_
 from sqlalchemy.orm import defer
@@ -793,6 +793,22 @@ SIEM_NAMES = {"elastic": "Kibana", "wazuh": "Wazuh"}
 KEY_READERS = (("elastic", _kibana_rule_id), ("wazuh", _wazuh_rule_id))
 
 
+def _named(finding: Mapping[str, Any]) -> Optional[Tuple[int, int]]:
+    """(rule id, version) an overlay runner's finding names, or None."""
+    context = finding.get("entity_context")
+    named = context.get("detection_rule") if isinstance(context, dict) else None
+    if (
+        not isinstance(named, dict)
+        or not named.get("rule_id")
+        or not named.get("version")
+    ):
+        return None
+    try:
+        return int(named["rule_id"]), int(named["version"])
+    except (TypeError, ValueError):
+        return None
+
+
 def _rule_ref(finding: Mapping[str, Any]) -> Any:
     """(inventory source, native key, alert time) the finding names, or why it is unknown."""
     source = finding.get("data_source")
@@ -820,13 +836,16 @@ def _rule_ref(finding: Mapping[str, Any]) -> Any:
 def rule_for_finding(finding: Mapping[str, Any]) -> Dict[str, Any]:
     """The inventory rule and version that fired a finding, or why it is unknown.
 
-    Read from the stored alert (entity_context.source_evidence), never matched
-    on name. The version is the latest one first seen at or before the alert.
+    A finding the overlay runner made names its rule and version
+    (entity_context.detection_rule) and resolves to exactly that. Otherwise it is
+    read from the stored alert (entity_context.source_evidence), never matched on
+    name; the version is the latest one first seen at or before the alert.
     Kibana (source 'elastic') and Wazuh (source 'wazuh') rules resolve.
     """
-    ref = _rule_ref(finding)
-    if not isinstance(ref, tuple):
-        return ref  # unknown without reading the inventory
+    if _named(finding) is None:
+        ref = _rule_ref(finding)
+        if not isinstance(ref, tuple):
+            return ref  # unknown without reading the inventory
     try:
         with get_db_manager().session_scope() as session:
             return resolve_findings(session, {0: finding})[0]
@@ -842,7 +861,8 @@ def resolve_findings(
 
     ``full`` False leaves out the version's query and checks.
     """
-    refs = {k: _rule_ref(f) for k, f in findings.items()}
+    named = {k: n for k, f in findings.items() if (n := _named(f)) is not None}
+    refs = {k: _rule_ref(f) for k, f in findings.items() if k not in named}
     wanted = {r[:2] for r in refs.values() if isinstance(r, tuple)}
     rules: Dict[tuple, DetectionRule] = {}
     versions: Dict[int, List[DetectionRuleVersion]] = {}
@@ -869,6 +889,14 @@ def resolve_findings(
         ):
             versions.setdefault(v.rule_id, []).append(v)
     out: Dict[Any, Dict[str, Any]] = {}
+    for k, (rule_id, number) in named.items():
+        rule = session.get(DetectionRule, rule_id)
+        row = session.get(DetectionRuleVersion, (rule_id, number)) if rule else None
+        out[k] = (
+            _unknown(f"rule {rule_id} v{number} is not in the inventory")
+            if row is None
+            else _resolved(rule, row, full)
+        )
     for k, ref in refs.items():
         if not isinstance(ref, tuple):
             out[k] = ref
@@ -902,6 +930,12 @@ def _pick(
                 else ""
             )
         )
+    return _resolved(rule, version, full)
+
+
+def _resolved(
+    rule: DetectionRule, version: DetectionRuleVersion, full: bool = True
+) -> Dict[str, Any]:
     out = {
         "resolved": True,
         "rule_id": rule.id,
