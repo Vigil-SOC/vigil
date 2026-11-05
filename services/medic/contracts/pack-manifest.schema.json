@@ -51,7 +51,7 @@
         "channel": {"enum": ["stable", "beta", "dev"]},
         "created_at": {"$ref": "#/$defs/ts"},
         "expires_at": {"$ref": "#/$defs/ts"},
-        "publisher": {"const": "deeptempo"}
+        "publisher": {"description": "A claim, not proof: who says they built it (a site names itself). The importer vouches for the pack by its sha256.", "$ref": "#/$defs/id"}
       }
     },
     "vigil_range": {

@@ -133,7 +133,12 @@ def main(argv: list[str] | None = None) -> int:
         now=datetime.fromtimestamp(_epoch(manifest["capture"]["started_at"]), UTC),
     )
     pack = pack_of(loaded.rules)
-    traced = (medic_block["pack"]["id"], medic_block["pack"]["version"])
+    p = medic_block["pack"]
+    traced = (
+        p["id"],
+        p.get("channel", pack[1]),
+        p["version"],
+    )  # old traces: no channel
     if traced != pack:
         print(
             f"warning: the trace ran pack {'/'.join(traced)}, replay loads "

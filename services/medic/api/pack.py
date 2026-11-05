@@ -44,6 +44,8 @@ _SHA256 = re.compile(r"[0-9A-Fa-f]{64}")
 CONFLICTS = frozenset(
     {
         lifecycle.WITHDRAWN,
+        "P-LINEAGE",  # another (id, channel) than the active pack, without override
+        "P-DOWNGRADE",  # an older version on the same line, override or not
         lifecycle.NO_TARGET,
         lifecycle.NO_ACTIVE,
         lifecycle.BUNDLED_ACTIVE,
