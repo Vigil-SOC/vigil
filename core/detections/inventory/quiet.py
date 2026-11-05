@@ -29,7 +29,8 @@ days) to now; under 24 h it reads ``unknown`` ("version too new"). Over
 ``quiet_max_alerts_per_day`` averaged over the window is ``fail``, else
 ``pass`` (a rule with no alerts too). Rules the terms aggregation could not
 hold read ``unknown`` ("not counted this sync"); a failed search, ``unknown``
-with its error.
+with its error. When some Wazuh indices' shards fail (others answering), the
+count is a floor: a ``fail`` stands, a ``pass`` reads ``unknown`` naming them.
 
 The result goes under checks['quiet'] ({result, reason, count, days,
 checked_at}), written only when it changed. Since the count moves the reason,
@@ -146,9 +147,15 @@ def _days(agg: Mapping[str, Any]) -> Tuple[Days, bool]:
 
 
 def _results(
-    rules: List[Rule], days_of: Days, truncated: bool, max_per_day: int, now: datetime
+    rules: List[Rule],
+    days_of: Days,
+    truncated: bool,
+    max_per_day: int,
+    now: datetime,
+    failed: Tuple[str, ...] = (),
 ) -> Dict[RuleKey, Dict[str, Any]]:
-    """Each rule's Quiet verdict, over its own window."""
+    """Each rule's Quiet verdict, over its own window. With ``failed`` (indices
+    whose shards failed) the count is a floor: a fail stands, a pass is unknown."""
     today = now.date()
     first_day = today - timedelta(days=DAYS - 1)
     out: Dict[RuleKey, Dict[str, Any]] = {}
@@ -168,6 +175,11 @@ def _results(
         midnight = datetime.combine(start, datetime.min.time(), timezone.utc)
         days = max(round((now - midnight) / timedelta(days=1)), 1)
         out[key] = _verdict(count, days, max_per_day)
+        if failed and out[key]["result"] == "pass":
+            out[key] = _unknown(
+                f"{out[key]['reason']} in the indices that answered; "
+                f"partial count, shards failed on {'; '.join(failed)}"
+            )
     return out
 
 
@@ -392,7 +404,14 @@ def sweep_wazuh() -> QuietReport:
                     return report
                 if agg is not None:
                     days_of, truncated = _days(agg)
-                    results = _results(rules, days_of, truncated, max_per_day, now)
+                    results = _results(
+                        rules,
+                        days_of,
+                        truncated,
+                        max_per_day,
+                        now,
+                        tuple(agg.get("failed") or ()),
+                    )
         if why:
             results = {key: _unknown(why) for key, _, _, _ in rules}
         report.written = write_check("quiet", results, _logged, source=wazuh.SOURCE)

@@ -22,6 +22,9 @@ spends nothing.
   of the rule's decoders got one;
 - ``unknown`` otherwise: without the archive Wazuh keeps alerts only, so no
   alert proves nothing. A failed search makes its part unknown, never pass.
+  When some indices' shards fail (e.g. one dynamically mapped, where
+  ``decoder.name`` is ``text``), the rest's buckets still pass a rule; a fail
+  becomes unknown, and every unknown names the failed indices and why.
 
 While a part the verdict depends on has no answer here (budget spent, or
 another process holds it), the rule is left as it is. Nothing is written to the
@@ -269,17 +272,26 @@ def _verdict(
     # Alerts can still pass any rule; the archive can still pass or fail one with a decoder.
     if alerts is None or (decs and archive is None):
         return None
-    errors = [p for p in (archive if decs else None, alerts) if isinstance(p, str)]
+    parts = (archive if decs else None, alerts)
+    errors = [p for p in parts if isinstance(p, str)]
     if errors:
         return _unknown("; ".join(errors), source)
+    # Indices whose shards failed: absence in the rest proves nothing, so no fail.
+    partial = [f for p in parts if isinstance(p, dict) for f in p.get("failed") or []]
+
+    def unknown(reason: str, data_source: Optional[str]) -> Dict[str, Any]:
+        if partial:
+            reason += f"; partial answer, shards failed on {'; '.join(partial)}"
+        return {"result": "unknown", "reason": reason, "data_source": data_source}
+
     if not decs:
-        return _unknown(
+        return unknown(
             "no decoder: no decoded_as on the rule or its if_sid parents, "
             f"and no alert from it or its parents in {DAYS}d",
             None,
         )
     if not archive["total"]:
-        return _unknown(
+        return unknown(
             "alerts only: "
             + (
                 f"no {ARCHIVES} index"
@@ -291,9 +303,15 @@ def _verdict(
             source,
         )
     if archive[DECODER]["other"]:
-        return _unknown(
+        return unknown(
             f"the archive's decoder list was cut off at {TERMS_SIZE} "
             f"and does not name {names}",
+            source,
+        )
+    if partial:
+        return unknown(
+            f"no events decoded as {' or '.join(sorted(decs))} in {DAYS}d "
+            "in the indices that answered",
             source,
         )
     return {
