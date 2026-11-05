@@ -127,6 +127,16 @@ CAPABILITIES: Dict[str, Tuple[Candidate, ...]] = {
         Candidate("virustotal", ("get_ip_report", "get_domain_report")),
     ),
     "findings_search": (Candidate(None, ("search_findings",)),),
+    # Threat-intelligence platform lookups, asked for only by a workflow that lists
+    # them under `capabilities` (intel-led-hunt). One tool each: a capability binds
+    # the first tool present, so OpenCTI's four tools are four capabilities.
+    "intel_observable": (
+        Candidate("opencti", ("opencti_search_observable",)),
+        Candidate("misp", ("misp_search_ioc",)),
+    ),
+    "intel_indicator": (Candidate("opencti", ("opencti_get_indicator",)),),
+    "intel_entity_search": (Candidate("opencti", ("opencti_search_entities",)),),
+    "intel_related": (Candidate("opencti", ("opencti_get_related",)),),
     # One candidate and no fallback: episodic memory is Vigil's own tier, so a
     # deployment either carries it or has no history to offer.
     "entity_recall": (Candidate(None, ("recall_entity",)),),
@@ -143,6 +153,11 @@ CAPABILITY_BOUNDS: Dict[str, Dict[str, int]] = {
     "telemetry_search": {"timeout_ms": 120_000, "max_rows": 500},
     "indicator_lookup": {"timeout_ms": 60_000, "max_rows": 200},
     "findings_search": {"timeout_ms": 30_000, "max_rows": 200},
+    # A platform's GraphQL or REST API; its tools cap a page at 50.
+    "intel_observable": {"timeout_ms": 60_000, "max_rows": 50},
+    "intel_indicator": {"timeout_ms": 60_000, "max_rows": 50},
+    "intel_entity_search": {"timeout_ms": 60_000, "max_rows": 50},
+    "intel_related": {"timeout_ms": 60_000, "max_rows": 50},
     # A read of our own Postgres, so the findings timeout is generous. The row
     # cap is stated because the bounds model requires one, not because it bites:
     # recall answers with one envelope, and the injected `limit` is in
@@ -509,6 +524,22 @@ def _strings(value: Any) -> List[str]:
     return [str(item) for item in value or [] if str(item).strip()]
 
 
+# What a hunt workflow asks for beyond the shared set, from its `capabilities` front
+# matter. Refused when unknown, for the reason checkpoints are: a typo would otherwise
+# leave a hunt quietly without the tools its author meant it to have.
+def extra_hunt_capabilities(definition: "WorkflowDefinition") -> Tuple[str, ...]:
+    declared = definition.metadata.get("capabilities") or []
+    if not isinstance(declared, list) or not all(isinstance(c, str) for c in declared):
+        raise UnknownPlaybook(f"{definition.id}: capabilities must be a list of names")
+    unknown = [c for c in declared if c not in CAPABILITIES]
+    if unknown:
+        raise UnknownPlaybook(
+            f"{definition.id} asks for capabilities this backend does not define: "
+            f"{', '.join(unknown)}"
+        )
+    return tuple(c for c in dict.fromkeys(declared) if c not in HUNT_CAPABILITIES)
+
+
 # The two layers a hunt run needs. Same tools and the same dump as a compose one;
 # what differs is that a hunt states beliefs to test where a compose states steps.
 def resolve_hunt(
@@ -528,6 +559,7 @@ def resolve_hunt(
     # Empty is the shipped case, not an error: what a hunt tests belongs to the caller.
     # A run with none from either source is refused in execute_workflow.
     hypotheses = _strings(definition.metadata.get("hypotheses"))
+    extra = extra_hunt_capabilities(definition)
 
     playbook = {
         "name": definition.name,
@@ -540,6 +572,7 @@ def resolve_hunt(
         "hypotheses": hypotheses,
         "attack_techniques": _strings(definition.metadata.get("attack_techniques")),
         "data_domains": _strings(definition.metadata.get("data_domains")),
+        **({"capabilities": list(extra)} if extra else {}),
         "narrative": definition.body,
     }
 
@@ -549,7 +582,9 @@ def resolve_hunt(
         **({"effort": effort} if effort else {}),
         "budgets": dict(HUNT_BUDGETS),
         "runtime": DEFAULT_RUNTIME,
-        "tools": _bound_capabilities(list(HUNT_CAPABILITIES), _tool_catalogue(registry))
+        "tools": _bound_capabilities(
+            [*HUNT_CAPABILITIES, *extra], _tool_catalogue(registry)
+        )
         + [_expand_tool()],
         # The hunt gates on its own checkpoint classes, which are a property of
         # what it is about to conclude rather than of a tool it happens to call.

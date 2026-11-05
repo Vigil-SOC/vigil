@@ -287,7 +287,14 @@ def preflight(
     hunt_like = is_hunt_like(definition.run_kind)
     investigate = definition.run_kind == INVESTIGATE_RUN_KIND
     if hunt_like:
-        report = capabilities(registry)
+        from core.workflows.playbook_resolver import (
+            HUNT_CAPABILITIES,
+            extra_hunt_capabilities,
+        )
+
+        report = capabilities(
+            registry, (*HUNT_CAPABILITIES, *extra_hunt_capabilities(definition))
+        )
     elif investigate:
         report = capabilities(registry, INVESTIGATE_CAPABILITIES)
     else:

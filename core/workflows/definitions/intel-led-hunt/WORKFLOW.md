@@ -32,6 +32,15 @@ data_domains:
   - email
   - cloud
 
+# Threat-intelligence lookups beyond the shared hunt set. Each binds to the
+# connected platform (OpenCTI, or MISP for observables); one that nothing here
+# answers is journalled as a blind spot rather than hunted around.
+capabilities:
+  - intel_observable
+  - intel_indicator
+  - intel_entity_search
+  - intel_related
+
 objectives:
   - "Test the stated claim within the subjects and window the hunter approved"
   - "Record every blind spot before ruling on anything"

@@ -22,6 +22,10 @@ const UNBOUND_IN_WORDS: Readonly<Record<string, string>> = {
   indicator_lookup: "No threat-intel source is connected, so the hunt could not look up indicators",
   findings_search: "Vigil's findings could not be searched, so the hunt could not read what detection already scored",
   get_finding: "Vigil's findings could not be opened, so the hunt could not read an alert's raw record",
+  intel_observable: "No threat-intel platform is connected, so the hunt could not look up observables there",
+  intel_indicator: "No threat-intel platform is connected, so the hunt could not read its indicators",
+  intel_entity_search: "No threat-intel platform is connected, so the hunt could not look up actors, malware or techniques there",
+  intel_related: "No threat-intel platform is connected, so the hunt could not follow an entity's relationships there",
   entity_recall: "Episodic memory is not available, so the hunt could not recall what earlier investigations saw",
 };
 
