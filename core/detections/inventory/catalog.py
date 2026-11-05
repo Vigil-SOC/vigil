@@ -81,9 +81,7 @@ CURRENT_STAGE = (
 )
 LINKED = DetectionRule.link_kind.in_(("same_id", "known_name", "agent"))
 NOT_DEPLOYED = "not deployed"
-NOT_READ = (
-    "Wazuh rules get no Noisy or Silent check (nor a never-firing count), yet"
-)
+NOT_READ = "Wazuh rules get no Noisy or Silent check (nor a never-firing count), yet"
 SEES_TOOLS = ("elastic", "wazuh", "splunk")
 QUIET_TOOLS = ("elastic", "wazuh", "splunk")
 # The tools whose findings resolve to a rule version (rule_for_finding):
