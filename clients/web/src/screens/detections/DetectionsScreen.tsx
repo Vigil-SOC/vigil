@@ -60,7 +60,7 @@ function RulesSection({ goSettings }: Pick<ConsoleScreenProps, 'goSettings'>) {
   }, [filter])
 
   const report = loaded?.report
-  if (error) return <Failure>{error}</Failure>
+  if (error && !report) return <Failure>{error}</Failure>
   if (!report) return <span className="x1-muted">Reading the inventory…</span>
   if (report.total === 0) {
     return (
@@ -86,6 +86,7 @@ function RulesSection({ goSettings }: Pick<ConsoleScreenProps, 'goSettings'>) {
         </div>
       </div>
       <div style={{ display: 'grid', gap: 10, minWidth: 0 }}>
+        {error && <Failure>{error}</Failure>}
         <div className="x1-table-wrap">
           <table className="x1-table" data-testid="de-rules">
             <thead><tr><th>Rule</th><th>Technique</th><th>Where</th><th>Health</th><th>Why</th></tr></thead>
