@@ -214,6 +214,9 @@ spec:
   # A refusal is not transient, and a retried apply would stop the release
   # again. The install retries: the in-chart Postgres may still be starting.
   backoffLimit: {{ ternary 2 0 (eq $job.name "install") }}
+  # Helm leaves hook Jobs behind on uninstall, and even a Failed pod keeps the
+  # vigil-upgrade PVC in use. This frees it, with time left to read the logs.
+  ttlSecondsAfterFinished: 900
   template:
     metadata:
       labels:

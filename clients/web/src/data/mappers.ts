@@ -279,6 +279,8 @@ export interface ApiWorkflow {
   run_kind?: string
   hunt_like?: boolean
   runs_7d?: number
+  /** runs a person stopped at an approval; outside the success rate */
+  rejected_7d?: number
   /** fraction 0..1 */
   success_rate?: number | null
   success_level?: Workflow['successLevel']
@@ -324,6 +326,7 @@ export function mapApiWorkflow(w: ApiWorkflow): Workflow {
     // did before the flag existed, so an older backend still reads correctly.
     huntLike: w.hunt_like ?? w.run_kind === 'hunt',
     runs7d: typeof w.runs_7d === 'number' ? w.runs_7d : 0,
+    rejected7d: typeof w.rejected_7d === 'number' ? w.rejected_7d : 0,
     successRate: typeof w.success_rate === 'number' ? w.success_rate : null,
     successLevel: w.success_level ?? null,
     triggers: w.triggers,

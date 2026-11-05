@@ -39,7 +39,8 @@ TACTIC_RULE_SOURCES = ("sigma", "elastic")
 SIEMS_NOT_READ_NOTE = (
     "Elastic (Kibana), Splunk and Wazuh rules are read from a SIEM. Kibana, "
     "Wazuh and Splunk rules get Sees (a Wazuh rule's data source is its decoder, "
-    "a Splunk search's its index/sourcetype or data model) and Quiet checks."
+    "a Splunk search's its index/sourcetype or data model) and Quiet checks; "
+    "Kibana, Wazuh and Splunk rules also get Noisy and Silent."
 )
 
 TECHNIQUE_ID = re.compile(r"^T\d{4}(\.\d{3})?$", re.IGNORECASE)
@@ -370,6 +371,25 @@ def _run_row(run: Tuple[str, str]) -> Dict[str, str]:
     return {"investigation_kind": run[0], "investigation_id": run[1]}
 
 
+def reconstruct_verdict(
+    v: Mapping[str, Any], read_findings: FindingsReader
+) -> Tuple[Optional[str], Dict[str, Any]]:
+    """A Verdict as one step reconstructed against its window's Findings: (why
+    it cannot be correlated, {}) or (None, the step's record with its citations)."""
+    if not any(v["entities"].values()):
+        return "names no host, IP or user, so no Finding can be joined to it", {}
+    findings = read_findings(v["first_seen"], v["last_seen"])
+    if len(findings) >= FINDINGS_LIMIT:
+        return (
+            f"its window holds {FINDINGS_LIMIT}+ Findings and the read was "
+            "cut off, so whether a rule alerted is unknown"
+        ), {}
+    step = {**v["entities"], "started_at": v["first_seen"], "ended_at": v["last_seen"]}
+    # A probe is Vigil checking itself, not a rule alerting.
+    alerts = [f for f in findings if f.get("data_source") != "probe"]
+    return None, reconstruct([step], alerts)["steps"][0]
+
+
 def missed_runs_report(
     context: str,
     is_case: bool,
@@ -402,16 +422,7 @@ def missed_runs_report(
     missed: List[Dict[str, Any]] = []
     caught = 0
     for v in proven:
-        reason = None
-        if not any(v["entities"].values()):
-            reason = "names no host, IP or user, so no Finding can be joined to it"
-        else:
-            findings = read_findings(v["first_seen"], v["last_seen"])
-            if len(findings) >= FINDINGS_LIMIT:
-                reason = (
-                    f"its window holds {FINDINGS_LIMIT}+ Findings and the read was "
-                    "cut off, so whether a rule alerted is unknown"
-                )
+        reason, record = reconstruct_verdict(v, read_findings)
         if reason:
             unknown.append(
                 {
@@ -421,14 +432,7 @@ def missed_runs_report(
                 }
             )
             continue
-        step = {
-            **v["entities"],
-            "started_at": v["first_seen"],
-            "ended_at": v["last_seen"],
-        }
-        # A probe is Vigil checking itself, not a rule alerting.
-        alerts = [f for f in findings if f.get("data_source") != "probe"]
-        verdict = reconstruct([step], alerts)["steps"][0]["verdict"]
+        verdict = record["verdict"]
         if verdict in ("missed", "loglm"):
             missed.append(v)
         else:

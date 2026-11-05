@@ -5,6 +5,7 @@ export type ConsoleScreenKey =
   | 'overview'
   | 'triage'
   | 'dashboard'
+  | 'detections'
   | 'home'
   | 'cases'
   | 'metrics'
@@ -24,6 +25,7 @@ export const NAV: [IconName, string, ConsoleScreenKey, NavGate?][] = [
   ['home', 'Home', 'home'],
   ['graph', 'Overview', 'overview'],
   ['clock', 'Triage queue', 'triage'],
+  ['target', 'Detections', 'detections'],
   ['grid', 'Findings', 'dashboard'],
   ['folder', 'Cases', 'cases'],
   ['bars', 'Case Metrics', 'metrics'],
@@ -114,6 +116,7 @@ export const TITLES: Record<ConsoleScreenKey, [string, string]> = {
   overview: ['Overview', 'What arrived today and where it went'],
   triage: ['Triage queue', 'What intake did with what arrived'],
   dashboard: ['Findings', 'Every finding, with ATT&CK and exclusions'],
+  detections: ['Detection engineering', 'The inventory and what is broken in it'],
   home: ['Home', 'What needs a person'],
   cases: ['Cases', 'Manage investigation cases'],
   metrics: ['Case Metrics', 'Real-time SOC performance analytics'],

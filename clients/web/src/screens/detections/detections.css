@@ -1,0 +1,116 @@
+/* Detections, on the shared x1 look. Console tokens only, so both themes follow. */
+.de { gap: 20px; }
+.de-note { margin: 0; font-size: 12px; color: var(--tx2); }
+/* Alex's tab row, on the console TabStrip; the page's one action sits at its right. */
+.de-top { display: flex; justify-content: flex-end; }
+.poor { color: var(--poor); }
+
+/* Tones, one per health state: --t is the state's colour. */
+.de .poor { --t: var(--poor); }
+.de .fair { --t: var(--fair); }
+.de .high { --t: var(--sev-high); }
+.de .ac { --t: var(--ac); }
+.de .good { --t: var(--good); }
+.de .idle { --t: var(--tx3); }
+.de .none { --t: var(--ln2); }
+
+/* KPI strip: one card split into cells by 1px rules. */
+.de-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1px; background: var(--ln1); border: 1px solid var(--ln1); border-radius: var(--radius-card, 10px); overflow: hidden; }
+.de-kpi { display: grid; align-content: start; gap: 6px; padding: 16px 18px; background: var(--bg1); }
+.de-kpi-label { font-size: 12px; font-weight: 500; color: var(--tx2); }
+.de-kpi b { font-size: 26px; font-weight: 700; letter-spacing: -.3px; color: var(--tx0); font-variant-numeric: tabular-nums; line-height: 1.1; }
+.de-kpi b.poor { color: var(--poor); }
+.de-kpi b small { font-size: 15px; font-weight: 500; color: var(--tx2); letter-spacing: 0; }
+.de-kpi-sub { font-size: 12px; color: var(--tx3); }
+
+/* Cards */
+.de-card { padding: 18px 20px; }
+.de-card h2 { margin: 0; font-size: 14px; font-weight: 650; color: var(--tx0); }
+.de-card h2 span { font-weight: 500; color: var(--tx3); }
+.de-card-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 12px; }
+.de-card-head p, .de-card-sub { margin: 4px 0 0; font-size: 12.5px; color: var(--tx2); }
+.de-pair { display: flex; flex-wrap: wrap; gap: 16px; align-items: stretch; }
+.de-siems { flex: 7 1 520px; }
+.de-blind { flex: 5 1 360px; }
+
+.de-legend { display: flex; gap: 14px; font-size: 12px; color: var(--tx2); }
+.de-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.de-legend i { width: 10px; height: 10px; border-radius: 2px; background: var(--t); }
+
+.de-siem { margin-top: 20px; }
+.de-siem-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 12.5px; }
+.de-siem-head > b { font-size: 13.5px; font-weight: 650; color: var(--tx0); }
+.de-siem-head > b span { font-weight: 400; color: var(--tx3); }
+.de-siem-head b.poor { color: var(--poor); font-weight: 650; }
+.de-bar { display: flex; gap: 2px; height: 10px; margin-top: 10px; border-radius: 5px; overflow: hidden; }
+.de-bar i { display: block; min-width: 3px; background: var(--t); }
+.de-bar.unchecked { background: repeating-linear-gradient(135deg, var(--bg4) 0 6px, var(--bg3) 6px 12px); }
+.de-siem-note { margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: var(--bg2); font-size: 12.5px; color: var(--tx1); }
+
+.de .de-group { margin: 16px 0 0; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .6px; color: var(--tx3); }
+.de-spots { list-style: none; margin: 6px 0 0; padding: 0; }
+.de-spots li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--ln0); }
+.de-spots code { font-family: var(--font-mono); font-size: 12px; color: var(--tx1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.de-spots span { flex: none; font-size: 12px; color: var(--tx2); }
+
+/* Rule inventory */
+.de-inv { padding: 0; overflow: hidden; }
+.de-inv-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding: 18px 20px 14px; }
+.de-inv-head p { margin: 4px 0 0; font-size: 12.5px; color: var(--tx2); }
+.de-inv-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.de-seg { display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: var(--bg0); border: 1px solid var(--ln1); }
+.de-seg button { height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent; color: var(--tx2); font-size: 12.5px; font-weight: 500; cursor: pointer; }
+.de-seg button:hover { color: var(--tx0); }
+.de-seg button.on { background: var(--bg3); color: var(--tx0); }
+.de-search { display: flex; align-items: center; gap: 8px; width: 300px; max-width: 100%; height: 36px; box-sizing: border-box; padding: 0 12px; border-radius: 9px; background: var(--bg0); border: 1px solid var(--ln1); color: var(--tx3); }
+.de-search:focus-within { border-color: var(--ac-ln); }
+.de-search svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; flex: none; }
+.de-search input { flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: var(--tx0); font: inherit; font-size: 12.5px; }
+
+.de-chips-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding: 0 20px 14px; }
+.de-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.de-div { width: 1px; height: 20px; margin: 0 4px; background: var(--ln1); }
+.de-chip, .de-more { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--ln1); background: transparent; color: var(--tx1); font: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer; }
+.de-chip:hover, .de-more:hover { border-color: var(--ln2); }
+.de-chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--t); }
+.de-chip-n { color: var(--tx3); font-variant-numeric: tabular-nums; }
+.de-chip.on, .de-more.on { border-color: var(--ac-ln); background: var(--ac-bg); color: var(--tx0); }
+.de-chip.on .de-chip-n { color: var(--ac); }
+.de-more { background: var(--bg1); }
+.de-chip:focus-visible, .de-more:focus-visible, .de-seg button:focus-visible, .de-raw-toggle:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+
+.de-pad { padding: 0 20px 14px; }
+/* Bounded list (the console's list-scroll): rows scroll inside the card, its header sticks,
+   and the card's head, chips and footer stay put, so a long view never grows the page.
+   The offset is the top bar + the card's head, chips and footer, so the whole card fits
+   the window once scrolled to; the floor keeps a short window usable. */
+.de-table { border-top: 1px solid var(--ln1); border-bottom: 1px solid var(--ln0); overflow-x: auto; transition: opacity .15s; }
+.de-table.list-scroll { max-height: clamp(300px, calc(100vh - 260px), 1400px); overscroll-behavior: contain; }
+.de-th { position: sticky; top: 0; z-index: 2; box-sizing: border-box; }
+.de-table.loading { opacity: .55; }
+.de-tr { display: grid; grid-template-columns: minmax(220px, 1.3fr) 132px minmax(280px, 2fr) 150px; gap: 20px; padding: 0 20px; min-width: 880px; }
+.de-th { align-items: center; height: 38px; background: var(--bg2); border-bottom: 1px solid var(--ln1); font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .5px; color: var(--tx2); }
+/* Virtual rows: absolutely placed in a box as tall as every row, so only on-screen rows are in the DOM. */
+.de-rows { position: relative; min-width: 880px; }
+.de-row { position: absolute; top: 0; left: 0; right: 0; box-sizing: border-box; align-items: start; padding-top: 13px; padding-bottom: 13px; border-bottom: 1px solid var(--ln0); background: var(--bg1); }
+.de-row:hover { background: var(--bg2); }
+.de-right { display: flex; justify-content: flex-end; text-align: right; }
+.de-name { font-size: 13.5px; line-height: 20px; font-weight: 550; color: var(--tx0); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.de-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; font-size: 12px; color: var(--tx3); }
+.de-where { padding: 1px 7px; border-radius: 5px; background: var(--bg3); color: var(--tx1); }
+.de-fired { color: var(--tx1); }
+.de-health { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 600; white-space: nowrap; color: var(--t); border: 1px solid color-mix(in srgb, var(--t) 40%, transparent); background: color-mix(in srgb, var(--t) 12%, transparent); }
+.de-health.none, .de-health.idle { color: var(--tx1); }
+.de-health i { width: 6px; height: 6px; border-radius: 50%; background: var(--t); }
+.de-why { min-width: 0; }
+.de-why-text { font-size: 12.5px; line-height: 20px; color: var(--tx1); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.de-raw-toggle { display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; padding: 0; border: 0; background: none; color: var(--tx3); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; }
+.de-raw-toggle:hover { color: var(--ac); }
+.de-raw-toggle svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.de-raw-toggle svg.up { transform: rotate(180deg); }
+.de-raw { margin: 8px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--bg0); border: 1px solid var(--ln1); font-family: var(--font-mono); font-size: 11.5px; line-height: 1.6; color: var(--tx1); white-space: pre-wrap; word-break: break-word; }
+.de-act { padding: 6px 12px; font-size: 12px; margin-top: -4px; }
+.de-end { min-height: 1px; padding: 10px 20px; text-align: center; font-size: 12px; color: var(--tx3); }
+.de-end:empty { padding: 0; }
+.de-empty { padding: 44px 20px; text-align: center; font-size: 13px; color: var(--tx2); border-bottom: 1px solid var(--ln0); }
+.de-foot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 20px; font-size: 12.5px; color: var(--tx2); }

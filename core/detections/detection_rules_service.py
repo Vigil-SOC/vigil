@@ -95,6 +95,26 @@ DEPLOY_FORMATS = ("splunk", "elastic")
 _CONFIG_FILENAME = "detection_sources.json"
 
 
+def _repo_key(url: str) -> str:
+    """``host/owner/repo`` of a git URL, so https, ssh and scp forms compare equal."""
+    u = (url or "").strip()
+    m = re.match(
+        r"^[A-Za-z][\w+.-]*://(?:[^/@]+@)?([^/:]+)(?::\d+)?/(.*)$", u
+    ) or re.match(r"^(?:[^@/]+@)?([^:/]+):(.*)$", u)
+    if not m:
+        return u.lower()
+    key = f"{m.group(1)}/{m.group(2).strip('/')}".lower()
+    return key[:-4] if key.endswith(".git") else key
+
+
+# Vendor repos Vigil ships as sources: never the customer's own, so never a deploy target.
+_VENDOR_REPOS = frozenset(_repo_key(s["git_url"]) for s in DEFAULT_SOURCES)
+
+
+def is_vendor_repo(url: str) -> bool:
+    return bool(url) and _repo_key(url) in _VENDOR_REPOS
+
+
 def _deploy_target_of(sources: List[Dict[str, Any]], fmt: str) -> Optional[Dict]:
     return next(
         (
@@ -103,6 +123,7 @@ def _deploy_target_of(sources: List[Dict[str, Any]], fmt: str) -> Optional[Dict]
             if s.get("deploy_target")
             and s.get("type") == "git"
             and s.get("format") == fmt
+            and not is_vendor_repo(s.get("git_url", ""))
         ),
         None,
     )
@@ -435,7 +456,7 @@ class DetectionRulesService:
         existing = self._find_existing(local_path, subdirectory, format)
         if deploy_target:
             self._check_deploy_target(
-                existing or {"type": source_type, "format": format}
+                existing or {"type": source_type, "format": format, "git_url": url}
             )
         if existing is not None:
             if not Path(local_path).exists():
@@ -546,6 +567,11 @@ class DetectionRulesService:
         if source.get("type") != "git" or fmt not in DEPLOY_FORMATS:
             raise ValueError(
                 "Only a git source whose format is splunk or elastic can be a deploy target"
+            )
+        if is_vendor_repo(source.get("git_url", "")):
+            raise ValueError(
+                f"{source.get('git_url')} is a vendor's public repo; a deploy target "
+                "must be your own repo, since Vigil opens pull requests into it"
             )
         other = self.deploy_target(fmt)
         if other is not None and other.get("id") != source.get("id"):

@@ -13,17 +13,23 @@
 #                    # the chart's key Secret, and Down <= 270 s after Medic
 #                    # stops (V2-8). Then checks 7 and 11 from inside Medic, and
 #                    # a negative control from the backend to Postgres and Redis.
-#                    # Local only: needs the backend image.
+#                    # Needs the backend image.
+#   e2e.sh full      # backend, plus everything the fault cells break: the SOC
+#                    # daemon, LLM worker, agent-serve and the real agent worker
+#                    # (no stubs; Bifrost stays on). Same checks as backend. KEEP=1
+#                    # leaves the cluster for tests/medic_eval/inject/test_helm_config_cells.py.
 # calico also runs the REJECT leg: Calico set to reject denied traffic, and
 # Medic must still read the policy as enforced (S7-2).
 #
 # Needs docker, kind, kubectl, helm, and the images built as vigil-medic:$TAG and
 # vigil-medic-gateway:$TAG (TAG default kind; the workflow builds them), plus
-# vigil-backend:$TAG for backend. CLUSTER names the kind cluster (default
+# vigil-backend:$TAG for backend and full, plus vigil-daemon:$TAG and vigil-agent:$TAG
+# for full. CLUSTER names the kind cluster (default
 # medic-<mode>); KEEP=1 leaves it up.
-# Only stub pods stand in for Vigil: the backend and agent worker are tiny HTTP
-# servers wearing the chart's labels, so Medic's policies select them as they
-# would the real pods. The worker has no Service: Medic reads its pod IP.
+# Only stub pods stand in for Vigil (not in backend or full, which run the real
+# backend; full runs the real agent worker too): the stubs are tiny HTTP servers
+# wearing the chart's labels, so Medic's policies select them as they would the
+# real pods. The worker has no Service: Medic reads its pod IP.
 set -euo pipefail
 
 MODE=${1:?usage: e2e.sh calico|kindnet|nopolicy|backend}
@@ -38,6 +44,9 @@ CHART=$(cd "$HERE/../.." && pwd)
 CANARY=medic-s7-canary-$RANDOM$RANDOM
 K="kubectl --context kind-$CLUSTER"
 PASS=0
+T0=$(date +%s)
+REAL=0 # the real backend (backend, full)
+[[ $MODE == backend || $MODE == full ]] && REAL=1
 
 say() { printf '\n== %s\n' "$*"; }
 ok() { PASS=$((PASS + 1)); printf '   ok  %s\n' "$*"; }
@@ -64,13 +73,13 @@ reach() { $K -n "$NS" exec "deploy/$FN-${4:-medic}" -- python -c "$CONNECT" "$1"
 say "kind cluster $CLUSTER ($MODE)"
 cfg=$(mktemp)
 case $MODE in
-  calico | backend) printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnetworking:\n  disableDefaultCNI: true\n  podSubnet: 192.168.0.0/16\n' >"$cfg" ;;
+  calico | backend | full) printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnetworking:\n  disableDefaultCNI: true\n  podSubnet: 192.168.0.0/16\n' >"$cfg" ;;
   nopolicy) printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnetworking:\n  disableDefaultCNI: true\n  podSubnet: 10.244.0.0/16\n' >"$cfg" ;;
   kindnet) printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\n' >"$cfg" ;;
   *) echo "unknown mode $MODE" >&2; exit 2 ;;
 esac
 kind create cluster --name "$CLUSTER" --config "$cfg" --wait 0s
-if [[ $MODE == calico || $MODE == backend ]]; then
+if [[ $MODE == calico || $REAL == 1 ]]; then
   $K apply -f "https://raw.githubusercontent.com/projectcalico/calico/$CALICO/manifests/calico.yaml" >/dev/null
   $K -n kube-system rollout status ds/calico-node --timeout=300s
 fi
@@ -86,10 +95,13 @@ CNI
 fi
 $K wait --for=condition=Ready nodes --all --timeout=300s
 kind load docker-image "vigil-medic:$TAG" "vigil-medic-gateway:$TAG" --name "$CLUSTER"
-if [[ $MODE == backend ]]; then
+if [[ $REAL == 1 ]]; then
   # Postgres and Redis are pulled by the node: kind's import of a multi-arch
   # image saved from a one-platform local copy fails ("content digest not found").
   kind load docker-image "vigil-backend:$TAG" --name "$CLUSTER"
+fi
+if [[ $MODE == full ]]; then
+  kind load docker-image "vigil-daemon:$TAG" "vigil-agent:$TAG" --name "$CLUSTER"
 fi
 
 # --- stubs and secrets -----------------------------------------------------------
@@ -129,10 +141,13 @@ spec:
           ports: [{name: http, containerPort: $3}]
 EOF
 }
-stub stub-agent-worker agent-worker 6990 503
-if [[ $MODE == backend ]]; then
+if [[ $MODE == full ]]; then
+  : # the real agent worker runs: a second pod with its labels would break the aw_ip lookups
+elif [[ $MODE == backend ]]; then
+  stub stub-agent-worker agent-worker 6990 503
   $K -n "$NS" rollout status deploy/stub-agent-worker --timeout=180s
 else
+  stub stub-agent-worker agent-worker 6990 503
   stub stub-backend backend 6987 200
   $K -n "$NS" rollout status deploy/stub-backend deploy/stub-agent-worker --timeout=180s
 fi
@@ -149,18 +164,33 @@ p = sys.argv[1]
 text = open(p).read()
 open(p, "w").write(re.split(r"^dependencies:", text, flags=re.M)[0])
 PY
-if [[ $MODE == backend ]]; then
+# What is switched off. full turns on the rest of Vigil's workloads (the
+# daemon is a StatefulSet of one; the others get one replica to fit a runner).
+workloads=(--set agentWorker.replicaCount=0
+  --set daemon.enabled=false --set llmWorker.enabled=false --set agentServe.enabled=false)
+if [[ $REAL == 1 ]]; then
   # The real backend, with the chart's own Postgres (+ the post-install schema
   # Job) and Redis.
   app_version=$(sed -n 's/^appVersion: *//p' "$chart/Chart.yaml" | tr -d "\"'")
   vigil_set=(--set backend.replicaCount=1
     --set upgrade.acknowledgeVersion="$app_version"
-    --set upgrade.acknowledgeReason="kind e2e: throwaway cluster, nothing to restore"
+    --set upgrade.acknowledgeReason="kind e2e: throwaway cluster; nothing to restore"
     --set backend.image.repository=vigil-backend --set backend.image.tag="$TAG"
     --set backend.image.pullPolicy=Never
     --set secrets.postgresPassword="$(head -c 18 /dev/urandom | base64 | tr -dc A-Za-z0-9)"
     --set secrets.vigilAppPassword="$(head -c 18 /dev/urandom | base64 | tr -dc A-Za-z0-9)"
     --set secrets.jwtSecretKey="$(head -c 32 /dev/urandom | base64 | tr -dc A-Za-z0-9)")
+  if [[ $MODE == full ]]; then
+    # A real token, so P-1.c has one to clear; the poll interval is the one the
+    # Compose cells run at. Images are the ones loaded above (llm-worker shares the
+    # backend's). DEV_MODE stays unset: chart default false, auth on (G4).
+    workloads=(--set agentWorker.replicaCount=1 --set llmWorker.replicaCount=1 --set agentServe.replicaCount=1
+      --set daemon.image.repository=vigil-daemon --set daemon.image.tag="$TAG" --set daemon.image.pullPolicy=Never
+      --set agentWorker.image.repository=vigil-agent --set agentWorker.image.tag="$TAG" --set agentWorker.image.pullPolicy=Never
+      --set agentServe.image.repository=vigil-agent --set agentServe.image.tag="$TAG" --set agentServe.image.pullPolicy=Never
+      --set config.DAEMON_SPLUNK_POLL_INTERVAL=15
+      --set secrets.agentInternalToken="$(head -c 24 /dev/urandom | base64 | tr -dc A-Za-z0-9)")
+  fi
 else
   # No backend runs here, so DEV_MODE only reaches Medic: it loads the medic-core
   # source tree, as no signed pack ships in the image yet (#2025).
@@ -178,9 +208,7 @@ helm --kube-context "kind-$CLUSTER" install "$REL" "$chart" -n "$NS" \
   --set medic.gateway.viewer.username=medic-viewer \
   --set medic.gateway.viewer.passwordSecret.name=medic-viewer \
   --set networkPolicies.enabled=true \
-  --set agentWorker.replicaCount=0 \
-  --set daemon.enabled=false --set llmWorker.enabled=false --set agentServe.enabled=false \
-  "${vigil_set[@]}" >/dev/null
+  "${workloads[@]}" "${vigil_set[@]}" >/dev/null
 api_cidrs=$($K -n "$NS" get networkpolicy "$FN-medic" -o jsonpath='{.spec.egress[*].to[*].ipBlock.cidr}')
 api_ep=$($K get endpointslice kubernetes -n default -o jsonpath='{.endpoints[0].addresses[0]}')
 api_port=$($K get endpointslice kubernetes -n default -o jsonpath='{.ports[0].port}')
@@ -232,9 +260,15 @@ grep -q "NetworkPolicy is enforced" <<<"$($K -n "$NS" logs "deploy/$FN-medic")" 
 ok "check 14: Medic Running and Ready; log: NetworkPolicy is enforced"
 
 # --- backend: the real backend reads Medic's status (V2-8, V2-2) -----------------
-if [[ $MODE == backend ]]; then
+if [[ $REAL == 1 ]]; then
   say "the real backend polls Medic through the gateway with the chart's key"
   $K -n "$NS" rollout status "deploy/$FN-backend" --timeout=600s || fail "backend not Ready"
+  if [[ $MODE == full ]]; then
+    for w in "sts/$FN-daemon" "deploy/$FN-llm-worker" "deploy/$FN-agent-serve" "deploy/$FN-agent-worker"; do
+      $K -n "$NS" rollout status "$w" --timeout=600s || fail "$w not Ready"
+    done
+  fi
+  ok "bring-up: $(( $(date +%s) - T0 )) s from start to every workload Ready"
   STATUS='from core.storage.connection import init_database
 init_database()
 from core.platform.medic_last_seen import current_status
@@ -264,14 +298,14 @@ print(current_status().value)'
   ok "Medic back: running"
 
   # Checks 7 and 11 run only here: calico mode has no Postgres or Redis, and its
-  # backend is a stub. Bifrost is not a target: it is deployed, but
-  # these checks are about the data stores and the backend.
+  # backend is a stub. Bifrost is a target too: it holds the provider keys.
   say "check 7: no route from Medic to Postgres, Redis, the backend, or the internet"
   pg_ip=$($K -n "$NS" get pod -l app.kubernetes.io/component=postgres -o jsonpath='{.items[0].status.podIP}')
   rd_ip=$($K -n "$NS" get pod -l app.kubernetes.io/component=redis -o jsonpath='{.items[0].status.podIP}')
   be_ip=$($K -n "$NS" get pod -l app.kubernetes.io/component=backend -o jsonpath='{.items[0].status.podIP}')
-  [[ -n $pg_ip && -n $rd_ip && -n $be_ip ]] \
-    || fail "check 7: missing pod IP (postgres=${pg_ip:-none} redis=${rd_ip:-none} backend=${be_ip:-none})"
+  bf_ip=$($K -n "$NS" get pod -l app.kubernetes.io/component=bifrost -o jsonpath='{.items[0].status.podIP}')
+  [[ -n $pg_ip && -n $rd_ip && -n $be_ip && -n $bf_ip ]] \
+    || fail "check 7: missing pod IP (postgres=${pg_ip:-none} redis=${rd_ip:-none} backend=${be_ip:-none} bifrost=${bf_ip:-none})"
   # Default Calico drops, so this is usually timeout. Reject (calico mode's
   # Felix patch, not applied here) reads refused. Anything else is a miss.
   blocked() { # host port label
@@ -287,6 +321,8 @@ print(current_status().value)'
   blocked "$rd_ip" 6379 "check 7 redis pod"
   blocked "$FN-backend" 6987 "check 7 backend Service"
   blocked "$be_ip" 6987 "check 7 backend pod"
+  blocked "$FN-bifrost" 8080 "check 7 bifrost Service"
+  blocked "$bf_ip" 8080 "check 7 bifrost pod"
   blocked 1.1.1.1 443 "check 7 internet"
   ok "check 11: a direct connect to the backend's 6987 is not connected"
 
@@ -354,7 +390,7 @@ print(f"{status} {code}".rstrip())'
   blocked "$FN-medic-gateway" 8470 "check 11 gateway inbound Service"
   blocked "$gw_ip" 8470 "check 11 gateway inbound pod"
 
-  say "PASS: $PASS checks ($MODE)"
+  say "PASS: $PASS checks ($MODE), $(( $(date +%s) - T0 )) s"
   exit 0
 fi
 

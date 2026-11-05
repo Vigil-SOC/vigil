@@ -641,9 +641,10 @@ async def _startup(app: FastAPI):
     except Exception as e:
         logger.error(f"Error during storage initialization: {e}")
 
-    # After the database is up. Query failure logs a warning and no code;
-    # startup continues, and POST /api/auth/bootstrap still requires the code.
-    announce_setup_code()
+    # Background: a failed query retries until the schema exists (Helm applies
+    # it after the pods start); startup does not wait. POST /api/auth/bootstrap
+    # requires the code either way.
+    app.state.setup_code_task = asyncio.create_task(announce_setup_code())
 
     if _testing:
         logger.info(
@@ -673,6 +674,17 @@ def _start_audit_feed(app) -> None:
     from core.audit.feed import start_leader
 
     app.state.audit_feed = start_leader()
+
+
+async def _stop_setup_code(app) -> None:
+    task = getattr(app.state, "setup_code_task", None)
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
 
 async def _stop_audit_feed(app) -> None:
@@ -707,6 +719,7 @@ async def _stop_medic_poller(app) -> None:
 
 async def _shutdown(app: FastAPI):
     """Clean up LLM gateway and MCP connections on shutdown."""
+    await _stop_setup_code(app)
     await _stop_audit_feed(app)
     await _stop_medic_poller(app)
     logger.info("Shutting down LLM Gateway...")

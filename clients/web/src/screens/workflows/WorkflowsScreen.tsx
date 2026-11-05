@@ -32,7 +32,7 @@ import {
   type HuntCheckpoint, type HuntEvidence, type HuntGap, type HuntHandoff, type HuntMove,
   type HuntQuestion, type HuntRecall, type HuntStanding, type HuntStrength, type HuntView,
   type InvestigateDecisionView, type RecalledFrom, type RecalledWindow,
-  type WfRun, type WfRunDetail,
+  type WfRun, type WfRunDetail, PHASE_WORD, shownPhaseStatus, shownStatus,
 } from './runRead'
 
 /** The body of POST /workflows/custom for a draft, so the server checks it as it would any other. */
@@ -262,6 +262,7 @@ function WorkflowCard({ wf: w, selected, onSelect }: { wf: Workflow; selected: b
             <>
               <span>Ran {w.runs7d} {w.runs7d === 1 ? 'time' : 'times'} this week</span>
               {' · '}<span>{w.successRate === null ? '—' : `${(w.successRate * 100).toFixed(1)}%`} succeeded</span>
+              {(w.rejected7d ?? 0) > 0 && <>{' · '}<span title="Stopped by a person at an approval; not counted as a failure">{w.rejected7d} rejected</span></>}
               {' · '}<span>{w.meanCostUsd === null ? '—' : <Cost usd={w.meanCostUsd} />} per run</span>
             </>
           ) : 'Off · not running'}
@@ -1479,14 +1480,16 @@ function RunRow({ run, onRemoved, onWatch }: { run: WfRun; onRemoved: () => void
     }
   }
 
+  // the open detail is fresher than the list: an approval answered below moves the row too
+  const status = shownStatus(detail ?? run)
   return (
     <>
       <tr className="clickable" onClick={toggle}>
         <td style={{ width: 24 }}><span className="caret" style={{ transform: open ? 'rotate(90deg)' : 'none' }}><Icon name="chevR" size={13} /></span></td>
         <td>
-          <span className="status" style={{ background: 'transparent', color: runStatusColor(run.status), border: `1px solid ${runStatusColor(run.status)}55` }}>{run.status}</span>
+          <span className="status" style={{ background: 'transparent', color: runStatusColor(status), border: `1px solid ${runStatusColor(status)}55` }}>{status}</span>
           <OutcomeBadge outcome={run.outcome} reason={run.reason} cause={run.stop_cause} />
-          {run.error && <span className="ml-2" style={{ color: 'var(--crit)' }} title={run.error}>⚠</span>}
+          {run.error && status !== 'rejected' && <span className="ml-2" style={{ color: 'var(--crit)' }} title={run.error}>⚠</span>}
         </td>
         <td className="muted">{fmtStarted(run.started_at)}</td>
         <td className="muted">{fmtDuration(run.duration_ms)}</td>
@@ -1582,8 +1585,10 @@ export function RunDetail({ d, onSteered }: { d: WfRunDetail; onSteered: () => v
       )}
       {d.error && d.error !== hunt?.reason && (
         <div className="modal-section">
-          <h4 style={{ color: 'var(--crit)' }}>Error</h4>
-          <pre className="font-mono text-[11.5px] leading-[1.5] whitespace-pre-wrap m-0" style={{ color: 'var(--crit)' }}>{d.error}</pre>
+          {shownStatus(d) === 'rejected'
+            ? <h4>Why it was rejected</h4>
+            : <h4 style={{ color: 'var(--crit)' }}>Error</h4>}
+          <pre className="font-mono text-[11.5px] leading-[1.5] whitespace-pre-wrap m-0" style={shownStatus(d) === 'rejected' ? undefined : { color: 'var(--crit)' }}>{d.error}</pre>
         </div>
       )}
       {trace && <RootCauseTrace trace={trace} />}
@@ -1611,7 +1616,7 @@ function RunBar({ d, hunt, trace, onSteered }: { d: WfRunDetail; hunt: HuntView 
   return (
     <>
       <div className="run-bar">
-        <span className="pill" style={{ color: runStatusColor(d.status) }}><span className="dot" />{d.status}</span>
+        <span className="pill" style={{ color: runStatusColor(shownStatus(d)) }}><span className="dot" />{shownStatus(d)}</span>
         {hunt?.outcome && !IN_FLIGHT.includes(d.status) && (
           <span className="muted text-[11.5px]" title={hunt.reason ?? undefined}>{hunt.outcome}</span>
         )}
@@ -3235,8 +3240,8 @@ function ComposeDetail({ d, suppressEmpty = false }: { d: WfRunDetail; suppressE
                 {d.phases.map((p) => (
                   <tr key={p.phase_id}>
                     <td className="muted tight">{p.phase_order}</td>
-                    <td>{agentMeta(p.agent_id).label}{p.error && <span className="ml-2" style={{ color: 'var(--crit)' }} title={p.error}>⚠</span>}</td>
-                    <td className="tight"><span style={{ color: runStatusColor(p.status) }}>{p.status}</span></td>
+                    <td>{agentMeta(p.agent_id).label}{p.error && shownPhaseStatus(p) !== 'rejected' && <span className="ml-2" style={{ color: 'var(--crit)' }} title={p.error}>⚠</span>}</td>
+                    <td className="tight"><span style={{ color: runStatusColor(shownPhaseStatus(p)) }}>{PHASE_WORD[shownPhaseStatus(p)] ?? p.status}</span></td>
                     <td className="muted tight">{fmtDuration(p.duration_ms)}</td>
                     <td className="muted tight"><Cost usd={p.cost_usd} digits={3} /></td>
                   </tr>

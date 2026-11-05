@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import api from '../../services/api'
-import type { DecisionRecord, FeedbackBody, IncidentDetail, IncidentPage, SensorList, StatusRead } from './medicTypes'
+import type { DecisionRecord, FeedbackBody, IncidentDetail, IncidentPage, PackState, SensorList, StatusRead } from './medicTypes'
 
 export type Phase = 'loading' | 'ready' | 'error'
 
@@ -198,3 +198,48 @@ export function useIncidentDetail(id: string, enabled: boolean) {
 /** POST /api/medic/incidents/{id}/feedback: the stored record. The admin is the session's, so the body names no user. */
 export const postFeedback = (id: string, body: FeedbackBody) =>
   api.post<{ record: DecisionRecord }>(`/medic/incidents/${encodeURIComponent(id)}/feedback`, body).then((r) => r.data.record)
+
+/** Medic's problem+json for a pack read or write: the code, and for a refusal the `pack_code` that says which check. */
+export const packProblem = (e: unknown): { status: number; code: string; packCode: string } => {
+  const r = (e as { response?: { status?: number; data?: { code?: unknown; pack_code?: unknown } } })?.response
+  return { status: r?.status ?? 0, code: r?.data?.code?.toString() ?? '', packCode: r?.data?.pack_code?.toString() ?? '' }
+}
+
+/** GET /api/medic/pack. `unavailable`: Medic has no pack lifecycle (dev mode). A failed read keeps the last good facts. */
+export function usePack(enabled: boolean) {
+  const [pack, setPack] = useState<PackState | null>(null)
+  const [phase, setPhase] = useState<Phase>('loading')
+  const [unavailable, setUnavailable] = useState(false)
+  const gen = useRef(0)
+  const load = useCallback(async (): Promise<PackState | null> => {
+    const mine = ++gen.current
+    try {
+      const { data } = await api.get<PackState>('/medic/pack')
+      if (mine !== gen.current) return null
+      if (!data || typeof data !== 'object' || !Array.isArray(data.withdrawn)) throw new Error('not a pack state') // the proxy passes bytes through
+      setPack(data)
+      setPhase('ready')
+      setUnavailable(false)
+      return data
+    } catch (e) {
+      if (mine !== gen.current) return null
+      if (packProblem(e).code === 'pack_unavailable') { setUnavailable(true); setPack(null); setPhase('ready') } else setPhase((p) => (p === 'ready' ? p : 'error'))
+      return null
+    }
+  }, [])
+  useEffect(() => { if (enabled) load() }, [enabled, load])
+  useVisiblePoll(load, enabled)
+  // a write's own answer is the truth; it replaces whatever an older read left
+  const set = useCallback((p: PackState) => { gen.current++; setPack(p); setPhase('ready'); setUnavailable(false) }, [])
+  return { pack, phase, unavailable, reload: load, set }
+}
+
+/** The pack writes. Each waits for Medic's next cycle (up to about 20 s) and is never retried; the answer is the new PackState. */
+export const importPack = (file: File, sha256: string, override: boolean) =>
+  api.post<PackState>('/medic/pack/import', file, {
+    params: override ? { sha256, override: true } : { sha256 },
+    headers: { 'Content-Type': 'application/json' },
+    timeout: 45_000,
+  }).then((r) => r.data)
+export const revertPack = () => api.post<PackState>('/medic/pack/revert', null, { timeout: 45_000 }).then((r) => r.data)
+export const switchToBundled = () => api.post<PackState>('/medic/pack/switch-to-bundled', null, { timeout: 45_000 }).then((r) => r.data)

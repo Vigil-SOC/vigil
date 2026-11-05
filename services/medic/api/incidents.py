@@ -77,16 +77,23 @@ class _Fold:
     reopen_count: int = 0
     escalation_simulated: bool = False
     ratings: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # What the engine's restart rebuild reads (not in the summary).
+    last_at: str | None = None  # `at` of the newest record
+    resolving_at: str | None = None  # `at` of the update that set `resolving`
+    evidence: set[str] = field(default_factory=set)  # signals of evidence_added
 
     def apply(self, rec: dict[str, Any]) -> None:
         body, kind = rec["body"], rec["type"]
-        self.last_seq = rec["seq"]
+        self.last_seq, self.last_at = rec["seq"], rec["at"]
         if kind == "incident_updated":
             change = body["change"]
             if change == "routed":
                 self.routed_at = self.routed_at or rec["at"]
             elif change in ("resolving", "refiring"):
                 self.resolving, self.last_eval = change == "resolving", body["eval"]
+                self.resolving_at = rec["at"] if self.resolving else None
+            elif change == "evidence_added":
+                self.evidence |= {item["signal"] for item in body["evidence"]}
             elif change == "suppressed":
                 self.suppressed_by = body["suppressed_by"]
             elif change == "unsuppressed":

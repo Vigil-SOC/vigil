@@ -11,6 +11,7 @@
     "generate:api": "python3 ../../scripts/generate_frontend_types.py"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "3.14.21",
     "axios": "^1.21.0",
     "date-fns": "^4.4.0",
     "qrcode": "^1.5.4",

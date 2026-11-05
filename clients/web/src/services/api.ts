@@ -891,8 +891,9 @@ export const timelineApi = {
 export const detectionRulesApi = {
   listSources: () => api.get('/detection-rules/sources'),
 
-  /** Whether each SIEM's rules can fire: check tallies, Blind spots, rules not passing. */
-  getHealth: (limit?: number) => api.get('/detection-rules/health', { params: { limit } }),
+  /** Every listed rule copy's health and its reason, worst first; one health's when given. */
+  rules: (params: { health?: string; tool?: string; q?: string; offset?: number } = {}) =>
+    api.get('/detection-rules/rules', { params }),
   
   
   addSource: (data: {
@@ -923,7 +924,7 @@ export const detectionRulesApi = {
 
   /** Live overlay rules no SIEM rule runs: only Vigil detects with them. */
   getOverlayOnly: () =>
-    api.get<{ rules: { id: number; name: string; language: string | null }[] }>(
+    api.get<{ rules: { id: number; name: string; language: string }[] }>(
       '/detection-rules/overlay-only',
     ),
   

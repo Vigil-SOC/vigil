@@ -3184,28 +3184,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/detection-rules/health": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Health
-         * @description Whether each SIEM's rules can fire: per-tool check tallies, Blind spots,
-         *     the rules failing or unknown on a check (fails first, capped at ``limit``),
-         *     and the repo rules no SIEM has a copy of. Read-only.
-         */
-        get: operations["get_api_detection-rules_health"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/detection-rules/mcp-env": {
         parameters: {
             query?: never;
@@ -3269,6 +3247,29 @@ export interface paths {
          *         Success status with updated stats and what the sync wrote per source
          */
         post: operations["post_api_detection-rules_reload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Rules
+         * @description Every listed rule copy's health with its reason, worst first, capped at
+         *     catalog.RULE_ROWS rows from ``offset``, narrowed by ``health`` ("attention"
+         *     is every state to act on), ``tool`` and the search ``q``; the counts, the
+         *     per-SIEM tallies and the blind spots cover them all. Read-only.
+         */
+        get: operations["get_api_detection-rules_rules"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4463,6 +4464,66 @@ export interface paths {
         get: operations["get_api_medic_pack"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/medic/pack/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Pack
+         * @description Import the posted ``medic.pack/v1`` file, held to the admin's expected sha256.
+         */
+        post: operations["post_api_medic_pack_import"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/medic/pack/revert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revert Pack
+         * @description Make the previous (last-known-good) pack active again.
+         */
+        post: operations["post_api_medic_pack_revert"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/medic/pack/switch-to-bundled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Switch To Bundled Pack
+         * @description Make the release's bundled pack active.
+         */
+        post: operations["post_api_medic_pack_switch-to-bundled"];
         delete?: never;
         options?: never;
         head?: never;
@@ -17430,39 +17491,6 @@ export interface operations {
             };
         };
     };
-    "get_api_detection-rules_health": {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     "get_api_detection-rules_mcp-env": {
         parameters: {
             query?: never;
@@ -17528,6 +17556,42 @@ export interface operations {
     "post_api_detection-rules_reload": {
         parameters: {
             query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_detection-rules_rules": {
+        parameters: {
+            query?: {
+                health?: ("attention" | "fails_to_run" | "data_silent" | "missing_field" | "never_fired" | "fires" | "disabled" | "no_fire_data") | null;
+                tool?: ("elastic" | "splunk" | "wazuh") | null;
+                q?: string | null;
+                offset?: number;
+            };
             header?: {
                 authorization?: string | null;
             };
@@ -19689,6 +19753,99 @@ export interface operations {
         };
     };
     get_api_medic_pack: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_medic_pack_import: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_medic_pack_revert: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_medic_pack_switch-to-bundled": {
         parameters: {
             query?: never;
             header?: {

@@ -32,6 +32,7 @@ import { SCREEN_PERMS, splitNav, useConsoleNav, type NavItem } from './consoleNa
 import type { ChatSeed, ConsoleScreenGoOptions, ConsoleScreenProps, SeedDocument, SettingsSectionKey } from '../shared/types'
 import type { Schema } from '../services/apiTypes'
 import DashboardScreen from '../screens/dashboard/DashboardScreen'
+import DetectionsScreen from '../screens/detections/DetectionsScreen'
 import CasesScreen from '../screens/cases/CasesScreen'
 import MetricsScreen from '../screens/metrics/MetricsScreen'
 import WorkflowsScreen from '../screens/workflows/WorkflowsScreen'
@@ -67,6 +68,7 @@ const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Eleme
   overview: OverviewScreen,
   triage: TriageScreen,
   dashboard: DashboardScreen,
+  detections: DetectionsScreen,
   home: HomeScreen,
   cases: CasesScreen,
   metrics: MetricsScreen,

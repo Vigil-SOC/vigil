@@ -18,7 +18,11 @@ import yaml
 _REWRITE = (
     "Rewrite around behaviour: process lineage, command-line arguments, "
     "parent-child relationships, or protocol/technique patterns — not a "
-    "specific host, address, account, or subnet."
+    "specific host, address, account, or subnet. To leave out one host, "
+    "address or account that is expected here, keep it out of the rule "
+    "(no `not filter_*` naming it) and add an exception instead: "
+    "save_detection_rule's exceptions, or detection_rule_exception on a "
+    "saved copy."
 )
 
 # IPv4 (optional CIDR). Candidates are confirmed with ipaddress.
