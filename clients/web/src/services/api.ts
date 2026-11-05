@@ -891,8 +891,8 @@ export const timelineApi = {
 export const detectionRulesApi = {
   listSources: () => api.get('/detection-rules/sources'),
 
-  /** Whether each SIEM's rules can fire: check tallies, Blind spots, rules not passing. */
-  getHealth: (limit?: number) => api.get('/detection-rules/health', { params: { limit } }),
+  /** Every listed rule copy's health and its reason, worst first; one health's when given. */
+  rules: (health?: string) => api.get('/detection-rules/rules', { params: { health } }),
   
   
   addSource: (data: {

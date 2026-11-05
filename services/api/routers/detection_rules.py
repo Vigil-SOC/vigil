@@ -3,9 +3,9 @@
 import asyncio
 import logging
 from dataclasses import asdict
-from typing import Optional
+from typing import Literal, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 
 from core.auth.permissions import permission_gate
@@ -222,21 +222,16 @@ def get_stats(
     return stats
 
 
-@router.get("/health")
-def get_health(limit: int = Query(200, ge=1, le=1000)):
-    """Whether each SIEM's rules can fire: per-tool check tallies, Blind spots,
-    the rules failing or unknown on a check (fails first, capped at ``limit``),
-    and the repo rules no SIEM has a copy of. Read-only."""
-    by_tool = catalog.rules_by_tool()
-    siems = [t for t in by_tool if t not in ("repo", catalog.OVERLAY)]
-    return {
-        "by_tool": by_tool,
-        "unchecked": catalog.unchecked(siems),
-        "not_read": catalog.NOT_READ,
-        "blind_spots": catalog.blind_spots(),
-        "not_passing": catalog.rules_not_passing(limit),
-        "repo": catalog.repo_coverage(),
-    }
+@router.get("/rules")
+def get_rules(
+    health: Optional[
+        Literal["fails_to_run", "data_silent", "disabled", "never_fired", "fires"]
+    ] = None,
+):
+    """Every listed rule copy's health (fails to run, data silent, disabled, never
+    fired, fires) with its reason, worst first, capped at catalog.RULE_ROWS rows,
+    only ``health``'s when given; the counts cover them all. Read-only."""
+    return catalog.health_listing(health)
 
 
 @router.get("/mcp-env")

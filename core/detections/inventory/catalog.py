@@ -42,6 +42,7 @@ from core.storage.models import (
     DetectionRuleCheckChange,
     DetectionRuleStage,
     DetectionRuleVersion,
+    Finding,
 )
 
 logger = logging.getLogger(__name__)
@@ -88,6 +89,10 @@ CHANGE = DetectionRuleCheckChange
 RECENT_CHANGES = 10
 # A row that changed the result; a fail -> fail row only changed the reason.
 RESULT_CHANGED = CHANGE.old_result.is_distinct_from(CHANGE.new_result)
+# The Detections page's rule listing: health states worst first, and its caps.
+HEALTH_ORDER = ("fails_to_run", "data_silent", "disabled", "never_fired", "fires")
+FIRES_WINDOW_DAYS = 90
+RULE_ROWS = 300
 
 
 def _latest_changes():
@@ -629,6 +634,122 @@ def repo_coverage() -> Dict[str, int]:
         "deployed": deployed,
         "not_deployed": len(ids) - deployed,
         "siems": len(tools),
+    }
+
+
+def _rule_of_copy(session: Any) -> Dict[int, Tuple[Any, ...]]:
+    """Which rule each stored copy belongs to, so one rule's copies count once.
+
+    A linked SIEM copy belongs to its origin. The overlay saves one rule's copies under one name.
+    """
+    rows = session.execute(
+        select(
+            DetectionRule.id,
+            DetectionRule.source,
+            DetectionRule.name,
+            DetectionRule.origin_rule_id,
+            DetectionRule.link_kind,
+        )
+    ).all()
+    own = {
+        r.id: (OVERLAY_SOURCE, r.name) if r.source == OVERLAY_SOURCE else (r.id,)
+        for r in rows
+    }
+    return {
+        r.id: (
+            own[r.origin_rule_id]
+            if r.origin_rule_id is not None and r.link_kind != "declined"
+            else own[r.id]
+        )
+        for r in rows
+    }
+
+
+def _fires(session: Any) -> Dict[str, int]:
+    """Findings per rule name in the window, read from what the alert named."""
+    since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        days=FIRES_WINDOW_DAYS
+    )
+    named = func.coalesce(Finding.entity_context["rule_name"].astext, Finding.title)
+    rows = session.execute(
+        select(named, func.count())
+        .where(Finding.timestamp >= since, named.is_not(None))
+        .group_by(named)
+    )
+    return {name: count for name, count in rows}
+
+
+def _health(status: str, checks: Dict[str, Any], fires: int) -> Tuple[str, str]:
+    """(health, why), the first that holds, worst first."""
+    runs = checks.get("runs") or {}
+    sees = checks.get("sees") or {}
+    if status == "disabled":
+        return "disabled", "Switched off in the SIEM."
+    if runs.get("result") == "fail":
+        return "fails_to_run", str(runs.get("reason") or "Its last run failed.")
+    if sees.get("result") == "fail":
+        # The Sees reason names any missing field.
+        return "data_silent", str(sees.get("reason") or "Its data is not arriving.")
+    if fires:
+        return "fires", f"Fired {fires} times in {FIRES_WINDOW_DAYS} days."
+    return "never_fired", f"No finding named it in {FIRES_WINDOW_DAYS} days."
+
+
+def health_listing(health: Optional[str] = None) -> Dict[str, Any]:
+    """Every listed copy's health, worst first, the first ``RULE_ROWS`` returned
+    (of one ``health`` when given).
+
+    The counts cover every copy; rule_total and mapped count each rule once.
+    """
+    with get_db_manager().session_scope() as session:
+        fires = _fires(session)
+        rule_of = _rule_of_copy(session)
+        rows = session.execute(
+            select(DetectionRule, DetectionRuleVersion.checks)
+            .join(DetectionRuleVersion, _latest_join())
+            .where(LISTED)
+            .order_by(DetectionRule.id)
+        ).all()
+        listed = []
+        counts = dict.fromkeys(HEALTH_ORDER, 0)
+        mapped = set()
+        for rule, checks in rows:
+            checks = checks or {}
+            if rule.techniques:
+                mapped.add(rule_of[rule.id])
+            count = fires.get(rule.name, 0)
+            state, why = _health(rule.status, checks, count)
+            counts[state] += 1
+            listed.append(
+                {
+                    "rule_id": rule.id,
+                    "name": rule.name,
+                    "language": rule.language,
+                    "source": rule.source,
+                    "tool": tool_of(rule.source),
+                    "status": rule.status,
+                    "techniques": list(rule.techniques or []),
+                    "health": state,
+                    "why": why,
+                    "fires": count,
+                    "runs": checks.get("runs"),
+                    "sees": checks.get("sees"),
+                }
+            )
+    listed.sort(key=lambda row: (HEALTH_ORDER.index(row["health"]), row["rule_id"]))
+    shown = [r for r in listed if r["health"] == health] if health else listed
+    return {
+        "total": len(listed),
+        "rule_total": len({rule_of[row["rule_id"]] for row in listed}),
+        "mapped": len(mapped),
+        "counts": counts,
+        "rules": shown[:RULE_ROWS],
+        "fires_window_days": FIRES_WINDOW_DAYS,
+        "limits": (
+            "Fires counts findings that name the rule, so a rule firing in a SIEM whose alerts "
+            "do not reach Vigil counts zero. Runs and Sees results exist only for rules Vigil "
+            "reads from Kibana, Wazuh and Splunk."
+        ),
     }
 
 
