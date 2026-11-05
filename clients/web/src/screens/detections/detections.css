@@ -92,12 +92,13 @@
    the window once scrolled to; the floor keeps a short window usable. */
 .de-table { border-top: 1px solid var(--ln1); border-bottom: 1px solid var(--ln0); overflow-x: auto; transition: opacity .15s; }
 .de-table.list-scroll { max-height: clamp(300px, calc(100vh - 260px), 1400px); overscroll-behavior: contain; }
-.de-th { position: sticky; top: 0; z-index: 1; }
+.de-th { position: sticky; top: 0; z-index: 2; box-sizing: border-box; }
 .de-table.loading { opacity: .55; }
 .de-tr { display: grid; grid-template-columns: minmax(220px, 1.3fr) 132px minmax(280px, 2fr) 150px; gap: 20px; padding: 0 20px; min-width: 880px; }
 .de-th { align-items: center; height: 38px; background: var(--bg2); border-bottom: 1px solid var(--ln1); font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .5px; color: var(--tx2); }
-.de-row { align-items: start; padding-top: 13px; padding-bottom: 13px; border-bottom: 1px solid var(--ln0); }
-.de-row:last-child { border-bottom: 0; }
+/* Virtual rows: absolutely placed in a box as tall as every row, so only on-screen rows are in the DOM. */
+.de-rows { position: relative; min-width: 880px; }
+.de-row { position: absolute; top: 0; left: 0; right: 0; box-sizing: border-box; align-items: start; padding-top: 13px; padding-bottom: 13px; border-bottom: 1px solid var(--ln0); background: var(--bg1); }
 .de-row:hover { background: var(--bg2); }
 .de-right { display: flex; justify-content: flex-end; text-align: right; }
 .de-name { font-size: 13.5px; line-height: 20px; font-weight: 550; color: var(--tx0); overflow-wrap: anywhere; }

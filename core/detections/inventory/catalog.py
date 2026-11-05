@@ -34,10 +34,11 @@ import base64
 import binascii
 import logging
 import re
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
-from sqlalchemy import Text, and_, case, cast, func, select, tuple_
+from sqlalchemy import Text, and_, case, cast, func, select, text, tuple_
 from sqlalchemy.orm import defer
 
 from core.detections.inventory.readers import OVERLAY_SOURCE
@@ -799,12 +800,141 @@ def _by_siem(listed: List[Dict[str, Any]]) -> Dict[str, Dict[str, int]]:
     return out
 
 
-def _matches(row: Dict[str, Any], needle: str) -> bool:
-    return (
-        needle in row["name"].lower()
-        or needle in row["why"].lower()
-        or any(needle in t.lower() for t in row["techniques"])
-    )
+def _haystack(row: Dict[str, Any]) -> str:
+    """What a search reads, lowercased once: name, reason and techniques."""
+    return "\n".join((row["name"], row["why"], *row["techniques"])).lower()
+
+
+# The listing reads every listed copy (about 2 s on 19k copies), so it is built
+# once and reused for every page, filter and search until a table it reads is
+# written. Postgres's own write counters say when: they move on any insert,
+# update or delete, from this process or the daemon's syncs and checks.
+_LISTING_TABLES = (
+    "detection_rules",
+    "detection_rule_versions",
+    "detection_rule_check_changes",
+)
+_FIRES_TABLES = ("findings",)
+_listing_lock = threading.Lock()
+_listing: Dict[str, Any] = {}
+
+
+def _write_marks(session: Any, tables: Tuple[str, ...]) -> Tuple[Any, ...]:
+    """Each table's insert/update/delete counts. They lag a commit by at most
+    Postgres's stats flush (seconds), and a stats reset only forces a rebuild."""
+    rows = session.execute(
+        text(
+            "SELECT relname, n_tup_ins, n_tup_upd, n_tup_del FROM pg_stat_user_tables"
+            " WHERE relname = ANY(:tables) ORDER BY relname"
+        ),
+        {"tables": list(tables)},
+    ).all()
+    return tuple(tuple(r) for r in rows)
+
+
+def _copies_listed(session: Any) -> Dict[str, Any]:
+    """Every listed copy with its checks, which rule each belongs to, and the blind spots."""
+    rows = session.execute(
+        select(
+            DetectionRule.id,
+            DetectionRule.name,
+            DetectionRule.language,
+            DetectionRule.source,
+            DetectionRule.status,
+            DetectionRule.techniques,
+            DetectionRuleVersion.checks,
+        )
+        .join(DetectionRuleVersion, _latest_join())
+        .where(LISTED)
+        .order_by(DetectionRule.id)
+    ).all()
+    return {
+        "rows": rows,
+        "rule_of": _rule_of_copy(session),
+        "blind_spots": [
+            {
+                "data_source": spot["data_source"],
+                "tool": rule["tool"],
+                "rules": sum(1 for r in spot["rules"] if r["tool"] == rule["tool"]),
+            }
+            for spot in blind_spots()
+            for rule in {r["tool"]: r for r in spot["rules"]}.values()
+        ],
+    }
+
+
+def _health_rows(copies: Dict[str, Any], fires: Dict[str, int]) -> Dict[str, Any]:
+    """Each copy's health row, worst first, and the totals that don't depend on a filter."""
+    rule_of = copies["rule_of"]
+    listed = []
+    mapped = set()
+    for rule in copies["rows"]:
+        checks = rule.checks or {}
+        if rule.techniques:
+            mapped.add(rule_of[rule.id])
+        count = fires.get(rule.name, 0)
+        state, why, raw = _health(rule.status, checks, count)
+        results = _results(checks)
+        listed.append(
+            {
+                "rule_id": rule.id,
+                "name": rule.name,
+                "language": rule.language,
+                "source": rule.source,
+                "tool": tool_of(rule.source),
+                "status": rule.status,
+                "techniques": list(rule.techniques or []),
+                "health": state,
+                "why": why,
+                "raw": raw,
+                "fires": count,
+                "checks_passing": results.count("pass"),
+                "checks_run": len(results),
+                "runs": checks.get("runs"),
+                "sees": checks.get("sees"),
+            }
+        )
+    listed.sort(key=lambda row: (HEALTH_ORDER.index(row["health"]), row["rule_id"]))
+    by_state: Dict[str, List[Tuple[str, str, Dict[str, Any]]]] = {
+        state: [] for state in HEALTH_ORDER
+    }
+    counts: Dict[Optional[str], Dict[str, int]] = {None: dict.fromkeys(HEALTH_ORDER, 0)}
+    for row in listed:
+        page_row = {k: v for k, v in row.items() if k not in ("runs", "sees")}
+        by_state[row["health"]].append((row["tool"], _haystack(row), page_row))
+        counts[None][row["health"]] += 1
+        counts.setdefault(row["tool"], dict.fromkeys(HEALTH_ORDER, 0))[
+            row["health"]
+        ] += 1
+    return {
+        "total": len(listed),
+        "by_state": by_state,
+        "counts": counts,
+        "rule_total": len({rule_of[row["rule_id"]] for row in listed}),
+        "mapped": len(mapped),
+        "by_siem": _by_siem(listed),
+    }
+
+
+def _listing_now() -> Dict[str, Any]:
+    """The health rows, rebuilt only when a table they read was written: the
+    copies on a rules or checks write, the fire counts on a findings write or a
+    new day (the window rolls)."""
+    with _listing_lock, get_db_manager().session_scope() as session:
+        written = _write_marks(session, _LISTING_TABLES + _FIRES_TABLES)
+        marks = tuple(m for m in written if m[0] in _LISTING_TABLES)
+        if _listing.get("marks") != marks:
+            _listing.clear()
+            _listing["copies"] = _copies_listed(session)
+            _listing["marks"] = marks
+        fires_marks = (
+            tuple(m for m in written if m[0] in _FIRES_TABLES),
+            datetime.now(timezone.utc).date(),
+        )
+        if _listing.get("fires_marks") != fires_marks or "health" not in _listing:
+            _listing["health"] = _health_rows(_listing["copies"], _fires(session))
+            _listing["fires_marks"] = fires_marks
+        return {**_listing["health"], "blind_spots": _listing["copies"]["blind_spots"]}
 
 
 def health_listing(
@@ -820,85 +950,29 @@ def health_listing(
     The counts cover every copy of ``tool`` (every copy when none); rule_total
     and mapped count each rule once, across every tool.
     """
-    with get_db_manager().session_scope() as session:
-        fires = _fires(session)
-        rule_of = _rule_of_copy(session)
-        rows = session.execute(
-            select(
-                DetectionRule.id,
-                DetectionRule.name,
-                DetectionRule.language,
-                DetectionRule.source,
-                DetectionRule.status,
-                DetectionRule.techniques,
-                DetectionRuleVersion.checks,
-            )
-            .join(DetectionRuleVersion, _latest_join())
-            .where(LISTED)
-            .order_by(DetectionRule.id)
-        ).all()
-        listed = []
-        counts = dict.fromkeys(HEALTH_ORDER, 0)
-        mapped = set()
-        for rule in rows:
-            checks = rule.checks or {}
-            if rule.techniques:
-                mapped.add(rule_of[rule.id])
-            count = fires.get(rule.name, 0)
-            state, why, raw = _health(rule.status, checks, count)
-            if tool is None or tool_of(rule.source) == tool:
-                counts[state] += 1
-            listed.append(
-                {
-                    "rule_id": rule.id,
-                    "name": rule.name,
-                    "language": rule.language,
-                    "source": rule.source,
-                    "tool": tool_of(rule.source),
-                    "status": rule.status,
-                    "techniques": list(rule.techniques or []),
-                    "health": state,
-                    "why": why,
-                    "raw": raw,
-                    "fires": count,
-                    "checks_passing": _results(checks).count("pass"),
-                    "checks_run": len(_results(checks)),
-                    "runs": checks.get("runs"),
-                    "sees": checks.get("sees"),
-                }
-            )
-    listed.sort(key=lambda row: (HEALTH_ORDER.index(row["health"]), row["rule_id"]))
-    by_siem = _by_siem(listed)
-    states = ATTENTION if health == "attention" else (health,) if health else None
+    built = _listing_now()
+    states = (
+        ATTENTION if health == "attention" else (health,) if health else HEALTH_ORDER
+    )
     needle = (q or "").strip().lower()
+    # by_state keeps worst-first order, so the states' lists in HEALTH_ORDER are too.
     shown = [
-        r
-        for r in listed
-        if (states is None or r["health"] in states)
-        and (tool is None or r["tool"] == tool)
-        and (not needle or _matches(r, needle))
+        row
+        for state in HEALTH_ORDER
+        if state in states
+        for row_tool, hay, row in built["by_state"][state]
+        if (tool is None or row_tool == tool) and needle in hay
     ]
     return {
-        "total": len(listed),
-        "rule_total": len({rule_of[row["rule_id"]] for row in listed}),
-        "mapped": len(mapped),
-        "counts": counts,
+        "total": built["total"],
+        "rule_total": built["rule_total"],
+        "mapped": built["mapped"],
+        "counts": built["counts"].get(tool, dict.fromkeys(HEALTH_ORDER, 0)),
         "matched": len(shown),
         "offset": offset,
-        "rules": [
-            {k: v for k, v in row.items() if k not in ("runs", "sees")}
-            for row in shown[offset : offset + RULE_ROWS]
-        ],
-        "by_siem": by_siem,
-        "blind_spots": [
-            {
-                "data_source": spot["data_source"],
-                "tool": rule["tool"],
-                "rules": sum(1 for r in spot["rules"] if r["tool"] == rule["tool"]),
-            }
-            for spot in blind_spots()
-            for rule in {r["tool"]: r for r in spot["rules"]}.values()
-        ],
+        "rules": shown[offset : offset + RULE_ROWS],
+        "by_siem": built["by_siem"],
+        "blind_spots": built["blind_spots"],
         "fires_window_days": FIRES_WINDOW_DAYS,
         "limits": (
             "Fires counts findings that name the rule, plus the days a SIEM's Silent check saw "

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { errorText } from '../../shared/errorText'
 import { detectionRulesApi } from '../../services/api'
@@ -71,6 +72,8 @@ const SIEMS: Siem[] = ['elastic', 'splunk', 'wazuh']
 const SIEM_NAME: Record<string, string> = { elastic: 'Elastic', splunk: 'Splunk', wazuh: 'Wazuh', repo: 'Repo', overlay: 'Vigil' }
 
 const n = (v: number) => v.toLocaleString()
+/** The list's sticky header row, in px: the rows sit under it in the same scroll. */
+const HEAD_ROW = 38
 const plural = (v: number, one: string, many: string) => `${n(v)} ${v === 1 ? one : many}`
 
 function viewCount(report: RulesReport, view: View): number {
@@ -124,7 +127,6 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   const [error, setError] = useState<string | null>(null)
   const [open, setOpen] = useState<number | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
-  const endRef = useRef<HTMLDivElement>(null)
   // Bumped per view, so a page asked for under the last view is dropped.
   const generation = useRef(0)
 
@@ -158,24 +160,29 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
 
   const matched = report?.matched ?? 0
   const hasMore = !loading && rows.length < matched
+  // Only the rows on screen are in the DOM; each is measured, so a wrapped name or an open raw error keeps its height.
+  const virtual = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => 70,
+    overscan: 8,
+    scrollMargin: HEAD_ROW,
+    getItemKey: (i) => rows[i].rule_id,
+  })
+  const shown = virtual.getVirtualItems()
+  const last = shown.length ? shown[shown.length - 1].index : -1
   // The next page loads as the list's end nears, inside the list's own scroll.
   useEffect(() => {
-    const root = listRef.current
-    const end = endRef.current
-    if (!root || !end || !hasMore || more) return
-    const watch = new IntersectionObserver((seen) => {
-      if (!seen.some((e) => e.isIntersecting)) return
-      watch.disconnect()
-      const asked = generation.current
-      setMore(true)
-      detectionRulesApi.rules({ ...params, offset: rows.length })
-        .then((res) => { if (asked === generation.current) setRows((prev) => [...prev, ...(res.data as RulesReport).rules]) })
-        .catch((e) => { if (asked === generation.current) setError(errorText(e, 'More rules did not load.')) })
-        .finally(() => { if (asked === generation.current) setMore(false) })
-    }, { root, rootMargin: '0px 0px 600px 0px' })
-    watch.observe(end)
-    return () => watch.disconnect()
-  })
+    if (!hasMore || more || last < rows.length - 40) return
+    const asked = generation.current
+    setMore(true)
+    detectionRulesApi.rules({ ...params, offset: rows.length })
+      .then((res) => { if (asked === generation.current) setRows((prev) => [...prev, ...(res.data as RulesReport).rules]) })
+      .catch((e) => { if (asked === generation.current) setError(errorText(e, 'More rules did not load.')) })
+      .finally(() => { if (asked === generation.current) setMore(false) })
+    // params follow view, siem and q, which reset rows and generation
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasMore, more, last, rows.length])
 
   if (error && !report) return <Failure>{error}</Failure>
   if (!report) return <span className="x1-muted">Reading the inventory…</span>
@@ -342,12 +349,14 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
           <div className="de-tr de-th">
             <span>Rule</span><span>Health ↓</span><span>Why</span><span className="de-right">Action</span>
           </div>
-          {rows.map((r) => {
+          <div className="de-rows" style={{ height: virtual.getTotalSize() }}>
+          {shown.map((item) => {
+            const r = rows[item.index]
             const h = HEALTH[r.health]
             const isOpen = open === r.rule_id
             const fired = r.fires > 0 ? `${plural(r.fires, 'fire', 'fires')} in ${days}d` : r.health === 'no_fire_data' ? 'No fire data' : r.health === 'fires' ? 'Alerted in the SIEM' : `No fires in ${days}d`
             return (
-              <div key={r.rule_id} className="de-tr de-row">
+              <div key={item.key} data-index={item.index} ref={virtual.measureElement} className="de-tr de-row" style={{ transform: `translateY(${item.start - HEAD_ROW}px)` }}>
                 <div className="de-rule">
                   <div className="de-name">{r.name}</div>
                   <div className="de-meta">
@@ -375,10 +384,11 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
               </div>
             )
           })}
+          </div>
           {rows.length === 0 && !loading && (
             <div className="de-empty">{q ? `No rules match “${q}”.` : 'No rules in this view.'}</div>
           )}
-          <div ref={endRef} className="de-end" aria-hidden="true">{more ? 'Loading more rules…' : hasMore ? '' : rows.length ? 'End of the list' : ''}</div>
+          <div className="de-end" aria-hidden="true">{more ? 'Loading more rules…' : hasMore ? '' : rows.length ? 'End of the list' : ''}</div>
         </div>
         <div className="de-foot">
           <span aria-live="polite">Showing {n(rows.length)} of {n(report.matched)}{more ? ' · loading more…' : ''}</span>
