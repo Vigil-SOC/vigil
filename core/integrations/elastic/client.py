@@ -479,6 +479,22 @@ class ElasticService:
         resp.raise_for_status()
         return set(resp.json().get("fields") or {})
 
+    async def unreadable(self, patterns: List[str]) -> List[str]:
+        """Which of ``patterns`` this user lacks ``read`` on, from
+        ``_security/user/_has_privileges`` (any user may ask for itself).
+        Exclusions and remote-cluster patterns are skipped. Metadata, not a
+        search; raises when security is off or the call fails."""
+        names = [p for p in patterns if not p.startswith("-") and ":" not in p]
+        if not names:
+            return []
+        resp = await self.es_client.post(
+            "/_security/user/_has_privileges",
+            json={"index": [{"names": names, "privileges": ["read"]}]},
+        )
+        resp.raise_for_status()
+        index = resp.json().get("index") or {}
+        return [p for p in names if not (index.get(p) or {}).get("read", False)]
+
     async def indices_matching(self, index: str) -> List[str]:
         """The concrete indices ``index`` (comma-joined patterns) resolves to.
 

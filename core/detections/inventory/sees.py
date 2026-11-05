@@ -194,8 +194,22 @@ async def _check(
             present = await service.field_caps(index, wanted)
         except Exception as exc:  # noqa: BLE001 -- only rules naming fields need it
             caps_error = str(exc)
+        denied: List[str] = []
+        if not seen:
+            # Security trims a wildcard to the indices this user may read, so a
+            # missing role looks like no events. Metadata: no budget spent.
+            try:
+                denied = await service.unreadable(list(group[0]))
+            except Exception as exc:  # noqa: BLE001 -- can't tell: keep the fail
+                logger.debug("sees: read privilege check of %s failed: %s", index, exc)
         for key, fields in members:
-            if not seen:
+            if denied:
+                results[key] = _unknown(
+                    f"Vigil's Elastic user lacks read on {', '.join(denied)}, "
+                    "so whether its events arrive can't be seen",
+                    index,
+                )
+            elif not seen:
                 unmapped = present is not None and ts not in present
                 results[key] = {
                     "result": "fail",
