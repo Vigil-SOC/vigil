@@ -475,6 +475,49 @@ class SplunkService:
             for p in patterns
         )
 
+    def macros(self) -> List[Dict]:
+        """Every search macro in every app (a REST listing, not a search). Raises."""
+        return (
+            self._get_json("/servicesNS/-/-/admin/macros", count=0).get("entry") or []
+        )
+
+    def datamodels(self) -> Dict[str, bool]:
+        """Each data model's name and whether it is accelerated; metadata only. Raises."""
+        out: Dict[str, bool] = {}
+        body = self._get_json("/servicesNS/-/-/datamodel/model", count=0)
+        for entry in body.get("entry") or []:
+            raw = (entry.get("content") or {}).get("acceleration") or "{}"
+            try:
+                accel = json.loads(raw) if isinstance(raw, str) else raw
+            except ValueError:
+                accel = {}
+            enabled = isinstance(accel, dict) and str(accel.get("enabled")).lower() in (
+                "1",
+                "true",
+            )
+            out[str(entry.get("name"))] = out.get(str(entry.get("name"))) or enabled
+        return out
+
+    def default_indexes(self, owner: str) -> Optional[List[str]]:
+        """``srchIndexesDefault`` over ``owner``'s roles and imported roles; None
+        when Splunk won't say. REST reads only, as ``can_search_index``."""
+        from urllib.parse import quote
+
+        try:
+            user = self._get_json(f"/services/authentication/users/{quote(owner)}")
+            roles = (user["entry"][0]["content"] or {}).get("roles") or []
+            patterns: List[str] = []
+            for role in roles:
+                content = self._get_json(
+                    f"/services/authorization/roles/{quote(role)}"
+                )["entry"][0]["content"]
+                for name in ("srchIndexesDefault", "imported_srchIndexesDefault"):
+                    patterns.extend(content.get(name) or [])
+        except (SplunkSearchError, KeyError, IndexError, *_HTTP_ERRORS) as e:
+            logger.info("Splunk default indexes of %s unreadable: %s", owner, e)
+            return None
+        return sorted(set(patterns))
+
 
 def saved_search_key(entry: Dict) -> str:
     acl = entry.get("acl") or {}
