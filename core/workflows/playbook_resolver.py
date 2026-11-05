@@ -41,6 +41,8 @@ REMOTE = "remote"
 # a missing one reach the run as a blind spot rather than a log line.
 INVESTIGATE_CAPABILITIES = (
     "case_records",
+    "case_evidence",
+    "entity_recall",
     "get_finding",
     "telemetry_search",
     "findings_search",
@@ -131,6 +133,7 @@ CAPABILITIES: Dict[str, Tuple[Candidate, ...]] = {
     # deployment either carries it or has no history to offer.
     "entity_recall": (Candidate(None, ("recall_entity",)),),
     "case_records": (Candidate(None, ("case_records",)),),
+    "case_evidence": (Candidate(None, ("read_case_evidence",)),),
     "get_finding": (Candidate(None, ("get_finding",)),),
 }
 
@@ -149,6 +152,9 @@ CAPABILITY_BOUNDS: Dict[str, Dict[str, int]] = {
     # RECALL_IGNORED_ARGS because memory caps each list itself.
     "entity_recall": {"timeout_ms": 30_000, "max_rows": 200},
     "case_records": {"max_rows": 100, "timeout_ms": 15_000},
+    # Extraction may take PARSE_TIMEOUT_S (60s) on a PDF or Office file. The row
+    # cap is the bounds model's shape; the evidence list is not under a key it cuts.
+    "case_evidence": {"timeout_ms": 90_000, "max_rows": 200},
     # One row of our own Postgres. Its size is the record behind the alert, which
     # result_cap bounds, so the row cap is only the shape the bounds model asks for.
     "get_finding": {"timeout_ms": 15_000, "max_rows": 1},

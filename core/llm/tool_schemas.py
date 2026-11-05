@@ -484,6 +484,48 @@ DEEPTEMPO_FINDING_TOOLS = [
         },
     },
     {
+        "name": "read_case_evidence",
+        "description": (
+            "Read the evidence attached to a case, in full. With case_id alone, "
+            "list its evidence (id, type, name, description, size, sha256, who "
+            "collected it and when). With evidence_id, return a window of that "
+            "item's text from offset (characters) for length characters, with total_chars "
+            "and next_offset to read on. With query, return the lines that "
+            "contain it (case-insensitive) with their line numbers and the "
+            "offset that opens a window there, capped, with how many were "
+            "omitted. A document condensed before a hunt read it is attached "
+            "here as the original."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "case_id": {
+                    "type": "string",
+                    "description": "The case whose evidence to read.",
+                },
+                "evidence_id": {
+                    "type": "integer",
+                    "description": "One evidence item from the case's list.",
+                },
+                "offset": {
+                    "type": "integer",
+                    "default": 0,
+                    "description": "Character to start the window at.",
+                },
+                "length": {
+                    "type": "integer",
+                    "default": 8000,
+                    "description": "Most characters to return (at most 16000).",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Text to find in the item, instead of a window.",
+                },
+            },
+            "required": ["case_id"],
+        },
+    },
+    {
         "name": "create_case",
         "description": "Create a new investigation case. Use this to organize related findings into a case for tracking and investigation.",
         "input_schema": {
