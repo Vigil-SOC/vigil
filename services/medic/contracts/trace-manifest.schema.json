@@ -24,6 +24,7 @@
           "additionalProperties": false,
           "properties": {
             "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+            "channel": {"description": "Absent in traces captured before the channel was recorded.", "enum": ["stable", "beta", "dev"]},
             "version": {"$ref": "#/$defs/semver"}
           }
         }
