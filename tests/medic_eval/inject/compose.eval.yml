@@ -52,6 +52,15 @@ services:
     volumes:
       - ${MEDIC_EVAL_SITE:?}:/eval-site/sitecustomize.py:ro
 
+  # The ARQ worker the L-2 and L-5 cells send calls through, pointed at the
+  # bifrost stub. Same image as the backend.
+  llm-worker:
+    container_name: !reset null
+    image: ${COMPOSE_PROJECT_NAME:?}-backend:local
+    pull_policy: never
+    build: !reset null
+    restart: "no"
+
   agent-serve:
     container_name: !reset null
     image: ${COMPOSE_PROJECT_NAME:?}-agent:local
@@ -122,6 +131,19 @@ services:
     volumes: ["${MEDIC_EVAL_STUB_DIR:?}/stub.py:/stub/stub.py:ro"]
     environment:
       STUB_ROLE: elastic
+    healthcheck: {test: ["CMD", "python", "-c", "0"], interval: 5s}
+    restart: "no"
+    networks:
+      - deeptempo-network
+
+  # The Splunk the daemon's federation polls (I-1.g): a login works, every search fails.
+  splunk-stub:
+    image: python:3.12-slim
+    pull_policy: missing
+    command: ["python", "/stub/stub.py"]
+    volumes: ["${MEDIC_EVAL_STUB_DIR:?}/stub.py:/stub/stub.py:ro"]
+    environment:
+      STUB_ROLE: splunk
     healthcheck: {test: ["CMD", "python", "-c", "0"], interval: 5s}
     restart: "no"
     networks:

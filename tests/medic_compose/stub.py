@@ -13,6 +13,11 @@ can prove what the gateway let through. stdlib only; runs in python:3.12-slim.
 - elastic (9200): an Elasticsearch with no alerts. Any POST answers an empty
   `hits`, or the JSON list in /tmp/elastic-hits.json while that file exists; every request is logged and `GET /__seen` (from inside this container
   only) returns the log, so a test can prove whether a poll arrived.
+- bifrost (8080): `POST /v1/chat/completions` answers an OpenAI-shaped completion, or the
+  status named in /tmp/bifrost-fault ("401" invalid_api_key, "402" a virtual-key budget
+  body) while that file exists. Everything else is 200 `{}`.
+- splunk (8089): `/services/auth/login` hands out a sessionKey and `POST
+  /services/search/jobs` answers 500, so every search fails after a good login.
 - anything else: 200 `{}` on HTTP ports, accept-and-close on raw TCP ones.
 """
 
@@ -36,10 +41,12 @@ PORTS = {
     "soc-daemon": [8081, 9090, 9091],
     "bifrost": [8080],
     "elastic": [9200],
+    "splunk": [8089],
 }
 RAW_PORTS = {"redis": [6379], "postgres": [5432]}
 NOT_READY = Path("/tmp/not-ready")
 HITS = Path("/tmp/elastic-hits.json")  # elastic: the `hits` list to serve, if present
+FAULT = Path("/tmp/bifrost-fault")  # bifrost: "401" or "402" to refuse chat completions
 SEEN: list[dict] = []
 LOCK = threading.Lock()
 
@@ -82,6 +89,10 @@ class Handler(BaseHTTPRequestHandler):
         body = self._body()
         if ROLE == "elastic":
             return self._elastic()
+        if ROLE == "bifrost" and self.path.split("?")[0] == "/v1/chat/completions":
+            return self._bifrost()
+        if ROLE == "splunk":
+            return self._splunk()
         if ROLE == "backend":
             if self.path == "/__seen" and self.client_address[0] == "127.0.0.1":
                 with LOCK:
@@ -113,6 +124,47 @@ class Handler(BaseHTTPRequestHandler):
             SEEN.append({"method": self.command, "path": self.path, "at": time.time()})
         hits = json.loads(HITS.read_text()) if HITS.exists() else []
         return self._reply(200, {"hits": {"total": {"value": len(hits)}, "hits": hits}})
+
+    def _bifrost(self) -> None:
+        fault = FAULT.read_text().strip() if FAULT.exists() else ""
+        if fault == "401":
+            err = {
+                "message": "Incorrect API key provided",
+                "type": "invalid_request_error",
+                "code": "invalid_api_key",
+            }
+            return self._reply(401, {"error": err})
+        if fault == "402":
+            err = {
+                "message": "Budget exceeded: virtual key budget has been spent",
+                "type": "budget_exceeded",
+                "code": "budget_exceeded",
+            }
+            return self._reply(402, {"error": err})
+        return self._reply(
+            200,
+            {
+                "id": "chatcmpl-stub",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": "stub",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            },
+        )
+
+    def _splunk(self) -> None:
+        if self.path.startswith("/services/auth/login"):
+            return self._reply(200, {"sessionKey": "stub-session"})
+        if self.path.startswith("/services/search/jobs"):
+            return self._reply(500, {"messages": [{"type": "FATAL", "text": "stub: search refused"}]})
+        return self._reply(200, {})
 
     def _backend(self, body: bytes) -> None:
         if self.command == "POST" and self.path in (
