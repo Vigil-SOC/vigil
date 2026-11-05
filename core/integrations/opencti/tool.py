@@ -114,7 +114,8 @@ async def handle_list_tools():
                 "returned (a STIX id matches nothing); each target carries its own id, and "
                 "an attack-pattern target its ATT&CK technique id as x_mitre_id. For a "
                 "report (or grouping, case) it also lists objects: the attack patterns, "
-                "intrusion sets, indicators, ... the report names."
+                "intrusion sets, indicators, ... the report names, capped; object_count is "
+                "how many the report holds in all."
             ),
             inputSchema={
                 "type": "object",

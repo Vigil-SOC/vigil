@@ -52,6 +52,7 @@ _EXTRA_ENTITY_FIELDS = {"attack_pattern": " x_mitre_id"}
 # A relationship target or container object: a named entity or an observable.
 _TARGET_FIELDS = """
   ... on StixDomainObject { id entity_type representative { main } }
+  ... on AttackPattern { x_mitre_id }
   ... on StixCyberObservable { id entity_type observable_value }
 """
 
@@ -229,6 +230,7 @@ class OpenCTIService:
             " edges { node { relationship_type confidence"
             " to {" + _TARGET_FIELDS + "} } } }"
             " stixDomainObject(id: $id) { ... on Container { objects(first: $n) {"
+            " pageInfo { globalCount }"
             " edges { node {" + _TARGET_FIELDS + "} } } } } }",
             {"id": entity_id, "ids": [entity_id], "n": _limit(limit)},
         )
@@ -242,6 +244,11 @@ class OpenCTIService:
         if "objects" in container:
             # Relationships a report holds match neither fragment and come back empty.
             objects = [o for o in _nodes(container["objects"]) if o.get("id")]
-            out["object_count"] = len(objects)
+            # object_count is what the container holds, not the capped page: a
+            # report of 9 read with limit=3 says 9, with 3 objects listed.
+            total = ((container["objects"] or {}).get("pageInfo") or {}).get(
+                "globalCount"
+            )
+            out["object_count"] = total if isinstance(total, int) else len(objects)
             out["objects"] = objects
         return out
