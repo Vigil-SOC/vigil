@@ -7,7 +7,8 @@ to see a deletion, and writes only what differs:
 - a key whose fingerprint differs from its latest version gets the next version;
 - a key the list no longer has is status 'removed', never deleted;
 - a name, path, technique or tactic change updates the rule row, no new version;
-- a SIEM rule switched off is status 'disabled', and carries no Runs, Sees or Quiet result.
+- a SIEM rule switched off is status 'disabled', and carries no Runs, Sees or Quiet
+  result (its drift result stays).
 
 A Runs result (checks['runs'] on the latest version) is written only when its
 result or reason differs from the stored one; a new version starts with none.
@@ -28,6 +29,15 @@ Every change of a check result is also appended to detection_rule_check_changes
 (``_record_changes``): a Runs result that differs from the rule's last recorded
 one, across versions, and a SIEM rule's status moving between active, disabled
 and removed. Repo rules have no checks and get no rows.
+
+After Kibana and Splunk link, ``_drift`` checks each linked copy against its
+repo rule and writes checks['drift'] the same way: fail when the copy is disabled
+or removed while its repo rule is active, or when only the copy moved (a same_id
+copy whose fingerprint differs and whose latest version is newer than both the
+link and the repo rule's; a known_name or agent copy that moved after the link
+with no repo version since its previous one). A copy that had a drift result and
+is no longer linked gets a NULL row, reason 'not linked'. A disabled rule keeps
+its drift; only Runs, Sees and Quiet are dropped.
 
 A source that fails to read, or is configured but not ready, is skipped whole.
 A source no longer configured has its rules marked removed.
@@ -91,6 +101,7 @@ class SourceReport:
     checked: int = 0
     linked: int = 0
     unlinked: int = 0
+    drifted: int = 0
     error: Optional[str] = None
     skipped: Optional[str] = None
 
@@ -423,12 +434,12 @@ def sync_repos() -> List[Any]:
         if not (wazuh_report.error or wazuh_report.skipped):
             reports.append(wazuh_sees.sweep())
         elastic, config = _sync_elastic()
-        reports.append(_linked(elastic, _link_same_id))
+        reports.append(_drifted(_linked(elastic, _link_same_id)))
         if config is not None:
             # Quiet first: its one search is spent before Sees' groups.
             reports.append(quiet.sweep_elastic(config))
             reports.append(sees.sweep_elastic(config))
-        reports.append(_linked(_sync_splunk(), _link_known_name))
+        reports.append(_drifted(_linked(_sync_splunk(), _link_known_name)))
     if removed:
         logger.info(
             "detection rules: %d rules of unconfigured sources removed", removed
@@ -445,6 +456,18 @@ def _linked(report: SourceReport, link: Callable[[], tuple]) -> SourceReport:
             "detection rules: linking %s rules failed: %s", report.source, exc
         )
         report.error = report.error or f"linking: {type(exc).__name__}: {exc}"
+    return report
+
+
+def _drifted(report: SourceReport) -> SourceReport:
+    """Check drift for a SIEM source that read and linked; a failure only marks the report."""
+    if report.error or report.skipped:
+        return report  # unread this sync: its copies keep their drift as it was
+    try:
+        report.drifted = _drift(report.source)
+    except Exception as exc:  # noqa: BLE001 -- the next sync checks again
+        logger.warning("detection rules: drift of %s failed: %s", report.source, exc)
+        report.error = f"drift: {type(exc).__name__}: {exc}"
     return report
 
 
@@ -692,3 +715,147 @@ def _link(
             copy.linked_at = now
             linked += 1
     return linked, unlinked
+
+
+DRIFT_LINKS = ("same_id", "known_name", "agent")
+SIEM_NAMES = {kibana.SOURCE: "Kibana", splunk.SOURCE: "Splunk"}
+
+
+def _at(when: datetime) -> str:
+    return f"{when.astimezone(timezone.utc):%d %b %H:%M} UTC"
+
+
+def _drift_of(
+    copy: DetectionRule,
+    seen: datetime,
+    prev_seen: Optional[datetime],
+    fp: str,
+    origin: Any,
+    siem: str,
+) -> tuple:
+    """(result, reason) of a linked copy against its origin's latest version."""
+    repo = f"repo rule {origin.id} v{origin.latest_version}"
+    mine = f"{siem} v{copy.latest_version}"
+    if origin.status != "active":
+        return "pass", f"origin not active: repo rule {origin.id} is {origin.status}"
+    if copy.status != "active":
+        where = "removed from" if copy.status == "removed" else "disabled in"
+        return "fail", f"{where} {siem}; repo rule {origin.id} still active"
+    moved = copy.linked_at is None or seen > copy.linked_at
+    if copy.link_kind == "same_id":
+        if fp == origin.fingerprint:
+            return "pass", f"{mine} matches {repo}"
+        if moved and seen > origin.first_seen:
+            return "fail", (
+                f"{mine} first seen {_at(seen)}; {repo} unchanged since "
+                f"{_at(origin.first_seen)}"
+            )
+        if origin.first_seen >= seen:
+            return "pass", (
+                f"repo ahead: {repo} first seen {_at(origin.first_seen)}, "
+                "not deployed yet"
+            )
+        return "pass", f"{mine} already differed from {repo} when linked"
+    # known_name / agent: the two never fingerprint equal; only the copy moving counts.
+    if not moved:
+        return "pass", f"{mine} unchanged since linked {_at(copy.linked_at)}"
+    if prev_seen is not None and origin.first_seen > prev_seen:
+        return "pass", (
+            f"{repo} first seen {_at(origin.first_seen)}, after {siem}'s previous version"
+        )
+    return "fail", (
+        f"{mine} first seen {_at(seen)}, after the link; {repo} unchanged since "
+        f"{_at(origin.first_seen)}"
+    )
+
+
+def _drift(source: str) -> int:
+    """Write checks['drift'] for ``source``'s copies; returns the change rows written."""
+    now = datetime.now(timezone.utc).isoformat()
+    siem = SIEM_NAMES.get(source, source)
+    v = DetectionRuleVersion
+    latest = and_(
+        v.rule_id == DetectionRule.id, v.version == DetectionRule.latest_version
+    )
+    with get_db_manager().session_scope() as session:
+        last = _last_results(session, source)
+        copies = session.execute(
+            select(DetectionRule, v.fingerprint, v.first_seen, v.checks)
+            .join(v, latest)
+            .where(DetectionRule.source == source)
+            # A link decision commits before or after this, not between.
+            .with_for_update(of=DetectionRule)
+        ).all()
+        prev = dict(
+            session.execute(
+                select(v.rule_id, v.first_seen)
+                .join(DetectionRule, DetectionRule.id == v.rule_id)
+                .where(
+                    DetectionRule.source == source,
+                    v.version == DetectionRule.latest_version - 1,
+                )
+            ).all()
+        )
+        origin_ids = {c.origin_rule_id for c, *_ in copies if c.origin_rule_id}
+        origins = {
+            o.id: o
+            for o in session.execute(
+                select(
+                    DetectionRule.id,
+                    DetectionRule.status,
+                    DetectionRule.latest_version,
+                    v.fingerprint,
+                    v.first_seen,
+                )
+                .join(v, latest)
+                .where(DetectionRule.id.in_(origin_ids))
+            ).all()
+        }
+        changes: List[dict] = []
+        checked: List[tuple] = []
+        for copy, fp, seen, checks in copies:
+            checks = checks or {}
+            before = last.get((copy.id, "drift"))
+            origin = origins.get(copy.origin_rule_id)
+            if copy.link_kind not in DRIFT_LINKS or origin is None:
+                if before and before[0] is not None:
+                    changes.append(
+                        _change(
+                            copy.id,
+                            copy.latest_version,
+                            "drift",
+                            before[0],
+                            None,
+                            "not linked",
+                        )
+                    )
+                if "drift" in checks:
+                    rest = {k: x for k, x in checks.items() if k != "drift"}
+                    checked.append((copy.id, copy.latest_version, rest))
+                continue
+            new = _drift_of(copy, seen, prev.get(copy.id), fp, origin, siem)
+            if before != new:
+                changes.append(
+                    _change(
+                        copy.id,
+                        copy.latest_version,
+                        "drift",
+                        before[0] if before else None,
+                        *new,
+                    )
+                )
+            stored = checks.get("drift") or {}
+            if (stored.get("result"), stored.get("reason")) != new:
+                drift = {"result": new[0], "reason": new[1], "checked_at": now}
+                checked.append(
+                    (copy.id, copy.latest_version, {**checks, "drift": drift})
+                )
+        if checked:
+            session.connection().execute(
+                update(v)
+                .where(v.rule_id == bindparam("rid"), v.version == bindparam("ver"))
+                .values(checks=bindparam("new_checks")),
+                [{"rid": i, "ver": n, "new_checks": c} for i, n, c in checked],
+            )
+        _record_changes(session, changes, now)
+    return len(changes)

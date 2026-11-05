@@ -15,9 +15,13 @@ linked copies' (disabled, or their Runs result, each beside its Quiet), or
 Wazuh rules get a Sees check; a Wazuh rule's data source is its decoder. Only
 Kibana rules get a Quiet check.
 
+A linked Kibana or Splunk copy also carries checks['drift']: fail when it was
+disabled, removed or edited in the SIEM while its repo rule stayed the same.
+
 A flag is a (rule, check) whose latest recorded change went pass -> fail, on a
-rule not removed. Nothing to fail, or a change to unknown, is no flag; a later
-change back to pass clears it. It is a query over detection_rule_check_changes.
+rule not removed (a drift flag stays on a removed copy). Nothing to fail, or a
+change to unknown, is no flag; a later change back to pass clears it. It is a
+query over detection_rule_check_changes.
 """
 
 from __future__ import annotations
@@ -26,7 +30,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set
 
-from sqlalchemy import Text, and_, case, cast, func, select
+from sqlalchemy import Text, and_, case, cast, func, or_, select
 
 from core.detections.inventory.readers import OVERLAY_SOURCE
 from core.storage.connection import get_db_manager
@@ -94,7 +98,8 @@ def _flags():
         .where(
             latest.c.old_result == "pass",
             latest.c.new_result == "fail",
-            DetectionRule.status != "removed",
+            # A deleted copy whose repo rule is still active is drift that matters.
+            or_(DetectionRule.status != "removed", latest.c.check_key == "drift"),
         )
     )
 
@@ -481,9 +486,12 @@ def blind_spots() -> List[Dict[str, Any]]:
 
 
 def _any_result(result: str) -> Any:
-    """A latest version with ``result`` on any of its checks."""
+    """A latest version with ``result`` on Runs, Sees or Quiet (drift is not
+    can't-fire)."""
     return func.jsonb_path_exists(
-        DetectionRuleVersion.checks, f'$.* ? (@.result == "{result}")'
+        DetectionRuleVersion.checks,
+        f'$ ? (@.runs.result == "{result}" || @.sees.result == "{result}"'
+        f' || @.quiet.result == "{result}")',
     )
 
 
@@ -520,7 +528,7 @@ def unchecked(siems: Iterable[str]) -> Dict[str, Dict[str, Any]]:
 
 
 def rules_not_passing(limit: int = 200) -> Dict[str, Any]:
-    """Active SIEM rules failing or unknown on any check, fails first: the first
+    """Active SIEM rules failing or unknown on Runs, Sees or Quiet, fails first: the first
     ``limit`` with their checks as stored, how many there are, and per tool how
     many are not passing and how many fail (can't fire)."""
     fails = _any_result("fail")
@@ -554,7 +562,8 @@ def rules_not_passing(limit: int = 200) -> Dict[str, Any]:
                 "title": rule.name,
                 "tool": tool_of(rule.source),
                 "version": rule.latest_version,
-                "checks": checks or {},
+                # The console makes a column of each key; drift is not can't-fire.
+                "checks": {k: v for k, v in (checks or {}).items() if k != "drift"},
             }
             for rule, checks in rows
         ]
