@@ -32,7 +32,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
-from sqlalchemy import Text, and_, case, cast, func, or_, select, tuple_
+from sqlalchemy import Text, and_, case, cast, func, select, tuple_
 from sqlalchemy.orm import defer
 
 from core.detections.inventory.readers import OVERLAY_SOURCE
@@ -112,8 +112,6 @@ def _flags():
         .where(
             latest.c.old_result == "pass",
             latest.c.new_result == "fail",
-            # A deleted copy whose repo rule is still active is drift that matters.
-            or_(DetectionRule.status != "removed", latest.c.check_key == "drift"),
         )
     )
 
