@@ -461,6 +461,23 @@ class ElasticService:
         resp.raise_for_status()
         return set(resp.json().get("fields") or {})
 
+    async def indices_matching(self, index: str) -> List[str]:
+        """The concrete indices ``index`` (comma-joined patterns) resolves to.
+
+        Uses ``_field_caps``, which needs only ``read`` (``_cat/indices`` needs
+        ``monitor``). Metadata, not a search.
+        """
+        resp = await self.es_client.get(
+            f"/{validate_index(index)}/_field_caps",
+            params={
+                "fields": "@timestamp",
+                "ignore_unavailable": "true",
+                "allow_no_indices": "true",
+            },
+        )
+        resp.raise_for_status()
+        return list(resp.json().get("indices") or [])
+
     async def get_data_view(self, data_view_id: str) -> Dict[str, Any]:
         """A Kibana data view (its ``title`` holds the index patterns). Read-only."""
         resp = await self.kibana_client.get(
