@@ -48,8 +48,8 @@ class SecurityDetectionsTools:
     ) -> Dict:
         """Catalog counts for techniques, or a run report when run_id / steps is set.
 
-        Catalog counts carry by_tool: each SIEM's Runs, Sees and Quiet results
-        tallied, and repo_deployed: the repo rules' linked copies by state.
+        Catalog counts carry by_tool: each SIEM's Runs, Sees, Quiet, Noisy and
+        Silent results tallied and its never-firing rules, and repo_deployed: the repo rules' linked copies by state.
 
         Extra kwargs (including ``limit`` injected by ``/internal/tools/invoke``)
         are ignored. A run id or action trace is the report path, not catalog
@@ -165,8 +165,8 @@ class SecurityDetectionsTools:
     ) -> Dict:
         """Techniques seen on stored alerts that no active rule declares, with what it cannot say,
         and the proven hunts and closed Cases no rule alerted on (``runs_rules_missed``),
-        and the SIEM rules that broke (``rule_health``: a Runs, Sees or Quiet check
-        that went pass -> fail).
+        and the SIEM rules that broke (``rule_health``: a Runs, Sees, Quiet, Noisy,
+        Silent or drift check that went pass -> fail).
 
         Args:
             context: A case id, an ATT&CK label to match, or empty for every stored alert.

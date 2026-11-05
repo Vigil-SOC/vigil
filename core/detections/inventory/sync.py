@@ -7,15 +7,16 @@ to see a deletion, and writes only what differs:
 - a key whose fingerprint differs from its latest version gets the next version;
 - a key the list no longer has is status 'removed', never deleted;
 - a name, path, technique or tactic change updates the rule row, no new version;
-- a SIEM rule switched off is status 'disabled', and carries no Runs, Sees or Quiet
-  result (its drift result stays).
+- a SIEM rule switched off is status 'disabled', and carries no Runs, Sees,
+  Quiet, Noisy or Silent result (its drift result stays).
 
 A Runs result (checks['runs'] on the latest version) is written only when its
 result or reason differs from the stored one; a new version starts with none.
 After Wazuh syncs, ``wazuh_sees`` checks whether each active Wazuh rule's
 decoder gets events (read from the elastic-siem indexer); after Kibana syncs,
-``quiet`` counts each active Kibana rule's alerts against a per-day threshold
-(checks['quiet']), then ``sees`` checks whether each active Kibana rule's data
+``quiet`` counts each active Kibana rule's alerts in one search, against a
+per-day threshold (checks['quiet']) and against the rule's own 30 days
+(checks['noisy'], checks['silent']), then ``sees`` checks whether each active Kibana rule's data
 is arriving. Both Sees checks write checks['sees']; each check is written the
 same way.
 
@@ -37,7 +38,7 @@ copy whose fingerprint differs and whose latest version is newer than both the
 link and the repo rule's; a known_name or agent copy that moved after the link
 with no repo version since its previous one). A copy that had a drift result and
 is no longer linked gets a NULL row, reason 'not linked'. A disabled rule keeps
-its drift; only Runs, Sees and Quiet are dropped.
+its drift; only Runs, Sees, Quiet, Noisy and Silent are dropped.
 
 A source that fails to read, or is configured but not ready, is skipped whole.
 A source no longer configured has its rules marked removed.
@@ -156,10 +157,13 @@ def _rule_fields(record: RuleRecord) -> Dict[str, Any]:
     }
 
 
+DROPPED_WHEN_DISABLED = ("runs", "sees", "quiet", "noisy", "silent")
+
+
 def _checks(stored: Dict[str, Any], record: RuleRecord, now: str) -> Dict[str, Any]:
     """``stored`` with the record's Runs result, or itself when nothing changed."""
     if record.status == "disabled":
-        return {k: v for k, v in stored.items() if k not in ("runs", "sees", "quiet")}
+        return {k: v for k, v in stored.items() if k not in DROPPED_WHEN_DISABLED}
     runs, old = record.runs, stored.get("runs") or {}
     if runs is None or (
         old.get("result") == runs["result"] and old.get("reason") == runs["reason"]
