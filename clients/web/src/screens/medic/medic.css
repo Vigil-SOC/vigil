@@ -123,3 +123,19 @@
 .mdc-save-failed { margin: 8px 0 0; font-size: 13px; color: var(--poor); }
 .mdc-saved { margin-top: 8px; }
 @media (max-width: 560px) { .mdc-comment-row { flex-direction: column; align-items: stretch; } }
+
+/* content pack: facts, actions, lists (UX-25…27) */
+.mdc-strip.good { color: var(--good); background: var(--good-bg); border-color: var(--good-ln); }
+.mdc-packs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
+@media (max-width: 1100px) { .mdc-packs { grid-template-columns: minmax(0, 1fr); } }
+.mdc-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 0; font-size: 13px; color: var(--tx1); }
+.mdc-facts dt { color: var(--tx2); }
+.mdc-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.mdc-expiry.fair { color: var(--fair); font-weight: 600; }
+.mdc-expiry.poor { color: var(--poor); font-weight: 600; }
+.mdc-import { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; max-width: 640px; }
+.mdc-import .field-input { max-width: 100%; }
+.mdc-import input[type="file"] { max-width: 100%; font-size: 13px; color: var(--tx1); }
+.mdc-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.mdc-list { margin: 0; padding: 0 0 0 18px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--tx1); overflow-wrap: anywhere; }
+.mdc-confirm { display: flex; flex-direction: column; gap: 6px; overflow-wrap: anywhere; }
