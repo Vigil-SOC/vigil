@@ -12,9 +12,12 @@ else the latest agent one. A noise mark is the analyst's when its kind says so;
 a close is when ``closed_by_person`` says so.
 
 Fewer than MIN_JUDGED judged reads unknown; under FAIL_BELOW real reads fail;
-else pass. The result goes under checks['accurate'] on the latest version,
-written only when result, reason or counts changed; a result or reason change is
-also appended to detection_rule_check_changes. Local SQL only: no SIEM search.
+else pass. A Wazuh rule whose level is below elastic-siem's min_rule_level, when
+it reads the indexer directly (no kibana_url), is never ingested: its unknown
+names that floor instead of "not enough data" (``logic.level``, read from the
+version's content). The result goes under checks['accurate'] on the latest
+version, written only when result, reason or counts changed; a result or reason
+change is also appended to detection_rule_check_changes. Local SQL only: no SIEM search.
 """
 
 from __future__ import annotations
@@ -74,10 +77,37 @@ def _verdict(found: List[Determination]) -> Optional[Tuple[bool, bool]]:
     return real, by_analyst
 
 
-def result_of(counts: Dict[str, int]) -> Dict[str, Any]:
+def ingest_floor() -> Optional[int]:
+    """elastic-siem's min_rule_level when its ingestion drops alerts below it, else None.
+
+    Only the direct-indexer path (no kibana_url) filters on rule.level.
+    """
+    from core.detections.inventory.wazuh_sees import indexer
+    from core.integrations.elastic.ingestion import min_rule_level_from_config
+
+    why, config = indexer()
+    if why or config.get("kibana_url"):
+        return None
+    return min_rule_level_from_config(config)
+
+
+def _below(level: Any, floor: Optional[int]) -> bool:
+    # A missing or unreadable level is no floor: never guess.
+    return floor is not None and type(level) is int and level < floor
+
+
+def result_of(
+    counts: Dict[str, int], level: Any = None, floor: Optional[int] = None
+) -> Dict[str, Any]:
     real, judged = counts["real"], counts["judged"]
     split = f"{real} of {judged} real (analyst {counts['analyst']}, agent {counts['agent']})"
-    if judged < MIN_JUDGED:
+    if judged < MIN_JUDGED and _below(level, floor):
+        result = "unknown"
+        reason = (
+            f"unknown: alerts below the ingestion floor (level {level} < {floor})"
+            f" are not ingested; {split}"
+        )
+    elif judged < MIN_JUDGED:
         result = "unknown"
         reason = f"unknown: not enough data: {judged} of {MIN_JUDGED}; {split}"
     else:
@@ -177,6 +207,7 @@ def sweep() -> AccurateReport:
     now = datetime.now(timezone.utc).isoformat()
     try:
         with get_db_manager().session_scope() as session:
+            floor = ingest_floor()
             counts, report.findings = judge(session)
             report.rules = len(counts)
             report.judged = sum(c["judged"] for c in counts.values())
@@ -188,15 +219,20 @@ def sweep() -> AccurateReport:
                     DetectionRuleVersion.rule_id,
                     DetectionRuleVersion.version,
                     DetectionRuleVersion.checks,
-                ).where(
+                    DetectionRule.source,
+                    DetectionRuleVersion.content["level"],
+                )
+                .join(DetectionRule, DetectionRule.id == DetectionRuleVersion.rule_id)
+                .where(
                     tuple_(
                         DetectionRuleVersion.rule_id, DetectionRuleVersion.version
                     ).in_(list(counts))
                 )
             ).all()
             changed, changes = [], []
-            for rid, ver, checks in rows:
-                new = result_of(counts[(rid, ver)])
+            for rid, ver, checks, source, level in rows:
+                wazuh_level = level if source == "wazuh" else None
+                new = result_of(counts[(rid, ver)], wazuh_level, floor)
                 old = (checks or {}).get("accurate") or {}
                 seen = (new["result"], new["reason"])
                 before = last.get((rid, "accurate"))
