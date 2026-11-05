@@ -1,0 +1,29 @@
+/* The 1.X screens' look (Detections), the primitives it uses. Console tokens only (tokens.css), so both themes follow. */
+.x1 { display: grid; gap: 16px; min-width: 0; }
+/* the page itself, as the console mounts it: the shell title's 22px gutter */
+.screen > .x1 { padding: 4px 22px 26px; }
+@media (max-width: 760px) { .screen > .x1 { padding: 4px 16px 20px; } }
+.x1-tag { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--ln1); background: var(--bg1); font-size: 11.5px; font-weight: 600; color: var(--tx1); white-space: nowrap; }
+.x1-tag.ac { color: var(--ac); border-color: var(--ac-ln); background: var(--ac-bg); }
+.x1-tag.fair { color: var(--fair); border-color: var(--fair-ln); background: var(--fair-bg); }
+.x1-tag.good { color: var(--good); border-color: var(--good-ln); background: var(--good-bg); }
+.x1-tag.poor { color: var(--poor); border-color: var(--poor-ln); background: var(--poor-bg); }
+.x1-card { background: var(--bg1); border: 1px solid var(--ln1); border-radius: var(--radius-card, 10px); padding: 14px 16px; min-width: 0; }
+.x1-card h3 { margin: 0 0 10px; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .6px; color: var(--tx2); }
+.x1-muted { color: var(--tx2); }
+.x1-mono { font-family: var(--font-mono); font-size: 12px; }
+.x1-stat { display: grid; gap: 2px; }
+.x1-stat b { font-size: 24px; font-weight: 700; color: var(--tx0); font-variant-numeric: tabular-nums; letter-spacing: -.3px; }
+.x1-stat span { font-size: 12.5px; color: var(--tx2); }
+.x1-link { color: var(--ac); background: none; border: 0; padding: 0; font: inherit; cursor: pointer; text-align: left; }
+.x1-link:hover { text-decoration: underline; }
+.x1-link:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+.x1-table-wrap { overflow-x: auto; border: 1px solid var(--ln1); border-radius: var(--radius-card, 10px); background: var(--bg1); }
+.x1-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.x1-table th { text-align: left; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .5px; color: var(--tx2); padding: 8px 10px; border-bottom: 1px solid var(--ln1); white-space: nowrap; position: sticky; top: 0; background: var(--bg1); }
+.x1-table td { padding: 7px 10px; border-top: 1px solid var(--ln0); vertical-align: top; color: var(--tx1); }
+.x1-saved { display: grid; gap: 4px; }
+.x1-saved button { text-align: left; background: none; border: 1px solid transparent; border-radius: 7px; padding: 6px 8px; color: var(--tx1); font-size: 12.5px; cursor: pointer; }
+.x1-saved button:hover { background: var(--bg3); }
+.x1-saved button.on { border-color: var(--ac-ln); background: var(--ac-bg); color: var(--tx0); }
+.x1-error { padding: 10px 12px; border-color: var(--poor-ln); background: var(--poor-bg); color: var(--tx0); font-size: 12.5px; }
