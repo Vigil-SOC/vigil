@@ -62,10 +62,13 @@ their image's revision. See [docs/upgrading.md](../../../docs/upgrading.md#helm)
   that), and upgrades. Only that Job mounts a token, for a
   namespace Role that can scale and patch ScaledObjects. Nothing is
   cluster-scoped. Give `--timeout` enough time for the whole window.
-- **Hook leftovers.** The upgrade ServiceAccount, Role, RoleBinding, ConfigMap,
-  NetworkPolicies and PVC are hooks, so `helm uninstall` leaves them. Delete
-  them with `kubectl delete sa,role,rolebinding,cm,networkpolicy,pvc -l
-  app.kubernetes.io/instance=<release>,app.kubernetes.io/component=upgrade`.
+- **Hook leftovers.** The upgrade Jobs, ServiceAccount, Role, RoleBinding,
+  ConfigMap, NetworkPolicies and PVC are hooks, so `helm uninstall` leaves
+  them. Delete them with `kubectl delete job,sa,role,rolebinding,cm,networkpolicy,pvc
+  -l app.kubernetes.io/instance=<release>,app.kubernetes.io/component=upgrade`.
+  The Jobs go first or the PVC stays `Terminating`: a finished Job's pods still
+  hold it until they are deleted, which the Jobs do themselves 15 minutes after
+  they finish. Deleting the PVC deletes `history.jsonl`, the upgrade record.
 - **Network policies.** With `networkPolicies.enabled`, the upgrade Jobs reach
   the Kubernetes API through `medic.kubeApi.cidrs` and `medic.kubeApi.ports`,
   as Medic does. Set the CIDRs where `lookup` can't run (`helm template`, Argo

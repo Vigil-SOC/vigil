@@ -106,6 +106,28 @@ def _compile_rule(rule_yaml: str) -> Matcher:
     return _ConditionParser(condition, selections).parse()
 
 
+def negated_only_selections(detection: Any) -> set:
+    """Selections the condition reaches only under ``not`` (#3819).
+
+    An unreadable condition (aggregation, unknown name, empty) returns none,
+    so every selection stays positive.
+    """
+    if not isinstance(detection, dict):
+        return set()
+    condition = detection.get("condition")
+    if isinstance(condition, list) and condition:
+        condition = " or ".join(f"({c})" for c in condition)
+    if not isinstance(condition, str) or not condition.strip() or "|" in condition:
+        return set()
+    names = {str(n): (lambda e: False) for n in detection if n != "condition"}
+    parser = _ConditionParser(condition, names)
+    try:
+        parser.parse()
+    except (_Unevaluable, RecursionError):
+        return set()
+    return {n for n, seen in parser.polarity.items() if seen == {False}}
+
+
 def _compile_selection(name: str, body: Any) -> Matcher:
     if isinstance(body, dict):
         if not body:
@@ -371,6 +393,9 @@ class _ConditionParser:
         self.selections = selections
         self.tokens = [m.group(1) for m in self._TOKEN.finditer(condition)]
         self.pos = 0
+        # Selection name -> the polarities it is reached with (True = positive).
+        self.polarity: Dict[str, set] = {}
+        self._negated = False
 
     def parse(self) -> Matcher:
         matcher = self._or()
@@ -408,7 +433,9 @@ class _ConditionParser:
     def _not(self) -> Matcher:
         if (self._peek() or "").lower() == "not":
             self.pos += 1
+            self._negated = not self._negated  # nested nots cancel
             inner = self._not()
+            self._negated = not self._negated
             return lambda e: not inner(e)
         return self._atom()
 
@@ -423,8 +450,12 @@ class _ConditionParser:
             self.pos += 1
             return self._of(token.lower(), self._next())
         if token in self.selections:
+            self._reach(token)
             return self.selections[token]
         self._fail(f"names unknown selection {token!r}")
+
+    def _reach(self, name: str) -> None:
+        self.polarity.setdefault(name, set()).add(not self._negated)
 
     def _of(self, quantity: str, target: str) -> Matcher:
         if quantity not in ("1", "any", "all"):
@@ -435,6 +466,8 @@ class _ConditionParser:
             names = [n for n in self.selections if fnmatch.fnmatchcase(n, target)]
         if not names:
             self._fail(f"{target!r} names no selection")
+        for n in names:
+            self._reach(n)
         parts = [self.selections[n] for n in names]
         combine = all if quantity == "all" else any
         return lambda e: combine(p(e) for p in parts)

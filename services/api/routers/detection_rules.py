@@ -10,11 +10,17 @@ from pydantic import BaseModel
 
 from core.auth.permissions import permission_gate
 from core.deps import provide_detection_rules, provide_mcp_client, provide_mcp_registry
-from core.detections.detection_rules_service import DetectionRulesService
+from core.detections.detection_rules_service import (
+    DetectionRulesService,
+    is_vendor_repo,
+)
 from core.detections.inventory import catalog
 from core.detections.inventory.sync import sync_repos
 from core.integrations.mcp.registry import MCPRegistry, register_connected
 from core.routing import Auth, RouterMeta
+from core.storage.config_service import get_config_service
+from core.storage.models import User
+from services.api.middleware.auth import get_current_active_user
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +50,26 @@ class AddSourceRequest(BaseModel):
     deploy_target: bool = False
 
 
+def _audit_deploy_target(user: User, source: dict, old: bool, new: bool) -> None:
+    """Record a deploy-target change. Best-effort: never fails the call."""
+    try:
+        get_config_service(user_id=str(user.user_id)).record_audit(
+            config_type="detection_rules",
+            config_key=f"deploy_target:{source['id']}",
+            action="update" if new else "delete",
+            old_value={"deploy_target": old},
+            new_value={
+                "source_id": source["id"],
+                "name": source.get("name"),
+                "format": source.get("format"),
+                "git_url": source.get("git_url"),
+                "deploy_target": new,
+            },
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Could not write deploy target audit log: %s", e)
+
+
 class DeployTargetRequest(BaseModel):
     """Whether this git source receives Vigil's live rules of its format."""
 
@@ -60,7 +86,11 @@ def list_sources(
     Returns:
         List of sources with metadata (name, format, rule count, status, etc.)
     """
-    sources = service.list_sources()
+    # vendor_repo: a shipped vendor repo, which can never be a deploy target
+    sources = [
+        {**s, "vendor_repo": is_vendor_repo(s.get("git_url", ""))}
+        for s in service.list_sources()
+    ]
     return {"sources": sources, "count": len(sources)}
 
 
@@ -89,6 +119,7 @@ def add_source(
     request: AddSourceRequest,
     background: BackgroundTasks,
     service: DetectionRulesService = Depends(provide_detection_rules),
+    current_user: User = Depends(get_current_active_user),
 ):
     """
     Add a new detection rule source (git repo or local directory).
@@ -100,6 +131,9 @@ def add_source(
         The newly created source
     """
     try:
+        before = (
+            service.deploy_target(request.format) if request.deploy_target else None
+        )
         source = service.add_source(
             name=request.name,
             source_type=request.source_type,
@@ -110,6 +144,9 @@ def add_source(
             story_subdirectory=request.story_subdirectory,
             deploy_target=request.deploy_target,
         )
+        if request.deploy_target:
+            was = before is not None and before.get("id") == source["id"]
+            _audit_deploy_target(current_user, source, was, True)
         background.add_task(_sync_detection_rules)
         return {"success": True, "source": source}
     except ValueError as e:
@@ -175,14 +212,17 @@ def set_deploy_target(
     source_id: str,
     request: DeployTargetRequest,
     service: DetectionRulesService = Depends(provide_detection_rules),
+    current_user: User = Depends(get_current_active_user),
 ):
     """Mark or unmark a git source as where Vigil's live rules of its format go."""
+    old = bool((service.get_source(source_id) or {}).get("deploy_target"))
     try:
         source = service.set_deploy_target(source_id, request.deploy_target)
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    _audit_deploy_target(current_user, source, old, request.deploy_target)
     return {"success": True, "source": source}
 
 
@@ -225,7 +265,7 @@ def get_stats(
 @router.get("/health")
 def get_health(limit: int = Query(200, ge=1, le=1000)):
     """Whether each SIEM's rules can fire: per-tool check tallies, Blind spots,
-    the rules failing or unknown on a check (fails first, capped at ``limit``),
+    the rules failing or unknown on a check (broken, then starved, first; capped at ``limit``),
     and the repo rules no SIEM has a copy of. Read-only."""
     by_tool = catalog.rules_by_tool()
     siems = [t for t in by_tool if t not in ("repo", catalog.OVERLAY)]
@@ -243,13 +283,13 @@ def get_health(limit: int = Query(200, ge=1, le=1000)):
 def get_overlay_only():
     """Live overlay copies no SIEM rule runs: only Vigil detects with these,
     so Stop halts their detection. Read-only."""
-    from core.detections.inventory import kibana, rollout
+    from core.detections.inventory import rollout
 
     live = [c for c in rollout._copies() if c.stage == "live"]
-    gone = rollout.siem_runs(kibana.SOURCE, [c.rule_id for c in live])
+    gone = rollout.handed_off([c.rule_id for c in live])
     return {
         "rules": [
-            {"id": c.rule_id, "name": c.name, "language": c.rule.get("language")}
+            {"id": c.rule_id, "name": c.name, "language": c.language}
             for c in live
             if c.rule_id not in gone
         ]

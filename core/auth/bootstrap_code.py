@@ -8,6 +8,7 @@ sessions, which is the same trust. The tag is not ``vigil-password-reset``.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -64,24 +65,41 @@ def has_human_user(session: Session) -> bool:
     )
 
 
-def announce_setup_code() -> None:
+def _announce_once() -> None:
+    """One attempt. Returns once the code is logged or a human user exists;
+    raises when the query fails."""
+    from core.storage.unit_of_work import unit_of_work
+
+    with unit_of_work() as session:
+        if has_human_user(session):
+            return
+    # Template stays free of the value so log grouping does not record it twice.
+    logger.warning(SETUP_CODE_LOG_TEMPLATE, setup_code())
+
+
+async def announce_setup_code() -> None:
     """Log the code once while no human user exists.
 
-    A failed query must not stop startup and must not print a code. POST still
-    requires the code either way.
+    Run as a background task: on Helm the schema arrives after the pods start,
+    so a failed query is retried (capped backoff) until it succeeds. The code is
+    never logged while the query fails. POST still requires it either way.
     """
-    try:
-        from core.storage.unit_of_work import unit_of_work
-
-        with unit_of_work() as session:
-            if has_human_user(session):
-                return
-        code = setup_code()
-    except Exception as exc:
-        logger.warning(
-            "Skipping first-run setup code announcement (%s); bootstrap still requires it",
-            exc,
-        )
-        return
-    # Template stays free of the value so log grouping does not record it twice.
-    logger.warning(SETUP_CODE_LOG_TEMPLATE, code)
+    delay = 2.0
+    warned = False
+    while True:
+        try:
+            # The session is synchronous; keep it off the event loop.
+            await asyncio.to_thread(_announce_once)
+            return
+        except Exception as exc:
+            if not warned:
+                warned = True
+                logger.warning(
+                    "Skipping first-run setup code announcement (%s); retrying "
+                    "until the database is ready. Bootstrap still requires it",
+                    exc,
+                )
+            else:
+                logger.debug("Setup code announcement retry failed: %s", exc)
+        await asyncio.sleep(delay)
+        delay = min(delay * 2, 30.0)

@@ -923,7 +923,7 @@ export const detectionRulesApi = {
 
   /** Live overlay rules no SIEM rule runs: only Vigil detects with them. */
   getOverlayOnly: () =>
-    api.get<{ rules: { id: number; name: string; language: string | null }[] }>(
+    api.get<{ rules: { id: number; name: string; language: string }[] }>(
       '/detection-rules/overlay-only',
     ),
   

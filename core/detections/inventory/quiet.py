@@ -1,5 +1,5 @@
 """Quiet, Noisy and Silent: each active Kibana, Wazuh or Splunk rule's alert
-volume, against a threshold, and (Kibana only) against its own history.
+volume, against a threshold, and (Kibana, Wazuh and Splunk) against its own history.
 
 Per SIEM, one size-0 search per sync counts alerts per rule per UTC day over
 the last 30 days: for Kibana through its signals route, building blocks
@@ -21,22 +21,30 @@ uses its own ``quiet_max_alerts_per_day``. When Vigil's Splunk user cannot searc
 
 Wazuh shares Wazuh Sees' gate: when elastic-siem is off, has no
 ``elasticsearch_url``, or the indexer lists no ``wazuh-alerts-*`` index, every
-active Wazuh rule reads ``unknown`` with that reason, and nothing is spent. A
-Wazuh rule below the manager's alert level never alerts and reads ``pass``.
+active Wazuh rule reads ``unknown`` with that reason (its Noisy and Silent too),
+and nothing is spent. A Wazuh rule below the manager's alert level never alerts
+and reads ``pass``.
 
 A rule's window runs from its latest version's first_seen day (capped at 30
 days) to now; under 24 h it reads ``unknown`` ("version too new"). Over
 ``quiet_max_alerts_per_day`` averaged over the window is ``fail``, else
 ``pass`` (a rule with no alerts too). Rules the terms aggregation could not
 hold read ``unknown`` ("not counted this sync"); a failed search, ``unknown``
-with its error.
+with its error. When some Wazuh indices' shards fail (others answering), the
+count is a floor: a ``fail`` stands, a ``pass`` reads ``unknown`` naming them;
+Noisy reads ``unknown``, and so does a Silent ``fail`` or a ``days_fired`` of 0.
 
 The result goes under checks['quiet'] ({result, reason, count, days,
 checked_at}), written only when it changed. Since the count moves the reason,
 a change is recorded in detection_rule_check_changes only when the result
 changes (or an unknown's reason). Nothing is written to Kibana or the indexer.
 
-Noisy and Silent (Kibana rules only, yet) read the same per-rule daily UTC buckets, never another search.
+Noisy and Silent (Kibana, Wazuh and Splunk rules) read the same per-rule
+daily UTC buckets, never another search, with the thresholds of the rules' own
+integration (elastic-siem's for Kibana and Wazuh, splunk's for Splunk). A Splunk
+scheduled report (no correlation search, no ``actions``, no ``alert.track``)
+can't alert: it reads both ``pass``, "a scheduled report; it does not alert",
+with no ``days_fired``, so it is no never-firing rule.
 "Today" is the current UTC day's bucket so far (partial, so a spike reads late,
 never early); "the last N d" is today and the N - 1 whole days before it.
 
@@ -48,7 +56,11 @@ never early); "the last N d" is today and the N - 1 whole days before it.
   many of the 30 days had an alert: 0 is a never-firing rule.
 
 Both are ``unknown`` when the rule (its first version, not its latest) has been
-in the inventory under 7 days, was not counted this sync, or the search failed.
+in the inventory under 7 days, was not counted this sync, or the search failed;
+for Splunk too, with Quiet's reason, when index=_audit is unreadable or empty.
+A Wazuh rule below Wazuh's default alert level (3) never alerts: once its
+search is read, both are ``pass`` and Silent carries no ``days_fired``, so it is
+never counted as never-firing, whatever its age.
 Each is written like Quiet: a pass -> fail change row is a rule_health flag.
 """
 
@@ -61,7 +73,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, tuple_
 from sqlalchemy.orm import aliased
 
 from core.detections.inventory import kibana, splunk, wazuh, wazuh_sees
@@ -83,12 +95,15 @@ NOT_COUNTED = "not counted this sync"
 # Noisy and Silent need a week of the rule's own history.
 MIN_AGE = timedelta(days=7)
 RULE_TOO_NEW = "rule in the inventory under 7 d"
+REPORT = "a scheduled report; it does not alert"
 DEFAULTS = {
     "noisy_min_alerts": 100,
     "noisy_multiple": 10,
     "silent_days": 7,
     "silent_min_active_days": 5,
 }
+# Wazuh's default log_alert_level: a rule below it never produces an alert.
+WAZUH_ALERT_LEVEL = 3
 
 # (rule id, version), rule_id, version first_seen, rule first_seen
 Rule = Tuple[RuleKey, str, datetime, datetime]
@@ -139,9 +154,15 @@ def _days(agg: Mapping[str, Any]) -> Tuple[Days, bool]:
 
 
 def _results(
-    rules: List[Rule], days_of: Days, truncated: bool, max_per_day: int, now: datetime
+    rules: List[Rule],
+    days_of: Days,
+    truncated: bool,
+    max_per_day: int,
+    now: datetime,
+    failed: Tuple[str, ...] = (),
 ) -> Dict[RuleKey, Dict[str, Any]]:
-    """Each rule's Quiet verdict, over its own window."""
+    """Each rule's Quiet verdict, over its own window. With ``failed`` (indices
+    whose shards failed) the count is a floor: a fail stands, a pass is unknown."""
     today = now.date()
     first_day = today - timedelta(days=DAYS - 1)
     out: Dict[RuleKey, Dict[str, Any]] = {}
@@ -161,6 +182,11 @@ def _results(
         midnight = datetime.combine(start, datetime.min.time(), timezone.utc)
         days = max(round((now - midnight) / timedelta(days=1)), 1)
         out[key] = _verdict(count, days, max_per_day)
+        if failed and out[key]["result"] == "pass":
+            out[key] = _unknown(
+                f"{out[key]['reason']} in the indices that answered; "
+                f"partial count, shards failed on {'; '.join(failed)}"
+            )
     return out
 
 
@@ -206,8 +232,11 @@ def _history(
     truncated: bool,
     cfg: Mapping[str, int],
     now: datetime,
+    failed: Tuple[str, ...] = (),
 ) -> Tuple[Dict[RuleKey, Dict[str, Any]], Dict[RuleKey, Dict[str, Any]]]:
-    """Each rule's Noisy and Silent verdicts from its daily buckets."""
+    """Each rule's Noisy and Silent verdicts from its daily buckets. With
+    ``failed`` (indices whose shards failed) every bucket is a floor: Noisy is
+    unknown, a Silent fail is unknown, and a days_fired of 0 is dropped."""
     today = now.date()
     window = [(today - timedelta(days=i)).isoformat() for i in range(DAYS - 1, -1, -1)]
     noisy: Dict[RuleKey, Dict[str, Any]] = {}
@@ -227,11 +256,37 @@ def _history(
             }
             continue
         noisy[key], silent[key] = _noisy(by_day, cfg), _silent(by_day, cfg)
+    if failed:
+        partial = f"partial count, shards failed on {'; '.join(failed)}"
+        for key in noisy:
+            if noisy[key]["result"] != "unknown":
+                reason = noisy[key]["reason"].removeprefix("fail: ")
+                noisy[key] = _history_unknown(f"{reason}; {partial}")
+            found = silent[key]
+            # Alerts seen in the last days stand; a silence or a 0 might not.
+            if found["result"] == "fail" or found.get("days_fired") == 0:
+                reason = found["reason"].removeprefix("fail: ")
+                kept = (
+                    {"days_fired": found["days_fired"]}
+                    if found.get("days_fired")
+                    else {}
+                )
+                silent[key] = {**_history_unknown(f"{reason}; {partial}"), **kept}
     return noisy, silent
 
 
 def _history_unknown(reason: str) -> Dict[str, Any]:
     return {"result": "unknown", "reason": reason}
+
+
+def _history_failed(
+    rules: List[Rule], reason: str, now: datetime
+) -> Dict[RuleKey, Dict[str, Any]]:
+    """No history read: every rule's Noisy and Silent unknown, or 'rule too new'."""
+    return {
+        key: _history_unknown(RULE_TOO_NEW if now - seen < MIN_AGE else reason)
+        for key, _, _, seen in rules
+    }
 
 
 def _active_rules(source: str) -> List[Rule]:
@@ -322,14 +377,7 @@ def sweep_elastic(config: Mapping[str, Any]) -> QuietReport:
             noisy, silent = _history(rules, days_of, truncated, cfg, now)
         except Exception as exc:  # noqa: BLE001 -- every rule reads unknown
             results = _failed(rules, exc, now)
-            noisy = {
-                key: _history_unknown(
-                    RULE_TOO_NEW
-                    if now - seen < MIN_AGE
-                    else f"alert count failed: {exc}"
-                )
-                for key, _, _, seen in rules
-            }
+            noisy = _history_failed(rules, f"alert count failed: {exc}", now)
             silent = dict(noisy)
         report.written = sum(
             write_check(key, found, _logged)
@@ -342,9 +390,42 @@ def sweep_elastic(config: Mapping[str, Any]) -> QuietReport:
     return report
 
 
+def _wazuh_levels(keys: List[RuleKey]) -> Dict[RuleKey, Any]:
+    """Each Wazuh rule version's level, from its content as accurate reads it."""
+    with get_db_manager().session_scope() as session:
+        rows = session.execute(
+            select(
+                DetectionRuleVersion.rule_id,
+                DetectionRuleVersion.version,
+                DetectionRuleVersion.content["level"],
+            ).where(
+                tuple_(DetectionRuleVersion.rule_id, DetectionRuleVersion.version).in_(
+                    keys
+                )
+            )
+        ).all()
+    return {(rid, ver): level for rid, ver, level in rows}
+
+
+def _cannot_alert(
+    noisy: Dict[RuleKey, Dict[str, Any]], silent: Dict[RuleKey, Dict[str, Any]]
+) -> None:
+    """A rule below Wazuh's alert level never alerts: Noisy and Silent pass, and
+    no days_fired, so it is never counted as never-firing (whatever its age)."""
+    for key, level in _wazuh_levels(list(silent)).items():
+        # A missing or unreadable level gets no exemption: never guess.
+        if type(level) is int and level < WAZUH_ALERT_LEVEL:
+            reason = (
+                f"level {level}, below Wazuh's alert level {WAZUH_ALERT_LEVEL}: "
+                "never alerts"
+            )
+            noisy[key] = {"result": "pass", "reason": reason}
+            silent[key] = {"result": "pass", "reason": reason}
+
+
 def sweep_wazuh() -> QuietReport:
     """Count every active Wazuh rule's alerts in one indexer search, if Wazuh
-    Sees' gate passes and the budget allows."""
+    Sees' gate passes and the budget allows, and write Quiet, Noisy and Silent."""
     report = QuietReport(source="wazuh:quiet")
     try:
         rules = _active_rules(wazuh.SOURCE)
@@ -352,12 +433,16 @@ def sweep_wazuh() -> QuietReport:
         if not rules:
             return report
         why, config = wazuh_sees.indexer()
+        now = datetime.now(timezone.utc)
         results: Dict[RuleKey, Dict[str, Any]] = {}
+        noisy: Dict[RuleKey, Dict[str, Any]] = {}
+        silent: Dict[RuleKey, Dict[str, Any]] = {}
         if why is None:
             per_hour = _int(config.get("max_searches_per_hour"), DEFAULT_PER_HOUR)
             max_per_day = _int(
                 config.get("quiet_max_alerts_per_day"), DEFAULT_MAX_PER_DAY
             )
+            cfg = {k: _int(config.get(k), v) for k, v in DEFAULTS.items()}
             service = kibana.service_of(config)
 
             async def _run() -> Tuple[Optional[str], Optional[Mapping[str, Any]]]:
@@ -381,21 +466,34 @@ def sweep_wazuh() -> QuietReport:
                 finally:
                     await service.close()
 
-            now = datetime.now(timezone.utc)
             try:
                 why, agg = asyncio.run(_run())
             except Exception as exc:  # noqa: BLE001 -- every rule reads unknown
                 results = _failed(rules, exc, now)
+                noisy = _history_failed(rules, f"alert count failed: {exc}", now)
+                silent = dict(noisy)
             else:
                 if why is None and agg is None:
                     report.skipped = "search budget spent"
                     return report
                 if agg is not None:
                     days_of, truncated = _days(agg)
-                    results = _results(rules, days_of, truncated, max_per_day, now)
+                    failed = tuple(agg.get("failed") or ())
+                    results = _results(
+                        rules, days_of, truncated, max_per_day, now, failed
+                    )
+                    noisy, silent = _history(
+                        rules, days_of, truncated, cfg, now, failed
+                    )
+                    _cannot_alert(noisy, silent)
         if why:
             results = {key: _unknown(why) for key, _, _, _ in rules}
-        report.written = write_check("quiet", results, _logged, source=wazuh.SOURCE)
+            noisy = _history_failed(rules, why, now)
+            silent = dict(noisy)
+        report.written = sum(
+            write_check(key, found, _logged, source=wazuh.SOURCE)
+            for key, found in (("quiet", results), ("noisy", noisy), ("silent", silent))
+        )
     except Exception as exc:  # noqa: BLE001 -- the sync's own report stands
         logger.warning("detection rules: Wazuh Quiet failed: %s", exc)
         report.error = f"{type(exc).__name__}: {exc}"
@@ -466,12 +564,39 @@ def _native_keys(source: str) -> set:
         )
 
 
+def _splunk_reports(rules: List[Rule]) -> set:
+    """The rules whose latest version is a scheduled report: no correlation search,
+    no alert action and no tracked alert, so nothing for it ever fires."""
+    keys = [key for key, _, _, _ in rules]
+    with get_db_manager().session_scope() as session:
+        rows = session.execute(
+            select(
+                DetectionRuleVersion.rule_id,
+                DetectionRuleVersion.version,
+                DetectionRuleVersion.content,
+            ).where(
+                tuple_(DetectionRuleVersion.rule_id, DetectionRuleVersion.version).in_(
+                    keys
+                )
+            )
+        ).all()
+    return {
+        (rid, ver)
+        for rid, ver, content in rows
+        if not splunk._truthy(content.get("action.correlationsearch.enabled"))
+        and not str(content.get("actions") or "").strip()
+        and not splunk._truthy(content.get("alert.track"))
+    }
+
+
 def sweep_splunk(config: Mapping[str, Any]) -> QuietReport:
     """Count every active Splunk saved search's alerts in one search, if Vigil's
-    user can read index=_audit and the splunk budget allows."""
+    user can read index=_audit and the splunk budget allows, and write Quiet,
+    Noisy and Silent from it."""
     report = QuietReport(source="splunk:quiet")
     try:
         max_per_day = _int(config.get("quiet_max_alerts_per_day"), DEFAULT_MAX_PER_DAY)
+        cfg = {k: _int(config.get(k), v) for k, v in DEFAULTS.items()}
         rules = _active_rules(splunk.SOURCE)
         report.rules = len(rules)
         if not rules:
@@ -482,6 +607,8 @@ def sweep_splunk(config: Mapping[str, Any]) -> QuietReport:
         if service.can_search_index("_audit") is False:
             why = f"{service.username} cannot search index=_audit"
             results = {key: _unknown(why) for key, _, _, _ in rules}
+            noisy = {key: _history_unknown(why) for key, _, _, _ in rules}
+            silent = dict(noisy)
         elif not search_budget.spend(splunk.SOURCE, splunk.per_hour_of(config)):
             report.skipped = "search budget spent"
             return report
@@ -498,12 +625,26 @@ def sweep_splunk(config: Mapping[str, Any]) -> QuietReport:
                 if not any(int(r.get("audit_events") or 0) for r in rows):
                     why = "no events in index=_audit; it may not be readable"
                     results = {key: _unknown(why) for key, _, _, _ in rules}
+                    noisy = {key: _history_unknown(why) for key, _, _, _ in rules}
+                    silent = dict(noisy)
                 else:
                     days_of = _splunk_days(rows, _native_keys(splunk.SOURCE))
                     results = _results(rules, days_of, False, max_per_day, now)
+                    noisy, silent = _history(rules, days_of, False, cfg, now)
+                    # A report can't alert: no days_fired, so it isn't never-firing.
+                    # One with counted alerts does alert, whatever its settings say.
+                    fired = {key for key, rid, _, _ in rules if days_of.get(rid)}
+                    for key in _splunk_reports(rules) - fired:
+                        noisy[key] = {"result": "pass", "reason": REPORT}
+                        silent[key] = {"result": "pass", "reason": REPORT}
             except Exception as exc:  # noqa: BLE001 -- every rule reads unknown
                 results = _failed(rules, exc, now)
-        report.written = write_check("quiet", results, _logged, source=splunk.SOURCE)
+                noisy = _history_failed(rules, f"alert count failed: {exc}", now)
+                silent = dict(noisy)
+        report.written = sum(
+            write_check(key, found, _logged, source=splunk.SOURCE)
+            for key, found in (("quiet", results), ("noisy", noisy), ("silent", silent))
+        )
     except Exception as exc:  # noqa: BLE001 -- the sync's own report stands
         logger.warning("detection rules: Splunk Quiet failed: %s", exc)
         report.error = f"{type(exc).__name__}: {exc}"
