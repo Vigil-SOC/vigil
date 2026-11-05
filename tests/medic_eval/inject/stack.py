@@ -3,8 +3,9 @@
 A real backend, Postgres, upgrade, Redis, soc-daemon, agent-serve and
 agent-worker, with Medic, its gateway and Docker proxy once scripts/medic/
 enable-compose.sh has run, and auth on (DEV_MODE off), under a `medic-eval-*`
-project of its own (VIGIL_MEDIC_EVAL_PROJECT overrides the name; compose_project() refuses anything else). Nothing touches a
-deeptempo-* container, port or volume. Secrets are minted per run.
+project of its own (VIGIL_MEDIC_EVAL_PROJECT overrides the name;
+compose_project() refuses anything else). Nothing touches a deeptempo-*
+container, port or volume. Secrets are minted per run.
 """
 
 from __future__ import annotations
