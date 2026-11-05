@@ -102,7 +102,7 @@ def load_pack(
         files = sorted((PACK_DIR / "rules").glob("*.yaml"))
         if not files:
             raise FileNotFoundError(f"no rules in {PACK_DIR / 'rules'}")
-        pack = (pack_doc["id"], pack_doc["version"])
+        pack = (pack_doc["id"], pack_doc["channel"], pack_doc["version"])
         return _assemble(
             shape,
             pack,
@@ -206,7 +206,8 @@ def _from_active(shape, data_dir, now, vigil, bundled, events) -> Loaded:
         return _no_pack(
             f"the active pack did not check: {[c for c, _ in errors]}", events
         )
-    pack = (res.manifest["pack"]["id"], res.manifest["pack"]["version"])
+    m = res.manifest["pack"]
+    pack = (m["id"], m["channel"], m["version"])
     files = json.loads(active.data)["files"]
     rules = [load_rule(doc, pack=pack) for doc in res.rules.values()]
     state = lifecycle.pack_state(

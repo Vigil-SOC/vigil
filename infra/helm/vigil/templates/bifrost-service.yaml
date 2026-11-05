@@ -1,0 +1,17 @@
+{{- if .Values.bifrost.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vigil.bifrost.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.componentLabels" (dict "context" . "component" "bifrost") | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.bifrost.service.port }}
+      targetPort: http
+  selector:
+    {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "bifrost") | nindent 4 }}
+{{- end }}

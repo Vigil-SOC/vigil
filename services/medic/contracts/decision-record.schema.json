@@ -489,6 +489,15 @@
                 "pack_id": {
                   "$ref": "#/$defs/id"
                 },
+                "pack_channel": {
+                  "description": "Channel of the pack the rule came from. Written for every pack rule, never for a built-in watcher.* rule.",
+                  "enum": [
+                    "stable",
+                    "beta",
+                    "dev"
+                  ],
+                  "x-medic-type": "enum"
+                },
                 "pack_version": {
                   "$ref": "#/$defs/id"
                 },
@@ -1162,7 +1171,7 @@
       "additionalProperties": false,
       "properties": {
         "event": {
-          "description": "imported: a pack became active (F3 bundled seed or admin import). reverted: admin swap to last-known-good or the bundled baseline (F4 §4). override: admin re-import of a version withdrawn on this site (F4 §4, T-23). rule_skipped: a rule in the active pack is not evaluated (E2 §1: needs a newer engine minor).",
+          "description": "imported: a pack became active (F3 bundled seed or admin import). reverted: admin swap to last-known-good or the bundled baseline (F4 §4). override: admin re-import of a version withdrawn on this site (F4 §4, T-23), or of a pack on another (id, channel) than the active one: a line change. imported, reverted and override carry the pack file's sha256 and its publisher claim. rule_skipped: a rule in the active pack is not evaluated (E2 §1: needs a newer engine minor).",
           "enum": [
             "imported",
             "reverted",
@@ -1192,6 +1201,14 @@
           ],
           "x-medic-type": "enum"
         },
+        "sha256": {
+          "description": "sha256 of the pack file (imported, reverted, override).",
+          "$ref": "#/$defs/hash"
+        },
+        "publisher": {
+          "description": "The pack's publisher claim, as written in its manifest: not proof.",
+          "$ref": "#/$defs/id"
+        },
         "by": {
           "description": "Session identity of the admin (never the request body; K1 T-17). Absent for automatic events.",
           "$ref": "#/$defs/id"
@@ -1218,7 +1235,9 @@
           "then": {
             "required": [
               "source",
-              "previous"
+              "previous",
+              "sha256",
+              "publisher"
             ],
             "not": {
               "anyOf": [
@@ -1250,7 +1269,9 @@
           "then": {
             "required": [
               "by",
-              "previous"
+              "previous",
+              "sha256",
+              "publisher"
             ],
             "properties": {
               "previous": {
@@ -1306,6 +1327,16 @@
                 {
                   "required": [
                     "previous"
+                  ]
+                },
+                {
+                  "required": [
+                    "sha256"
+                  ]
+                },
+                {
+                  "required": [
+                    "publisher"
                   ]
                 }
               ]
@@ -1386,12 +1417,21 @@
       "type": "object",
       "required": [
         "id",
+        "channel",
         "version"
       ],
       "additionalProperties": false,
       "properties": {
         "id": {
           "$ref": "#/$defs/id"
+        },
+        "channel": {
+          "enum": [
+            "stable",
+            "beta",
+            "dev"
+          ],
+          "x-medic-type": "enum"
         },
         "version": {
           "$ref": "#/$defs/id"

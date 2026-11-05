@@ -579,11 +579,12 @@ def _meta(rule: LoadedRule | Builtin) -> dict:
     """The rule's half of incident_opened (decision-record.md §3)."""
     if isinstance(rule, Builtin):
         return rule.meta
-    r, (pack_id, pack_version) = rule.rule, rule.pack
+    r, (pack_id, pack_channel, pack_version) = rule.rule, rule.pack
     return {
         "subject": "vigil",
         "rule": {"id": r["id"], "revision": r["revision"], "pack_id": pack_id}
-        | {"pack_version": pack_version, "engine_api": r.get("engine_api", "1.0")}
+        | {"pack_channel": pack_channel, "pack_version": pack_version}
+        | {"engine_api": r.get("engine_api", "1.0")}
         | {"input_trust": rule.input_trust},
         "fault": {k: copy.deepcopy(r["fault"][k]) for k in ("class", "mode", "causes")},
         "detection_type": rule.detection,

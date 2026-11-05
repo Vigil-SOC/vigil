@@ -1,0 +1,20 @@
+{
+  "$comment": "Refused: an import that doesn't record the pack file's hash.",
+  "v": 1,
+  "at": "2026-12-10T16:05:00Z",
+  "type": "pack_event",
+  "body": {
+    "event": "imported",
+    "pack": {
+      "id": "medic-core",
+      "channel": "stable",
+      "version": "0.1.0"
+    },
+    "previous": null,
+    "source": "bundled",
+    "publisher": "deeptempo"
+  },
+  "seq": 11,
+  "prev": "323d54f15d13a24261b6c2cd10c581f40c1703c22ae0612b092bcd992959642b",
+  "hash": "876e1d9d0b00b69e1ae729be9c022772e786a50cd9092088374d54f34ed98dde"
+}

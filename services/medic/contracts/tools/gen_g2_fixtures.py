@@ -33,6 +33,7 @@ OPEN_LANE2 = {
         "id": "ingest.integration-config-incomplete",
         "revision": 1,
         "pack_id": "medic-core",
+        "pack_channel": "stable",
         "pack_version": "0.1.0",
         "engine_api": "1.0",
         "input_trust": "untrusted",
@@ -72,6 +73,7 @@ OPEN_LANE1 = {
         "id": "pipeline.agent-worker-down",
         "revision": 2,
         "pack_id": "medic-core",
+        "pack_channel": "stable",
         "pack_version": "0.1.0",
         "engine_api": "1.0",
         "input_trust": "trusted",
@@ -179,8 +181,10 @@ OPEN_LANE2, OPEN_LANE1, OPEN_SELF, OPEN_CHILD = map(
 ID2, ID1, IDS, IDC = (
     b["incident_id"] for b in (OPEN_LANE2, OPEN_LANE1, OPEN_SELF, OPEN_CHILD)
 )
-CORE_010 = {"id": "medic-core", "version": "0.1.0"}
-CORE_011 = {"id": "medic-core", "version": "0.1.1"}
+CORE_010 = {"id": "medic-core", "channel": "stable", "version": "0.1.0"}
+CORE_011 = {"id": "medic-core", "channel": "stable", "version": "0.1.1"}
+SHA_010 = "5c1e9a7d3b2f4a60918e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a3921"
+SHA_011 = "a3f0c91d84e7b6521c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b"
 # Head hash of the replay store an admin reviewed (E6); the replay itself is a separate store.
 REPLAY_HEAD = "9" * 64
 
@@ -292,6 +296,8 @@ def pilot_day() -> list[dict]:
                     "pack": CORE_011,
                     "previous": CORE_010,
                     "source": "admin_import",
+                    "sha256": SHA_011,
+                    "publisher": "deeptempo",
                     "by": "user:7f3c",
                 },
             ),
@@ -302,6 +308,8 @@ def pilot_day() -> list[dict]:
                     "event": "reverted",
                     "pack": CORE_010,
                     "previous": CORE_011,
+                    "sha256": SHA_010,
+                    "publisher": "deeptempo",
                     "by": "user:7f3c",
                 },
             ),
@@ -312,6 +320,8 @@ def pilot_day() -> list[dict]:
                     "event": "override",
                     "pack": CORE_011,
                     "previous": CORE_010,
+                    "sha256": SHA_011,
+                    "publisher": "deeptempo",
                     "by": "user:7f3c",
                 },
             ),
@@ -486,6 +496,21 @@ INVALID_PACK_EVENT = {
                 "pack": r["body"]["pack"],
                 "previous": None,
                 "source": "admin_import",
+                "sha256": SHA_011,
+                "publisher": "deeptempo",
+            },
+        ),
+    ),
+    "pack-event-imported-without-sha256": (
+        "an import that doesn't record the pack file's hash",
+        lambda r: r.__setitem__(
+            "body",
+            {
+                "event": "imported",
+                "pack": r["body"]["pack"],
+                "previous": None,
+                "source": "bundled",
+                "publisher": "deeptempo",
             },
         ),
     ),

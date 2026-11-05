@@ -13,7 +13,8 @@ linked copies' (disabled, or their Runs result, each beside its Quiet), or
 'not deployed' when it has none there. Every SIEM Vigil reads (Kibana,
 'elastic'; Splunk, 'splunk'; the Wazuh manager, 'wazuh') is listed. Kibana and
 Wazuh rules get a Sees check; a Wazuh rule's data source is its decoder. Kibana
-and Wazuh rules get a Quiet check and an Accurate one (``accurate``).
+and Wazuh rules get a Quiet check and an Accurate one (``accurate``); only
+Kibana rules get Noisy and Silent.
 
 A linked Kibana or Splunk copy also carries checks['drift']: fail when it was
 disabled, removed or edited in the SIEM while its repo rule stayed the same.
@@ -57,6 +58,12 @@ RUNS = DetectionRuleVersion.checks["runs"]["result"].astext
 SEES = DetectionRuleVersion.checks["sees"]["result"].astext
 QUIET = DetectionRuleVersion.checks["quiet"]["result"].astext
 ACCURATE = DetectionRuleVersion.checks["accurate"]["result"].astext
+NOISY = DetectionRuleVersion.checks["noisy"]["result"].astext
+SILENT = DetectionRuleVersion.checks["silent"]["result"].astext
+# No alert across Quiet's whole 30-day search: a never-firing rule.
+NEVER_FIRED = DetectionRuleVersion.checks["silent"]["days_fired"].astext == "0"
+# The per-tool tally columns _by_tool reads, in order, before the count.
+TALLIED = (TOOL, RUNS, SEES, QUIET, ACCURATE, NOISY, SILENT, NEVER_FIRED)
 RUNS_RESULTS = ("pass", "fail", "unknown")
 # Each rule's current stage: its latest stage row.
 CURRENT_STAGE = (
@@ -67,10 +74,15 @@ CURRENT_STAGE = (
 )
 LINKED = DetectionRule.link_kind.in_(("same_id", "known_name", "agent"))
 NOT_DEPLOYED = "not deployed"
-NOT_READ = "Splunk rules get no Sees, Quiet or Accurate check yet"
+NOT_READ = (
+    "Splunk rules get no Sees, Quiet or Accurate check, and Splunk and Wazuh rules "
+    "no Noisy or Silent check (nor a never-firing count), yet"
+)
 SEES_TOOLS = ("elastic", "wazuh")
 QUIET_TOOLS = ("elastic", "wazuh")
 ACCURATE_TOOLS = ("elastic", "wazuh")
+# Noisy, Silent and the never-firing count read a rule's own history.
+HISTORY_TOOLS = ("elastic",)
 CHANGE = DetectionRuleCheckChange
 RECENT_CHANGES = 10
 # A row that changed the result; a fail -> fail row only changed the reason.
@@ -296,10 +308,11 @@ def _with_links(session: Any, hits: List[Dict], rules: List[DetectionRule]) -> N
 
 
 def _by_tool(rows: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
-    """(tool, runs, sees, quiet, accurate, count) rows as rules per tool, and each
-    check's results for a SIEM's."""
+    """(TALLIED..., count) rows as rules per tool, and for a SIEM's its Runs, Sees,
+    Quiet, Accurate, Noisy and Silent, and (where Noisy and Silent run) its
+    never-firing rules."""
     out: Dict[str, Dict[str, Any]] = {}
-    for tool, runs, sees, quiet, accurate, count in rows:
+    for tool, runs, sees, quiet, accurate, noisy, silent, never, count in rows:
         entry = out.setdefault(tool, {"rules": 0})
         entry["rules"] += count
         if tool not in ("repo", OVERLAY):
@@ -308,11 +321,17 @@ def _by_tool(rows: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
                 ("sees", sees),
                 ("quiet", quiet),
                 ("accurate", accurate),
+                ("noisy", noisy),
+                ("silent", silent),
             ):
                 bucket = entry.setdefault(
                     check, {**dict.fromkeys(RUNS_RESULTS, 0), "unchecked": 0}
                 )
                 _tally(bucket, result, count)
+            if tool in HISTORY_TOOLS:
+                entry["never_firing"] = entry.get("never_firing", 0) + (
+                    count if never else 0
+                )
     return out
 
 
@@ -382,11 +401,11 @@ def rules_for_technique(technique: str, top: int = 5) -> Dict[str, Any]:
         )
         by_tool = _by_tool(
             session.execute(
-                select(TOOL, RUNS, SEES, QUIET, ACCURATE, func.count())
+                select(*TALLIED, func.count())
                 .select_from(DetectionRule)
                 .join(DetectionRuleVersion, _latest_join())
                 .where(ACTIVE, declares)
-                .group_by(TOOL, RUNS, SEES, QUIET, ACCURATE)
+                .group_by(*TALLIED)
             ).all()
         )
         first = session.execute(
@@ -504,15 +523,15 @@ def _any_result(result: str) -> Any:
 
 def rules_by_tool() -> Dict[str, Dict[str, Any]]:
     """Active rules per tool across the estate, with each SIEM's Runs, Sees,
-    Quiet and Accurate."""
+    Quiet, Accurate, Noisy and Silent, and its never-firing rules."""
     with get_db_manager().session_scope() as session:
         return _by_tool(
             session.execute(
-                select(TOOL, RUNS, SEES, QUIET, ACCURATE, func.count())
+                select(*TALLIED, func.count())
                 .select_from(DetectionRule)
                 .join(DetectionRuleVersion, _latest_join())
                 .where(ACTIVE)
-                .group_by(TOOL, RUNS, SEES, QUIET, ACCURATE)
+                .group_by(*TALLIED)
             ).all()
         )
 
@@ -534,6 +553,13 @@ def unchecked(siems: Iterable[str]) -> Dict[str, Dict[str, Any]]:
         "accurate": {
             "tools": [t for t in siems if t in ACCURATE_TOOLS],
             "reason": "not judged since the last sync",
+        },
+        **{
+            check: {
+                "tools": [t for t in siems if t in HISTORY_TOOLS],
+                "reason": "waiting for the query budget",
+            }
+            for check in ("noisy", "silent")
         },
     }
 

@@ -38,7 +38,9 @@ INSTALL = (
     "backend",
     "upgrade",
     "siem-stub",
+    "splunk-stub",
     "soc-daemon",
+    "llm-worker",
     "agent-worker",
     "agent-serve",
 )
@@ -152,7 +154,7 @@ class Stack:
             lambda c: c == 200,
         )
         self.wait_daemon()
-        for svc in ("agent-serve", "agent-worker"):
+        for svc in ("agent-serve", "agent-worker", "llm-worker"):
             self.wait(
                 lambda s=svc: self.compose("ps", "--format", "json", s).stdout,
                 lambda o: '"healthy"' in o,

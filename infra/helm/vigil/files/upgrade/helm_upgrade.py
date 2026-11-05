@@ -33,8 +33,9 @@ import psycopg2
 
 SA_DIR = Path("/var/run/secrets/kubernetes.io/serviceaccount")
 KEDA_PAUSE = "autoscaling.keda.sh/paused-replicas"
-# Left running: the database and the queue the upgrade needs, and Bifrost,
-# which the chart does not render but an operator might label as part of it.
+# Left running: the database and the queue the upgrade needs, and Bifrost, the
+# gateway (templates/bifrost-statefulset.yaml, component "bifrost"): it holds no
+# app state the upgrade touches and stays up for the pods that come back.
 KEEP = ("postgres", "redis", "bifrost", "upgrade")
 KINDS = (("deployments", "Deployment"), ("statefulsets", "StatefulSet"))
 RECORD = "helm-scale.json"

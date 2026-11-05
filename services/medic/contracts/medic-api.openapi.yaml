@@ -315,7 +315,9 @@ components:
     PackConflict:
       description: |
         The operation doesn't fit this install's pack state: `P-WITHDRAWN` (re-import of a
-        withdrawn version without `override`), `P-NO-TARGET` (no last-known-good, or no bundled
+        withdrawn version without `override`), `P-LINEAGE` (a pack of another id or channel than
+        the active one, without `override`), `P-DOWNGRADE` (a version not newer than the active
+        one on the same id and channel; `override` does not lift it), `P-NO-TARGET` (no last-known-good, or no bundled
         pack), `P-NO-ACTIVE` or `P-BUNDLED-ACTIVE`. Nothing was changed.
         Or (`pack_unavailable`) Medic has no pack lifecycle to operate on: dev mode, which runs
         the source pack, or a start whose pack lifecycle failed (an unusable data dir).
@@ -410,7 +412,8 @@ components:
             For pack_refused and pack_conflict only: the check that refused. `S-DIGEST` is the
             import's expected-hash check (the file's sha256 is not the `sha256` the admin gave),
             `P-*` the pack checks and the lifecycle's own refusals (`P-WITHDRAWN`, `P-NO-TARGET`,
-            `P-NO-ACTIVE`, `P-BUNDLED-ACTIVE`). A closed set the console maps to its own words.
+            `P-NO-ACTIVE`, `P-BUNDLED-ACTIVE`). `P-LINEAGE` and `P-DOWNGRADE`
+            depend on the active pack, so they answer 409 `pack_conflict`. A closed set the console maps to its own words.
           type: string
           enum:
             - S-DIGEST
@@ -900,7 +903,7 @@ components:
               x-medic-type: enum
             - $ref: "#/components/schemas/PackFacts"
         withdrawn:
-          description: Versions withdrawn on this site by a revert (re-import needs an override, UX-27).
+          description: Versions (by id, channel and version) withdrawn on this site by a revert or switch (re-import needs an override, UX-27).
           type: array
           maxItems: 50
           items: { $ref: "./decision-record.schema.json#/$defs/pack_ref" }
@@ -1328,8 +1331,11 @@ paths:
         body's sha256 must equal `sha256` (422 `S-DIGEST`, logged, no `pack_event`); then the
         pack checks run without lineage (422 `P-*`). The loop checks again, with lineage, as
         it activates it. A `dev`-channel pack is accepted outside dev mode. A version on `withdrawn` is refused (409,
-        `P-WITHDRAWN`) unless `override=true`, which does nothing for any other version.
-        Writes `imported` (or `override`, for a withdrawn version), then one `rule_skipped` per
+        `P-WITHDRAWN`), and so is a pack of another id or channel than the active one (409,
+        `P-LINEAGE`: a site's own pack over `medic-core`, or back), unless `override=true`,
+        which resolves exactly these two. A version not newer than the active one on the same
+        id and channel is 409 `P-DOWNGRADE`, with `override` or without.
+        Writes `imported` (or `override`, for a withdrawn version or a line change), then one `rule_skipped` per
         rule the engine is too old for. The outgoing pack becomes `previous`.
         Runs in Medic's main loop at its next cycle boundary (up to ~20 s), so the response
         is slow by design; the rules, suppression list and log catalogue change before the
@@ -1353,7 +1359,7 @@ paths:
         - name: override
           in: query
           required: false
-          description: Re-import a version that was withdrawn here by a revert (UX-27). Default false.
+          description: Resolves `P-WITHDRAWN` (re-import a version withdrawn here, UX-27) and `P-LINEAGE` (replace the active pack with one of another id or channel); logged as an `override` event. Does nothing for `P-DOWNGRADE`. Default false.
           schema: { type: boolean, default: false }
       requestBody:
         required: true

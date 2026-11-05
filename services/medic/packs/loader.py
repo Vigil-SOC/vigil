@@ -21,6 +21,7 @@ On disk, under <data_dir>/packs/ (dir 0700, files 0600), the pack file as receiv
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -42,7 +43,7 @@ _SEMVER = re.compile(r"\d+\.\d+\.\d+")
 @dataclass
 class LoadResult:
     errors: list[tuple[str, str]] = field(default_factory=list)  # (code, message)
-    imported: dict | None = None  # id, channel, version, previous
+    imported: dict | None = None  # id, channel, version, sha256, publisher, previous
     rule_skipped: list[str] = field(default_factory=list)
     tolerated: list[tuple[str, str]] = field(default_factory=list)  # let through
 
@@ -200,6 +201,8 @@ def load_pack(
         "id": pack["id"],
         "channel": pack["channel"],
         "version": pack["version"],
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "publisher": pack["publisher"],
         "previous": (
             {
                 "id": active.lineage.id,
