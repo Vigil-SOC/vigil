@@ -4,7 +4,7 @@
 # The stack the injectors break: the real backend, Postgres, upgrade, Redis,
 # soc-daemon, agent-serve and agent-worker, since the faults live in those
 # services (compose.v1.yml has a real backend only, compose.test.yml none).
-# Stand-ins: Bifrost, the backup, mcp-runner and the Elastic the daemon polls.
+# Stand-ins: Bifrost, the backup, mcp-runner and the Elastic and Splunk the daemon polls.
 # Medic itself is not here: every verify reads Vigil directly.
 #
 # Names and host ports are reset so it runs beside a developer's deeptempo-*
@@ -51,6 +51,13 @@ services:
       PYTHONPATH: /app:/eval-site
     volumes:
       - ${MEDIC_EVAL_SITE:?}:/eval-site/sitecustomize.py:ro
+
+  # Drains the LLM queue; BIFROST_URL defaults to the bifrost stand-in below.
+  llm-worker:
+    container_name: !reset null
+    image: ${COMPOSE_PROJECT_NAME:?}-backend:local
+    pull_policy: never
+    restart: "no"
 
   agent-serve:
     container_name: !reset null
@@ -122,6 +129,19 @@ services:
     volumes: ["${MEDIC_EVAL_STUB_DIR:?}/stub.py:/stub/stub.py:ro"]
     environment:
       STUB_ROLE: elastic
+    healthcheck: {test: ["CMD", "python", "-c", "0"], interval: 5s}
+    restart: "no"
+    networks:
+      - deeptempo-network
+
+  # The Splunk the daemon polls (I-1.g): logs in, fails every search.
+  splunk-stub:
+    image: python:3.12-slim
+    pull_policy: missing
+    command: ["python", "/stub/stub.py"]
+    volumes: ["${MEDIC_EVAL_STUB_DIR:?}/stub.py:/stub/stub.py:ro"]
+    environment:
+      STUB_ROLE: splunk
     healthcheck: {test: ["CMD", "python", "-c", "0"], interval: 5s}
     restart: "no"
     networks:

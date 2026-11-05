@@ -1,6 +1,6 @@
 """The Compose project the fault injectors break (compose.eval.yml).
 
-A real backend, Postgres, upgrade, Redis, soc-daemon, agent-serve and
+A real backend, Postgres, upgrade, Redis, soc-daemon, llm-worker, agent-serve and
 agent-worker, under a `medic-eval-*` project of its own (VIGIL_MEDIC_EVAL_PROJECT
 overrides the name; compose_project() refuses anything else). Nothing touches a
 deeptempo-* container, port or volume. Secrets are minted per run.
@@ -38,7 +38,9 @@ INSTALL = (
     "backend",
     "upgrade",
     "siem-stub",
+    "splunk-stub",
     "soc-daemon",
+    "llm-worker",
     "agent-worker",
     "agent-serve",
 )
@@ -152,7 +154,7 @@ class Stack:
             lambda c: c == 200,
         )
         self.wait_daemon()
-        for svc in ("agent-serve", "agent-worker"):
+        for svc in ("agent-serve", "agent-worker", "llm-worker"):
             self.wait(
                 lambda s=svc: self.compose("ps", "--format", "json", s).stdout,
                 lambda o: '"healthy"' in o,
