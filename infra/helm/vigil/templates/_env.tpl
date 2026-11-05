@@ -98,6 +98,9 @@ helper. Prefer the Secret when both are set.
 {{- define "vigil.env" -}}
 - name: HOME
   value: "/home/vigil"
+{{- if .Values.bifrost.enabled }}
+{{ include "vigil.bifrost.auth.env" . }}
+{{- end }}
 - name: POSTGRES_HOST
   value: {{ include "vigil.postgres.host" . | quote }}
 - name: POSTGRES_PORT

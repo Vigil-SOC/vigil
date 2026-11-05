@@ -8,11 +8,13 @@ on:
     paths:
       - 'infra/helm/**'
       - 'infra/database/init/**'
+      - 'infra/docker/bifrost/**'
       - '.github/workflows/helm-chart.yml'
   pull_request:
     paths:
       - 'infra/helm/**'
       - 'infra/database/init/**'
+      - 'infra/docker/bifrost/**'
       - '.github/workflows/helm-chart.yml'
 
 jobs:
@@ -21,6 +23,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      # Helm cannot read outside the chart, so it carries a copy of Compose's file.
+      - name: Bifrost config matches Compose's
+        run: cmp infra/docker/bifrost/config.json infra/helm/vigil/files/bifrost/config.json
 
       - name: Set up Helm
         uses: azure/setup-helm@v5

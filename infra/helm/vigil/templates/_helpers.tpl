@@ -137,6 +137,10 @@ read-only on the runner. Nothing when detectionRules.volume is unset.
 {{- printf "%s-redis" (include "vigil.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "vigil.bifrost.fullname" -}}
+{{- printf "%s-bifrost" (include "vigil.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
 {{- define "vigil.configmap.fullname" -}}
 {{- printf "%s-config" (include "vigil.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
@@ -485,3 +489,26 @@ Usage: include "vigil.networkPolicy.probeRule" (dict "context" . "port" 8080)
       port: {{ $.port }}
 {{- end }}
 {{- end }}
+
+{{/*
+Admin password of the in-chart Bifrost. A Secret of its own (not the app Secret):
+the Bifrost pod holds only this, and it stays whether or not secrets.existingSecret
+or externalSecret replace the app Secret. bifrost.auth.existingSecret supplies a
+pre-created one and the chart then renders none (templates/bifrost-secret.yaml).
+*/}}
+{{- define "vigil.bifrost.auth.secretName" -}}
+{{- .Values.bifrost.auth.existingSecret | default (printf "%s-auth" (include "vigil.bifrost.fullname" .)) -}}
+{{- end -}}
+
+{{- define "vigil.bifrost.auth.secretKey" -}}
+{{- .Values.bifrost.auth.existingSecretKey | default "BIFROST_ADMIN_PASSWORD" -}}
+{{- end -}}
+
+{{/* The BIFROST_ADMIN_PASSWORD env entry, for every pod that calls Bifrost's /api/*. */}}
+{{- define "vigil.bifrost.auth.env" -}}
+- name: BIFROST_ADMIN_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "vigil.bifrost.auth.secretName" . }}
+      key: {{ include "vigil.bifrost.auth.secretKey" . }}
+{{- end -}}

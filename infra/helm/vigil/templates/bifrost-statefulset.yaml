@@ -1,0 +1,117 @@
+{{- if .Values.bifrost.enabled }}
+{{- /* The LLM gateway (docker-compose's `bifrost` service). A StatefulSet, like
+       Redis, so the one ReadWriteOnce volume never has two pods at a rollout. */ -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "vigil.bifrost.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.componentLabels" (dict "context" . "component" "bifrost") | nindent 4 }}
+spec:
+  serviceName: {{ include "vigil.bifrost.fullname" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "bifrost") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vigil.componentLabels" (dict "context" . "component" "bifrost") | nindent 8 }}
+      annotations:
+        checksum/config: {{ .Files.Get "files/bifrost/config.json" | sha256sum }}
+        {{- with .Values.bifrost.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "vigil.serviceAccountName" . }}
+      {{- include "vigil.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: bifrost
+          image: "{{ .Values.bifrost.image.repository }}:{{ .Values.bifrost.image.tag }}"
+          imagePullPolicy: {{ .Values.bifrost.image.pullPolicy | default "IfNotPresent" }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            # The listen port is fixed by the image; bifrost.service.port only moves the Service.
+            # The same value the backend gets, so one setting reaches both.
+            - name: OLLAMA_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "vigil.configmap.fullname" . }}
+                  key: OLLAMA_URL
+                  optional: true
+            {{- include "vigil.bifrost.auth.env" . | nindent 12 }}
+            # Provider keys come from the app Secret (secrets.existingSecret and
+            # externalSecret included); a key it lacks is just empty, as in Compose.
+            {{- range $k := list "ANTHROPIC_API_KEY" "OPENAI_API_KEY" "GEMINI_API_KEY" }}
+            - name: {{ $k }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "vigil.secret.fullname" $ }}
+                  key: {{ $k }}
+                  optional: true
+            {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: config
+              mountPath: /app/data/config.json
+              subPath: config.json
+              readOnly: true
+          # GET only: /health answers 405 on HEAD.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.bifrost.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "vigil.bifrost.fullname" . }}-config
+        {{- if not .Values.bifrost.persistence.enabled }}
+        - name: data
+          emptyDir: {}
+        {{- end }}
+      {{- with .Values.bifrost.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.bifrost.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.bifrost.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- if .Values.bifrost.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          {{- toYaml .Values.bifrost.persistence.accessModes | nindent 10 }}
+        {{- if .Values.bifrost.persistence.storageClassName }}
+        storageClassName: {{ .Values.bifrost.persistence.storageClassName | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.bifrost.persistence.size }}
+  {{- end }}
+{{- end }}
