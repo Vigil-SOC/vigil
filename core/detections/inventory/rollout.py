@@ -25,6 +25,12 @@ queue. A run fetches at most ``MAX_DOCS`` documents (its count is the full
 total): a live copy past that in one run is over the daily hit limit and
 reverts in the same tick.
 
+A copy's active exceptions (``core/detections/exceptions.py``) drop the fetched
+documents they match before any of that: a dropped document is not in the
+day's hit count and becomes no finding, and checks['exceptions'] counts each
+exception's matches per day. A handed-off copy is not run, so its exceptions
+are not applied; alerts the SIEM itself raises are never filtered.
+
 The sweep (after ``sync_repos``) then writes a stage row (actor 'system', proof
 holding the numbers) for each move that is due: shadow -> live after a quiet,
 passing week with checks['sees'] pass (at most ``LIVE_PER_DAY`` a day across
@@ -67,6 +73,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import aliased
 
+from core.detections import exceptions
 from core.detections.inventory import accurate, kibana, readers, sees, splunk
 from core.detections.inventory.catalog import REPO_PREFIX
 from core.integrations._base import search_budget
@@ -380,8 +387,10 @@ def _ran(
     end: datetime,
     outcome: Tuple[Optional[int], List[Dict], Optional[str]],
     searched_to: datetime,
+    excepted: Optional[Dict[str, int]] = None,
 ) -> Dict[str, Any]:
-    """``checks`` after one run: Runs, and the stage's per-day hits on a pass."""
+    """``checks`` after one run: Runs, and on a pass the stage's per-day hits
+    and each exception's per-day matches."""
     total, docs, error = outcome
     day = end.date().isoformat()
     runs = dict(checks.get("runs") or {})
@@ -407,6 +416,13 @@ def _ran(
         if stage == "shadow" and docs:
             block["sample"] = [_sample(d) for d in docs[:SAMPLE]]
         out[stage] = block
+        if excepted:
+            counts = dict(checks.get("exceptions") or {})
+            for eid, n in excepted.items():
+                per_day = dict((counts.get(eid) or {}).get("days") or {})
+                per_day[day] = int(per_day.get(day) or 0) + n
+                counts[eid] = {"days": _trimmed(per_day, day)}
+            out["exceptions"] = counts
     return out
 
 
@@ -513,7 +529,12 @@ async def _run_elastic(
         await service.close()
 
 
-def _write_runs(copies: List[Copy], results: Dict[int, tuple], now: datetime) -> int:
+def _write_runs(
+    copies: List[Copy],
+    results: Dict[int, tuple],
+    now: datetime,
+    excepted: Optional[Dict[int, Dict[str, int]]] = None,
+) -> int:
     """Merge each run into its version's checks; record changed Runs results."""
     from core.detections.inventory.sync import _change, _last_results, _record_changes
 
@@ -539,7 +560,12 @@ def _write_runs(copies: List[Copy], results: Dict[int, tuple], now: datetime) ->
             if ver != copy.version:
                 continue
             new = _ran(
-                checks or {}, copy.stage, now, results[rid], _window(copy, now)[1]
+                checks or {},
+                copy.stage,
+                now,
+                results[rid],
+                _window(copy, now)[1],
+                (excepted or {}).get(rid),
             )
             runs = new["runs"]
             before = last.get((rid, "runs"))
@@ -762,7 +788,7 @@ def sweep(now: datetime, report: RolloutReport) -> None:
         if rows:
             session.execute(insert(DetectionRuleStage), rows)
             # In the same transaction: a promotion and its PR run land together.
-            for trigger in _deploy_runs(promoted, target):
+            for trigger in _deploy_runs(session, promoted, target):
                 session.add(trigger)
                 session.flush()
                 report.queued.append(trigger.id)
@@ -784,8 +810,25 @@ def _deploy_target() -> Optional[Dict[str, Any]]:
         return None
 
 
+def _excepted_brief(session: Any, copy: Copy) -> str:
+    """The copy's active exceptions for the PR description; the rule file has none."""
+    rows = exceptions.listed(session, copy.rule_id)
+    if not rows:
+        return ""
+    lines = "\n".join(
+        f"- {json.dumps(r['match'], sort_keys=True)}: {r['note']}" for r in rows
+    )
+    return (
+        " List these customer-specific exceptions in the pull request's "
+        "description, not in the rule file: Vigil applied them to this rule's "
+        "hits and stops once the SIEM runs it, so the reviewer can carry them into "
+        "the SIEM's own exception mechanism (for example a Kibana exception "
+        f"list).\n{lines}"
+    )
+
+
 def _deploy_runs(
-    promoted: List[Copy], target: Optional[Dict[str, Any]]
+    session: Any, promoted: List[Copy], target: Optional[Dict[str, Any]]
 ) -> List[IntakeTrigger]:
     """A queued mitre_analyst run per promoted Elastic copy, when a target is set."""
     promoted = [c for c in promoted if c.language == "elastic"]
@@ -808,8 +851,8 @@ def _deploy_runs(
                     f"{target['git_url']} under {where}, with the attached TOML "
                     f"(Vigil's {copy.path or 'overlay file'}) as its file content "
                     "exactly as given, and record the pull request's link on this Case."
+                    + _excepted_brief(session, copy)
                 ),
-                # The overlay file whole, exclusions included; the brief carries it.
                 "document": copy.toml,
             },
         )
@@ -875,10 +918,26 @@ def run(live: bool) -> RolloutReport:
     return run_sweep(run_copies(live))
 
 
+def _except(
+    results: Dict[int, tuple],
+) -> Tuple[Dict[int, tuple], Dict[int, Dict[str, int]]]:
+    """Results with the documents an active exception matches dropped, and the
+    matches per exception id by rule id. The total drops by the same number."""
+    ran = [rid for rid, (_, _, error) in results.items() if not error]
+    excepted = exceptions.active(ran)
+    out, counts = dict(results), {}
+    for rid, rules in excepted.items():
+        total, docs, error = results[rid]
+        kept, counts[rid] = exceptions.split(docs, rules)
+        out[rid] = (max(int(total or 0) - (len(docs) - len(kept)), 0), kept, error)
+    return out, counts
+
+
 def _finish(
     copies: List[Copy], results: Dict[int, tuple], now: datetime, report: RolloutReport
 ) -> None:
-    report.written += _write_runs(copies, results, now)
+    results, excepted = _except(results)
+    report.written += _write_runs(copies, results, now, excepted)
     for copy in copies:
         _, docs, error = results.get(copy.rule_id, (None, [], "not run"))
         if copy.stage == "live" and not error:

@@ -15,14 +15,14 @@ from typing import Any, Iterable, Optional
 
 import yaml
 
-from core.detections.replay import negated_only_selections
-
 _REWRITE = (
     "Rewrite around behaviour: process lineage, command-line arguments, "
     "parent-child relationships, or protocol/technique patterns — not a "
-    "specific host, address, account, or subnet. An environment literal "
-    "belongs only in a selection the condition excludes with `not` (for "
-    "example `selection and not filter_backup_host`)."
+    "specific host, address, account, or subnet. To leave out one host, "
+    "address or account that is expected here, keep it out of the rule "
+    "(no `not filter_*` naming it) and add an exception instead: "
+    "save_detection_rule's exceptions, or detection_rule_exception on a "
+    "saved copy."
 )
 
 # IPv4 (optional CIDR). Candidates are confirmed with ipaddress.
@@ -157,12 +157,7 @@ def _lint_yaml(text: str) -> dict[str, Any]:
     for section in ("detection", "logsource"):
         if section not in parsed:
             continue
-        node = parsed[section]
-        if section == "detection" and isinstance(node, dict):
-            # A selection reached only under `not` is an exclusion; its literals are allowed.
-            excluded = negated_only_selections(node)
-            node = {k: v for k, v in node.items() if str(k) not in excluded}
-        for field, value in _iter_strings(node):
+        for field, value in _iter_strings(parsed[section]):
             for finding in _findings_for(field, value):
                 key = (finding["kind"], finding["value"], finding["field"])
                 if key in seen:
