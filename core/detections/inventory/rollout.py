@@ -6,7 +6,9 @@ or live is run from its last successful run (or the last hour) up to now. An
 Elastic copy runs against the elastic-siem Elasticsearch: EQL through
 ``_eql/search``, ES|QL through ``_query``, Lucene through ``_search``. A Splunk
 copy runs its SPL (the ESCU YAML's ``search``) against the splunk integration;
-its hit count is the result rows. Each run spends one search of its SIEM's
+its hit count is the result rows; a Splunk copy whose first clause names an index
+Vigil's Splunk user cannot search is not run, and its Runs reads unknown (no pass,
+so it does not promote). Each run spends one search of its SIEM's
 budget (key ``overlay:<rule id>``), least recently run first; once the hour's
 budget is spent the rest wait. A copy an active SIEM copy linked to it now runs
 (``handed_off``) is neither searched nor spent for, and its stage is left as is.
@@ -38,6 +40,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import tomllib
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -57,7 +60,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import aliased
 
-from core.detections.inventory import kibana, readers, sees, splunk
+from core.detections.inventory import kibana, readers, sees, splunk, splunk_sees
 from core.detections.inventory.catalog import REPO_PREFIX
 from core.integrations._base import search_budget
 from core.integrations._base.ids import EXTERNAL_ID_MAX, fit_id
@@ -228,8 +231,9 @@ def handed_off(copies: List[Copy]) -> Set[int]:
 
     That is a Splunk saved search (for a Splunk copy) or a Kibana rule (for an
     Elastic one) linked by the sync (same_id / known_name) or an agent to the
-    overlay rule, or to an active repo rule of its language carrying its name
-    or its key (rule_id).
+    overlay rule, or to an active repo rule of its language carrying its key
+    (rule_id). A Splunk copy also matches a repo rule by name, since ESCU links
+    by name (known_name); an Elastic copy matches by rule_id only.
     """
     if not copies:
         return set()
@@ -240,7 +244,10 @@ def handed_off(copies: List[Copy]) -> Set[int]:
             r.source.startswith(REPO_PREFIX),
             r.status == "active",
             r.language == o.language,
-            or_(r.name == o.name, r.native_key == o.native_key),
+            or_(
+                r.native_key == o.native_key,
+                and_(o.language == "splunk", r.name == o.name),
+            ),
         )
         .correlate(o)
     )
@@ -290,6 +297,25 @@ async def _query(
     if language == "esql":
         return await service.esql_query(query, window)
     return await service.lucene_search(_index(rule), query, window, MAX_DOCS)
+
+
+class Unknown(str):
+    """A run's outcome that is neither pass nor fail: nothing was searched."""
+
+
+def _unreadable_index(
+    service: Any, search: str, seen: Dict[str, Optional[bool]]
+) -> Optional[str]:
+    """Why Vigil's Splunk user cannot search an index the SPL's first clause names."""
+    first = re.sub(r"^\s*search\b", "", search.split("|", 1)[0], flags=re.I)
+    for index in splunk_sees._terms(first)["index"]:
+        if "*" in index:
+            continue  # a pattern: Splunk searches whatever of it the role may
+        if index not in seen:
+            seen[index] = service.can_search_index(index)
+        if seen[index] is False:
+            return f"Vigil's Splunk user cannot search index={index}"
+    return None
 
 
 async def _splunk_query(
@@ -362,6 +388,11 @@ def _ran(
     runs = dict(checks.get("runs") or {})
     days = dict(runs.get("days") or {})
     tally = dict(days.get(day) or {"pass": 0, "fail": 0})
+    if isinstance(error, Unknown):
+        # Neither a pass nor a fail: the day counts no passing run, so no promotion.
+        runs.update(result="unknown", reason=str(error))
+        runs.update(days=_trimmed(days, day), checked_at=end.isoformat())
+        return {**checks, "runs": runs}
     if error:
         runs.update(
             result="fail", reason=error, failures=int(runs.get("failures") or 0) + 1
@@ -846,16 +877,24 @@ def _run_splunk_copies(
     why = "a splunk copy needs a search: add search: <SPL> to its YAML"
     blocked = [(c, why) for c in copies if not str(c.rule.get("search") or "").strip()]
     ready = [c for c in copies if str(c.rule.get("search") or "").strip()]
+    service = splunk.service_of(config)
+    seen: Dict[str, Optional[bool]] = {}
+    unread = {
+        c.rule_id: Unknown(reason)
+        for c in ready
+        if (reason := _unreadable_index(service, str(c.rule.get("search")), seen))
+    }
     results = asyncio.run(
         _run_all(
             splunk.SOURCE,
-            splunk.service_of(config),
+            service,
             _splunk_query,
-            ready,
+            [c for c in ready if c.rule_id not in unread],
             splunk.per_hour_of(config),
             now,
             report,
         )
     )
+    results.update({rid: (None, [], reason) for rid, reason in unread.items()})
     report.written += _write_unrunnable(blocked, now)
     _finish(ready, results, now, report)
