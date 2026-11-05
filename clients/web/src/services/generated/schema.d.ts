@@ -3276,6 +3276,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/detection-rules/rules/{rule_id}/exceptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Rule Exceptions
+         * @description An overlay copy's exceptions, active and removed, each with its per-day
+         *     matches; ``handed_off`` when a SIEM copy runs the rule, so Vigil applies none.
+         */
+        get: operations["get_api_detection-rules_rules_rule_id_exceptions"];
+        put?: never;
+        /**
+         * Add Rule Exception
+         * @description Add an exception to an overlay copy, attributed to the signed-in user.
+         */
+        post: operations["post_api_detection-rules_rules_rule_id_exceptions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/rules/{rule_id}/exceptions/{exception_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Rule Exception
+         * @description Remove (soft) one of an overlay copy's exceptions, with a reason.
+         */
+        delete: operations["delete_api_detection-rules_rules_rule_id_exceptions_exception_id"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/detection-rules/sources": {
         parameters: {
             query?: never;
@@ -7370,6 +7415,18 @@ export interface components {
             details?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /**
+         * AddExceptionRequest
+         * @description A customer-specific exception: every {field: value} pair must match.
+         */
+        AddExceptionRequest: {
+            /** Match */
+            match: {
+                [key: string]: unknown;
+            };
+            /** Note */
+            note: string;
         };
         /**
          * AddSourceRequest
@@ -17596,6 +17653,112 @@ export interface operations {
                 authorization?: string | null;
             };
             path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_detection-rules_rules_rule_id_exceptions": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                rule_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_rules_rule_id_exceptions": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                rule_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddExceptionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "delete_api_detection-rules_rules_rule_id_exceptions_exception_id": {
+        parameters: {
+            query: {
+                reason: string;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                rule_id: number;
+                exception_id: number;
+            };
             cookie?: never;
         };
         requestBody?: never;

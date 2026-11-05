@@ -4,6 +4,7 @@ import type { ConsoleScreenProps } from '../../shared/types'
 import { errorText } from '../../shared/errorText'
 import { detectionRulesApi } from '../../services/api'
 import { Empty, Failure } from '../shared/x1'
+import RuleExceptions from './RuleExceptions'
 import './detections.css'
 
 type RuleHealth =
@@ -115,7 +116,8 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   const [loading, setLoading] = useState(true)
   const [more, setMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [open, setOpen] = useState<number | null>(null)
+  // One row opens at a time: its raw error, or (a Vigil copy) its exceptions.
+  const [open, setOpen] = useState<{ id: number; what: 'raw' | 'exceptions' } | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   // Bumped per view, so a page asked for under the last view is dropped.
   const generation = useRef(0)
@@ -150,7 +152,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
 
   const matched = report?.matched ?? 0
   const hasMore = !loading && rows.length < matched
-  // Only the rows on screen are in the DOM; each is measured, so a wrapped name or an open raw error keeps its height.
+  // Only the rows on screen are in the DOM; each is measured, so a wrapped name or an open raw error or exception list keeps its height.
   const virtual = useVirtualizer({
     count: rows.length,
     getScrollElement: () => listRef.current,
@@ -338,7 +340,8 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
           {shown.map((item) => {
             const r = rows[item.index]
             const h = HEALTH[r.health]
-            const isOpen = open === r.rule_id
+            const isOpen = open?.id === r.rule_id && open.what === 'raw'
+            const excOpen = open?.id === r.rule_id && open.what === 'exceptions'
             const fired = r.fires > 0 ? `${plural(r.fires, 'fire', 'fires')} in ${days}d` : r.health === 'no_fire_data' ? 'No fire data' : r.health === 'fires' ? 'Alerted in the SIEM' : `No fires in ${days}d`
             return (
               <div key={item.key} data-index={item.index} ref={virtual.measureElement} className="de-tr de-row" style={{ transform: `translateY(${item.start - HEAD_ROW}px)` }}>
@@ -355,17 +358,26 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                 <div><span className={`de-health ${h.tone}`}><i />{h.label}</span></div>
                 <div className="de-why">
                   <div className="de-why-text" title={r.why}>{r.why}</div>
-                  {r.raw && (
-                    <button type="button" className="de-raw-toggle" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : r.rule_id)}>
-                      {isOpen ? 'Hide raw error' : 'Raw error'}
-                      <svg viewBox="0 0 24 24" aria-hidden="true" className={isOpen ? 'up' : ''}><path d="m6 9 6 6 6-6" /></svg>
-                    </button>
-                  )}
+                  <div className="de-toggles">
+                    {r.raw && (
+                      <button type="button" className="de-raw-toggle" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : { id: r.rule_id, what: 'raw' })}>
+                        {isOpen ? 'Hide raw error' : 'Raw error'}
+                        <svg viewBox="0 0 24 24" aria-hidden="true" className={isOpen ? 'up' : ''}><path d="m6 9 6 6 6-6" /></svg>
+                      </button>
+                    )}
+                    {r.tool === 'overlay' && (
+                      <button type="button" className="de-raw-toggle" aria-expanded={excOpen} onClick={() => setOpen(excOpen ? null : { id: r.rule_id, what: 'exceptions' })}>
+                        {excOpen ? 'Hide exceptions' : 'Exceptions'}
+                        <svg viewBox="0 0 24 24" aria-hidden="true" className={excOpen ? 'up' : ''}><path d="m6 9 6 6 6-6" /></svg>
+                      </button>
+                    )}
+                  </div>
                   {isOpen && r.raw && <pre className="de-raw">{r.raw}</pre>}
                 </div>
                 <div className="de-right">
                   <button type="button" className="btn ghost de-act" onClick={() => openChat(prompt(r, days))}>{h.action}</button>
                 </div>
+                {excOpen && <RuleExceptions ruleId={r.rule_id} />}
               </div>
             )
           })}
