@@ -1,20 +1,23 @@
 """The Compose project the fault injectors break (compose.eval.yml).
 
 A real backend, Postgres, upgrade, Redis, soc-daemon, agent-serve and
-agent-worker, under a `medic-eval-*` project of its own (VIGIL_MEDIC_EVAL_PROJECT
-overrides the name; compose_project() refuses anything else). Nothing touches a
+agent-worker, with Medic, its gateway and Docker proxy once scripts/medic/
+enable-compose.sh has run, and auth on (DEV_MODE off), under a `medic-eval-*`
+project of its own (VIGIL_MEDIC_EVAL_PROJECT overrides the name; compose_project() refuses anything else). Nothing touches a
 deeptempo-* container, port or volume. Secrets are minted per run.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import subprocess
 import time
 from pathlib import Path
 
 from tests.medic_compose.compose import (
+    ENABLE,
     REPO,
     clean_env,
     compose_cmd,
@@ -27,6 +30,9 @@ OVERRIDE = HERE / "compose.eval.yml"
 STUB_DIR = REPO / "tests" / "medic_compose"
 PROJECT_ENV = "VIGIL_MEDIC_EVAL_PROJECT"
 IMAGES = ("backend", "daemon", "agent")  # <project>-<name>:local, see compose.eval.yml
+# enable-compose.sh builds these and reads the gateway's by tag.
+MEDIC_IMAGES = ("vigil-medic:local", "vigil-medic-gateway:local", "vigil-medic-dockerproxy:local")
+ADMIN_USER = "evaladmin"
 INSTALL = (
     "postgres",
     "redis",
@@ -52,7 +58,7 @@ POLL_S = 15
 HTTP = r"""
 import json, sys, urllib.request, urllib.error
 method, url, token, body = sys.argv[1:5]
-headers = {"Content-Type": "application/json"}
+headers = {"Content-Type": "application/json", **json.loads(sys.argv[5] if len(sys.argv) > 5 else "{}")}
 if token:
     headers["Authorization"] = "Bearer " + token
 req = urllib.request.Request(url, data=body.encode() if body else None, method=method, headers=headers)
@@ -86,6 +92,11 @@ class Stack:
             else require_compose_project(project)
         )
         token = secrets.token_hex(16)
+        self.secrets_dir = home / "medic-secrets"
+        self.admin_password = "Ev" + secrets.token_urlsafe(24) + "!9"
+        self.csrf = secrets.token_urlsafe(32)  # the double-submit pair
+        self.bearer = ""
+        self.medic = False  # Medic's overlay and profile join every call once enabled
         self.good_webhook_token = "EVALHOOK" + secrets.token_hex(12)
         self.agent_token = "EVALAGENT" + secrets.token_hex(12)
         self.env = clean_env(
@@ -101,10 +112,15 @@ class Stack:
             AGENT_INTERNAL_TOKEN=self.agent_token,
             MEDIC_EVAL_AGENT_TOKEN=self.agent_token,
             MEDIC_EVAL_WEBHOOK_TOKEN=self.good_webhook_token,
-            # Auth off: the injectors drive the backend's own API without a login.
-            DEV_MODE="true",
+            # Auth on: Medic's sensors read the API only with DEV_MODE off.
+            DEV_MODE="false",
+            VIGIL_MEDIC_SECRETS_DIR=str(self.secrets_dir),
+            VIGIL_MEDIC_COMPOSE_OVERRIDE=str(OVERRIDE),
+            VIGIL_MEDIC_DOTENV=os.devnull,  # not a developer's .env
             DAEMON_SPLUNK_POLL_INTERVAL=str(POLL_S),
         )
+        if os.environ.get("VIGIL_MEDIC_DOCKER_GID"):
+            self.env["VIGIL_MEDIC_DOCKER_GID"] = os.environ["VIGIL_MEDIC_DOCKER_GID"]
         # What the push client presents (I-5.b); the daemon's own token is in env.
         self.pusher_token = self.good_webhook_token
         # Per-cell state a second inject or a later verify needs.
@@ -116,7 +132,10 @@ class Stack:
     def compose(
         self, *args: str, check: bool = True, **kw
     ) -> subprocess.CompletedProcess:
-        cmd = compose_cmd("daemon", overlay=False, files=(OVERRIDE,))
+        # Without the overlay and profile on every call, Docker drops the agents
+        # off medic-net at the next `up`.
+        profiles = ("daemon", "medic") if self.medic else ("daemon",)
+        cmd = compose_cmd(*profiles, overlay=self.medic, files=(OVERRIDE,))
         done = subprocess.run(
             [*cmd, "-p", self.project, *args],
             env=self.env,
@@ -139,7 +158,14 @@ class Stack:
         self.compose("up", "-d", "--no-deps", "--force-recreate", *services)
 
     def start(self) -> None:
-        # A run that was killed leaves volumes holding its random passwords.
+        # A run that was killed leaves containers and volumes holding its random
+        # passwords (Medic's too, which `down` skips without its profile).
+        stale = subprocess.run(
+            ["docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={self.project}"],
+            capture_output=True, text=True, check=False,
+        ).stdout.split()
+        if stale:
+            subprocess.run(["docker", "rm", "-f", *stale], capture_output=True, check=False)
         self.compose("down", "-v", "--remove-orphans", check=False)
         self.compose("build", "backend", "soc-daemon", "agent-serve")
         self.compose("up", "-d", *INSTALL)
@@ -159,14 +185,56 @@ class Stack:
                 lambda s=svc: self.compose("ps", "--format", "json", s).stdout,
                 lambda o: '"healthy"' in o,
             )
+        self.bootstrap_admin()
+        self.enable_medic()
+
+    def bootstrap_admin(self) -> None:
+        """The first-run flow: a fresh database has no admin (Medic's Viewer is a service account)."""
+        code = self.py(
+            "backend", "from core.auth.bootstrap_code import setup_code; print(setup_code())"
+        )
+        status, body = self.api(
+            "POST",
+            "/api/auth/bootstrap",
+            {
+                "username": ADMIN_USER,
+                "email": "evaladmin@example.com",
+                "password": self.admin_password,
+                "setup_code": code,
+            },
+            auth=False,
+        )
+        assert status == 201, (status, body)
+
+    def enable_medic(self) -> None:
+        """The shipped enable script, for real: secrets, networks, Viewer account, the three services."""
+        done = subprocess.run(
+            [str(ENABLE)], env=self.env, capture_output=True, text=True,
+            check=False, timeout=1800,
+        )
+        if done.returncode:
+            raise ComposeFailed(f"enable-compose.sh: {done.stdout[-1500:]}{done.stderr[-1500:]}")
+        # What compose.env holds, as the environment every later call needs.
+        for line in (self.secrets_dir / "compose.env").read_text().splitlines():
+            if line.startswith("VIGIL_MEDIC_") and "=" in line:
+                k, v = line.split("=", 1)
+                self.env[k] = v
+        self.medic = True
+        self.wait(
+            lambda: self.compose("ps", "--format", "json", "medic").stdout,
+            lambda o: '"healthy"' in o,
+            timeout=420,
+        )
+        self.wait(
+            lambda: self.http("GET", "backend", 6987, "/api/health")[0],
+            lambda c: c == 200,
+        )
 
     def stop(self) -> None:
         self.compose("down", "-v", "--remove-orphans", check=False)
-        for name in IMAGES:
+        for image in (*(f"{self.project}-{n}:local" for n in IMAGES), *MEDIC_IMAGES):
             subprocess.run(
-                ["docker", "image", "rm", "-f", f"{self.project}-{name}:local"],
-                capture_output=True,
-                check=False,
+                ["docker", "image", "rm", "-f", image], capture_output=True, check=False
             )
 
     # ---- reads --------------------------------------------------------------
@@ -198,24 +266,47 @@ class Stack:
         path: str,
         token: str = "",
         body: str = "",
+        headers: dict | None = None,
     ) -> tuple[int, str]:
         """One request from the backend container to a service on the network."""
         out = self.py(
-            "backend", HTTP, method, f"http://{host}:{port}{path}", token, body
+            "backend", HTTP, method, f"http://{host}:{port}{path}", token, body,
+            json.dumps(headers or {}),
         )
         status, text = json.loads(out)
         return status, text
 
-    def api(
-        self, method: str, path: str, body: dict | None = None
-    ) -> tuple[int, dict | list | str]:
+    def login(self) -> None:
+        """Sign in as the admin the first-run flow made, sending the shipped CSRF pair."""
         status, text = self.http(
-            method,
-            "backend",
-            6987,
-            path,
-            body=json.dumps(body) if body is not None else "",
+            "POST", "backend", 6987, "/api/auth/login",
+            body=json.dumps({"username_or_email": ADMIN_USER, "password": self.admin_password}),
+            headers=self._csrf(),
         )
+        assert status == 200, (status, text)
+        self.bearer = json.loads(text)["access_token"]
+
+    def _csrf(self) -> dict:
+        # Vigil compares the cookie with the header (double submit).
+        return {"Cookie": f"csrf_token={self.csrf}", "X-CSRF-Token": self.csrf}
+
+    def api(
+        self, method: str, path: str, body: dict | None = None, auth: bool = True
+    ) -> tuple[int, dict | list | str]:
+        """The backend's API as the admin; signs in on first use and again after a 401."""
+        for attempt in (0, 1):
+            if auth and not self.bearer:
+                self.login()
+            status, text = self.http(
+                method, "backend", 6987, path,
+                token=self.bearer if auth else "",
+                body=json.dumps(body) if body is not None else "",
+                headers=self._csrf(),
+            )
+            if status == 401 and auth and not attempt:
+                self.bearer = ""  # expired: one fresh login
+                continue
+            break
         try:
             return status, json.loads(text)
         except ValueError:
