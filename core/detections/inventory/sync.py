@@ -12,14 +12,15 @@ to see a deletion, and writes only what differs:
 
 A Runs result (checks['runs'] on the latest version) is written only when its
 result or reason differs from the stored one; a new version starts with none.
-After Wazuh syncs, ``wazuh_sees`` checks whether each active Wazuh rule's
-decoder gets events (read from the elastic-siem indexer); after Kibana syncs,
-``quiet`` counts each active Kibana rule's alerts against a per-day threshold
-(checks['quiet']), then ``sees`` checks whether each active Kibana rule's data
-is arriving. Both Sees checks write checks['sees']; each check is written the
-same way. Last, ``accurate`` judges each active Kibana and Wazuh rule's latest
-version from the stored findings' verdicts and writes checks['accurate'] the
-same way (local SQL only).
+After Wazuh syncs, ``quiet`` counts each active Wazuh rule's alerts against a
+per-day threshold (checks['quiet'], from ``wazuh-alerts-*`` on the elastic-siem
+indexer), then ``wazuh_sees`` checks whether each one's decoder gets events;
+after Kibana syncs, ``quiet`` counts each active Kibana rule's alerts the same
+way, then ``sees`` checks whether each active Kibana rule's data is arriving.
+Both Sees checks write checks['sees']; each check is written the same way. Last,
+``accurate`` judges each active Kibana and Wazuh rule's latest version from the
+stored findings' verdicts and writes checks['accurate'] the same way (local SQL
+only).
 
 After the sources, each SIEM rule is linked to the repo rule it came from when
 that is certain: a Kibana rule by ``same_id`` (one active repo Elastic rule with
@@ -425,8 +426,7 @@ def _remove_unconfigured(configured: List[str]) -> int:
 
 def sync_repos() -> List[Any]:
     """Read every configured repo, Wazuh, Kibana and Splunk, and sync each, checking
-    Wazuh rules' Sees, Kibana rules' Quiet and Sees, then Kibana and Wazuh rules'
-    Accurate.
+    Wazuh and Kibana rules' Quiet and Sees, then their Accurate.
 
     One failing source skips only itself.
     """
@@ -437,10 +437,11 @@ def sync_repos() -> List[Any]:
         sources = service.list_sources()
         reports = [_sync_one(service, source) for source in sources]
         removed = _remove_unconfigured([readers.source_name(s) for s in sources])
-        # Wazuh's two searches go before Kibana's Sees backlog can spend the budget.
+        # Wazuh's searches go before Kibana's Sees backlog can spend the budget.
         wazuh_report = _sync_wazuh()
         reports.append(wazuh_report)
         if not (wazuh_report.error or wazuh_report.skipped):
+            reports.append(quiet.sweep_wazuh())  # Quiet first, as for Kibana
             reports.append(wazuh_sees.sweep())
         elastic, config = _sync_elastic()
         reports.append(_drifted(_linked(elastic, _link_same_id)))

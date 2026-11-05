@@ -1,7 +1,8 @@
 # medic-core pack source (F4). pack_build.py turns this directory into one
 # medic.pack/v1 file. Bumping `version` on main is the release: medic-pack-release.yml
 # tags medic-core-vX.Y.Z and publishes the built file with its SHA-256 on the Release
-# (nothing is signed). DeepTempo publishes the stable channel only.
+# (nothing is signed). An admin imports the file by the sha256 they expect it to have.
+# DeepTempo publishes the stable channel only.
 format: medic.pack/v1
 pack:
   id: medic-core

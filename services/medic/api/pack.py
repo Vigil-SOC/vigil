@@ -1,10 +1,10 @@
-"""`GET /v1/pack` and the four pack writes under `/v1/pack/` (F6, #2026).
+"""`GET /v1/pack` and the three pack writes under `/v1/pack/` (F6, #2026).
 
 The listener's threads only check and queue. The main loop is the one writer: it
 takes each request at a cycle boundary, runs the lifecycle operation, records the
-`pack_event`s and swaps the engine (app/pack_admin.py). An import is vetted here
-first (`loader.vet_pack`), so a bad pack is refused on this thread and never
-reaches the loop. A request nobody picked up within `timeout` is abandoned: it is
+`pack_event`s and swaps the engine (app/pack_admin.py). An import is held to the
+admin's expected sha256 and vetted here first (`loader.vet_pack`), so a bad pack is
+refused on this thread and never reaches the loop. A request nobody picked up within `timeout` is abandoned: it is
 answered `busy` and the loop skips it, so it can't apply later.
 """
 
@@ -20,15 +20,17 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl
 
 from services.medic.api.decisions import (
     _SCHEMA,
     Problem,
     _Bad,
+    _field,
     _reject_query,
     _with_store,
 )
-from services.medic.contracts.trust_check import MAX_IMPORT_BYTES
+from services.medic.contracts.pack_check import MAX_PACK_BYTES, check_digest
 from services.medic.packs import lifecycle
 from services.medic.packs.loader import vet_pack
 
@@ -36,7 +38,8 @@ log = logging.getLogger("services.medic")
 
 MAX_BODY = 4096  # the body-less operations
 _ADMIN = re.compile(_SCHEMA["$defs"]["id"]["pattern"])
-OPS = ("import", "revert", "switch-to-bundled", "acknowledge")
+OPS = ("import", "revert", "switch-to-bundled")
+_SHA256 = re.compile(r"[0-9A-Fa-f]{64}")
 # Refusals about this install's state, not about the pack file (409 pack_conflict).
 CONFLICTS = frozenset(
     {
@@ -44,7 +47,6 @@ CONFLICTS = frozenset(
         lifecycle.NO_TARGET,
         lifecycle.NO_ACTIVE,
         lifecycle.BUNDLED_ACTIVE,
-        "P-NO-BUNDLED",
     }
 )
 SUPPRESSION_DAYS = 7
@@ -78,15 +80,15 @@ class _Request:
 
 class PackBridge:
     """The hand-off between the listener's threads and the main loop. With no
-    `root` there is no pack lifecycle (dev mode) and every call is refused."""
+    `vigil` there is no pack lifecycle (dev mode) and every call is refused."""
 
-    def __init__(self, root: dict | None = None, vigil: str | None = None) -> None:
-        self.root, self.vigil = root, vigil
+    def __init__(self, vigil: str | None = None) -> None:
+        self.vigil = vigil
         self._queue: queue.SimpleQueue[_Request] = queue.SimpleQueue()
 
     @property
     def available(self) -> bool:
-        return self.root is not None
+        return self.vigil is not None
 
     def submit(
         self, op: str, *, by: str, data: bytes = b"", override: bool = False,
@@ -142,12 +144,10 @@ def post_pack(
     timeout: float,
 ) -> dict | Problem:
     """`read_body(n)` is called only after every cheaper check has passed."""
-    override = False
+    override, sha256 = False, None
     try:
-        if op == "import" and query:  # the one query parameter
-            if query not in ("override=true", "override=false"):
-                raise _Bad("invalid_parameter", "override")
-            override = query == "override=true"
+        if op == "import":
+            override, sha256 = _import_query(query)
         else:
             _reject_query(query)
     except _Bad as bad:
@@ -158,7 +158,7 @@ def post_pack(
             return Problem(415, "unsupported_media_type")
     if length is None or not length.isascii() or not length.isdigit():
         return Problem(400, "invalid_parameter", "Content-Length")
-    if int(length) > (MAX_IMPORT_BYTES if op == "import" else MAX_BODY):
+    if int(length) > (MAX_PACK_BYTES if op == "import" else MAX_BODY):
         return Problem(413, "payload_too_large")
     if len(admins) != 1 or _ADMIN.fullmatch(admins[0]) is None:
         return Problem(422, "missing_admin_identity", "X-Medic-Admin")
@@ -169,12 +169,14 @@ def post_pack(
         if data:
             return Problem(422, "invalid_body")
     else:
+        if digest := check_digest(data, sha256):  # logged, never a pack_event
+            log.warning("pack import by %s refused: %s", admins[0], digest[1])
+            return refusal([digest])
         now = datetime.fromtimestamp(wall(), UTC)
         try:
-            errors, _, _ = vet_pack(
-                data, trust_root=bridge.root, vigil_version=bridge.vigil,
-                dev_mode=False, now=now, lineage=None,
-            )  # fmt: skip
+            errors, _ = vet_pack(
+                data, vigil_version=bridge.vigil, now=now, lineage=None
+            )
         except Exception as exc:  # noqa: BLE001 (a hostile file never ends the thread)
             log.error("pack import vetting failed: %s", type(exc).__name__)
             return Problem(500, "internal")
@@ -189,6 +191,20 @@ def post_pack(
         op, by=admins[0], data=data if op == "import" else b"", override=override,
         timeout=timeout,
     )  # fmt: skip
+
+
+def _import_query(query: str) -> tuple[bool, str]:
+    """(override, sha256 in lowercase). `sha256` is required, each name at most once."""
+    seen: dict[str, str] = {}
+    for name, value in parse_qsl(query, keep_blank_values=True):
+        if name not in ("sha256", "override") or name in seen:
+            raise _Bad("invalid_parameter", _field(name))
+        seen[name] = value
+    if seen.get("override", "false") not in ("true", "false"):
+        raise _Bad("invalid_parameter", "override")
+    if _SHA256.fullmatch(seen.get("sha256", "")) is None:
+        raise _Bad("invalid_parameter", "sha256")
+    return seen.get("override") == "true", seen["sha256"].lower()
 
 
 def suppression_7d(data_dir: Path, now: datetime) -> list[dict[str, Any]]:

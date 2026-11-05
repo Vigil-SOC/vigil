@@ -1,6 +1,6 @@
 """Medic's API listener (X2): `GET /v1/status`, the decision log, incidents,
 sensors and the pack, and the writes: `POST /v1/incidents/{id}/feedback` and the
-four pack operations under `/v1/pack/` (queued to the main loop, api/pack.py).
+three pack operations under `/v1/pack/` (queued to the main loop, api/pack.py).
 
 stdlib only, like the gateway (SP1 ⚑5). Every request needs `X-Medic-Key`,
 compared in constant time with the key file, re-read on each request so a new

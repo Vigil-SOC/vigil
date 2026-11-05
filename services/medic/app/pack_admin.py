@@ -34,7 +34,7 @@ class PackAdmin:
         self.context: PackContext = loaded.context
         self.shape, self.data_dir, self.clock = shape, data_dir, clock
         self.facts = loaded.facts  # the active pack's PackFacts (`/v1/status.pack`)
-        self.bridge = PackBridge(self.context.root, self.context.vigil)
+        self.bridge = PackBridge(self.context.vigil)
         self._monotonic = monotonic or time.monotonic
         self._suppression: tuple[float, list[dict[str, Any]]] | None = None
         self._answered: list = []
@@ -52,7 +52,6 @@ class PackAdmin:
         return {
             **lifecycle.pack_state(
                 data_dir=self.data_dir,
-                trust_root=ctx.root,
                 bundled=ctx.bundled,
                 vigil_version=ctx.vigil,
                 now=now,
@@ -81,22 +80,12 @@ class PackAdmin:
     def _apply(self, req, medic) -> dict[str, Any] | Problem:
         ctx = self.context
         now = datetime.fromtimestamp(self.clock.wall(), UTC)
-        if req.op == "acknowledge":  # no chain event, only a log line
-            notice = lifecycle.acknowledge_revoked_notice(self.data_dir)
-            log.info(
-                "pack revoked-key notice %s by %s",
-                "acknowledged" if notice else "was not set",
-                req.by,
-            )
-            return self.state(now, fresh=True)
         # Checked before the swap, so a pack is never swapped and left unrecorded.
         if medic.writer.stopped:
             return Problem(503, "store_not_recording")
         kw: dict[str, Any] = {
             "data_dir": self.data_dir,
-            "trust_root": ctx.root,
             "vigil_version": ctx.vigil,
-            "dev_mode": False,
             "now": now,
             "by": req.by,
         }

@@ -116,7 +116,7 @@ class SecurityDetectionsTools:
             stage: Optional filter by current rollout stage ("shadow", "live", "off")
             sees: Optional filter by Sees result ("pass", "fail", "unknown")
             quiet: Optional filter by Quiet result ("pass", "fail", "unknown"):
-                fail is a Kibana rule averaging over its alerts-per-day threshold
+                fail is a Kibana or Wazuh rule averaging over its alerts-per-day threshold
             flagged: Optional filter: rules with (True) or without (False) an open flag
             accurate: Optional filter by Accurate result ("pass", "fail", "unknown"):
                 whether a Kibana or Wazuh rule's judged alerts are mostly real
