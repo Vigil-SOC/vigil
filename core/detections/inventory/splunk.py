@@ -2,8 +2,8 @@
 
 Credentials are the ``splunk`` integration's. Listing is REST reads; the Runs
 result costs exactly one search per sync, against ``index=_internal``, spent
-against the integration's ``max_searches_per_hour`` (Sees, in ``splunk_sees``,
-spends the same budget). Nothing is written to Splunk.
+against the integration's ``max_searches_per_hour`` (Quiet and Sees, in
+``quiet`` and ``splunk_sees``, spend the same budget). Nothing is written to Splunk.
 
 A scheduled run's errors are read from two sourcetypes joined on sid: the
 scheduler logs a runtime failure as ``success`` (Splunk 10.4) or not at all
