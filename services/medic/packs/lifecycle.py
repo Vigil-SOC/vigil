@@ -318,7 +318,8 @@ def import_pack(
         st["withdrawn"].remove(_ref(lin))
     _save_state(data_dir, st)
     events = _activated(res, "admin_import", by)
-    if withdrawn or line_change:  # (override is set: it was refused or P-LINEAGE else)
+    # override is set (refused, or P-LINEAGE, else); a line change always has a previous
+    if (withdrawn or line_change) and previous:
         # `override` has no `source`, and `previous` is required (never null) there.
         ev = events[0]
         events[0] = {
