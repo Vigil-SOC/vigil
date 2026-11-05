@@ -9,6 +9,7 @@ import asyncio
 from typing import Any, Dict, List, Optional
 
 from core.agents.projections import read_projection
+from core.detections.exceptions import edit_exception
 from core.detections.gaps import (
     FINDINGS_LIMIT,
     gap_report,
@@ -289,12 +290,14 @@ class SecurityDetectionsTools:
         sigma_yaml: Optional[str] = None,
         proven_events: Optional[List[Dict]] = None,
         ruled_out_events: Optional[List[Dict]] = None,
+        exceptions: Optional[Dict[str, List[Dict]]] = None,
         **_kwargs: object,
     ) -> Dict:
         """Save one rule's copies into Vigil's overlay; each enters shadow.
 
         With events, the Sigma form is replayed on them first and the save is
-        refused unless a proven event matches and no ruled-out one does.
+        refused unless a proven event matches and no ruled-out one does (a
+        ruled-out event a Sigma exception matches is excluded).
         """
         return await asyncio.to_thread(
             save_rule,
@@ -303,6 +306,22 @@ class SecurityDetectionsTools:
             sigma_yaml,
             proven_events,
             ruled_out_events,
+            exceptions,
+        )
+
+    async def detection_rule_exception(
+        self,
+        action: str = "",
+        rule_id: Any = None,
+        match: Any = None,
+        note: Any = None,
+        exception_id: Any = None,
+        reason: Any = None,
+        **_kwargs: object,
+    ) -> Dict:
+        """Add a customer-specific exception to an overlay copy, or remove one."""
+        return await asyncio.to_thread(
+            edit_exception, action, rule_id, match, note, exception_id, reason
         )
 
     async def reconstruct_run(self, steps: List[Dict], **_kwargs: object) -> Dict:

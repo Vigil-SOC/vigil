@@ -10,6 +10,31 @@ from core.cases.case_status import CASE_STATUSES
 from core.memory.recall_contract import RECALL_PARAMETERS, RECALL_TOOL
 from core.skills.skill_library import READ_SKILL_TOOL
 
+# Customer-specific exceptions per copy (#3794): kept apart from the rule body.
+_EXCEPTION_ITEMS = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "match": {
+                "type": "object",
+                "description": "{field: value} in this copy's own field names; every pair must equal. A CIDR value matches an address inside it.",
+            },
+            "note": {"type": "string", "description": "Why it is expected. Required."},
+        },
+        "required": ["match", "note"],
+    },
+}
+_EXCEPTIONS_SCHEMA = {
+    "type": "object",
+    "description": "Customer-specific exceptions per copy, stored apart from the rule body instead of a `not filter_*` naming a host, address or account (lint refuses those). Keys are the copies being saved. Vigil's runner drops hits an exception matches; the replay counts a ruled-out event a sigma exception matches as excluded (a proven event one matches refuses the save). Adds no rule version; an exception already on the copy with the same match is kept as is.",
+    "properties": {
+        "splunk": _EXCEPTION_ITEMS,
+        "elastic": _EXCEPTION_ITEMS,
+        "sigma": _EXCEPTION_ITEMS,
+    },
+}
+
 # Security-Detections Tools (Core functionality)
 SECURITY_DETECTION_TOOLS = [
     {
@@ -237,7 +262,7 @@ SECURITY_DETECTION_TOOLS = [
     },
     {
         "name": "save_detection_rule",
-        "description": "Save one drafted or changed detection rule into Vigil's overlay (a local rule source Vigil owns), then sync it into the rule inventory. Pass a Splunk copy (ESCU-style YAML with search), an Elastic copy (detection-rules TOML with a [rule] table), or both, plus an optional Sigma form. Each copy is written as its own file. A copy that does not parse, or a Sigma form that fails lint, refuses the whole save and writes nothing. Pass proven_events (and ruled_out_events) to have the Sigma form replayed on them first: the save is refused, with the replay in the error, unless the Sigma form is given, can be replayed, matches a proven event and matches no ruled-out event. The result is stored as checks.replay on the Sigma copy's version (result not_run when no events are passed). A copy keeps the id it carries (ESCU id, Elastic rule_id, Sigma id): pass an existing rule's id to change that rule (a logic change is a new version); omit it for a new rule. Returns each saved copy's rule_id, id, version and stage: a new Splunk or Elastic rule or version enters shadow (nobody sees its alerts); a Sigma copy has no stage. Vigil runs the Elastic copy itself, so its [rule] language must be eql, esql or lucene (kuery is refused) and an eql or lucene copy needs an index. Writes no SIEM.",
+        "description": "Save one drafted or changed detection rule into Vigil's overlay (a local rule source Vigil owns), then sync it into the rule inventory. Pass a Splunk copy (ESCU-style YAML with search), an Elastic copy (detection-rules TOML with a [rule] table), or both, plus an optional Sigma form. Each copy is written as its own file. A copy that does not parse, or a Sigma form that fails lint, refuses the whole save and writes nothing. Pass proven_events (and ruled_out_events) to have the Sigma form replayed on them first: the save is refused, with the replay in the error, unless the Sigma form is given, can be replayed, matches a proven event and matches no ruled-out event. The result is stored as checks.replay on the Sigma copy's version (result not_run when no events are passed). A copy keeps the id it carries (ESCU id, Elastic rule_id, Sigma id): pass an existing rule's id to change that rule (a logic change is a new version); omit it for a new rule. Returns each saved copy's rule_id, id, version and stage: a new Splunk or Elastic rule or version enters shadow (nobody sees its alerts); a Sigma copy has no stage. Vigil runs the Elastic copy itself, so its [rule] language must be eql, esql or lucene (kuery is refused) and an eql or lucene copy needs an index. Pass exceptions to keep an expected host, address or account out of the rule body. Writes no SIEM.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -261,10 +286,42 @@ SECURITY_DETECTION_TOOLS = [
                 "ruled_out_events": {
                     "type": "array",
                     "items": {"type": "object"},
-                    "description": "Events from runs whose explanation was ruled out. The Sigma form must match none of them.",
+                    "description": "Events from runs whose explanation was ruled out. The Sigma form must match none of them, except those a sigma exception matches.",
                 },
+                "exceptions": _EXCEPTIONS_SCHEMA,
             },
             "required": [],
+        },
+    },
+    {
+        "name": "detection_rule_exception",
+        "description": "Add a customer-specific exception to one of Vigil's overlay copies (search_detections tool 'overlay'), or remove one. An exception keeps an expected host, address or account out of the rule's query: Vigil's runner drops the hits whose fields equal every pair of match (a CIDR value matches an address inside it) before they are counted or become findings, and counts its matches per day in the version's checks.exceptions. Field names are the copy's own: ECS paths for the Elastic copy, Splunk field names for the Splunk copy, Sigma fields for the Sigma form. Each exception covers one copy. Adding or removing one makes no new rule version and does not restart shadow. Exceptions are listed in the deploy pull request's description and stop applying once the SIEM's own copy runs the rule. Every addition and removal is recorded with you as the actor; a removed exception is kept with who removed it, when and why.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["add", "remove"]},
+                "rule_id": {
+                    "type": "integer",
+                    "description": "The overlay copy's rule_id. Required to add.",
+                },
+                "match": {
+                    "type": "object",
+                    "description": "{field: value}; every pair must equal the hit's field. Required to add.",
+                },
+                "note": {
+                    "type": "string",
+                    "description": "Why these hits are expected here. Required to add.",
+                },
+                "exception_id": {
+                    "type": "integer",
+                    "description": "The exception to remove. Required to remove.",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why it is removed. Required to remove.",
+                },
+            },
+            "required": ["action"],
         },
     },
     {
