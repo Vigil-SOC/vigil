@@ -1,11 +1,15 @@
-"""Rollout: Vigil runs its Elastic overlay copies and moves them shadow -> live -> back.
+"""Rollout: Vigil runs its overlay copies and moves them shadow -> live -> back.
 
-Each daemon sync tick, after ``sync_repos``, every active Elastic overlay copy
-whose current stage (its latest stage row) is shadow or live is run against the
-elastic-siem Elasticsearch, from its last successful run (or the last hour) up
-to now: EQL through ``_eql/search``, ES|QL through ``_query``, Lucene through
-``_search``. Each run spends one elastic-siem search (key ``overlay:<rule id>``),
-least recently run first; once the hour's budget is spent the rest wait.
+Each daemon sync tick, before ``sync_repos`` (so Sees spends only what is left),
+every active overlay copy whose current stage (its latest stage row) is shadow
+or live is run from its last successful run (or the last hour) up to now. An
+Elastic copy runs against the elastic-siem Elasticsearch: EQL through
+``_eql/search``, ES|QL through ``_query``, Lucene through ``_search``. A Splunk
+copy runs its SPL (the ESCU YAML's ``search``) against the splunk integration;
+its hit count is the result rows. Each run spends one search of its SIEM's
+budget (key ``overlay:<rule id>``), least recently run first; once the hour's
+budget is spent the rest wait. A copy an active SIEM copy linked to it now runs
+(``handed_off``) is neither searched nor spent for, and its stage is left as is.
 
 A run writes checks['runs'] on the latest version (result, reason, last
 successful run, consecutive failures, per-day pass/fail), recording a changed
@@ -16,13 +20,13 @@ queue. A run fetches at most ``MAX_DOCS`` documents (its count is the full
 total): a live copy past that in one run is over the daily hit limit and
 reverts in the same tick.
 
-The sweep then writes a stage row (actor 'system', proof holding the numbers)
-for each move that is due: shadow -> live after a quiet, passing week (at most
+The sweep (after ``sync_repos``) then writes a stage row (actor 'system', proof
+holding the numbers) for each move that is due: shadow -> live after a quiet, passing week (at most
 ``LIVE_PER_DAY`` a day across all rules), live -> shadow on noise or a loud
 day, shadow -> off after ``OFF_AFTER_FAILURES`` failed runs in a row. No stage
 row is written while Stop is set, or while the ceiling cannot be read.
 
-Nothing is written to Elasticsearch or Kibana.
+Nothing is written to Elasticsearch, Kibana or Splunk.
 """
 
 from __future__ import annotations
@@ -34,14 +38,27 @@ import logging
 import tomllib
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Set, Tuple
 
-from sqlalchemy import and_, bindparam, func, insert, select, text, update
+from sqlalchemy import (
+    and_,
+    bindparam,
+    case,
+    exists,
+    func,
+    insert,
+    or_,
+    select,
+    text,
+    update,
+)
+from sqlalchemy.orm import aliased
 
-from core.detections.inventory import kibana, readers, sees
+from core.detections.inventory import kibana, readers, sees, splunk
 from core.integrations._base import search_budget
 from core.integrations._base.ids import EXTERNAL_ID_MAX, fit_id
 from core.integrations.elastic.descriptor import ELASTIC
+from core.integrations.splunk.descriptor import SPLUNK, SPLUNK_SELFHOSTED_REQUIRED
 from core.storage.connection import get_db_manager
 from core.storage.models import DetectionRule, DetectionRuleStage, DetectionRuleVersion
 
@@ -60,6 +77,8 @@ LIVE_PER_DAY = 5
 REVERT_MIN_FINDINGS = 10
 REVERT_NOISE_SHARE = 0.5
 OFF_AFTER_FAILURES = 3
+# Links under which a SIEM copy runs an overlay rule in its place.
+HANDOFF_LINKS = ("same_id", "known_name", "agent")
 
 
 def _budget_key(rule_id: int) -> str:
@@ -72,6 +91,7 @@ class Copy:
     rule_id: int
     version: int
     name: str
+    language: str  # "elastic" or "splunk"
     stage: str
     stage_at: datetime
     checks: Dict[str, Any]
@@ -84,12 +104,13 @@ class RolloutReport:
     copies: int = 0
     searched: int = 0
     deferred: int = 0
+    handed_off: int = 0  # copies a linked SIEM copy runs instead
     written: int = 0
     moves: List[str] = field(default_factory=list)
     held: int = 0  # due moves not written: Stop set or the ceiling unread
     findings: List[Dict[str, Any]] = field(default_factory=list, repr=False)
     error: Optional[str] = None
-    skipped: Optional[str] = None
+    skipped: List[str] = field(default_factory=list)
 
 
 def _toml_rule(content: Mapping[str, Any]) -> Dict[str, Any]:
@@ -100,8 +121,13 @@ def _toml_rule(content: Mapping[str, Any]) -> Dict[str, Any]:
     return rule if isinstance(rule, dict) else {}
 
 
+def _rule_of(language: str, content: Mapping[str, Any]) -> Dict[str, Any]:
+    # A Splunk copy's content is its ESCU YAML as JSON; an Elastic one's is its TOML.
+    return dict(content) if language == "splunk" else _toml_rule(content)
+
+
 def _copies() -> List[Copy]:
-    """Active Elastic overlay copies at their latest version, with their current stage."""
+    """Active overlay copies at their latest version, with their current stage."""
     s = DetectionRuleStage
     current = (
         select(s.rule_id, s.stage, s.at)
@@ -115,6 +141,7 @@ def _copies() -> List[Copy]:
                 DetectionRule.id,
                 DetectionRule.latest_version,
                 DetectionRule.name,
+                DetectionRule.language,
                 current.c.stage,
                 current.c.at,
                 DetectionRuleVersion.checks,
@@ -130,14 +157,16 @@ def _copies() -> List[Copy]:
             .join(current, current.c.rule_id == DetectionRule.id)
             .where(
                 DetectionRule.source == readers.OVERLAY_SOURCE,
-                DetectionRule.language == "elastic",
+                DetectionRule.language.in_(("elastic", "splunk")),
                 DetectionRule.status == "active",
             )
             .order_by(DetectionRule.id)
         ).all()
     return [
-        Copy(rid, ver, name, stage, at, checks or {}, _toml_rule(content or {}))
-        for rid, ver, name, stage, at, checks, content in rows
+        Copy(
+            rid, ver, name, lang, stage, at, checks or {}, _rule_of(lang, content or {})
+        )
+        for rid, ver, name, lang, stage, at, checks, content in rows
     ]
 
 
@@ -155,8 +184,51 @@ def _elastic_config() -> Optional[Dict[str, Any]]:
     return None if missing(config, "elasticsearch_url") else config
 
 
+def _splunk_config() -> Optional[Dict[str, Any]]:
+    """splunk's resolved config, read as ``sync._sync_splunk`` reads it."""
+    from core.config import load_integrations_config
+    from core.integrations._base.config import missing, resolve
+
+    integrations = load_integrations_config()
+    if not integrations["configured"]:
+        return None
+    if SPLUNK.id not in integrations["enabled_integrations"]:
+        return None
+    config = resolve(SPLUNK)
+    return None if missing(config, *SPLUNK_SELFHOSTED_REQUIRED) else config
+
+
+def handed_off(copies: List[Copy]) -> Set[int]:
+    """Rule ids of the overlay copies an active SIEM copy runs instead.
+
+    That is a Splunk saved search (for a Splunk copy) or a Kibana rule (for an
+    Elastic one) linked by the sync (same_id / known_name) or an agent to the
+    overlay rule, or to an active repo rule with its name and language.
+    """
+    if not copies:
+        return set()
+    o, r, s = aliased(DetectionRule), aliased(DetectionRule), aliased(DetectionRule)
+    same_name = select(r.id).where(
+        r.source.startswith("repo:"),
+        r.status == "active",
+        r.name == o.name,
+        r.language == o.language,
+    )
+    linked = exists().where(
+        s.source == case((o.language == "splunk", splunk.SOURCE), else_=kibana.SOURCE),
+        s.status == "active",
+        s.link_kind.in_(HANDOFF_LINKS),
+        or_(s.origin_rule_id == o.id, s.origin_rule_id.in_(same_name)),
+    )
+    with get_db_manager().session_scope() as session:
+        ids = session.scalars(
+            select(o.id).where(o.id.in_([c.rule_id for c in copies]), linked)
+        ).all()
+    return set(ids)
+
+
 def runnable(rule: Mapping[str, Any]) -> Optional[str]:
-    """Why the runner cannot run this [rule] table, or None when it can."""
+    """Why the runner cannot run this Elastic [rule] table, or None when it can."""
     language = rule.get("language")
     if language not in LANGUAGES:
         return (
@@ -190,12 +262,44 @@ async def _query(
     return await service.lucene_search(_index(rule), query, window, MAX_DOCS)
 
 
+async def _splunk_query(
+    service: Any, copy: Copy, start: datetime, end: datetime
+) -> Tuple[int, List[Dict[str, Any]]]:
+    # Epoch ends, not "now": the next run starts where this one ended.
+    found = await asyncio.to_thread(
+        service.search,
+        str(copy.rule.get("search") or ""),
+        earliest_time=f"{start.timestamp():.3f}",
+        latest_time=f"{end.timestamp():.3f}",
+        max_count=MAX_DOCS,
+    )
+    # Rows, not event_count: that is events scanned, wrong for transforming SPL.
+    rows = found.results[:MAX_DOCS]
+    return len(rows), [_splunk_doc(row) for row in rows]
+
+
+def _digest(value: Any) -> str:
+    blob = json.dumps(value, sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode()).hexdigest()[:20]
+
+
+def _splunk_doc(row: Mapping[str, Any]) -> Dict[str, Any]:
+    """A result row in the shape of an Elasticsearch hit."""
+    if row.get("_cd"):
+        # _cd is per bucket; _bkt (index~id~guid) makes it unique across indexes.
+        hit_id = ":".join(str(row[k]) for k in ("_bkt", "_cd") if row.get(k))
+    elif row.get("_raw") is not None:
+        hit_id = _digest([row.get("_raw"), row.get("_time")])
+    else:
+        hit_id = _digest(row)
+    return {"_id": hit_id, "_index": row.get("index"), "_source": dict(row)}
+
+
 def _doc_id(doc: Mapping[str, Any]) -> str:
     if doc.get("_id"):
         return str(doc["_id"])
     # ES|QL rows carry no _id unless the query asks for METADATA _id.
-    blob = json.dumps(doc.get("_source"), sort_keys=True, default=str)
-    return hashlib.sha256(blob.encode()).hexdigest()[:20]
+    return _digest(doc.get("_source"))
 
 
 def _sample(doc: Mapping[str, Any]) -> Dict[str, Any]:
@@ -251,8 +355,17 @@ def _ran(
     return out
 
 
-def _entities(source: Mapping[str, Any]) -> Dict[str, List[str]]:
-    """The few ECS fields triage keys on, when the hit has them."""
+# The few fields triage keys on: ECS paths, else Splunk CIM names.
+_ENTITY_FIELDS = (
+    ("hostnames", ("host", "name"), ("dest", "host")),
+    ("usernames", ("user", "name"), ("user",)),
+    ("src_ips", ("source", "ip"), ("src_ip", "src")),
+    ("dest_ips", ("destination", "ip"), ("dest_ip",)),
+)
+
+
+def _entities(source: Mapping[str, Any], language: str) -> Dict[str, List[str]]:
+    """The few fields triage keys on, when the hit has them."""
 
     def get(*path: str) -> Any:
         value: Any = source
@@ -261,13 +374,11 @@ def _entities(source: Mapping[str, Any]) -> Dict[str, List[str]]:
         return value if value is not None else source.get(".".join(path))
 
     out: Dict[str, List[str]] = {}
-    for key, path in (
-        ("hostnames", ("host", "name")),
-        ("usernames", ("user", "name")),
-        ("src_ips", ("source", "ip")),
-        ("dest_ips", ("destination", "ip")),
-    ):
-        value = get(*path)
+    for key, path, cim in _ENTITY_FIELDS:
+        if language == "splunk":
+            value = next((source[f] for f in cim if source.get(f)), None)
+        else:
+            value = get(*path)
         if isinstance(value, (str, int)):
             out[key] = [str(value)]
     return out
@@ -277,58 +388,76 @@ def _finding(copy: Copy, doc: Mapping[str, Any], end: datetime) -> Dict[str, Any
     hit_id = _doc_id(doc)
     digest = hashlib.sha256(f"{copy.rule_id}:{hit_id}".encode()).hexdigest()[:32]
     source = doc.get("_source") if isinstance(doc.get("_source"), dict) else {}
-    ts = copy.rule.get("timestamp_override") or "@timestamp"
+    if copy.language == "splunk":
+        ts = "_time"
+    else:
+        ts = copy.rule.get("timestamp_override") or "@timestamp"
     stamp = source.get(ts) if isinstance(source.get(ts), str) else end.isoformat()
     severity = str(copy.rule.get("severity") or "medium").lower()
     return {
         "finding_id": f"overlay-{digest}",
         "external_id": fit_id("", f"overlay:{copy.rule_id}:{hit_id}", EXTERNAL_ID_MAX),
-        "data_source": "elastic",
+        "data_source": copy.language,
         "timestamp": stamp,
         "severity": severity,
         "title": str(copy.rule.get("name") or copy.name),
         "description": str(copy.rule.get("description") or "")[:500],
         "entity_context": {
-            **_entities(source),
+            **_entities(source, copy.language),
             "detection_rule": {"rule_id": copy.rule_id, "version": copy.version},
         },
         "raw_data": dict(doc),  # becomes source_evidence.records
     }
 
 
+Query = Callable[[Any, Copy, datetime, datetime], Awaitable[Tuple[int, List[Dict]]]]
+
+
 async def _run_all(
+    integration: str,
+    service: Any,
+    query: Query,
+    copies: List[Copy],
+    per_hour: int,
+    now: datetime,
+    report: RolloutReport,
+) -> Dict[int, Tuple[Optional[int], List[Dict], Optional[str]]]:
+    """(total, docs, error) by rule id, for the copies ``integration``'s budget reached."""
+    results: Dict[int, Tuple[Optional[int], List[Dict], Optional[str]]] = {}
+    last = search_budget.last_spent(
+        integration, [_budget_key(c.rule_id) for c in copies]
+    )
+    never = datetime.min.replace(tzinfo=timezone.utc)
+    order = sorted(copies, key=lambda c: last.get(_budget_key(c.rule_id), never))
+    for n, copy in enumerate(order):
+        if not search_budget.spend(integration, per_hour, _budget_key(copy.rule_id)):
+            report.deferred += len(order) - n
+            break
+        report.searched += 1
+        since = (copy.checks.get("runs") or {}).get("last_success")
+        start = datetime.fromisoformat(since) if since else now - FIRST_WINDOW
+        try:
+            total, docs = await query(service, copy, start, now)
+            results[copy.rule_id] = (total, docs, None)
+        except Exception as exc:  # noqa: BLE001 -- the run fails with its message
+            results[copy.rule_id] = (None, [], str(exc)[:500] or type(exc).__name__)
+    return results
+
+
+async def _run_elastic(
     config: Mapping[str, Any],
     copies: List[Copy],
     per_hour: int,
     now: datetime,
     report: RolloutReport,
 ) -> Dict[int, Tuple[Optional[int], List[Dict], Optional[str]]]:
-    """(total, docs, error) by rule id, for the copies the budget reached."""
-    results: Dict[int, Tuple[Optional[int], List[Dict], Optional[str]]] = {}
-    last = search_budget.last_spent(
-        INTEGRATION, [_budget_key(c.rule_id) for c in copies]
-    )
-    never = datetime.min.replace(tzinfo=timezone.utc)
-    order = sorted(copies, key=lambda c: last.get(_budget_key(c.rule_id), never))
     service = kibana.service_of(config)
     try:
-        for n, copy in enumerate(order):
-            if not search_budget.spend(
-                INTEGRATION, per_hour, _budget_key(copy.rule_id)
-            ):
-                report.deferred = len(order) - n
-                break
-            report.searched += 1
-            since = (copy.checks.get("runs") or {}).get("last_success")
-            start = datetime.fromisoformat(since) if since else now - FIRST_WINDOW
-            try:
-                total, docs = await _query(service, copy, start, now)
-                results[copy.rule_id] = (total, docs, None)
-            except Exception as exc:  # noqa: BLE001 -- the run reads fail
-                results[copy.rule_id] = (None, [], str(exc)[:500] or type(exc).__name__)
+        return await _run_all(
+            INTEGRATION, service, _query, copies, per_hour, now, report
+        )
     finally:
         await service.close()
-    return results
 
 
 def _write_runs(copies: List[Copy], results: Dict[int, tuple], now: datetime) -> int:
@@ -539,8 +668,8 @@ def sweep(now: datetime, report: RolloutReport) -> None:
             session.execute(insert(DetectionRuleStage), rows)
 
 
-def run(live: bool) -> RolloutReport:
-    """Run the overlay copies within the budget, then sweep their stages.
+def run_copies(live: bool) -> RolloutReport:
+    """Run both SIEMs' overlay copies within their budgets.
 
     ``live`` False (no processor queue) skips live copies entirely, so their
     last successful run stays put and their hits are read next tick.
@@ -548,13 +677,37 @@ def run(live: bool) -> RolloutReport:
     report = RolloutReport()
     now = datetime.now(timezone.utc)
     try:
-        _run_copies(live, now, report)
-    except Exception as exc:  # noqa: BLE001 -- the sync's own reports stand
-        logger.warning("detection rules: overlay runs failed: %s", exc)
+        copies = [
+            c for c in _copies() if c.stage == "shadow" or (c.stage == "live" and live)
+        ]
+        skip = handed_off(copies)
+    except Exception as exc:  # noqa: BLE001 -- the sync still runs
+        logger.warning("detection rules: reading overlay copies failed: %s", exc)
         report.error = f"{type(exc).__name__}: {exc}"
+        return report
+    report.handed_off = len(skip)
+    copies = [c for c in copies if c.rule_id not in skip]
+    report.copies = len(copies)
+    for language, step in (
+        ("elastic", _run_elastic_copies),
+        ("splunk", _run_splunk_copies),
+    ):
+        mine = [c for c in copies if c.language == language]
+        if not mine:
+            continue
+        try:  # one SIEM unreachable leaves the other's runs standing
+            step(mine, now, report)
+        except Exception as exc:  # noqa: BLE001 -- the sync's own reports stand
+            logger.warning("detection rules: %s overlay runs failed: %s", language, exc)
+            report.error = report.error or f"{language}: {type(exc).__name__}: {exc}"
+    return report
+
+
+def run_sweep(report: RolloutReport) -> RolloutReport:
+    """Write the stage rows due onto ``report``: its own step, so a Revert is
+    still due when a SIEM is unreachable."""
     try:
-        # Its own step: a Revert is still due when Elasticsearch is unreachable.
-        sweep(now, report)
+        sweep(datetime.now(timezone.utc), report)
     except Exception as exc:  # noqa: BLE001
         logger.warning("detection rules: overlay stage sweep failed: %s", exc)
         report.error = report.error or f"sweep: {type(exc).__name__}: {exc}"
@@ -562,22 +715,57 @@ def run(live: bool) -> RolloutReport:
     return report
 
 
-def _run_copies(live: bool, now: datetime, report: RolloutReport) -> None:
-    config = _elastic_config()
-    if config is None:
-        report.skipped = "elastic-siem not enabled or has no elasticsearch_url"
-        return
-    per_hour = config.get("max_searches_per_hour")
-    per_hour = sees.DEFAULT_PER_HOUR if per_hour is None else max(int(per_hour), 0)
-    copies = [
-        c for c in _copies() if c.stage == "shadow" or (c.stage == "live" and live)
-    ]
-    report.copies = len(copies)
-    blocked = [(c, why) for c in copies if (why := runnable(c.rule))]
-    ready = [c for c in copies if not runnable(c.rule)]
-    results = asyncio.run(_run_all(config, ready, per_hour, now, report))
-    report.written = _write_runs(ready, results, now) + _write_unrunnable(blocked, now)
-    for copy in ready:
+def run(live: bool) -> RolloutReport:
+    """Run the overlay copies within their budgets, then sweep their stages."""
+    return run_sweep(run_copies(live))
+
+
+def _finish(
+    copies: List[Copy], results: Dict[int, tuple], now: datetime, report: RolloutReport
+) -> None:
+    report.written += _write_runs(copies, results, now)
+    for copy in copies:
         _, docs, error = results.get(copy.rule_id, (None, [], "not run"))
         if copy.stage == "live" and not error:
             report.findings += [_finding(copy, d, now) for d in docs]
+
+
+def _run_elastic_copies(
+    copies: List[Copy], now: datetime, report: RolloutReport
+) -> None:
+    config = _elastic_config()
+    if config is None:
+        report.skipped.append("elastic-siem not enabled or has no elasticsearch_url")
+        return
+    per_hour = config.get("max_searches_per_hour")
+    per_hour = sees.DEFAULT_PER_HOUR if per_hour is None else max(int(per_hour), 0)
+    blocked = [(c, why) for c in copies if (why := runnable(c.rule))]
+    ready = [c for c in copies if not runnable(c.rule)]
+    results = asyncio.run(_run_elastic(config, ready, per_hour, now, report))
+    report.written += _write_unrunnable(blocked, now)
+    _finish(ready, results, now, report)
+
+
+def _run_splunk_copies(
+    copies: List[Copy], now: datetime, report: RolloutReport
+) -> None:
+    config = _splunk_config()
+    if config is None:
+        report.skipped.append("splunk not enabled or missing its login")
+        return
+    why = "a splunk copy needs a search: add search: <SPL> to its YAML"
+    blocked = [(c, why) for c in copies if not str(c.rule.get("search") or "").strip()]
+    ready = [c for c in copies if str(c.rule.get("search") or "").strip()]
+    results = asyncio.run(
+        _run_all(
+            splunk.SOURCE,
+            splunk.service_of(config),
+            _splunk_query,
+            ready,
+            splunk.per_hour_of(config),
+            now,
+            report,
+        )
+    )
+    report.written += _write_unrunnable(blocked, now)
+    _finish(ready, results, now, report)
