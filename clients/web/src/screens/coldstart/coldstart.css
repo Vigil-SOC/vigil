@@ -1,0 +1,55 @@
+/* Console tokens only (tokens.css), so both themes follow. */
+.cs { display: grid; gap: 16px; min-width: 0; }
+.screen > .cs { padding: 4px 26px 26px; }
+@media (max-width: 760px) { .screen > .cs { padding: 4px 16px 20px; } }
+.cs-tag { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--ln1); background: var(--bg1); font-size: 11.5px; font-weight: 600; color: var(--tx1); white-space: nowrap; }
+.cs-tag.ac { color: var(--ac); border-color: var(--ac-ln); background: var(--ac-bg); }
+.cs-tag.fair { color: var(--fair); border-color: var(--fair-ln); background: var(--fair-bg); }
+.cs-tag.good { color: var(--good); border-color: var(--good-ln); background: var(--good-bg); }
+.cs-tag.poor { color: var(--poor); border-color: var(--poor-ln); background: var(--poor-bg); }
+.cs-card { background: var(--bg1); border: 1px solid var(--ln1); border-radius: var(--radius-card, 10px); padding: 14px 16px; min-width: 0; }
+.cs-card h2 { margin: 0; font-size: 16px; font-weight: 650; color: var(--tx0); }
+.cs-muted { color: var(--tx2); }
+.cs-mono { font-family: var(--font-mono); font-size: 12px; }
+.cs-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.cs-grid3 { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.cs-stat { display: grid; gap: 2px; }
+.cs-stat b { font-size: 24px; font-weight: 700; color: var(--tx0); font-variant-numeric: tabular-nums; letter-spacing: -.3px; }
+.cs-stat span { font-size: 12.5px; color: var(--tx2); }
+.cs-link { color: var(--ac); background: none; border: 0; padding: 0; font: inherit; cursor: pointer; text-align: left; }
+.cs-link:hover { text-decoration: underline; }
+.cs-link:focus-visible, .cs-chipbtn:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+.cs-chipbtn { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--ln1); background: var(--bg1); color: var(--tx1); font-size: 12.5px; cursor: pointer; }
+.cs-chipbtn[aria-pressed="true"] { border-color: var(--ac); background: var(--ac-bg); color: var(--tx0); }
+.cs-chipbtn .n { color: var(--tx2); font-variant-numeric: tabular-nums; }
+.cs-table-wrap { overflow-x: auto; border: 1px solid var(--ln1); border-radius: var(--radius-card, 10px); background: var(--bg1); }
+.cs-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.cs-table th { text-align: left; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .5px; color: var(--tx2); padding: 8px 10px; border-bottom: 1px solid var(--ln1); white-space: nowrap; position: sticky; top: 0; background: var(--bg1); }
+.cs-table td { padding: 7px 10px; border-top: 1px solid var(--ln0); vertical-align: top; color: var(--tx1); }
+.cs-table tr.open td { background: var(--bg2); }
+.cs-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.cs-kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 14px; font-size: 12.5px; }
+.cs-kv dt { color: var(--tx2); } .cs-kv dd { margin: 0; color: var(--tx0); overflow-wrap: anywhere; }
+.cs-reasons { margin: 0; padding-left: 18px; display: grid; gap: 7px; font-size: 13.5px; color: var(--tx1); }
+.cs-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--good); margin-right: 6px; }
+.cs-dot.off { background: var(--tx3); }
+.cs-start-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.cs-start-step { height: 100%; display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 8px; align-items: center; padding: 10px; border: 1px solid var(--ln1); border-radius: var(--radius-card, 10px); background: var(--bg1); color: var(--tx1); }
+.cs-start-step .n { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; border: 1px solid var(--ln1); font-size: 12px; }
+.cs-start-step .l { color: var(--tx0); font-size: 13px; }
+.cs-start-step.on { border-color: var(--ac); background: var(--ac-bg); }
+.cs-start-step.on .n { border-color: var(--ac); color: var(--ac); }
+.cs-start-step.past .n { border-color: var(--good-ln); color: var(--good); background: var(--good-bg); }
+@media (max-width: 1000px) { .cs-start-steps { grid-template-columns: minmax(0, 1fr); } }
+.cs-sources { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.cs-source { display: grid; gap: 4px; align-content: start; justify-items: start; text-align: left; padding: 12px; border: 1px solid var(--ln1); border-radius: var(--radius-card, 10px); background: var(--bg1); color: var(--tx2); font: inherit; font-size: 12.5px; }
+button.cs-source { cursor: pointer; }
+.cs-source[aria-pressed="true"] { border-color: var(--ac); background: var(--ac-bg); }
+.cs-source:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+.cs-source b { color: var(--tx0); font-size: 13.5px; font-weight: 600; }
+.cs-field { display: grid; gap: 4px; justify-items: start; font-size: 13px; color: var(--tx1); }
+.cs-stat > .cs-tag { justify-self: start; margin-top: 4px; font-size: 11.5px; color: var(--tx1); }
+.cs-stat > .cs-tag.ac { color: var(--ac); }
+.cs-range { height: 34px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--ln1); background: var(--bg2); color: var(--tx0); font-size: 12.5px; }
+.cs-error { padding: 10px 12px; border-color: var(--poor-ln); background: var(--poor-bg); color: var(--tx0); font-size: 12.5px; }
+.cs-note { padding: 10px 12px; border-color: var(--fair-ln); background: var(--fair-bg); color: var(--tx0); font-size: 12.5px; }

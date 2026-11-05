@@ -285,6 +285,12 @@ function Verdict({ verdict }: { verdict: TriageVerdict | null }) {
   )
 }
 
+const BASELINE_WORDS: Record<string, string> = {
+  dismiss_candidate: 'Would close',
+  escalate: 'Escalate',
+  abstain: 'Needs judgment',
+}
+
 function VerdictPanel({ verdict }: { verdict: TriageVerdict }) {
   return (
     <>
@@ -295,6 +301,9 @@ function VerdictPanel({ verdict }: { verdict: TriageVerdict }) {
           <BreakdownRow label="Category">{verdict.category ?? BLANK}</BreakdownRow>
           <BreakdownRow label="Confidence">{verdict.confidence === null ? BLANK : `${Math.round(verdict.confidence * 100)}%`}</BreakdownRow>
           <BreakdownRow label="Triaged at">{fmtArrived(verdict.triaged_at)}</BreakdownRow>
+          {verdict.recommended_action && <BreakdownRow label="Model recommends">{verdict.recommended_action}</BreakdownRow>}
+          {verdict.baseline && <BreakdownRow label="Your history says">{BASELINE_WORDS[verdict.baseline.stage1] ?? verdict.baseline.stage1}</BreakdownRow>}
+          {verdict.baseline?.reasons.map((reason) => <p key={reason} className="tq-reasoning">{reason}</p>)}
           {verdict.reasoning && <p className="tq-reasoning">{verdict.reasoning}</p>}
         </>
       )}

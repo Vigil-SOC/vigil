@@ -36,6 +36,11 @@ from core.storage.models.case_entities import (
     CaseWatcher,
     SLAPolicy,
 )
+from core.storage.models.cold_start import (
+    ColdStartAlert,
+    ColdStartOutcome,
+    ColdStartRun,
+)
 from core.storage.models.config import (
     ConfigAuditLog,
     FederationSource,
@@ -106,6 +111,9 @@ __all__ = [
     "CaseTemplate",
     "CaseWatcher",
     "ChatMessage",
+    "ColdStartAlert",
+    "ColdStartOutcome",
+    "ColdStartRun",
     "ConfigAuditLog",
     "Conversation",
     "CustomAgent",

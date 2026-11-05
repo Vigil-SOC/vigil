@@ -31,6 +31,7 @@ forbidden_modules =
     core.auth
     core.cases
     core.chat
+    core.coldstart
     core.detections
     core.federation
     core.findings
@@ -52,6 +53,7 @@ source_modules =
     core.auth
     core.cases
     core.chat
+    core.coldstart
     core.detections
     core.federation
     core.findings

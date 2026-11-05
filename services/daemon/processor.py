@@ -8,6 +8,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from redis.exceptions import RedisError
 
+from core.coldstart import active
+from core.coldstart.baseline import Assessment, alert_from_finding, assess
 from core.findings.exclusions import cached_active_ips, excluded_ips_of
 from core.ingestion.ack import settle_ack
 from core.ingestion.dedup import RedisDedupSet
@@ -697,6 +699,7 @@ class FindingProcessor:
         try:
             # Build triage prompt
             prompt = self._build_triage_prompt(finding)
+            precedent = await self._baseline_precedent(finding)
 
             # The gateway gives up at triage_timeout only if no worker has
             # started the call; a started one is still answering. This bound
@@ -710,6 +713,12 @@ class FindingProcessor:
                 # Parse and apply AI assessment
                 finding = self._apply_triage_result(finding, response)
                 self.stats["triaged"] += 1
+                if precedent:
+                    finding["ai_triage"]["baseline"] = {
+                        "stage1": precedent.stage1.value,
+                        "rule": precedent.rule,
+                        "reasons": list(precedent.reasons),
+                    }
             else:
                 finding["ai_triage_error"] = error or "empty LLM response"
 
@@ -725,6 +734,21 @@ class FindingProcessor:
             finding["ai_triage_error"] = f"{type(e).__name__}: {e}"
 
         return finding
+
+    async def _baseline_precedent(
+        self, finding: Dict[str, Any]
+    ) -> Optional[Assessment]:
+        """What the live cold start baseline says about this finding, if there is one.
+
+        It is stored for a person and never reaches the model: on synthetic alerts it
+        made the model stand down on real attacks. It closes nothing."""
+        if finding.get("data_source") == PROBE_DATA_SOURCE:
+            return None
+        baseline = await asyncio.to_thread(active.live_baseline)
+        alert = alert_from_finding(finding) if baseline else None
+        if alert is None:
+            return None
+        return assess(alert, baseline)
 
     def _build_triage_prompt(self, finding: Dict[str, Any]) -> str:
         """Build prompt for AI triage."""

@@ -789,6 +789,112 @@ export const ingestionApi = {
 export type SampleAlertsStatus = Schema<'SampleAlertsStatus'>
 export type SampleAlertsCleared = Schema<'SampleAlertsCleared'>
 
+// Day-one cold start
+export interface ColdStartSource {
+  id: string
+  label: string
+  kind: 'federation' | 'upload'
+  configured: boolean
+}
+
+export interface ColdStartSources {
+  sources: ColdStartSource[]
+  model: { provider: string; model: string } | null
+  loglm: { connected: boolean }
+  daemon: { state: ColdStartDaemonState; auto_triage: boolean }
+}
+
+export type ColdStartDaemonState = 'running' | 'unhealthy' | 'not_running' | 'unknown'
+
+export type ColdStartRunStatus = 'collecting' | 'judging' | 'ready' | 'live' | 'failed'
+
+export interface ColdStartRun {
+  id: string
+  source: string
+  status: ColdStartRunStatus
+  error: string | null
+  running: boolean
+  resumable: boolean
+  history_days: number
+  review_days: number
+  judging_skipped: string | null
+  progress: { phase: string; done?: number; total?: number; alerts?: number; capped?: boolean; judge_failed?: number }
+  counts: {
+    alerts_read: number
+    days_covered: number
+    kinds: number
+    tickets_kept: number
+    tickets_unlinked: number
+    tickets_dropped: Record<string, number>
+    review_alerts: number
+    dismiss_candidates: number
+    escalations: number
+    abstained: number
+    judged: number
+    unparsed: number
+    average_model_seconds: number | null
+  }
+  created_at: string
+  updated_at: string
+}
+
+export interface ColdStartRunRequest {
+  source: string
+  history_days: number
+  review_days?: number
+  judge_limit?: number
+}
+
+export interface ColdStartUploadResult {
+  kept: number
+  dropped: Record<string, number>
+}
+
+export type ColdStartVerdict = 'agree' | 'not_benign'
+
+export interface ColdStartGroup {
+  key: string
+  label: string
+  source: string
+  count: number
+  stage1: { escalate: number; abstain: number; dismiss_candidate: number }
+  top_rule: string
+  reasons: string[]
+  sample: { title: string; severity: string; observed_at: string; entities: string[] }
+  llm: { judged: number; verdicts: Record<string, number>; example_reasoning: string | null; unparsed: number }
+  review: { agree: number; not_benign: number; pending: number }
+  tickets: { benign: number; real: number }
+  miss_bound: number | null
+}
+
+const coldStartRunUrl = (runId: string) => `/cold-start/runs/${encodeURIComponent(runId)}`
+
+const coldStartUpload = (runId: string, kind: 'alerts' | 'tickets', file: File) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  return api.post<ColdStartUploadResult>(`${coldStartRunUrl(runId)}/${kind}`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 0,
+  })
+}
+
+export const coldStartApi = {
+  sources: () => api.get<ColdStartSources>('/cold-start/sources'),
+  // 404 when no run exists yet
+  latestRun: (timeout?: number) => api.get<ColdStartRun>('/cold-start/runs/latest', { timeout }),
+  getRun: (runId: string) => api.get<ColdStartRun>(coldStartRunUrl(runId)),
+  createRun: (request: ColdStartRunRequest) =>
+    api.post<ColdStartRun>('/cold-start/runs', request, { timeout: LLM_TIMEOUT }),
+  uploadAlerts: (runId: string, file: File) => coldStartUpload(runId, 'alerts', file),
+  uploadTickets: (runId: string, file: File) => coldStartUpload(runId, 'tickets', file),
+  judge: (runId: string) => api.post<ColdStartRun>(`${coldStartRunUrl(runId)}/judge`),
+  rebuild: (runId: string) => api.post(`${coldStartRunUrl(runId)}/rebuild`, undefined, { timeout: LLM_TIMEOUT }),
+  groups: (runId: string) => api.get<{ groups: ColdStartGroup[] }>(`${coldStartRunUrl(runId)}/groups`),
+  review: (runId: string, key: string, verdict: ColdStartVerdict) =>
+    api.post<{ groups: ColdStartGroup[] }>(`${coldStartRunUrl(runId)}/groups/${encodeURIComponent(key)}/review`, { verdict }),
+  goLive: (runId: string) => api.post<ColdStartRun>(`${coldStartRunUrl(runId)}/go-live`),
+}
+
 export interface BudgetSettings {
   default_vk: string
 }
@@ -1521,6 +1627,8 @@ export type TriageVerdict =
       confidence: number | null
       reasoning: string | null
       triaged_at: string | null
+      recommended_action: string | null
+      baseline: { stage1: string; rule: string; reasons: string[] } | null
     }
   | { state: 'failed'; error: string }
   | { state: 'none' }

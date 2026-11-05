@@ -46,6 +46,7 @@ import { ROUTABILITY_CHANGED } from '../screens/settings/routabilityChanged'
 import NotFoundScreen from '../screens/notfound/NotFoundScreen'
 import OverviewScreen from '../screens/overview/OverviewScreen'
 import TriageScreen from '../screens/triage/TriageScreen'
+import StartScreen from '../screens/coldstart/StartScreen'
 import { VigilLogo } from '../shared/VigilLogo'
 import {
   authBypassed,
@@ -58,7 +59,7 @@ import {
 } from './statusLine'
 
 // what a collapsed vertical tile shows under its icon, where the full label would not fit
-const TILE_LABELS: Record<string, string> = { triage: 'Triage', metrics: 'Metrics', workflows: 'Agents' }
+const TILE_LABELS: Record<string, string> = { start: 'Day one', triage: 'Triage', metrics: 'Metrics', workflows: 'Agents' }
 
 const AUTONOMY_ACT = 'Act · reversible changes on its own'
 const AUTONOMY_ASSIST = 'Assist · asks before changes'
@@ -66,6 +67,7 @@ const AUTONOMY_IRREVERSIBLE = 'Actions that cannot be undone also run on their o
 
 const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Element> = {
   overview: OverviewScreen,
+  start: StartScreen,
   triage: TriageScreen,
   dashboard: DashboardScreen,
   detections: DetectionsScreen,
@@ -182,7 +184,8 @@ function SocConsoleInner() {
     () => (canTourHome ? ['nav', 'attention', 'ask'] : ['nav', 'ask']),
     [canTourHome],
   )
-  const [tourOn, setTourOn] = useState(() => !readConsoleTourSeen())
+  // The tour's second stop moves to Home, which would pull a first visit off day one setup.
+  const [tourOn, setTourOn] = useState(() => !readConsoleTourSeen() && current !== 'start')
   const [tourIndex, setTourIndex] = useState(0)
   const [demoOn, setDemoOn] = useState(false)
   // the stored choice yields to a narrow window and to the open dock, without being rewritten

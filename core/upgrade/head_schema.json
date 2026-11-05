@@ -1654,6 +1654,206 @@
   "nullable": false,
   "type": "jsonb"
  },
+ "column cold_start_alerts.alert_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column cold_start_alerts.entities": {
+  "default": "'[]'::jsonb",
+  "nullable": false,
+  "type": "jsonb"
+ },
+ "column cold_start_alerts.in_review_window": {
+  "default": "false",
+  "nullable": false,
+  "type": "boolean"
+ },
+ "column cold_start_alerts.llm": {
+  "default": null,
+  "nullable": true,
+  "type": "jsonb"
+ },
+ "column cold_start_alerts.observed_at": {
+  "default": null,
+  "nullable": false,
+  "type": "timestamp with time zone"
+ },
+ "column cold_start_alerts.payload": {
+  "default": "'{}'::jsonb",
+  "nullable": false,
+  "type": "jsonb"
+ },
+ "column cold_start_alerts.reasons": {
+  "default": null,
+  "nullable": true,
+  "type": "jsonb"
+ },
+ "column cold_start_alerts.review": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column cold_start_alerts.reviewed_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp with time zone"
+ },
+ "column cold_start_alerts.reviewed_by": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column cold_start_alerts.rule": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column cold_start_alerts.run_id": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(36)"
+ },
+ "column cold_start_alerts.severity": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column cold_start_alerts.signature": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column cold_start_alerts.source": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column cold_start_alerts.stage1": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column cold_start_alerts.title": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column cold_start_outcomes.alert_ids": {
+  "default": "'[]'::jsonb",
+  "nullable": false,
+  "type": "jsonb"
+ },
+ "column cold_start_outcomes.closed_at": {
+  "default": null,
+  "nullable": false,
+  "type": "timestamp with time zone"
+ },
+ "column cold_start_outcomes.disposition": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column cold_start_outcomes.entities": {
+  "default": "'[]'::jsonb",
+  "nullable": false,
+  "type": "jsonb"
+ },
+ "column cold_start_outcomes.external_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column cold_start_outcomes.run_id": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(36)"
+ },
+ "column cold_start_outcomes.signature": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column cold_start_outcomes.source_system": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column cold_start_runs.baseline": {
+  "default": null,
+  "nullable": true,
+  "type": "jsonb"
+ },
+ "column cold_start_runs.created_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp with time zone"
+ },
+ "column cold_start_runs.created_by": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column cold_start_runs.drops": {
+  "default": "'{}'::jsonb",
+  "nullable": false,
+  "type": "jsonb"
+ },
+ "column cold_start_runs.error": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column cold_start_runs.history_days": {
+  "default": null,
+  "nullable": false,
+  "type": "integer"
+ },
+ "column cold_start_runs.judge_limit": {
+  "default": null,
+  "nullable": false,
+  "type": "integer"
+ },
+ "column cold_start_runs.judging_skipped": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column cold_start_runs.live_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp with time zone"
+ },
+ "column cold_start_runs.progress": {
+  "default": "'{}'::jsonb",
+  "nullable": false,
+  "type": "jsonb"
+ },
+ "column cold_start_runs.review_days": {
+  "default": null,
+  "nullable": false,
+  "type": "integer"
+ },
+ "column cold_start_runs.run_id": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(36)"
+ },
+ "column cold_start_runs.source": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column cold_start_runs.status": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(16)"
+ },
+ "column cold_start_runs.updated_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp with time zone"
+ },
  "column config_audit_log.action": {
   "default": null,
   "nullable": false,
@@ -4109,6 +4309,15 @@
  "constraint chat_messages.chat_messages_conversation_id_fkey": "FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE",
  "constraint chat_messages.chat_messages_pkey": "PRIMARY KEY (id)",
  "constraint chat_messages.uq_chat_messages_conv_seq": "UNIQUE (conversation_id, seq)",
+ "constraint cold_start_alerts.cold_start_alerts_pkey": "PRIMARY KEY (run_id, alert_id)",
+ "constraint cold_start_alerts.cold_start_alerts_review_check": "CHECK ((review = ANY (ARRAY['agree'::text, 'not_benign'::text])))",
+ "constraint cold_start_alerts.cold_start_alerts_run_fkey": "FOREIGN KEY (run_id) REFERENCES cold_start_runs(run_id) ON DELETE CASCADE",
+ "constraint cold_start_alerts.cold_start_alerts_stage1_check": "CHECK ((stage1 = ANY (ARRAY['escalate'::text, 'abstain'::text, 'dismiss_candidate'::text])))",
+ "constraint cold_start_outcomes.cold_start_outcomes_disposition_check": "CHECK ((disposition = ANY (ARRAY['benign_positive'::text, 'false_positive'::text, 'true_positive'::text])))",
+ "constraint cold_start_outcomes.cold_start_outcomes_pkey": "PRIMARY KEY (run_id, external_id)",
+ "constraint cold_start_outcomes.cold_start_outcomes_run_fkey": "FOREIGN KEY (run_id) REFERENCES cold_start_runs(run_id) ON DELETE CASCADE",
+ "constraint cold_start_runs.cold_start_runs_pkey": "PRIMARY KEY (run_id)",
+ "constraint cold_start_runs.cold_start_runs_status_check": "CHECK (((status)::text = ANY ((ARRAY['collecting'::character varying, 'judging'::character varying, 'ready'::character varying, 'live'::character varying, 'failed'::character varying])::text[])))",
  "constraint config_audit_log.config_audit_log_pkey": "PRIMARY KEY (id)",
  "constraint conversations.conversations_pkey": "PRIMARY KEY (id)",
  "constraint custom_agents.custom_agents_pkey": "PRIMARY KEY (id)",
@@ -4367,6 +4576,9 @@
  "index case_watchers_pkey": "CREATE UNIQUE INDEX case_watchers_pkey ON public.case_watchers USING btree (case_id, user_id)",
  "index cases_pkey": "CREATE UNIQUE INDEX cases_pkey ON public.cases USING btree (case_id)",
  "index chat_messages_pkey": "CREATE UNIQUE INDEX chat_messages_pkey ON public.chat_messages USING btree (id)",
+ "index cold_start_alerts_pkey": "CREATE UNIQUE INDEX cold_start_alerts_pkey ON public.cold_start_alerts USING btree (run_id, alert_id)",
+ "index cold_start_outcomes_pkey": "CREATE UNIQUE INDEX cold_start_outcomes_pkey ON public.cold_start_outcomes USING btree (run_id, external_id)",
+ "index cold_start_runs_pkey": "CREATE UNIQUE INDEX cold_start_runs_pkey ON public.cold_start_runs USING btree (run_id)",
  "index config_audit_log_pkey": "CREATE UNIQUE INDEX config_audit_log_pkey ON public.config_audit_log USING btree (id)",
  "index conversations_pkey": "CREATE UNIQUE INDEX conversations_pkey ON public.conversations USING btree (id)",
  "index custom_agents_pkey": "CREATE UNIQUE INDEX custom_agents_pkey ON public.custom_agents USING btree (id)",
@@ -4470,6 +4682,7 @@
  "index idx_case_watcher_case_id": "CREATE INDEX idx_case_watcher_case_id ON public.case_watchers USING btree (case_id)",
  "index idx_case_watcher_user_id": "CREATE INDEX idx_case_watcher_user_id ON public.case_watchers USING btree (user_id)",
  "index idx_chat_messages_conversation": "CREATE INDEX idx_chat_messages_conversation ON public.chat_messages USING btree (conversation_id)",
+ "index idx_cold_start_alerts_review": "CREATE INDEX idx_cold_start_alerts_review ON public.cold_start_alerts USING btree (run_id, in_review_window, stage1)",
  "index idx_conversations_user_archived": "CREATE INDEX idx_conversations_user_archived ON public.conversations USING btree (user_id, archived)",
  "index idx_conversations_user_last_msg": "CREATE INDEX idx_conversations_user_last_msg ON public.conversations USING btree (user_id, last_message_at)",
  "index idx_custom_agents_updated_at": "CREATE INDEX idx_custom_agents_updated_at ON public.custom_agents USING btree (updated_at DESC)",
@@ -4588,6 +4801,8 @@
  "index uniq_ip_exclusions_active_ip": "CREATE UNIQUE INDEX uniq_ip_exclusions_active_ip ON public.ip_exclusions USING btree (ip) WHERE (removed_at IS NULL)",
  "index uq_approval_actions_idempotency_key": "CREATE UNIQUE INDEX uq_approval_actions_idempotency_key ON public.approval_actions USING btree (idempotency_key) WHERE ((idempotency_key IS NOT NULL) AND ((status)::text <> 'failed'::text))",
  "index uq_chat_messages_conv_seq": "CREATE UNIQUE INDEX uq_chat_messages_conv_seq ON public.chat_messages USING btree (conversation_id, seq)",
+ "index uq_cold_start_runs_one_active": "CREATE UNIQUE INDEX uq_cold_start_runs_one_active ON public.cold_start_runs USING btree ((1)) WHERE ((status)::text = ANY ((ARRAY['collecting'::character varying, 'judging'::character varying])::text[]))",
+ "index uq_cold_start_runs_one_live": "CREATE UNIQUE INDEX uq_cold_start_runs_one_live ON public.cold_start_runs USING btree ((1)) WHERE ((status)::text = 'live'::text)",
  "index uq_intake_triggers_queued_finding": "CREATE UNIQUE INDEX uq_intake_triggers_queued_finding ON public.intake_triggers USING btree (finding_id) WHERE (((state)::text = 'queued'::text) AND (finding_id IS NOT NULL))",
  "index user_preferences_pkey": "CREATE UNIQUE INDEX user_preferences_pkey ON public.user_preferences USING btree (user_id)",
  "index users_email_key": "CREATE UNIQUE INDEX users_email_key ON public.users USING btree (email)",
@@ -5423,6 +5638,72 @@
    false
   ],
   "sequence": "[\"integer\", 1, 1, 1, 2147483647, 1, false]"
+ },
+ "relation cold_start_alerts": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation cold_start_outcomes": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation cold_start_runs": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
  },
  "relation config_audit_log": {
   "acl": [

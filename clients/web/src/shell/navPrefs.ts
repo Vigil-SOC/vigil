@@ -10,7 +10,7 @@ export interface NavPrefs {
   iconsOnly: boolean
 }
 
-export const NAV_SHOWN_DEFAULT = ['home', 'overview', 'triage', 'cases', 'workflows', 'settings']
+export const NAV_SHOWN_DEFAULT = ['home', 'start', 'overview', 'triage', 'cases', 'workflows', 'settings']
 
 export const NAV_PREFS_DEFAULT: NavPrefs = { layout: 'vertical', collapsed: false, shown: NAV_SHOWN_DEFAULT, iconsOnly: false }
 

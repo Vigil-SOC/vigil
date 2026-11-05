@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { NAV, TITLES, type ConsoleScreenKey, type NavGate } from '../data/data'
 import { useExtensions } from '../extensions/ExtensionProvider'
 import type { IconName } from '../shared/icons'
-import { HOME_PERM } from './landing'
+import { HOME_PERM, START_PERM } from './landing'
 
 /** The only permission check in the app; ProtectedRoute handles auth alone.
  *  Screens absent here are ungated, and DEV_MODE grants everything. */
@@ -12,6 +12,7 @@ export const SCREEN_PERMS: Partial<Record<ConsoleScreenKey, string>> = {
   detections: 'detections.read',
   home: HOME_PERM,
   medic: 'medic.read',
+  start: START_PERM,
 }
 
 /** key is a plain string, so extension screens can join the nav row */

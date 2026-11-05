@@ -646,6 +646,8 @@ def _triage(finding: Optional[dict]) -> dict:
         category = result.get("category")
         confidence = result.get("confidence")
         reasoning = result.get("reasoning")
+        action = result.get("recommended_action")
+        baseline = stored.get("baseline")
         when = stored.get("timestamp")
         return {
             "state": "done",
@@ -662,6 +664,8 @@ def _triage(finding: Optional[dict]) -> dict:
                 reasoning if isinstance(reasoning, str) and reasoning else None
             ),
             "triaged_at": when if isinstance(when, str) else None,
+            "recommended_action": action if isinstance(action, str) else None,
+            "baseline": baseline if isinstance(baseline, dict) else None,
         }
     error = enrichment.get("ai_triage_error")
     if isinstance(error, str) and error:
