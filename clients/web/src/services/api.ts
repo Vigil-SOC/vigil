@@ -892,7 +892,8 @@ export const detectionRulesApi = {
   listSources: () => api.get('/detection-rules/sources'),
 
   /** Every listed rule copy's health and its reason, worst first; one health's when given. */
-  rules: (health?: string) => api.get('/detection-rules/rules', { params: { health } }),
+  rules: (params: { health?: string; tool?: string; q?: string; offset?: number } = {}) =>
+    api.get('/detection-rules/rules', { params }),
   
   
   addSource: (data: {

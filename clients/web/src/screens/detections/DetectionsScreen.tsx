@@ -2,10 +2,19 @@ import { useEffect, useState } from 'react'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { errorText } from '../../shared/errorText'
 import { detectionRulesApi } from '../../services/api'
-import { Empty, Failure, Stat, Tag, type TagTone } from '../shared/x1'
+import { Empty, Failure } from '../shared/x1'
 import './detections.css'
 
-type RuleHealth = 'fails_to_run' | 'data_silent' | 'disabled' | 'never_fired' | 'fires'
+type RuleHealth =
+  | 'fails_to_run'
+  | 'data_silent'
+  | 'missing_field'
+  | 'never_fired'
+  | 'fires'
+  | 'disabled'
+  | 'no_fire_data'
+type View = RuleHealth | 'attention' | 'all'
+type Siem = 'elastic' | 'splunk' | 'wazuh'
 
 interface RuleRow {
   rule_id: number
@@ -15,6 +24,18 @@ interface RuleRow {
   techniques: string[]
   health: RuleHealth
   why: string
+  /** The failing check's reason as stored, when it says more than ``why``. */
+  raw: string | null
+  fires: number
+  checks_passing: number
+  checks_run: number
+}
+
+interface SiemTally {
+  rules: number
+  cant_fire: number
+  not_checked: number
+  can_fire: number
 }
 
 interface RulesReport {
@@ -24,88 +45,323 @@ interface RulesReport {
   rule_total: number
   mapped: number
   counts: Record<RuleHealth, number>
+  matched: number
+  offset: number
   rules: RuleRow[]
+  by_siem: Partial<Record<Siem, SiemTally>>
+  blind_spots: { data_source: string; tool: string; rules: number }[]
+  fires_window_days: number
   limits: string
 }
 
-const HEALTH: Record<RuleHealth, { label: string; tone: TagTone | undefined }> = {
-  fails_to_run: { label: 'Fails to run', tone: 'poor' },
-  data_silent: { label: 'Data silent', tone: 'poor' },
-  disabled: { label: 'Disabled', tone: 'fair' },
-  never_fired: { label: 'Never fired', tone: 'fair' },
-  fires: { label: 'Fires', tone: 'good' },
+const HEALTH: Record<RuleHealth, { label: string; tone: string; note: string; action: string }> = {
+  fails_to_run: { label: 'Fails to run', tone: 'poor', note: 'the query errors before it can search', action: 'Fix with Vigil' },
+  data_silent: { label: 'Data silent', tone: 'fair', note: 'runs, but the data it needs isn’t arriving', action: 'Check source' },
+  missing_field: { label: 'Missing field', tone: 'high', note: 'references a field the index doesn’t have', action: 'Fix with Vigil' },
+  never_fired: { label: 'Never fired', tone: 'ac', note: 'searches live data but has never matched', action: 'Replay attack' },
+  fires: { label: 'Fires', tone: 'good', note: 'matched events in the window', action: 'View alerts' },
+  disabled: { label: 'Disabled', tone: 'idle', note: 'turned off in the SIEM', action: 'Open rule' },
+  no_fire_data: { label: 'No fire data', tone: 'none', note: 'the SIEM doesn’t report fire counts for these', action: 'Open rule' },
+}
+const ATTENTION: RuleHealth[] = ['fails_to_run', 'data_silent', 'missing_field', 'never_fired']
+const MORE: View[] = ['disabled', 'no_fire_data', 'all']
+const SIEMS: Siem[] = ['elastic', 'splunk', 'wazuh']
+const SIEM_NAME: Record<string, string> = { elastic: 'Elastic', splunk: 'Splunk', wazuh: 'Wazuh', repo: 'Repo', overlay: 'Vigil' }
+
+const n = (v: number) => v.toLocaleString()
+const plural = (v: number, one: string, many: string) => `${n(v)} ${v === 1 ? one : many}`
+
+function viewCount(report: RulesReport, view: View): number {
+  if (view === 'all') return Object.values(report.counts).reduce((a, b) => a + b, 0)
+  if (view === 'attention') return ATTENTION.reduce((a, h) => a + report.counts[h], 0)
+  return report.counts[view]
 }
 
-/** The shell heads the page (TITLES); this is Alex's Existing rules view under it. */
-export default function DetectionsScreen({ goSettings }: ConsoleScreenProps) {
+function prompt(r: RuleRow, days: number): string {
+  const rule = `rule "${r.name}" (${SIEM_NAME[r.tool] ?? r.tool})`
+  switch (r.health) {
+    case 'fails_to_run': return `The ${rule} fails to run: ${r.why}. Find why and draft a fix.`
+    case 'missing_field': return `The ${rule} references a field its index doesn't have: ${r.why}. Draft a fix.`
+    case 'data_silent': return `The ${rule} is data silent: ${r.why}. Check whether that source is arriving, and why not.`
+    case 'never_fired': return `The ${rule} has never fired. Replay an attack it should catch and tell me whether it alerts.`
+    case 'fires': return `Show me the alerts the ${rule} raised in the last ${days} days.`
+    default: return `Show me the ${rule}: what it detects, its query and its checks.`
+  }
+}
+
+/** The shell heads the page (TITLES); under it, rule health across every SIEM. */
+export default function DetectionsScreen({ goSettings, openChat }: ConsoleScreenProps) {
+  const [view, setView] = useState<View>('attention')
+  const [siem, setSiem] = useState<Siem | 'all'>('all')
+  const [typed, setTyped] = useState('')
+  const [q, setQ] = useState('')
+  const [report, setReport] = useState<RulesReport | null>(null)
+  const [rows, setRows] = useState<RuleRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [more, setMore] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [open, setOpen] = useState<number | null>(null)
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setQ(typed.trim()), 250)
+    return () => window.clearTimeout(t)
+  }, [typed])
+
+  const params = { health: view === 'all' ? undefined : view, tool: siem === 'all' ? undefined : siem, q: q || undefined }
+
+  // Each view, SIEM and search asks the server: the listing is capped, so narrowing capped rows here would miss rules.
+  useEffect(() => {
+    let live = true
+    setLoading(true)
+    detectionRulesApi.rules({ health: view === 'all' ? undefined : view, tool: siem === 'all' ? undefined : siem, q: q || undefined })
+      .then((res) => {
+        if (!live) return
+        const data = res.data as RulesReport
+        setReport(data)
+        setRows(data.rules)
+        setOpen(null)
+        setError(null)
+      })
+      .catch((e) => { if (live) setError(errorText(e, 'Rule health did not load.')) })
+      .finally(() => { if (live) setLoading(false) })
+    return () => { live = false }
+  }, [view, siem, q])
+
+  const loadMore = () => {
+    setMore(true)
+    detectionRulesApi.rules({ ...params, offset: rows.length })
+      .then((res) => setRows((prev) => [...prev, ...(res.data as RulesReport).rules]))
+      .catch((e) => setError(errorText(e, 'More rules did not load.')))
+      .finally(() => setMore(false))
+  }
+
+  if (error && !report) return <div className="x1"><Failure>{error}</Failure></div>
+  if (!report) return <div className="x1"><span className="x1-muted">Reading the inventory…</span></div>
+  if (report.total === 0) {
+    return (
+      <div className="x1">
+        <Empty title="The inventory is empty">
+          Add a rule repository in <button type="button" className="x1-link" onClick={() => goSettings('data')}>Settings</button>, or enable the Elastic, Splunk or Wazuh integration. Vigil reads rules from those and tags them from what they declare.
+        </Empty>
+      </div>
+    )
+  }
+
+  const days = report.fires_window_days
+  const siems = SIEMS.filter((s) => report.by_siem[s])
+  const cantFire = siems.reduce((a, s) => a + (report.by_siem[s]?.cant_fire ?? 0), 0)
+  const of = viewCount(report, view)
+  const note = q
+    ? `${plural(report.matched, 'rule matches', 'rules match')} “${q}”`
+    : view === 'attention'
+      ? `${n(of)} of ${n(viewCount(report, 'all'))} rules need attention, worst first`
+      : view === 'all'
+        ? `All ${n(of)} rules, worst first`
+        : `${plural(of, 'rule', 'rules')} · ${HEALTH[view].note}`
+
   return (
-    <div className="x1">
-      <RulesSection goSettings={goSettings} />
+    <div className="x1 de">
+      <div className="de-actions">
+        <button type="button" className="btn primary" onClick={() => goSettings('data')}>Import rules</button>
+      </div>
+
+      <div className="de-kpis">
+        <div className="de-kpi">
+          <span className="de-kpi-label">Rules in inventory</span>
+          <b>{n(report.rule_total)}</b>
+          <span className="de-kpi-sub">{report.total > report.rule_total ? `Stored as ${n(report.total)} copies` : 'One copy each'}</span>
+        </div>
+        <div className="de-kpi">
+          <span className="de-kpi-label">Declare an ATT&amp;CK technique</span>
+          <b>{n(report.mapped)}</b>
+          <span className="de-kpi-sub">{Math.round((100 * report.mapped) / Math.max(report.rule_total, 1))}% of the inventory</span>
+        </div>
+        <div className="de-kpi">
+          <span className="de-kpi-label">Priority techniques validated <span className="de-mock">[mock]</span></span>
+          <b>2 <small>of 6 · 33%</small></b>
+          <span className="de-segs" aria-hidden="true">{[0, 1, 2, 3, 4, 5].map((i) => <i key={i} className={i < 2 ? 'on' : ''} />)}</span>
+        </div>
+        <div className="de-kpi">
+          <span className="de-kpi-label">Rules that can’t fire</span>
+          <b className={cantFire ? 'poor' : ''}>{n(cantFire)}</b>
+          <span className="de-kpi-sub">{siems.map((s) => `${n(report.by_siem[s]?.cant_fire ?? 0)} ${SIEM_NAME[s]}`).join(' · ')}</span>
+        </div>
+      </div>
+
+      <div className="de-pair">
+        <section className="x1-card de-card de-siems">
+          <div className="de-card-head">
+            <div>
+              <h2>Health by SIEM</h2>
+              <p>Whether each enabled rule can actually fire where it is deployed</p>
+            </div>
+            <div className="de-legend">
+              <span><i className="poor" />Can’t fire</span>
+              <span><i className="idle" />Not checked</span>
+              <span><i className="good" />Can fire</span>
+            </div>
+          </div>
+          {siems.map((s) => {
+            const t = report.by_siem[s] as SiemTally
+            const checked = t.cant_fire + t.can_fire
+            const pct = (v: number) => `${(100 * v) / Math.max(t.rules, 1)}%`
+            return (
+              <div key={s} className="de-siem">
+                <div className="de-siem-head">
+                  <b>{SIEM_NAME[s]} <span>· {plural(t.rules, 'rule', 'rules')}</span></b>
+                  {checked ? (
+                    <span className="x1-muted">
+                      {t.cant_fire > 0 && <><b className="poor">{n(t.cant_fire)} can’t fire</b> · </>}
+                      {t.not_checked > 0 && <>{n(t.not_checked)} not checked · </>}
+                      {n(t.can_fire)} can fire
+                    </span>
+                  ) : <span className="x1-muted">None checked yet</span>}
+                </div>
+                {checked ? (
+                  <div className="de-bar" aria-hidden="true">
+                    {t.cant_fire > 0 && <i className="poor" style={{ width: pct(t.cant_fire) }} />}
+                    {t.not_checked > 0 && <i className="idle" style={{ width: pct(t.not_checked) }} />}
+                    {t.can_fire > 0 && <i className="good" style={{ flex: 1 }} />}
+                  </div>
+                ) : (
+                  <>
+                    <div className="de-bar unchecked" aria-hidden="true" />
+                    <div className="de-siem-note">{plural(t.rules, `${SIEM_NAME[s]} rule has`, `${SIEM_NAME[s]} rules have`)} no Runs or Sees result yet, so none is known to fire or not.</div>
+                  </>
+                )}
+              </div>
+            )
+          })}
+        </section>
+
+        <section className="x1-card de-card de-blind">
+          <div className="de-card-head">
+            <h2>Blind spots <span>· {n(report.blind_spots.length)}</span></h2>
+            <button type="button" className="x1-link" onClick={() => goSettings('integrations')}>View sources</button>
+          </div>
+          <p className="de-card-sub">Data sources that aren’t arriving, and the rules each one starves</p>
+          {report.blind_spots.length === 0 && <p className="x1-muted de-card-sub">Every enabled rule’s data is arriving.</p>}
+          {siems.map((s) => {
+            const spots = report.blind_spots.filter((b) => b.tool === s)
+            if (!spots.length) return null
+            return (
+              <div key={s}>
+                <h3 className="de-group">{SIEM_NAME[s]} · {spots.length}</h3>
+                <ul className="de-spots">
+                  {spots.map((b) => (
+                    <li key={b.data_source}>
+                      <code title={b.data_source}>{b.data_source}</code>
+                      <span>{plural(b.rules, 'rule', 'rules')}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )
+          })}
+        </section>
+      </div>
+
+      <section className="x1-card de-card de-inv">
+        <div className="de-inv-head">
+          <div>
+            <h2>Rule inventory</h2>
+            <p>{note}</p>
+          </div>
+          <div className="de-inv-tools">
+            <div className="de-seg" role="group" aria-label="SIEM">
+              {(['all', ...siems] as const).map((s) => (
+                <button key={s} type="button" aria-pressed={siem === s} className={siem === s ? 'on' : ''} onClick={() => setSiem(s)}>
+                  {s === 'all' ? 'All' : SIEM_NAME[s]}
+                </button>
+              ))}
+            </div>
+            <label className="de-search">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+              <input type="search" aria-label="Search rules" placeholder="Search name, technique or reason" value={typed} onChange={(e) => setTyped(e.target.value)} />
+            </label>
+          </div>
+        </div>
+
+        <div className="de-chips-row">
+          <div className="de-chips" role="group" aria-label="Health">
+            <Chip on={view === 'attention'} onClick={() => setView('attention')} label="Needs attention" count={viewCount(report, 'attention')} />
+            <span className="de-div" aria-hidden="true" />
+            {ATTENTION.map((h) => (
+              <Chip key={h} on={view === h} tone={HEALTH[h].tone} onClick={() => setView(h)} label={HEALTH[h].label} count={report.counts[h]} />
+            ))}
+            <span className="de-div" aria-hidden="true" />
+            <Chip on={view === 'fires'} tone="good" onClick={() => setView('fires')} label="Fires" count={report.counts.fires} />
+          </div>
+          <select aria-label="Other views" className={`de-more${MORE.includes(view) ? ' on' : ''}`} value={MORE.includes(view) ? view : ''} onChange={(e) => setView((e.target.value || 'attention') as View)}>
+            <option value="">More views</option>
+            <option value="disabled">Disabled · {n(report.counts.disabled)}</option>
+            <option value="no_fire_data">No fire data · {n(report.counts.no_fire_data)}</option>
+            <option value="all">All rules · {n(viewCount(report, 'all'))}</option>
+          </select>
+        </div>
+
+        {error && <div className="de-pad"><Failure>{error}</Failure></div>}
+
+        <div className={`de-table${loading ? ' loading' : ''}`} data-testid="de-rules">
+          <div className="de-tr de-th">
+            <span>Rule</span><span>Health ↓</span><span>Why</span><span className="de-right">Action</span>
+          </div>
+          {rows.map((r) => {
+            const h = HEALTH[r.health]
+            const isOpen = open === r.rule_id
+            const fired = r.fires > 0 ? `${plural(r.fires, 'fire', 'fires')} in ${days}d` : r.health === 'no_fire_data' ? 'No fire data' : r.health === 'fires' ? 'Alerted in the SIEM' : `No fires in ${days}d`
+            return (
+              <div key={r.rule_id} className="de-tr de-row">
+                <div className="de-rule">
+                  <div className="de-name">{r.name}</div>
+                  <div className="de-meta">
+                    <span className="de-where">{SIEM_NAME[r.tool] ?? r.tool}</span>
+                    {r.techniques.length > 0 && <span className="x1-mono">{r.techniques.slice(0, 2).join(', ')}{r.techniques.length > 2 ? ` +${r.techniques.length - 2}` : ''}</span>}
+                    <span>{!r.checks_run ? 'Not checked' : r.checks_passing ? plural(r.checks_passing, 'check passes', 'checks pass') : 'No check passes'}</span>
+                    <span aria-hidden="true">·</span>
+                    <span className={r.fires > 0 ? 'de-fired' : ''}>{fired}</span>
+                  </div>
+                </div>
+                <div><span className={`de-health ${h.tone}`}><i />{h.label}</span></div>
+                <div className="de-why">
+                  <div className="de-why-text">{r.why}</div>
+                  {r.raw && (
+                    <button type="button" className="de-raw-toggle" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : r.rule_id)}>
+                      {isOpen ? 'Hide raw error' : 'Raw error'}
+                      <svg viewBox="0 0 24 24" aria-hidden="true" className={isOpen ? 'up' : ''}><path d="m6 9 6 6 6-6" /></svg>
+                    </button>
+                  )}
+                  {isOpen && r.raw && <pre className="de-raw">{r.raw}</pre>}
+                </div>
+                <div className="de-right">
+                  <button type="button" className="btn ghost de-act" onClick={() => openChat(prompt(r, days))}>{h.action}</button>
+                </div>
+              </div>
+            )
+          })}
+          {rows.length === 0 && !loading && (
+            <div className="de-empty">{q ? `No rules match “${q}”.` : 'No rules in this view.'}</div>
+          )}
+          <div className="de-foot">
+            <span>Showing {n(rows.length)} of {n(report.matched)}</span>
+            {rows.length < report.matched && (
+              <button type="button" className="btn ghost de-act" disabled={more} onClick={loadMore}>{more ? 'Loading…' : 'Load more'}</button>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <p className="de-note">{report.limits}</p>
     </div>
   )
 }
 
-function RulesSection({ goSettings }: Pick<ConsoleScreenProps, 'goSettings'>) {
-  const [loaded, setLoaded] = useState<{ report: RulesReport; filter: RuleHealth | 'all' } | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [filter, setFilter] = useState<RuleHealth | 'all'>('all')
-
-  // A chip asks for its own rows: the listing is capped, so filtering the capped rows here could miss them all.
-  useEffect(() => {
-    let live = true
-    detectionRulesApi.rules(filter === 'all' ? undefined : filter)
-      .then((res) => { if (live) { setLoaded({ report: res.data as RulesReport, filter }); setError(null) } })
-      .catch((e) => { if (live) setError(errorText(e, 'Rule health did not load.')) })
-    return () => { live = false }
-  }, [filter])
-
-  const report = loaded?.report
-  if (error && !report) return <Failure>{error}</Failure>
-  if (!report) return <span className="x1-muted">Reading the inventory…</span>
-  if (report.total === 0) {
-    return (
-      <Empty title="The inventory is empty">
-        Add a rule repository in <button type="button" className="x1-link" onClick={() => goSettings('data')}>Settings</button>, or enable the Elastic, Splunk or Wazuh integration. Vigil reads rules from those and tags them from what they declare.
-      </Empty>
-    )
-  }
-  // until the chip's own rows arrive, the last ones stay, filtered
-  const rows = loaded?.filter === filter ? report.rules : report.rules.filter((r) => filter === 'all' || r.health === filter)
-  const of = filter === 'all' ? report.total : report.counts[filter]
+function Chip({ on, tone, label, count, onClick }: { on: boolean; tone?: string; label: string; count: number; onClick: () => void }) {
   return (
-    <div className="de-split">
-      <div style={{ display: 'grid', gap: 10 }}>
-        <Stat value={report.rule_total} label={report.total > report.rule_total ? `rules in the inventory, stored as ${report.total} copies` : 'rules in the inventory'} />
-        <Stat value={report.mapped} label="declare an ATT&CK technique" />
-        <div className="x1-card x1-saved">
-          <h3 style={{ marginBottom: 4 }}>Health</h3>
-          <button type="button" className={filter === 'all' ? 'on' : ''} onClick={() => setFilter('all')}>All · {report.total}</button>
-          {(Object.keys(HEALTH) as RuleHealth[]).map((h) => (
-            <button key={h} type="button" className={filter === h ? 'on' : ''} onClick={() => setFilter(h)}>{HEALTH[h].label} · {report.counts[h]}</button>
-          ))}
-        </div>
-      </div>
-      <div style={{ display: 'grid', gap: 10, minWidth: 0 }}>
-        {error && <Failure>{error}</Failure>}
-        <div className="x1-table-wrap">
-          <table className="x1-table" data-testid="de-rules">
-            <thead><tr><th>Rule</th><th>Technique</th><th>Where</th><th>Health</th><th>Why</th></tr></thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.rule_id}>
-                  <td style={{ color: 'var(--tx0)' }}>{r.name}</td>
-                  <td className="x1-mono">{r.techniques.join(', ') || 'None declared'}</td>
-                  <td>{r.tool} · {r.language}</td>
-                  <td><Tag tone={HEALTH[r.health].tone}>{HEALTH[r.health].label}</Tag></td>
-                  <td>{r.why}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {of > rows.length && <p className="de-note">Showing the worst {rows.length} of {of}. The counts cover them all.</p>}
-        <p className="de-note">{report.limits}</p>
-      </div>
-    </div>
+    <button type="button" className={`de-chip${on ? ' on' : ''}`} aria-pressed={on} onClick={onClick}>
+      {tone && <i className={tone} />}
+      <span>{label}</span>
+      <span className="de-chip-n">{n(count)}</span>
+    </button>
   )
 }

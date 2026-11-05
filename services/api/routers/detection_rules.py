@@ -5,7 +5,7 @@ import logging
 from dataclasses import asdict
 from typing import Literal, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from core.auth.permissions import permission_gate
@@ -265,13 +265,26 @@ def get_stats(
 @router.get("/rules")
 def get_rules(
     health: Optional[
-        Literal["fails_to_run", "data_silent", "disabled", "never_fired", "fires"]
+        Literal[
+            "attention",
+            "fails_to_run",
+            "data_silent",
+            "missing_field",
+            "never_fired",
+            "fires",
+            "disabled",
+            "no_fire_data",
+        ]
     ] = None,
+    tool: Optional[Literal["elastic", "splunk", "wazuh"]] = None,
+    q: Optional[str] = Query(default=None, max_length=200),
+    offset: int = Query(default=0, ge=0),
 ):
-    """Every listed rule copy's health (fails to run, data silent, disabled, never
-    fired, fires) with its reason, worst first, capped at catalog.RULE_ROWS rows,
-    only ``health``'s when given; the counts cover them all. Read-only."""
-    return catalog.health_listing(health)
+    """Every listed rule copy's health with its reason, worst first, capped at
+    catalog.RULE_ROWS rows from ``offset``, narrowed by ``health`` ("attention"
+    is every state to act on), ``tool`` and the search ``q``; the counts, the
+    per-SIEM tallies and the blind spots cover them all. Read-only."""
+    return catalog.health_listing(health, tool=tool, q=q, offset=offset)
 
 
 @router.get("/mcp-env")

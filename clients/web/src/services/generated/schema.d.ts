@@ -3241,9 +3241,10 @@ export interface paths {
         };
         /**
          * Get Rules
-         * @description Every listed rule copy's health (fails to run, data silent, disabled, never
-         *     fired, fires) with its reason, worst first, capped at catalog.RULE_ROWS rows,
-         *     only ``health``'s when given; the counts cover them all. Read-only.
+         * @description Every listed rule copy's health with its reason, worst first, capped at
+         *     catalog.RULE_ROWS rows from ``offset``, narrowed by ``health`` ("attention"
+         *     is every state to act on), ``tool`` and the search ``q``; the counts, the
+         *     per-SIEM tallies and the blind spots cover them all. Read-only.
          */
         get: operations["get_api_detection-rules_rules"];
         put?: never;
@@ -17474,7 +17475,10 @@ export interface operations {
     "get_api_detection-rules_rules": {
         parameters: {
             query?: {
-                health?: ("fails_to_run" | "data_silent" | "disabled" | "never_fired" | "fires") | null;
+                health?: ("attention" | "fails_to_run" | "data_silent" | "missing_field" | "never_fired" | "fires" | "disabled" | "no_fire_data") | null;
+                tool?: ("elastic" | "splunk" | "wazuh") | null;
+                q?: string | null;
+                offset?: number;
             };
             header?: {
                 authorization?: string | null;
