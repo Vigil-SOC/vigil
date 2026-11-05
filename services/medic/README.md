@@ -66,7 +66,17 @@ logs why and exits **3** before opening its store (A3-3).
 Data directory: `medic.db` (+ `-wal`, `-shm`), `medic.lock`, `instance_id`,
 `run/heartbeat`, `run/engine-state.json`, `run/starts.json` (restarts and the last
 exit reason for `/v1/status`), and host-native only `run/api_key`. `python -m services.medic.store verify`
-checks the chain.
+checks the chain (`--db <name>` picks another file in the data dir).
+
+**Corruption.** At start, a store that fails `quick_check`, isn't a SQLite file, or
+whose chain doesn't verify is renamed to `medic.db.corrupt-<UTC>` (with its `-wal`
+and `-shm`; the newest two sets are kept) and replaced by a fresh `medic.db` whose
+first record is `store_reset`, continuing seq from the old store's last good record
+when one can be read. Medic keeps running; the `watcher.store-reset` incident
+opens, and `/v1/status` `store.states` has `reset_after_corruption` for 24 h. A
+locked store, a busy or read-only file, bad modes, a newer layout, or a missing
+`instance_id` over a used store are refused, never reset. Run `verify --db
+medic.db.corrupt-<UTC>` to see what broke.
 
 ## Isolation
 
