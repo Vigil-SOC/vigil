@@ -518,7 +518,15 @@ class DecisionWriter:
             row = conn.execute(
                 "SELECT record FROM records ORDER BY seq DESC LIMIT 1"
             ).fetchone()
-            count, size, first, last, last_hash, lo, hi = 0, 0, None, None, "", None, None
+            count, size, first, last, last_hash, lo, hi = (
+                0,
+                0,
+                None,
+                None,
+                "",
+                None,
+                None,
+            )
             for seq, hash_col, at, n in conn.execute(
                 "SELECT seq, hash, json_extract(record, '$.at'), length(record) "
                 "FROM records ORDER BY seq"
@@ -600,7 +608,8 @@ class DecisionWriter:
 
     def _hourly(self, conn: sqlite3.Connection) -> None:
         """Once an hour: purge past retention, then log the head, an outside witness
-        (C4 §6.5) like the line at open. The head is the last row; it's not re-verified."""
+        (C4 §6.5) like the line at open. The head is the last row; it's not re-verified.
+        """
         now = self._clock()
         mark = self._hour_mark
         if mark is not None and mark <= now < mark + HOURLY:

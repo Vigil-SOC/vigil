@@ -102,9 +102,7 @@ def anchors_of(records: Iterable[dict[str, Any]]) -> dict[int, str]:
     }
 
 
-def verify_stream(
-    records: Iterable[dict[str, Any]], anchors: Mapping[int, str]
-) -> str:
+def verify_stream(records: Iterable[dict[str, Any]], anchors: Mapping[int, str]) -> str:
     """Verify records in seq order, holding one at a time. Returns the chain head hash.
 
     `anchors` comes from a pre-pass (`anchors_of`, or a query for anchor rows), since
