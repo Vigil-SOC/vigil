@@ -62,6 +62,7 @@ class SeesReport:
     searched: int = 0
     deferred: int = 0
     written: int = 0
+    closed: int = 0
     error: Optional[str] = None
 
 
@@ -231,12 +232,12 @@ def _active_rules() -> List[Tuple[RuleKey, Mapping[str, Any]]]:
     return [((rid, ver), content or {}) for rid, ver, content in rows]
 
 
-def overlay_copies(language: str, siem: str) -> List[Tuple[RuleKey, Mapping[str, Any]]]:
-    """Active overlay copies of ``language`` at their latest version whose current
-    stage is shadow or live, less those an active SIEM copy runs instead
-    (``rollout.handed_off``: a ``siem`` rule, since ``language`` picks it)."""
-    from core.detections.inventory.rollout import handed_off
+STAGEFUL = ("shadow", "live")
 
+
+def _overlay_rows(session: Any, language: str) -> List[tuple]:
+    """(id, latest version, content, checks, current stage) of the active overlay
+    copies of ``language`` that have a stage."""
     s = DetectionRuleStage
     current = (
         select(s.rule_id, s.stage)
@@ -244,33 +245,84 @@ def overlay_copies(language: str, siem: str) -> List[Tuple[RuleKey, Mapping[str,
         .order_by(s.rule_id, s.at.desc(), s.id.desc())
         .subquery()
     )
+    return session.execute(
+        select(
+            DetectionRule.id,
+            DetectionRule.latest_version,
+            DetectionRuleVersion.content,
+            DetectionRuleVersion.checks,
+            current.c.stage,
+        )
+        .join(
+            DetectionRuleVersion,
+            and_(
+                DetectionRuleVersion.rule_id == DetectionRule.id,
+                DetectionRuleVersion.version == DetectionRule.latest_version,
+            ),
+        )
+        .join(current, current.c.rule_id == DetectionRule.id)
+        .where(
+            DetectionRule.source == readers.OVERLAY_SOURCE,
+            DetectionRule.language == language,
+            DetectionRule.status == "active",
+        )
+        .order_by(DetectionRule.id)
+    ).all()
+
+
+def overlay_copies(language: str, siem: str) -> List[Tuple[RuleKey, Mapping[str, Any]]]:
+    """Active overlay copies of ``language`` at their latest version whose current
+    stage is shadow or live, less those an active SIEM copy runs instead
+    (``rollout.handed_off``: a ``siem`` rule, since ``language`` picks it)."""
+    from core.detections.inventory.rollout import handed_off
+
     with get_db_manager().session_scope() as session:
-        rows = session.execute(
-            select(
-                DetectionRule.id,
-                DetectionRule.latest_version,
-                DetectionRuleVersion.content,
-            )
-            .join(
-                DetectionRuleVersion,
-                and_(
-                    DetectionRuleVersion.rule_id == DetectionRule.id,
-                    DetectionRuleVersion.version == DetectionRule.latest_version,
-                ),
-            )
-            .join(current, current.c.rule_id == DetectionRule.id)
-            .where(
-                DetectionRule.source == readers.OVERLAY_SOURCE,
-                DetectionRule.language == language,
-                DetectionRule.status == "active",
-                current.c.stage.in_(("shadow", "live")),
-            )
-            .order_by(DetectionRule.id)
-        ).all()
-    gone = handed_off([rid for rid, _, _ in rows])
+        rows = [r for r in _overlay_rows(session, language) if r[4] in STAGEFUL]
+    gone = handed_off([r[0] for r in rows])
     return [
-        ((rid, ver), content or {}) for rid, ver, content in rows if rid not in gone
+        ((rid, ver), content or {})
+        for rid, ver, content, _, _ in rows
+        if rid not in gone
     ]
+
+
+def close_unchecked(language: str, selected: set) -> int:
+    """Close Sees on the overlay copies of ``language`` that ``overlay_copies`` left
+    out (``selected`` is what it returned): a NULL row and the key dropped, for
+    each with a non-NULL Sees last recorded. Returns how many were closed."""
+    from core.detections.inventory.rollout import handed_off
+    from core.detections.inventory.sync import (
+        _dropped,
+        _last_results,
+        _record_changes,
+        _write_checks,
+    )
+
+    siem = "Splunk" if language == "splunk" else "Kibana"
+    with get_db_manager().session_scope() as session:
+        last = _last_results(session, readers.OVERLAY_SOURCE)
+        rows = [
+            r
+            for r in _overlay_rows(session, language)
+            if r[0] not in selected and last.get((r[0], "sees"), (None,))[0] is not None
+        ]
+        gone = handed_off([r[0] for r in rows if r[4] in STAGEFUL])
+        changes, checked = [], []
+        for rid, ver, _, checks, stage in rows:
+            if stage in STAGEFUL and rid not in gone:
+                continue  # stageful since overlay_copies read it: the next sweep checks it
+            reason = (
+                f"checked on {siem}'s copy"
+                if rid in gone
+                else f"not checked at stage {stage}"
+            )
+            dropped, kept = _dropped(rid, ver, checks, ("sees",), last, reason)
+            changes += dropped
+            if kept != (checks or {}):
+                checked.append((rid, ver, kept))
+        _write_checks(session, checked)
+        _record_changes(session, changes, datetime.now(timezone.utc).isoformat())
+    return len(changes)
 
 
 def _overlay_rule(content: Mapping[str, Any]) -> Dict[str, Any]:
@@ -384,6 +436,8 @@ def sweep_elastic(config: Mapping[str, Any], kibana_rules: bool = True) -> SeesR
             logger.warning("detection rules: overlay copies unread for Sees: %s", exc)
             report.error = f"overlay: {type(exc).__name__}: {exc}"
             copies = []
+        else:  # left-out copies close only when the selection was read
+            report.closed = close_unchecked("elastic", {k[0] for k, _ in copies})
         report.rules = len(rules) + len(copies)
         service = kibana.service_of(config)
 

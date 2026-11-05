@@ -67,6 +67,7 @@ class SplunkSeesReport:
     deferred: int = 0
     left: int = 0
     written: int = 0
+    closed: int = 0
     error: Optional[str] = None
 
 
@@ -487,6 +488,8 @@ def sweep(config: Mapping[str, Any]) -> SplunkSeesReport:
             logger.warning("detection rules: overlay copies unread for Sees: %s", exc)
             report.error = f"overlay: {type(exc).__name__}: {exc}"
             copies = []
+        else:  # left-out copies close only when the selection was read
+            report.closed = sees.close_unchecked("splunk", {k[0] for k, _ in copies})
         report.rules = len(rules) + len(copies)
         service = splunk.service_of(config)
         results = _check(
