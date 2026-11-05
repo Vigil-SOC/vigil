@@ -29,7 +29,9 @@ SPENT_LINE = "LLM budget spent (virtual_key tier)"
 AVAILABLE_LINE = "LLM budget available (virtual_key tier)"
 CALLS = 3  # the L-2.a rule's `calls`
 
-# Submits n calls the real way (the gateway's ARQ enqueue) and prints each result's type.
+# Submits n calls the real way (the gateway's ARQ enqueue) and prints how each ended:
+# "error" for the worker's error dict, "bifrost" for a reply the router got back
+# (the router's result carries `path`, not `type`).
 SUBMIT = """
 import asyncio, json, sys
 from core.llm.gateway.gateway import get_llm_gateway
@@ -40,7 +42,7 @@ async def main(n, provider_id):
         gw.submit(f"eval call {i}", model="eval-model", provider_id=provider_id, timeout=60)
         for i in range(int(n))
     ])
-    print(json.dumps([r["type"] for r in rs]))
+    print(json.dumps([r.get("type") or r.get("path") for r in rs]))
 
 asyncio.run(main(*sys.argv[1:3]))
 """
@@ -93,7 +95,7 @@ def _llm_revert(s: Stack, cause: str) -> None:
             "INSERT INTO llm_provider_configs (provider_id, provider_type, name, default_model) "
             f"VALUES ('{PROVIDER}', 'openai', 'eval stub provider', 'eval-model')"
         )
-    _expect(_submit(s, 1), ["text"], "result of the call after revert")
+    _expect(_submit(s, 1), ["bifrost"], "result of the call after revert")
     s.sql(f"DELETE FROM llm_provider_configs WHERE provider_id = '{PROVIDER}'")
     s.active.discard(cause)
 
