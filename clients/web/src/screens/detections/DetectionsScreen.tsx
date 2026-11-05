@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { errorText } from '../../shared/errorText'
 import { detectionRulesApi } from '../../services/api'
+import { TabStrip } from '../../shared/TabStrip'
 import { Empty, Failure } from '../shared/x1'
 import './detections.css'
 
@@ -89,8 +91,28 @@ function prompt(r: RuleRow, days: number): string {
   }
 }
 
-/** The shell heads the page (TITLES); under it, rule health across every SIEM. */
+/** Alex's 1.x tabs; only Existing rules is ported so far. Threat model, Heat map, Red team and Proposals join here. */
+const TABS = [{ id: 'rules', label: 'Existing rules' }] as const
+type Tab = (typeof TABS)[number]['id']
+
+/** The shell heads the page (TITLES); under it, the tab strip and the open tab. */
 export default function DetectionsScreen({ goSettings, openChat }: ConsoleScreenProps) {
+  const [params, setParams] = useSearchParams()
+  // the tab is in the URL; none, or one not ported yet, reads as Existing rules
+  const tab: Tab = TABS.find((t) => t.id === params.get('tab'))?.id ?? 'rules'
+  return (
+    <div className="x1 de">
+      <div className="de-tabs">
+        <TabStrip label="Detection engineering" tabs={TABS} active={tab} onChange={(id) => setParams({ tab: id })} />
+        <button type="button" className="btn primary" onClick={() => goSettings('data')}>Import rules</button>
+      </div>
+      {tab === 'rules' && <RulesTab goSettings={goSettings} openChat={openChat} />}
+    </div>
+  )
+}
+
+/** Rule health across every SIEM: the KPI strip, health by SIEM, blind spots and the inventory. */
+function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings' | 'openChat'>) {
   const [view, setView] = useState<View>('attention')
   const [siem, setSiem] = useState<Siem | 'all'>('all')
   const [typed, setTyped] = useState('')
@@ -135,15 +157,13 @@ export default function DetectionsScreen({ goSettings, openChat }: ConsoleScreen
       .finally(() => setMore(false))
   }
 
-  if (error && !report) return <div className="x1"><Failure>{error}</Failure></div>
-  if (!report) return <div className="x1"><span className="x1-muted">Reading the inventory…</span></div>
+  if (error && !report) return <Failure>{error}</Failure>
+  if (!report) return <span className="x1-muted">Reading the inventory…</span>
   if (report.total === 0) {
     return (
-      <div className="x1">
-        <Empty title="The inventory is empty">
-          Add a rule repository in <button type="button" className="x1-link" onClick={() => goSettings('data')}>Settings</button>, or enable the Elastic, Splunk or Wazuh integration. Vigil reads rules from those and tags them from what they declare.
-        </Empty>
-      </div>
+      <Empty title="The inventory is empty">
+        Add a rule repository in <button type="button" className="x1-link" onClick={() => goSettings('data')}>Settings</button>, or enable the Elastic, Splunk or Wazuh integration. Vigil reads rules from those and tags them from what they declare.
+      </Empty>
     )
   }
 
@@ -160,11 +180,7 @@ export default function DetectionsScreen({ goSettings, openChat }: ConsoleScreen
         : `${plural(of, 'rule', 'rules')} · ${HEALTH[view].note}`
 
   return (
-    <div className="x1 de">
-      <div className="de-actions">
-        <button type="button" className="btn primary" onClick={() => goSettings('data')}>Import rules</button>
-      </div>
-
+    <>
       <div className="de-kpis">
         <div className="de-kpi">
           <span className="de-kpi-label">Rules in inventory</span>
@@ -302,7 +318,7 @@ export default function DetectionsScreen({ goSettings, openChat }: ConsoleScreen
 
         {error && <div className="de-pad"><Failure>{error}</Failure></div>}
 
-        <div className={`de-table${loading ? ' loading' : ''}`} data-testid="de-rules">
+        <div className={`de-table list-scroll${loading ? ' loading' : ''}`} data-testid="de-rules">
           <div className="de-tr de-th">
             <span>Rule</span><span>Health ↓</span><span>Why</span><span className="de-right">Action</span>
           </div>
@@ -342,17 +358,17 @@ export default function DetectionsScreen({ goSettings, openChat }: ConsoleScreen
           {rows.length === 0 && !loading && (
             <div className="de-empty">{q ? `No rules match “${q}”.` : 'No rules in this view.'}</div>
           )}
-          <div className="de-foot">
-            <span>Showing {n(rows.length)} of {n(report.matched)}</span>
-            {rows.length < report.matched && (
-              <button type="button" className="btn ghost de-act" disabled={more} onClick={loadMore}>{more ? 'Loading…' : 'Load more'}</button>
-            )}
-          </div>
+        </div>
+        <div className="de-foot">
+          <span>Showing {n(rows.length)} of {n(report.matched)}</span>
+          {rows.length < report.matched && (
+            <button type="button" className="btn ghost de-act" disabled={more} onClick={loadMore}>{more ? 'Loading…' : 'Load more'}</button>
+          )}
         </div>
       </section>
 
       <p className="de-note">{report.limits}</p>
-    </div>
+    </>
   )
 }
 
