@@ -18,6 +18,7 @@ from core.workflows.playbook_resolver import (
     HUNT_CAPABILITIES,
     INVESTIGATE_CAPABILITIES,
     UnknownPlaybook,
+    extra_hunt_capabilities,
 )
 from core.workflows.workflows_service import (
     ADJUDICATE_RUN_KIND,
@@ -287,14 +288,14 @@ def preflight(
     hunt_like = is_hunt_like(definition.run_kind)
     investigate = definition.run_kind == INVESTIGATE_RUN_KIND
     if hunt_like:
-        from core.workflows.playbook_resolver import (
-            HUNT_CAPABILITIES,
-            extra_hunt_capabilities,
-        )
-
-        report = capabilities(
-            registry, (*HUNT_CAPABILITIES, *extra_hunt_capabilities(definition))
-        )
+        # A malformed `capabilities` list refuses the run itself, with the reason;
+        # preflight still answers, over the shared set, rather than failing outright.
+        try:
+            extra = extra_hunt_capabilities(definition)
+        except UnknownPlaybook as exc:
+            logger.warning("%s", exc)
+            extra = ()
+        report = capabilities(registry, (*HUNT_CAPABILITIES, *extra))
     elif investigate:
         report = capabilities(registry, INVESTIGATE_CAPABILITIES)
     else:
