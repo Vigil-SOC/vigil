@@ -17,8 +17,9 @@ per-day threshold (checks['quiet'], from ``wazuh-alerts-*`` on the elastic-siem
 indexer), then ``wazuh_sees`` checks whether each one's decoder gets events;
 after Kibana syncs, ``quiet`` counts each active Kibana rule's alerts the same
 way and against the rule's own 30 days (checks['noisy'], checks['silent']),
-then ``sees`` checks whether each active Kibana rule's data is arriving. Both
-Sees checks write checks['sees']; each check is written the
+then ``sees`` checks whether each active Kibana rule's data is arriving; after
+Splunk syncs, ``splunk_sees`` checks each active saved search's data the same
+way. All three Sees checks write checks['sees']; each check is written the
 same way.
 
 After the sources, each SIEM rule is linked to the repo rule it came from when
@@ -70,6 +71,7 @@ from core.detections.inventory import (
     readers,
     sees,
     splunk,
+    splunk_sees,
     wazuh,
     wazuh_sees,
 )
@@ -423,7 +425,7 @@ def _remove_unconfigured(configured: List[str]) -> int:
 
 
 def sync_repos() -> List[Any]:
-    """Read every configured repo, Wazuh, Kibana and Splunk, and sync each, checking Wazuh and Kibana rules' Quiet and Sees.
+    """Read every configured repo, Wazuh, Kibana and Splunk, and sync each, checking Wazuh and Kibana rules' Quiet and Sees, and Splunk's Sees.
 
     One failing source skips only itself.
     """
@@ -446,7 +448,10 @@ def sync_repos() -> List[Any]:
             # Quiet first: its one search is spent before Sees' groups.
             reports.append(quiet.sweep_elastic(config))
             reports.append(sees.sweep_elastic(config))
-        reports.append(_drifted(_linked(_sync_splunk(), _link_known_name)))
+        splunk_report, splunk_config = _sync_splunk()
+        reports.append(_drifted(_linked(splunk_report, _link_known_name)))
+        if splunk_config is not None:
+            reports.append(splunk_sees.sweep(splunk_config))  # its own budget
     if removed:
         logger.info(
             "detection rules: %d rules of unconfigured sources removed", removed
@@ -606,11 +611,12 @@ def _sync_wazuh() -> SourceReport:
     return report
 
 
-def _sync_splunk() -> SourceReport:
+def _sync_splunk() -> tuple[SourceReport, Optional[Dict[str, Any]]]:
     """Splunk's saved searches, with the splunk integration's credentials.
 
     The same config handling as _sync_elastic: removed only when the config was
     read and splunk is not enabled; an unreadable config or Splunk is skipped.
+    The config comes back only when the sync succeeded, for Sees.
     """
     from core.config import load_integrations_config
     from core.integrations._base.config import missing, resolve
@@ -619,23 +625,32 @@ def _sync_splunk() -> SourceReport:
     try:
         integrations = load_integrations_config()
         if not integrations["configured"]:
-            return SourceReport(source=splunk.SOURCE, skipped="no integration config")
+            return (
+                SourceReport(source=splunk.SOURCE, skipped="no integration config"),
+                None,
+            )
         if SPLUNK.id not in integrations["enabled_integrations"]:
-            return SourceReport(
-                source=splunk.SOURCE,
-                removed=_remove_siem(splunk.SOURCE, "splunk"),
-                skipped="not enabled",
+            return (
+                SourceReport(
+                    source=splunk.SOURCE,
+                    removed=_remove_siem(splunk.SOURCE, "splunk"),
+                    skipped="not enabled",
+                ),
+                None,
             )
         config = resolve(SPLUNK)
         absent = missing(config, *SPLUNK_SELFHOSTED_REQUIRED)
         if absent:
-            return SourceReport(source=splunk.SOURCE, skipped=f"no {absent[0]}")
+            return SourceReport(source=splunk.SOURCE, skipped=f"no {absent[0]}"), None
         report = sync_source(splunk.SOURCE, splunk.read_splunk(config))
     except Exception as exc:  # noqa: BLE001 -- unreachable is skipped, never removed
         logger.warning("detection rules: syncing splunk failed: %s", exc)
-        return SourceReport(source=splunk.SOURCE, error=f"{type(exc).__name__}: {exc}")
+        return (
+            SourceReport(source=splunk.SOURCE, error=f"{type(exc).__name__}: {exc}"),
+            None,
+        )
     logger.info("detection rules: %s", asdict(report))
-    return report
+    return report, config
 
 
 def _link_same_id() -> tuple:

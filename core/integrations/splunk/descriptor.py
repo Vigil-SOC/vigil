@@ -23,6 +23,8 @@ SPLUNK = register_descriptor(
             IntegrationField("verify_ssl", value_type="bool", default=True),
             IntegrationField("ca_cert_path"),
             IntegrationField("lookback_hours", value_type="int"),
+            # Every search the rule checks send (Runs, Sees) spends one.
+            IntegrationField("max_searches_per_hour", value_type="int", default=30),
         ),
     )
 )

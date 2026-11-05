@@ -37,11 +37,7 @@ jobs:
         run: |
           helm repo add bitnami https://charts.bitnami.com/bitnami
           helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
-          helm dependency update infra/helm/vigil
-          # Helm 4 requires subcharts extracted, not just as tgz
-          for tgz in infra/helm/vigil/charts/*.tgz; do
-            tar -xzf "$tgz" -C infra/helm/vigil/charts/
-          done
+          helm dependency build infra/helm/vigil
 
       # secrets.postgresPassword has no default, so every default-values
       # render sets a test one.

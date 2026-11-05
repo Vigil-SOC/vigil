@@ -1,7 +1,7 @@
 """Sees: whether the data each active Kibana rule reads is arriving.
 
-Wazuh rules get theirs from ``wazuh_sees``, which writes through ``write_check``;
-Splunk rules get none yet.
+Wazuh rules get theirs from ``wazuh_sees`` and Splunk saved searches from
+``splunk_sees``, each writing through ``write_check``.
 
 A rule's data source is its ``index`` patterns (or its data view's) and the
 timestamp field its 7-day range runs on. Rules on one source share one search:
@@ -225,7 +225,7 @@ def write_check(
     A result for which ``logged(new, last recorded (result, reason))`` holds,
     across versions, is also appended to detection_rule_check_changes, in the
     same transaction. By default: a result or reason that differs.
-    ``source`` is the rules' (Kibana's, or Wazuh's for ``wazuh_sees``).
+    ``source`` is the rules' (Kibana's, or Wazuh's / Splunk's for their Sees).
     """
     from core.detections.inventory.sync import (
         _change,
