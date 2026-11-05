@@ -92,7 +92,9 @@ from core.storage.models import (
     DetectionRuleVersion,
     Finding,
     IntakeTrigger,
+    Investigation,
 )
+from core.storage.models.workflow import LIVE_INVESTIGATION_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -949,16 +951,32 @@ def overlay_only() -> List[Dict[str, Any]]:
     ]
 
 
+def _deploy_in_flight(trigger_state: str, run_status: Optional[str]) -> bool:
+    """A deploy run still on its way: queued, or launched into a run that is live.
+    A failed, expired or finished one doesn't block another."""
+    return trigger_state == "queued" or run_status in LIVE_INVESTIGATION_STATUSES
+
+
 def _deploys_queued(session: Any, rule_ids: List[int]) -> Set[int]:
-    """Of these rule ids, those a deploy-PR run was ever queued for."""
+    """Of these rule ids, those with a deploy-PR run still in flight."""
     if not rule_ids:
         return set()
-    briefs = session.scalars(
-        select(IntakeTrigger.payload["hypothesis"].astext).where(
-            IntakeTrigger.payload["workflow_id"].astext == DEPLOY_WORKFLOW
+    run = Investigation.investigation_id == func.coalesce(
+        IntakeTrigger.investigation_id, IntakeTrigger.merged_into
+    )
+    rows = session.execute(
+        select(
+            IntakeTrigger.payload["hypothesis"].astext,
+            IntakeTrigger.state,
+            Investigation.status,
         )
+        .outerjoin(Investigation, run)
+        .where(IntakeTrigger.payload["workflow_id"].astext == DEPLOY_WORKFLOW)
     ).all()
-    return {r for r in rule_ids if any(_deploy_marker(r) in (b or "") for b in briefs)}
+    briefs = [
+        brief or "" for brief, state, status in rows if _deploy_in_flight(state, status)
+    ]
+    return {r for r in rule_ids if any(_deploy_marker(r) in b for b in briefs)}
 
 
 def deploy_overlay_only(rule_ids: Optional[List[int]] = None) -> Dict[str, Any]:
@@ -986,10 +1004,10 @@ def deploy_overlay_only(rule_ids: Optional[List[int]] = None) -> Dict[str, Any]:
         queued_before = _deploys_queued(session, [c.rule_id for c in wanted])
         todo = []
         for copy in wanted:
-            if copy.rule_id in queued_before:
-                skipped[copy.rule_id] = "a deploy pull request is already queued"
-            elif not targets.get(copy.language):
+            if not targets.get(copy.language):
                 skipped[copy.rule_id] = f"no {copy.language} deploy target is set"
+            elif copy.rule_id in queued_before:
+                skipped[copy.rule_id] = "a deploy pull request is already queued"
             elif copy.language == "splunk" and not copy.toml:
                 skipped[copy.rule_id] = "its overlay file could not be read"
             else:

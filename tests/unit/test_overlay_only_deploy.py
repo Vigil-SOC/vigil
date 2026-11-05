@@ -115,3 +115,44 @@ def test_a_splunk_rule_needs_its_overlay_file(estate, monkeypatch):
         {"rule_id": 3, "reason": "its overlay file could not be read"}
     ]
     assert session.added == []
+
+
+@pytest.mark.parametrize(
+    "trigger_state, run_status, blocks",
+    [
+        ("queued", None, True),
+        ("launched", "executing", True),
+        ("launched", "waiting_approval", True),
+        ("launched", "failed", False),
+        ("launched", "completed", False),
+        ("merged", "executing", True),
+        ("expired", None, False),
+        ("not_offered", None, False),
+    ],
+)
+def test_only_a_deploy_in_flight_blocks_another(trigger_state, run_status, blocks):
+    assert rollout._deploy_in_flight(trigger_state, run_status) is blocks
+
+
+def test_a_failed_deploy_run_can_be_queued_again(monkeypatch):
+    brief = f"... {rollout._deploy_marker(1)} ..."
+
+    class _Rows:
+        def all(self):
+            return [(brief, "launched", "failed"), (brief, "expired", None)]
+
+    class _S:
+        def execute(self, _stmt):
+            return _Rows()
+
+    assert rollout._deploys_queued(_S(), [1]) == set()
+
+
+def test_no_target_wins_over_an_old_queued_run(estate):
+    state, session = estate
+    state["targets"] = {}
+    out = rollout.deploy_overlay_only([2])
+    assert out["skipped"] == [
+        {"rule_id": 2, "reason": "no elastic deploy target is set"}
+    ]
+    assert session.added == []
