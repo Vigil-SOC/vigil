@@ -356,6 +356,16 @@ ensure_npm_on_path() {
     return 1
 }
 
+# True when clients/web needs an install: node_modules or npm's own install
+# record (.package-lock.json, rewritten on every install) is missing, or the
+# lockfile changed after the last install (e.g. a pull that added a dep).
+frontend_deps_stale() {
+    local web="${1:-clients/web}"
+    [ -d "$web/node_modules" ] || return 0
+    [ -f "$web/node_modules/.package-lock.json" ] || return 0
+    [ -f "$web/package-lock.json" ] && [ "$web/package-lock.json" -nt "$web/node_modules/.package-lock.json" ]
+}
+
 # Where dependency versions come from. requirements.lock is fully pinned and
 # resolved for every supported platform, so two people installing months apart
 # get the same tree; requirements.txt (open ranges) is the fallback for a

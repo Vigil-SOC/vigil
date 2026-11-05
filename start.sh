@@ -225,8 +225,13 @@ run_schema_upgrade || exit 1
 start_backup_loop
 
 # --- Frontend deps ---
-if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "clients/web" ] && [ ! -d "clients/web/node_modules" ]; then
-    (cd clients/web && npm install)
+if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "clients/web" ] && frontend_deps_stale clients/web; then
+    echo "Frontend dependencies missing or out of date; installing..."
+    if [ -f "clients/web/package-lock.json" ]; then
+        (cd clients/web && npm ci)
+    else
+        (cd clients/web && npm install)
+    fi
 fi
 
 # --- Launch ---
