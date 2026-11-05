@@ -37,11 +37,14 @@ and removed. Repo rules have no checks and get no rows here; Vigil's Elastic
 overlay copies get their Runs from ``rollout``, which records them the same way.
 
 After Kibana and Splunk link, ``_drift`` checks each linked copy against its
-repo rule and writes checks['drift'] the same way: fail when the copy is disabled
-or removed while its repo rule is active, or when only the copy moved (a same_id
-copy whose fingerprint differs and whose latest version is newer than both the
-link and the repo rule's; a known_name or agent copy that moved after the link
-with no repo version since its previous one). A copy that had a drift result and
+repo rule and writes checks['drift'] the same way: fail when the copy was
+switched off or removed after the link while its repo rule is active (a copy
+never switched on since, as Elastic's prebuilt rules install, passes), or when
+only the copy moved (a same_id copy whose fingerprint differs and whose latest
+version is newer than both the link and the repo rule's, unless it is Elastic's
+uncustomized prebuilt rule; a known_name or agent copy that moved after the link
+with no repo version since its previous one). A copy back to its fingerprint at
+the link passes, whatever the repo rule did. A copy that had a drift result and
 is no longer linked gets a NULL row, reason 'not linked'. A disabled rule keeps
 its drift; only Runs, Sees, Quiet, Noisy and Silent are dropped.
 
@@ -771,20 +774,41 @@ def _drift_of(
     fp: str,
     origin: Any,
     siem: str,
+    linked_fp: Optional[str],
+    off_at: Optional[datetime],
+    content: Dict[str, Any],
 ) -> tuple:
-    """(result, reason) of a linked copy against its origin's latest version."""
+    """(result, reason) of a linked copy against its origin's latest version.
+
+    ``linked_fp`` is the copy's fingerprint when linked; ``off_at`` when it last
+    went from active to disabled or removed.
+    """
     repo = f"repo rule {origin.id} v{origin.latest_version}"
     mine = f"{siem} v{copy.latest_version}"
     if origin.status != "active":
         return "pass", f"origin not active: repo rule {origin.id} is {origin.status}"
     if copy.status != "active":
         where = "removed from" if copy.status == "removed" else "disabled in"
-        return "fail", f"{where} {siem}; repo rule {origin.id} still active"
+        # Only a switch-off after the link is drift: prebuilt rules install disabled.
+        if off_at is not None and copy.linked_at and off_at > copy.linked_at:
+            return "fail", (
+                f"{where} {siem} {_at(off_at)}, after the link; "
+                f"repo rule {origin.id} still active"
+            )
+        since = f" since linked {_at(copy.linked_at)}" if copy.linked_at else ""
+        return "pass", f"{where} {siem}, not switched on{since}"
     moved = copy.linked_at is None or seen > copy.linked_at
+    if moved and linked_fp is not None and fp == linked_fp:
+        return "pass", f"{mine} back to what it was when linked {_at(copy.linked_at)}"
     if copy.link_kind == "same_id":
         if fp == origin.fingerprint:
             return "pass", f"{mine} matches {repo}"
         if moved and seen > origin.first_seen:
+            if content.get("immutable") is True and (
+                (content.get("rule_source") or {}).get("is_customized") is not True
+            ):
+                # An Elastic package upgrade, not an edit made in Kibana.
+                return "pass", f"{mine} is Elastic's prebuilt rule, not customized"
             return "fail", (
                 f"{mine} first seen {_at(seen)}; {repo} unchanged since "
                 f"{_at(origin.first_seen)}"
@@ -819,7 +843,7 @@ def _drift(source: str) -> int:
     with get_db_manager().session_scope() as session:
         last = _last_results(session, source)
         copies = session.execute(
-            select(DetectionRule, v.fingerprint, v.first_seen, v.checks)
+            select(DetectionRule, v.fingerprint, v.first_seen, v.checks, v.content)
             .join(v, latest)
             .where(DetectionRule.source == source)
             # A link decision commits before or after this, not between.
@@ -833,6 +857,34 @@ def _drift(source: str) -> int:
                     DetectionRule.source == source,
                     v.version == DetectionRule.latest_version - 1,
                 )
+            ).all()
+        )
+        # Each copy's fingerprint when linked: its latest version seen by then.
+        linked_fps = dict(
+            session.execute(
+                select(v.rule_id, v.fingerprint)
+                .join(DetectionRule, DetectionRule.id == v.rule_id)
+                .where(
+                    DetectionRule.source == source,
+                    v.first_seen <= DetectionRule.linked_at,
+                )
+                .distinct(v.rule_id)
+                .order_by(v.rule_id, v.version.desc())
+            ).all()
+        )
+        # When each copy last went from active to disabled or removed.
+        ch = DetectionRuleCheckChange
+        offs = dict(
+            session.execute(
+                select(ch.rule_id, ch.changed_at)
+                .join(DetectionRule, DetectionRule.id == ch.rule_id)
+                .where(
+                    DetectionRule.source == source,
+                    ch.check_key == "status",
+                    ch.old_result == "active",
+                )
+                .distinct(ch.rule_id)
+                .order_by(ch.rule_id, ch.changed_at.desc(), ch.id.desc())
             ).all()
         )
         origin_ids = {c.origin_rule_id for c, *_ in copies if c.origin_rule_id}
@@ -852,7 +904,7 @@ def _drift(source: str) -> int:
         }
         changes: List[dict] = []
         checked: List[tuple] = []
-        for copy, fp, seen, checks in copies:
+        for copy, fp, seen, checks, content in copies:
             checks = checks or {}
             before = last.get((copy.id, "drift"))
             origin = origins.get(copy.origin_rule_id)
@@ -872,7 +924,17 @@ def _drift(source: str) -> int:
                     rest = {k: x for k, x in checks.items() if k != "drift"}
                     checked.append((copy.id, copy.latest_version, rest))
                 continue
-            new = _drift_of(copy, seen, prev.get(copy.id), fp, origin, siem)
+            new = _drift_of(
+                copy,
+                seen,
+                prev.get(copy.id),
+                fp,
+                origin,
+                siem,
+                linked_fps.get(copy.id),
+                offs.get(copy.id),
+                content or {},
+            )
             if before != new:
                 changes.append(
                     _change(
