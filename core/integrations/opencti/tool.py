@@ -90,7 +90,11 @@ async def handle_list_tools():
         ),
         types.Tool(
             name="opencti_search_entities",
-            description="Search OpenCTI by name or alias for threat actors, intrusion sets, malware, attack patterns, tools or campaigns.",
+            description=(
+                "Search OpenCTI by name or alias for threat actors, intrusion sets, "
+                "malware, attack patterns, tools or campaigns. Attack patterns carry "
+                "x_mitre_id, the ATT&CK technique id (e.g. T1003.001)."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -106,7 +110,8 @@ async def handle_list_tools():
             description=(
                 "List the relationships going out of an OpenCTI entity (uses, targets, "
                 "attributed-to, ...), capped. entity_id is the id another OpenCTI tool "
-                "returned (a STIX id matches nothing); each target carries its own id."
+                "returned (a STIX id matches nothing); each target carries its own id, and "
+                "an attack-pattern target its ATT&CK technique id as x_mitre_id."
             ),
             inputSchema={
                 "type": "object",
