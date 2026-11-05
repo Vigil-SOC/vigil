@@ -1,8 +1,9 @@
 """Read Splunk's scheduled and correlation saved searches, and whether each runs.
 
 Credentials are the ``splunk`` integration's. Listing is REST reads; the Runs
-result costs exactly one search per sync, against ``index=_internal``. Nothing
-is written to Splunk.
+result costs exactly one search per sync, against ``index=_internal``, spent
+against the integration's ``max_searches_per_hour`` (Sees, in ``splunk_sees``,
+spends the same budget). Nothing is written to Splunk.
 
 A scheduled run's errors are read from two sourcetypes joined on sid: the
 scheduler logs a runtime failure as ``success`` (Splunk 10.4) or not at all
@@ -14,13 +15,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Mapping, Optional, Set
 
 from core.detections.inventory.readers import _techniques
 from core.detections.inventory.record import RuleRecord
 
+logger = logging.getLogger(__name__)
+
 SOURCE = "splunk"
+# Searches Vigil may send Splunk an hour when max_searches_per_hour is unset.
+DEFAULT_PER_HOUR = 30
 # Scheduled searches and correlation searches; Splunk counts with this filter too.
 LISTED = "is_scheduled=1 OR action.correlationsearch.enabled=1"
 # A run due less than GRACE ago may not be logged and indexed yet, so the window
@@ -281,18 +287,35 @@ def latest_run(
     return max(mine, key=lambda r: float(r.get("t") or 0), default=None)
 
 
-def read_splunk(config: Mapping[str, Any]) -> List[RuleRecord]:
-    """Every listed saved search with its Runs result, or raise on a short list."""
-    from core.integrations.splunk.client import SplunkSearchError, SplunkService
+def service_of(config: Mapping[str, Any]) -> Any:
+    from core.integrations.splunk.client import SplunkService
 
     verify = True if config.get("verify_ssl") is None else config["verify_ssl"]
-    service = SplunkService(
+    return SplunkService(
         server_url=config["server_url"],
         username=config["username"],
         password=config["password"],
         verify_ssl=verify,
         ca_cert_path=config.get("ca_cert_path"),
     )
+
+
+def per_hour_of(config: Mapping[str, Any]) -> int:
+    """The splunk integration's max_searches_per_hour: absent 30, never below 0."""
+    per_hour = config.get("max_searches_per_hour")
+    return DEFAULT_PER_HOUR if per_hour is None else max(int(per_hour), 0)
+
+
+def read_splunk(config: Mapping[str, Any]) -> List[RuleRecord]:
+    """Every listed saved search with its Runs result, or raise on a short list.
+
+    The Runs search spends one of the splunk budget's searches; when the hour's
+    are spent every record has no Runs result, so the stored ones are kept.
+    """
+    from core.integrations._base import search_budget
+    from core.integrations.splunk.client import SplunkSearchError
+
+    service = service_of(config)
     entries = service.list_saved_searches(LISTED)
     now = datetime.now(timezone.utc)
     started = service.started_at()
@@ -301,6 +324,9 @@ def read_splunk(config: Mapping[str, Any]) -> List[RuleRecord]:
     if any(scheduled(e) for e in entries):
         if service.can_search_index("_internal") is False:
             unreadable = f"{service.username} cannot search index=_internal"
+        elif not search_budget.spend(SOURCE, per_hour_of(config)):
+            logger.info("detection rules: Splunk Runs not searched, budget spent")
+            return [record_of(e, None) for e in entries]
         else:
             try:
                 rows = service.search(
