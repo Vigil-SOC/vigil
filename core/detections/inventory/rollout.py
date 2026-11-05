@@ -330,6 +330,8 @@ async def _splunk_query(
         earliest_time=f"{start.timestamp():.3f}",
         latest_time=f"{end.timestamp():.3f}",
         max_count=MAX_DOCS,
+        # Every field, so an exception on one the SPL doesn't name can match.
+        all_fields=True,
     )
     # Rows, not event_count: that is events scanned, wrong for transforming SPL.
     rows = found.results[:MAX_DOCS]
