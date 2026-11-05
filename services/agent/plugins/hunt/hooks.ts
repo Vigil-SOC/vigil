@@ -8,7 +8,7 @@ import { classOf, okWith, RECORD_TOOLS, refusedWith, type RecordBackend } from "
 import type { Harness } from "../../core/loop.js";
 import { errorFields, logger } from "../../core/log.js";
 import type { State } from "../../core/seams.js";
-import { narrowFinding, type RunSpec, type ToolSpec } from "../../core/spec.js";
+import { declaredCapabilities, narrowFinding, type RunSpec, type ToolSpec } from "../../core/spec.js";
 import { isVisibilityGap } from "../../core/security.js";
 import { toolsFrom } from "../../tools/remote.js";
 import { disconfirmationCritic, evidenceFrom, narrativeWriter, type AdapterOptions } from "./adapters.js";
@@ -136,7 +136,7 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
         huntSpec(kernelSpec(base.spec as RunSpec)),
         base.started_by,
         ctx.options.run_kind,
-        ctx.options.plugin.needs,
+        [...ctx.options.plugin.needs, ...declaredCapabilities(ctx.options.spec.sections)],
         base.principal,
         base.origin,
       );
