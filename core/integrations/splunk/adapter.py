@@ -32,10 +32,13 @@ logger = logging.getLogger(__name__)
 # specific notable index first, falling back to broader queries if it's empty
 # (matching pre-federation behavior). Oldest first: when the window holds more
 # than max_items events, the ones left out must be the newest (#1571).
+# `fields *`: a REST search job returns only the fields its SPL names, so without
+# it a notable's search-time fields (search_name, orig_sid, urgency, src...) are
+# never extracted and the finding cannot name its saved search (#3791).
 _QUERIES = [
-    "index=notable | sort 0 _time | head {limit}",
-    "index=security sourcetype=*:alert* | sort 0 _time | head {limit}",
-    "`notable` | sort 0 _time | head {limit}",
+    "index=notable | fields * | sort 0 _time | head {limit}",
+    "index=security sourcetype=*:alert* | fields * | sort 0 _time | head {limit}",
+    "`notable` | fields * | sort 0 _time | head {limit}",
 ]
 
 _SEVERITY_MAP = {

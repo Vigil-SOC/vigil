@@ -14,8 +14,9 @@ linked copies' (disabled, or their Runs result, each beside its Quiet), or
 'elastic'; Splunk, 'splunk'; the Wazuh manager, 'wazuh') is listed. Kibana,
 Wazuh and Splunk rules get a Sees check; a Wazuh rule's data source is its
 decoder, a Splunk search's its index/sourcetype or data model. Kibana,
-Wazuh and Splunk rules get a Quiet check; Kibana and Wazuh rules an Accurate one
-(``accurate``); only Kibana rules get Noisy and Silent.
+Wazuh and Splunk rules get a Quiet check, an Accurate one (``accurate``) and a
+Caught one (``caught``: pass, or untested); only Kibana rules get Noisy and
+Silent.
 
 A linked Kibana or Splunk copy also carries checks['drift']: fail when it was
 disabled, removed or edited in the SIEM while its repo rule stayed the same.
@@ -28,11 +29,14 @@ query over detection_rule_check_changes.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
-from sqlalchemy import Text, and_, case, cast, func, or_, select, tuple_
+from sqlalchemy import Text, and_, case, cast, func, select, tuple_
 from sqlalchemy.orm import defer
 
 from core.detections.inventory.readers import OVERLAY_SOURCE
@@ -61,10 +65,11 @@ QUIET = DetectionRuleVersion.checks["quiet"]["result"].astext
 ACCURATE = DetectionRuleVersion.checks["accurate"]["result"].astext
 NOISY = DetectionRuleVersion.checks["noisy"]["result"].astext
 SILENT = DetectionRuleVersion.checks["silent"]["result"].astext
+CAUGHT = DetectionRuleVersion.checks["caught"]["result"].astext
 # No alert across Quiet's whole 30-day search: a never-firing rule.
 NEVER_FIRED = DetectionRuleVersion.checks["silent"]["days_fired"].astext == "0"
 # The per-tool tally columns _by_tool reads, in order, before the count.
-TALLIED = (TOOL, RUNS, SEES, QUIET, ACCURATE, NOISY, SILENT, NEVER_FIRED)
+TALLIED = (TOOL, RUNS, SEES, QUIET, ACCURATE, NOISY, SILENT, CAUGHT, NEVER_FIRED)
 RUNS_RESULTS = ("pass", "fail", "unknown")
 # Each rule's current stage: its latest stage row.
 CURRENT_STAGE = (
@@ -76,12 +81,14 @@ CURRENT_STAGE = (
 LINKED = DetectionRule.link_kind.in_(("same_id", "known_name", "agent"))
 NOT_DEPLOYED = "not deployed"
 NOT_READ = (
-    "Splunk rules get no Accurate check, and Splunk and Wazuh rules no Noisy or "
-    "Silent check (nor a never-firing count), yet"
+    "Splunk and Wazuh rules get no Noisy or Silent check (nor a never-firing "
+    "count), yet"
 )
 SEES_TOOLS = ("elastic", "wazuh", "splunk")
 QUIET_TOOLS = ("elastic", "wazuh", "splunk")
-ACCURATE_TOOLS = ("elastic", "wazuh")
+# The tools whose findings resolve to a rule version (rule_for_finding):
+# Accurate and Caught run there.
+RESOLVES = ("elastic", "wazuh", "splunk")
 # Noisy, Silent and the never-firing count read a rule's own history.
 HISTORY_TOOLS = ("elastic",)
 CHANGE = DetectionRuleCheckChange
@@ -112,8 +119,6 @@ def _flags():
         .where(
             latest.c.old_result == "pass",
             latest.c.new_result == "fail",
-            # A deleted copy whose repo rule is still active is drift that matters.
-            or_(DetectionRule.status != "removed", latest.c.check_key == "drift"),
         )
     )
 
@@ -277,6 +282,7 @@ def _copies(session: Any, origins: Iterable[int]) -> Dict[int, Dict[str, List[Di
                 "runs": (checks or {}).get("runs"),
                 "quiet": (checks or {}).get("quiet"),
                 "accurate": (checks or {}).get("accurate"),
+                "caught": (checks or {}).get("caught"),
                 "link": copy.link_kind,
             }
         )
@@ -310,10 +316,10 @@ def _with_links(session: Any, hits: List[Dict], rules: List[DetectionRule]) -> N
 
 def _by_tool(rows: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
     """(TALLIED..., count) rows as rules per tool, and for a SIEM's its Runs, Sees,
-    Quiet, Accurate, Noisy and Silent, and (where Noisy and Silent run) its
-    never-firing rules."""
+    Quiet, Accurate, Noisy, Silent and Caught, and (where Noisy and Silent run)
+    its never-firing rules."""
     out: Dict[str, Dict[str, Any]] = {}
-    for tool, runs, sees, quiet, accurate, noisy, silent, never, count in rows:
+    for tool, runs, sees, quiet, accurate, noisy, silent, caught, never, count in rows:
         entry = out.setdefault(tool, {"rules": 0})
         entry["rules"] += count
         if tool not in ("repo", OVERLAY):
@@ -324,6 +330,7 @@ def _by_tool(rows: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
                 ("accurate", accurate),
                 ("noisy", noisy),
                 ("silent", silent),
+                ("caught", caught),
             ):
                 bucket = entry.setdefault(
                     check, {**dict.fromkeys(RUNS_RESULTS, 0), "unchecked": 0}
@@ -524,7 +531,7 @@ def _any_result(result: str) -> Any:
 
 def rules_by_tool() -> Dict[str, Dict[str, Any]]:
     """Active rules per tool across the estate, with each SIEM's Runs, Sees,
-    Quiet, Accurate, Noisy and Silent, and its never-firing rules."""
+    Quiet, Accurate, Noisy, Silent and Caught, and its never-firing rules."""
     with get_db_manager().session_scope() as session:
         return _by_tool(
             session.execute(
@@ -552,8 +559,12 @@ def unchecked(siems: Iterable[str]) -> Dict[str, Dict[str, Any]]:
             "reason": "waiting for the query budget",
         },
         "accurate": {
-            "tools": [t for t in siems if t in ACCURATE_TOOLS],
+            "tools": [t for t in siems if t in RESOLVES],
             "reason": "not judged since the last sync",
+        },
+        "caught": {
+            "tools": [t for t in siems if t in RESOLVES],
+            "reason": "untested: no attack run or proven incident has caught this version",
         },
         **{
             check: {
@@ -643,11 +654,13 @@ def search(
     flagged: Optional[bool] = None,
     quiet: Optional[str] = None,
     accurate: Optional[str] = None,
+    caught: Optional[str] = None,
 ) -> List[Dict]:
     """Active and disabled rules whose format, path or parsed content contains ``query``.
 
     ``tool`` is 'overlay', 'repo' or a SIEM source; ``runs``, ``sees`` and
-    ``quiet`` and ``accurate`` keep rules whose latest version has that check result; ``stage`` keeps
+    ``quiet`` and ``accurate`` keep rules whose latest version has that check result;
+    ``caught`` 'pass' keeps caught versions, 'untested' the rest; ``stage`` keeps
     rules currently there; ``flagged`` keeps rules with (or without) an open
     flag. Each hit says whether it is flagged; a single hit carries its recent
     check changes.
@@ -683,6 +696,10 @@ def search(
         statement = statement.where(QUIET == quiet)
     if accurate:
         statement = statement.where(ACCURATE == accurate)
+    if caught:
+        statement = statement.where(
+            CAUGHT.is_(None) if caught == "untested" else CAUGHT == caught
+        )
     flags = _flags().subquery()
     if flagged is not None:
         is_flagged = DetectionRule.id.in_(select(flags.c.rule_id))
@@ -788,8 +805,63 @@ def _wazuh_rule_id(record: Any) -> Optional[str]:
     return None
 
 
+def _text(record: Any, field: str) -> Optional[str]:
+    value = record.get(field) if isinstance(record, dict) else None
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+# A scheduled search's sid: scheduler_<owner>_<app>_<search>_at_<epoch>_<n>
+# ('rt_scheduler_' when real-time), owner and app each written '_<name>' when
+# plain alphanumeric, else as unpadded base64 (nobody_U3BsdW5rX1NBX0NJTQ is
+# nobody, Splunk_SA_CIM); the search is '_<name>' or RMD5<hash>.
+_SID = re.compile(r"(?:rt_)?scheduler_(.+?)_at_\d")
+
+
+def _sid_owner_app(sid: Optional[str]) -> Optional[Tuple[str, str]]:
+    """(owner, app) a scheduler sid names, or None when it is not readable."""
+    match = _SID.match(sid or "")
+    if not match:
+        return None
+    tokens = iter(match.group(1).split("_"))
+    parts: List[str] = []
+    for token in tokens:
+        if len(parts) == 2:
+            break  # the search part, which the notable's search_name gives
+        if token == "":
+            parts.append(next(tokens, ""))
+            continue
+        try:
+            parts.append(
+                base64.b64decode(
+                    token + "=" * (-len(token) % 4), validate=True
+                ).decode()
+            )
+        except (binascii.Error, UnicodeDecodeError):
+            return None
+    else:
+        return None  # no search part after owner and app: not a scheduler sid
+    return (parts[0], parts[1]) if all(parts) else None
+
+
+def _splunk_ref(records: List[Any]) -> Any:
+    """(saved search name, inventory keys to try in order) a notable names, or why not.
+
+    The keys are saved_search_key's: app/name@owner (shared with its owner only),
+    then app/name. With no readable orig_sid there are none: match on name alone.
+    """
+    notable = next((r for r in records if _text(r, "search_name")), None)
+    if notable is None:
+        return _unknown("the Splunk alert names no saved search (no search_name)")
+    name = _text(notable, "search_name")
+    owner_app = _sid_owner_app(_text(notable, "orig_sid"))
+    if owner_app is None:
+        return name, ()
+    owner, app = owner_app
+    return name, (f"{app}/{name}@{owner}", f"{app}/{name}")
+
+
 # Inventory source -> the SIEM a reason names.
-SIEM_NAMES = {"elastic": "Kibana", "wazuh": "Wazuh"}
+SIEM_NAMES = {"elastic": "Kibana", "wazuh": "Wazuh", "splunk": "Splunk"}
 # The key readers, in order: a Kibana rule wins over a Wazuh one.
 KEY_READERS = (("elastic", _kibana_rule_id), ("wazuh", _wazuh_rule_id))
 
@@ -811,27 +883,35 @@ def _named(finding: Mapping[str, Any]) -> Optional[Tuple[int, int]]:
 
 
 def _rule_ref(finding: Mapping[str, Any]) -> Any:
-    """(inventory source, native key, alert time) the finding names, or why it is unknown."""
+    """(inventory source, native keys to try, alert time, Splunk search name) the
+    finding names, or why it is unknown. No keys: match the search name alone."""
     source = finding.get("data_source")
-    if source == "splunk":
-        return _unknown("Splunk findings do not name their saved search yet")
-    if source != "elastic":
+    if source not in ("elastic", "splunk"):
         return _unknown(
-            f"only Kibana and Wazuh rules resolve; this finding is from {source}"
+            f"only Kibana, Wazuh and Splunk rules resolve; this finding is from {source}"
         )
     context = finding.get("entity_context")
     evidence = context.get("source_evidence") if isinstance(context, dict) else None
     records = evidence.get("records") if isinstance(evidence, dict) else None
-    for siem, read in KEY_READERS:
-        key = next(filter(None, map(read, records or [])), None)
-        if key is not None:
-            break
+    records = records if isinstance(records, list) else []
+    name = None
+    if source == "splunk":
+        ref = _splunk_ref(records)
+        if not isinstance(ref, tuple):
+            return ref
+        siem, (name, keys) = "splunk", ref
     else:
-        return _unknown("the alert names no Kibana or Wazuh detection rule")
+        for siem, read in KEY_READERS:
+            key = next(filter(None, map(read, records)), None)
+            if key is not None:
+                keys = (key,)
+                break
+        else:
+            return _unknown("the alert names no Kibana or Wazuh detection rule")
     fired = _when(finding.get("timestamp"))
     if fired is None:
         return _unknown("the finding has no alert time to pick a version by")
-    return siem, key, fired
+    return siem, keys, fired, name
 
 
 def rule_for_finding(finding: Mapping[str, Any]) -> Dict[str, Any]:
@@ -839,9 +919,12 @@ def rule_for_finding(finding: Mapping[str, Any]) -> Dict[str, Any]:
 
     A finding the overlay runner made names its rule and version
     (entity_context.detection_rule) and resolves to exactly that. Otherwise it is
-    read from the stored alert (entity_context.source_evidence), never matched on
-    name; the version is the latest one first seen at or before the alert.
-    Kibana (source 'elastic') and Wazuh (source 'wazuh') rules resolve.
+    read from the stored alert (entity_context.source_evidence); the version is
+    the latest one first seen at or before the alert. Kibana (source 'elastic')
+    and Wazuh (source 'wazuh') rules resolve by the rule id the alert names. A
+    Splunk notable resolves by its search_name, with app and owner read from its
+    orig_sid; with no readable sid, by search_name alone only when exactly one
+    Splunk saved search has that name.
     """
     if _named(finding) is None:
         ref = _rule_ref(finding)
@@ -864,8 +947,13 @@ def resolve_findings(
     """
     named = {k: n for k, f in findings.items() if (n := _named(f)) is not None}
     refs = {k: _rule_ref(f) for k, f in findings.items() if k not in named}
-    wanted = {r[:2] for r in refs.values() if isinstance(r, tuple)}
+    wanted = {
+        (r[0], key) for r in refs.values() if isinstance(r, tuple) for key in r[1]
+    }
+    # Splunk notables with no readable sid: matched on the saved search's name.
+    names = {r[3] for r in refs.values() if isinstance(r, tuple) and not r[1]}
     rules: Dict[tuple, DetectionRule] = {}
+    by_name: Dict[str, List[DetectionRule]] = {}
     versions: Dict[int, List[DetectionRuleVersion]] = {}
     if wanted:
         rules = {
@@ -876,6 +964,17 @@ def resolve_findings(
                 )
             )
         }
+    if names:
+        for r in session.scalars(
+            select(DetectionRule).where(
+                DetectionRule.source == "splunk", DetectionRule.name.in_(names)
+            )
+        ):
+            by_name.setdefault(r.name, []).append(r)
+    ids = {r.id for r in rules.values()} | {
+        r.id for found in by_name.values() for r in found
+    }
+    if ids:
         loads = [defer(DetectionRuleVersion.content)]
         if not full:
             loads += [
@@ -885,7 +984,7 @@ def resolve_findings(
         for v in session.scalars(
             select(DetectionRuleVersion)
             .options(*loads)
-            .where(DetectionRuleVersion.rule_id.in_([r.id for r in rules.values()]))
+            .where(DetectionRuleVersion.rule_id.in_(ids))
             .order_by(DetectionRuleVersion.rule_id, DetectionRuleVersion.version.desc())
         ):
             versions.setdefault(v.rule_id, []).append(v)
@@ -902,10 +1001,22 @@ def resolve_findings(
         if not isinstance(ref, tuple):
             out[k] = ref
             continue
-        siem, key, fired = ref
-        rule = rules.get((siem, key))
+        siem, keys, fired, name = ref
+        if keys:
+            rule = next((rules[(siem, n)] for n in keys if (siem, n) in rules), None)
+            missing = f"{SIEM_NAMES[siem]} rule {keys[-1]} is not in the inventory"
+        else:
+            found = by_name.get(name, [])
+            rule = found[0] if len(found) == 1 else None
+            missing = (
+                f"Splunk saved search name {name!r} is not unique "
+                f"({', '.join(sorted(r.native_key for r in found))}) and the "
+                "notable has no readable orig_sid to tell them apart"
+                if found
+                else f"no Splunk saved search named {name!r} is in the inventory"
+            )
         out[k] = (
-            _unknown(f"{SIEM_NAMES[siem]} rule {key} is not in the inventory")
+            _unknown(missing)
             if rule is None
             else _pick(rule, versions.get(rule.id, []), fired, full)
         )
