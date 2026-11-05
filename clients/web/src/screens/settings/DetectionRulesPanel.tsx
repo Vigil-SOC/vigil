@@ -40,6 +40,9 @@ const fmtNum = (n: number) => n.toLocaleString()
 const DEPLOY_FORMATS = ['splunk', 'elastic']
 const deployable = (s: DetectionSource) => s.type === 'git' && DEPLOY_FORMATS.includes(s.format)
 
+// A deploy target awaiting the person's confirmation: an existing row, or the add form.
+type PendingTarget = { name: string; url: string; format: string; source?: DetectionSource }
+
 export default function DetectionRulesPanel({ notify }: SectionProps) {
   const { sources, stats, phase, error, reload, addSource, removeSource, updateSource, updateAll, setDeployTarget } =
     useDetectionRules()
@@ -48,6 +51,7 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
   const [form, setForm] = useState<AddSourcePayload>(EMPTY_SOURCE)
   const [saving, setSaving] = useState(false)
   const [confirmDel, setConfirmDel] = useState<DetectionSource | null>(null)
+  const [confirmTarget, setConfirmTarget] = useState<PendingTarget | null>(null)
 
   const title = 'Detection rule sources'
   const desc = 'Rules agents can search and compare against when they explain coverage.'
@@ -97,6 +101,13 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
     } finally {
       setUpdating(null)
     }
+  }
+
+  const onConfirmTarget = () => {
+    if (!confirmTarget) return
+    setConfirmTarget(null)
+    if (confirmTarget.source) void onDeployTarget(confirmTarget.source, true)
+    else void onAdd()
   }
 
   const onAdd = async () => {
@@ -180,15 +191,25 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
                       )}
                     </td>
                     <td>{formatName(s.format)}</td>
-                    <td title={deployable(s) ? `When one of Vigil's ${formatName(s.format)} rules goes live, an agent opens a pull request adding it here; it waits for approval.` : undefined}>
-                      {deployable(s) && (
+                    <td
+                      title={
+                        !deployable(s) ? undefined
+                        : s.vendor_repo ? 'A vendor’s public repo can’t be a deploy target; add your own repo for that.'
+                        : `When one of Vigil's ${formatName(s.format)} rules goes live, an agent opens a pull request adding it here; it waits for approval.`
+                      }
+                    >
+                      {deployable(s) && (s.vendor_repo ? (
+                        <span className="text-xs text-tx-3">Vendor repo</span>
+                      ) : (
                         <Toggle
                           checked={!!s.deploy_target}
                           disabled={!!updating}
                           label={`${s.name}: deploy target for ${formatName(s.format)} rules`}
-                          onChange={(on) => onDeployTarget(s, on)}
+                          onChange={(on) =>
+                            on ? setConfirmTarget({ name: s.name, url: s.git_url, format: s.format, source: s }) : onDeployTarget(s, false)
+                          }
                         />
-                      )}
+                      ))}
                     </td>
                     <td className="data-clip font-mono" title={s.git_url || undefined}>{where || '—'}</td>
                     <td>{fmtNum(s.rule_count)}</td>
@@ -252,10 +273,34 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
           )}
           <div className="flex justify-end gap-2.5 mt-1">
             <button className="btn ghost" onClick={() => setAddOpen(false)} disabled={saving}>Cancel</button>
-            <button className="btn primary" onClick={onAdd} disabled={!addValid || saving}>
+            <button
+              className="btn primary"
+              onClick={() =>
+                formDeployable && form.deploy_target
+                  ? setConfirmTarget({ name: form.name, url: form.url || '', format: form.format })
+                  : onAdd()
+              }
+              disabled={!addValid || saving}
+            >
               {saving ? 'Adding…' : 'Add Source'}
             </button>
           </div>
+        </div>
+      </Popup>
+
+      {/* Deploy target confirm: Vigil will open pull requests into this repo */}
+      <Popup open={!!confirmTarget} onClose={() => setConfirmTarget(null)} title="Make this the deploy target?" width={480}>
+        <p className="text-sm text-tx-2 leading-relaxed">
+          When one of Vigil's {confirmTarget && formatName(confirmTarget.format)} rules goes live, an agent will open a pull
+          request adding it to <strong>{confirmTarget?.name}</strong>:
+        </p>
+        <p className="text-sm font-mono mt-2 break-all">{confirmTarget?.url}</p>
+        <p className="text-sm text-tx-2 leading-relaxed mt-2">
+          Each pull request waits for a person's approval. Only choose a repo your organisation owns.
+        </p>
+        <div className="flex justify-end gap-2.5 mt-5">
+          <button className="btn ghost" onClick={() => setConfirmTarget(null)}>Cancel</button>
+          <button className="btn primary" onClick={onConfirmTarget}>Make deploy target</button>
         </div>
       </Popup>
 
