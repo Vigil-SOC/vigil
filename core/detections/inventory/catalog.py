@@ -34,10 +34,11 @@ import base64
 import binascii
 import logging
 import re
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
-from sqlalchemy import Text, and_, case, cast, func, select, tuple_
+from sqlalchemy import Text, and_, case, cast, func, select, text, tuple_
 from sqlalchemy.orm import defer
 
 from core.detections.inventory.readers import OVERLAY_SOURCE
@@ -98,7 +99,19 @@ RECENT_CHANGES = 10
 # A row that changed the result; a fail -> fail row only changed the reason.
 RESULT_CHANGED = CHANGE.old_result.is_distinct_from(CHANGE.new_result)
 # The Detections page's rule listing: health states worst first, and its caps.
-HEALTH_ORDER = ("fails_to_run", "data_silent", "disabled", "never_fired", "fires")
+HEALTH_ORDER = (
+    "fails_to_run",
+    "data_silent",
+    "missing_field",
+    "never_fired",
+    "fires",
+    "disabled",
+    "no_fire_data",
+)
+# What an operator has to act on: a rule that can't fire, or never has.
+ATTENTION = ("fails_to_run", "data_silent", "missing_field", "never_fired")
+CANT_FIRE = ("fails_to_run", "data_silent", "missing_field")
+LISTING_SIEMS = ("elastic", "splunk", "wazuh")
 FIRES_WINDOW_DAYS = 90
 RULE_ROWS = 300
 
@@ -703,76 +716,268 @@ def _fires(session: Any) -> Dict[str, int]:
     return {name: count for name, count in rows}
 
 
-def _health(status: str, checks: Dict[str, Any], fires: int) -> Tuple[str, str]:
-    """(health, why), the first that holds, worst first."""
+def _health(
+    status: str, checks: Dict[str, Any], fires: int
+) -> Tuple[str, str, Optional[str]]:
+    """(health, why, raw), the first that holds, worst first. ``raw`` is the
+    failing check's stored reason, as the SIEM or the check wrote it."""
     runs = checks.get("runs") or {}
     sees = checks.get("sees") or {}
+    silent = checks.get("silent") or {}
     if status == "disabled":
-        return "disabled", "Switched off in the SIEM."
+        return "disabled", "Switched off in the SIEM.", None
     if runs.get("result") == "fail":
-        return "fails_to_run", str(runs.get("reason") or "Its last run failed.")
+        raw = str(runs.get("reason") or "")
+        return "fails_to_run", _first_line(raw) or "Its last run failed.", raw or None
     if sees.get("result") == "fail":
-        # The Sees reason names any missing field.
-        return "data_silent", str(sees.get("reason") or "Its data is not arriving.")
+        raw = str(sees.get("reason") or "")
+        state = "missing_field" if "not in the mapping" in raw else "data_silent"
+        return state, _first_line(raw) or "Its data is not arriving.", raw or None
     if fires:
-        return "fires", f"Fired {fires} times in {FIRES_WINDOW_DAYS} days."
-    return "never_fired", f"No finding named it in {FIRES_WINDOW_DAYS} days."
+        return "fires", f"Fired {fires} times in {FIRES_WINDOW_DAYS} days.", None
+    # Silent's days_fired is the SIEM's own count; with no finding and no
+    # count, the fire count is unknown, not zero.
+    days = silent.get("days_fired")
+    if isinstance(days, int) and days > 0:
+        return "fires", f"Alerted on {days} days in the SIEM.", None
+    if days == 0:
+        return (
+            "never_fired",
+            str(silent.get("reason") or "The SIEM saw no alert from it."),
+            None,
+        )
+    return (
+        "no_fire_data",
+        "No finding names it, and its SIEM reports no alert counts for it.",
+        None,
+    )
 
 
-def health_listing(health: Optional[str] = None) -> Dict[str, Any]:
-    """Every listed copy's health, worst first, the first ``RULE_ROWS`` returned
-    (of one ``health`` when given).
+def _first_line(reason: str) -> str:
+    """The reason's first line without its status prefix; a bare error code
+    takes the next line too, so the line says what went wrong."""
+    lines = [ln.strip() for ln in reason.strip().splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    line = lines[0]
+    for prefix in ("fail: ", "failed: ", "skipped: ", "partial failure: "):
+        if line.startswith(prefix):
+            line = line[len(prefix) :]
+            break
+    if " " not in line and len(lines) > 1:
+        line = f"{line}: {lines[-1]}"
+    return line[:1].upper() + line[1:]
 
-    The counts cover every copy; rule_total and mapped count each rule once.
-    """
-    with get_db_manager().session_scope() as session:
-        fires = _fires(session)
-        rule_of = _rule_of_copy(session)
-        rows = session.execute(
-            select(DetectionRule, DetectionRuleVersion.checks)
-            .join(DetectionRuleVersion, _latest_join())
-            .where(LISTED)
-            .order_by(DetectionRule.id)
-        ).all()
-        listed = []
-        counts = dict.fromkeys(HEALTH_ORDER, 0)
-        mapped = set()
-        for rule, checks in rows:
-            checks = checks or {}
-            if rule.techniques:
-                mapped.add(rule_of[rule.id])
-            count = fires.get(rule.name, 0)
-            state, why = _health(rule.status, checks, count)
-            counts[state] += 1
-            listed.append(
-                {
-                    "rule_id": rule.id,
-                    "name": rule.name,
-                    "language": rule.language,
-                    "source": rule.source,
-                    "tool": tool_of(rule.source),
-                    "status": rule.status,
-                    "techniques": list(rule.techniques or []),
-                    "health": state,
-                    "why": why,
-                    "fires": count,
-                    "runs": checks.get("runs"),
-                    "sees": checks.get("sees"),
-                }
-            )
+
+def _results(checks: Dict[str, Any]) -> List[Any]:
+    """Each stored check's result; drift compares copies, so it is no check of the rule."""
+    return [
+        value.get("result")
+        for key, value in checks.items()
+        if key != "drift" and isinstance(value, dict)
+    ]
+
+
+def _by_siem(listed: List[Dict[str, Any]]) -> Dict[str, Dict[str, int]]:
+    """Per SIEM, its enabled copies: how many can't fire, have no Runs or Sees
+    result yet, and the rest."""
+    out = {
+        tool: {"rules": 0, "cant_fire": 0, "not_checked": 0, "can_fire": 0}
+        for tool in LISTING_SIEMS
+        if any(r["tool"] == tool for r in listed)
+    }
+    for row in listed:
+        entry = out.get(row["tool"])
+        if entry is None or row["status"] != "active":
+            continue
+        entry["rules"] += 1
+        if row["health"] in CANT_FIRE:
+            entry["cant_fire"] += 1
+        elif not row["runs"] and not row["sees"]:
+            entry["not_checked"] += 1
+        else:
+            entry["can_fire"] += 1
+    return out
+
+
+def _haystack(row: Dict[str, Any]) -> str:
+    """What a search reads, lowercased once: name, reason and techniques."""
+    return "\n".join((row["name"], row["why"], *row["techniques"])).lower()
+
+
+# The listing reads every listed copy (about 2 s on 19k copies), so it is built
+# once and reused for every page, filter and search until a table it reads is
+# written. Postgres's own write counters say when: they move on any insert,
+# update or delete, from this process or the daemon's syncs and checks.
+_LISTING_TABLES = (
+    "detection_rules",
+    "detection_rule_versions",
+    "detection_rule_check_changes",
+)
+_FIRES_TABLES = ("findings",)
+_listing_lock = threading.Lock()
+_listing: Dict[str, Any] = {}
+
+
+def _write_marks(session: Any, tables: Tuple[str, ...]) -> Tuple[Any, ...]:
+    """Each table's insert/update/delete counts. They lag a commit by at most
+    Postgres's stats flush (seconds), and a stats reset only forces a rebuild."""
+    rows = session.execute(
+        text(
+            "SELECT relname, n_tup_ins, n_tup_upd, n_tup_del FROM pg_stat_user_tables"
+            " WHERE relname = ANY(:tables) ORDER BY relname"
+        ),
+        {"tables": list(tables)},
+    ).all()
+    return tuple(tuple(r) for r in rows)
+
+
+def _copies_listed(session: Any) -> Dict[str, Any]:
+    """Every listed copy with its checks, which rule each belongs to, and the blind spots."""
+    rows = session.execute(
+        select(
+            DetectionRule.id,
+            DetectionRule.name,
+            DetectionRule.language,
+            DetectionRule.source,
+            DetectionRule.status,
+            DetectionRule.techniques,
+            DetectionRuleVersion.checks,
+        )
+        .join(DetectionRuleVersion, _latest_join())
+        .where(LISTED)
+        .order_by(DetectionRule.id)
+    ).all()
+    return {
+        "rows": rows,
+        "rule_of": _rule_of_copy(session),
+        "blind_spots": [
+            {
+                "data_source": spot["data_source"],
+                "tool": rule["tool"],
+                "rules": sum(1 for r in spot["rules"] if r["tool"] == rule["tool"]),
+            }
+            for spot in blind_spots()
+            for rule in {r["tool"]: r for r in spot["rules"]}.values()
+        ],
+    }
+
+
+def _health_rows(copies: Dict[str, Any], fires: Dict[str, int]) -> Dict[str, Any]:
+    """Each copy's health row, worst first, and the totals that don't depend on a filter."""
+    rule_of = copies["rule_of"]
+    listed = []
+    mapped = set()
+    for rule in copies["rows"]:
+        checks = rule.checks or {}
+        if rule.techniques:
+            mapped.add(rule_of[rule.id])
+        count = fires.get(rule.name, 0)
+        state, why, raw = _health(rule.status, checks, count)
+        results = _results(checks)
+        listed.append(
+            {
+                "rule_id": rule.id,
+                "name": rule.name,
+                "language": rule.language,
+                "source": rule.source,
+                "tool": tool_of(rule.source),
+                "status": rule.status,
+                "techniques": list(rule.techniques or []),
+                "health": state,
+                "why": why,
+                "raw": raw,
+                "fires": count,
+                "checks_passing": results.count("pass"),
+                "checks_run": len(results),
+                "runs": checks.get("runs"),
+                "sees": checks.get("sees"),
+            }
+        )
     listed.sort(key=lambda row: (HEALTH_ORDER.index(row["health"]), row["rule_id"]))
-    shown = [r for r in listed if r["health"] == health] if health else listed
+    by_state: Dict[str, List[Tuple[str, str, Dict[str, Any]]]] = {
+        state: [] for state in HEALTH_ORDER
+    }
+    counts: Dict[Optional[str], Dict[str, int]] = {None: dict.fromkeys(HEALTH_ORDER, 0)}
+    for row in listed:
+        page_row = {k: v for k, v in row.items() if k not in ("runs", "sees")}
+        by_state[row["health"]].append((row["tool"], _haystack(row), page_row))
+        counts[None][row["health"]] += 1
+        counts.setdefault(row["tool"], dict.fromkeys(HEALTH_ORDER, 0))[
+            row["health"]
+        ] += 1
     return {
         "total": len(listed),
+        "by_state": by_state,
+        "counts": counts,
         "rule_total": len({rule_of[row["rule_id"]] for row in listed}),
         "mapped": len(mapped),
-        "counts": counts,
-        "rules": shown[:RULE_ROWS],
+        "by_siem": _by_siem(listed),
+    }
+
+
+def _listing_now() -> Dict[str, Any]:
+    """The health rows, rebuilt only when a table they read was written: the
+    copies on a rules or checks write, the fire counts on a findings write or a
+    new day (the window rolls)."""
+    with _listing_lock, get_db_manager().session_scope() as session:
+        written = _write_marks(session, _LISTING_TABLES + _FIRES_TABLES)
+        marks = tuple(m for m in written if m[0] in _LISTING_TABLES)
+        if _listing.get("marks") != marks:
+            _listing.clear()
+            _listing["copies"] = _copies_listed(session)
+            _listing["marks"] = marks
+        fires_marks = (
+            tuple(m for m in written if m[0] in _FIRES_TABLES),
+            datetime.now(timezone.utc).date(),
+        )
+        if _listing.get("fires_marks") != fires_marks or "health" not in _listing:
+            _listing["health"] = _health_rows(_listing["copies"], _fires(session))
+            _listing["fires_marks"] = fires_marks
+        return {**_listing["health"], "blind_spots": _listing["copies"]["blind_spots"]}
+
+
+def health_listing(
+    health: Optional[str] = None,
+    tool: Optional[str] = None,
+    q: Optional[str] = None,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    """Every listed copy's health, worst first, ``RULE_ROWS`` from ``offset``,
+    narrowed to one ``health`` (or "attention", the states to act on), one
+    ``tool`` and a ``q`` over name, technique and reason before the cap.
+
+    The counts cover every copy of ``tool`` (every copy when none); rule_total
+    and mapped count each rule once, across every tool.
+    """
+    built = _listing_now()
+    states = (
+        ATTENTION if health == "attention" else (health,) if health else HEALTH_ORDER
+    )
+    needle = (q or "").strip().lower()
+    # by_state keeps worst-first order, so the states' lists in HEALTH_ORDER are too.
+    shown = [
+        row
+        for state in HEALTH_ORDER
+        if state in states
+        for row_tool, hay, row in built["by_state"][state]
+        if (tool is None or row_tool == tool) and needle in hay
+    ]
+    return {
+        "total": built["total"],
+        "rule_total": built["rule_total"],
+        "mapped": built["mapped"],
+        "counts": built["counts"].get(tool, dict.fromkeys(HEALTH_ORDER, 0)),
+        "matched": len(shown),
+        "offset": offset,
+        "rules": shown[offset : offset + RULE_ROWS],
+        "by_siem": built["by_siem"],
+        "blind_spots": built["blind_spots"],
         "fires_window_days": FIRES_WINDOW_DAYS,
         "limits": (
-            "Fires counts findings that name the rule, so a rule firing in a SIEM whose alerts "
-            "do not reach Vigil counts zero. Runs and Sees results exist only for rules Vigil "
-            "reads from Kibana, Wazuh and Splunk."
+            "Fires counts findings that name the rule, plus the days a SIEM's Silent check saw "
+            "it alert. A rule with neither reads No fire data, not Never fired. Runs and Sees "
+            "results exist only for rules Vigil reads from Kibana, Wazuh and Splunk."
         ),
     }
 
