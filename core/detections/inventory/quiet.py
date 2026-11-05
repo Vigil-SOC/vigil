@@ -408,11 +408,24 @@ def _wazuh_levels(keys: List[RuleKey]) -> Dict[RuleKey, Any]:
 
 
 def _cannot_alert(
-    noisy: Dict[RuleKey, Dict[str, Any]], silent: Dict[RuleKey, Dict[str, Any]]
+    rules: List[Rule],
+    days_of: Days,
+    truncated: bool,
+    noisy: Dict[RuleKey, Dict[str, Any]],
+    silent: Dict[RuleKey, Dict[str, Any]],
 ) -> None:
-    """A rule below Wazuh's alert level never alerts: Noisy and Silent pass, and
-    no days_fired, so it is never counted as never-firing (whatever its age)."""
-    for key, level in _wazuh_levels(list(silent)).items():
+    """A rule below Wazuh's alert level with no alerts never alerts: Noisy and
+    Silent pass, and no days_fired, so it is never counted as never-firing
+    (whatever its age). A rule that did alert keeps its own verdicts."""
+    exempt = {
+        key
+        for key, rule_id, _, _ in rules
+        # Alerts (a lowered log_alert_level) are judged; with a truncated
+        # count, absence is not "no alerts" and NOT_COUNTED stands.
+        if not any((days_of.get(rule_id) or {}).values())
+        and not (truncated and rule_id not in days_of)
+    }
+    for key, level in (_wazuh_levels(list(exempt)) if exempt else {}).items():
         # A missing or unreadable level gets no exemption: never guess.
         if type(level) is int and level < WAZUH_ALERT_LEVEL:
             reason = (
@@ -485,7 +498,7 @@ def sweep_wazuh() -> QuietReport:
                     noisy, silent = _history(
                         rules, days_of, truncated, cfg, now, failed
                     )
-                    _cannot_alert(noisy, silent)
+                    _cannot_alert(rules, days_of, truncated, noisy, silent)
         if why:
             results = {key: _unknown(why) for key, _, _, _ in rules}
             noisy = _history_failed(rules, why, now)
