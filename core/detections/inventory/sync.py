@@ -22,7 +22,9 @@ Splunk syncs, ``splunk_sees`` checks each active saved search's data the same
 way. All three Sees checks write checks['sees']; each check is written the
 same way. Last, ``accurate`` judges each active Kibana and Wazuh rule's latest
 version from the stored findings' verdicts and writes checks['accurate'] the
-same way (local SQL only).
+same way (local SQL only). Then, at most once a day, ``caught`` credits each rule
+version cited on a matching compose-run step or proven Verdict (checks['caught'],
+pass only, never cleared; a disabled rule keeps it).
 
 After the sources, each SIEM rule is linked to the repo rule it came from when
 that is certain: a Kibana rule by ``same_id`` (one active repo Elastic rule with
@@ -69,6 +71,7 @@ from sqlalchemy import and_, bindparam, func, insert, or_, select, update
 
 from core.detections.inventory import (
     accurate,
+    caught,
     kibana,
     quiet,
     readers,
@@ -430,7 +433,7 @@ def _remove_unconfigured(configured: List[str]) -> int:
 def sync_repos() -> List[Any]:
     """Read every configured repo, Wazuh, Kibana and Splunk, and sync each, checking
     Wazuh, Kibana and Splunk rules' Quiet and Sees, then Kibana and Wazuh rules'
-    Accurate.
+    Accurate and Caught.
 
     One failing source skips only itself.
     """
@@ -460,6 +463,7 @@ def sync_repos() -> List[Any]:
             reports.append(quiet.sweep_splunk(splunk_config))
             reports.append(splunk_sees.sweep(splunk_config))
         reports.append(accurate.sweep())
+        reports.append(caught.sweep())  # at most once a day; local reads only
     if removed:
         logger.info(
             "detection rules: %d rules of unconfigured sources removed", removed

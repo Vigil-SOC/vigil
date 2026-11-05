@@ -139,7 +139,7 @@ function NotPassingCard({ h }: { h: RulesHealth }) {
             <thead>
               <tr>
                 <th className="w-[90px]">Tool</th>
-                <th className="w-[26%]">Rule</th>
+                <th className="w-[18%]">Rule</th>
                 <th className="w-[72px]">Version</th>
                 {checks.map((k) => <th key={k}>{cap(k)}</th>)}
               </tr>

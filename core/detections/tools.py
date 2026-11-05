@@ -100,6 +100,7 @@ class SecurityDetectionsTools:
         flagged: Optional[bool] = None,
         quiet: Optional[str] = None,
         accurate: Optional[str] = None,
+        caught: Optional[str] = None,
     ) -> List[Dict]:
         """
         Search across all detection rules using keywords.
@@ -117,6 +118,8 @@ class SecurityDetectionsTools:
             flagged: Optional filter: rules with (True) or without (False) an open flag
             accurate: Optional filter by Accurate result ("pass", "fail", "unknown"):
                 whether a Kibana or Wazuh rule's judged alerts are mostly real
+            caught: Optional filter: "pass" for versions that alerted on a real
+                attack step, "untested" for the rest
 
         Returns:
             List of matching detection rules, each with its status, checks and
@@ -134,6 +137,7 @@ class SecurityDetectionsTools:
             flagged,
             quiet,
             accurate,
+            caught,
         )
 
     async def link_detection_rule(

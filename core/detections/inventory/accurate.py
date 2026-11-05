@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 MIN_JUDGED = 20
 FAIL_BELOW = 0.10
-SOURCES = ("elastic", "wazuh")
+SOURCES = catalog.RESOLVES
 COUNTS = ("real", "judged", "analyst", "agent")
 
 # (at, analyst, real): one determination of a finding.
