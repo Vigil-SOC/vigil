@@ -25,9 +25,9 @@ way and against the rule's own 30 days (checks['noisy'], checks['silent']),
 then ``sees`` checks whether each active Kibana rule's data is arriving; after
 Splunk syncs, ``splunk_sees`` checks each active saved search's data the same
 way. All three Sees checks write checks['sees']; each check is written the
-same way. Last, ``accurate`` judges each active Kibana and Wazuh rule's latest
-version from the stored findings' verdicts and writes checks['accurate'] the
-same way (local SQL only).
+same way. Last, ``accurate`` judges each active Kibana, Wazuh and Splunk rule's
+latest version from the stored findings' verdicts and writes checks['accurate']
+the same way (local SQL only).
 
 After the sources, each SIEM rule is linked to the repo rule it came from when
 that is certain: a Kibana rule by ``same_id`` (one active repo Elastic rule with
@@ -533,8 +533,7 @@ def _remove_unconfigured(configured: List[str]) -> int:
 
 def sync_repos() -> List[Any]:
     """Read every configured repo, Wazuh, Kibana and Splunk, and sync each, checking
-    Wazuh, Kibana and Splunk rules' Quiet and Sees, then Kibana and Wazuh rules'
-    Accurate.
+    Wazuh, Kibana and Splunk rules' Quiet and Sees, then their Accurate.
 
     One failing source skips only itself.
     """
