@@ -22,7 +22,7 @@ import {
 } from './useSettings'
 import type { SectionProps } from './types'
 import IntentReportCard from './IntentReportCard'
-import type { EffectClass, ToolClass } from '../../services/api'
+import { detectionRulesApi, type EffectClass, type ToolClass } from '../../services/api'
 import { errorText } from '../../shared/errorText'
 
 // Raising any of these needs a confirm; lowering applies at once. Settings also
@@ -114,7 +114,7 @@ const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
     case 'stop':
       return {
         title: 'Stop autonomy?',
-        body: 'No tool acts on its own, and unattended writes, proposals and outside actions are off until you resume; reads continue. Automatic investigation turns off and investigations in progress are marked failed.',
+        body: 'No tool acts on its own, and unattended writes, proposals, outside actions and Vigil’s own detection rules are off until you resume; other reads continue. Automatic investigation turns off and investigations in progress are marked failed.',
       }
     case 'workflow': {
       const shown = agreementText(pending.workflow.agreement)
@@ -186,6 +186,21 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
   const [advanced, setAdvanced] = useState(false)
   const [intentRevision, setIntentRevision] = useState(0)
   const [pending, setPending] = useState<PendingSave | null>(null)
+  // Live rules only Vigil runs: Stop halts their detection, so the Stop prompt names them
+  const [overlayOnly, setOverlayOnly] = useState<string[]>([])
+  const stopping = pending?.kind === 'stop'
+  useEffect(() => {
+    setOverlayOnly([])
+    if (!stopping) return
+    let live = true
+    detectionRulesApi
+      .getOverlayOnly()
+      .then((r) => live && setOverlayOnly(r.data.rules.map((x) => x.name)))
+      .catch(() => {}) // unread: the prompt says nothing extra
+    return () => {
+      live = false
+    }
+  }, [stopping])
 
   configRef.current = config
   useEffect(() => {
@@ -726,7 +741,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
             {ceil.stopped && (
               <div className="settings-banner err mb-3">
                 <Icon name="alert" size={14} />
-                <span>Stopped. Unattended writes, proposals and outside actions are off until someone resumes; reads continue. The choices below apply after that.</span>
+                <span>Stopped. Unattended writes, proposals, outside actions and Vigil’s own detection rules are off until someone resumes; other reads continue. The choices below apply after that.</span>
               </div>
             )}
             {locked && (
@@ -871,6 +886,19 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                 />
                 % agree, required
               </label>
+            </>
+          ) : stopping && overlayOnly.length > 0 ? (
+            <>
+              {dialog?.body}
+              <span className="block mt-3">
+                {overlayOnly.length === 1 ? 'This live rule runs' : `These ${overlayOnly.length} live rules run`} only in
+                Vigil, so nothing detects with {overlayOnly.length === 1 ? 'it' : 'them'} while stopped. Add{' '}
+                {overlayOnly.length === 1 ? 'it' : 'them'} to your SIEM:
+              </span>
+              <span className="block mt-1.5 text-tx font-medium">
+                {overlayOnly.slice(0, TOOLS_SHOWN).join(', ')}
+                {overlayOnly.length > TOOLS_SHOWN && `, and ${overlayOnly.length - TOOLS_SHOWN} more`}
+              </span>
             </>
           ) : (
             dialog?.body ?? ''
