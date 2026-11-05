@@ -425,7 +425,7 @@ def _remove_unconfigured(configured: List[str]) -> int:
 
 
 def sync_repos() -> List[Any]:
-    """Read every configured repo, Wazuh, Kibana and Splunk, and sync each, checking Wazuh and Kibana rules' Quiet and Sees, and Splunk's Sees.
+    """Read every configured repo, Wazuh, Kibana and Splunk, and sync each, checking Wazuh, Kibana and Splunk rules' Quiet and Sees.
 
     One failing source skips only itself.
     """
@@ -451,7 +451,9 @@ def sync_repos() -> List[Any]:
         splunk_report, splunk_config = _sync_splunk()
         reports.append(_drifted(_linked(splunk_report, _link_known_name)))
         if splunk_config is not None:
-            reports.append(splunk_sees.sweep(splunk_config))  # its own budget
+            # After Runs, and before Sees' searches can spend the budget.
+            reports.append(quiet.sweep_splunk(splunk_config))
+            reports.append(splunk_sees.sweep(splunk_config))
     if removed:
         logger.info(
             "detection rules: %d rules of unconfigured sources removed", removed
