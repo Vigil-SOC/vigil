@@ -150,18 +150,44 @@ def _compile_field(key: str, value: Any) -> Matcher:
     if not values:
         raise _Unevaluable(f"field {key!r} has an empty value list")
     if value is None or (None in values and not mods):
-        # null: the key is absent or None.
-        rest = [_value_test(key, mods, v) for v in values if v is not None]
-        return lambda e: e.get(field) is None or any(t(e.get(field)) for t in rest)
-    tests = [_value_test(key, mods, v) for v in values]
+        # null: the field is absent or None.
+        rest = [_each(_value_test(key, mods, v)) for v in values if v is not None]
+
+        def match_null(event: Dict[str, Any]) -> bool:
+            actual = _resolve(event, field)
+            return actual is _ABSENT or actual is None or any(t(actual) for t in rest)
+
+        return match_null
+    tests = [_each(_value_test(key, mods, v)) for v in values]
     combine = all if "all" in mods else any
 
     def match(event: Dict[str, Any]) -> bool:
-        if field not in event:
+        actual = _resolve(event, field)
+        if actual is _ABSENT:
             return False
-        return combine(t(event[field]) for t in tests)
+        return combine(t(actual) for t in tests)
 
     return match
+
+
+_ABSENT = object()
+
+
+def _resolve(event: Dict[str, Any], field: str) -> Any:
+    """Flat key first (`{"process.name": ...}`), else walk nested maps as ES `_source` stores them."""
+    if field in event:
+        return event[field]
+    current: Any = event
+    for part in field.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return _ABSENT
+        current = current[part]
+    return current
+
+
+def _each(test: Callable[[Any], bool]) -> Callable[[Any], bool]:
+    """A list value (ECS arrays like event.category) passes when any element does."""
+    return lambda a: any(test(x) for x in a) if isinstance(a, list) else test(a)
 
 
 def _value_test(key: str, mods: List[str], expected: Any) -> Callable[[Any], bool]:
