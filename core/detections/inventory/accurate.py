@@ -142,8 +142,8 @@ def _findings(session: Any) -> Dict[str, Dict[str, Any]]:
     }
 
 
-def _closes(session: Any) -> Dict[str, List[Determination]]:
-    """Each elastic or splunk finding's closed-Case determinations (as _CLOSURE_VERDICTS)."""
+def _closes(session: Any, *where: Any) -> Dict[str, List[Determination]]:
+    """Each elastic or splunk finding's (matching ``where``) closed-Case determinations."""
     out: Dict[str, List[Determination]] = {}
     for fid, category, channel, closed_at in session.execute(
         select(
@@ -157,7 +157,7 @@ def _closes(session: Any) -> Dict[str, List[Determination]]:
         )
         .join(CaseClosureInfo, CaseClosureInfo.case_id == Case.case_id)
         .join(Finding, Finding.finding_id == case_findings.c.finding_id)
-        .where(Finding.data_source.in_(FINDING_SOURCES))
+        .where(Finding.data_source.in_(FINDING_SOURCES), *where)
     ):
         real = closure_says_real(category)
         if real is not None:
@@ -165,6 +165,29 @@ def _closes(session: Any) -> Dict[str, List[Determination]]:
                 (_utc(closed_at), closed_by_person(channel), real)
             )
     return out
+
+
+def verdict_of(
+    closes: List[Determination], marked: Optional[datetime], kind: Optional[str]
+) -> Optional[Tuple[bool, bool]]:
+    """(real, analyst) of one finding from its closes and noise mark, or None."""
+    found = list(closes)
+    if marked is not None:
+        found.append((_utc(marked), kind == ClosedByKind.ANALYST.value, False))
+    return _verdict(found)
+
+
+def verdicts(session: Any, *where: Any) -> Dict[str, Optional[Tuple[bool, bool]]]:
+    """Each elastic or splunk finding matching ``where``: its verdict_of."""
+    closes = _closes(session, *where)
+    rows = session.execute(
+        select(
+            Finding.finding_id, Finding.noise_marked_at, Finding.noise_marked_by_kind
+        ).where(Finding.data_source.in_(FINDING_SOURCES), *where)
+    )
+    return {
+        fid: verdict_of(closes.get(fid, []), marked, kind) for fid, marked, kind in rows
+    }
 
 
 def judge(session: Any) -> Tuple[Dict[Tuple[int, int], Dict[str, int]], int]:
@@ -188,11 +211,7 @@ def judge(session: Any) -> Tuple[Dict[Tuple[int, int], Dict[str, int]], int]:
         if not rule["resolved"] or key not in latest:
             continue
         counted += 1
-        found = list(closes.get(fid, []))
-        marked, kind = findings[fid]["noise"]
-        if marked is not None:
-            found.append((_utc(marked), kind == ClosedByKind.ANALYST.value, False))
-        verdict = _verdict(found)
+        verdict = verdict_of(closes.get(fid, []), *findings[fid]["noise"])
         if verdict is None:
             continue
         real, analyst = verdict

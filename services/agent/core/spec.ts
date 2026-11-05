@@ -515,6 +515,12 @@ function declaredStrings(sections: Record<string, unknown>, section: string): re
   return Array.isArray(declared) ? declared.filter((one): one is string => typeof one === "string") : [];
 }
 
+// What a playbook asks for beyond its plugin's needs: capabilities only that workflow
+// wants, such as an intel-led hunt's threat-intelligence lookups. Absent asks for none.
+export function declaredCapabilities(sections: Record<string, unknown>): readonly string[] {
+  return declaredStrings(sections, "capabilities");
+}
+
 export interface SpecPaths {
   arch: string;
   playbook: string;
