@@ -85,6 +85,8 @@ class ComposeFailed(AssertionError):
 
 
 class Stack:
+    backend_host = "backend"  # the backend's name on the network
+
     def __init__(self, home: Path, project: str | None = None) -> None:
         # Before any docker call.
         self.project = (
