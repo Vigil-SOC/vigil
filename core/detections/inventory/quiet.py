@@ -10,14 +10,22 @@ when the budget is spent Quiet is skipped and nothing is written. Never a
 second search. Both use elastic-siem's ``quiet_max_alerts_per_day``.
 
 For Splunk, one search per sync (``SPLUNK_SPL``) counts each saved search's
-triggered alerts (``index=_audit action=alert_fired``, its ``triggered_alerts``)
-and, under Enterprise Security, its notables (``index=notable``); a search with
-notables is counted by them alone, its triggered alerts being the same firings.
-Counts are keyed as the stored native_key (``app/name``, ``@owner`` when shared
-to its user); a name that matches none is dropped. It is spent against the
-splunk integration's ``max_searches_per_hour`` after Runs and before Sees, and
-uses its own ``quiet_max_alerts_per_day``. When Vigil's Splunk user cannot search
-``index=_audit`` every rule reads ``unknown``, never ``pass``, and nothing is spent.
+firings from the three places Splunk records them: under Enterprise Security its
+notables (``index=notable``), its triggered alerts (``index=_audit
+action=alert_fired``, its ``triggered_alerts``), and the scheduler's runs whose
+actions fired one outside Splunk's data-output actions (``DATA_ACTIONS``:
+summary indexing, lookups, telemetry), the only record of an untracked alert
+(``index=_internal sourcetype=scheduler``, one firing per run). Per search per
+day they rank in that order: a lower one counts only on days the higher have
+nothing, being the same firings. Counts are keyed as the stored native_key
+(``app/name``, ``@owner`` when shared to its user); a name that matches none is
+dropped. It is spent against the splunk integration's ``max_searches_per_hour``
+after Runs and before Sees, and uses its own ``quiet_max_alerts_per_day``. When
+Vigil's Splunk user cannot search ``index=_audit`` every rule reads ``unknown``,
+never ``pass``, and nothing is spent. When only ``index=_internal`` is
+unreadable, the searches that alert through actions alone (untracked, not a
+correlation search, an action outside ``DATA_ACTIONS``) read ``unknown`` naming
+it for Quiet, Noisy and Silent; the rest are judged as ever.
 
 Wazuh shares Wazuh Sees' gate: when elastic-siem is off, has no
 ``elasticsearch_url``, or the indexer lists no ``wazuh-alerts-*`` index, every
@@ -42,9 +50,10 @@ changes (or an unknown's reason). Nothing is written to Kibana or the indexer.
 Noisy and Silent (Kibana, Wazuh and Splunk rules) read the same per-rule
 daily UTC buckets, never another search, with the thresholds of the rules' own
 integration (elastic-siem's for Kibana and Wazuh, splunk's for Splunk). A Splunk
-scheduled report (no correlation search, no ``actions``, no ``alert.track``)
-can't alert: it reads both ``pass``, "a scheduled report; it does not alert",
-with no ``days_fired``, so it is no never-firing rule.
+scheduled report (no correlation search, no ``alert.track``, and no ``actions``
+but data-output ones, such as ``outputtelemetry`` or ``summary_index``) can't
+alert: it reads both ``pass``, "a scheduled report; it does not alert", with no
+``days_fired``, so it is no never-firing rule.
 "Today" is the current UTC day's bucket so far (partial, so a spike reads late,
 never early); "the last N d" is today and the N - 1 whole days before it.
 
@@ -501,21 +510,45 @@ def sweep_wazuh() -> QuietReport:
     return report
 
 
+# Splunk's data-output actions: they write results back into Splunk or to its
+# telemetry endpoint and tell no one, so a search with only these is a report.
+DATA_ACTIONS = (
+    "summary_index",
+    "summary_metric_index",
+    "lookup",
+    "populate_lookup",
+    "outputtelemetry",
+    "studio_snapshot",
+)
+_DATA_RE = "|".join(DATA_ACTIONS)
+
 # One search: each saved search's alerts per UTC day (day = epoch days). From
-# the triggered-alert audit (one event per firing; triggered_alerts results) and,
-# under Enterprise Security, notables (one per result). A notable's owner and app
+# the triggered-alert audit (one event per firing; triggered_alerts results),
+# under Enterprise Security notables (one per result), and the scheduler's runs
+# whose alert actions fired one outside DATA_ACTIONS (one firing per run, the
+# only record of an untracked alert; ``success`` only, so a search head
+# cluster's delegation rows don't count it twice). A notable's owner and app
 # are read from its orig_sid: each ``__plain`` or ``_<base64>`` (see _sid_part).
-# The appended row counts every _audit event: none means _audit is unreadable.
+# The appended rows count every _audit and _internal event: none means it is
+# unreadable.
 SPLUNK_SPL = r"""search (index=_audit action=alert_fired ss_name=*)
   OR (index=notable search_name=* orig_sid=scheduler_*)
+  OR (index=_internal sourcetype=scheduler status=success savedsearch_name=* suppressed=0 alert_actions=*)
 | rex field=orig_sid "^scheduler(?<sid_user>__[A-Za-z0-9]+|_[A-Za-z0-9+/=]+)(?<sid_app>__[A-Za-z0-9]+|_[A-Za-z0-9+/=]+)__"
-| eval notable=if(index="notable", 1, 0),
-  name=if(notable=1, search_name, ss_name),
-  user=if(notable=1, sid_user, ss_user), app=if(notable=1, sid_app, ss_app),
-  n=if(notable=1, 1, coalesce(tonumber(triggered_alerts), 1)),
+| eval acts=split(alert_actions, ",")
+| eval acts=mvfilter(match(acts, "\S") AND NOT match(acts, "^\s*(DATA_RE)\s*$"))
+| where index!="_internal" OR isnotnull(acts)
+| eval src=case(index="notable", "notable", index="_audit", "audit", true(), "scheduler"),
+  name=case(src="notable", search_name, src="audit", ss_name, true(), savedsearch_name),
+  user=case(src="notable", sid_user, src="audit", ss_user, true(), user),
+  app=case(src="notable", sid_app, src="audit", ss_app, true(), app),
+  n=if(src="audit", coalesce(tonumber(triggered_alerts), 1), 1),
   day=floor(_time / 86400)
-| stats sum(n) as n by notable name user app day
-| append [| tstats count as audit_events where index=_audit]"""
+| stats sum(n) as n by src name user app day
+| append [| tstats count as audit_events where index=_audit]
+| append [| tstats count as internal_events where index=_internal]""".replace(
+    "DATA_RE", _DATA_RE
+)
 
 
 def _sid_part(part: str) -> str:
@@ -526,16 +559,23 @@ def _sid_part(part: str) -> str:
     return base64.b64decode(raw + "=" * (-len(raw) % 4), validate=True).decode()
 
 
+# Where a Splunk firing is read from, highest first: a day counted by one is
+# not counted again by those below (the same firings, recorded twice).
+_SOURCES = ("notable", "audit", "scheduler")
+
+
 def _splunk_days(rows: List[Mapping[str, Any]], keys: set) -> Days:
-    """Per native_key (any stored, active or not) its alerts per UTC day. A day
-    with notables is counted by them alone: its triggered alerts are the same
-    firings. A row matching no stored key is dropped, never guessed."""
-    counts: Dict[bool, Days] = {False: {}, True: {}}
+    """Per native_key (any stored, active or not) its alerts per UTC day. Each
+    day is counted by its highest source alone (_SOURCES). A row matching no
+    stored key is dropped, never guessed."""
+    counts: Dict[str, Days] = {src: {} for src in _SOURCES}
     for row in rows:
-        notable = str(row.get("notable")) == "1"
+        src = str(row.get("src") or "")
+        if src not in counts:
+            continue
         user, app = str(row.get("user") or ""), str(row.get("app") or "")
         try:
-            if notable:
+            if src == "notable":
                 user, app = _sid_part(user), _sid_part(app)
         except (ValueError, UnicodeDecodeError):
             continue
@@ -547,11 +587,12 @@ def _splunk_days(rows: List[Mapping[str, Any]], keys: set) -> Days:
         if key is None:
             continue
         day = (date(1970, 1, 1) + timedelta(days=int(float(row["day"])))).isoformat()
-        by_day = counts[notable].setdefault(key, {})
+        by_day = counts[src].setdefault(key, {})
         by_day[day] = by_day.get(day, 0) + int(float(row.get("n") or 0))
-    days_of = counts[False]
-    for key, by_day in counts[True].items():
-        days_of[key] = {**days_of.get(key, {}), **by_day}
+    days_of: Days = {}
+    for src in reversed(_SOURCES):
+        for key, by_day in counts[src].items():
+            days_of[key] = {**days_of.get(key, {}), **by_day}
     return days_of
 
 
@@ -564,9 +605,11 @@ def _native_keys(source: str) -> set:
         )
 
 
-def _splunk_reports(rules: List[Rule]) -> set:
-    """The rules whose latest version is a scheduled report: no correlation search,
-    no alert action and no tracked alert, so nothing for it ever fires."""
+def _splunk_kinds(rules: List[Rule]) -> Tuple[set, set]:
+    """(reports, action-only alerts) among the rules' latest versions. Neither
+    is a correlation search or tracked; a report's actions are none or all
+    DATA_ACTIONS, so nothing for it ever fires; an action-only alert has another
+    action, and its firings are read from index=_internal alone."""
     keys = [key for key, _, _, _ in rules]
     with get_db_manager().session_scope() as session:
         rows = session.execute(
@@ -580,13 +623,15 @@ def _splunk_reports(rules: List[Rule]) -> set:
                 )
             )
         ).all()
-    return {
-        (rid, ver)
-        for rid, ver, content in rows
-        if not splunk._truthy(content.get("action.correlationsearch.enabled"))
-        and not str(content.get("actions") or "").strip()
-        and not splunk._truthy(content.get("alert.track"))
-    }
+    reports, by_action = set(), set()
+    for rid, ver, content in rows:
+        if splunk._truthy(
+            content.get("action.correlationsearch.enabled")
+        ) or splunk._truthy(content.get("alert.track")):
+            continue
+        actions = {a.strip() for a in str(content.get("actions") or "").split(",")}
+        (by_action if actions - {"", *DATA_ACTIONS} else reports).add((rid, ver))
+    return reports, by_action
 
 
 def sweep_splunk(config: Mapping[str, Any]) -> QuietReport:
@@ -631,12 +676,24 @@ def sweep_splunk(config: Mapping[str, Any]) -> QuietReport:
                     days_of = _splunk_days(rows, _native_keys(splunk.SOURCE))
                     results = _results(rules, days_of, False, max_per_day, now)
                     noisy, silent = _history(rules, days_of, False, cfg, now)
+                    reports, by_action = _splunk_kinds(rules)
                     # A report can't alert: no days_fired, so it isn't never-firing.
                     # One with counted alerts does alert, whatever its settings say.
                     fired = {key for key, rid, _, _ in rules if days_of.get(rid)}
-                    for key in _splunk_reports(rules) - fired:
+                    for key in reports - fired:
                         noisy[key] = {"result": "pass", "reason": REPORT}
                         silent[key] = {"result": "pass", "reason": REPORT}
+                    # An untracked alert's firings are only in _internal: unread,
+                    # its 0 would read as a pass.
+                    if service.can_search_index("_internal") is False:
+                        why = f"{service.username} cannot search index=_internal"
+                    elif not any(int(r.get("internal_events") or 0) for r in rows):
+                        why = "no events in index=_internal; it may not be readable"
+                    else:
+                        why = None
+                    for key in by_action if why else ():
+                        results[key] = _unknown(why)
+                        noisy[key] = silent[key] = _history_unknown(why)
             except Exception as exc:  # noqa: BLE001 -- every rule reads unknown
                 results = _failed(rules, exc, now)
                 noisy = _history_failed(rules, f"alert count failed: {exc}", now)
