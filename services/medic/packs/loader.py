@@ -1,23 +1,20 @@
-"""The pack loader (F6): verify, check, persist atomically, keep last-known-good.
+"""The pack loader (F6): check, persist atomically, keep last-known-good.
 
-load_pack() takes the raw bytes of one signed-pack file and either makes it the active
-pack (the outgoing active pack becomes last-known-good) or refuses it with the
-verifiers' own codes and changes nothing on disk. Order, each step gating the next:
-trust_check.verify_envelope (signature, key state, dev mode, size, statement digest)
--> pack_check.check_pack (never on unverified bytes) -> trust_check.check_channel
--> persist.
+load_pack() takes the raw bytes of one medic.pack/v1 file and either makes it the
+active pack (the outgoing active pack becomes last-known-good) or refuses it with
+pack_check's own codes and changes nothing on disk. An admin import's expected
+sha256 is checked before this, on the API thread (api/pack.py).
 
 `tolerate` (check_pack codes to let through) and `override_lineage` exist for the
 lifecycle (lifecycle.py); vet_pack() is the same checks without the write.
 
 A refusal is a return value, never an exception. The loader writes no decision log
 and touches no engine: the caller records `imported` / `rule_skipped` as pack_events.
-Everything it needs (trust root, Vigil version, dev mode, clock, data dir) is a
-parameter. A failing disk is not hostile input, so a write error is raised (after
-its temp files are cleaned up) with the previous active pack still in place.
+Everything it needs (Vigil version, clock, data dir) is a parameter. A failing disk
+is not hostile input, so a write error is raised (after its temp files are cleaned
+up) with the previous active pack still in place.
 
-On disk, under <data_dir>/packs/ (dir 0700, files 0600), the whole signed-pack file
-as received, so a later re-verify can read its signing keyid:
+On disk, under <data_dir>/packs/ (dir 0700, files 0600), the pack file as received:
     active.json            the pack in force
     last-known-good.json   the pack it replaced
 """
@@ -33,7 +30,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from services.medic.contracts import trust_check
 from services.medic.contracts.pack_check import Lineage, check_pack
 
 log = logging.getLogger("services.medic")
@@ -46,7 +42,7 @@ _SEMVER = re.compile(r"\d+\.\d+\.\d+")
 @dataclass
 class LoadResult:
     errors: list[tuple[str, str]] = field(default_factory=list)  # (code, message)
-    imported: dict | None = None  # id, channel, version, signed_by, previous
+    imported: dict | None = None  # id, channel, version, previous
     rule_skipped: list[str] = field(default_factory=list)
     tolerated: list[tuple[str, str]] = field(default_factory=list)  # let through
 
@@ -61,7 +57,7 @@ class LoadResult:
 
 @dataclass(frozen=True)
 class StoredPack:
-    data: bytes  # the signed-pack file exactly as it was imported
+    data: bytes  # the pack file exactly as it was imported
     lineage: Lineage
 
 
@@ -70,11 +66,10 @@ def packs_dir(data_dir: Path) -> Path:
 
 
 def _lineage(data: bytes) -> Lineage | None:
-    """The id/channel/version a stored file claims, or None if it isn't a pack file."""
+    """The id/channel/version a stored file claims, or None if it isn't a pack file
+    (a pre-2.0 medic.signed-pack/v1 file has no top-level manifest: None)."""
     try:
-        doc = json.loads(data)
-        pack = doc["pack"] if doc.get("format") == trust_check.SIGNED_PACK else None
-        manifest = (json.loads(pack) if pack is not None else doc)["manifest"]["pack"]
+        manifest = json.loads(data)["manifest"]["pack"]
         lin = Lineage(manifest["id"], manifest["channel"], manifest["version"])
     except (ValueError, KeyError, TypeError, AttributeError, RecursionError):
         return None
@@ -160,59 +155,37 @@ def _refuse(errors: list[tuple[str, str]]) -> LoadResult:
 def vet_pack(
     data: bytes,
     *,
-    trust_root: dict,
     vigil_version: str,
-    dev_mode: bool,
     now: datetime,
     lineage: Lineage | None,
     override_lineage: bool = False,
     tolerate: frozenset[str] = frozenset(),
 ):
-    """Every check short of writing: (errors, verified, check_pack result).
-
-    `tolerate` names check_pack codes to let through (the bundled pack's exception);
-    signature, key and channel failures are never tolerable.
-    """
-    verified = trust_check.verify_envelope(
-        data,
-        trust_root,
-        expected={trust_check.PACK, trust_check.PACK_DEV},
-        now=now,
-        dev_mode=dev_mode,
-    )
-    if not verified.ok:
-        return verified.errors, verified, None
+    """Every check short of writing: (errors, check_pack result).
+    `tolerate` names check_pack codes to let through (the bundled pack's exception)."""
     res = check_pack(
-        verified.payload,
+        data,
         vigil_version=vigil_version,
         now=now,
         last_known_good=lineage,
         override_lineage=override_lineage,
     )
-    errors = [e for e in res.errors if e[0] not in tolerate]
-    if res.manifest:
-        pack = res.manifest["pack"]
-        errors += trust_check.check_channel(verified, trust_root, pack["channel"])
-    return errors, verified, res
+    return [e for e in res.errors if e[0] not in tolerate], res
 
 
 def load_pack(
     data: bytes,
     *,
     data_dir: Path,
-    trust_root: dict,
     vigil_version: str,
-    dev_mode: bool,
     now: datetime,
     override_lineage: bool = False,
     tolerate: frozenset[str] = frozenset(),
 ) -> LoadResult:
     active = read_active(data_dir)
-    errors, verified, res = vet_pack(
+    errors, res = vet_pack(
         data,
-        trust_root=trust_root,
         vigil_version=vigil_version,
-        dev_mode=dev_mode,
         now=now,
         lineage=active.lineage if active else None,
         override_lineage=override_lineage,
@@ -227,7 +200,6 @@ def load_pack(
         "id": pack["id"],
         "channel": pack["channel"],
         "version": pack["version"],
-        "signed_by": verified.signed_by,
         "previous": (
             {
                 "id": active.lineage.id,

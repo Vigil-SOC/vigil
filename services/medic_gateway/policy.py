@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 MAX_TARGET = 2048
 MAX_POST_BODY = 4096  # X2: feedback bodies and the body-less pack POSTs
-MAX_IMPORT_BODY = 4 * 1024 * 1024 + 64 * 1024  # a signed pack: 4 MB + envelope
+MAX_IMPORT_BODY = 4 * 1024 * 1024  # a pack file: pack_check.MAX_PACK_BYTES
 # A pack write waits for Medic's main loop (up to its 20 s snapshot age), so it
 # outlasts the default upstream timeout.
 PACK_WRITE_TIMEOUT = 25.0
@@ -132,13 +132,12 @@ INBOUND = [
     Route(
         "POST",
         "/v1/pack/import",
-        {"override": BOOL},
+        {"sha256": ("[0-9A-Fa-f]{64}", 1), "override": BOOL},
         max_body=MAX_IMPORT_BODY,
         timeout=PACK_WRITE_TIMEOUT,
     ),
     Route("POST", "/v1/pack/revert", timeout=PACK_WRITE_TIMEOUT),
     Route("POST", "/v1/pack/switch-to-bundled", timeout=PACK_WRITE_TIMEOUT),
-    Route("POST", "/v1/pack/acknowledge", timeout=PACK_WRITE_TIMEOUT),
 ]
 
 

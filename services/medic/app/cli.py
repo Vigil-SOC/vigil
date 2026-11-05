@@ -436,7 +436,7 @@ def _run(
             log.error("cannot write to the data dir %s: %s", data_dir, exc)
             return 1
         log.info("Medic running; data dir %s, shape %s", data_dir, shape)
-        # Dev mode and a start with no usable trust root have no lifecycle.
+        # Dev mode, and a start whose lifecycle failed, have none.
         admin = (
             PackAdmin(pack, shape=shape, data_dir=data_dir, clock=clock)
             if pack.context is not None

@@ -1,8 +1,8 @@
 """Reference import checks for Medic content packs (medic.pack/v1).
 
 The executable form of F1 §4. The pack loader (F6) must accept and refuse exactly
-what this does, with the same codes. It runs AFTER the signature (F2) has been
-verified on the raw bytes, and before anything else touches the pack.
+what this does, with the same codes. An admin import is first held to the sha256 the
+admin expects (check_digest, S-DIGEST); nothing else touches the pack before this.
 Order: size → strict JSON → schema → files and hashes → identity (dates, Vigil
 range, lineage) → rules → suppression → catalog → runbooks → counts.
 A member YAML file that is malformed, nested too deeply to parse or not a mapping
@@ -43,6 +43,16 @@ CATALOG = _sub("#/$defs/catalog")
 RUNBOOK = _sub("#/$defs/runbook")
 MAX_PACK_BYTES = 4 * 1024 * 1024
 MAX_LIFETIME_DAYS = 366
+DIGEST = "S-DIGEST"
+
+
+def check_digest(data: bytes, expected: str) -> tuple[str, str] | None:
+    """An import's bytes against the sha256 the admin expects (lowercase hex):
+    None if they match, else the (code, message) refusal."""
+    got = hashlib.sha256(data).hexdigest()
+    if got == expected:
+        return None
+    return DIGEST, f"pack sha256 is {got}, expected {expected}"
 
 
 @dataclass

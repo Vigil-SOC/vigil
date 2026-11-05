@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://deeptempo.ai/system-watcher/contracts/pack/v1",
   "title": "Medic content pack v1 (built single-file form)",
-  "description": "One JSON file: a manifest plus the exact text of every pack file, keyed by path. The signature (F2) covers the file's bytes and is verified before this schema is applied. $defs also hold the schemas of the pack's own documents: source manifest, suppression, catalog, runbook descriptor. Checks JSON Schema can't express are in pack_check.py.",
+  "description": "One JSON file: a manifest plus the exact text of every pack file, keyed by path. An admin import is first held to the sha256 the admin expects for the file's bytes (S-DIGEST), before this schema is applied. $defs also hold the schemas of the pack's own documents: source manifest, suppression, catalog, runbook descriptor. Checks JSON Schema can't express are in pack_check.py.",
   "type": "object",
   "required": ["format", "manifest", "files"],
   "additionalProperties": false,

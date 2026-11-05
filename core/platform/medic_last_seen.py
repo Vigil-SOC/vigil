@@ -57,7 +57,7 @@ _TS = re.compile(
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?Z"
 )
 _INSTANCE = re.compile(r"mi_[0-9a-f]{16}")
-_API_VERSION = re.compile(r"1\.[0-9]{1,3}")
+_API_VERSION = re.compile(r"2\.[0-9]{1,3}")
 _STATES = frozenset(
     {"running", "degraded", "not_recording", "blind", "starting", "crash_looping"}
 )

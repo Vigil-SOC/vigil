@@ -8,7 +8,7 @@ Source layout (F5 content repo):
     catalog.yaml              trusted template catalog (D3 §2), optional
 
 Output: one JSON file, byte-for-byte reproducible from the same source, so a
-reviewer can rebuild and compare before F5 signs it (F2 signs the bytes).
+reviewer can rebuild it and compare sha256s.
 Usage: uv run python pack_build.py <src_dir> <out_file>
 """
 
