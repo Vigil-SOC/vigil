@@ -79,6 +79,19 @@ def closed_by_person(channel: str | None) -> bool:
     return trust_word(channel) == ClosedByKind.ANALYST.value
 
 
+def closure_says_real(category: str | None) -> bool | None:
+    """Real or not by the closure vocabulary; None when it determined neither."""
+    try:
+        outcome = CLOSURE_OUTCOMES.get(ClosureCategory(category))
+    except ValueError:
+        return None
+    if outcome is VerdictOutcome.PROVEN:
+        return True
+    if outcome is VerdictOutcome.FALSE_POSITIVE:
+        return False
+    return None
+
+
 __all__: Sequence[str] = (
     "CHANNEL_AGENT",
     "CHANNEL_COOKIE",
@@ -87,5 +100,6 @@ __all__: Sequence[str] = (
     "ClosureCategory",
     "PERSON_CHANNELS",
     "closed_by_person",
+    "closure_says_real",
     "trust_word",
 )

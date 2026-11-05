@@ -6,14 +6,13 @@ request-scoped ``Session``; nothing here commits — the unit of work owns that.
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from sqlalchemy import and_, func, text
 from sqlalchemy.orm import Session, noload
 
-from core.cases.closure import CLOSURE_OUTCOMES, ClosureCategory, closed_by_person
+from core.cases.closure import closed_by_person, closure_says_real
 from core.llm.providers.registry import get_registry, infer_provider_type
-from core.memory.recall_contract import VerdictOutcome
 from core.storage.models import (
     Case,
     CaseClosureInfo,
@@ -700,19 +699,6 @@ def _agreement_tally() -> Dict[str, Any]:
     }
 
 
-def _closure_says_real(category: Optional[str]) -> Optional[bool]:
-    """Real or not by the closure vocabulary; None when it determined neither."""
-    try:
-        outcome = CLOSURE_OUTCOMES.get(ClosureCategory(category))
-    except ValueError:
-        return None
-    if outcome is VerdictOutcome.PROVEN:
-        return True
-    if outcome is VerdictOutcome.FALSE_POSITIVE:
-        return False
-    return None
-
-
 async def get_agent_agreement(
     db: Session, start_time: datetime, end_time: datetime
 ) -> Dict[str, Any]:
@@ -739,7 +725,7 @@ def agent_agreement(
             key = "closed_by_agent_alone"
         else:
             disposition = (row.disposition or "").strip().lower()
-            closure = _closure_says_real(row.closure_category)
+            closure = closure_says_real(row.closure_category)
             if closure is None:
                 key = "closed_without_determination"
             elif disposition in _REAL or disposition in _NOT_REAL:

@@ -8,7 +8,7 @@ to see a deletion, and writes only what differs:
 - a key the list no longer has is status 'removed', never deleted;
 - a name, path, technique or tactic change updates the rule row, no new version;
 - a SIEM rule switched off is status 'disabled', and carries no Runs, Sees,
-  Quiet, Noisy or Silent result (its drift result stays).
+  Quiet, Accurate, Noisy or Silent result (its drift result stays).
 
 A Runs result (checks['runs'] on the latest version) is written only when its
 result or reason differs from the stored one; a new version starts with none.
@@ -20,7 +20,9 @@ way and against the rule's own 30 days (checks['noisy'], checks['silent']),
 then ``sees`` checks whether each active Kibana rule's data is arriving; after
 Splunk syncs, ``splunk_sees`` checks each active saved search's data the same
 way. All three Sees checks write checks['sees']; each check is written the
-same way.
+same way. Last, ``accurate`` judges each active Kibana and Wazuh rule's latest
+version from the stored findings' verdicts and writes checks['accurate'] the
+same way (local SQL only).
 
 After the sources, each SIEM rule is linked to the repo rule it came from when
 that is certain: a Kibana rule by ``same_id`` (one active repo Elastic rule with
@@ -66,6 +68,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional
 from sqlalchemy import and_, bindparam, func, insert, or_, select, update
 
 from core.detections.inventory import (
+    accurate,
     kibana,
     quiet,
     readers,
@@ -161,7 +164,7 @@ def _rule_fields(record: RuleRecord) -> Dict[str, Any]:
     }
 
 
-DROPPED_WHEN_DISABLED = ("runs", "sees", "quiet", "noisy", "silent")
+DROPPED_WHEN_DISABLED = ("runs", "sees", "quiet", "accurate", "noisy", "silent")
 
 
 def _checks(stored: Dict[str, Any], record: RuleRecord, now: str) -> Dict[str, Any]:
@@ -425,7 +428,9 @@ def _remove_unconfigured(configured: List[str]) -> int:
 
 
 def sync_repos() -> List[Any]:
-    """Read every configured repo, Wazuh, Kibana and Splunk, and sync each, checking Wazuh, Kibana and Splunk rules' Quiet and Sees.
+    """Read every configured repo, Wazuh, Kibana and Splunk, and sync each, checking
+    Wazuh, Kibana and Splunk rules' Quiet and Sees, then Kibana and Wazuh rules'
+    Accurate.
 
     One failing source skips only itself.
     """
@@ -454,6 +459,7 @@ def sync_repos() -> List[Any]:
             # After Runs, and before Sees' searches can spend the budget.
             reports.append(quiet.sweep_splunk(splunk_config))
             reports.append(splunk_sees.sweep(splunk_config))
+        reports.append(accurate.sweep())
     if removed:
         logger.info(
             "detection rules: %d rules of unconfigured sources removed", removed
