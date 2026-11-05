@@ -34,7 +34,10 @@ Vigil SOC has been installed in namespace {{ .Release.Namespace }} as release "{
 
 No default admin account ships. On first visit the web UI opens a bootstrap
 screen (POST /api/auth/bootstrap) where you create the admin with a password
-of your choosing; it closes as soon as one account exists.
+of your choosing; it closes as soon as one account exists. The screen asks for
+a setup code, which the backend logs once its database is ready:
+
+   kubectl logs -n {{ .Release.Namespace }} deploy/{{ include "vigil.backend.fullname" . }} | grep 'First-run setup code:'
 {{- end }}
 
 {{- $medic := .Values.medic | default dict }}
