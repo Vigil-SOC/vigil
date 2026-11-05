@@ -28,6 +28,7 @@ ENTITY_QUERIES = {
     "attack_pattern": "attackPatterns",
     "tool": "tools",
     "campaign": "campaigns",
+    "report": "reports",
 }
 
 _OBSERVABLE_FIELDS = """
@@ -41,6 +42,13 @@ _OBSERVABLE_FIELDS = """
 _ENTITY_FIELDS = """
   id entity_type name description confidence
   objectLabel { value }
+"""
+
+
+# A relationship target or container object: a named entity or an observable.
+_TARGET_FIELDS = """
+  ... on StixDomainObject { id entity_type representative { main } }
+  ... on StixCyberObservable { id entity_type observable_value }
 """
 
 
@@ -206,16 +214,27 @@ class OpenCTIService:
     async def get_related(self, entity_id: str, limit: Any = 20) -> Dict[str, Any]:
         if not _ID.match(entity_id or ""):
             raise OpenCTIError(f"Invalid entity id {entity_id!r}")
+        # A container's (report, grouping, case) contents are object refs, not
+        # relationships; ask for both in one round trip.
         data = await self._query(
-            "query($id: [String], $n: Int) { stixCoreRelationships(fromId: $id, first: $n) {"
+            "query($id: String!, $ids: [String], $n: Int) {"
+            " stixCoreRelationships(fromId: $ids, first: $n) {"
             " edges { node { relationship_type confidence"
-            " to { ... on StixDomainObject { id entity_type representative { main } }"
-            " ... on StixCyberObservable { id entity_type observable_value } } } } } }",
-            {"id": [entity_id], "n": _limit(limit)},
+            " to {" + _TARGET_FIELDS + "} } } }"
+            " stixDomainObject(id: $id) { ... on Container { objects(first: $n) {"
+            " edges { node {" + _TARGET_FIELDS + "} } } } } }",
+            {"id": entity_id, "ids": [entity_id], "n": _limit(limit)},
         )
         relationships = _nodes(data.get("stixCoreRelationships"))
-        return {
+        out: Dict[str, Any] = {
             "id": entity_id,
             "count": len(relationships),
             "relationships": relationships,
         }
+        container = data.get("stixDomainObject") or {}
+        if "objects" in container:
+            # Relationships a report holds match neither fragment and come back empty.
+            objects = [o for o in _nodes(container["objects"]) if o.get("id")]
+            out["object_count"] = len(objects)
+            out["objects"] = objects
+        return out

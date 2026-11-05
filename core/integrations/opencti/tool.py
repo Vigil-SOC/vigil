@@ -1,8 +1,8 @@
 """OpenCTI MCP tool server.
 
 Read-only lookups over the OpenCTI GraphQL API: observables and their
-indicators, one indicator's detail, named entities (actors, malware, ...) and
-an entity's relationships.
+indicators, one indicator's detail, named entities (actors, malware, reports,
+...) and an entity's relationships, or the objects a report names.
 """
 
 import sys
@@ -90,7 +90,11 @@ async def handle_list_tools():
         ),
         types.Tool(
             name="opencti_search_entities",
-            description="Search OpenCTI by name or alias for threat actors, intrusion sets, malware, attack patterns, tools or campaigns.",
+            description=(
+                "Search OpenCTI by name or alias for threat actors, intrusion sets, malware, "
+                "attack patterns, tools, campaigns or reports. To read what a report names, "
+                "pass its id to opencti_get_related."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -106,7 +110,9 @@ async def handle_list_tools():
             description=(
                 "List the relationships going out of an OpenCTI entity (uses, targets, "
                 "attributed-to, ...), capped. entity_id is the id another OpenCTI tool "
-                "returned (a STIX id matches nothing); each target carries its own id."
+                "returned (a STIX id matches nothing); each target carries its own id. "
+                "For a report (or grouping, case) it also lists objects: the attack "
+                "patterns, intrusion sets, indicators, ... the report names."
             ),
             inputSchema={
                 "type": "object",
