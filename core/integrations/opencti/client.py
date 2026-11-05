@@ -28,6 +28,7 @@ ENTITY_QUERIES = {
     "attack_pattern": "attackPatterns",
     "tool": "tools",
     "campaign": "campaigns",
+    "report": "reports",
 }
 
 _OBSERVABLE_FIELDS = """
@@ -46,6 +47,14 @@ _ENTITY_FIELDS = """
 # Fields only some entity types have; asking another type for them fails.
 # x_mitre_id is the ATT&CK technique id, as analyze_coverage takes it.
 _EXTRA_ENTITY_FIELDS = {"attack_pattern": " x_mitre_id"}
+
+
+# A relationship target or container object: a named entity or an observable.
+_TARGET_FIELDS = """
+  ... on StixDomainObject { id entity_type representative { main } }
+  ... on AttackPattern { x_mitre_id }
+  ... on StixCyberObservable { id entity_type observable_value }
+"""
 
 
 class OpenCTIError(Exception):
@@ -213,17 +222,33 @@ class OpenCTIService:
     async def get_related(self, entity_id: str, limit: Any = 20) -> Dict[str, Any]:
         if not _ID.match(entity_id or ""):
             raise OpenCTIError(f"Invalid entity id {entity_id!r}")
+        # A container's (report, grouping, case) contents are object refs, not
+        # relationships; ask for both in one round trip.
         data = await self._query(
-            "query($id: [String], $n: Int) { stixCoreRelationships(fromId: $id, first: $n) {"
+            "query($id: String!, $ids: [String], $n: Int) {"
+            " stixCoreRelationships(fromId: $ids, first: $n) {"
             " edges { node { relationship_type confidence"
-            " to { ... on StixDomainObject { id entity_type representative { main } }"
-            " ... on AttackPattern { x_mitre_id }"
-            " ... on StixCyberObservable { id entity_type observable_value } } } } } }",
-            {"id": [entity_id], "n": _limit(limit)},
+            " to {" + _TARGET_FIELDS + "} } } }"
+            " stixDomainObject(id: $id) { ... on Container { objects(first: $n) {"
+            " pageInfo { globalCount }"
+            " edges { node {" + _TARGET_FIELDS + "} } } } } }",
+            {"id": entity_id, "ids": [entity_id], "n": _limit(limit)},
         )
         relationships = _nodes(data.get("stixCoreRelationships"))
-        return {
+        out: Dict[str, Any] = {
             "id": entity_id,
             "count": len(relationships),
             "relationships": relationships,
         }
+        container = data.get("stixDomainObject") or {}
+        if "objects" in container:
+            # Relationships a report holds match neither fragment and come back empty.
+            objects = [o for o in _nodes(container["objects"]) if o.get("id")]
+            # object_count is what the container holds, not the capped page: a
+            # report of 9 read with limit=3 says 9, with 3 objects listed.
+            total = ((container["objects"] or {}).get("pageInfo") or {}).get(
+                "globalCount"
+            )
+            out["object_count"] = total if isinstance(total, int) else len(objects)
+            out["objects"] = objects
+        return out

@@ -73,7 +73,7 @@ Lane 2 is for a fix that is the admin's (free disk or raise the cap; the cluster
 
 - **Scope: one chain per store** (install), covering every record type, feedback and adjudication included (⚑4).
 - `hash = sha256(canonical JSON of the record without hash)`. Canonical = sorted keys, no whitespace, UTF-8, integers only (equal to RFC 8785 for these records, **inferred**: keys are ASCII). `prev` = the previous record's hash; the first record ever uses 64 zeros.
-- **Purge:** append an anchor naming the last deleted record's hash, then delete. Verification starts at the oldest remaining record, which must be genesis, a reset, or covered by an anchor.
+- **Purge:** in one transaction, delete the oldest prefix and seal an anchor naming the last deleted record's hash onto the head (a failure leaves the chain as it was). Verification starts at the oldest remaining record, which must be genesis, a reset, or covered by an anchor.
 - **Reset:** a fresh store starts with `store_reset`, whose `prev` and `previous_head` name the old head (or zeros if unknown).
 - **Errors** (`decision_chain.verify`): `E-HASH` edited, `E-SEQ` gap or reorder, `E-LINK` broken link (including an edited-and-rehashed record), `E-UNANCHORED` history missing with no anchor, `E-GAP` a `gap` that ends before it starts (times compared as instants; the writer refuses one before appending, so a clock jump can't leave a chain that won't verify). Each has a test.
 - The logged chain head (C4) and H5's head and anchor counts are the outside witnesses. The chain alone can't stop a fully compromised writer.

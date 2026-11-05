@@ -1,8 +1,8 @@
 """OpenCTI MCP tool server.
 
 Read-only lookups over the OpenCTI GraphQL API: observables and their
-indicators, one indicator's detail, named entities (actors, malware, ...) and
-an entity's relationships.
+indicators, one indicator's detail, named entities (actors, malware, reports,
+...) and an entity's relationships, or the objects a report names.
 """
 
 import sys
@@ -91,9 +91,10 @@ async def handle_list_tools():
         types.Tool(
             name="opencti_search_entities",
             description=(
-                "Search OpenCTI by name or alias for threat actors, intrusion sets, "
-                "malware, attack patterns, tools or campaigns. Attack patterns carry "
-                "x_mitre_id, the ATT&CK technique id (e.g. T1003.001)."
+                "Search OpenCTI by name or alias for threat actors, intrusion sets, malware, "
+                "attack patterns, tools, campaigns or reports. Attack patterns carry "
+                "x_mitre_id, the ATT&CK technique id (e.g. T1003.001). To read what a report "
+                "names, pass its id to opencti_get_related."
             ),
             inputSchema={
                 "type": "object",
@@ -111,7 +112,10 @@ async def handle_list_tools():
                 "List the relationships going out of an OpenCTI entity (uses, targets, "
                 "attributed-to, ...), capped. entity_id is the id another OpenCTI tool "
                 "returned (a STIX id matches nothing); each target carries its own id, and "
-                "an attack-pattern target its ATT&CK technique id as x_mitre_id."
+                "an attack-pattern target its ATT&CK technique id as x_mitre_id. For a "
+                "report (or grouping, case) it also lists objects: the attack patterns, "
+                "intrusion sets, indicators, ... the report names, capped; object_count is "
+                "how many the report holds in all."
             ),
             inputSchema={
                 "type": "object",
