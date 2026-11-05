@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
@@ -73,14 +73,14 @@ def seal(record: dict[str, Any], prev: dict[str, Any] | None) -> dict[str, Any]:
     return out
 
 
-def _instant(ts: str) -> datetime:
+def instant(ts: str) -> datetime:
     """A schema `ts` as an instant: "…:00.5Z" is later than "…:00Z" though it sorts first."""
     return datetime.fromisoformat(ts)
 
 
 def gap_ok(body: dict[str, Any]) -> bool:
     """A `gap` must not end before it starts (E-GAP); writers check before appending."""
-    return _instant(body["from"]) <= _instant(body["to"])
+    return instant(body["from"]) <= instant(body["to"])
 
 
 def _start_ok(first: dict[str, Any], anchors: dict[int, str]) -> bool:
@@ -93,43 +93,52 @@ def _start_ok(first: dict[str, Any], anchors: dict[int, str]) -> bool:
     return anchors.get(first["seq"] - 1) == first["prev"]
 
 
-def verify(records: Sequence[dict[str, Any]]) -> str:
-    """Verify a store's records in seq order. Returns the chain head hash.
+def anchors_of(records: Iterable[dict[str, Any]]) -> dict[int, str]:
+    """deleted_last_seq -> last_deleted_hash, for each anchor among `records`."""
+    return {
+        r["body"]["deleted_last_seq"]: r["body"]["last_deleted_hash"]
+        for r in records
+        if r["type"] == "anchor"
+    }
+
+
+def verify_stream(records: Iterable[dict[str, Any]], anchors: Mapping[int, str]) -> str:
+    """Verify records in seq order, holding one at a time. Returns the chain head hash.
+
+    `anchors` comes from a pre-pass (`anchors_of`, or a query for anchor rows), since
+    the anchor that covers the oldest record sits after it in seq order.
 
     Error codes: E-HASH (a record was edited), E-SEQ (gap, duplicate or reorder),
     E-LINK (prev doesn't match the record before it), E-UNANCHORED (the oldest
     record is neither genesis, a store reset, nor covered by an anchor), E-GAP (a
     `gap` record ends before it starts; the schema can't compare two fields).
     """
-    if not records:
-        return GENESIS
-    anchors = {
-        r["body"]["deleted_last_seq"]: r["body"]["last_deleted_hash"]
-        for r in records
-        if r["type"] == "anchor"
-    }
-    for i, rec in enumerate(records):
+    before: dict[str, Any] | None = None
+    for rec in records:
         if record_hash(rec) != rec["hash"]:
             raise ChainError("E-HASH", rec["seq"], "content does not match its hash")
         if rec["type"] == "gap" and not gap_ok(rec["body"]):
             raise ChainError("E-GAP", rec["seq"], "the gap ends before it starts")
-        if i == 0:
+        if before is None:
             if not _start_ok(rec, anchors):
                 raise ChainError(
                     "E-UNANCHORED", rec["seq"], "oldest record has no anchor"
                 )
-            continue
-        before = records[i - 1]
-        if rec["type"] == "store_reset":
+        elif rec["type"] == "store_reset":
             if not _start_ok(rec, anchors):
                 raise ChainError(
                     "E-LINK", rec["seq"], "reset does not name the old head"
                 )
-            continue
-        if rec["seq"] != before["seq"] + 1:
+        elif rec["seq"] != before["seq"] + 1:
             raise ChainError("E-SEQ", rec["seq"], f"expected seq {before['seq'] + 1}")
-        if rec["prev"] != before["hash"]:
+        elif rec["prev"] != before["hash"]:
             raise ChainError(
                 "E-LINK", rec["seq"], "prev is not the previous record's hash"
             )
-    return records[-1]["hash"]
+        before = rec
+    return before["hash"] if before else GENESIS
+
+
+def verify(records: Sequence[dict[str, Any]]) -> str:
+    """Verify a store's records in seq order (see `verify_stream`). Returns the head."""
+    return verify_stream(records, anchors_of(records))
