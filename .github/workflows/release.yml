@@ -120,7 +120,7 @@ jobs:
           cache-to:   type=registry,ref=ghcr.io/vigil-soc/vigil-backend:buildcache,mode=max
           # Pass the version into the image
           build-args: |
-            VIGIL_VERSION=${{ github.ref_name }}
+            VIGIL_VERSION=${{ needs.version.outputs.version }}
             PYTHON_VERSION=${{ steps.pin.outputs.version }}
           platforms: linux/amd64,linux/arm64
 
@@ -144,6 +144,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       digest: ${{ steps.push.outputs.digest }}   # the index digest cosign signs
+    needs: [version]
     permissions:
       contents: read
       packages: write
@@ -198,7 +199,7 @@ jobs:
           cache-from: type=registry,ref=ghcr.io/vigil-soc/vigil-daemon:buildcache
           cache-to:   type=registry,ref=ghcr.io/vigil-soc/vigil-daemon:buildcache,mode=max
           build-args: |
-            VIGIL_VERSION=${{ github.ref_name }}
+            VIGIL_VERSION=${{ needs.version.outputs.version }}
             PYTHON_VERSION=${{ steps.pin.outputs.version }}
           platforms: linux/amd64,linux/arm64
 
@@ -220,6 +221,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       digest: ${{ steps.push.outputs.digest }}   # the index digest cosign signs
+    needs: [version]
     permissions:
       contents: read
       packages: write
@@ -274,7 +276,7 @@ jobs:
           cache-from: type=registry,ref=ghcr.io/vigil-soc/vigil-mcp-runner:buildcache
           cache-to:   type=registry,ref=ghcr.io/vigil-soc/vigil-mcp-runner:buildcache,mode=max
           build-args: |
-            VIGIL_VERSION=${{ github.ref_name }}
+            VIGIL_VERSION=${{ needs.version.outputs.version }}
             PYTHON_VERSION=${{ steps.pin.outputs.version }}
           platforms: linux/amd64,linux/arm64
 
@@ -296,6 +298,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       digest: ${{ steps.push.outputs.digest }}   # the index digest cosign signs
+    needs: [version]
     permissions:
       contents: read
       packages: write
@@ -346,7 +349,7 @@ jobs:
           cache-from: type=registry,ref=ghcr.io/vigil-soc/vigil-agent:buildcache
           cache-to:   type=registry,ref=ghcr.io/vigil-soc/vigil-agent:buildcache,mode=max
           build-args: |
-            VIGIL_VERSION=${{ github.ref_name }}
+            VIGIL_VERSION=${{ needs.version.outputs.version }}
           platforms: linux/amd64,linux/arm64
 
       - name: Install Cosign
