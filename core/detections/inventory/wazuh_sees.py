@@ -10,8 +10,11 @@ At most two searches, each a size-0 terms aggregation over the last 7 days and
 each spent against elastic-siem's ``max_searches_per_hour``: the archive
 (``wazuh-archives-*``: which decoders got events) and the alerts
 (``wazuh-alerts-*``: which decoders and rule ids alerted). Each answer is held
-in memory for 24 h; rules synced in between are judged from it. Listing the
-indices is metadata and spends nothing.
+in memory for 24 h; rules synced in between are judged from it. Each search is
+spent under the key ``wazuh:<pattern>``, so a part another process searched
+within 24 h is not searched again here: its rules keep the Sees that process
+wrote. Parts due are searched oldest first. Listing the indices is metadata and
+spends nothing.
 
 - ``pass``: a decoder of the rule is in either answer, or the rule or an
   ancestor alerted;
@@ -20,8 +23,9 @@ indices is metadata and spends nothing.
 - ``unknown`` otherwise: without the archive Wazuh keeps alerts only, so no
   alert proves nothing. A failed search makes its part unknown, never pass.
 
-While a part the verdict depends on has no answer yet (budget spent), the rule
-is left as it is. Nothing is written to the indexer or the manager.
+While a part the verdict depends on has no answer here (budget spent, or
+another process holds it), the rule is left as it is. Nothing is written to the
+indexer or the manager.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Mapping, Optional, Set, Tuple
 
 from sqlalchemy import and_, select
@@ -51,8 +56,12 @@ TERMS_SIZE = 20000
 
 RuleKey = sees.RuleKey
 
-# (indexer url, index pattern) -> (monotonic time searched, answer). A restart searches again.
+# (indexer url, index pattern) -> (monotonic time searched, answer): the fast path
+# before asking siem_searches when the part was last searched.
 held: Dict[Tuple[str, str], Tuple[float, Dict[str, Any]]] = {}
+# (indexer url, index pattern) whose search failed in this process: searched again
+# next sync, though its keyed row (spent before the search) is recent.
+failed: Set[Tuple[str, str]] = set()
 
 
 @dataclass
@@ -188,28 +197,44 @@ async def _answers(
         return f"neither {ALERTS} nor {ARCHIVES} exists on the indexer", {}
     out: Dict[str, Any] = {}
     now = time.monotonic()
-    for pattern, fields in ((ARCHIVES, [DECODER]), (ALERTS, [DECODER, RULE])):
+    fields = {ARCHIVES: [DECODER], ALERTS: [DECODER, RULE]}
+    due: List[str] = []
+    for pattern in fields:
         if not exists[pattern]:
             out[pattern] = {
                 "total": 0,
                 "missing": True,
-                **{f: {"values": set(), "other": 0} for f in fields},
+                **{f: {"values": set(), "other": 0} for f in fields[pattern]},
             }
             continue
         hold = held.get((url, pattern))
         if hold and now - hold[0] < HOLD_SECONDS:
             out[pattern] = hold[1]
-            continue
-        if not search_budget.spend(sees.INTEGRATION, per_hour):
-            report.deferred += 1  # its rules wait for a later sync
-            continue
+        else:
+            due.append(pattern)
+
+    key = {p: f"wazuh:{p}" for p in due}
+    last = search_budget.last_spent(sees.INTEGRATION, key.values())
+    never = datetime.min.replace(tzinfo=timezone.utc)
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=HOLD_SECONDS)
+    # Searched within 24 h by a process whose answer this one doesn't hold: absent,
+    # so its rules are left as that process wrote them.
+    due = [p for p in due if last.get(key[p], never) <= cutoff or (url, p) in failed]
+    for n, pattern in enumerate(sorted(due, key=lambda p: last.get(key[p], never))):
+        if not search_budget.spend(sees.INTEGRATION, per_hour, key[pattern]):
+            report.deferred = len(due) - n  # their rules wait for a later sync
+            break
         report.searched += 1
         try:
-            answer = await service.terms_since(pattern, fields, DAYS, TERMS_SIZE)
+            answer = await service.terms_since(
+                pattern, fields[pattern], DAYS, TERMS_SIZE
+            )
         except Exception as exc:  # noqa: BLE001 -- that part reads unknown
             out[pattern] = f"search of {pattern} failed: {type(exc).__name__}: {exc}"
+            failed.add((url, pattern))
             continue
-        held[(url, pattern)] = (now, answer)
+        held[(url, pattern)] = (time.monotonic(), answer)
+        failed.discard((url, pattern))
         out[pattern] = answer
     return None, out
 
