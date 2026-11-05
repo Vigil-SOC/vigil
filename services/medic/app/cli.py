@@ -43,7 +43,9 @@ from services.medic.app.wiring import (
     grid_tick,
     load_engine_state,
     load_pack,
+    rebuild_machines,
     save_engine_state,
+    store_head,
 )
 from services.medic.engine.core import iso
 from services.medic.redact import install_log_redaction
@@ -417,7 +419,8 @@ def _run(
             return 1
         try:
             try:
-                write_gap(writer, gap)
+                if stored := write_gap(writer, gap):
+                    medic.head_seq = stored["seq"]
             except RecordHeld:  # stopped at start: written, in order, on resume
                 medic.held.append({"v": 1, "at": gap["to"], "type": "gap", "body": gap})
             for event in pack.events:  # what the pack's start-up did, after the gap
@@ -520,8 +523,33 @@ def _build(
         # The clock stepped back: every tick would be skipped until it caught up.
         log.warning("Engine state is from the future, starting fresh")
         state = None
-    try:
-        return Medic(
+
+    def medic_from(state: dict | None, why: str | None = None) -> Medic:
+        saved = (state or {}).get("head_seq")
+        head = -1 if saved is None else saved
+        try:
+            head = store_head(data_dir)
+            if why is None and state is None:
+                why = "the engine state is missing or unusable"
+            elif why is None and saved is None:
+                why = "the engine state has no store head"
+            elif why is None and saved != head:
+                why = f"the store is at seq {head}, the state at {saved}"
+        except (StoreError, sqlite3.Error) as exc:  # the saved state still stands
+            log.warning("Can't read the store's head: %s", type(exc).__name__)
+            why = None
+        if why is not None:
+            try:  # the store is the truth; the engine state is a cache
+                state, resumed = rebuild_machines(data_dir, state, rules)
+                log.log(
+                    logging.WARNING if resumed else logging.INFO,
+                    "Rebuilt the open incidents from the store (%s): %d resumed",
+                    why,
+                    resumed,
+                )
+            except (StoreError, sqlite3.Error, KeyError, ValueError) as exc:
+                log.warning("Can't rebuild from the store: %s", type(exc).__name__)
+        medic = Medic(
             writer=writer,
             rules=rules,
             sensors=sensors,
@@ -533,21 +561,16 @@ def _build(
             capture=capture,
             runbooks=pack.runbooks,
         )
+        medic.head_seq = head
+        return medic
+
+    try:
+        return medic_from(state, None)
     except Exception as exc:  # any bad state: start fresh, never a crash loop
         if state is None:
             raise
         log.warning("Engine state not usable, starting fresh: %s", type(exc).__name__)
-        return Medic(
-            writer=writer,
-            rules=rules,
-            sensors=sensors,
-            clock=clock,
-            shape=shape,
-            suppression=suppression,
-            vigil_dev_mode=vigil_dev_mode,
-            capture=capture,
-            runbooks=pack.runbooks,
-        )
+        return medic_from(None, "the engine state is not usable")
 
 
 async def _loop(
@@ -573,7 +596,7 @@ async def _loop(
         await medic.cycle()
         cycle += 1
         try:
-            save_engine_state(data_dir, medic.engine.state())
+            save_engine_state(data_dir, medic.state())
             write_heartbeat(
                 data_dir,
                 cycle=cycle,

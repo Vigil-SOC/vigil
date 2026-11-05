@@ -67,9 +67,12 @@ def pending_gap(data_dir: Path, *, now: float) -> dict[str, Any] | None:
     return {"from": iso(since), "to": iso(now), "reason": reason}
 
 
-def write_gap(writer: DecisionWriter, gap: dict[str, Any] | None) -> None:
+def write_gap(
+    writer: DecisionWriter, gap: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    """The stored gap record, or None when there was none to write."""
     if gap is None:
-        return
+        return None
     stored = writer.append({"v": 1, "at": gap["to"], "type": "gap", "body": gap})
     log.warning(
         "Medic was not watching from %s to %s (%s); recorded as seq %d",
@@ -78,3 +81,4 @@ def write_gap(writer: DecisionWriter, gap: dict[str, Any] | None) -> None:
         gap["reason"],
         stored["seq"],
     )
+    return stored
