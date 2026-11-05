@@ -233,8 +233,9 @@ def _active_rules() -> List[Tuple[RuleKey, Mapping[str, Any]]]:
 
 def overlay_copies(language: str, siem: str) -> List[Tuple[RuleKey, Mapping[str, Any]]]:
     """Active overlay copies of ``language`` at their latest version whose current
-    stage is shadow or live, less those an active ``siem`` rule runs instead."""
-    from core.detections.inventory.rollout import siem_runs
+    stage is shadow or live, less those an active SIEM copy runs instead
+    (``rollout.handed_off``: a ``siem`` rule, since ``language`` picks it)."""
+    from core.detections.inventory.rollout import handed_off
 
     s = DetectionRuleStage
     current = (
@@ -266,7 +267,7 @@ def overlay_copies(language: str, siem: str) -> List[Tuple[RuleKey, Mapping[str,
             )
             .order_by(DetectionRule.id)
         ).all()
-    gone = siem_runs(siem, [rid for rid, _, _ in rows])
+    gone = handed_off([rid for rid, _, _ in rows])
     return [
         ((rid, ver), content or {}) for rid, ver, content in rows if rid not in gone
     ]
