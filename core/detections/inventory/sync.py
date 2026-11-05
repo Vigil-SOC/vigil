@@ -10,6 +10,11 @@ to see a deletion, and writes only what differs:
 - a SIEM rule switched off is status 'disabled', and carries no Runs, Sees,
   Quiet, Accurate, Noisy or Silent result (its drift result stays).
 
+A rule that stops carrying a check (disabled, no longer listed, its integration
+or source gone, or an overlay copy Kibana now runs) gets a NULL row for each
+check whose last recorded result isn't NULL (``_dropped``), which closes any
+open flag on it.
+
 A Runs result (checks['runs'] on the latest version) is written only when its
 result or reason differs from the stored one; a new version starts with none.
 After Wazuh syncs, ``quiet`` counts each active Wazuh rule's alerts against a
@@ -21,9 +26,9 @@ then ``sees`` checks whether each active Kibana rule's data is arriving; after
 Splunk syncs, ``quiet`` counts each active saved search's alerts the same way,
 Noisy and Silent included, then ``splunk_sees`` checks each active saved search's data the same
 way. All three Sees checks write checks['sees']; each check is written the
-same way. Last, ``accurate`` judges each active Kibana and Wazuh rule's latest
-version from the stored findings' verdicts and writes checks['accurate'] the
-same way (local SQL only).
+same way. Last, ``accurate`` judges each active Kibana, Wazuh and Splunk rule's
+latest version from the stored findings' verdicts and writes checks['accurate']
+the same way (local SQL only).
 
 After the sources, each SIEM rule is linked to the repo rule it came from when
 that is certain: a Kibana rule by ``same_id`` (one active repo Elastic rule with
@@ -44,7 +49,7 @@ copy whose fingerprint differs and whose latest version is newer than both the
 link and the repo rule's; a known_name or agent copy that moved after the link
 with no repo version since its previous one). A copy that had a drift result and
 is no longer linked gets a NULL row, reason 'not linked'. A disabled rule keeps
-its drift; only Runs, Sees, Quiet, Noisy and Silent are dropped.
+its drift; only Runs, Sees, Quiet, Accurate, Noisy and Silent are dropped.
 
 A source that fails to read, or is configured but not ready, is skipped whole.
 A source no longer configured has its rules marked removed.
@@ -66,7 +71,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
-from sqlalchemy import and_, bindparam, func, insert, or_, select, update
+from sqlalchemy import and_, bindparam, func, insert, or_, select, tuple_, update
 
 from core.detections.inventory import (
     accurate,
@@ -224,6 +229,75 @@ def _runs_change(
     return _change(rule_id, version, "runs", old[0] if old else None, *new)
 
 
+def _dropped(
+    rule_id: int,
+    version: int,
+    checks: Optional[Dict[str, Any]],
+    keys: tuple,
+    last: Dict[tuple, tuple],
+    reason: str,
+) -> tuple[List[dict], Dict[str, Any]]:
+    """A rule stops carrying ``keys``: (NULL rows, ``checks`` without them).
+
+    A row is written for each key whose last recorded result isn't NULL, so an
+    open flag on it closes.
+    """
+    rows = [
+        _change(rule_id, version, k, last[(rule_id, k)][0], None, reason)
+        for k in keys
+        if last.get((rule_id, k), (None,))[0] is not None
+    ]
+    return rows, {k: v for k, v in (checks or {}).items() if k not in keys}
+
+
+def _write_checks(session: Any, checked: List[tuple]) -> None:
+    """Write each (rule id, version, checks); the one column of a version ever updated."""
+    if checked:
+        session.connection().execute(
+            update(DetectionRuleVersion)
+            .where(
+                DetectionRuleVersion.rule_id == bindparam("rid"),
+                DetectionRuleVersion.version == bindparam("ver"),
+            )
+            .values(checks=bindparam("new_checks")),
+            [{"rid": i, "ver": v, "new_checks": c} for i, v, c in checked],
+        )
+
+
+def _drop_all(
+    session: Any, rules: List[Any], keys: tuple, reason: str, now: str
+) -> None:
+    """``_dropped`` for each (id, latest version, source, ...) of ``rules``, written.
+
+    Only rules with a key still recorded non-NULL are touched, so passing ones
+    already dropped is free.
+    """
+    last: Dict[tuple, tuple] = {}
+    for source in {r[2] for r in rules}:
+        last.update(_last_results(session, source))
+    rules = [r for r in rules if any(last.get((r[0], k), (None,))[0] for k in keys)]
+    if not rules:
+        return
+    v = DetectionRuleVersion
+    stored = dict(
+        session.execute(
+            select(v.rule_id, v.checks).where(
+                tuple_(v.rule_id, v.version).in_([(r[0], r[1]) for r in rules])
+            )
+        ).all()
+    )
+    changes: List[dict] = []
+    checked: List[tuple] = []
+    for rule_id, version, *_ in rules:
+        before = stored.get(rule_id) or {}
+        rows, checks = _dropped(rule_id, version, before, keys, last, reason)
+        changes += rows
+        if checks != before:
+            checked.append((rule_id, version, checks))
+    _write_checks(session, checked)
+    _record_changes(session, changes, now)
+
+
 def _record_changes(session: Any, rows: List[dict], now: str) -> None:
     """Append check result changes, in the caller's transaction. Every writer uses it."""
     if rows:
@@ -264,7 +338,8 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
             rule.native_key: (rule, fp, checks)
             for rule, fp, checks in session.execute(latest).all()
         }
-        last = _last_results(session, source) if siem else {}
+        overlay = source == readers.OVERLAY_SOURCE
+        last = _last_results(session, source) if siem or overlay else {}
         changes: List[dict] = []
 
         new: List[tuple] = []
@@ -323,6 +398,16 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
             if changed and fp == latest_fp:
                 report.updated += 1
             checks = _checks(stored, record, now)
+            if siem and record.status == "disabled":
+                dropped, checks = _dropped(
+                    rule.id,
+                    rule.latest_version,
+                    checks,
+                    DROPPED_WHEN_DISABLED,
+                    last,
+                    f"disabled in {SIEM_NAMES.get(source, source)}",
+                )
+                changes += dropped
             if checks != stored:
                 checked.append((rule.id, rule.latest_version, checks))
             if siem:
@@ -331,8 +416,23 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
                     changes.append(runs)
 
         listed = {r.native_key for r in records}
-        for key, (rule, _, _) in existing.items():
-            if key not in listed and rule.status != "removed":
+        for key, (rule, _, stored) in existing.items():
+            if key in listed:
+                continue
+            # Already removed ones too, so a check left from before is dropped;
+            # drift is _drift's to decide, never dropped here.
+            dropped, checks = _dropped(
+                rule.id,
+                rule.latest_version,
+                stored,
+                DROPPED_WHEN_DISABLED,
+                last,
+                f"no longer listed by {source}",
+            )
+            changes += dropped
+            if checks != (stored or {}):
+                checked.append((rule.id, rule.latest_version, checks))
+            if rule.status != "removed":
                 if siem:
                     changes.append(
                         _change(
@@ -381,18 +481,8 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
             session.execute(insert(DetectionRuleVersion), versions)
         if stages:
             session.execute(insert(DetectionRuleStage), stages)
-        if checked:
-            # checks is the one column of a version ever updated.
-            session.connection().execute(
-                update(DetectionRuleVersion)
-                .where(
-                    DetectionRuleVersion.rule_id == bindparam("rid"),
-                    DetectionRuleVersion.version == bindparam("ver"),
-                )
-                .values(checks=bindparam("new_checks")),
-                [{"rid": i, "ver": v, "new_checks": c} for i, v, c in checked],
-            )
-            report.checked = len(checked)
+        _write_checks(session, checked)
+        report.checked = len(checked)
         _record_changes(session, changes, now)
     return report
 
@@ -400,8 +490,10 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
 def _remove_unconfigured(configured: List[str]) -> int:
     """Mark removed every repo rule whose source is no longer configured.
 
-    An overlay copy with a stage gets 'off', as sync_source gives a removed one.
+    An overlay copy with a stage gets 'off', as sync_source gives a removed one,
+    and a NULL row for each check it carried.
     """
+    now = datetime.now(timezone.utc).isoformat()
     with get_db_manager().session_scope() as session:
         removed = session.execute(
             update(DetectionRule)
@@ -425,13 +517,24 @@ def _remove_unconfigured(configured: List[str]) -> int:
         ]
         if stages:
             session.execute(insert(DetectionRuleStage), stages)
+        # Every such rule with recorded checks (only overlay copies have them),
+        # already removed ones too, so a check left from before is dropped.
+        recorded = session.execute(
+            select(
+                DetectionRule.id, DetectionRule.latest_version, DetectionRule.source
+            ).where(
+                DetectionRule.source.startswith(REPO_PREFIX),
+                DetectionRule.source.not_in(configured),
+                DetectionRule.id.in_(select(DetectionRuleCheckChange.rule_id)),
+            )
+        ).all()
+        _drop_all(session, recorded, DROPPED_WHEN_DISABLED, "source removed", now)
         return len(removed)
 
 
 def sync_repos() -> List[Any]:
     """Read every configured repo, Wazuh, Kibana and Splunk, and sync each, checking
-    Wazuh, Kibana and Splunk rules' Quiet and Sees, then Kibana and Wazuh rules'
-    Accurate.
+    Wazuh, Kibana and Splunk rules' Quiet and Sees, then their Accurate.
 
     One failing source skips only itself.
     """
@@ -509,18 +612,28 @@ def _sync_one(service: Any, source: Dict[str, Any]) -> SourceReport:
 
 
 def _remove_siem(source: str, integration: str) -> int:
-    """Mark a SIEM source's rules removed, with a status row for each."""
+    """Mark a SIEM source's rules removed, with a status row for each and a
+    NULL row for each check they carried, drift included."""
     now = datetime.now(timezone.utc).isoformat()
     with get_db_manager().session_scope() as session:
         # Read under the sync lock, so the statuses read are the ones replaced.
         rows = session.execute(
             select(
-                DetectionRule.id, DetectionRule.latest_version, DetectionRule.status
-            ).where(
-                DetectionRule.source == source,
-                DetectionRule.status != "removed",
-            )
+                DetectionRule.id,
+                DetectionRule.latest_version,
+                DetectionRule.source,
+                DetectionRule.status,
+            ).where(DetectionRule.source == source)
         ).all()
+        # Already removed ones too, so a check left from before is dropped.
+        _drop_all(
+            session,
+            rows,
+            DROPPED_WHEN_DISABLED + ("drift",),
+            f"{integration} integration not enabled",
+            now,
+        )
+        rows = [r for r in rows if r.status != "removed"]
         if not rows:
             return 0
         session.execute(
@@ -758,7 +871,7 @@ def _link(
 
 
 DRIFT_LINKS = ("same_id", "known_name", "agent")
-SIEM_NAMES = {kibana.SOURCE: "Kibana", splunk.SOURCE: "Splunk"}
+SIEM_NAMES = {kibana.SOURCE: "Kibana", splunk.SOURCE: "Splunk", wazuh.SOURCE: "Wazuh"}
 
 
 def _at(when: datetime) -> str:
@@ -772,19 +885,40 @@ def _drift_of(
     fp: str,
     origin: Any,
     siem: str,
+    linked_fp: Optional[str] = None,
+    switched_off: Optional[datetime] = None,
+    prebuilt: bool = False,
 ) -> tuple:
-    """(result, reason) of a linked copy against its origin's latest version."""
+    """(result, reason) of a linked copy against its origin's latest version.
+
+    Drift means the copy moved after the link (#3728 decision 4). ``linked_fp``
+    is the fingerprint of its latest version first seen at or before the link;
+    ``switched_off`` when its status last left active; ``prebuilt``
+    an uncustomized Elastic prebuilt rule whose latest version is Elastic's.
+    """
     repo = f"repo rule {origin.id} v{origin.latest_version}"
     mine = f"{siem} v{copy.latest_version}"
     if origin.status != "active":
         return "pass", f"origin not active: repo rule {origin.id} is {origin.status}"
     if copy.status != "active":
+        # Only switching it off after the link counts; prebuilt rules install disabled.
         where = "removed from" if copy.status == "removed" else "disabled in"
-        return "fail", f"{where} {siem}; repo rule {origin.id} still active"
+        if switched_off is not None and (
+            copy.linked_at is None or switched_off > copy.linked_at
+        ):
+            return "fail", (
+                f"{where} {siem} {_at(switched_off)}; repo rule {origin.id} still active"
+            )
+        return "pass", f"{where} {siem}; never switched on since linked"
     moved = copy.linked_at is None or seen > copy.linked_at
+    if linked_fp is not None and fp == linked_fp:
+        how = "back to what it was when" if moved else "unchanged since"
+        return "pass", f"{mine} {how} linked"
     if copy.link_kind == "same_id":
         if fp == origin.fingerprint:
             return "pass", f"{mine} matches {repo}"
+        if prebuilt:
+            return "pass", f"{mine} is an Elastic prebuilt upgrade, not customized"
         if moved and seen > origin.first_seen:
             return "fail", (
                 f"{mine} first seen {_at(seen)}; {repo} unchanged since "
@@ -820,20 +954,63 @@ def _drift(source: str) -> int:
     with get_db_manager().session_scope() as session:
         last = _last_results(session, source)
         copies = session.execute(
-            select(DetectionRule, v.fingerprint, v.first_seen, v.checks)
+            select(
+                DetectionRule,
+                v.fingerprint,
+                v.first_seen,
+                v.checks,
+                v.content["version"].astext,
+                # Uncustomized Elastic prebuilt: Kibana's own record of it.
+                and_(
+                    v.content["immutable"].astext == "true",
+                    func.coalesce(
+                        v.content["rule_source"]["is_customized"].astext, "false"
+                    )
+                    != "true",
+                ),
+            )
             .join(v, latest)
             .where(DetectionRule.source == source)
             # A link decision commits before or after this, not between.
             .with_for_update(of=DetectionRule)
         ).all()
-        prev = dict(
-            session.execute(
-                select(v.rule_id, v.first_seen)
+        prev = {
+            r: (seen, pkg)
+            for r, seen, pkg in session.execute(
+                select(v.rule_id, v.first_seen, v.content["version"].astext)
                 .join(DetectionRule, DetectionRule.id == v.rule_id)
                 .where(
                     DetectionRule.source == source,
                     v.version == DetectionRule.latest_version - 1,
                 )
+            )
+        }
+        # Each copy's fingerprint at link time: its latest version seen by then.
+        linked_fps = dict(
+            session.execute(
+                select(v.rule_id, v.fingerprint)
+                .join(DetectionRule, DetectionRule.id == v.rule_id)
+                .where(
+                    DetectionRule.source == source,
+                    v.first_seen <= DetectionRule.linked_at,
+                )
+                .distinct(v.rule_id)
+                .order_by(v.rule_id, v.version.desc())
+            ).all()
+        )
+        # When each copy last left active: for a copy off now, its last switch-off.
+        ch = DetectionRuleCheckChange
+        switched_off = dict(
+            session.execute(
+                select(ch.rule_id, ch.changed_at)
+                .join(DetectionRule, DetectionRule.id == ch.rule_id)
+                .where(
+                    DetectionRule.source == source,
+                    ch.check_key == "status",
+                    ch.old_result == "active",
+                )
+                .distinct(ch.rule_id)
+                .order_by(ch.rule_id, ch.changed_at.desc(), ch.id.desc())
             ).all()
         )
         origin_ids = {c.origin_rule_id for c, *_ in copies if c.origin_rule_id}
@@ -853,7 +1030,7 @@ def _drift(source: str) -> int:
         }
         changes: List[dict] = []
         checked: List[tuple] = []
-        for copy, fp, seen, checks in copies:
+        for copy, fp, seen, checks, pkg, prebuilt in copies:
             checks = checks or {}
             before = last.get((copy.id, "drift"))
             origin = origins.get(copy.origin_rule_id)
@@ -873,7 +1050,22 @@ def _drift(source: str) -> int:
                     rest = {k: x for k, x in checks.items() if k != "drift"}
                     checked.append((copy.id, copy.latest_version, rest))
                 continue
-            new = _drift_of(copy, seen, prev.get(copy.id), fp, origin, siem)
+            prev_seen, prev_pkg = prev.get(copy.id, (None, None))
+            new = _drift_of(
+                copy,
+                seen,
+                prev_seen,
+                fp,
+                origin,
+                siem,
+                linked_fps.get(copy.id),
+                switched_off.get(copy.id),
+                # Kibana 8.17 leaves is_customized false on an edit, but only an
+                # Elastic upgrade changes the rule's own version.
+                source == kibana.SOURCE
+                and bool(prebuilt)
+                and (prev_seen is None or pkg != prev_pkg),
+            )
             if before != new:
                 changes.append(
                     _change(

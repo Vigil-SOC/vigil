@@ -116,7 +116,7 @@ class SecurityDetectionsTools:
                 fail is a Kibana or Wazuh rule averaging over its alerts-per-day threshold
             flagged: Optional filter: rules with (True) or without (False) an open flag
             accurate: Optional filter by Accurate result ("pass", "fail", "unknown"):
-                whether a Kibana or Wazuh rule's judged alerts are mostly real
+                whether a Kibana, Wazuh or Splunk rule's judged alerts are mostly real
 
         Returns:
             List of matching detection rules, each with its status, checks and

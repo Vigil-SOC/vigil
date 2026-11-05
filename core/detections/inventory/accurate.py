@@ -1,8 +1,9 @@
-"""Accurate: the share of each Kibana and Wazuh rule's alerts judged real.
+"""Accurate: the share of each Kibana, Wazuh and Splunk rule's alerts judged real.
 
-Each elastic finding is resolved to its rule version with ``rule_for_finding``'s
-own mapping (``catalog.resolve_findings``). Only findings of the latest version
-of an active 'elastic' or 'wazuh' rule count, with no time cap.
+Each elastic or splunk finding is resolved to its rule version with
+``rule_for_finding``'s own mapping (``catalog.resolve_findings``). Only findings
+of the latest version of an active rule of a ``catalog.ACCURATE_TOOLS`` source
+count, with no time cap.
 
 A finding's determinations are its noise mark (not real) and each closed Case
 it is in whose closure category CLOSURE_OUTCOMES maps to proven (real) or
@@ -45,7 +46,9 @@ logger = logging.getLogger(__name__)
 
 MIN_JUDGED = 20
 FAIL_BELOW = 0.10
-SOURCES = ("elastic", "wazuh")
+# The finding data_sources that resolve: "elastic" carries Kibana and Wazuh
+# alerts, "splunk" Splunk notables.
+FINDING_SOURCES = ("elastic", "splunk")
 COUNTS = ("real", "judged", "analyst", "agent")
 
 # (at, analyst, real): one determination of a finding.
@@ -117,7 +120,7 @@ def result_of(
 
 
 def _findings(session: Any) -> Dict[str, Dict[str, Any]]:
-    """Every elastic finding, as much of it as resolving and its noise mark need."""
+    """Every elastic or splunk finding, as much as resolving and its noise mark need."""
     rows = session.execute(
         select(
             Finding.finding_id,
@@ -126,7 +129,7 @@ def _findings(session: Any) -> Dict[str, Dict[str, Any]]:
             Finding.entity_context["source_evidence"],
             Finding.noise_marked_at,
             Finding.noise_marked_by_kind,
-        ).where(Finding.data_source == "elastic")
+        ).where(Finding.data_source.in_(FINDING_SOURCES))
     ).all()
     return {
         fid: {
@@ -140,7 +143,7 @@ def _findings(session: Any) -> Dict[str, Dict[str, Any]]:
 
 
 def _closes(session: Any) -> Dict[str, List[Determination]]:
-    """Each elastic finding's closed-Case determinations, as _CLOSURE_VERDICTS reads a close."""
+    """Each elastic or splunk finding's closed-Case determinations (as _CLOSURE_VERDICTS)."""
     out: Dict[str, List[Determination]] = {}
     for fid, category, channel, closed_at in session.execute(
         select(
@@ -154,7 +157,7 @@ def _closes(session: Any) -> Dict[str, List[Determination]]:
         )
         .join(CaseClosureInfo, CaseClosureInfo.case_id == Case.case_id)
         .join(Finding, Finding.finding_id == case_findings.c.finding_id)
-        .where(Finding.data_source == "elastic")
+        .where(Finding.data_source.in_(FINDING_SOURCES))
     ):
         real = closure_says_real(category)
         if real is not None:
@@ -165,13 +168,14 @@ def _closes(session: Any) -> Dict[str, List[Determination]]:
 
 
 def judge(session: Any) -> Tuple[Dict[Tuple[int, int], Dict[str, int]], int]:
-    """Per (rule id, latest version) of an active Kibana or Wazuh rule, its counts;
+    """Per (rule id, latest version) of an active Kibana, Wazuh or Splunk rule, its counts;
     and how many findings resolved to one."""
     latest = {
         (rid, ver): dict.fromkeys(COUNTS, 0)
         for rid, ver in session.execute(
             select(DetectionRule.id, DetectionRule.latest_version).where(
-                DetectionRule.source.in_(SOURCES), DetectionRule.status == "active"
+                DetectionRule.source.in_(catalog.ACCURATE_TOOLS),
+                DetectionRule.status == "active",
             )
         )
     }
@@ -200,7 +204,7 @@ def judge(session: Any) -> Tuple[Dict[Tuple[int, int], Dict[str, int]], int]:
 
 
 def sweep() -> AccurateReport:
-    """Judge every active Kibana and Wazuh rule's latest version and write what changed."""
+    """Judge every active Kibana, Wazuh and Splunk rule's latest version and write what changed."""
     from core.detections.inventory.sync import _change, _last_results, _record_changes
 
     report = AccurateReport()
@@ -212,7 +216,7 @@ def sweep() -> AccurateReport:
             report.rules = len(counts)
             report.judged = sum(c["judged"] for c in counts.values())
             last: Dict[tuple, tuple] = {}
-            for source in SOURCES:
+            for source in catalog.ACCURATE_TOOLS:
                 last.update(_last_results(session, source))
             rows = session.execute(
                 select(
