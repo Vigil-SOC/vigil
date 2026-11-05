@@ -1,0 +1,4 @@
+/* Detections, on the shared x1 look. Console tokens only, so both themes follow. */
+.de-note { margin: 0; font-size: 12px; color: var(--tx2); }
+.de-split { display: grid; gap: 16px; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); align-items: start; }
+@media (max-width: 1000px) { .de-split { grid-template-columns: minmax(0, 1fr); } }

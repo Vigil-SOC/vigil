@@ -14,8 +14,9 @@ triggered alerts (``index=_audit action=alert_fired``, its ``triggered_alerts``)
 and, under Enterprise Security, its notables (``index=notable``); a search with
 notables is counted by them alone, its triggered alerts being the same firings.
 A search counted by neither is counted from the scheduler log
-(``index=_internal sourcetype=scheduler``, runs whose ``alert_actions`` isn't
-empty, so not suppressed; ``fired`` each in per-result mode, else 1): an
+(``index=_internal sourcetype=scheduler``, successful runs whose
+``alert_actions`` holds one outside Splunk's data-output actions,
+``DATA_ACTIONS``, so not suppressed; ``fired`` each in per-result mode, else 1): an
 untracked alert (``alert.track=0``) logs no ``alert_fired``. Counts are keyed as
 the stored native_key (``app/name``, ``@owner`` when shared to its user); a name
 that matches none is dropped. It is spent against the splunk integration's
@@ -48,9 +49,10 @@ changes (or an unknown's reason). Nothing is written to Kibana or the indexer.
 Noisy and Silent (Kibana, Wazuh and Splunk rules) read the same per-rule
 daily UTC buckets, never another search, with the thresholds of the rules' own
 integration (elastic-siem's for Kibana and Wazuh, splunk's for Splunk). A Splunk
-scheduled report (no correlation search, no ``actions``, no ``alert.track``)
-can't alert: it reads both ``pass``, "a scheduled report; it does not alert",
-with no ``days_fired``, so it is no never-firing rule.
+scheduled report (no correlation search, no ``alert.track``, and no ``actions``
+but data-output ones, such as ``outputtelemetry`` or ``summary_index``) can't
+alert: it reads both ``pass``, "a scheduled report; it does not alert", with no
+``days_fired``, so it is no never-firing rule.
 "Today" is the current UTC day's bucket so far (partial, so a spike reads late,
 never early); "the last N d" is today and the N - 1 whole days before it.
 
@@ -521,18 +523,33 @@ def sweep_wazuh() -> QuietReport:
     return report
 
 
+# Splunk's data-output actions: they write results back into Splunk or to its
+# telemetry endpoint and tell no one, so a search with only these is a report.
+DATA_ACTIONS = (
+    "summary_index",
+    "summary_metric_index",
+    "lookup",
+    "populate_lookup",
+    "outputtelemetry",
+    "studio_snapshot",
+)
+_DATA_RE = "|".join(DATA_ACTIONS)
+
 # One search: each saved search's alerts per UTC day (day = epoch days). From
 # the triggered-alert audit (one event per firing; triggered_alerts results), the
-# scheduler log (a run with alert actions: ``alert_actions=*`` matches "", hence
-# the where; ``fired`` results in per-result mode, else 1), the only one to see
-# an untracked alert (alert.track=0) fire, and, under Enterprise Security,
-# notables (one per result). A notable's owner and app are read from its
-# orig_sid: each ``__plain`` or ``_<base64>`` (see _sid_part).
+# scheduler log (a run with an alert action outside DATA_ACTIONS:
+# ``alert_actions=*`` matches "", hence the where; ``fired`` results in per-result mode, else 1;
+# ``success`` only, so a search head cluster's delegation rows don't count it
+# twice), the only one to see an untracked alert (alert.track=0) fire, and, under
+# Enterprise Security, notables (one per result). A notable's owner and app are
+# read from its orig_sid: each ``__plain`` or ``_<base64>`` (see _sid_part).
 # The appended rows count each source index's events: none means it's unreadable.
 SPLUNK_SPL = r"""search (index=_audit action=alert_fired ss_name=*)
   OR (index=notable search_name=* orig_sid=scheduler_*)
-  OR (index=_internal sourcetype=scheduler savedsearch_name=* alert_actions=*)
-| where index!="_internal" OR len(alert_actions) > 0
+  OR (index=_internal sourcetype=scheduler status=success savedsearch_name=* alert_actions=*)
+| eval acts=split(alert_actions, ",")
+| eval acts=mvfilter(match(acts, "\S") AND NOT match(acts, "^\s*(DATA_RE)\s*$"))
+| where index!="_internal" OR isnotnull(acts)
 | rex field=orig_sid "^scheduler(?<sid_user>__[A-Za-z0-9]+|_[A-Za-z0-9+/=]+)(?<sid_app>__[A-Za-z0-9]+|_[A-Za-z0-9+/=]+)__"
 | eval src=case(index="notable", "notable", index="_internal", "scheduler",
     true(), "audit"),
@@ -545,7 +562,9 @@ SPLUNK_SPL = r"""search (index=_audit action=alert_fired ss_name=*)
   day=floor(_time / 86400)
 | stats sum(n) as n by src name user app day
 | append [| tstats count as events
-    where index=_audit OR (index=_internal sourcetype=scheduler) by index]"""
+    where index=_audit OR (index=_internal sourcetype=scheduler) by index]""".replace(
+    "DATA_RE", _DATA_RE
+)
 
 
 def _sid_part(part: str) -> str:
@@ -603,7 +622,8 @@ def _native_keys(source: str) -> set:
 
 def _splunk_reports(rules: List[Rule]) -> set:
     """The rules whose latest version is a scheduled report: no correlation search,
-    no alert action and no tracked alert, so nothing for it ever fires."""
+    no tracked alert, and no alert action but DATA_ACTIONS, so nothing for it
+    ever fires."""
     keys = [key for key, _, _, _ in rules]
     with get_db_manager().session_scope() as session:
         rows = session.execute(
@@ -621,8 +641,9 @@ def _splunk_reports(rules: List[Rule]) -> set:
         (rid, ver)
         for rid, ver, content in rows
         if not splunk._truthy(content.get("action.correlationsearch.enabled"))
-        and not str(content.get("actions") or "").strip()
         and not splunk._truthy(content.get("alert.track"))
+        and not {a.strip() for a in str(content.get("actions") or "").split(",")}
+        - {"", *DATA_ACTIONS}
     }
 
 

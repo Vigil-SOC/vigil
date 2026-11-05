@@ -384,9 +384,12 @@ def _verdict(need: Need, answer: Any, allowed: Any) -> Dict[str, Any]:
     if kind == "raw":
         concrete = [i for i in a if "*" not in i]
         if concrete and len(concrete) == len(a) and all(allowed(i) is False for i in a):
-            return _unknown(
-                f"Vigil's Splunk user cannot search {_fmt('index', a)}", source
-            )
+            return {
+                **_unknown(
+                    f"Vigil's Splunk user cannot search {_fmt('index', a)}", source
+                ),
+                "unreadable": True,  # rollout holds an overlay copy's runs
+            }
     reason = f"fail: no events in {source} in {DAYS}d"
     return {
         "result": "fail",

@@ -3184,28 +3184,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/detection-rules/health": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Health
-         * @description Whether each SIEM's rules can fire: per-tool check tallies, Blind spots,
-         *     the rules failing or unknown on a check (broken, then starved, first; capped at ``limit``),
-         *     and the repo rules no SIEM has a copy of. Read-only.
-         */
-        get: operations["get_api_detection-rules_health"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/detection-rules/mcp-env": {
         parameters: {
             query?: never;
@@ -3269,6 +3247,28 @@ export interface paths {
          *         Success status with updated stats and what the sync wrote per source
          */
         post: operations["post_api_detection-rules_reload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Rules
+         * @description Every listed rule copy's health (fails to run, data silent, disabled, never
+         *     fired, fires) with its reason, worst first, capped at catalog.RULE_ROWS rows,
+         *     only ``health``'s when given; the counts cover them all. Read-only.
+         */
+        get: operations["get_api_detection-rules_rules"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -17490,39 +17490,6 @@ export interface operations {
             };
         };
     };
-    "get_api_detection-rules_health": {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     "get_api_detection-rules_mcp-env": {
         parameters: {
             query?: never;
@@ -17588,6 +17555,39 @@ export interface operations {
     "post_api_detection-rules_reload": {
         parameters: {
             query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_detection-rules_rules": {
+        parameters: {
+            query?: {
+                health?: ("fails_to_run" | "data_silent" | "disabled" | "never_fired" | "fires") | null;
+            };
             header?: {
                 authorization?: string | null;
             };
