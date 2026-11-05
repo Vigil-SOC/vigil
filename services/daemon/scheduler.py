@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 
 # Each sync reads every repo in full; hourly sees a deleted rule soon enough.
 DETECTION_RULES_SYNC_INTERVAL = 3600
+# Once a day, mitre_analyst turns the listed detection gaps into Cases (#3755).
+DETECTION_GAPS_WORKFLOW = "agent-run-mitre_analyst"
+DETECTION_GAPS_INTERVAL = 86400
 
 
 def _sandbox_poll_enabled() -> bool:
@@ -30,8 +33,8 @@ def _sandbox_poll_interval() -> int:
     return max(30, get_settings().sandbox_poll_interval)
 
 
-def _last_scheduled_hunt_at() -> Optional[datetime]:
-    """When the newest scheduled hunt was queued; None if none was or the read failed.
+def _last_scheduled_at(workflow_id: str) -> Optional[datetime]:
+    """When ``workflow_id`` was last queued by the scheduler; None if never or the read failed.
 
     Intel rows share kind "schedule" but must not hold back the hunt.
     """
@@ -46,11 +49,12 @@ def _last_scheduled_hunt_at() -> Optional[datetime]:
                 .filter(
                     IntakeTrigger.kind == "schedule",
                     IntakeTrigger.payload["trigger_type"].astext == "scheduled",
+                    IntakeTrigger.payload["workflow_id"].astext == workflow_id,
                 )
                 .scalar()
             )
     except Exception as e:  # noqa: BLE001 -- a hunt with no history still runs
-        logger.warning("could not read the last scheduled hunt: %s", e)
+        logger.warning("could not read when %s was last queued: %s", workflow_id, e)
         return None
 
 
@@ -97,6 +101,14 @@ class TaskScheduler:
                 name="threat_hunt",
                 func=self._run_threat_hunt,
                 interval=self.config.threat_hunt_interval,
+            )
+        )
+
+        self._tasks.append(
+            ScheduledTask(
+                name="detection_gaps",
+                func=self._run_detection_gaps,
+                interval=DETECTION_GAPS_INTERVAL,
             )
         )
 
@@ -166,10 +178,17 @@ class TaskScheduler:
         await refresh_gateway_rates()
         rates_refresher = asyncio.create_task(run_gateway_rates_refresher())
 
-        # The hunt's clock survives a restart; the other tasks run on the first tick.
+        # The hunt's and the gaps run's clocks survive a restart; the other tasks
+        # run on the first tick.
+        queued = {
+            "threat_hunt": SCHEDULED_WORKFLOW,
+            "detection_gaps": DETECTION_GAPS_WORKFLOW,
+        }
         for task in self._tasks:
-            if task.name == "threat_hunt":
-                task.last_run = await asyncio.to_thread(_last_scheduled_hunt_at)
+            if task.name in queued:
+                task.last_run = await asyncio.to_thread(
+                    _last_scheduled_at, queued[task.name]
+                )
 
         # Main scheduling loop
         while not shutdown_event.is_set():
@@ -234,6 +253,58 @@ class TaskScheduler:
             "Queued a scheduled threat hunt: %s",
             hypothesis or "the definition's hypotheses",
         )
+
+    async def _run_detection_gaps(self):
+        """Queue a mitre_analyst run on the gaps identify_gaps lists; none when it lists none.
+
+        A schedule intake with no case_id mints a Case, so an empty report queues nothing.
+        """
+        if not is_enabled(DETECTION_GAPS_WORKFLOW):
+            logger.info(
+                "Daily detection gaps run skipped: %s is turned off",
+                DETECTION_GAPS_WORKFLOW,
+            )
+            return
+        from core.detections.tools import get_security_detection_tools
+
+        # Off the loop: the report reads the ledger and Findings synchronously.
+        report = await asyncio.to_thread(
+            asyncio.run, get_security_detection_tools().identify_gaps()
+        )
+        missed = [g["technique"] for g in report["runs_rules_missed"]["groups"]]
+        paper = list(report["covered_on_paper_only"])
+        blind = [s["data_source"] for s in report["blind_spots"]]
+        if not (missed or paper or blind):
+            logger.info("Daily detection gaps run: no gaps listed, nothing queued")
+            return
+
+        listed = [
+            f"{label}: {', '.join(items)}"
+            for label, items in (
+                ("runs no rule caught", missed),
+                ("covered on paper only", paper),
+                ("blind spots (data sources)", blind),
+            )
+            if items
+        ]
+        hypothesis = (
+            "Turn the detection gaps identify_gaps lists into Cases with checked "
+            "rule drafts, so each real gap is tracked and has a rule in shadow. "
+            + "; ".join(listed)
+        )
+        from services.daemon.orchestrator import insert_intake_trigger
+
+        insert_intake_trigger(
+            kind="schedule",
+            priority="low",
+            payload={
+                "workflow_id": DETECTION_GAPS_WORKFLOW,
+                "trigger_type": "scheduled",
+                "finding_ids": [],
+                "hypothesis": hypothesis,
+            },
+        )
+        logger.info("Queued the daily detection gaps run: %s", hypothesis)
 
     # What this hunt is out to test, read off the techniques the estate is showing, so
     # a nightly hunt follows it rather than repeating one fixed question.
