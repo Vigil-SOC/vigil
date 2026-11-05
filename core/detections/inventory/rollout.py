@@ -635,6 +635,9 @@ def sweep(now: datetime, report: RolloutReport) -> None:
     from core.detections.inventory.sync import _stage_row
 
     copies = [c for c in _copies() if c.stage in ("shadow", "live")]
+    # A handed-off copy keeps its stage: Vigil no longer runs it.
+    skip = handed_off(copies)
+    copies = [c for c in copies if c.rule_id not in skip]
     stopped = _stopped()
     with get_db_manager().session_scope() as session:
         live_24h = session.scalar(
