@@ -24,7 +24,10 @@ The sweep (after ``sync_repos``) then writes a stage row (actor 'system', proof
 holding the numbers) for each move that is due: shadow -> live after a quiet, passing week (at most
 ``LIVE_PER_DAY`` a day across all rules), live -> shadow on noise or a loud
 day, shadow -> off after ``OFF_AFTER_FAILURES`` failed runs in a row. No stage
-row is written while Stop is set, or while the ceiling cannot be read.
+row is written while Stop is set, or while the ceiling cannot be read. An
+Elastic copy's move to live, when a git source is marked ``deploy_target`` for
+elastic, queues one ``agent-run-mitre_analyst`` run that opens a pull request
+adding the rule there.
 
 Nothing is written to Elasticsearch, Kibana or Splunk.
 """
@@ -55,12 +58,18 @@ from sqlalchemy import (
 from sqlalchemy.orm import aliased
 
 from core.detections.inventory import kibana, readers, sees, splunk
+from core.detections.inventory.catalog import REPO_PREFIX
 from core.integrations._base import search_budget
 from core.integrations._base.ids import EXTERNAL_ID_MAX, fit_id
 from core.integrations.elastic.descriptor import ELASTIC
 from core.integrations.splunk.descriptor import SPLUNK, SPLUNK_SELFHOSTED_REQUIRED
 from core.storage.connection import get_db_manager
-from core.storage.models import DetectionRule, DetectionRuleStage, DetectionRuleVersion
+from core.storage.models import (
+    DetectionRule,
+    DetectionRuleStage,
+    DetectionRuleVersion,
+    IntakeTrigger,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +105,9 @@ class Copy:
     stage_at: datetime
     checks: Dict[str, Any]
     rule: Dict[str, Any]
+    key: str = ""  # its rule_id, the overlay rule's native_key
+    toml: str = ""  # the overlay file exactly as stored
+    path: Optional[str] = None
 
 
 @dataclass
@@ -108,6 +120,7 @@ class RolloutReport:
     written: int = 0
     moves: List[str] = field(default_factory=list)
     held: int = 0  # due moves not written: Stop set or the ceiling unread
+    queued: List[int] = field(default_factory=list)  # intake rows for deploy PRs
     findings: List[Dict[str, Any]] = field(default_factory=list, repr=False)
     error: Optional[str] = None
     skipped: List[str] = field(default_factory=list)
@@ -146,6 +159,8 @@ def _copies() -> List[Copy]:
                 current.c.at,
                 DetectionRuleVersion.checks,
                 DetectionRuleVersion.content,
+                DetectionRule.native_key,
+                DetectionRule.path,
             )
             .join(
                 DetectionRuleVersion,
@@ -164,9 +179,19 @@ def _copies() -> List[Copy]:
         ).all()
     return [
         Copy(
-            rid, ver, name, lang, stage, at, checks or {}, _rule_of(lang, content or {})
+            rid,
+            ver,
+            name,
+            lang,
+            stage,
+            at,
+            checks or {},
+            _rule_of(lang, content or {}),
+            key,
+            str((content or {}).get("_content") or ""),
+            path,
         )
-        for rid, ver, name, lang, stage, at, checks, content in rows
+        for rid, ver, name, lang, stage, at, checks, content, key, path in rows
     ]
 
 
@@ -203,22 +228,27 @@ def handed_off(copies: List[Copy]) -> Set[int]:
 
     That is a Splunk saved search (for a Splunk copy) or a Kibana rule (for an
     Elastic one) linked by the sync (same_id / known_name) or an agent to the
-    overlay rule, or to an active repo rule with its name and language.
+    overlay rule, or to an active repo rule of its language carrying its name
+    or its key (rule_id).
     """
     if not copies:
         return set()
     o, r, s = aliased(DetectionRule), aliased(DetectionRule), aliased(DetectionRule)
-    same_name = select(r.id).where(
-        r.source.startswith("repo:"),
-        r.status == "active",
-        r.name == o.name,
-        r.language == o.language,
+    same_rule = (
+        select(r.id)
+        .where(
+            r.source.startswith(REPO_PREFIX),
+            r.status == "active",
+            r.language == o.language,
+            or_(r.name == o.name, r.native_key == o.native_key),
+        )
+        .correlate(o)
     )
     linked = exists().where(
         s.source == case((o.language == "splunk", splunk.SOURCE), else_=kibana.SOURCE),
         s.status == "active",
         s.link_kind.in_(HANDOFF_LINKS),
-        or_(s.origin_rule_id == o.id, s.origin_rule_id.in_(same_name)),
+        or_(s.origin_rule_id == o.id, s.origin_rule_id.in_(same_rule)),
     )
     with get_db_manager().session_scope() as session:
         ids = session.scalars(
@@ -639,6 +669,7 @@ def sweep(now: datetime, report: RolloutReport) -> None:
     skip = handed_off(copies)
     copies = [c for c in copies if c.rule_id not in skip]
     stopped = _stopped()
+    target = _deploy_target()
     with get_db_manager().session_scope() as session:
         live_24h = session.scalar(
             select(func.count())
@@ -648,7 +679,7 @@ def sweep(now: datetime, report: RolloutReport) -> None:
                 DetectionRuleStage.at >= now - timedelta(hours=24),
             )
         )
-        rows = []
+        rows, promoted = [], []
         for copy in copies:
             due = _due(session, copy, now, live_24h)
             if due is None:
@@ -667,8 +698,64 @@ def sweep(now: datetime, report: RolloutReport) -> None:
                 f"{copy.rule_id} v{copy.version}: {copy.stage} -> {stage}"
             )
             live_24h += stage == "live"
+            if stage == "live":
+                promoted.append(copy)
         if rows:
             session.execute(insert(DetectionRuleStage), rows)
+            # In the same transaction: a promotion and its PR run land together.
+            for trigger in _deploy_runs(promoted, target):
+                session.add(trigger)
+                session.flush()
+                report.queued.append(trigger.id)
+
+
+DEPLOY_WORKFLOW = "agent-run-mitre_analyst"
+
+
+def _deploy_target() -> Optional[Dict[str, Any]]:
+    """The elastic deploy target, read before the stage transaction opens."""
+    from core.detections.detection_rules_service import read_deploy_target
+
+    try:
+        return read_deploy_target("elastic")
+    except (
+        Exception
+    ) as exc:  # noqa: BLE001 -- an unread target must not hold a promotion
+        logger.warning("detection rules: deploy target unread: %s", exc)
+        return None
+
+
+def _deploy_runs(
+    promoted: List[Copy], target: Optional[Dict[str, Any]]
+) -> List[IntakeTrigger]:
+    """A queued mitre_analyst run per promoted Elastic copy, when a target is set."""
+    promoted = [c for c in promoted if c.language == "elastic"]
+    if not promoted or target is None:
+        return []
+    where = target.get("subdirectory") or "the repository root"
+    return [
+        IntakeTrigger(
+            kind="schedule",
+            state="queued",
+            priority="low",
+            payload={
+                "workflow_id": DEPLOY_WORKFLOW,
+                # Not "scheduled": the daily gaps run reads its clock off those.
+                "trigger_type": "rollout",
+                "finding_ids": [],
+                "hypothesis": (
+                    f"Open a pull request adding the live Vigil rule {copy.name!r} "
+                    f"(rule_id {copy.key}, Vigil detection rule {copy.rule_id}) to "
+                    f"{target['git_url']} under {where}, with the attached TOML "
+                    f"(Vigil's {copy.path or 'overlay file'}) as its file content "
+                    "exactly as given, and record the pull request's link on this Case."
+                ),
+                # The overlay file whole, exclusions included; the brief carries it.
+                "document": copy.toml,
+            },
+        )
+        for copy in promoted
+    ]
 
 
 def run_copies(live: bool) -> RolloutReport:

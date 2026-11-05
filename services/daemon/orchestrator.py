@@ -103,7 +103,7 @@ from core.workflows.enablement import is_enabled
 from core.workflows.hypothesis_subjects import kept_subjects
 from core.workflows.routing import FALLBACK_WORKFLOW, SHADOW_WORKFLOW_ID
 from core.workflows.workflow_run_service import WorkflowRunService
-from core.workflows.workflows_service import WorkflowsService
+from core.workflows.workflows_service import AGENT_RUN_PREFIX, WorkflowsService
 from services.daemon.plan_generator import (
     _infer_title,
     generate_initial_context,
@@ -397,7 +397,7 @@ def _start_principal(
         person_id = principal_id_for_username(username)
     if person_id or username:
         origin = "person"
-    elif trigger_type in ("schedule", "scheduled"):
+    elif trigger_type in ("schedule", "scheduled", "rollout"):
         origin = "schedule"
     else:
         origin = "alert"
@@ -1205,7 +1205,13 @@ class Orchestrator:
         self.workdir.write_file(
             inv_id,
             "context.md",
-            generate_initial_context(findings, case_id, document),
+            generate_initial_context(
+                findings,
+                case_id,
+                document,
+                # One agent on its own has no board; its goal rides in the brief.
+                goal=hypothesis if workflow_id.startswith(AGENT_RUN_PREFIX) else None,
+            ),
         )
         # What this run is about, so the harness's keyed read has something to ask
         # on. Written even when empty: an investigation whose findings name no

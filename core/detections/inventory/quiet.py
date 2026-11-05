@@ -1,5 +1,5 @@
-"""Quiet, Noisy and Silent: each active Kibana or Wazuh rule's alert volume,
-against a threshold, and (Kibana only) against its own history.
+"""Quiet, Noisy and Silent: each active Kibana, Wazuh or Splunk rule's alert
+volume, against a threshold, and (Kibana only) against its own history.
 
 Per SIEM, one size-0 search per sync counts alerts per rule per UTC day over
 the last 30 days: for Kibana through its signals route, building blocks
@@ -8,6 +8,16 @@ excluded; for Wazuh on ``wazuh-alerts-*`` on the indexer behind elastic-siem
 ``max_searches_per_hour`` (Kibana's before Sees, Wazuh's before Wazuh Sees);
 when the budget is spent Quiet is skipped and nothing is written. Never a
 second search. Both use elastic-siem's ``quiet_max_alerts_per_day``.
+
+For Splunk, one search per sync (``SPLUNK_SPL``) counts each saved search's
+triggered alerts (``index=_audit action=alert_fired``, its ``triggered_alerts``)
+and, under Enterprise Security, its notables (``index=notable``); a search with
+notables is counted by them alone, its triggered alerts being the same firings.
+Counts are keyed as the stored native_key (``app/name``, ``@owner`` when shared
+to its user); a name that matches none is dropped. It is spent against the
+splunk integration's ``max_searches_per_hour`` after Runs and before Sees, and
+uses its own ``quiet_max_alerts_per_day``. When Vigil's Splunk user cannot search
+``index=_audit`` every rule reads ``unknown``, never ``pass``, and nothing is spent.
 
 Wazuh shares Wazuh Sees' gate: when elastic-siem is off, has no
 ``elasticsearch_url``, or the indexer lists no ``wazuh-alerts-*`` index, every
@@ -45,15 +55,16 @@ Each is written like Quiet: a pass -> fail change row is a rule_health flag.
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import aliased
 
-from core.detections.inventory import kibana, wazuh, wazuh_sees
+from core.detections.inventory import kibana, splunk, wazuh, wazuh_sees
 from core.detections.inventory.sees import INTEGRATION, RuleKey, write_check
 from core.integrations._base import search_budget
 from core.storage.connection import get_db_manager
@@ -389,4 +400,112 @@ def sweep_wazuh() -> QuietReport:
         logger.warning("detection rules: Wazuh Quiet failed: %s", exc)
         report.error = f"{type(exc).__name__}: {exc}"
     logger.info("detection rules: Wazuh Quiet %s", report)
+    return report
+
+
+# One search: each saved search's alerts per UTC day (day = epoch days). From
+# the triggered-alert audit (one event per firing; triggered_alerts results) and,
+# under Enterprise Security, notables (one per result). A notable's owner and app
+# are read from its orig_sid: each ``__plain`` or ``_<base64>`` (see _sid_part).
+# The appended row counts every _audit event: none means _audit is unreadable.
+SPLUNK_SPL = r"""search (index=_audit action=alert_fired ss_name=*)
+  OR (index=notable search_name=* orig_sid=scheduler_*)
+| rex field=orig_sid "^scheduler(?<sid_user>__[A-Za-z0-9]+|_[A-Za-z0-9+/=]+)(?<sid_app>__[A-Za-z0-9]+|_[A-Za-z0-9+/=]+)__"
+| eval notable=if(index="notable", 1, 0),
+  name=if(notable=1, search_name, ss_name),
+  user=if(notable=1, sid_user, ss_user), app=if(notable=1, sid_app, ss_app),
+  n=if(notable=1, 1, coalesce(tonumber(triggered_alerts), 1)),
+  day=floor(_time / 86400)
+| stats sum(n) as n by notable name user app day
+| append [| tstats count as audit_events where index=_audit]"""
+
+
+def _sid_part(part: str) -> str:
+    """A sid's owner or app: ``__name`` as is, ``_<base64>`` decoded."""
+    if part.startswith("__"):
+        return part[2:]
+    raw = part[1:]
+    return base64.b64decode(raw + "=" * (-len(raw) % 4), validate=True).decode()
+
+
+def _splunk_days(rows: List[Mapping[str, Any]], keys: set) -> Days:
+    """Per native_key (any stored, active or not) its alerts per UTC day. A day
+    with notables is counted by them alone: its triggered alerts are the same
+    firings. A row matching no stored key is dropped, never guessed."""
+    counts: Dict[bool, Days] = {False: {}, True: {}}
+    for row in rows:
+        notable = str(row.get("notable")) == "1"
+        user, app = str(row.get("user") or ""), str(row.get("app") or "")
+        try:
+            if notable:
+                user, app = _sid_part(user), _sid_part(app)
+        except (ValueError, UnicodeDecodeError):
+            continue
+        name = row.get("name")
+        # A user-shared search's key carries its owner (client.saved_search_key).
+        key = next(
+            (k for k in (f"{app}/{name}@{user}", f"{app}/{name}") if k in keys), None
+        )
+        if key is None:
+            continue
+        day = (date(1970, 1, 1) + timedelta(days=int(float(row["day"])))).isoformat()
+        by_day = counts[notable].setdefault(key, {})
+        by_day[day] = by_day.get(day, 0) + int(float(row.get("n") or 0))
+    days_of = counts[False]
+    for key, by_day in counts[True].items():
+        days_of[key] = {**days_of.get(key, {}), **by_day}
+    return days_of
+
+
+def _native_keys(source: str) -> set:
+    with get_db_manager().session_scope() as session:
+        return set(
+            session.scalars(
+                select(DetectionRule.native_key).where(DetectionRule.source == source)
+            )
+        )
+
+
+def sweep_splunk(config: Mapping[str, Any]) -> QuietReport:
+    """Count every active Splunk saved search's alerts in one search, if Vigil's
+    user can read index=_audit and the splunk budget allows."""
+    report = QuietReport(source="splunk:quiet")
+    try:
+        max_per_day = _int(config.get("quiet_max_alerts_per_day"), DEFAULT_MAX_PER_DAY)
+        rules = _active_rules(splunk.SOURCE)
+        report.rules = len(rules)
+        if not rules:
+            return report
+        service = splunk.service_of(config)
+        now = datetime.now(timezone.utc)
+        # No events from an unreadable index would read as a pass.
+        if service.can_search_index("_audit") is False:
+            why = f"{service.username} cannot search index=_audit"
+            results = {key: _unknown(why) for key, _, _, _ in rules}
+        elif not search_budget.spend(splunk.SOURCE, splunk.per_hour_of(config)):
+            report.skipped = "search budget spent"
+            return report
+        else:
+            report.searched = 1
+            first = now.date() - timedelta(days=DAYS - 1)
+            earliest = datetime.combine(first, time.min, timezone.utc).timestamp()
+            try:
+                rows = service.search(
+                    SPLUNK_SPL, earliest_time=str(int(earliest)), max_count=0
+                ).results
+                # Splunk returns no events, not an error, for an index the user
+                # can't read (and can_search_index may not say).
+                if not any(int(r.get("audit_events") or 0) for r in rows):
+                    why = "no events in index=_audit; it may not be readable"
+                    results = {key: _unknown(why) for key, _, _, _ in rules}
+                else:
+                    days_of = _splunk_days(rows, _native_keys(splunk.SOURCE))
+                    results = _results(rules, days_of, False, max_per_day, now)
+            except Exception as exc:  # noqa: BLE001 -- every rule reads unknown
+                results = _failed(rules, exc, now)
+        report.written = write_check("quiet", results, _logged, source=splunk.SOURCE)
+    except Exception as exc:  # noqa: BLE001 -- the sync's own report stands
+        logger.warning("detection rules: Splunk Quiet failed: %s", exc)
+        report.error = f"{type(exc).__name__}: {exc}"
+    logger.info("detection rules: Splunk Quiet %s", report)
     return report
