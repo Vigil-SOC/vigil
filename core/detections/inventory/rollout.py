@@ -8,13 +8,13 @@ stamped earlier but indexed late still lands in a window not yet searched, and
 is counted once. An Elastic copy runs against the elastic-siem Elasticsearch:
 EQL through ``_eql/search``, ES|QL through ``_query``, Lucene through
 ``_search``. A Splunk copy runs its SPL (the ESCU YAML's ``search``) against the
-splunk integration; its hit count is the result rows; a Splunk copy whose first
-clause names an index Vigil's Splunk user cannot search is not run, and its Runs
-reads unknown (no pass, so it does not promote). Each run spends one search of
-its SIEM's budget (key ``overlay:<rule id>``), least recently run first; once
-the hour's budget is spent the rest wait. A copy an active SIEM copy linked to
-it now runs (``handed_off``) is neither searched nor spent for, its stage is
-left as is, and its Runs is dropped (a NULL row closes its flag).
+splunk integration; its hit count is the result rows (an index Vigil's Splunk
+user cannot search is Splunk Sees' unknown, which holds promotion). Each run
+spends one search of its SIEM's budget (key ``overlay:<rule id>``), least
+recently run first; once the hour's budget is spent the rest wait. A copy an
+active SIEM copy linked to it now runs (``handed_off``) is neither searched nor
+spent for, its stage is left as is, and its Runs is dropped (a NULL row closes
+its flag).
 
 A run writes checks['runs'] on the latest version (result, reason, last
 successful run, consecutive failures, per-day pass/fail), recording a changed
@@ -28,12 +28,17 @@ reverts in the same tick.
 The sweep (after ``sync_repos``) then writes a stage row (actor 'system', proof
 holding the numbers) for each move that is due: shadow -> live after a quiet,
 passing week with checks['sees'] pass (at most ``LIVE_PER_DAY`` a day across
-all rules), live -> shadow on noise, a loud day or a Sees fail (its data
-stopped), shadow -> off after ``OFF_AFTER_FAILURES`` failed runs in a row. No
-stage row is written while Stop is set, or while the ceiling cannot be read. An
-Elastic copy's move to live, when a git source is marked ``deploy_target`` for
-elastic, queues one ``agent-run-mitre_analyst`` run that opens a pull request
-adding the rule there.
+all rules), live -> shadow when half its findings are judged not real
+(``accurate.verdicts``: the latest analyst determination wins), a loud day or a
+Sees fail (its data stopped), shadow -> off after ``OFF_AFTER_FAILURES``
+failed runs in a row. No stage row is written while Stop is set, or while the
+ceiling cannot be read. An Elastic copy's move to live, when a git source is
+marked ``deploy_target`` for elastic, queues one ``agent-run-mitre_analyst``
+run that opens a pull request adding the rule there.
+
+While Stop is set (or the ceiling cannot be read) no copy is run: no search,
+no checks written, no findings. Its last successful run stays put, so the stopped
+period is searched on the first run after Stop lifts.
 
 Nothing is written to Elasticsearch, Kibana or Splunk.
 """
@@ -44,7 +49,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import re
 import tomllib
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -59,12 +63,11 @@ from sqlalchemy import (
     insert,
     or_,
     select,
-    text,
     update,
 )
 from sqlalchemy.orm import aliased
 
-from core.detections.inventory import kibana, readers, sees, splunk, splunk_sees
+from core.detections.inventory import accurate, kibana, readers, sees, splunk
 from core.detections.inventory.catalog import REPO_PREFIX
 from core.integrations._base import search_budget
 from core.integrations._base.ids import EXTERNAL_ID_MAX, fit_id
@@ -75,6 +78,7 @@ from core.storage.models import (
     DetectionRule,
     DetectionRuleStage,
     DetectionRuleVersion,
+    Finding,
     IntakeTrigger,
 )
 
@@ -304,25 +308,6 @@ async def _query(
     return await service.lucene_search(_index(rule), query, window, MAX_DOCS)
 
 
-class Unknown(str):
-    """A run's outcome that is neither pass nor fail: nothing was searched."""
-
-
-def _unreadable_index(
-    service: Any, search: str, seen: Dict[str, Optional[bool]]
-) -> Optional[str]:
-    """Why Vigil's Splunk user cannot search an index the SPL's first clause names."""
-    first = re.sub(r"^\s*search\b", "", search.split("|", 1)[0], flags=re.I)
-    for index in splunk_sees._terms(first)["index"]:
-        if "*" in index:
-            continue  # a pattern: Splunk searches whatever of it the role may
-        if index not in seen:
-            seen[index] = service.can_search_index(index)
-        if seen[index] is False:
-            return f"Vigil's Splunk user cannot search index={index}"
-    return None
-
-
 async def _splunk_query(
     service: Any, copy: Copy, start: datetime, end: datetime
 ) -> Tuple[int, List[Dict[str, Any]]]:
@@ -402,11 +387,6 @@ def _ran(
     runs = dict(checks.get("runs") or {})
     days = dict(runs.get("days") or {})
     tally = dict(days.get(day) or {"pass": 0, "fail": 0})
-    if isinstance(error, Unknown):
-        # Neither a pass nor a fail: the day counts no passing run, so no promotion.
-        runs.update(result="unknown", reason=str(error))
-        runs.update(days=_trimmed(days, day), checked_at=end.isoformat())
-        return {**checks, "runs": runs}
     if error:
         runs.update(
             result="fail", reason=error, failures=int(runs.get("failures") or 0) + 1
@@ -633,27 +613,18 @@ def _write_unrunnable(copies: List[Tuple[Copy, str]], now: datetime) -> int:
     )
 
 
-_NOISE = text("""
-    SELECT count(*),
-           count(*) FILTER (WHERE f.noise_marked_at IS NOT NULL OR EXISTS (
-               SELECT 1 FROM case_findings cf
-               JOIN cases c ON c.case_id = cf.case_id
-               JOIN case_closure_info ci ON ci.case_id = cf.case_id
-               WHERE cf.finding_id = f.finding_id
-                 AND c.status = 'closed'
-                 AND ci.closure_category = 'false_positive'))
-    FROM findings f
-    WHERE f.entity_context -> 'detection_rule' @> CAST(:rule AS jsonb)
-      AND f.created_at >= :since
-""")
-
-
 def _noise(session: Any, copy: Copy) -> Tuple[int, int]:
-    """(findings naming the version since it went live, how many are noise)."""
+    """(findings naming the version since it went live, how many were judged not real)."""
     since = copy.stage_at.astimezone(timezone.utc).replace(tzinfo=None)
-    rule = json.dumps({"rule_id": copy.rule_id, "version": copy.version})
-    total, noise = session.execute(_NOISE, {"rule": rule, "since": since}).one()
-    return int(total), int(noise)
+    found = accurate.verdicts(
+        session,
+        Finding.entity_context["detection_rule"].contains(
+            {"rule_id": copy.rule_id, "version": copy.version}
+        ),
+        Finding.created_at >= since,
+    )
+    noise = sum(1 for v in found.values() if v is not None and not v[0])
+    return len(found), noise
 
 
 def _week(now: datetime) -> List[str]:
@@ -735,7 +706,7 @@ def _due(
     if total >= REVERT_MIN_FINDINGS and noise >= total * REVERT_NOISE_SHARE:
         return (
             "shadow",
-            f"{noise} of {total} findings marked noise or closed false_positive",
+            f"{noise} of {total} findings judged not real",
             {"live_since": since, "findings": total, "noise": noise},
         )
     return None
@@ -854,6 +825,11 @@ def run_copies(live: bool) -> RolloutReport:
     """
     report = RolloutReport()
     now = datetime.now(timezone.utc)
+    # Overlay searches and findings are Vigil's own activity: Stop halts them all.
+    # Nothing is written, so last_success stays and the next run covers the gap.
+    if _stopped():
+        report.skipped.append("stopped")
+        return report
     try:
         copies = [
             c for c in _copies() if c.stage == "shadow" or (c.stage == "live" and live)
@@ -935,24 +911,16 @@ def _run_splunk_copies(
     why = "a splunk copy needs a search: add search: <SPL> to its YAML"
     blocked = [(c, why) for c in copies if not str(c.rule.get("search") or "").strip()]
     ready = [c for c in copies if str(c.rule.get("search") or "").strip()]
-    service = splunk.service_of(config)
-    seen: Dict[str, Optional[bool]] = {}
-    unread = {
-        c.rule_id: Unknown(reason)
-        for c in ready
-        if (reason := _unreadable_index(service, str(c.rule.get("search")), seen))
-    }
     results = asyncio.run(
         _run_all(
             splunk.SOURCE,
-            service,
+            splunk.service_of(config),
             _splunk_query,
-            [c for c in ready if c.rule_id not in unread],
+            ready,
             splunk.per_hour_of(config),
             now,
             report,
         )
     )
-    results.update({rid: (None, [], reason) for rid, reason in unread.items()})
     report.written += _write_unrunnable(blocked, now)
     _finish(ready, results, now, report)
