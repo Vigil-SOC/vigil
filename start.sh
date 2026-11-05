@@ -225,8 +225,14 @@ run_schema_upgrade || exit 1
 start_backup_loop
 
 # --- Frontend deps ---
-if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "clients/web" ] && [ ! -d "clients/web/node_modules" ]; then
-    (cd clients/web && npm install)
+# Also reinstalls when a pull changed the lockfile since the last install, so a
+# newly added dependency does not leave Vite failing to resolve it.
+if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "clients/web" ] && frontend_deps_stale clients/web; then
+    if [ -f clients/web/package-lock.json ]; then
+        (cd clients/web && npm ci)
+    else
+        (cd clients/web && npm install)
+    fi
 fi
 
 # --- Launch ---
