@@ -8,7 +8,6 @@
 *.orig
 *.swp
 *.bak
-*.tgz
 .project
 *.tmproj
 OWNERS
