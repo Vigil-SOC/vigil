@@ -921,6 +921,12 @@ export const detectionRulesApi = {
   updateAll: () => api.post('/detection-rules/update-all', undefined, { timeout: 0 }),
   
   getStats: () => api.get('/detection-rules/stats'),
+
+  /** Live overlay rules no SIEM rule runs: only Vigil detects with them. */
+  getOverlayOnly: () =>
+    api.get<{ rules: { id: number; name: string; language: string }[] }>(
+      '/detection-rules/overlay-only',
+    ),
   
   
   reload: () => api.post('/detection-rules/reload'),

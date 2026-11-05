@@ -287,6 +287,23 @@ def get_rules(
     return catalog.health_listing(health, tool=tool, q=q, offset=offset)
 
 
+@router.get("/overlay-only")
+def get_overlay_only():
+    """Live overlay copies no SIEM rule runs: only Vigil detects with these,
+    so Stop halts their detection. Read-only."""
+    from core.detections.inventory import rollout
+
+    live = [c for c in rollout._copies() if c.stage == "live"]
+    gone = rollout.handed_off([c.rule_id for c in live])
+    return {
+        "rules": [
+            {"id": c.rule_id, "name": c.name, "language": c.language}
+            for c in live
+            if c.rule_id not in gone
+        ]
+    }
+
+
 @router.get("/mcp-env")
 def get_mcp_env(
     service: DetectionRulesService = Depends(provide_detection_rules),

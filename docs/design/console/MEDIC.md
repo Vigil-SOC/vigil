@@ -160,7 +160,7 @@ The facts are `GET /v1/pack` (`getPack`, `PackState`): `active`, `previous`, `bu
 Tokens: `bg1` `bg2` `ln0` `tx0` `tx2` `fair` `fair-bg` `poor` `poor-bg` `poor-ln`
 Components: `card` `InfoTip` `ConfirmDialog` `HoldButton` `EmptyState` `hold-to-confirm`. The pack facts are plain code under `clients/web/src/screens/medic/`, extracted only when a second caller exists.
 
-- **UX-25 Facts:** pack id, version, channel (`pack.channel`: `dev` or `stable`; the schema also allows `beta`), source (`source`: **bundled**, or **imported by <admin> on <date>** from `imported_by` and `activated_at`), created (`pack.created_at`), **expires in N days** (`pack.expires_at`; amber at ≤ 30, red "Expired, still running" after, when `stale` is true), Vigil range (`vigil.min` to `vigil.max_exclusive`), sha256 (`sha256`). The previous pack (last-known-good) shows the same facts. Neither `PackFacts` nor the manifest has a `pack_diff` field, so the link is left out until one exists, the same way UX-17 leaves out a missing evidence level. #2107 does not invent the field. When a field does exist, that one link opens in a new tab with `rel="noopener noreferrer"`.
+- **UX-25 Facts:** pack id, version, channel (`pack.channel`: `dev` or `stable`; the schema also allows `beta`), source (`source`: **bundled**, or **imported by <admin> on <date>** from `imported_by` and `activated_at`), created (`pack.created_at`), **expires in N days** (`pack.expires_at`; amber at ≤ 30, red "Expired, still running" after, when `stale` is true), Vigil range (`vigil.min` to `vigil.max_exclusive`), sha256 (`sha256`). The previous pack (last-known-good) shows the same facts. Neither `PackFacts` nor the manifest has a `pack_diff` field, so the link is left out until one exists, the same way UX-17 leaves out a missing evidence level. #2109 does not invent the field. When a field does exist, that one link opens in a new tab with `rel="noopener noreferrer"`.
 - **UX-26 Suppression counts:** "N incidents suppressed by rule X (last 7 d)", one row per suppression entry that fired (`suppression_7d`: `rule`, `suppressed`).
 - **UX-27 Actions (`medic.admin`).** The import, revert and switch operations are added under `/v1/pack/` by #2026, and the console calls them through backend routes under the same rules as #2099 (explicit `medic.admin`, CSRF, session identity).
   - **Import pack:** one `medic.pack/v1` `.json` file, sent as is, and the sha256 the admin expects it to have, sent as `sha256`. The file is at most 4 MB (`MAX_PACK_BYTES` in `services/medic/contracts/pack_check.py`), and the console refuses a larger file before upload. The confirm step shows the new version against the active one. A refusal shows the code and the message the checker already returned with it: `S-DIGEST` when the file's sha256 is not the expected one, or a `P-` or `E-` pair from `services/medic/contracts/pack_check.py` and `services/medic/contracts/rule_check.py` (each error is `(code, message)`). There is no second list of reasons. The active pack stays.
@@ -183,7 +183,7 @@ Which issue builds each requirement. Each screen issue cites its rows; "not assi
 | §2 | UX-1 Status word in the status line, for everyone | #2101 (`ProcessStates.medic` and the fold fact) |
 | §2 | UX-2 Status line | #2101 |
 | §2 | UX-3 (cut, #2094 record) | none |
-| §2 | UX-4 `/medic` and its tabs | #2103 (Incidents), #2107 (Can't see, Content pack) |
+| §2 | UX-4 `/medic` and its tabs | #2103 (Incidents), #2107 (Can't see), #2109 (Content pack) |
 | §2 | UX-5 Write actions for `medic.admin` only | #2105 (rate, comment), #2109 (import, revert, switch); server side #2099 |
 | §3 | UX-6 States and weight | #2101 (state word, `LevelBadge` `label`); #2103 (status block) |
 | §3 | UX-7 Status line fact | #2101 (`ProcessStates.medic` and the fold fact) |
@@ -197,17 +197,17 @@ Which issue builds each requirement. Each screen issue cites its rows; "not assi
 | §5 | UX-15 "Would have" panel | #2103 |
 | §5 | UX-16 Timeline | #2103 |
 | §5 | UX-17 Evidence is text only | #2103 (and every screen issue for its own strings) |
-| §5 | UX-18 XSS fixtures | #2103, #2105 (comments), #2107 (sensor and pack text), #2109 (refusal text) |
+| §5 | UX-18 XSS fixtures | #2103, #2105 (comments), #2107 (sensor text), #2109 (pack text and refusal text) |
 | §6 | UX-19 One current rating per admin | #2105 |
 | §6 | UX-20 Comment | #2105 |
 | §6 | UX-21 Rateable incidents | #2105 |
 | §6 | UX-22 Agreement denominator | #2105 (shows the response rate only) |
 | §6 | UX-23 Replay review session | not assigned: filed as its own issue only if the pilot's design partners agree |
 | §7 | UX-24 Can't see | #2107 |
-| §7 | UX-25 Pack facts | #2107 |
-| §7 | UX-26 Suppression counts | #2107 |
+| §7 | UX-25 Pack facts | #2109 |
+| §7 | UX-26 Suppression counts | #2109 |
 | §7 | UX-27 Pack actions | #2109 (Medic operations: #2026) |
-| §8 | UX-30 Empty, error and loading states | #2101 (status part), #2103; each tab's own states: #2107 |
+| §8 | UX-30 Empty, error and loading states | #2101 (status part), #2103; each tab's own states: #2107 (Can't see), #2109 (Content pack) |
 
 ## 10. Security notes for reviewers
 

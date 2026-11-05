@@ -180,9 +180,9 @@ export default function LoginScreen() {
               />
             </div>
             <p id="bs-code-hint" className="field-hint">
-              The API prints this once at startup, while no account exists. Read it
-              with docker compose logs (Compose), kubectl logs (Helm), or in the
-              ./start.sh terminal.
+              The API prints this once the database is ready, while no account
+              exists. Read it with docker compose logs (Compose), kubectl logs
+              (Helm), or in the ./start.sh terminal.
             </p>
           </div>
 
