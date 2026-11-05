@@ -20,7 +20,7 @@ from core.agents.enablement import set_agent_enabled
 from core.agents.manager import CUSTOM_AGENT_ID_PREFIX
 from core.auth.permissions import permission_gate
 from core.deps import provide_agent_ai, provide_mcp_registry
-from core.integrations.mcp.registry import MCPRegistry
+from core.integrations.mcp.registry import MCPRegistry, refresh_from_client
 from core.integrations.mcp.surface import VIGIL_SERVER
 from core.llm.system_prompt import validate_system_prompt
 from core.llm.tool_schemas import ALL_TOOLS
@@ -164,6 +164,9 @@ def list_available_tools(
     """
     rows: Dict[str, Dict[str, str]] = {}
     try:
+        # Boot only warms the registry from the on-disk cache, which a new install does
+        # not have, so Vigil's own tools and any server connected since are added here.
+        refresh_from_client(registry)
         servers = registry.tool_servers()
         for t in registry.get_all_tools():
             server = servers.get(t["name"], "other")
