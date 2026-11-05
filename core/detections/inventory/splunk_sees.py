@@ -20,7 +20,9 @@ searched). Each key is searched at most once per 24 h by any Vigil process,
 least recently searched first; this process holds its answers for that long, and
 rules whose answer another process holds are left as they are, as are rules
 whose search waits on the budget. A failed search is tried again on this
-process's next sweep. Nothing is written to Splunk.
+process's next sweep. Vigil's Splunk overlay copies in shadow or live (not
+handed off to a Splunk saved search) are checked alongside, on the same keyed
+searches and budget. Nothing is written to Splunk.
 """
 
 from __future__ import annotations
@@ -35,7 +37,7 @@ from typing import Any, Dict, List, Mapping, Optional, Set, Tuple
 
 from sqlalchemy import and_, select
 
-from core.detections.inventory import sees, splunk
+from core.detections.inventory import readers, sees, splunk
 from core.integrations._base import search_budget
 from core.storage.connection import get_db_manager
 from core.storage.models import DetectionRule, DetectionRuleVersion
@@ -474,16 +476,35 @@ def _check(
 
 
 def sweep(config: Mapping[str, Any]) -> SplunkSeesReport:
-    """Check Sees for the active Splunk saved searches, as far as the hour's budget goes."""
+    """Check Sees for the active Splunk saved searches and the stageful Splunk
+    overlay copies, as far as the hour's budget goes."""
     report = SplunkSeesReport()
     try:
         rules = _rules()
-        report.rules = len(rules)
+        try:
+            copies = sees.overlay_copies("splunk", splunk.SOURCE)
+        except Exception as exc:  # noqa: BLE001 -- the saved searches still get Sees
+            logger.warning("detection rules: overlay copies unread for Sees: %s", exc)
+            report.error = f"overlay: {type(exc).__name__}: {exc}"
+            copies = []
+        report.rules = len(rules) + len(copies)
         service = splunk.service_of(config)
         results = _check(
-            service, rules, service.server_url, splunk.per_hour_of(config), report
+            service,
+            rules + copies,
+            service.server_url,
+            splunk.per_hour_of(config),
+            report,
         )
-        report.written = sees.write_check("sees", results, source=splunk.SOURCE)
+        report.written = sees.write_check(
+            "sees",
+            {k: results[k] for k, _ in rules if k in results},
+            source=splunk.SOURCE,
+        ) + sees.write_check(
+            "sees",
+            {k: results[k] for k, _ in copies if k in results},
+            source=readers.OVERLAY_SOURCE,
+        )
     except Exception as exc:  # noqa: BLE001 -- the sync's own report stands
         logger.warning("detection rules: Splunk Sees sweep failed: %s", exc)
         report.error = f"{type(exc).__name__}: {exc}"

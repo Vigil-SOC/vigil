@@ -2,9 +2,11 @@
 
 Each daemon sync tick, after ``sync_repos``, every active Elastic overlay copy
 whose current stage (its latest stage row) is shadow or live is run against the
-elastic-siem Elasticsearch, from its last successful run (or the last hour) up
-to now: EQL through ``_eql/search``, ES|QL through ``_query``, Lucene through
-``_search``. Each run spends one elastic-siem search (key ``overlay:<rule id>``),
+elastic-siem Elasticsearch over a window that runs ``LAG`` behind now: from
+where its last successful run stopped (or an hour before that) up to now - LAG,
+so an event stamped earlier but indexed late still lands in a window not yet
+searched, and is counted once. EQL goes through ``_eql/search``, ES|QL through
+``_query``, Lucene through ``_search``. Each run spends one elastic-siem search (key ``overlay:<rule id>``),
 least recently run first; once the hour's budget is spent the rest wait.
 
 A run writes checks['runs'] on the latest version (result, reason, last
@@ -17,11 +19,12 @@ total): a live copy past that in one run is over the daily hit limit and
 reverts in the same tick.
 
 The sweep then writes a stage row (actor 'system', proof holding the numbers)
-for each move that is due: shadow -> live after a quiet, passing week (at most
-``LIVE_PER_DAY`` a day across all rules), live -> shadow on noise or a loud
-day, shadow -> off after ``OFF_AFTER_FAILURES`` failed runs in a row. No stage
-row is written while Stop is set, or while the ceiling cannot be read. A move
-to live, when a git source is marked ``deploy_target`` for elastic, queues one
+for each move that is due: shadow -> live after a quiet, passing week with
+checks['sees'] pass (at most ``LIVE_PER_DAY`` a day across all rules), live ->
+shadow on noise, a loud day or a Sees fail (its data stopped), shadow -> off
+after ``OFF_AFTER_FAILURES`` failed runs in a row. No stage row is written
+while Stop is set, or while the ceiling cannot be read. A move to live, when a
+git source is marked ``deploy_target`` for elastic, queues one
 ``agent-run-mitre_analyst`` run that opens a pull request adding the rule there.
 
 A copy an active Kibana rule now runs (one linked to the overlay rule, or to a
@@ -61,6 +64,7 @@ logger = logging.getLogger(__name__)
 INTEGRATION = ELASTIC.id
 LANGUAGES = ("eql", "esql", "lucene")
 FIRST_WINDOW = timedelta(hours=1)
+LAG = timedelta(minutes=30)  # how late an event may be indexed and still be seen
 MAX_DOCS = 100  # documents fetched per run; the count is the full total
 SAMPLE = 3
 SAMPLE_CHARS = 500
@@ -283,11 +287,20 @@ def _trimmed(days: Dict[str, Any], today: str) -> Dict[str, Any]:
     return {d: v for d, v in sorted(days.items()) if d >= cutoff}
 
 
+def _window(copy: Copy, now: datetime) -> Tuple[datetime, datetime]:
+    """[start, end) a run searches: from the last window's end to now - LAG."""
+    end = now - LAG
+    since = (copy.checks.get("runs") or {}).get("last_success")
+    start = datetime.fromisoformat(since) if since else end - FIRST_WINDOW
+    return start, max(start, end)  # never moves back over a searched window
+
+
 def _ran(
     checks: Dict[str, Any],
     stage: str,
     end: datetime,
     outcome: Tuple[Optional[int], List[Dict], Optional[str]],
+    searched_to: datetime,
 ) -> Dict[str, Any]:
     """``checks`` after one run: Runs, and the stage's per-day hits on a pass."""
     total, docs, error = outcome
@@ -302,7 +315,7 @@ def _ran(
         tally["fail"] += 1
     else:
         runs.update(result="pass", reason=None, failures=0)
-        runs["last_success"] = end.isoformat()
+        runs["last_success"] = searched_to.isoformat()  # the next window's start
         tally["pass"] += 1
     days[day] = tally
     runs.update(days=_trimmed(days, day), checked_at=end.isoformat())
@@ -386,10 +399,8 @@ async def _run_all(
                 report.deferred = len(order) - n
                 break
             report.searched += 1
-            since = (copy.checks.get("runs") or {}).get("last_success")
-            start = datetime.fromisoformat(since) if since else now - FIRST_WINDOW
             try:
-                total, docs = await _query(service, copy, start, now)
+                total, docs = await _query(service, copy, *_window(copy, now))
                 results[copy.rule_id] = (total, docs, None)
             except Exception as exc:  # noqa: BLE001 -- the run reads fail
                 results[copy.rule_id] = (None, [], str(exc)[:500] or type(exc).__name__)
@@ -423,7 +434,9 @@ def _write_runs(copies: List[Copy], results: Dict[int, tuple], now: datetime) ->
             copy = by_id[rid]
             if ver != copy.version:
                 continue
-            new = _ran(checks or {}, copy.stage, now, results[rid])
+            new = _ran(
+                checks or {}, copy.stage, now, results[rid], _window(copy, now)[1]
+            )
             runs = new["runs"]
             before = last.get((rid, "runs"))
             if before != (runs["result"], runs["reason"]):
@@ -450,6 +463,31 @@ def _write_runs(copies: List[Copy], results: Dict[int, tuple], now: datetime) ->
             )
         _record_changes(session, changes, stamp)
     return len(changed)
+
+
+def _hand_off(copies: List[Copy], now: datetime) -> None:
+    """Copies Kibana runs now stop carrying Runs: a NULL row closes their flag."""
+    from core.detections.inventory.sync import (
+        _dropped,
+        _last_results,
+        _record_changes,
+        _write_checks,
+    )
+
+    if not copies:
+        return
+    with get_db_manager().session_scope() as session:
+        last = _last_results(session, readers.OVERLAY_SOURCE)
+        changes, checked = [], []
+        for c in copies:
+            rows, checks = _dropped(
+                c.rule_id, c.version, c.checks, ("runs",), last, "run by Kibana"
+            )
+            changes += rows
+            if checks != c.checks:
+                checked.append((c.rule_id, c.version, checks))
+        _write_checks(session, checked)
+        _record_changes(session, changes, now.isoformat())
 
 
 def _write_unrunnable(copies: List[Tuple[Copy, str]], now: datetime) -> int:
@@ -498,6 +536,10 @@ def _due(
 ) -> Optional[Tuple[str, str, Dict[str, Any]]]:
     """(stage, reason, proof) of the move due for ``copy``, or None."""
     runs = copy.checks.get("runs") or {}
+    sees_check = copy.checks.get("sees") or {}
+    seen = {
+        k: sees_check.get(k) for k in ("result", "reason", "data_source", "checked_at")
+    }
     since = copy.stage_at.isoformat()
     if copy.stage == "shadow":
         failures = int(runs.get("failures") or 0)
@@ -524,17 +566,20 @@ def _due(
             return None
         if any(v["hits"] > MAX_HITS_PER_DAY for v in days.values()):
             return None
+        if seen.get("result") != "pass":  # its data must be shown to arrive
+            return None
         if live_24h >= LIVE_PER_DAY:
             return None
         return (
             "live",
             f"{SHADOW_DAYS} days in shadow, every day's runs passed, no day "
-            f"above {MAX_HITS_PER_DAY} hits",
+            f"above {MAX_HITS_PER_DAY} hits, Sees passed",
             {
                 "shadow_since": since,
                 "days": days,
                 "max_hits_per_day": max(v["hits"] for v in days.values()),
                 "live_rows_last_24h": live_24h,
+                "sees": seen,
             },
         )
     # live: only what happened since it went live counts.
@@ -550,6 +595,12 @@ def _due(
             "shadow",
             f"a live day above {MAX_HITS_PER_DAY} hits",
             {"live_since": since, "loud_days": loud},
+        )
+    if seen["result"] == "fail":  # lost data; unknown changes nothing
+        return (
+            "shadow",
+            f"Sees: {seen['reason'] or 'fail'}",
+            {"live_since": since, "sees": seen},
         )
     total, noise = _noise(session, copy)
     if total >= REVERT_MIN_FINDINGS and noise >= total * REVERT_NOISE_SHARE:
@@ -701,6 +752,7 @@ def _run_copies(live: bool, now: datetime, report: RolloutReport) -> None:
     # Worked out on each read: no stage records the handoff.
     gone = siem_runs(kibana.SOURCE, [c.rule_id for c in copies])
     report.handed_off = len(gone)
+    _hand_off([c for c in copies if c.rule_id in gone], now)
     copies = [c for c in copies if c.rule_id not in gone]
     report.copies = len(copies)
     blocked = [(c, why) for c in copies if (why := runnable(c.rule))]
