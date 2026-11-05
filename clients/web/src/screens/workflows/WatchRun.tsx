@@ -8,7 +8,7 @@ import { STOP_CAUSES, stopCauseOf } from '../../shared/stopCause'
 import { StopLine } from '../../shared/StopLine'
 import { utcClock as hhmm } from '../../shared/utc'
 import {
-  IN_FLIGHT, callFailure, callLine, fmtDuration, moveWord, useInvestigateReplay,
+  IN_FLIGHT, callFailure, callLine, fmtDuration, moveWord, shownStatus, useInvestigateReplay,
   type CallFailure, type HuntView, type InvestigateDecisionView, type RootCauseBudgets, type RootCauseEntry, type WfRunDetail,
 } from './runRead'
 import { Heading, HuntPanels, InvestigatePanels, OtherPanels, PlaybookReport, Prose, RootCausePanels } from './WatchPanels'
@@ -40,7 +40,7 @@ interface CallRow {
 }
 type Mark = 'done' | 'failed' | 'running' | 'warn' | 'paused' | 'stopped' | 'pending'
 /** Why the run is not working right now, though its steps may be on screen. */
-interface Halt { kind: 'needs_you' | 'paused' | 'failed' | 'cancelled'; reason: string }
+interface Halt { kind: 'needs_you' | 'paused' | 'failed' | 'cancelled' | 'rejected'; reason: string }
 const HUNT_LIKE_RUN_KINDS = ['hunt', 'adjudicate']
 
 export const STEP_MS = 1400
@@ -58,15 +58,19 @@ const workflowTitle = (name: string) => {
 /** What the run is stopped on, if it is. A person's question outranks a pause; a dead run outranks both. */
 function haltOf(d: WfRunDetail): Halt | null {
   const cause = stopCauseOf(d.stop_cause)
+  if (shownStatus(d) === 'rejected') return { kind: 'rejected', reason: d.error || d.reason || '' }
   if (d.status === 'failed' || d.status === 'cancelled') return { kind: d.status, reason: cause ? STOP_CAUSES[cause].badge : d.error || d.hunt?.reason || d.reason || '' }
   if (d.hunt?.open_checkpoint) return { kind: 'needs_you', reason: '' }
   if (d.status === 'paused' || d.hunt?.status === 'parked') return { kind: 'paused', reason: d.hunt?.reason || d.reason || '' }
   return null
 }
 const haltCaption = (h: Halt) =>
-  h.kind === 'needs_you' ? 'Stopped · needs you' : h.kind === 'paused' ? (h.reason ? `Paused · ${h.reason}` : 'Paused') : `Stopped · ${h.reason || h.kind}`
-const HALT_CLOCK: Record<Halt['kind'], string> = { needs_you: 'waiting on you', paused: 'paused', failed: 'stopped', cancelled: 'stopped' }
-const HALT_MARK: Record<Halt['kind'], Mark> = { needs_you: 'warn', paused: 'paused', failed: 'failed', cancelled: 'stopped' }
+  h.kind === 'needs_you' ? 'Stopped · needs you'
+    : h.kind === 'paused' ? (h.reason ? `Paused · ${h.reason}` : 'Paused')
+    : h.kind === 'rejected' ? h.reason || 'A person rejected a step.'
+    : `Stopped · ${h.reason || h.kind}`
+const HALT_CLOCK: Record<Halt['kind'], string> = { needs_you: 'waiting on you', paused: 'paused', failed: 'stopped', cancelled: 'stopped', rejected: 'rejected' }
+const HALT_MARK: Record<Halt['kind'], Mark> = { needs_you: 'warn', paused: 'paused', failed: 'failed', cancelled: 'stopped', rejected: 'stopped' }
 
 /** Ledger order: the projection sends moves newest-first. */
 function huntSteps(hunt: HuntView): Step[] {
@@ -629,6 +633,7 @@ export function WatchRun({ d, onBack }: { d: WfRunDetail; onBack: () => void }) 
         <>
           <OneLine>{d.workflow_id?.startsWith('agent-run-') ? AGENT_RUN : PLAYBOOK}</OneLine>
           <WaitingOnPerson d={d} />
+          {halt?.kind === 'rejected' && !cause && <OneLine>{haltCaption(halt)}</OneLine>}
           <PlaybookReport d={d} />
           <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3.5 items-start"><OtherPanels d={d} /></div>
         </>

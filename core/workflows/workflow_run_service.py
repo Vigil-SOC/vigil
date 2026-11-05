@@ -13,6 +13,7 @@ from core.storage.models import WorkflowRun, WorkflowRunPhase
 from core.storage.schemas import WorkflowRunPhaseSchema, WorkflowRunSchema
 from core.telemetry import get_meter
 from core.time import utcnow
+from core.workflows.run_rating import RATED_STATUS
 
 logger = logging.getLogger(__name__)
 
@@ -341,6 +342,23 @@ class WorkflowRunService:
         except SQLAlchemyError as e:
             logger.warning("Error fetching workflow run %s: %s", run_id, e)
             return None
+
+    def rated_statuses(self, run_ids: List[str]) -> Dict[str, str]:
+        """``{run_id: status}`` as rates read it, so a console and a rate cannot disagree."""
+        if not run_ids:
+            return {}
+        try:
+            db = get_db_manager()
+            with db.session_scope() as session:
+                rows = session.execute(
+                    select(WorkflowRun.run_id, RATED_STATUS).where(
+                        WorkflowRun.run_id.in_(run_ids)
+                    )
+                ).all()
+                return {run_id: status for run_id, status in rows}
+        except SQLAlchemyError as e:
+            logger.warning("Error rating workflow runs: %s", e)
+            return {}
 
     def delete_run(self, run_id: str) -> bool:
         """Hide ``run_id`` from the listings. False when there is no such live run."""
