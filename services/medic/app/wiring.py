@@ -49,7 +49,7 @@ log = logging.getLogger("services.medic")
 
 TICK_S = 15  # semantics.md §1
 PACK_DIR = Path(__file__).resolve().parents[1] / "packs" / "medic-core"  # dev mode only
-# The image's own trust root and bundled pack: fixed names, no setting.
+# The image's bundled pack: a fixed name, no setting.
 BUNDLED_DIR = Path(__file__).resolve().parents[1] / "packs" / "bundled"
 VERSION_FILE = Path(__file__).resolve().parents[3] / "VERSION"
 # Several Helm series share this signal. Ungrouped, the newest read is
@@ -63,10 +63,9 @@ HELD_MAX = 1000  # decisions kept in memory while recording is stopped
 
 
 class PackContext(NamedTuple):
-    """What the start-up's pack lifecycle settled on, for every later admin
-    operation: the trust root in force, the image's bundled bytes, Vigil's version."""
+    """What every later admin operation needs: the image's bundled bytes (None when
+    the build has none) and Vigil's version."""
 
-    root: dict[str, Any]
     bundled: bytes | None
     vigil: str
 
@@ -93,9 +92,9 @@ def load_pack(
     now: datetime,
     vigil_version: str | None = None,
 ) -> Loaded:
-    """The rules Medic runs. Dev mode: the medic-core source tree, unsigned. Otherwise:
-    the verified active pack, after the lifecycle's start-up work (trust root,
-    revocation fallback, bundled seed or upgrade). With no verified pack it is
+    """The rules Medic runs. Dev mode: the medic-core source tree. Otherwise: the
+    checked active pack, after the lifecycle's start-up work (bundled seed or
+    upgrade). With no usable pack it is
     empty, never an error: the built-in watcher.* rules still run. Dev mode lets a
     bad rule raise, which stops the start."""
     if dev_mode:
@@ -164,21 +163,15 @@ def _load_active(
     shape: str, data_dir: Path, now: datetime, vigil_version: str | None
 ) -> Loaded:
     try:
-        root_bytes = (BUNDLED_DIR / "trust-root.dsse.json").read_bytes()
-    except OSError as exc:
-        return _no_pack(f"the image's trust root is unreadable: {type(exc).__name__}")
-    try:
         bundled = (BUNDLED_DIR / "medic-core.json").read_bytes()
     except OSError:
         bundled = None
     vigil = vigil_version or VERSION_FILE.read_text().strip()
-    root, started = lifecycle.start(
-        data_dir=data_dir, image_trust_root=root_bytes, bundled=bundled,
-        vigil_version=vigil, dev_mode=False, now=now,
-    )  # fmt: skip
-    for code, message in started.errors:
-        log.error("pack start-up: %s %s", code, message)
-    context = PackContext(root, bundled, vigil)
+    # Seed errors are logged by the lifecycle, once per code.
+    started = lifecycle.start(
+        data_dir=data_dir, bundled=bundled, vigil_version=vigil, now=now
+    )
+    context = PackContext(bundled, vigil)
     return reload_active(shape, data_dir, now, context, started.events)
 
 
@@ -193,32 +186,31 @@ def reload_active(
     raises: `events` are already owed, and a bad pack never crash-loops Medic."""
     try:
         loaded = _from_active(
-            shape, data_dir, now, context.vigil, context.root, context.bundled, events
+            shape, data_dir, now, context.vigil, context.bundled, events
         )
     except Exception as exc:  # noqa: BLE001
         loaded = _no_pack(f"loading it failed ({type(exc).__name__}: {exc})", events)
     return loaded._replace(context=context)
 
 
-def _from_active(shape, data_dir, now, vigil, root, bundled, events) -> Loaded:
+def _from_active(shape, data_dir, now, vigil, bundled, events) -> Loaded:
     active = read_active(data_dir)
     if active is None:
-        return _no_pack("no verified pack is active", events)
-    # Verified again, strictly as the bundled pack is (stale and out-of-range run).
-    errors, verified, res = vet_pack(
-        active.data, trust_root=root, vigil_version=vigil, dev_mode=False, now=now,
-        lineage=None, tolerate=lifecycle.TOLERATED,
+        return _no_pack("no pack is active", events)
+    # Checked again, as the bundled pack is (stale and out-of-range run).
+    errors, res = vet_pack(
+        active.data, vigil_version=vigil, now=now, lineage=None,
+        tolerate=lifecycle.TOLERATED,
     )  # fmt: skip
     if errors:
         return _no_pack(
-            f"the active pack did not verify: {[c for c, _ in errors]}", events
+            f"the active pack did not check: {[c for c, _ in errors]}", events
         )
     pack = (res.manifest["pack"]["id"], res.manifest["pack"]["version"])
-    files = json.loads(verified.payload)["files"]
+    files = json.loads(active.data)["files"]
     rules = [load_rule(doc, pack=pack) for doc in res.rules.values()]
     state = lifecycle.pack_state(
         data_dir=data_dir,
-        trust_root=root,
         bundled=bundled,
         vigil_version=vigil,
         now=now,

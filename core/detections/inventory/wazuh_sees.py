@@ -148,16 +148,42 @@ def _source(decs: Set[str]) -> Optional[str]:
     return f"wazuh decoder {', '.join(sorted(decs))}" if decs else None
 
 
+def indexer() -> Tuple[Optional[str], Mapping[str, Any]]:
+    """(why the Wazuh indexer is not read, or None; elastic-siem's resolved config).
+
+    The gate Wazuh Sees and Wazuh Quiet share, with :func:`indices`.
+    """
+    from core.config import load_integrations_config
+    from core.integrations._base.config import missing, resolve
+    from core.integrations.elastic.descriptor import ELASTIC
+
+    if ELASTIC.id not in load_integrations_config()["enabled_integrations"]:
+        return "elastic-siem is not enabled, so the Wazuh indexer is not read", {}
+    config = resolve(ELASTIC)
+    absent = missing(config, "elasticsearch_url")
+    if absent:
+        return f"elastic-siem has no {absent[0]}, so the Wazuh indexer is not read", {}
+    return None, config
+
+
+async def indices(
+    service: Any, patterns: Tuple[str, ...]
+) -> Tuple[Optional[str], Dict[str, bool]]:
+    """(why the indexer could not be listed, or None; whether each pattern has an
+    index). Listing is metadata and spends no search."""
+    names = await service.get_indices()
+    if names is None:
+        return f"the indexer could not be read: {service.last_indices_error}", {}
+    return None, {p: any(n.startswith(p.rstrip("*")) for n in names) for p in patterns}
+
+
 async def _answers(
     service: Any, url: str, per_hour: int, report: WazuhSeesReport
 ) -> Tuple[Optional[str], Dict[str, Any]]:
     """(why no rule can be judged, or None; pattern -> answer, an error string, or absent)."""
-    names = await service.get_indices()
-    if names is None:
-        return f"the indexer could not be read: {service.last_indices_error}", {}
-    exists = {
-        p: any(n.startswith(p.rstrip("*")) for n in names) for p in (ARCHIVES, ALERTS)
-    }
+    why, exists = await indices(service, (ARCHIVES, ALERTS))
+    if why:
+        return why, {}
     if not any(exists.values()):
         return f"neither {ALERTS} nor {ARCHIVES} exists on the indexer", {}
     out: Dict[str, Any] = {}
@@ -251,26 +277,13 @@ def _verdict(
 
 def sweep() -> WazuhSeesReport:
     """Check Sees for the active Wazuh rules against the elastic-siem indexer."""
-    from core.config import load_integrations_config
-    from core.integrations._base.config import missing, resolve
-    from core.integrations.elastic.descriptor import ELASTIC
-
     report = WazuhSeesReport()
     try:
         active, details = _rules()
         report.rules = len(active)
         lineage = _lineage(details)
-        why: Optional[str] = None
         parts: Dict[str, Any] = {}
-        if ELASTIC.id not in load_integrations_config()["enabled_integrations"]:
-            why = "elastic-siem is not enabled, so the Wazuh indexer is not read"
-        else:
-            config = resolve(ELASTIC)
-            absent = missing(config, "elasticsearch_url")
-            if absent:
-                why = (
-                    f"elastic-siem has no {absent[0]}, so the Wazuh indexer is not read"
-                )
+        why, config = indexer()
         if why is None:
             per_hour = config.get("max_searches_per_hour")
             per_hour = (

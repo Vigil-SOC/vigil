@@ -25,9 +25,9 @@ is ended by the watchdog. On start, if the last heartbeat shows Medic was
 stalled or off, one `gap` record goes into the chain first. Rules,
 suppression and the log catalogue come from one rule pack, chosen at start:
 
-- **Dev mode** (`DEV_MODE` on): the unsigned `medic-core` source tree in `packs/medic-core/`. The pack lifecycle is not used and `/v1/status` shows `pack: null`.
-- **Otherwise**: the verified active pack in `<data dir>/packs/`. At start the lifecycle checks the image's trust root (`packs/bundled/trust-root.dsse.json`), falls back from a revoked pack, and seeds or upgrades from the image's bundled pack (`packs/bundled/medic-core.json`). Each pack event (`imported`, `rule_skipped`) goes into the decision log. `/v1/status.pack` describes the active pack.
-- **No verified pack** (and dev mode off): Medic logs one WARNING and starts with no rules. The built-in `watcher.*` rules still run, `check` stays healthy, and `pack` is null.
+- **Dev mode** (`DEV_MODE` on): the `medic-core` source tree in `packs/medic-core/`. The pack lifecycle is not used and `/v1/status` shows `pack: null`.
+- **Otherwise**: the active pack in `<data dir>/packs/`, re-checked with `pack_check`. At start the lifecycle seeds or upgrades from the image's bundled pack (`packs/bundled/medic-core.json`) when it passes `pack_check` (stale or out of Vigil's range is let through); any other refusal is logged once per code and the bundled pack is not seeded. An admin imports a pack by its expected sha256 (`POST /v1/pack/import?sha256=…`). Each pack event (`imported`, `rule_skipped`) goes into the decision log. `/v1/status.pack` describes the active pack.
+- **No usable pack** (and dev mode off): Medic logs one WARNING and starts with no rules. The built-in `watcher.*` rules still run, `check` stays healthy, and `pack` is null.
 
 `check` fails on any heartbeat state but `running` or `degraded` (C5 K-d), each
 with its own reason (`stopped`, `stalled`, `crash-looping`, unknown).

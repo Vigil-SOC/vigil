@@ -613,7 +613,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
         required: false,
         default: 50,
         placeholder: '50',
-        helpText: 'A Kibana rule averaging more alerts per day than this (over up to 30 days) fails its Quiet check.',
+        helpText: 'A Kibana or Wazuh rule averaging more alerts per day than this (over up to 30 days) fails its Quiet check.',
       },
     ],
     docs_url: 'https://www.elastic.co/guide/en/security/current/index.html',

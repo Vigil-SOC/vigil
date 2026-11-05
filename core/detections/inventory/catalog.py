@@ -12,8 +12,8 @@ overlay rule counts as a repo rule here. A repo rule's state in a SIEM is its
 linked copies' (disabled, or their Runs result, each beside its Quiet), or
 'not deployed' when it has none there. Every SIEM Vigil reads (Kibana,
 'elastic'; Splunk, 'splunk'; the Wazuh manager, 'wazuh') is listed. Kibana and
-Wazuh rules get a Sees check; a Wazuh rule's data source is its decoder. Only
-Kibana rules get a Quiet check.
+Wazuh rules get a Sees check; a Wazuh rule's data source is its decoder. Kibana
+and Wazuh rules get a Quiet check.
 
 A linked Kibana or Splunk copy also carries checks['drift']: fail when it was
 disabled, removed or edited in the SIEM while its repo rule stayed the same.
@@ -65,11 +65,9 @@ CURRENT_STAGE = (
 )
 LINKED = DetectionRule.link_kind.in_(("same_id", "known_name", "agent"))
 NOT_DEPLOYED = "not deployed"
-NOT_READ = (
-    "Splunk rules get no Sees check, and Splunk and Wazuh rules no Quiet check, yet"
-)
+NOT_READ = "Splunk rules get no Sees or Quiet check yet"
 SEES_TOOLS = ("elastic", "wazuh")
-QUIET_TOOLS = ("elastic",)
+QUIET_TOOLS = ("elastic", "wazuh")
 CHANGE = DetectionRuleCheckChange
 RECENT_CHANGES = 10
 # A row that changed the result; a fail -> fail row only changed the reason.
