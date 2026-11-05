@@ -43,6 +43,10 @@ _ENTITY_FIELDS = """
   objectLabel { value }
 """
 
+# Fields only some entity types have; asking another type for them fails.
+# x_mitre_id is the ATT&CK technique id, as analyze_coverage takes it.
+_EXTRA_ENTITY_FIELDS = {"attack_pattern": " x_mitre_id"}
+
 
 class OpenCTIError(Exception):
     """A failed OpenCTI call, with a message safe to show (never the token)."""
@@ -192,7 +196,10 @@ class OpenCTIService:
             )
         data = await self._query(
             f"query($s: String, $n: Int) {{ {field}(search: $s, first: $n)"
-            " { edges { node {" + _ENTITY_FIELDS + "} } } }",
+            " { edges { node {"
+            + _ENTITY_FIELDS
+            + _EXTRA_ENTITY_FIELDS.get(entity_type, "")
+            + "} } } }",
             {"s": query, "n": _limit(limit)},
         )
         entities = _nodes(data.get(field))
@@ -210,6 +217,7 @@ class OpenCTIService:
             "query($id: [String], $n: Int) { stixCoreRelationships(fromId: $id, first: $n) {"
             " edges { node { relationship_type confidence"
             " to { ... on StixDomainObject { id entity_type representative { main } }"
+            " ... on AttackPattern { x_mitre_id }"
             " ... on StixCyberObservable { id entity_type observable_value } } } } } }",
             {"id": [entity_id], "n": _limit(limit)},
         )
