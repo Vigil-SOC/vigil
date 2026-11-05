@@ -14,8 +14,9 @@ linked copies' (disabled, or their Runs result, each beside its Quiet), or
 'elastic'; Splunk, 'splunk'; the Wazuh manager, 'wazuh') is listed. Kibana,
 Wazuh and Splunk rules get a Sees check; a Wazuh rule's data source is its
 decoder, a Splunk search's its index/sourcetype or data model. Kibana,
-Wazuh and Splunk rules get a Quiet check and an Accurate one (``accurate``);
-Kibana and Wazuh rules get Noisy and Silent.
+Wazuh and Splunk rules get a Quiet check, an Accurate one (``accurate``) and a
+Caught one (``caught``: pass, or untested); Kibana and Wazuh rules get Noisy
+and Silent.
 
 A linked Kibana or Splunk copy also carries checks['drift']: fail when it was
 disabled, removed or edited in the SIEM while its repo rule stayed the same.
@@ -64,10 +65,11 @@ QUIET = DetectionRuleVersion.checks["quiet"]["result"].astext
 ACCURATE = DetectionRuleVersion.checks["accurate"]["result"].astext
 NOISY = DetectionRuleVersion.checks["noisy"]["result"].astext
 SILENT = DetectionRuleVersion.checks["silent"]["result"].astext
+CAUGHT = DetectionRuleVersion.checks["caught"]["result"].astext
 # No alert across Quiet's whole 30-day search: a never-firing rule.
 NEVER_FIRED = DetectionRuleVersion.checks["silent"]["days_fired"].astext == "0"
 # The per-tool tally columns _by_tool reads, in order, before the count.
-TALLIED = (TOOL, RUNS, SEES, QUIET, ACCURATE, NOISY, SILENT, NEVER_FIRED)
+TALLIED = (TOOL, RUNS, SEES, QUIET, ACCURATE, NOISY, SILENT, CAUGHT, NEVER_FIRED)
 RUNS_RESULTS = ("pass", "fail", "unknown")
 # Each rule's current stage: its latest stage row.
 CURRENT_STAGE = (
@@ -81,8 +83,9 @@ NOT_DEPLOYED = "not deployed"
 NOT_READ = "Splunk rules get no Noisy or Silent check (nor a never-firing count), yet"
 SEES_TOOLS = ("elastic", "wazuh", "splunk")
 QUIET_TOOLS = ("elastic", "wazuh", "splunk")
-# The tools whose findings resolve to a rule (rule_for_finding) and get Accurate.
-ACCURATE_TOOLS = ("elastic", "wazuh", "splunk")
+# The tools whose findings resolve to a rule version (rule_for_finding):
+# Accurate and Caught run there.
+RESOLVES = ("elastic", "wazuh", "splunk")
 # Noisy, Silent and the never-firing count read a rule's own history.
 HISTORY_TOOLS = ("elastic", "wazuh")
 CHANGE = DetectionRuleCheckChange
@@ -276,6 +279,7 @@ def _copies(session: Any, origins: Iterable[int]) -> Dict[int, Dict[str, List[Di
                 "runs": (checks or {}).get("runs"),
                 "quiet": (checks or {}).get("quiet"),
                 "accurate": (checks or {}).get("accurate"),
+                "caught": (checks or {}).get("caught"),
                 "link": copy.link_kind,
             }
         )
@@ -309,10 +313,10 @@ def _with_links(session: Any, hits: List[Dict], rules: List[DetectionRule]) -> N
 
 def _by_tool(rows: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
     """(TALLIED..., count) rows as rules per tool, and for a SIEM's its Runs, Sees,
-    Quiet, Accurate, Noisy and Silent, and (where Noisy and Silent run) its
-    never-firing rules."""
+    Quiet, Accurate, Noisy, Silent and Caught, and (where Noisy and Silent run)
+    its never-firing rules."""
     out: Dict[str, Dict[str, Any]] = {}
-    for tool, runs, sees, quiet, accurate, noisy, silent, never, count in rows:
+    for tool, runs, sees, quiet, accurate, noisy, silent, caught, never, count in rows:
         entry = out.setdefault(tool, {"rules": 0})
         entry["rules"] += count
         if tool not in ("repo", OVERLAY):
@@ -323,6 +327,7 @@ def _by_tool(rows: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
                 ("accurate", accurate),
                 ("noisy", noisy),
                 ("silent", silent),
+                ("caught", caught),
             ):
                 bucket = entry.setdefault(
                     check, {**dict.fromkeys(RUNS_RESULTS, 0), "unchecked": 0}
@@ -523,7 +528,7 @@ def _any_result(result: str) -> Any:
 
 def rules_by_tool() -> Dict[str, Dict[str, Any]]:
     """Active rules per tool across the estate, with each SIEM's Runs, Sees,
-    Quiet, Accurate, Noisy and Silent, and its never-firing rules."""
+    Quiet, Accurate, Noisy, Silent and Caught, and its never-firing rules."""
     with get_db_manager().session_scope() as session:
         return _by_tool(
             session.execute(
@@ -551,8 +556,12 @@ def unchecked(siems: Iterable[str]) -> Dict[str, Dict[str, Any]]:
             "reason": "waiting for the query budget",
         },
         "accurate": {
-            "tools": [t for t in siems if t in ACCURATE_TOOLS],
+            "tools": [t for t in siems if t in RESOLVES],
             "reason": "not judged since the last sync",
+        },
+        "caught": {
+            "tools": [t for t in siems if t in RESOLVES],
+            "reason": "untested: no attack run or proven incident has caught this version",
         },
         **{
             check: {
@@ -642,11 +651,13 @@ def search(
     flagged: Optional[bool] = None,
     quiet: Optional[str] = None,
     accurate: Optional[str] = None,
+    caught: Optional[str] = None,
 ) -> List[Dict]:
     """Active and disabled rules whose format, path or parsed content contains ``query``.
 
     ``tool`` is 'overlay', 'repo' or a SIEM source; ``runs``, ``sees`` and
-    ``quiet`` and ``accurate`` keep rules whose latest version has that check result; ``stage`` keeps
+    ``quiet`` and ``accurate`` keep rules whose latest version has that check result;
+    ``caught`` 'pass' keeps caught versions, 'untested' the rest; ``stage`` keeps
     rules currently there; ``flagged`` keeps rules with (or without) an open
     flag. Each hit says whether it is flagged; a single hit carries its recent
     check changes.
@@ -682,6 +693,10 @@ def search(
         statement = statement.where(QUIET == quiet)
     if accurate:
         statement = statement.where(ACCURATE == accurate)
+    if caught:
+        statement = statement.where(
+            CAUGHT.is_(None) if caught == "untested" else CAUGHT == caught
+        )
     flags = _flags().subquery()
     if flagged is not None:
         is_flagged = DetectionRule.id.in_(select(flags.c.rule_id))

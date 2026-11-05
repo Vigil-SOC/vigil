@@ -2,7 +2,7 @@
 
 Each elastic or splunk finding is resolved to its rule version with
 ``rule_for_finding``'s own mapping (``catalog.resolve_findings``). Only findings
-of the latest version of an active rule of a ``catalog.ACCURATE_TOOLS`` source
+of the latest version of an active rule of a ``catalog.RESOLVES`` source
 count, with no time cap.
 
 A finding's determinations are its noise mark (not real) and each closed Case
@@ -174,7 +174,7 @@ def judge(session: Any) -> Tuple[Dict[Tuple[int, int], Dict[str, int]], int]:
         (rid, ver): dict.fromkeys(COUNTS, 0)
         for rid, ver in session.execute(
             select(DetectionRule.id, DetectionRule.latest_version).where(
-                DetectionRule.source.in_(catalog.ACCURATE_TOOLS),
+                DetectionRule.source.in_(catalog.RESOLVES),
                 DetectionRule.status == "active",
             )
         )
@@ -216,7 +216,7 @@ def sweep() -> AccurateReport:
             report.rules = len(counts)
             report.judged = sum(c["judged"] for c in counts.values())
             last: Dict[tuple, tuple] = {}
-            for source in catalog.ACCURATE_TOOLS:
+            for source in catalog.RESOLVES:
                 last.update(_last_results(session, source))
             rows = session.execute(
                 select(
