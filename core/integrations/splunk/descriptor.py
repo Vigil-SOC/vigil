@@ -26,6 +26,11 @@ SPLUNK = register_descriptor(
             # Every search the rule checks send (Runs, Quiet, Sees) spends one.
             IntegrationField("max_searches_per_hour", value_type="int", default=30),
             IntegrationField("quiet_max_alerts_per_day", value_type="int", default=50),
+            # Noisy and Silent thresholds; defaults are quiet.DEFAULTS.
+            IntegrationField("noisy_min_alerts", value_type="int", default=100),
+            IntegrationField("noisy_multiple", value_type="int", default=10),
+            IntegrationField("silent_days", value_type="int", default=7),
+            IntegrationField("silent_min_active_days", value_type="int", default=5),
         ),
     )
 )

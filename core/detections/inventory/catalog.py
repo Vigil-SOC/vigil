@@ -15,8 +15,9 @@ linked copies' (disabled, or their Runs result, each beside its Quiet), or
 Wazuh and Splunk rules get a Sees check; a Wazuh rule's data source is its
 decoder, a Splunk search's its index/sourcetype or data model. Kibana,
 Wazuh and Splunk rules get a Quiet check, an Accurate one (``accurate``) and a
-Caught one (``caught``: pass, or untested); Kibana and Wazuh rules get Noisy
-and Silent.
+Caught one (``caught``: pass, or untested); Kibana, Wazuh and Splunk rules
+get Noisy and Silent (a Wazuh rule below level 3 or a Splunk scheduled report,
+neither of which can alert, passes both and is not counted as never-firing).
 
 A linked Kibana or Splunk copy also carries checks['drift']: fail when it was
 disabled, removed or edited in the SIEM while its repo rule stayed the same.
@@ -80,14 +81,17 @@ CURRENT_STAGE = (
 )
 LINKED = DetectionRule.link_kind.in_(("same_id", "known_name", "agent"))
 NOT_DEPLOYED = "not deployed"
-NOT_READ = "Splunk rules get no Noisy or Silent check (nor a never-firing count), yet"
+NOT_READ = (
+    "Only Kibana, Wazuh and Splunk rules get Noisy and Silent checks (and a "
+    "never-firing count)"
+)
 SEES_TOOLS = ("elastic", "wazuh", "splunk")
 QUIET_TOOLS = ("elastic", "wazuh", "splunk")
 # The tools whose findings resolve to a rule version (rule_for_finding):
 # Accurate and Caught run there.
 RESOLVES = ("elastic", "wazuh", "splunk")
 # Noisy, Silent and the never-firing count read a rule's own history.
-HISTORY_TOOLS = ("elastic", "wazuh")
+HISTORY_TOOLS = ("elastic", "wazuh", "splunk")
 CHANGE = DetectionRuleCheckChange
 RECENT_CHANGES = 10
 # A row that changed the result; a fail -> fail row only changed the reason.

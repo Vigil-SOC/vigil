@@ -23,7 +23,8 @@ checks['silent'], from ``wazuh-alerts-*`` on the elastic-siem indexer), then ``w
 after Kibana syncs, ``quiet`` counts each active Kibana rule's alerts the same
 way and against the rule's own 30 days (checks['noisy'], checks['silent']),
 then ``sees`` checks whether each active Kibana rule's data is arriving; after
-Splunk syncs, ``splunk_sees`` checks each active saved search's data the same
+Splunk syncs, ``quiet`` counts each active saved search's alerts the same way,
+Noisy and Silent included, then ``splunk_sees`` checks each active saved search's data the same
 way. All three Sees checks write checks['sees']; each check is written the
 same way. Last, ``accurate`` judges each active Kibana, Wazuh and Splunk rule's
 latest version from the stored findings' verdicts and writes checks['accurate']
