@@ -1,0 +1,80 @@
+name: Medic nightly
+
+# Medic's evaluation on Compose, nightly: every injector cell held for what its rule
+# needs and scored against Medic's own decision log, a flood, the survival checks,
+# and the live Compose suites. Two jobs, because each runs its own Compose stack and
+# two must not share a runner. The metrics artifact (tests/medic_eval/nightly.py's
+# metrics.json and summary.md) is uploaded even when the run is red.
+#
+# Red only for a failed bring-up, inject, verify or revert, a privilege check (the
+# live suites), harm to Vigil, Medic over 1 vCPU / 1 GiB, or a failed survival check
+# or flood floor. Detection, time to detect, the lane matrix, false alarms and the
+# advisory bars are reported with their n and never turn it red.
+
+on:
+  schedule:
+    # Not nightly.yml's 02:00: both would want a runner at once.
+    - cron: '30 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # The live suites, unchanged, as medic.yml's medic-compose runs them; each suite
+  # builds its own medic-* project. Their failure is a hard floor.
+  live-suites:
+    name: Live Compose suites
+    if: github.event_name == 'workflow_dispatch' || github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.7"
+
+      # --noconftest because tests/conftest.py imports the backend's settings.
+      - name: Live suites
+        env:
+          VIGIL_MEDIC_COMPOSE_LIVE: "1"
+        run: |
+          uv run --no-project --python 3.12 --with pytest --with pyyaml \
+            python -m pytest --noconftest -o addopts= -p no:cacheprovider -rs \
+            tests/medic_compose/test_last_seen_live.py \
+            tests/medic_compose/test_enable_live.py \
+            tests/medic_compose/test_compose_live.py
+
+  # The scored run. Holds are ~4.5 h end to end (nightly.py estimates it from the cells'
+  # holds and reports a cell that would not fit as "too long for the nightly").
+  evaluate:
+    name: Evaluation
+    if: github.event_name == 'workflow_dispatch' || github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.7"
+
+      - name: Evaluate
+        run: |
+          uv run --no-project --python 3.12 --with pyyaml --with jsonschema \
+            python -m tests.medic_eval.nightly --out medic-eval-out
+
+      - name: Summary
+        if: always()
+        run: test -f medic-eval-out/summary.md && cat medic-eval-out/summary.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload metrics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: medic-eval-metrics
+          path: medic-eval-out
+          if-no-files-found: warn
