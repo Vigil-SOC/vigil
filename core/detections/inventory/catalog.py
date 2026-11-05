@@ -843,17 +843,48 @@ def _sid_owner_app(sid: Optional[str]) -> Optional[Tuple[str, str]]:
     return (parts[0], parts[1]) if all(parts) else None
 
 
+# One key=value pair of a Splunk stash record (an ES notable's _raw), its value
+# quoted with backslash escapes or bare to a comma or space; a key only at a
+# field boundary. A lone quoted string is matched too, so nothing inside one
+# reads as a pair.
+_STASH = re.compile(
+    r'(?:(?<=[,\s])|^)([A-Za-z_][\w.]*)=("(?:\\.|[^"\\])*"|[^,\s"]*)'
+    r'|"(?:\\.|[^"\\])*"'
+)
+
+
+def _stash_fields(raw: Any) -> Dict[str, str]:
+    """search_name and orig_sid a stash _raw names, first match of each."""
+    fields: Dict[str, str] = {}
+    for match in _STASH.finditer(raw if isinstance(raw, str) else ""):
+        key, value = match.groups()
+        if key in ("search_name", "orig_sid") and key not in fields:
+            if value.startswith('"'):
+                value = re.sub(r"\\(.)", r"\1", value[1:-1])
+            fields[key] = value
+    return fields
+
+
 def _splunk_ref(records: List[Any]) -> Any:
     """(saved search name, inventory keys to try in order) a notable names, or why not.
 
+    A record's top-level search_name and orig_sid are read first; without them,
+    the pair its _raw stash record names (a notable fetched before the adapter
+    asked for every field kept only Splunk's default fields, _raw among them).
     The keys are saved_search_key's: app/name@owner (shared with its owner only),
     then app/name. With no readable orig_sid there are none: match on name alone.
     """
-    notable = next((r for r in records if _text(r, "search_name")), None)
-    if notable is None:
+    for record in records:
+        if _text(record, "search_name"):
+            name, sid = _text(record, "search_name"), _text(record, "orig_sid")
+            break
+        stash = _stash_fields(record.get("_raw") if isinstance(record, dict) else None)
+        if _text(stash, "search_name"):
+            name, sid = _text(stash, "search_name"), _text(stash, "orig_sid")
+            break
+    else:
         return _unknown("the Splunk alert names no saved search (no search_name)")
-    name = _text(notable, "search_name")
-    owner_app = _sid_owner_app(_text(notable, "orig_sid"))
+    owner_app = _sid_owner_app(sid)
     if owner_app is None:
         return name, ()
     owner, app = owner_app
@@ -923,8 +954,9 @@ def rule_for_finding(finding: Mapping[str, Any]) -> Dict[str, Any]:
     the latest one first seen at or before the alert. Kibana (source 'elastic')
     and Wazuh (source 'wazuh') rules resolve by the rule id the alert names. A
     Splunk notable resolves by its search_name, with app and owner read from its
-    orig_sid; with no readable sid, by search_name alone only when exactly one
-    Splunk saved search has that name.
+    orig_sid (its top-level fields, else its _raw stash record); with no
+    readable sid, by search_name alone only when exactly one Splunk saved search
+    has that name.
     """
     if _named(finding) is None:
         ref = _rule_ref(finding)
