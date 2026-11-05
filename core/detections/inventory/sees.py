@@ -11,27 +11,33 @@ whether the rule's ``required_fields`` are mapped. Groups are searched one at a
 time, the least recently searched by any Vigil process first (never searched
 before all); when the hour's budget is spent the rest wait for the next sweep.
 
+Vigil's own Elastic overlay copies in shadow or live (not handed off to a
+Kibana rule) are checked alongside, from their TOML's [rule] table, on the same
+searches and budget; with no Kibana configured they are checked alone.
+
 The result goes under checks['sees'] on the latest version, written only when
-it changed. ES|QL, ML and rules with no index read ``unknown``, never ``pass``.
-Nothing is written to Elasticsearch or Kibana.
+it changed. An ES|QL rule's indices are read from its leading ``FROM``; ML
+rules, rules with no index and ES|QL with no readable ``FROM`` read
+``unknown``, never ``pass``. Nothing is written to Elasticsearch or Kibana.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from sqlalchemy import and_, bindparam, select, tuple_, update
 
-from core.detections.inventory import kibana
+from core.detections.inventory import kibana, readers
 from core.integrations._base import search_budget
 from core.integrations._base.search_params import validate_index
 from core.integrations.elastic.descriptor import ELASTIC
 from core.storage.connection import get_db_manager
-from core.storage.models import DetectionRule, DetectionRuleVersion
+from core.storage.models import DetectionRule, DetectionRuleStage, DetectionRuleVersion
 
 logger = logging.getLogger(__name__)
 
@@ -73,13 +79,29 @@ def _fields(content: Mapping[str, Any]) -> List[str]:
     )
 
 
+ESQL_FROM = re.compile(r"FROM\s+(.+?)(?:\s+METADATA\s+.*)?", re.I | re.S)
+ESQL_INDEX = re.compile(r"[^\s,|\"'`()\[\]]+")
+
+
+def _esql_from(query: str) -> Tuple[List[str], Optional[str]]:
+    """The indices of an ES|QL query's leading ``FROM a, b [METADATA ...]``."""
+    head = re.sub(r"//[^\n]*", " ", query).split("|", 1)[0].strip()
+    m = ESQL_FROM.fullmatch(head)
+    if not m:
+        return [], "ES|QL rule: its query does not start with FROM"
+    patterns = [p.strip().strip('"') for p in m.group(1).split(",")]
+    if not all(ESQL_INDEX.fullmatch(p) for p in patterns):
+        return [], f"ES|QL rule: its FROM ({m.group(1).strip()}) could not be read"
+    return patterns, None
+
+
 async def _patterns(
     service: Any, content: Mapping[str, Any], views: Dict[str, Any]
 ) -> Tuple[List[str], Optional[str]]:
     """The rule's index patterns, or why there are none. A data view is read once a sweep."""
     kind = content.get("type")
     if kind == "esql":
-        return [], "ES|QL rule: its data source is not parsed"
+        return _esql_from(str(content.get("query") or ""))
     if kind == "machine_learning":
         return [], "machine learning rule: reads an ML job, not an index"
     index = [p for p in content.get("index") or [] if isinstance(p, str) and p]
@@ -209,6 +231,59 @@ def _active_rules() -> List[Tuple[RuleKey, Mapping[str, Any]]]:
     return [((rid, ver), content or {}) for rid, ver, content in rows]
 
 
+def overlay_copies(language: str, siem: str) -> List[Tuple[RuleKey, Mapping[str, Any]]]:
+    """Active overlay copies of ``language`` at their latest version whose current
+    stage is shadow or live, less those an active ``siem`` rule runs instead."""
+    from core.detections.inventory.rollout import siem_runs
+
+    s = DetectionRuleStage
+    current = (
+        select(s.rule_id, s.stage)
+        .distinct(s.rule_id)
+        .order_by(s.rule_id, s.at.desc(), s.id.desc())
+        .subquery()
+    )
+    with get_db_manager().session_scope() as session:
+        rows = session.execute(
+            select(
+                DetectionRule.id,
+                DetectionRule.latest_version,
+                DetectionRuleVersion.content,
+            )
+            .join(
+                DetectionRuleVersion,
+                and_(
+                    DetectionRuleVersion.rule_id == DetectionRule.id,
+                    DetectionRuleVersion.version == DetectionRule.latest_version,
+                ),
+            )
+            .join(current, current.c.rule_id == DetectionRule.id)
+            .where(
+                DetectionRule.source == readers.OVERLAY_SOURCE,
+                DetectionRule.language == language,
+                DetectionRule.status == "active",
+                current.c.stage.in_(("shadow", "live")),
+            )
+            .order_by(DetectionRule.id)
+        ).all()
+    gone = siem_runs(siem, [rid for rid, _, _ in rows])
+    return [
+        ((rid, ver), content or {}) for rid, ver, content in rows if rid not in gone
+    ]
+
+
+def _overlay_rule(content: Mapping[str, Any]) -> Dict[str, Any]:
+    """An Elastic copy's [rule] table, read as a Kibana rule's content is."""
+    from core.detections.inventory.rollout import _toml_rule
+
+    rule = dict(_toml_rule(content))
+    if isinstance(rule.get("index"), str):
+        rule["index"] = [rule["index"]]
+    if rule.get("language") == "esql":
+        rule["type"] = "esql"
+    return rule
+
+
 def _logged(new: Mapping[str, Any], before: Optional[tuple]) -> bool:
     return before != (new["result"], new["reason"])
 
@@ -291,23 +366,41 @@ def write_check(
     return len(changed)
 
 
-def sweep_elastic(config: Mapping[str, Any]) -> SeesReport:
-    """Check Sees for the active Kibana rules, as far as the hour's budget goes."""
+def sweep_elastic(config: Mapping[str, Any], kibana_rules: bool = True) -> SeesReport:
+    """Check Sees for the active Kibana rules (unless ``kibana_rules`` is False)
+    and the stageful Elastic overlay copies, as far as the hour's budget goes."""
     report = SeesReport()
     try:
         per_hour = config.get("max_searches_per_hour")
         per_hour = DEFAULT_PER_HOUR if per_hour is None else max(int(per_hour), 0)
-        rules = _active_rules()
-        report.rules = len(rules)
+        rules = _active_rules() if kibana_rules else []
+        try:
+            copies = [
+                (key, _overlay_rule(content))
+                for key, content in overlay_copies("elastic", kibana.SOURCE)
+            ]
+        except Exception as exc:  # noqa: BLE001 -- Kibana's rules still get Sees
+            logger.warning("detection rules: overlay copies unread for Sees: %s", exc)
+            report.error = f"overlay: {type(exc).__name__}: {exc}"
+            copies = []
+        report.rules = len(rules) + len(copies)
         service = kibana.service_of(config)
 
         async def _run() -> Dict[RuleKey, Dict[str, Any]]:
             try:
-                return await _check(service, rules, per_hour, report)
+                return await _check(service, rules + copies, per_hour, report)
             finally:
                 await service.close()
 
-        report.written = write_check("sees", asyncio.run(_run()))
+        results = asyncio.run(_run())
+        # One write per source: write_check reads the last results per source.
+        report.written = write_check(
+            "sees", {k: results[k] for k, _ in rules if k in results}
+        ) + write_check(
+            "sees",
+            {k: results[k] for k, _ in copies if k in results},
+            source=readers.OVERLAY_SOURCE,
+        )
     except Exception as exc:  # noqa: BLE001 -- the sync's own report stands
         logger.warning("detection rules: Sees sweep failed: %s", exc)
         report.error = f"{type(exc).__name__}: {exc}"

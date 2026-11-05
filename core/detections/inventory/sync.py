@@ -560,6 +560,9 @@ def sync_repos() -> List[Any]:
             # Quiet first: its one search is spent before Sees' groups.
             reports.append(quiet.sweep_elastic(config))
             reports.append(sees.sweep_elastic(config))
+        elif (es_config := _overlay_elastic_config()) is not None:
+            # No Kibana sync: Vigil's overlay copies still need Sees to promote.
+            reports.append(sees.sweep_elastic(es_config, kibana_rules=False))
         splunk_report, splunk_config = _sync_splunk()
         reports.append(_drifted(_linked(splunk_report, _link_known_name)))
         if splunk_config is not None:
@@ -573,6 +576,17 @@ def sync_repos() -> List[Any]:
             "detection rules: %d rules of unconfigured sources removed", removed
         )
     return reports
+
+
+def _overlay_elastic_config() -> Optional[Dict[str, Any]]:
+    """elastic-siem's config as the overlay runner reads it (no kibana_url needed)."""
+    from core.detections.inventory.rollout import _elastic_config
+
+    try:
+        return _elastic_config()
+    except Exception as exc:  # noqa: BLE001 -- the Elastic sync's report stands
+        logger.warning("detection rules: elastic-siem config unread: %s", exc)
+        return None
 
 
 def _linked(report: SourceReport, link: Callable[[], tuple]) -> SourceReport:
