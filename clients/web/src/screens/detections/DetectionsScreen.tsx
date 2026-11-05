@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { errorText } from '../../shared/errorText'
 import { detectionRulesApi } from '../../services/api'
-import { TabStrip } from '../../shared/TabStrip'
 import { Empty, Failure } from '../shared/x1'
 import './detections.css'
 
@@ -94,22 +92,14 @@ function prompt(r: RuleRow, days: number): string {
   }
 }
 
-/** Alex's 1.x tabs; only Existing rules is ported so far. Threat model, Heat map, Red team and Proposals join here. */
-const TABS = [{ id: 'rules', label: 'Existing rules' }] as const
-type Tab = (typeof TABS)[number]['id']
-
-/** The shell heads the page (TITLES); under it, the tab strip and the open tab. */
+/** The shell heads the page (TITLES); under it, Import rules and the rule health. */
 export default function DetectionsScreen({ goSettings, openChat }: ConsoleScreenProps) {
-  const [params, setParams] = useSearchParams()
-  // the tab is in the URL; none, or one not ported yet, reads as Existing rules
-  const tab: Tab = TABS.find((t) => t.id === params.get('tab'))?.id ?? 'rules'
   return (
     <div className="x1 de">
-      <div className="de-tabs">
-        <TabStrip label="Detection engineering" tabs={TABS} active={tab} onChange={(id) => setParams({ tab: id })} />
+      <div className="de-top">
         <button type="button" className="btn primary" onClick={() => goSettings('data')}>Import rules</button>
       </div>
-      {tab === 'rules' && <RulesTab goSettings={goSettings} openChat={openChat} />}
+      <RulesTab goSettings={goSettings} openChat={openChat} />
     </div>
   )
 }
@@ -218,11 +208,6 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
           <span className="de-kpi-label">Declare an ATT&amp;CK technique</span>
           <b>{n(report.mapped)}</b>
           <span className="de-kpi-sub">{Math.round((100 * report.mapped) / Math.max(report.rule_total, 1))}% of the inventory</span>
-        </div>
-        <div className="de-kpi">
-          <span className="de-kpi-label">Priority techniques validated <span className="de-mock">[mock]</span></span>
-          <b>2 <small>of 6 · 33%</small></b>
-          <span className="de-segs" aria-hidden="true">{[0, 1, 2, 3, 4, 5].map((i) => <i key={i} className={i < 2 ? 'on' : ''} />)}</span>
         </div>
         <div className="de-kpi">
           <span className="de-kpi-label">Rules that can’t fire</span>
@@ -358,7 +343,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
             return (
               <div key={item.key} data-index={item.index} ref={virtual.measureElement} className="de-tr de-row" style={{ transform: `translateY(${item.start - HEAD_ROW}px)` }}>
                 <div className="de-rule">
-                  <div className="de-name">{r.name}</div>
+                  <div className="de-name" title={r.name}>{r.name}</div>
                   <div className="de-meta">
                     <span className="de-where">{SIEM_NAME[r.tool] ?? r.tool}</span>
                     {r.techniques.length > 0 && <span className="x1-mono">{r.techniques.slice(0, 2).join(', ')}{r.techniques.length > 2 ? ` +${r.techniques.length - 2}` : ''}</span>}
@@ -369,7 +354,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                 </div>
                 <div><span className={`de-health ${h.tone}`}><i />{h.label}</span></div>
                 <div className="de-why">
-                  <div className="de-why-text">{r.why}</div>
+                  <div className="de-why-text" title={r.why}>{r.why}</div>
                   {r.raw && (
                     <button type="button" className="de-raw-toggle" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : r.rule_id)}>
                       {isOpen ? 'Hide raw error' : 'Raw error'}
