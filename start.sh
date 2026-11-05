@@ -229,7 +229,7 @@ start_backup_loop
 # newly added dependency does not leave Vite failing to resolve it.
 if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "clients/web" ] && frontend_deps_stale clients/web; then
     if [ -f clients/web/package-lock.json ]; then
-        (cd clients/web && npm ci)
+        (cd clients/web && npm ci) || (cd clients/web && npm install)
     else
         (cd clients/web && npm install)
     fi
