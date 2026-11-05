@@ -3229,6 +3229,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/detection-rules/overlay-only": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Overlay Only
+         * @description Live overlay copies no SIEM rule runs: only Vigil detects with these,
+         *     so Stop halts their detection. Read-only.
+         */
+        get: operations["get_api_detection-rules_overlay-only"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/detection-rules/reload": {
         parameters: {
             query?: never;
@@ -17443,6 +17464,37 @@ export interface operations {
         };
     };
     "get_api_detection-rules_mcp-env": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_detection-rules_overlay-only": {
         parameters: {
             query?: never;
             header?: {

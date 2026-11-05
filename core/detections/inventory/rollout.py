@@ -35,6 +35,10 @@ Elastic copy's move to live, when a git source is marked ``deploy_target`` for
 elastic, queues one ``agent-run-mitre_analyst`` run that opens a pull request
 adding the rule there.
 
+While Stop is set (or the ceiling cannot be read) no copy is run: no search,
+no checks written, no findings. Its last successful run stays put, so the stopped
+period is searched on the first run after Stop lifts.
+
 Nothing is written to Elasticsearch, Kibana or Splunk.
 """
 
@@ -854,6 +858,11 @@ def run_copies(live: bool) -> RolloutReport:
     """
     report = RolloutReport()
     now = datetime.now(timezone.utc)
+    # Overlay searches and findings are Vigil's own activity: Stop halts them all.
+    # Nothing is written, so last_success stays and the next run covers the gap.
+    if _stopped():
+        report.skipped.append("stopped")
+        return report
     try:
         copies = [
             c for c in _copies() if c.stage == "shadow" or (c.stage == "live" and live)
