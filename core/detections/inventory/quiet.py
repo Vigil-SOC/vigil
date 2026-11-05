@@ -30,7 +30,9 @@ days) to now; under 24 h it reads ``unknown`` ("version too new"). Over
 ``quiet_max_alerts_per_day`` averaged over the window is ``fail``, else
 ``pass`` (a rule with no alerts too). Rules the terms aggregation could not
 hold read ``unknown`` ("not counted this sync"); a failed search, ``unknown``
-with its error.
+with its error. When some Wazuh indices' shards fail (others answering), the
+count is a floor: a ``fail`` stands, a ``pass`` reads ``unknown`` naming them;
+Noisy reads ``unknown``, and so does a Silent ``fail`` or a ``days_fired`` of 0.
 
 The result goes under checks['quiet'] ({result, reason, count, days,
 checked_at}), written only when it changed. Since the count moves the reason,
@@ -146,9 +148,15 @@ def _days(agg: Mapping[str, Any]) -> Tuple[Days, bool]:
 
 
 def _results(
-    rules: List[Rule], days_of: Days, truncated: bool, max_per_day: int, now: datetime
+    rules: List[Rule],
+    days_of: Days,
+    truncated: bool,
+    max_per_day: int,
+    now: datetime,
+    failed: Tuple[str, ...] = (),
 ) -> Dict[RuleKey, Dict[str, Any]]:
-    """Each rule's Quiet verdict, over its own window."""
+    """Each rule's Quiet verdict, over its own window. With ``failed`` (indices
+    whose shards failed) the count is a floor: a fail stands, a pass is unknown."""
     today = now.date()
     first_day = today - timedelta(days=DAYS - 1)
     out: Dict[RuleKey, Dict[str, Any]] = {}
@@ -168,6 +176,11 @@ def _results(
         midnight = datetime.combine(start, datetime.min.time(), timezone.utc)
         days = max(round((now - midnight) / timedelta(days=1)), 1)
         out[key] = _verdict(count, days, max_per_day)
+        if failed and out[key]["result"] == "pass":
+            out[key] = _unknown(
+                f"{out[key]['reason']} in the indices that answered; "
+                f"partial count, shards failed on {'; '.join(failed)}"
+            )
     return out
 
 
@@ -213,8 +226,11 @@ def _history(
     truncated: bool,
     cfg: Mapping[str, int],
     now: datetime,
+    failed: Tuple[str, ...] = (),
 ) -> Tuple[Dict[RuleKey, Dict[str, Any]], Dict[RuleKey, Dict[str, Any]]]:
-    """Each rule's Noisy and Silent verdicts from its daily buckets."""
+    """Each rule's Noisy and Silent verdicts from its daily buckets. With
+    ``failed`` (indices whose shards failed) every bucket is a floor: Noisy is
+    unknown, a Silent fail is unknown, and a days_fired of 0 is dropped."""
     today = now.date()
     window = [(today - timedelta(days=i)).isoformat() for i in range(DAYS - 1, -1, -1)]
     noisy: Dict[RuleKey, Dict[str, Any]] = {}
@@ -234,6 +250,22 @@ def _history(
             }
             continue
         noisy[key], silent[key] = _noisy(by_day, cfg), _silent(by_day, cfg)
+    if failed:
+        partial = f"partial count, shards failed on {'; '.join(failed)}"
+        for key in noisy:
+            if noisy[key]["result"] != "unknown":
+                reason = noisy[key]["reason"].removeprefix("fail: ")
+                noisy[key] = _history_unknown(f"{reason}; {partial}")
+            found = silent[key]
+            # Alerts seen in the last days stand; a silence or a 0 might not.
+            if found["result"] == "fail" or found.get("days_fired") == 0:
+                reason = found["reason"].removeprefix("fail: ")
+                kept = (
+                    {"days_fired": found["days_fired"]}
+                    if found.get("days_fired")
+                    else {}
+                )
+                silent[key] = {**_history_unknown(f"{reason}; {partial}"), **kept}
     return noisy, silent
 
 
@@ -440,8 +472,13 @@ def sweep_wazuh() -> QuietReport:
                     return report
                 if agg is not None:
                     days_of, truncated = _days(agg)
-                    results = _results(rules, days_of, truncated, max_per_day, now)
-                    noisy, silent = _history(rules, days_of, truncated, cfg, now)
+                    failed = tuple(agg.get("failed") or ())
+                    results = _results(
+                        rules, days_of, truncated, max_per_day, now, failed
+                    )
+                    noisy, silent = _history(
+                        rules, days_of, truncated, cfg, now, failed
+                    )
                     _cannot_alert(noisy, silent)
         if why:
             results = {key: _unknown(why) for key, _, _, _ in rules}

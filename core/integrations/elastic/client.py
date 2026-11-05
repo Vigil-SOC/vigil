@@ -13,6 +13,27 @@ from core.integrations._base.tls import tls_verify
 logger = logging.getLogger(__name__)
 
 
+def _partial(body: Dict[str, Any]) -> List[str]:
+    """``index: reason`` per index whose shards failed, when others answered.
+
+    Raises when the search timed out or no shard answered."""
+    shards = body.get("_shards") or {}
+    if shards.get("failed") and not shards.get("successful"):
+        raise RuntimeError(f"shard failures: {shards.get('failures')}")
+    if body.get("timed_out"):
+        raise RuntimeError("the search timed out: its buckets are partial")
+    out: Dict[str, str] = {}
+    for f in shards.get("failures") or []:
+        reason = f.get("reason") or {}
+        text = reason.get("reason") if isinstance(reason, dict) else str(reason)
+        # First sentence: Fielddata's own runs on for four more.
+        text = (str(text or "shard failed").split(". ") or [""])[0]
+        out.setdefault(str(f.get("index") or "an index"), text)
+    if shards.get("failed") and not out:
+        out["an index"] = f"{shards['failed']} shard(s) failed"
+    return [f"{i}: {r}" for i, r in sorted(out.items())]
+
+
 class ElasticService:
     """Service for interacting with Elasticsearch and Kibana Security APIs."""
 
@@ -281,9 +302,10 @@ class ElasticService:
         self, index: str, fields: List[str], days: int, size: int = 10000
     ) -> Dict[str, Any]:
         """One size-0 search over the last ``days`` of ``index`` (on @timestamp)
-        with a terms aggregation per field: ``{"total": hits, field: {"values":
-        set, "other": docs past the size}}``. A missing index reads as no events;
-        any other failure raises."""
+        with a terms aggregation per field: ``{"total": hits, "failed": [index:
+        reason] of indices whose shards failed, field: {"values": set, "other":
+        docs past the size}}``. A missing index reads as no events; a time-out,
+        or every shard failing, raises."""
         resp = await self.es_client.post(
             f"/{validate_index(index)}/_search",
             params={"ignore_unavailable": "true", "allow_no_indices": "true"},
@@ -296,13 +318,11 @@ class ElasticService:
         )
         resp.raise_for_status()
         body = resp.json()
-        if (body.get("_shards") or {}).get("failed"):
-            raise RuntimeError(f"shard failures: {body['_shards'].get('failures')}")
-        if body.get("timed_out"):
-            raise RuntimeError("the search timed out: its buckets are partial")
+        failed = _partial(body)
         total = (body.get("hits") or {}).get("total")
         out: Dict[str, Any] = {
-            "total": int(total.get("value") if isinstance(total, dict) else total or 0)
+            "total": int(total.get("value") if isinstance(total, dict) else total or 0),
+            "failed": failed,
         }
         aggs = body.get("aggregations") or {}
         for f in fields:
@@ -412,8 +432,8 @@ class ElasticService:
         """Alerts per ``rule.id`` per UTC day in ``index`` (e.g. ``wazuh-alerts-*``)
         since ``days`` - 1 days ago midnight: one size-0 search on the indexer.
         Returns the ``rules`` terms aggregation, shaped as
-        :meth:`alerts_per_rule_per_day`'s; a missing index reads as no alerts,
-        any other failure raises."""
+        :meth:`alerts_per_rule_per_day`'s plus ``failed`` (as :meth:`terms_since`'s);
+        a missing index reads as no alerts, any other failure raises."""
         resp = await self.es_client.post(
             f"/{validate_index(index)}/_search",
             params={"ignore_unavailable": "true", "allow_no_indices": "true"},
@@ -441,12 +461,10 @@ class ElasticService:
         if resp.is_error:  # the indexer's own message says why, e.g. too many buckets
             raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:500]}")
         body = resp.json()
-        if (body.get("_shards") or {}).get("failed"):
-            raise RuntimeError(f"shard failures: {body['_shards'].get('failures')}")
-        if body.get("timed_out"):
-            raise RuntimeError("the search timed out: its buckets are partial")
+        failed = _partial(body)
         # No index matched: no aggregation, and no alerts.
-        return (body.get("aggregations") or {}).get("rules") or {"buckets": []}
+        agg = (body.get("aggregations") or {}).get("rules") or {"buckets": []}
+        return {**agg, "failed": failed}
 
     async def field_caps(self, index: str, fields: List[str]) -> set:
         """Which of ``fields`` the mapping of ``index`` has. Metadata, not a search."""
