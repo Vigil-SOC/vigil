@@ -154,7 +154,9 @@ def main(argv: list[str] | None = None) -> int:
 
     clock = ReplayClock(first)
     try:
-        with open_writer(store, shape=shape) as writer:
+        # Retention counts replay time, or a trace older than 90 days would be purged.
+        replay_now = lambda: datetime.fromtimestamp(clock.now, UTC)  # noqa: E731
+        with open_writer(store, shape=shape, clock=replay_now) as writer:
             medic = Medic(
                 writer=writer,
                 rules=loaded.rules,
