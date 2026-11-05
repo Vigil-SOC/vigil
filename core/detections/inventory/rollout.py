@@ -452,6 +452,31 @@ def _write_runs(copies: List[Copy], results: Dict[int, tuple], now: datetime) ->
     return len(changed)
 
 
+def _hand_off(copies: List[Copy], now: datetime) -> None:
+    """Copies Kibana runs now stop carrying Runs: a NULL row closes their flag."""
+    from core.detections.inventory.sync import (
+        _dropped,
+        _last_results,
+        _record_changes,
+        _write_checks,
+    )
+
+    if not copies:
+        return
+    with get_db_manager().session_scope() as session:
+        last = _last_results(session, readers.OVERLAY_SOURCE)
+        changes, checked = [], []
+        for c in copies:
+            rows, checks = _dropped(
+                c.rule_id, c.version, c.checks, ("runs",), last, "run by Kibana"
+            )
+            changes += rows
+            if checks != c.checks:
+                checked.append((c.rule_id, c.version, checks))
+        _write_checks(session, checked)
+        _record_changes(session, changes, now.isoformat())
+
+
 def _write_unrunnable(copies: List[Tuple[Copy, str]], now: datetime) -> int:
     """checks['runs'] unknown for copies the runner cannot run, once per reason."""
     results = {
@@ -701,6 +726,7 @@ def _run_copies(live: bool, now: datetime, report: RolloutReport) -> None:
     # Worked out on each read: no stage records the handoff.
     gone = siem_runs(kibana.SOURCE, [c.rule_id for c in copies])
     report.handed_off = len(gone)
+    _hand_off([c for c in copies if c.rule_id in gone], now)
     copies = [c for c in copies if c.rule_id not in gone]
     report.copies = len(copies)
     blocked = [(c, why) for c in copies if (why := runnable(c.rule))]
