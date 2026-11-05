@@ -101,8 +101,12 @@ def generate_initial_context(
     findings: List[Dict[str, Any]],
     case_id: Optional[str] = None,
     document: Optional[str] = None,
+    goal: Optional[str] = None,
 ) -> str:
     """Generate the initial context.md with trigger finding summaries.
+
+    ``goal`` is what a run with no hypothesis board (one agent on its own) is
+    asked to do; its brief is the only place the agent reads it.
 
     ``document`` is whatever a person handed the ask -- a URL, a path, or the
     report text. It goes in whole and unparsed, ahead of the findings: a run
@@ -114,6 +118,8 @@ def generate_initial_context(
     lines = ["# Investigation Context", ""]
     if case_id:
         lines.extend([f"case_id: {case_id}", ""])
+    if goal:
+        lines.extend(["## Goal", "", goal.strip(), ""])
     if document:
         lines.extend(["## Attached Document", "", *fenced_document(document), ""])
     lines.extend(["## Trigger Findings", ""])

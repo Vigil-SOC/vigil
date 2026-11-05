@@ -903,7 +903,12 @@ export const detectionRulesApi = {
     path?: string
     subdirectory?: string
     story_subdirectory?: string
+    deploy_target?: boolean
   }) => api.post('/detection-rules/sources', data),
+
+  /** Mark (or clear) the git source Vigil's live rules of its format go to. */
+  setDeployTarget: (sourceId: string, deployTarget: boolean) =>
+    api.post(`/detection-rules/sources/${sourceId}/deploy-target`, { deploy_target: deployTarget }),
   
   removeSource: (sourceId: string, deleteFiles: boolean = false) =>
     api.delete(`/detection-rules/sources/${sourceId}`, { params: { delete_files: deleteFiles } }),
