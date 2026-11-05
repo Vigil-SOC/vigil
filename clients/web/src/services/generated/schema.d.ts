@@ -3194,7 +3194,7 @@ export interface paths {
         /**
          * Get Health
          * @description Whether each SIEM's rules can fire: per-tool check tallies, Blind spots,
-         *     the rules failing or unknown on a check (fails first, capped at ``limit``),
+         *     the rules failing or unknown on a check (broken, then starved, first; capped at ``limit``),
          *     and the repo rules no SIEM has a copy of. Read-only.
          */
         get: operations["get_api_detection-rules_health"];

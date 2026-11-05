@@ -574,23 +574,31 @@ def unchecked(siems: Iterable[str]) -> Dict[str, Dict[str, Any]]:
 
 
 def rules_not_passing(limit: int = 200) -> Dict[str, Any]:
-    """Active SIEM rules failing or unknown on Runs, Sees or Quiet, fails first: the first
-    ``limit`` with their checks as stored, how many there are, and per tool how
-    many are not passing and how many fail (can't fire)."""
-    fails = _any_result("fail")
+    """Active SIEM rules failing or unknown on Runs, Sees or Quiet: the first
+    ``limit`` with their checks as stored, broken (Runs fails) first, then starved
+    (Sees fails, Runs doesn't), then the rest; how many there are; and per tool
+    how many are not passing, broken and starved. Broken plus starved can't fire."""
+    broken = RUNS == "fail"
+    # RUNS is NULL with no run yet; a bare != would drop those rules.
+    starved = and_(SEES == "fail", RUNS.is_distinct_from("fail"))
     where = (
         ACTIVE,
         ~DetectionRule.source.startswith(REPO_PREFIX),
-        fails | _any_result("unknown"),
+        _any_result("fail") | _any_result("unknown"),
     )
     latest = (
         select().select_from(DetectionRule).join(DetectionRuleVersion, _latest_join())
     )
     with get_db_manager().session_scope() as session:
         by_tool = {
-            tool: {"not_passing": count, "failing": failing}
-            for tool, count, failing in session.execute(
-                latest.add_columns(TOOL, func.count(), func.count().filter(fails))
+            tool: {"not_passing": count, "broken": b, "starved": s}
+            for tool, count, b, s in session.execute(
+                latest.add_columns(
+                    TOOL,
+                    func.count(),
+                    func.count().filter(broken),
+                    func.count().filter(starved),
+                )
                 .where(*where)
                 .group_by(TOOL)
             ).all()
@@ -598,7 +606,11 @@ def rules_not_passing(limit: int = 200) -> Dict[str, Any]:
         rows = session.execute(
             latest.add_columns(DetectionRule, DetectionRuleVersion.checks)
             .where(*where)
-            .order_by(fails.desc(), DetectionRule.source, DetectionRule.name)
+            .order_by(
+                case((broken, 0), (SEES == "fail", 1), else_=2),
+                DetectionRule.source,
+                DetectionRule.name,
+            )
             .limit(limit)
         ).all()
         rules = [
