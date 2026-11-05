@@ -225,7 +225,7 @@ def get_stats(
 @router.get("/health")
 def get_health(limit: int = Query(200, ge=1, le=1000)):
     """Whether each SIEM's rules can fire: per-tool check tallies, Blind spots,
-    the rules failing or unknown on a check (fails first, capped at ``limit``),
+    the rules failing or unknown on a check (broken, then starved, first; capped at ``limit``),
     and the repo rules no SIEM has a copy of. Read-only."""
     by_tool = catalog.rules_by_tool()
     siems = [t for t in by_tool if t not in ("repo", catalog.OVERLAY)]
