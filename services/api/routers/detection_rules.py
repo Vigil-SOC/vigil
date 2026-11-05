@@ -41,6 +41,13 @@ class AddSourceRequest(BaseModel):
     path: Optional[str] = None
     subdirectory: str = ""
     story_subdirectory: str = ""
+    deploy_target: bool = False
+
+
+class DeployTargetRequest(BaseModel):
+    """Whether this git source receives Vigil's live rules of its format."""
+
+    deploy_target: bool
 
 
 @router.get("/sources")
@@ -101,6 +108,7 @@ def add_source(
             path=request.path,
             subdirectory=request.subdirectory,
             story_subdirectory=request.story_subdirectory,
+            deploy_target=request.deploy_target,
         )
         background.add_task(_sync_detection_rules)
         return {"success": True, "source": source}
@@ -160,6 +168,22 @@ async def update_source(
         return {"success": True, "source": source}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/sources/{source_id}/deploy-target", dependencies=_SETTINGS_WRITE)
+def set_deploy_target(
+    source_id: str,
+    request: DeployTargetRequest,
+    service: DetectionRulesService = Depends(provide_detection_rules),
+):
+    """Mark or unmark a git source as where Vigil's live rules of its format go."""
+    try:
+        source = service.set_deploy_target(source_id, request.deploy_target)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"success": True, "source": source}
 
 
 @router.post("/update-all", dependencies=_SETTINGS_WRITE)

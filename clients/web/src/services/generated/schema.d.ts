@@ -3324,6 +3324,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/detection-rules/sources/{source_id}/deploy-target": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set Deploy Target
+         * @description Mark or unmark a git source as where Vigil's live rules of its format go.
+         */
+        post: operations["post_api_detection-rules_sources_source_id_deploy-target"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/detection-rules/sources/{source_id}/update": {
         parameters: {
             query?: never;
@@ -7274,6 +7294,11 @@ export interface components {
          * @description Request to add a new detection rule source.
          */
         AddSourceRequest: {
+            /**
+             * Deploy Target
+             * @default false
+             */
+            deploy_target: boolean;
             /** Format */
             format: string;
             /** Name */
@@ -8881,6 +8906,14 @@ export interface components {
              * @default false
              */
             enabled: boolean;
+        };
+        /**
+         * DeployTargetRequest
+         * @description Whether this git source receives Vigil's live rules of its format.
+         */
+        DeployTargetRequest: {
+            /** Deploy Target */
+            deploy_target: boolean;
         };
         /** DirectiveRequest */
         DirectiveRequest: {
@@ -17584,6 +17617,43 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_sources_source_id_deploy-target": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeployTargetRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

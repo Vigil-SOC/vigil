@@ -20,7 +20,12 @@ The sweep then writes a stage row (actor 'system', proof holding the numbers)
 for each move that is due: shadow -> live after a quiet, passing week (at most
 ``LIVE_PER_DAY`` a day across all rules), live -> shadow on noise or a loud
 day, shadow -> off after ``OFF_AFTER_FAILURES`` failed runs in a row. No stage
-row is written while Stop is set, or while the ceiling cannot be read.
+row is written while Stop is set, or while the ceiling cannot be read. A move
+to live, when a git source is marked ``deploy_target`` for elastic, queues one
+``agent-run-mitre_analyst`` run that opens a pull request adding the rule there.
+
+A copy an active Kibana rule now runs (one linked to the overlay rule, or to a
+repo rule with its rule_id) is handed off: the runner skips it, its stage stays.
 
 Nothing is written to Elasticsearch or Kibana.
 """
@@ -39,11 +44,17 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 from sqlalchemy import and_, bindparam, func, insert, select, text, update
 
 from core.detections.inventory import kibana, readers, sees
+from core.detections.inventory.catalog import REPO_PREFIX
 from core.integrations._base import search_budget
 from core.integrations._base.ids import EXTERNAL_ID_MAX, fit_id
 from core.integrations.elastic.descriptor import ELASTIC
 from core.storage.connection import get_db_manager
-from core.storage.models import DetectionRule, DetectionRuleStage, DetectionRuleVersion
+from core.storage.models import (
+    DetectionRule,
+    DetectionRuleStage,
+    DetectionRuleVersion,
+    IntakeTrigger,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +87,9 @@ class Copy:
     stage_at: datetime
     checks: Dict[str, Any]
     rule: Dict[str, Any]
+    key: str = ""  # its rule_id, the overlay rule's native_key
+    toml: str = ""  # the overlay file exactly as stored
+    path: Optional[str] = None
 
 
 @dataclass
@@ -87,6 +101,8 @@ class RolloutReport:
     written: int = 0
     moves: List[str] = field(default_factory=list)
     held: int = 0  # due moves not written: Stop set or the ceiling unread
+    handed_off: int = 0  # copies an active SIEM rule runs instead
+    queued: List[int] = field(default_factory=list)  # intake rows for deploy PRs
     findings: List[Dict[str, Any]] = field(default_factory=list, repr=False)
     error: Optional[str] = None
     skipped: Optional[str] = None
@@ -119,6 +135,8 @@ def _copies() -> List[Copy]:
                 current.c.at,
                 DetectionRuleVersion.checks,
                 DetectionRuleVersion.content,
+                DetectionRule.native_key,
+                DetectionRule.path,
             )
             .join(
                 DetectionRuleVersion,
@@ -136,9 +154,58 @@ def _copies() -> List[Copy]:
             .order_by(DetectionRule.id)
         ).all()
     return [
-        Copy(rid, ver, name, stage, at, checks or {}, _toml_rule(content or {}))
-        for rid, ver, name, stage, at, checks, content in rows
+        Copy(
+            rid,
+            ver,
+            name,
+            stage,
+            at,
+            checks or {},
+            _toml_rule(content or {}),
+            key,
+            str((content or {}).get("_content") or ""),
+            path,
+        )
+        for rid, ver, name, stage, at, checks, content, key, path in rows
     ]
+
+
+LINKED = ("same_id", "known_name", "agent")  # 'declined' is not a link
+
+
+def siem_runs(siem: str, rule_ids: List[int]) -> set:
+    """Of these overlay rules, those an active linked SIEM copy runs.
+
+    A ``siem`` copy (status active, so enabled) linked to the overlay rule
+    itself, or to a repo rule of its language carrying its key, runs it now.
+    """
+    if not rule_ids:
+        return set()
+    overlay, repo, siem_copy = (
+        DetectionRule.__table__.alias(n) for n in ("o", "r", "c")
+    )
+    with get_db_manager().session_scope() as session:
+        return set(
+            session.scalars(
+                select(overlay.c.id)
+                .distinct()
+                .join(
+                    repo,
+                    and_(
+                        repo.c.source.startswith(REPO_PREFIX),
+                        repo.c.language == overlay.c.language,
+                        repo.c.native_key == overlay.c.native_key,
+                    ),
+                )
+                .join(siem_copy, siem_copy.c.origin_rule_id == repo.c.id)
+                .where(
+                    overlay.c.id.in_(rule_ids),
+                    siem_copy.c.source == siem,
+                    siem_copy.c.status == "active",
+                    siem_copy.c.link_kind.in_(LINKED),
+                )
+            )
+        )
 
 
 def _elastic_config() -> Optional[Dict[str, Any]]:
@@ -506,7 +573,11 @@ def sweep(now: datetime, report: RolloutReport) -> None:
     from core.detections.inventory.sync import _stage_row
 
     copies = [c for c in _copies() if c.stage in ("shadow", "live")]
+    # A shadow copy Kibana already runs is not promoted (nor offered by PR).
+    gone = siem_runs(kibana.SOURCE, [c.rule_id for c in copies if c.stage == "shadow"])
+    copies = [c for c in copies if c.rule_id not in gone]
     stopped = _stopped()
+    target = _deploy_target()
     with get_db_manager().session_scope() as session:
         live_24h = session.scalar(
             select(func.count())
@@ -516,7 +587,7 @@ def sweep(now: datetime, report: RolloutReport) -> None:
                 DetectionRuleStage.at >= now - timedelta(hours=24),
             )
         )
-        rows = []
+        rows, promoted = [], []
         for copy in copies:
             due = _due(session, copy, now, live_24h)
             if due is None:
@@ -535,8 +606,63 @@ def sweep(now: datetime, report: RolloutReport) -> None:
                 f"{copy.rule_id} v{copy.version}: {copy.stage} -> {stage}"
             )
             live_24h += stage == "live"
+            if stage == "live":
+                promoted.append(copy)
         if rows:
             session.execute(insert(DetectionRuleStage), rows)
+            # In the same transaction: a promotion and its PR run land together.
+            for trigger in _deploy_runs(promoted, target):
+                session.add(trigger)
+                session.flush()
+                report.queued.append(trigger.id)
+
+
+DEPLOY_WORKFLOW = "agent-run-mitre_analyst"
+
+
+def _deploy_target() -> Optional[Dict[str, Any]]:
+    """The elastic deploy target, read before the stage transaction opens."""
+    from core.detections.detection_rules_service import read_deploy_target
+
+    try:
+        return read_deploy_target("elastic")
+    except (
+        Exception
+    ) as exc:  # noqa: BLE001 -- an unread target must not hold a promotion
+        logger.warning("detection rules: deploy target unread: %s", exc)
+        return None
+
+
+def _deploy_runs(
+    promoted: List[Copy], target: Optional[Dict[str, Any]]
+) -> List[IntakeTrigger]:
+    """A queued mitre_analyst run per promoted copy, when a target is set."""
+    if not promoted or target is None:
+        return []
+    where = target.get("subdirectory") or "the repository root"
+    return [
+        IntakeTrigger(
+            kind="schedule",
+            state="queued",
+            priority="low",
+            payload={
+                "workflow_id": DEPLOY_WORKFLOW,
+                # Not "scheduled": the daily gaps run reads its clock off those.
+                "trigger_type": "rollout",
+                "finding_ids": [],
+                "hypothesis": (
+                    f"Open a pull request adding the live Vigil rule {copy.name!r} "
+                    f"(rule_id {copy.key}, Vigil detection rule {copy.rule_id}) to "
+                    f"{target['git_url']} under {where}, with the attached TOML "
+                    f"(Vigil's {copy.path or 'overlay file'}) as its file content "
+                    "exactly as given, and record the pull request's link on this Case."
+                ),
+                # The overlay file whole, exclusions included; the brief carries it.
+                "document": copy.toml,
+            },
+        )
+        for copy in promoted
+    ]
 
 
 def run(live: bool) -> RolloutReport:
@@ -572,6 +698,10 @@ def _run_copies(live: bool, now: datetime, report: RolloutReport) -> None:
     copies = [
         c for c in _copies() if c.stage == "shadow" or (c.stage == "live" and live)
     ]
+    # Worked out on each read: no stage records the handoff.
+    gone = siem_runs(kibana.SOURCE, [c.rule_id for c in copies])
+    report.handed_off = len(gone)
+    copies = [c for c in copies if c.rule_id not in gone]
     report.copies = len(copies)
     blocked = [(c, why) for c in copies if (why := runnable(c.rule))]
     ready = [c for c in copies if not runnable(c.rule)]

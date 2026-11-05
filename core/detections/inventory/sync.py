@@ -696,21 +696,30 @@ def _link(
     ``origin_key`` is ``key_of(copy)``.
 
     Only rows the sync owns (no link, or a ``kind`` one) are written, and only
-    when the origin differs. A key more than one repo rule carries links nothing.
+    when the origin differs. A key more than one repo rule carries links nothing;
+    the overlay's rule is left out of that count when a customer repo carries it.
     Returns (linked, unlinked).
     """
     linked = unlinked = 0
     now = datetime.now(timezone.utc)
     with get_db_manager().session_scope() as session:
         origins: Dict[str, List[int]] = {}
-        for rule_id, key in session.execute(
-            select(DetectionRule.id, origin_key).where(
+        overlay: Dict[str, int] = {}
+        for rule_id, key, rule_source in session.execute(
+            select(DetectionRule.id, origin_key, DetectionRule.source).where(
                 DetectionRule.source.startswith(REPO_PREFIX),
                 DetectionRule.language == language,
                 DetectionRule.status == "active",
             )
         ):
-            origins.setdefault(key, []).append(rule_id)
+            if rule_source == readers.OVERLAY_SOURCE:
+                overlay[key] = rule_id
+            else:
+                origins.setdefault(key, []).append(rule_id)
+        # The overlay counts only where no customer repo carries the key: once
+        # its rule is merged there, the repo rule is the origin.
+        for key, rule_id in overlay.items():
+            origins.setdefault(key, [rule_id])
         copies = session.scalars(
             select(DetectionRule).where(
                 DetectionRule.source == source,
