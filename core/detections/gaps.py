@@ -37,9 +37,9 @@ RULE_SOURCES = ("sigma", "splunk", "elastic", "kql", "wazuh")
 TACTIC_RULE_SOURCES = ("sigma", "elastic")
 
 SIEMS_NOT_READ_NOTE = (
-    "Elastic (Kibana), Splunk and Wazuh rules are read from a SIEM. Only Kibana "
-    "rules get a Sees check, so whether the data a Splunk or Wazuh rule reads is "
-    "arriving is not part of this report."
+    "Elastic (Kibana), Splunk and Wazuh rules are read from a SIEM. Kibana and "
+    "Wazuh rules get a Sees check (a Wazuh rule's data source is its decoder); "
+    "whether the data a Splunk rule reads is arriving is not part of this report."
 )
 
 TECHNIQUE_ID = re.compile(r"^T\d{4}(\.\d{3})?$", re.IGNORECASE)

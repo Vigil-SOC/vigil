@@ -1,0 +1,135 @@
+name: Medic pack release
+
+# Bumping services/medic/packs/medic-core's pack.yaml version on main is the
+# release (medic-core is not a release-please component). When that version has no
+# medic-core-v<version> tag yet, this builds the pack, tags it, publishes a Release
+# carrying the file and its SHA-256, and opens a PR committing the file to
+# services/medic/packs/bundled/. Nothing is signed: Medic checks an imported pack by
+# its SHA-256. It never pushes to main; the PR goes through medic-bundled-check.yml.
+# Only the canonical repo: forks lack the release-please App vars/secrets.
+#
+# The tag is medic-core-vX.Y.Z; release.yml's image build listens for
+# "v[0-9]+.[0-9]+.[0-9]+", a glob matched from the first character, so it never
+# sees these.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/medic/packs/medic-core/**"
+  workflow_dispatch:
+
+# The Release and tag use GITHUB_TOKEN; the PR uses the App token below.
+permissions:
+  contents: write
+
+concurrency:
+  group: medic-pack-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'Vigil-SOC/vigil' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Full history: the pack diff and the changelog need the medic-core-v* tags.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.11.7"
+
+      - name: Install Medic's locked dependencies
+        run: uv sync --project services/medic --frozen
+
+      # A push that doesn't bump the version, or a re-run after the tag exists,
+      # stops here.
+      - name: Is this version tagged yet?
+        id: version
+        run: |
+          version=$(uv run --project services/medic --frozen python -c \
+            'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["pack"]["version"])' \
+            services/medic/packs/medic-core/pack.yaml)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad pack version '$version'"; exit 1; }
+          tag=medic-core-v$version
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "::notice::$tag already exists; nothing to release."
+            echo "release=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "release=true" >>"$GITHUB_OUTPUT"
+          fi
+
+      # The last medic-core-v* tag; before the first tag, the commit before the
+      # push (a manual run: the commit's parent).
+      - name: Pick the diff baseline
+        id: base
+        if: steps.version.outputs.release == 'true'
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          base=$(git tag --list 'medic-core-v*' --sort=-v:refname | sed -n 1p)
+          if [ -z "$base" ]; then
+            if [ "$EVENT" = push ] && [[ "$BEFORE" =~ [1-9a-f] ]]; then base=$BEFORE; else base=$(git rev-parse HEAD^); fi
+          fi
+          echo "base=$base" >>"$GITHUB_OUTPUT"
+
+      # Build twice and compare, pack_check, pack_diff: the script CI runs is the
+      # one to run by hand.
+      - name: Build and check the pack
+        if: steps.version.outputs.release == 'true'
+        run: scripts/medic/pack_release.sh "$RUNNER_TEMP/pack" "${{ steps.base.outputs.base }}"
+
+      - name: Publish the Release
+        if: steps.version.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Not "latest": that stays Vigil's own release.
+          gh release create "$TAG" \
+            "$RUNNER_TEMP/pack/medic-core.json" "$RUNNER_TEMP/pack/medic-core.json.sha256" \
+            --target "$GITHUB_SHA" --title "medic-core $VERSION" --latest=false \
+            --notes-file "$RUNNER_TEMP/pack/release-notes.md"
+
+      # An App token, not GITHUB_TOKEN: a PR opened with GITHUB_TOKEN doesn't
+      # trigger the required checks.
+      - name: Mint GitHub App token
+        id: app-token
+        if: steps.version.outputs.release == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.RELEASE_PLEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_PRIVATE_KEY }}
+
+      # A branch and a PR, never a push to main. The file is the Release asset,
+      # byte for byte; medic-bundled-check.yml compares it to the Release's hash.
+      - name: Open the bundled-file PR
+        if: steps.version.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          branch=medic-pack/$TAG
+          dest=services/medic/packs/bundled/medic-core.json
+          sum=$(cut -d' ' -f1 "$RUNNER_TEMP/pack/medic-core.json.sha256")
+          git switch -c "$branch"
+          mkdir -p "$(dirname "$dest")"
+          cp "$RUNNER_TEMP/pack/medic-core.json" "$dest"
+          git add -- "$dest"
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "chore(medic): bundle medic-core $VERSION"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "$branch"
+          gh pr create --repo "$REPO" --base main --head "$branch" \
+            --title "chore(medic): bundle medic-core $VERSION" \
+            --body "Commits the \`$TAG\` Release's \`medic-core.json\` (SHA-256 \`$sum\`) as the pack Medic ships in its image. Only that file changes; \`medic-bundled-check\` compares its hash to the Release's."

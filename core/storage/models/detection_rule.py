@@ -2,8 +2,8 @@
 
 The schema is core/upgrade/versions/0026_detection_rules.sql,
 0027_detection_rule_checks.sql, 0028_detection_rule_origin.sql,
-0029_detection_rule_stages.sql, 0031_detection_rule_changes.sql and
-0033_detection_rule_known_name.sql; these models
+0029_detection_rule_stages.sql, 0031_detection_rule_changes.sql,
+0033_detection_rule_known_name.sql and 0034_siem_searches.sql; these models
 mirror it for core/detections/inventory.
 """
 
@@ -167,5 +167,21 @@ class DetectionRuleCheckChange(Base):
     new_result: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+
+class SiemSearch(Base):
+    """A search a check sent a SIEM: the shared max_searches_per_hour window (#3741)."""
+
+    __tablename__ = "siem_searches"
+    __table_args__ = (
+        Index("idx_siem_searches_window", "integration_id", "searched_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    integration_id: Mapped[str] = mapped_column(Text, nullable=False)
+    search_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    searched_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )

@@ -48,6 +48,9 @@ class SecurityDetectionsTools:
     ) -> Dict:
         """Catalog counts for techniques, or a run report when run_id / steps is set.
 
+        Catalog counts carry by_tool: each SIEM's Runs, Sees and Quiet results
+        tallied, and repo_deployed: the repo rules' linked copies by state.
+
         Extra kwargs (including ``limit`` injected by ``/internal/tools/invoke``)
         are ignored. A run id or action trace is the report path, not catalog
         counts mixed into the same rows.
@@ -98,6 +101,7 @@ class SecurityDetectionsTools:
         stage: Optional[str] = None,
         sees: Optional[str] = None,
         flagged: Optional[bool] = None,
+        quiet: Optional[str] = None,
         accurate: Optional[str] = None,
     ) -> List[Dict]:
         """
@@ -111,6 +115,8 @@ class SecurityDetectionsTools:
             runs: Optional filter by Runs result ("pass", "fail", "unknown")
             stage: Optional filter by current rollout stage ("shadow", "live", "off")
             sees: Optional filter by Sees result ("pass", "fail", "unknown")
+            quiet: Optional filter by Quiet result ("pass", "fail", "unknown"):
+                fail is a Kibana rule averaging over its alerts-per-day threshold
             flagged: Optional filter: rules with (True) or without (False) an open flag
             accurate: Optional filter by Accurate result ("pass", "fail", "unknown"):
                 whether a Kibana or Wazuh rule's judged alerts are mostly real
@@ -121,7 +127,16 @@ class SecurityDetectionsTools:
             rows; a single hit also carries its recent check changes
         """
         return catalog.search(
-            query or "", source_type, limit, tool, runs, stage, sees, flagged, accurate
+            query or "",
+            source_type,
+            limit,
+            tool,
+            runs,
+            stage,
+            sees,
+            flagged,
+            quiet,
+            accurate,
         )
 
     async def link_detection_rule(
@@ -162,7 +177,8 @@ class SecurityDetectionsTools:
     ) -> Dict:
         """Techniques seen on stored alerts that no active rule declares, with what it cannot say,
         and the proven hunts and closed Cases no rule alerted on (``runs_rules_missed``),
-        and the SIEM rules that broke (``rule_health``).
+        and the SIEM rules that broke (``rule_health``: a Runs, Sees or Quiet check
+        that went pass -> fail).
 
         Args:
             context: A case id, an ATT&CK label to match, or empty for every stored alert.
