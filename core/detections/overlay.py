@@ -23,7 +23,7 @@ import yaml
 from sqlalchemy import select
 
 from core.detections.detection_rules_service import DetectionRulesService
-from core.detections.inventory import readers, sync
+from core.detections.inventory import readers, rollout, sync
 from core.detections.inventory.record import RuleRecord
 from core.detections.lint import lint_sigma
 from core.storage.connection import get_db_manager
@@ -102,6 +102,11 @@ def _prepare(copies: Dict[str, str]) -> List[Tuple[str, str, RuleRecord]]:
     prepared = []
     for language, text in copies.items():
         text = _with_id(language, text)
+        if language == "elastic":
+            # Vigil runs the copy itself (rollout): only languages it can run.
+            why = rollout.runnable(tomllib.loads(text).get("rule") or {})
+            if why:
+                raise Refused(f"elastic copy is refused: {why}")
         prepared.append((language, text, _parse(language, text)))
     if "sigma" in copies:
         lint = lint_sigma(rule_yaml=copies["sigma"])

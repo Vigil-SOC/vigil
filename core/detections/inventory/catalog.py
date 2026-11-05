@@ -731,10 +731,20 @@ def _unknown(reason: str) -> Dict[str, Any]:
 def rule_for_finding(finding: Mapping[str, Any]) -> Dict[str, Any]:
     """The inventory rule and version that fired a finding, or why it is unknown.
 
-    Read from the stored alert (entity_context.source_evidence), never matched
-    on name. The version is the latest one first seen at or before the alert.
-    Only Kibana (source 'elastic') rules resolve today.
+    A finding the overlay runner made names its rule and version
+    (entity_context.detection_rule) and resolves to exactly that. Otherwise read
+    from the stored alert (entity_context.source_evidence), never matched on
+    name; the version is the latest one first seen at or before the alert, and
+    only Kibana (source 'elastic') rules resolve.
     """
+    context = finding.get("entity_context")
+    named = context.get("detection_rule") if isinstance(context, dict) else None
+    if isinstance(named, dict) and named.get("rule_id") and named.get("version"):
+        try:
+            return _resolve_named(int(named["rule_id"]), int(named["version"]))
+        except Exception:  # a finding read must not fail on the inventory
+            logger.exception("Could not resolve rule %s", named)
+            return _unknown("the rule inventory could not be read")
     source = finding.get("data_source")
     if source == "splunk":
         return _unknown("Splunk findings do not name their saved search yet")
@@ -787,15 +797,29 @@ def _resolve(key: str, fired: datetime) -> Dict[str, Any]:
                     else ""
                 )
             )
-        return {
-            "resolved": True,
-            "rule_id": rule.id,
-            "source": rule.source,
-            "native_key": rule.native_key,
-            "name": rule.name,
-            "status": rule.status,
-            "version": version.version,
-            "query": version.query,
-            "first_seen": version.first_seen.isoformat(),
-            "checks": version.checks or {},
-        }
+        return _resolved(rule, version)
+
+
+def _resolve_named(rule_id: int, version: int) -> Dict[str, Any]:
+    """The exact rule and version a finding names (the overlay runner's findings)."""
+    with get_db_manager().session_scope() as session:
+        rule = session.get(DetectionRule, rule_id)
+        row = session.get(DetectionRuleVersion, (rule_id, version)) if rule else None
+        if row is None:
+            return _unknown(f"rule {rule_id} v{version} is not in the inventory")
+        return _resolved(rule, row)
+
+
+def _resolved(rule: DetectionRule, version: DetectionRuleVersion) -> Dict[str, Any]:
+    return {
+        "resolved": True,
+        "rule_id": rule.id,
+        "source": rule.source,
+        "native_key": rule.native_key,
+        "name": rule.name,
+        "status": rule.status,
+        "version": version.version,
+        "query": version.query,
+        "first_seen": version.first_seen.isoformat(),
+        "checks": version.checks or {},
+    }

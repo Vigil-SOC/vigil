@@ -28,7 +28,8 @@ made is never touched.
 Every change of a check result is also appended to detection_rule_check_changes
 (``_record_changes``): a Runs result that differs from the rule's last recorded
 one, across versions, and a SIEM rule's status moving between active, disabled
-and removed. Repo rules have no checks and get no rows.
+and removed. Repo rules have no checks and get no rows here; Vigil's Elastic
+overlay copies get their Runs from ``rollout``, which records them the same way.
 
 After Kibana and Splunk link, ``_drift`` checks each linked copy against its
 repo rule and writes checks['drift'] the same way: fail when the copy is disabled
