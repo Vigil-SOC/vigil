@@ -894,6 +894,15 @@ export const detectionRulesApi = {
   /** Every listed rule copy's health and its reason, worst first; one health's when given. */
   rules: (params: { health?: string; tool?: string; q?: string; offset?: number } = {}) =>
     api.get('/detection-rules/rules', { params }),
+
+  /** An overlay copy's exceptions, active and removed, with per-day matches. */
+  exceptions: (ruleId: number) => api.get(`/detection-rules/rules/${ruleId}/exceptions`),
+
+  addException: (ruleId: number, data: { match: Record<string, string>; note: string }) =>
+    api.post(`/detection-rules/rules/${ruleId}/exceptions`, data),
+
+  removeException: (ruleId: number, exceptionId: number, reason: string) =>
+    api.delete(`/detection-rules/rules/${ruleId}/exceptions/${exceptionId}`, { params: { reason } }),
   
   
   addSource: (data: {

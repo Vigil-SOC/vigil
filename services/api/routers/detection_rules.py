@@ -3,13 +3,14 @@
 import asyncio
 import logging
 from dataclasses import asdict
-from typing import Literal, Optional
+from typing import Any, Dict, Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from core.auth.permissions import permission_gate
 from core.deps import provide_detection_rules, provide_mcp_client, provide_mcp_registry
+from core.detections import exceptions
 from core.detections.detection_rules_service import (
     DetectionRulesService,
     is_vendor_repo,
@@ -17,6 +18,7 @@ from core.detections.detection_rules_service import (
 from core.detections.inventory import catalog
 from core.detections.inventory.sync import sync_repos
 from core.integrations.mcp.registry import MCPRegistry, register_connected
+from core.integrations.mcp.surface import acting_as
 from core.routing import Auth, RouterMeta
 from core.storage.config_service import get_config_service
 from core.storage.models import User
@@ -302,6 +304,77 @@ def get_overlay_only():
             if c.rule_id not in gone
         ]
     }
+
+
+class AddExceptionRequest(BaseModel):
+    """A customer-specific exception: every {field: value} pair must match."""
+
+    match: Dict[str, Any]
+    note: str
+
+
+def _edited(result: Dict[str, Any]) -> Dict[str, Any]:
+    """``edit_exception``'s result, its error as a 4xx carrying the same text."""
+    error = result.get("error")
+    if not error:
+        return result
+    if error.startswith(("No detection rule", "No exception")):
+        status = 404
+    elif "already" in error:
+        status = 409
+    else:
+        status = 400
+    raise HTTPException(status_code=status, detail=error)
+
+
+@router.get("/rules/{rule_id}/exceptions")
+def get_rule_exceptions(rule_id: int):
+    """An overlay copy's exceptions, active and removed, each with its per-day
+    matches; ``handed_off`` when a SIEM copy runs the rule, so Vigil applies none."""
+    try:
+        return exceptions.of_copy(rule_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/rules/{rule_id}/exceptions", dependencies=_SETTINGS_WRITE)
+def add_rule_exception(
+    rule_id: int,
+    request: AddExceptionRequest,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Add an exception to an overlay copy, attributed to the signed-in user."""
+    with acting_as(current_user.username):
+        return _edited(
+            exceptions.edit_exception(
+                "add", rule_id=rule_id, match=request.match, note=request.note
+            )
+        )
+
+
+@router.delete(
+    "/rules/{rule_id}/exceptions/{exception_id}", dependencies=_SETTINGS_WRITE
+)
+def remove_rule_exception(
+    rule_id: int,
+    exception_id: int,
+    reason: str = Query(max_length=2000),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Remove (soft) one of an overlay copy's exceptions, with a reason."""
+    if exceptions.rule_of(exception_id) != rule_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No exception {exception_id} on rule {rule_id}",
+        )
+    with acting_as(current_user.username):
+        return _edited(
+            exceptions.edit_exception(
+                "remove", exception_id=exception_id, reason=reason
+            )
+        )
 
 
 @router.get("/mcp-env")
