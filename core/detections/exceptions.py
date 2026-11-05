@@ -20,7 +20,11 @@ from sqlalchemy import select
 
 from core.detections.inventory import readers
 from core.storage.connection import get_db_manager
-from core.storage.models import DetectionRule, DetectionRuleException
+from core.storage.models import (
+    DetectionRule,
+    DetectionRuleException,
+    DetectionRuleVersion,
+)
 
 ACTIONS = ("add", "remove")
 _ABSENT = object()
@@ -152,17 +156,58 @@ def active(rule_ids: List[int]) -> Dict[int, List[Tuple[int, Dict[str, Any]]]]:
     return out
 
 
-def listed(session: Any, rule_id: int) -> List[Dict[str, Any]]:
-    """A rule's active exceptions: id, match, note, created_by."""
-    rows = session.scalars(
-        select(DetectionRuleException)
-        .where(
-            DetectionRuleException.rule_id == rule_id,
-            DetectionRuleException.removed_at.is_(None),
-        )
-        .order_by(DetectionRuleException.id)
-    ).all()
+def listed(session: Any, rule_id: int, removed: bool = False) -> List[Dict[str, Any]]:
+    """A rule's active exceptions (and its removed ones too with ``removed``)."""
+    query = select(DetectionRuleException).where(
+        DetectionRuleException.rule_id == rule_id
+    )
+    if not removed:
+        query = query.where(DetectionRuleException.removed_at.is_(None))
+    rows = session.scalars(query.order_by(DetectionRuleException.id)).all()
     return [_row(r) for r in rows]
+
+
+def of_copy(rule_id: int) -> Dict[str, Any]:
+    """Every exception on an overlay copy, active and removed, with each one's
+    per-day matches from the copy's latest version and whether a SIEM copy runs
+    it instead (``handed_off``: Vigil no longer applies them).
+
+    LookupError when there is no such rule, ValueError when it isn't an overlay copy.
+    """
+    from core.detections.inventory.rollout import handed_off
+
+    with get_db_manager().session_scope() as session:
+        rule = session.get(DetectionRule, rule_id)
+        if rule is None:
+            raise LookupError(f"No detection rule {rule_id}")
+        if rule.source != readers.OVERLAY_SOURCE:
+            raise ValueError(f"Rule {rule_id} is not one of Vigil's overlay copies")
+        checks = session.scalar(
+            select(DetectionRuleVersion.checks).where(
+                DetectionRuleVersion.rule_id == rule_id,
+                DetectionRuleVersion.version == rule.latest_version,
+            )
+        )
+        counts = (checks or {}).get("exceptions") or {}
+        rows = [
+            {**r, "days": (counts.get(str(r["exception_id"])) or {}).get("days") or {}}
+            for r in listed(session, rule_id, removed=True)
+        ]
+    return {
+        "rule_id": rule_id,
+        "handed_off": rule_id in handed_off([rule_id]),
+        "exceptions": rows,
+    }
+
+
+def rule_of(exception_id: int) -> Optional[int]:
+    """The rule an exception belongs to, or None when there is no such exception."""
+    with get_db_manager().session_scope() as session:
+        return session.scalar(
+            select(DetectionRuleException.rule_id).where(
+                DetectionRuleException.id == exception_id
+            )
+        )
 
 
 def _row(r: DetectionRuleException) -> Dict[str, Any]:
