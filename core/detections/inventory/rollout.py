@@ -922,6 +922,89 @@ def _deploy_runs(
     ]
 
 
+def _deploy_marker(rule_id: int) -> str:
+    """The text every deploy brief for this rule carries (see _deploy_brief)."""
+    return f"Vigil detection rule {rule_id})"
+
+
+def overlay_only() -> List[Dict[str, Any]]:
+    """Live overlay copies no SIEM rule runs: only Vigil detects with these, so
+    Stop halts their detection. Each says whether its format has a deploy
+    target and whether a deploy-PR run was already queued for it."""
+    live = [c for c in _copies() if c.stage == "live"]
+    gone = handed_off([c.rule_id for c in live])
+    live = [c for c in live if c.rule_id not in gone]
+    targets = _deploy_targets()
+    with get_db_manager().session_scope() as session:
+        queued = _deploys_queued(session, [c.rule_id for c in live])
+    return [
+        {
+            "id": c.rule_id,
+            "name": c.name,
+            "language": c.language,
+            "deploy_target": c.language in targets,
+            "deploy_queued": c.rule_id in queued,
+        }
+        for c in live
+    ]
+
+
+def _deploys_queued(session: Any, rule_ids: List[int]) -> Set[int]:
+    """Of these rule ids, those a deploy-PR run was ever queued for."""
+    if not rule_ids:
+        return set()
+    briefs = session.scalars(
+        select(IntakeTrigger.payload["hypothesis"].astext).where(
+            IntakeTrigger.payload["workflow_id"].astext == DEPLOY_WORKFLOW
+        )
+    ).all()
+    return {r for r in rule_ids if any(_deploy_marker(r) in (b or "") for b in briefs)}
+
+
+def deploy_overlay_only(rule_ids: Optional[List[int]] = None) -> Dict[str, Any]:
+    """Queue the deploy-PR run, as a promotion to live does, for live
+    overlay-only copies (these ``rule_ids``, or all): only those whose format
+    has a deploy target and with no deploy run queued yet. Says why each other
+    one was skipped."""
+    live = [c for c in _copies() if c.stage == "live"]
+    gone = handed_off([c.rule_id for c in live])
+    wanted = [
+        c
+        for c in live
+        if c.rule_id not in gone and (rule_ids is None or c.rule_id in rule_ids)
+    ]
+    targets = _deploy_targets()
+    if targets.get("splunk"):
+        _read_splunk_files(wanted)
+    skipped: Dict[int, str] = {}
+    if rule_ids is not None:
+        found = {c.rule_id for c in wanted}
+        skipped.update(
+            {r: "not a live rule only Vigil runs" for r in rule_ids if r not in found}
+        )
+    with get_db_manager().session_scope() as session:
+        queued_before = _deploys_queued(session, [c.rule_id for c in wanted])
+        todo = []
+        for copy in wanted:
+            if copy.rule_id in queued_before:
+                skipped[copy.rule_id] = "a deploy pull request is already queued"
+            elif not targets.get(copy.language):
+                skipped[copy.rule_id] = f"no {copy.language} deploy target is set"
+            elif copy.language == "splunk" and not copy.toml:
+                skipped[copy.rule_id] = "its overlay file could not be read"
+            else:
+                todo.append(copy)
+        queued = []
+        for copy, trigger in zip(todo, _deploy_runs(session, todo, targets)):
+            session.add(trigger)
+            session.flush()
+            queued.append({"rule_id": copy.rule_id, "trigger_id": trigger.id})
+    return {
+        "queued": queued,
+        "skipped": [{"rule_id": r, "reason": why} for r, why in skipped.items()],
+    }
+
+
 def run_copies(live: bool) -> RolloutReport:
     """Run both SIEMs' overlay copies within their budgets.
 
