@@ -106,7 +106,7 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
           <div className="flex flex-col gap-[5px] min-w-0">
             {/* inline weight: the shell's unlayered h1 rule would beat a utility class */}
             <h1 className="m-0 text-[20px] leading-[1.25] tracking-[-0.2px] text-tx" style={{ fontWeight: 700 }}>{PAGE_TITLE}</h1>
-            <p className="m-0 text-[13px] leading-[1.5] text-tx-2 max-w-[760px]">{PAGE_DESC}</p>
+            <p className="m-0 text-[13px] leading-[1.5] text-tx-2 max-w-[var(--text-max)]">{PAGE_DESC}</p>
           </div>
           <button className="btn primary wf-new" onClick={() => setDescribing('')}><Icon name="plus" /> New workflow</button>
         </div>
