@@ -5,6 +5,8 @@ import { errorText } from '../../shared/errorText'
 import { detectionRulesApi } from '../../services/api'
 import { Empty, Failure } from '../shared/x1'
 import RuleExceptions from './RuleExceptions'
+import RuleFindings from './RuleFindings'
+import FindingPopup from '../dashboard/FindingPopup'
 import './detections.css'
 
 type RuleHealth =
@@ -45,7 +47,11 @@ interface RuleRow {
   why: string
   /** The failing check's reason as stored, when it says more than ``why``. */
   raw: string | null
+  /** Findings Vigil traced to it (else that name it) in the fires window. */
   fires: number
+  /** Alerts the SIEM itself counted (Quiet), and over how many days; null when it reports none. */
+  siem_alerts: number | null
+  siem_days: number | null
   checks_passing: number
   checks_run: number
 }
@@ -66,6 +72,8 @@ interface RulesReport {
   counts: Record<RuleHealth, number>
   /** Rules with each flag failing, and with Caught passing. */
   flag_counts: Record<FlagView, number>
+  /** Never fired, counting each rule once however many copies it has. */
+  never_fired_rules: number
   matched: number
   /** With a search: how many it matches in each view outside this one. */
   matched_elsewhere: Partial<Record<RuleHealth, number>>
@@ -163,7 +171,9 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   const [more, setMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // One row opens at a time: its raw error, or (a Vigil copy) its exceptions.
-  const [open, setOpen] = useState<{ id: number; what: 'raw' | 'exceptions' } | null>(null)
+  const [open, setOpen] = useState<{ id: number; what: 'raw' | 'exceptions' | 'findings' } | null>(null)
+  // A finding opened from a rule's fire count.
+  const [finding, setFinding] = useState<string | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   // Bumped per view, so a page asked for under the last view is dropped.
   const generation = useRef(0)
@@ -378,7 +388,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
             <Chip on={!flag && view === 'attention'} onClick={() => pickView('attention')} label="Needs attention" count={viewCount(report, 'attention')} />
             <span className="de-div" aria-hidden="true" />
             {ATTENTION.map((h) => (
-              <Chip key={h} on={!flag && view === h} tone={HEALTH[h].tone} onClick={() => pickView(h)} label={HEALTH[h].label} count={report.counts[h]} />
+              <Chip key={h} on={!flag && view === h} tone={HEALTH[h].tone} onClick={() => pickView(h)} label={HEALTH[h].label} count={h === 'never_fired' ? report.never_fired_rules ?? report.counts[h] : report.counts[h]} />
             ))}
             <span className="de-div" aria-hidden="true" />
             <Chip on={!flag && view === 'fires'} tone="good" onClick={() => pickView('fires')} label="Fires" count={report.counts.fires} />
@@ -411,7 +421,9 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
             const others = [...(r.flags ?? []).filter((f) => f !== r.worst), ...(r.caught && r.worst !== 'caught' ? ['caught' as const] : [])]
             const isOpen = open?.id === r.rule_id && open.what === 'raw'
             const excOpen = open?.id === r.rule_id && open.what === 'exceptions'
-            const fired = r.fires > 0 ? n(r.fires) : r.health === 'no_fire_data' ? 'No data' : 'None'
+            const fdOpen = open?.id === r.rule_id && open.what === 'findings'
+            const siemOnly = r.fires === 0 && (r.siem_alerts ?? 0) > 0
+            const fired = siemOnly ? `${n(r.siem_alerts ?? 0)} in SIEM` : r.health === 'no_fire_data' ? 'No data' : r.health === 'never_fired' ? 'Never' : 'None'
             return (
               <div key={item.key} data-index={item.index} ref={virtual.measureElement} className="de-tr de-row" style={{ transform: `translateY(${item.start - HEAD_ROW}px)` }}>
                 <div className="de-rule">
@@ -449,11 +461,20 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                   {r.techniques.length ? <>{r.techniques[0]}{r.techniques.length > 1 && <span className="de-tech-more"> +{r.techniques.length - 1}</span>}</> : <span className="de-none">—</span>}
                 </div>
                 <div className="col-low"><span className={`de-health ${h.tone}`}><i />{h.label}</span></div>
-                <div className={`de-right de-fires${r.fires > 0 ? ' de-fired' : ''}`}>{fired}</div>
+                <div className={`de-right de-fires${r.fires > 0 ? ' de-fired' : ''}`}>
+                  {r.fires > 0 ? (
+                    <button type="button" className="de-fires-link" aria-expanded={fdOpen} title={`Open the ${plural(r.fires, 'finding', 'findings')} it raised in ${days} days`} onClick={() => setOpen(fdOpen ? null : { id: r.rule_id, what: 'findings' })}>
+                      {n(r.fires)}
+                    </button>
+                  ) : (
+                    <span title={siemOnly ? `The SIEM counted ${n(r.siem_alerts ?? 0)} alerts${r.siem_days ? ` in ${r.siem_days} days` : ''}; none became a finding in Vigil.` : undefined}>{fired}</span>
+                  )}
+                </div>
                 <div className="de-right">
                   <button type="button" className="btn ghost de-act" onClick={() => openChat(prompt(r, days))}>{h.action}</button>
                 </div>
                 {excOpen && <RuleExceptions ruleId={r.rule_id} />}
+                {fdOpen && <RuleFindings ruleId={r.rule_id} onOpen={setFinding} />}
               </div>
             )
           })}
@@ -482,6 +503,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
       </section>
 
       <p className="de-note">{report.limits}</p>
+      <FindingPopup id={finding} onClose={() => setFinding(null)} onConfigureAi={() => goSettings('ai-config')} />
     </>
   )
 }

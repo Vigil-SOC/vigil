@@ -33,7 +33,8 @@ def _built(copies, fires=None):
 
 
 def _row(checks, status="active", fires=0):
-    built = _built([_copy(1, checks, status)], {"Rule 1": fires})
+    hit = {"finding_id": "f", "title": "t", "severity": "low", "timestamp": None}
+    built = _built([_copy(1, checks, status)], {"by_name": {"Rule 1": [hit] * fires}})
     (row,) = [
         r for state in catalog.HEALTH_ORDER for _t, _h, r in built["by_state"][state]
     ]
@@ -120,7 +121,9 @@ def listing(monkeypatch):
         _copy(5, {"runs": PASS, "caught": PASS}),
         _copy(6, {"runs": PASS}),
     ]
-    built = _built(copies, {"Rule 3": 9, "Rule 4": 2, "Rule 5": 1, "Rule 6": 3})
+    hit = {"finding_id": "f", "title": "t", "severity": "low", "timestamp": None}
+    named = {"Rule 3": 9, "Rule 4": 2, "Rule 5": 1, "Rule 6": 3}
+    built = _built(copies, {"by_name": {k: [hit] * n for k, n in named.items()}})
     built["blind_spots"] = []
     monkeypatch.setattr(catalog, "_listing_now", lambda: built)
 

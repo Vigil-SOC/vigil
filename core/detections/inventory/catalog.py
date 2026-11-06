@@ -139,6 +139,8 @@ SORTS = {
     "worst": lambda row: (WORST_ORDER.index(row["worst"]), row["rule_id"]),
 }
 FIRES_WINDOW_DAYS = 90
+# Findings kept per copy for its click-through, newest first.
+FIRES_LISTED = 50
 RULE_ROWS = 300
 
 
@@ -733,18 +735,87 @@ def _rule_of_copy(session: Any) -> Dict[int, Tuple[Any, ...]]:
     }
 
 
-def _fires(session: Any) -> Dict[str, int]:
-    """Findings per rule name in the window, read from what the alert named."""
+def _fires(session: Any) -> Dict[str, Dict[Any, List[Dict[str, Any]]]]:
+    """Findings in the window, newest first, by the rule that fired them.
+
+    A finding goes to the rule ``resolve_findings`` traces it to (the rule id or
+    saved search the alert names, or the overlay rule that made it). One that
+    doesn't resolve falls back to the rule name the alert carries, else its
+    title, so a SIEM whose alerts name no rule id still counts."""
     since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
         days=FIRES_WINDOW_DAYS
     )
-    named = func.coalesce(Finding.entity_context["rule_name"].astext, Finding.title)
     rows = session.execute(
-        select(named, func.count())
-        .where(Finding.timestamp >= since, named.is_not(None))
-        .group_by(named)
+        select(
+            Finding.finding_id,
+            Finding.title,
+            Finding.severity,
+            Finding.timestamp,
+            Finding.data_source,
+            Finding.entity_context,
+        )
+        .where(Finding.timestamp >= since)
+        .order_by(Finding.timestamp.desc(), Finding.finding_id)
+    ).all()
+    resolved = (
+        resolve_findings(
+            session,
+            {
+                r.finding_id: {
+                    "data_source": r.data_source,
+                    "entity_context": r.entity_context,
+                }
+                for r in rows
+            },
+            full=False,
+        )
+        if rows
+        else {}
     )
-    return {name: count for name, count in rows}
+    by_rule: Dict[Any, List[Dict[str, Any]]] = {}
+    by_name: Dict[Any, List[Dict[str, Any]]] = {}
+    for r in rows:
+        hit = {
+            "finding_id": r.finding_id,
+            "title": r.title,
+            "severity": r.severity,
+            # Stored naive, in UTC (as the window above reads it).
+            "timestamp": (
+                r.timestamp.replace(tzinfo=timezone.utc).isoformat()
+                if r.timestamp
+                else None
+            ),
+        }
+        found = resolved.get(r.finding_id) or {}
+        if found.get("resolved"):
+            by_rule.setdefault(found["rule_id"], []).append(hit)
+            continue
+        context = r.entity_context if isinstance(r.entity_context, dict) else {}
+        name = context.get("rule_name") or r.title
+        if name:
+            by_name.setdefault(name, []).append(hit)
+    return {"by_rule": by_rule, "by_name": by_name}
+
+
+def _fired(
+    fires: Dict[str, Dict[Any, List[Dict[str, Any]]]], rule: Any
+) -> List[Dict[str, Any]]:
+    """A copy's findings: those traced to it, then those only its name matches."""
+    return fires.get("by_rule", {}).get(rule.id, []) + fires.get("by_name", {}).get(
+        rule.name, []
+    )
+
+
+def _siem_alerts(checks: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]:
+    """(alerts, days) the SIEM itself counted for the rule, as Quiet stored them."""
+    quiet = checks.get("quiet")
+    if not isinstance(quiet, dict):
+        return None, None
+    count, days = quiet.get("count"), quiet.get("days")
+    return (
+        count if isinstance(count, int) and not isinstance(count, bool) else None,
+        days if isinstance(days, int) and not isinstance(days, bool) else None,
+    )
 
 
 def _health(
@@ -766,6 +837,14 @@ def _health(
         return state, _first_line(raw) or "Its data is not arriving.", raw or None
     if fires:
         return "fires", f"Fired {fires} times in {FIRES_WINDOW_DAYS} days.", None
+    alerts, days_counted = _siem_alerts(checks)
+    if alerts:
+        span = f" in {days_counted} days" if days_counted else ""
+        return (
+            "fires",
+            f"The SIEM counted {alerts} alerts{span}; none became a finding.",
+            None,
+        )
     # Silent's days_fired is the SIEM's own count; with no finding and no
     # count, the fire count is unknown, not zero.
     days = silent.get("days_fired")
@@ -939,12 +1018,16 @@ def _health_rows(copies: Dict[str, Any], fires: Dict[str, int]) -> Dict[str, Any
     """Each copy's health row, worst first, and the totals that don't depend on a filter."""
     rule_of = copies["rule_of"]
     listed = []
+    fired: Dict[int, List[Dict[str, Any]]] = {}
     mapped = set()
     for rule in copies["rows"]:
         checks = rule.checks or {}
         if rule.techniques:
             mapped.add(rule_of[rule.id])
-        count = fires.get(rule.name, 0)
+        hits = _fired(fires, rule)
+        fired[rule.id] = hits[:FIRES_LISTED]
+        count = len(hits)
+        alerts, days_counted = _siem_alerts(checks)
         state, why, raw = _health(rule.status, checks, count)
         flags, caught = _check_flags(checks)
         results = _results(checks)
@@ -965,6 +1048,8 @@ def _health_rows(copies: Dict[str, Any], fires: Dict[str, int]) -> Dict[str, Any
                 "why": why,
                 "raw": raw,
                 "fires": count,
+                "siem_alerts": alerts,
+                "siem_days": days_counted,
                 "checks_passing": results.count("pass"),
                 "checks_run": len(results),
                 "runs": checks.get("runs"),
@@ -992,6 +1077,14 @@ def _health_rows(copies: Dict[str, Any], fires: Dict[str, int]) -> Dict[str, Any
         "by_state": by_state,
         "counts": counts,
         "flag_counts": flag_counts,
+        "never_fired_rules": len(
+            {
+                rule_of[row["rule_id"]]
+                for row in listed
+                if row["health"] == "never_fired"
+            }
+        ),
+        "fired": fired,
         "rule_total": len({rule_of[row["rule_id"]] for row in listed}),
         "mapped": len(mapped),
         "by_siem": _by_siem(listed),
@@ -1079,6 +1172,7 @@ def health_listing(
         "mapped": built["mapped"],
         "counts": built["counts"].get(tool, dict.fromkeys(HEALTH_ORDER, 0)),
         "flag_counts": built["flag_counts"].get(tool, dict.fromkeys(FLAGS, 0)),
+        "never_fired_rules": built.get("never_fired_rules", 0),
         "matched": len(shown),
         "matched_elsewhere": elsewhere,
         "offset": offset,
@@ -1087,11 +1181,32 @@ def health_listing(
         "blind_spots": built["blind_spots"],
         "fires_window_days": FIRES_WINDOW_DAYS,
         "limits": (
-            "Fires counts findings that name the rule, plus the days a SIEM's Silent check saw "
-            "it alert. A rule with neither reads No fire data, not Never fired. Runs and Sees "
-            "results exist only for rules Vigil reads from Kibana, Wazuh and Splunk."
+            "Fires counts the findings Vigil traced to the rule (by the rule id or "
+            "saved search its alert names), else the ones that name it, in the last "
+            f"{FIRES_WINDOW_DAYS} days. A rule with none whose SIEM counted alerts "
+            "(Quiet) still fires; with neither, and a Silent check that saw no alert, it "
+            "never fired; with no count at all it reads No fire data. Never fired "
+            "counts rules once, however many copies. Runs and Sees results exist only "
+            "for rules Vigil reads from Kibana, Wazuh and Splunk."
         ),
     }
+
+
+def rule_findings(rule_id: int) -> Dict[str, Any]:
+    """The findings a listed copy fired in the window, newest first
+    (``FIRES_LISTED`` at most), and how many in all."""
+    built = _listing_now()
+    for state in HEALTH_ORDER:
+        for _tool, _hay, row in built["by_state"][state]:
+            if row["rule_id"] == rule_id:
+                return {
+                    "rule_id": rule_id,
+                    "name": row["name"],
+                    "total": row["fires"],
+                    "days": FIRES_WINDOW_DAYS,
+                    "findings": built["fired"].get(rule_id, []),
+                }
+    return {"rule_id": rule_id, "total": 0, "days": FIRES_WINDOW_DAYS, "findings": []}
 
 
 def search(

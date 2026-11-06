@@ -909,6 +909,9 @@ export const detectionRulesApi = {
   rules: (params: { health?: string; tool?: string; q?: string; offset?: number; sort?: string; flag?: string } = {}) =>
     api.get('/detection-rules/rules', { params }),
 
+  /** The findings a rule copy raised in the fires window, newest first, as the rules list counts them. */
+  ruleFindings: (ruleId: number) => api.get(`/detection-rules/rules/${ruleId}/findings`),
+
   /** An overlay copy's exceptions, active and removed, with per-day matches. */
   exceptions: (ruleId: number) => api.get(`/detection-rules/rules/${ruleId}/exceptions`),
 
