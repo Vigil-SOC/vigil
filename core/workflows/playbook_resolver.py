@@ -135,6 +135,14 @@ CAPABILITIES: Dict[str, Tuple[Candidate, ...]] = {
     "case_records": (Candidate(None, ("case_records",)),),
     "case_evidence": (Candidate(None, ("read_case_evidence",)),),
     "get_finding": (Candidate(None, ("get_finding",)),),
+    # A threat-intel platform's own graph, one tool each: an observable's indicators,
+    # one indicator, named actors and malware, and what an entity links to. OpenCTI is
+    # opt-in, so a hunt holds these when it is connected and misses nothing when not
+    # (OPTIONAL_HUNT_CAPABILITIES).
+    "intel_observable": (Candidate("opencti", ("opencti_search_observable",)),),
+    "intel_indicator": (Candidate("opencti", ("opencti_get_indicator",)),),
+    "intel_entities": (Candidate("opencti", ("opencti_search_entities",)),),
+    "intel_relationships": (Candidate("opencti", ("opencti_get_related",)),),
 }
 
 
@@ -158,6 +166,16 @@ CAPABILITY_BOUNDS: Dict[str, Dict[str, int]] = {
     # One row of our own Postgres. Its size is the record behind the alert, which
     # result_cap bounds, so the row cap is only the shape the bounds model asks for.
     "get_finding": {"timeout_ms": 15_000, "max_rows": 1},
+    # Each tool caps its own list at 50; this is the shape the bounds model asks for.
+    **{
+        name: {"timeout_ms": 60_000, "max_rows": 50}
+        for name in (
+            "intel_observable",
+            "intel_indicator",
+            "intel_entities",
+            "intel_relationships",
+        )
+    },
 }
 
 
@@ -187,7 +205,12 @@ def _bound_capabilities(
             )
             break
         else:
-            logger.warning(
+            # An opt-in integration that is not connected is the expected case.
+            (
+                logger.debug
+                if capability in OPTIONAL_HUNT_CAPABILITIES
+                else logger.warning
+            )(
                 "no tool in this deployment provides %s; roles needing it lose it",
                 capability,
             )
@@ -445,6 +468,20 @@ HUNT_CAPABILITIES = (
     # Bound on the run rather than granted to every role: `needs` in the arch is
     # what decides who holds it, and the lead and critic are not granted it.
     "entity_recall",
+    "intel_observable",
+    "intel_indicator",
+    "intel_entities",
+    "intel_relationships",
+)
+
+# Needs a hunt holds when the deployment answers them and goes without otherwise,
+# with no blind spot journalled: an opt-in integration that is not connected is not
+# a gap in this estate's visibility. Mirrors `optional` in the hunt plugin.yaml.
+OPTIONAL_HUNT_CAPABILITIES = (
+    "intel_observable",
+    "intel_indicator",
+    "intel_entities",
+    "intel_relationships",
 )
 
 # A hunt is bounded by iterations rather than phases. Separate ceilings: max_calls
@@ -487,6 +524,8 @@ INVESTIGATE_BUDGETS = {
 
 # What this deployment can and cannot answer, without resolving a whole playbook. The
 # console asks before a run starts, so the deployment gap is told before the spend.
+# An optional need nothing answers is absent, not unbound: the run goes without it
+# and records no gap.
 def capability_report(
     registry: Optional["MCPRegistry"] = None,
     needs: Tuple[str, ...] = HUNT_CAPABILITIES,
@@ -497,9 +536,11 @@ def capability_report(
         for tool in _bound_capabilities(list(needs), catalogue)
         if tool.get("provides")
     }
+    missing = [name for name in needs if name not in bound]
     return {
         "bound": [name for name in needs if name in bound],
-        "unbound": [name for name in needs if name not in bound],
+        "unbound": [n for n in missing if n not in OPTIONAL_HUNT_CAPABILITIES],
+        "absent": [n for n in missing if n in OPTIONAL_HUNT_CAPABILITIES],
     }
 
 

@@ -24,9 +24,18 @@ from typing import Any, NamedTuple
 
 import yaml
 
+from services.medic.api.incidents import _folds
 from services.medic.app.policy_probe import Policy, PolicyCheck
 from services.medic.app.trace import TraceCapture
-from services.medic.engine import Engine, LoadedRule, load_rule, load_rule_file
+from services.medic.engine import (
+    Engine,
+    LoadedRule,
+    load_rule,
+    load_rule_file,
+    suppress,
+)
+from services.medic.engine.core import BUILTINS, OVERFLOW
+from services.medic.engine.history import gkey
 from services.medic.packs import lifecycle
 from services.medic.packs.loader import read_active, vet_pack
 from services.medic.router import Router
@@ -43,7 +52,7 @@ from services.medic.sensors import (
 )
 from services.medic.sensors.base import Clock
 from services.medic.sensors.logtail import LOG_CAPACITY, LogStream, bind_log_tails
-from services.medic.store import DecisionWriter, RecordHeld, StoreError
+from services.medic.store import DecisionWriter, RecordHeld, StoreError, open_reader
 
 log = logging.getLogger("services.medic")
 
@@ -286,6 +295,27 @@ class RecordingSensor:
         ]
 
 
+class StoreResetSensor:
+    """`medic_store`/`reset`: true on the first collect of a start that reset the
+    store after corruption, false after. The built-in watcher.store-reset rule
+    opens its incident on true and keeps it on the console for 24 h."""
+
+    id = "medic.store-reset"
+    service = "medic"
+    interval_s = 60
+    timeout_s = 5.0
+    covers = ("medic_store",)
+    uses_vigil_api = False
+
+    def __init__(self, writer: DecisionWriter) -> None:
+        self.writer, self._reported = writer, False
+
+    async def collect(self, ctx: SensorContext) -> Sequence[Reading]:
+        flag = self.writer.reset_on_open and not self._reported
+        self._reported = True
+        return [Reading("medic_store", self.service, [Value.flag("reset", flag)])]
+
+
 class PolicyStartupSensor:
     """`medic_network_policy`/`unenforced`, once, after a startup refusal that
     lasted: true, then false on the next collect, so the incident opens and
@@ -392,6 +422,13 @@ class Medic:
         self.held: list[dict[str, Any]] = []
         self._reserved: set[str] = set()
         self._stepped_back = False
+        # The newest record this process stored or found at start; -1: none yet.
+        self.head_seq = -1
+
+    def state(self) -> dict[str, Any]:
+        """What the next start loads: the engine's state and the store head it matches
+        (a start finding the store past it rebuilds the open incidents)."""
+        return self.engine.state() | {"head_seq": self.head_seq}
 
     def swap(self, pack: Loaded) -> None:
         """Run a new pack from the next tick. Called between cycles. The engine
@@ -495,8 +532,83 @@ class Medic:
                 getattr(exc, "code", type(exc).__name__),
             )
             return None
+        self.head_seq = stored["seq"]
         log.info("%s %s seq %d", routed["type"], body.get("incident_id"), stored["seq"])
         return stored
+
+
+def _ts(iso_text: str) -> float:
+    return datetime.fromisoformat(iso_text).timestamp()
+
+
+def store_head(data_dir: Path) -> int:
+    """The store's newest seq (-1 when empty: the first record is seq 0)."""
+    with open_reader(data_dir) as conn:
+        return conn.execute("SELECT coalesce(max(seq), -1) FROM records").fetchone()[0]
+
+
+def rebuild_machines(
+    data_dir: Path, state: dict[str, Any] | None, rules: Sequence[LoadedRule]
+) -> tuple[dict[str, Any], int]:
+    """The engine state with its incident machines rebuilt from the store: the
+    store is the truth, the state a cache (a crash can land between a record's append
+    and the state's save). An incident the store holds open resumes with its stored
+    id; a machine holding one the store doesn't list as open goes back to inactive.
+    Latches, cover, upgrade and last_tick stay. Returns (state, incidents resumed)."""
+    state = copy.deepcopy(state) if state else {"v": 1, "machines": {}}
+    machines = state["machines"]
+    by_id = {r.id: r for r in rules}
+    with open_reader(data_dir) as conn:
+        folds, _ = _folds(conn)
+    for slots in machines.values():
+        for m in slots.values():
+            if m.get("incident_id"):
+                kept = {k: m[k] for k in ("seen", "opens", "members", "last") if k in m}
+                m.clear()
+                m.update(kept, state="inactive")
+    resumed = 0
+    for fold in folds.values():
+        o = fold.opened["body"]
+        if fold.resolved is not None or o["rule"] is None:  # (G1 R4: no rule to run)
+            continue
+        rule_id = o["rule"]["id"]
+        key = gkey({g["name"]: g["value"] for g in o["group"]})
+        old = machines.setdefault(rule_id, {}).get(key, {})
+        # The engine's evidence names are the rule's signal names; a built-in's
+        # (and a gone rule's) are the signals themselves.
+        rule = by_id.get(rule_id)
+        signals = {e["signal"] for e in o["evidence"]} | fold.evidence
+        names = signals
+        if rule and rule_id not in BUILTINS:
+            names = {
+                n
+                for n, sig in rule.rule["signals"].items()
+                if next(iter(sig.values()))["signal"] in signals
+            }
+        opened_at = _ts(fold.opened["at"])
+        m = {k: old[k] for k in ("seen", "opens", "members", "last") if k in old}
+        if o["group"] and all(g["value"] == OVERFLOW for g in o["group"]):
+            m.setdefault("members", {})  # the overflow group: its members re-form
+        machines[rule_id][key] = (
+            m
+            | {
+                "state": "resolving" if fold.resolving else "firing",
+                "incident_id": o["incident_id"],
+                "active_since": _ts(o["active_since"]),
+                "opened_at": opened_at,
+                "routed_at": _ts(fold.routed_at) if fold.routed_at else None,
+                "hold_end": opened_at + suppress.HOLD_S,
+                "suppressed_by": fold.suppressed_by,
+                "reopen_count": fold.reopen_count,
+                "evidenced": sorted(names),
+                "seen": max(old.get("seen", 0), _ts(fold.last_at or fold.opened["at"])),
+            }
+            | ({"resolving_since": _ts(fold.resolving_at)} if fold.resolving else {})
+        )
+        if fold.reopen_count:
+            machines[rule_id][key]["flapping"] = True
+        resumed += 1
+    return state, resumed
 
 
 def engine_state_path(data_dir: Path) -> Path:

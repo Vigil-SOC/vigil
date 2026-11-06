@@ -3,7 +3,8 @@
 The schema is core/upgrade/versions/0026_detection_rules.sql,
 0027_detection_rule_checks.sql, 0028_detection_rule_origin.sql,
 0029_detection_rule_stages.sql, 0031_detection_rule_changes.sql,
-0033_detection_rule_known_name.sql and 0034_siem_searches.sql; these models
+0033_detection_rule_known_name.sql, 0034_siem_searches.sql and
+0035_detection_rule_exceptions.sql; these models
 mirror it for core/detections/inventory.
 """
 
@@ -185,3 +186,44 @@ class SiemSearch(Base):
     searched_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
+
+
+class DetectionRuleException(Base):
+    """A customer-specific exception to one overlay copy (#3794). Removal is a soft delete."""
+
+    __tablename__ = "detection_rule_exceptions"
+    __table_args__ = (
+        CheckConstraint(
+            "jsonb_typeof(match) = 'object' AND match <> '{}'::jsonb",
+            name="detection_rule_exceptions_match_check",
+        ),
+        CheckConstraint(
+            "btrim(note) <> ''", name="detection_rule_exceptions_note_check"
+        ),
+        CheckConstraint(
+            "(removed_at IS NULL) = (removed_by IS NULL)",
+            name="detection_rule_exceptions_removal_check",
+        ),
+        Index(
+            "idx_detection_rule_exceptions_active",
+            "rule_id",
+            postgresql_where=text("removed_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    rule_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("detection_rules.id"), nullable=False
+    )
+    # {field: value} in the copy's own SIEM field names; every pair must equal.
+    match: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    note: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    removed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    removed_by: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    removal_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

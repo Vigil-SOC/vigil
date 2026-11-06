@@ -9,12 +9,14 @@ import asyncio
 from typing import Any, Dict, List, Optional
 
 from core.agents.projections import read_projection
+from core.detections.exceptions import edit_exception
 from core.detections.gaps import (
     FINDINGS_LIMIT,
     gap_report,
     missed_runs_report,
     read_alert_labels,
     read_ledger,
+    technique_check,
 )
 from core.detections.inventory import catalog
 from core.detections.inventory.links import link_rule
@@ -174,7 +176,11 @@ class SecurityDetectionsTools:
         return {"total": sum(counts.values()), "by_source": counts}
 
     async def identify_gaps(
-        self, context: str = "", since_days: int = 30, **_kwargs: object
+        self,
+        context: str = "",
+        since_days: int = 30,
+        techniques: Any = None,
+        **_kwargs: object,
     ) -> Dict:
         """Techniques seen on stored alerts that no active rule declares, with what it cannot say,
         and the proven hunts and closed Cases no rule alerted on (``runs_rules_missed``),
@@ -184,20 +190,41 @@ class SecurityDetectionsTools:
         Args:
             context: A case id, an ATT&CK label to match, or empty for every stored alert.
             since_days: How far back Verdicts are read for runs_rules_missed.
+            techniques: ATT&CK ids from any source (e.g. what threat intel names);
+                each is bucketed in ``techniques_checked``.
         """
         # A model may send "30"; keep the window within what timedelta can hold.
         since_days = min(max(int(since_days), 0), 3650)
         alerts = read_alert_labels(context)
         rules_by_technique = catalog.rules_by_technique()
+        siem_checks = catalog.siem_checks_by_technique()
         report = gap_report(
             context,
             alerts,
             rules_by_technique,
             catalog.rules_by_tactic(),
             catalog.rule_counts(),
-            catalog.siem_checks_by_technique(),
+            siem_checks,
             catalog.blind_spots(),
         )
+        if techniques:
+            if isinstance(techniques, str):
+                techniques = techniques.replace(",", " ").split()
+            checked = technique_check(techniques, rules_by_technique, siem_checks)
+            report["techniques_checked"] = checked
+            if checked["rejected"]:
+                report["unknown"].append(
+                    "Not ATT&CK technique ids, so not checked: "
+                    + ", ".join(checked["rejected"])
+                )
+            if report["rules_loaded"] and checked["gaps"]:
+                report["answer"] = "gaps_found"
+            elif (
+                report["rules_loaded"]
+                and checked["checked"]
+                and report["answer"] == "unknown"
+            ):
+                report["answer"] = "no_gaps_found"
         data = DatabaseDataService()
         report["runs_rules_missed"] = missed_runs_report(
             context,
@@ -289,12 +316,14 @@ class SecurityDetectionsTools:
         sigma_yaml: Optional[str] = None,
         proven_events: Optional[List[Dict]] = None,
         ruled_out_events: Optional[List[Dict]] = None,
+        exceptions: Optional[Dict[str, List[Dict]]] = None,
         **_kwargs: object,
     ) -> Dict:
         """Save one rule's copies into Vigil's overlay; each enters shadow.
 
         With events, the Sigma form is replayed on them first and the save is
-        refused unless a proven event matches and no ruled-out one does.
+        refused unless a proven event matches and no ruled-out one does (a
+        ruled-out event a Sigma exception matches is excluded).
         """
         return await asyncio.to_thread(
             save_rule,
@@ -303,6 +332,22 @@ class SecurityDetectionsTools:
             sigma_yaml,
             proven_events,
             ruled_out_events,
+            exceptions,
+        )
+
+    async def detection_rule_exception(
+        self,
+        action: str = "",
+        rule_id: Any = None,
+        match: Any = None,
+        note: Any = None,
+        exception_id: Any = None,
+        reason: Any = None,
+        **_kwargs: object,
+    ) -> Dict:
+        """Add a customer-specific exception to an overlay copy, or remove one."""
+        return await asyncio.to_thread(
+            edit_exception, action, rule_id, match, note, exception_id, reason
         )
 
     async def reconstruct_run(self, steps: List[Dict], **_kwargs: object) -> Dict:

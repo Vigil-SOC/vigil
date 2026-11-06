@@ -1964,6 +1964,60 @@
   "nullable": false,
   "type": "integer"
  },
+ "column detection_rule_exceptions.created_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp with time zone"
+ },
+ "column detection_rule_exceptions.created_by": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column detection_rule_exceptions.id": {
+  "default": "nextval('detection_rule_exceptions_id_seq'::regclass)",
+  "nullable": false,
+  "type": "bigint"
+ },
+ "column detection_rule_exceptions.match": {
+  "default": null,
+  "nullable": false,
+  "type": "jsonb"
+ },
+ "column detection_rule_exceptions.note": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column detection_rule_exceptions.removal_reason": {
+  "acl": [
+   "app:UPDATE"
+  ],
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column detection_rule_exceptions.removed_at": {
+  "acl": [
+   "app:UPDATE"
+  ],
+  "default": null,
+  "nullable": true,
+  "type": "timestamp with time zone"
+ },
+ "column detection_rule_exceptions.removed_by": {
+  "acl": [
+   "app:UPDATE"
+  ],
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column detection_rule_exceptions.rule_id": {
+  "default": null,
+  "nullable": false,
+  "type": "integer"
+ },
  "column detection_rule_stages.actor": {
   "default": null,
   "nullable": false,
@@ -4115,6 +4169,11 @@
  "constraint custom_workflows.custom_workflows_pkey": "PRIMARY KEY (workflow_id)",
  "constraint detection_rule_check_changes.detection_rule_check_changes_pkey": "PRIMARY KEY (id)",
  "constraint detection_rule_check_changes.detection_rule_check_changes_rule_id_fkey": "FOREIGN KEY (rule_id) REFERENCES detection_rules(id)",
+ "constraint detection_rule_exceptions.detection_rule_exceptions_match_check": "CHECK (((jsonb_typeof(match) = 'object'::text) AND (match <> '{}'::jsonb)))",
+ "constraint detection_rule_exceptions.detection_rule_exceptions_note_check": "CHECK ((btrim(note) <> ''::text))",
+ "constraint detection_rule_exceptions.detection_rule_exceptions_pkey": "PRIMARY KEY (id)",
+ "constraint detection_rule_exceptions.detection_rule_exceptions_removal_check": "CHECK (((removed_at IS NULL) = (removed_by IS NULL)))",
+ "constraint detection_rule_exceptions.detection_rule_exceptions_rule_id_fkey": "FOREIGN KEY (rule_id) REFERENCES detection_rules(id)",
  "constraint detection_rule_stages.detection_rule_stages_pkey": "PRIMARY KEY (id)",
  "constraint detection_rule_stages.detection_rule_stages_rule_id_fkey": "FOREIGN KEY (rule_id) REFERENCES detection_rules(id)",
  "constraint detection_rule_stages.detection_rule_stages_stage_check": "CHECK ((stage = ANY (ARRAY['shadow'::text, 'live'::text, 'off'::text])))",
@@ -4372,6 +4431,7 @@
  "index custom_agents_pkey": "CREATE UNIQUE INDEX custom_agents_pkey ON public.custom_agents USING btree (id)",
  "index custom_workflows_pkey": "CREATE UNIQUE INDEX custom_workflows_pkey ON public.custom_workflows USING btree (workflow_id)",
  "index detection_rule_check_changes_pkey": "CREATE UNIQUE INDEX detection_rule_check_changes_pkey ON public.detection_rule_check_changes USING btree (id)",
+ "index detection_rule_exceptions_pkey": "CREATE UNIQUE INDEX detection_rule_exceptions_pkey ON public.detection_rule_exceptions USING btree (id)",
  "index detection_rule_stages_pkey": "CREATE UNIQUE INDEX detection_rule_stages_pkey ON public.detection_rule_stages USING btree (id)",
  "index detection_rule_versions_pkey": "CREATE UNIQUE INDEX detection_rule_versions_pkey ON public.detection_rule_versions USING btree (rule_id, version)",
  "index detection_rules_pkey": "CREATE UNIQUE INDEX detection_rules_pkey ON public.detection_rules USING btree (id)",
@@ -4477,6 +4537,7 @@
  "index idx_custom_workflows_created_by": "CREATE INDEX idx_custom_workflows_created_by ON public.custom_workflows USING btree (created_by)",
  "index idx_custom_workflows_name": "CREATE INDEX idx_custom_workflows_name ON public.custom_workflows USING btree (name)",
  "index idx_detection_rule_check_changes_latest": "CREATE INDEX idx_detection_rule_check_changes_latest ON public.detection_rule_check_changes USING btree (rule_id, check_key, changed_at DESC, id DESC)",
+ "index idx_detection_rule_exceptions_active": "CREATE INDEX idx_detection_rule_exceptions_active ON public.detection_rule_exceptions USING btree (rule_id) WHERE (removed_at IS NULL)",
  "index idx_detection_rule_stages_rule": "CREATE INDEX idx_detection_rule_stages_rule ON public.detection_rule_stages USING btree (rule_id, id)",
  "index idx_detection_rules_origin_rule_id": "CREATE INDEX idx_detection_rules_origin_rule_id ON public.detection_rules USING btree (origin_rule_id)",
  "index idx_detection_rules_techniques": "CREATE INDEX idx_detection_rules_techniques ON public.detection_rules USING gin (techniques)",
@@ -5549,6 +5610,42 @@
   "sequence": null
  },
  "relation detection_rule_check_changes_id_seq": {
+  "acl": [
+   "app:SELECT",
+   "app:USAGE",
+   "owner:SELECT",
+   "owner:UPDATE",
+   "owner:USAGE"
+  ],
+  "kind": "S",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": "[\"bigint\", 1, 1, 1, 9223372036854775807, 1, false]"
+ },
+ "relation detection_rule_exceptions": {
+  "acl": [
+   "app:INSERT",
+   "app:SELECT",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation detection_rule_exceptions_id_seq": {
   "acl": [
    "app:SELECT",
    "app:USAGE",

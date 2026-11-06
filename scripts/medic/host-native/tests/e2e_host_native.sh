@@ -10,8 +10,8 @@
 # plus: DEV_MODE is refused (K1 T-37), Medic runs as vigil-medic from its own
 # venv, reports install shape start_sh and reads the agent worker's /readyz on
 # loopback (L49), the backend reads Medic's /v1/status on loopback (S9), `check`
-# goes green, a kill -9 is restarted after the backoff,
-# and a TERM to the pidfile stops it all.
+# goes green, the host-native fault cells inject and revert (SW I2), a kill -9
+# is restarted after the backoff, and a TERM to the pidfile stops it all.
 set -uo pipefail
 
 cd "$(dirname "$0")/../../../.." || exit 1
@@ -95,7 +95,9 @@ pass "data dir $DATA is vigil-medic 0700"
 # Started after Medic, on Medic's own venv (a bare python3 stalled on the macOS
 # runner); Medic re-reads /readyz every 30 s.
 READY_LOG="$STATE/readyz.hits"
-"$RT/venv/bin/python" - "$READY_LOG" "$STATE/readyz.up" > "$STATE/readyz.err" 2>&1 <<'PY' &
+start_readyz() {
+    rm -f "$STATE/readyz.up"
+    "$RT/venv/bin/python" - "$READY_LOG" "$STATE/readyz.up" > "$STATE/readyz.err" 2>&1 <<'PY' &
 import http.server, sys
 hits, up = sys.argv[1], sys.argv[2]
 class H(http.server.BaseHTTPRequestHandler):
@@ -108,10 +110,12 @@ s = http.server.HTTPServer(("127.0.0.1", 6990), H)
 open(up, "w").write("up\n")
 s.serve_forever()
 PY
-READY_PID=$!
+    READY_PID=$!
+    wait_for 30 ready_up || fail "the /readyz stand-in didn't start: $(cat "$STATE/readyz.err")"
+}
 trap 'kill "$READY_PID" 2>/dev/null' EXIT
 ready_up() { [ -s "$STATE/readyz.up" ]; }
-wait_for 30 ready_up || fail "the /readyz stand-in didn't start: $(cat "$STATE/readyz.err")"
+start_readyz
 
 # L49: install shape start_sh, and the worker reached on loopback.
 read_ready() { grep -qx /readyz "$READY_LOG" 2>/dev/null; }
@@ -176,6 +180,19 @@ else
     fi
 fi
 pass "Medic's environment holds no Vigil credential (check 9, host-native half)"
+
+# SW I2, lane 1: the host-native fault cells, with Medic still running. P-1.b
+# holds 6989 and 6990 itself, so the /readyz stand-in steps aside (its own PID
+# only) and comes back for the checks after. Linux only: macOS's runner is flaky
+# enough already (#2047).
+if [ "$(uname -s)" = Linux ]; then
+    kill "$READY_PID"; wait "$READY_PID" 2>/dev/null
+    VIGIL_MEDIC_EVAL_HOST_NATIVE=1 uv run --project services/medic --frozen python -m pytest \
+        --noconftest -o addopts= -p no:cacheprovider -q \
+        tests/medic_eval/inject/test_host_native_cells.py || fail "host-native fault cells"
+    start_readyz
+    pass "P-1.b and P-3.c: inject, verify, revert, twice each (SW I2)"
+fi
 
 # Kill -9 → restarted after the 5 s backoff.
 sudo -n kill -9 "$pid"

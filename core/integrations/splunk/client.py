@@ -233,6 +233,7 @@ class SplunkService:
         earliest_time: str = "-24h",
         latest_time: str = "now",
         max_count: int = 1000,
+        all_fields: bool = False,
     ) -> SearchResult:
         """
         Execute a search query in Splunk.
@@ -247,6 +248,8 @@ class SplunkService:
             earliest_time: Earliest time for search (default: -24h)
             latest_time: Latest time for search (default: now)
             max_count: Maximum number of results to return
+            all_fields: Run in verbose mode so rows carry every field Splunk
+                extracts from the event, not just those the SPL names.
 
         Returns:
             SearchResult with the rows, Splunk's event count and its warnings.
@@ -257,7 +260,7 @@ class SplunkService:
         session = self.session
         try:
             return self._run_search(
-                session, query, earliest_time, latest_time, max_count
+                session, query, earliest_time, latest_time, max_count, all_fields
             )
         except SplunkSearchError as e:
             logger.error("Splunk search failed: %s", e)
@@ -277,21 +280,23 @@ class SplunkService:
         earliest_time: str,
         latest_time: str,
         max_count: int,
+        all_fields: bool = False,
     ) -> SearchResult:
         if not self.session_key and not self.authenticate():
             raise SplunkSearchError("Splunk login failed; check the credentials")
 
         search_url = f"{self.server_url}/services/search/jobs"
-        response = self._request(
-            "POST",
-            search_url,
-            data={
-                "search": _as_search(query),
-                "earliest_time": earliest_time,
-                "latest_time": latest_time,
-                "output_mode": "json",
-            },
-        )
+        job = {
+            "search": _as_search(query),
+            "earliest_time": earliest_time,
+            "latest_time": latest_time,
+            "output_mode": "json",
+        }
+        if all_fields:
+            # Smart mode returns only the fields the SPL names; verbose also
+            # returns the key=value fields auto-extracted from _raw.
+            job["adhoc_search_level"] = "verbose"
+        response = self._request("POST", search_url, data=job)
         if response.status_code not in [200, 201]:
             raise SplunkSearchError(f"Splunk refused the search: {_refusal(response)}")
 

@@ -105,3 +105,25 @@ export interface FeedbackBody {
   suggested_lane?: number
   comment?: string
 }
+
+/** One pack's facts (PackFacts). */
+export interface PackFacts {
+  pack: { id: string; version: string; channel: string; created_at: string; expires_at: string; publisher: string }
+  sha256: string
+  vigil: { min: string; max_exclusive: string }
+  source: 'bundled' | 'admin_import' | string
+  imported_by: string | null
+  activated_at: string
+  stale: boolean
+  in_vigil_range: boolean
+  rules_skipped: number
+}
+
+/** GET /api/medic/pack, and what each pack write returns (PackState). */
+export interface PackState {
+  active: PackFacts | null
+  previous: PackFacts | null
+  bundled: PackFacts | null
+  withdrawn: { id: string; channel: string; version: string }[]
+  suppression_7d: { rule: string; suppressed: number }[]
+}

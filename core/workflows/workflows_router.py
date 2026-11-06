@@ -643,6 +643,15 @@ def _stamp_source_tiers(folded: Optional[Dict[str, Any]]) -> None:
         item["source_tier"] = min(tiers, key=_TIER_ORDER.index).value
 
 
+def _stamp_rated_status(
+    run_service: WorkflowRunService, rows: List[Dict[str, Any]]
+) -> None:
+    """Each row's status as rates read it: a rejected run is stored failed."""
+    rated = run_service.rated_statuses([row["run_id"] for row in rows])
+    for row in rows:
+        row["rated_status"] = rated.get(row["run_id"], row.get("status"))
+
+
 @router.get("/workflows/runs/{run_id}")
 async def get_workflow_run(
     run_id: str,
@@ -664,6 +673,7 @@ async def get_workflow_run(
     if not row:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
     row["phases"] = run_service.list_phases(run_id)
+    _stamp_rated_status(run_service, [row])
     folded = await read_projection(run_id, evidence_limit)
     if catalog.is_hunt(workflows, row.get("workflow_id")):
         _stamp_source_tiers(folded)
@@ -911,4 +921,5 @@ async def list_workflow_runs(
         limit=limit,
         offset=offset,
     )
+    _stamp_rated_status(run_service, runs)
     return {"workflow_id": workflow_id, "runs": runs}

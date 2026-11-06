@@ -18,6 +18,8 @@ export interface Workflow {
   huntLike: boolean
   /** Runs started in the last 7 days, running ones included. */
   runs7d: number
+  /** Runs a person stopped at an approval, counted apart from the success rate. */
+  rejected7d?: number
   /** Completed over finished runs in those 7 days, 0..1. Null when none has finished. */
   successRate: number | null
   successLevel: 'good' | 'fair' | 'poor' | null

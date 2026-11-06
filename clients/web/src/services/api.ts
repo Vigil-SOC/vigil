@@ -891,8 +891,18 @@ export const timelineApi = {
 export const detectionRulesApi = {
   listSources: () => api.get('/detection-rules/sources'),
 
-  /** Whether each SIEM's rules can fire: check tallies, Blind spots, rules not passing. */
-  getHealth: (limit?: number) => api.get('/detection-rules/health', { params: { limit } }),
+  /** Every listed rule copy's health and its reason, worst first; one health's when given. */
+  rules: (params: { health?: string; tool?: string; q?: string; offset?: number } = {}) =>
+    api.get('/detection-rules/rules', { params }),
+
+  /** An overlay copy's exceptions, active and removed, with per-day matches. */
+  exceptions: (ruleId: number) => api.get(`/detection-rules/rules/${ruleId}/exceptions`),
+
+  addException: (ruleId: number, data: { match: Record<string, string>; note: string }) =>
+    api.post(`/detection-rules/rules/${ruleId}/exceptions`, data),
+
+  removeException: (ruleId: number, exceptionId: number, reason: string) =>
+    api.delete(`/detection-rules/rules/${ruleId}/exceptions/${exceptionId}`, { params: { reason } }),
   
   
   addSource: (data: {
@@ -920,6 +930,12 @@ export const detectionRulesApi = {
   updateAll: () => api.post('/detection-rules/update-all', undefined, { timeout: 0 }),
   
   getStats: () => api.get('/detection-rules/stats'),
+
+  /** Live overlay rules no SIEM rule runs: only Vigil detects with them. */
+  getOverlayOnly: () =>
+    api.get<{ rules: { id: number; name: string; language: string }[] }>(
+      '/detection-rules/overlay-only',
+    ),
   
   
   reload: () => api.post('/detection-rules/reload'),

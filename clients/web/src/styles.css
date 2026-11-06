@@ -6443,32 +6443,6 @@
       background: var(--bg);
    }
 
-   .rules-kpis {
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      margin-bottom: -1px;
-   }
-
-   /* below its min-width the table scrolls inside its card */
-   .rules-tbl {
-      table-layout: fixed;
-      min-width: 640px;
-   }
-
-   .rules-tbl.rules-checks {
-      min-width: 820px;
-   }
-
-   .tbl.rules-tbl tbody td {
-      white-space: normal;
-      vertical-align: top;
-   }
-
-   .tbl.rules-tbl tbody tr.rules-group td {
-      padding-top: 10px;
-      padding-bottom: 8px;
-      background: var(--bg-2);
-   }
-
    .coverage-run-input {
       width: 280px;
       font-family: var(--mono);

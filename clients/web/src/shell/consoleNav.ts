@@ -9,6 +9,7 @@ import { HOME_PERM } from './landing'
  *  Screens absent here are ungated, and DEV_MODE grants everything. */
 export const SCREEN_PERMS: Partial<Record<ConsoleScreenKey, string>> = {
   cases: 'cases.read',
+  detections: 'detections.read',
   home: HOME_PERM,
   medic: 'medic.read',
 }

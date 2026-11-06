@@ -3,13 +3,14 @@
 import asyncio
 import logging
 from dataclasses import asdict
-from typing import Optional
+from typing import Any, Dict, Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from core.auth.permissions import permission_gate
 from core.deps import provide_detection_rules, provide_mcp_client, provide_mcp_registry
+from core.detections import exceptions
 from core.detections.detection_rules_service import (
     DEPLOY_FORMATS,
     DetectionRulesService,
@@ -18,6 +19,7 @@ from core.detections.detection_rules_service import (
 from core.detections.inventory import catalog
 from core.detections.inventory.sync import sync_repos
 from core.integrations.mcp.registry import MCPRegistry, register_connected
+from core.integrations.mcp.surface import acting_as
 from core.routing import Auth, RouterMeta
 from core.storage.config_service import get_config_service
 from core.storage.models import User
@@ -274,21 +276,117 @@ def get_stats(
     return stats
 
 
-@router.get("/health")
-def get_health(limit: int = Query(200, ge=1, le=1000)):
-    """Whether each SIEM's rules can fire: per-tool check tallies, Blind spots,
-    the rules failing or unknown on a check (fails first, capped at ``limit``),
-    and the repo rules no SIEM has a copy of. Read-only."""
-    by_tool = catalog.rules_by_tool()
-    siems = [t for t in by_tool if t not in ("repo", catalog.OVERLAY)]
+@router.get("/rules")
+def get_rules(
+    health: Optional[
+        Literal[
+            "attention",
+            "fails_to_run",
+            "data_silent",
+            "missing_field",
+            "never_fired",
+            "fires",
+            "disabled",
+            "no_fire_data",
+        ]
+    ] = None,
+    tool: Optional[Literal["elastic", "splunk", "wazuh"]] = None,
+    q: Optional[str] = Query(default=None, max_length=200),
+    offset: int = Query(default=0, ge=0),
+):
+    """Every listed rule copy's health with its reason, worst first, capped at
+    catalog.RULE_ROWS rows from ``offset``, narrowed by ``health`` ("attention"
+    is every state to act on), ``tool`` and the search ``q``; the counts, the
+    per-SIEM tallies and the blind spots cover them all. Read-only."""
+    return catalog.health_listing(health, tool=tool, q=q, offset=offset)
+
+
+@router.get("/overlay-only")
+def get_overlay_only():
+    """Live overlay copies no SIEM rule runs: only Vigil detects with these,
+    so Stop halts their detection. Read-only."""
+    from core.detections.inventory import rollout
+
+    live = [c for c in rollout._copies() if c.stage == "live"]
+    gone = rollout.handed_off([c.rule_id for c in live])
     return {
-        "by_tool": by_tool,
-        "unchecked": catalog.unchecked(siems),
-        "not_read": catalog.NOT_READ,
-        "blind_spots": catalog.blind_spots(),
-        "not_passing": catalog.rules_not_passing(limit),
-        "repo": catalog.repo_coverage(),
+        "rules": [
+            {"id": c.rule_id, "name": c.name, "language": c.language}
+            for c in live
+            if c.rule_id not in gone
+        ]
     }
+
+
+class AddExceptionRequest(BaseModel):
+    """A customer-specific exception: every {field: value} pair must match."""
+
+    match: Dict[str, Any]
+    note: str
+
+
+def _edited(result: Dict[str, Any]) -> Dict[str, Any]:
+    """``edit_exception``'s result, its error as a 4xx carrying the same text."""
+    error = result.get("error")
+    if not error:
+        return result
+    if error.startswith(("No detection rule", "No exception")):
+        status = 404
+    elif "already" in error:
+        status = 409
+    else:
+        status = 400
+    raise HTTPException(status_code=status, detail=error)
+
+
+@router.get("/rules/{rule_id}/exceptions")
+def get_rule_exceptions(rule_id: int):
+    """An overlay copy's exceptions, active and removed, each with its per-day
+    matches; ``handed_off`` when a SIEM copy runs the rule, so Vigil applies none."""
+    try:
+        return exceptions.of_copy(rule_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/rules/{rule_id}/exceptions", dependencies=_SETTINGS_WRITE)
+def add_rule_exception(
+    rule_id: int,
+    request: AddExceptionRequest,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Add an exception to an overlay copy, attributed to the signed-in user."""
+    with acting_as(current_user.username):
+        return _edited(
+            exceptions.edit_exception(
+                "add", rule_id=rule_id, match=request.match, note=request.note
+            )
+        )
+
+
+@router.delete(
+    "/rules/{rule_id}/exceptions/{exception_id}", dependencies=_SETTINGS_WRITE
+)
+def remove_rule_exception(
+    rule_id: int,
+    exception_id: int,
+    reason: str = Query(max_length=2000),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Remove (soft) one of an overlay copy's exceptions, with a reason."""
+    if exceptions.rule_of(exception_id) != rule_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No exception {exception_id} on rule {rule_id}",
+        )
+    with acting_as(current_user.username):
+        return _edited(
+            exceptions.edit_exception(
+                "remove", exception_id=exception_id, reason=reason
+            )
+        )
 
 
 @router.get("/mcp-env")

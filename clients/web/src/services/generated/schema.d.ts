@@ -3184,28 +3184,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/detection-rules/health": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Health
-         * @description Whether each SIEM's rules can fire: per-tool check tallies, Blind spots,
-         *     the rules failing or unknown on a check (fails first, capped at ``limit``),
-         *     and the repo rules no SIEM has a copy of. Read-only.
-         */
-        get: operations["get_api_detection-rules_health"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/detection-rules/mcp-env": {
         parameters: {
             query?: never;
@@ -3221,6 +3199,27 @@ export interface paths {
          *         Dictionary of environment variable names to their values
          */
         get: operations["get_api_detection-rules_mcp-env"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/overlay-only": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Overlay Only
+         * @description Live overlay copies no SIEM rule runs: only Vigil detects with these,
+         *     so Stop halts their detection. Read-only.
+         */
+        get: operations["get_api_detection-rules_overlay-only"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3249,6 +3248,74 @@ export interface paths {
          */
         post: operations["post_api_detection-rules_reload"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Rules
+         * @description Every listed rule copy's health with its reason, worst first, capped at
+         *     catalog.RULE_ROWS rows from ``offset``, narrowed by ``health`` ("attention"
+         *     is every state to act on), ``tool`` and the search ``q``; the counts, the
+         *     per-SIEM tallies and the blind spots cover them all. Read-only.
+         */
+        get: operations["get_api_detection-rules_rules"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/rules/{rule_id}/exceptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Rule Exceptions
+         * @description An overlay copy's exceptions, active and removed, each with its per-day
+         *     matches; ``handed_off`` when a SIEM copy runs the rule, so Vigil applies none.
+         */
+        get: operations["get_api_detection-rules_rules_rule_id_exceptions"];
+        put?: never;
+        /**
+         * Add Rule Exception
+         * @description Add an exception to an overlay copy, attributed to the signed-in user.
+         */
+        post: operations["post_api_detection-rules_rules_rule_id_exceptions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/rules/{rule_id}/exceptions/{exception_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Rule Exception
+         * @description Remove (soft) one of an overlay copy's exceptions, with a reason.
+         */
+        delete: operations["delete_api_detection-rules_rules_rule_id_exceptions_exception_id"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4442,6 +4509,66 @@ export interface paths {
         get: operations["get_api_medic_pack"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/medic/pack/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Pack
+         * @description Import the posted ``medic.pack/v1`` file, held to the admin's expected sha256.
+         */
+        post: operations["post_api_medic_pack_import"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/medic/pack/revert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revert Pack
+         * @description Make the previous (last-known-good) pack active again.
+         */
+        post: operations["post_api_medic_pack_revert"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/medic/pack/switch-to-bundled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Switch To Bundled Pack
+         * @description Make the release's bundled pack active.
+         */
+        post: operations["post_api_medic_pack_switch-to-bundled"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7288,6 +7415,18 @@ export interface components {
             details?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /**
+         * AddExceptionRequest
+         * @description A customer-specific exception: every {field: value} pair must match.
+         */
+        AddExceptionRequest: {
+            /** Match */
+            match: {
+                [key: string]: unknown;
+            };
+            /** Note */
+            note: string;
         };
         /**
          * AddSourceRequest
@@ -17409,11 +17548,9 @@ export interface operations {
             };
         };
     };
-    "get_api_detection-rules_health": {
+    "get_api_detection-rules_mcp-env": {
         parameters: {
-            query?: {
-                limit?: number;
-            };
+            query?: never;
             header?: {
                 authorization?: string | null;
             };
@@ -17442,7 +17579,7 @@ export interface operations {
             };
         };
     };
-    "get_api_detection-rules_mcp-env": {
+    "get_api_detection-rules_overlay-only": {
         parameters: {
             query?: never;
             header?: {
@@ -17480,6 +17617,148 @@ export interface operations {
                 authorization?: string | null;
             };
             path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_detection-rules_rules": {
+        parameters: {
+            query?: {
+                health?: ("attention" | "fails_to_run" | "data_silent" | "missing_field" | "never_fired" | "fires" | "disabled" | "no_fire_data") | null;
+                tool?: ("elastic" | "splunk" | "wazuh") | null;
+                q?: string | null;
+                offset?: number;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_detection-rules_rules_rule_id_exceptions": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                rule_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_rules_rule_id_exceptions": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                rule_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddExceptionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "delete_api_detection-rules_rules_rule_id_exceptions_exception_id": {
+        parameters: {
+            query: {
+                reason: string;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                rule_id: number;
+                exception_id: number;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -19637,6 +19916,99 @@ export interface operations {
         };
     };
     get_api_medic_pack: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_medic_pack_import: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_medic_pack_revert: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_medic_pack_switch-to-bundled": {
         parameters: {
             query?: never;
             header?: {

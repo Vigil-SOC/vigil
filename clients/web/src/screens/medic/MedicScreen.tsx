@@ -6,6 +6,7 @@ import { NotMeasured } from '../../shared/NotMeasured'
 import { TabStrip } from '../../shared/TabStrip'
 import { EmptyState } from '../../shared/ui'
 import { IncidentsTab } from './IncidentsTab'
+import { PackTab } from './PackTab'
 import { SensorsTab } from './SensorsTab'
 import type { StatusRead } from './medicTypes'
 import { safeText } from './safeText'
@@ -25,7 +26,7 @@ const WORDS: Record<string, [string, Level]> = {
   crash_looping: ['Crash-looping', 'poor'],
 }
 
-const TABS = [{ id: 'incidents', label: 'Incidents' }, { id: 'cant-see', label: "Can't see" }] as const
+const TABS = [{ id: 'incidents', label: 'Incidents' }, { id: 'cant-see', label: "Can't see" }, { id: 'pack', label: 'Content pack' }] as const
 
 const mb = (b: number) => (b >= 2 ** 30 ? `${(b / 2 ** 30).toFixed(1)} GiB` : `${Math.round(b / 2 ** 20)} MB`)
 
@@ -91,7 +92,7 @@ export default function MedicScreen() {
             </p>
             <p>
               {m.pack
-                ? `Pack ${safeText(m.pack.id)} ${safeText(m.pack.version)} ${safeText(m.pack.channel)} · ${m.pack.stale ? 'expired, still running' : `expires ${Math.max(0, Math.ceil((Date.parse(m.pack.expires_at) - Date.now()) / 864e5))} d`}`
+                ? <button type="button" className="mdc-link" onClick={() => setParams({ tab: 'pack' })}>{`Pack ${safeText(m.pack.id)} ${safeText(m.pack.version)} ${safeText(m.pack.channel)} · ${m.pack.stale ? 'expired, still running' : `expires ${Math.max(0, Math.ceil((Date.parse(m.pack.expires_at) - Date.now()) / 864e5))} d`} ›`}</button>
                 : <>Pack: <NotMeasured /></>}
             </p>
           </>
@@ -109,8 +110,8 @@ export default function MedicScreen() {
           <div className="mdc-tabs">
             <TabStrip label="Medic sections" tabs={TABS} active={tab} onChange={(id) => setParams({ tab: id })} />
           </div>
-          {tab === 'cant-see'
-            ? <SensorsTab status={status} open={open} />
+          {tab === 'cant-see' ? <SensorsTab status={status} open={open} />
+            : tab === 'pack' ? <PackTab running={status.state === 'running'} reloadStatus={reload} />
             : <IncidentsTab status={status} incidentId={incidentId} open={open} />}
         </>
       )}

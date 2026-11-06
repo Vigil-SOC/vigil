@@ -2,9 +2,9 @@
 
 One plain route per Medic operation (``services/medic/contracts/medic-api.openapi.yaml``),
 each behind its own permission: ``medic.read`` for reads, ``medic.admin`` for the
-feedback POST. Not a generic proxy: a path or query parameter the contract does not
-declare never reaches Medic, and no client header is forwarded. Medic gets only
-``X-Medic-Key``, plus ``X-Medic-Admin`` (the signed-in user) on the feedback POST.
+feedback POST and the three pack writes. Not a generic proxy: a path or query parameter
+the contract does not declare never reaches Medic, and no client header is forwarded.
+Medic gets only ``X-Medic-Key``, plus ``X-Medic-Admin`` (the signed-in user) on writes.
 
 Records, incidents and decisions are hash-covered, so Medic's body bytes pass through
 untouched. Only the status snapshot is parsed and cached (15 s, per process).
@@ -13,6 +13,7 @@ untouched. Only the status snapshot is parsed and cached (15 s, per process).
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import time
 from typing import Optional
@@ -33,6 +34,8 @@ from core.platform.medic_status import MedicStatus, medic_enabled
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 ROUTER_META = RouterMeta(
@@ -42,13 +45,27 @@ ROUTER_META = RouterMeta(
 )
 
 _TIMEOUT_S = 5.0
+# A pack write waits for Medic's next cycle (up to SNAPSHOT_MAX_AGE_S, 20 s): wait past it
+_PACK_TIMEOUT_S = 30.0
 _MAX_BODY = 4 * 1024 * 1024  # a page of 100 records of up to 16 KB, with room
 _MAX_FEEDBACK = 4 * 1024  # the contract's request limit
+_MAX_PACK = 4 * 1024 * 1024  # MAX_PACK_BYTES: the contract's limit for an import
 _STATUS_TTL_S = 15.0
 _MAX_PARAM_LEN = 300
 
 _INCIDENT_ID = r"^inc_[0-9A-Za-z]{8,32}$"
 _ADMIN_LABEL = re.compile(r"[A-Za-z0-9_.:/@+-]{1,128}")
+_SHA256 = re.compile(r"[0-9A-Fa-f]{64}")
+# Medic's refusals of a pack write: their body (pack_code, field) is what the console shows.
+_PACK_REFUSALS = frozenset(
+    {
+        "pack_refused",
+        "pack_conflict",
+        "pack_unavailable",
+        "invalid_body",
+        "missing_admin_identity",
+    }
+)
 # The closed set of Medic error codes (the contract's Error schema).
 _CODES = frozenset(
     {
@@ -107,6 +124,19 @@ def _medic_code(response: httpx.Response) -> Optional[str]:
     return code if code in _CODES else None
 
 
+def _pack_refusal(response: httpx.Response) -> bool:
+    """Whether Medic's body is one of its pack refusals (small, with a known ``code``)."""
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    return (
+        isinstance(body, dict)
+        and body.get("code") in _PACK_REFUSALS
+        and len(response.content) <= 4096
+    )
+
+
 def _target() -> tuple[Optional[str], Optional[str], Optional[Response]]:
     """(base URL, key, None), or an error when Medic is off or not reachable by config."""
     settings = get_settings()
@@ -125,11 +155,13 @@ async def _call(
     params: Optional[list[tuple[str, str]]] = None,
     extra_headers: Optional[dict[str, str]] = None,
     content: Optional[bytes] = None,
+    pack: bool = False,
 ) -> tuple[Optional[httpx.Response], Optional[Response]]:
     """One request to Medic: (its response, None) or (None, the error to return).
 
     Never retried. A refusal, timeout, 401 or 5xx becomes a fixed 503; a 404 the
-    fixed not-found; any other Medic error keeps its status and ``code``.
+    fixed not-found; any other Medic error keeps its status and ``code``. For the pack
+    operations Medic's 409 and 422 refusals pass through whole, and a write waits longer.
     """
     base, key, err = _target()
     if err is not None:
@@ -137,7 +169,9 @@ async def _call(
     headers = {"X-Medic-Key": key, **(extra_headers or {})}
     try:
         async with httpx.AsyncClient(
-            timeout=_TIMEOUT_S, follow_redirects=False, trust_env=False
+            timeout=_PACK_TIMEOUT_S if pack and method == "POST" else _TIMEOUT_S,
+            follow_redirects=False,
+            trust_env=False,
         ) as client:
             r = await client.request(
                 method, base + path, params=params, headers=headers, content=content
@@ -149,9 +183,19 @@ async def _call(
     if r.status_code >= 500 or r.status_code in (401, 403):
         code = _medic_code(r) if r.status_code >= 500 else None
         return None, _problem(503, code or "medic_unavailable")
+    if pack and r.status_code in (409, 422) and _pack_refusal(r):
+        return None, _passthrough(r)
     if r.status_code >= 400:
         return None, _problem(r.status_code, _medic_code(r) or "internal")
-    if r.status_code not in (200, 201) or len(r.content) > _MAX_BODY:
+    if r.status_code not in (200, 201):
+        return None, _problem(503, "medic_unavailable")
+    if len(r.content) > _MAX_BODY:
+        logger.warning(
+            "medic response refused as too large: path=%s size=%d limit=%d",
+            path,
+            len(r.content),
+            _MAX_BODY,
+        )
         return None, _problem(503, "medic_unavailable")
     return r, None
 
@@ -181,8 +225,10 @@ def _query(request: Request, allowed: frozenset) -> tuple[list, Optional[Respons
     return pairs, None
 
 
-async def _get(path: str, params: Optional[list] = None) -> Response:
-    r, err = await _call("GET", path, params=params)
+async def _get(
+    path: str, params: Optional[list] = None, pack: bool = False
+) -> Response:
+    r, err = await _call("GET", path, params=params, pack=pack)
     return err or _passthrough(r)
 
 
@@ -300,4 +346,84 @@ async def list_sensors() -> Response:
 
 @router.get("/pack", dependencies=[_read])
 async def get_pack() -> Response:
-    return await _get("/v1/pack")
+    return await _get("/v1/pack", pack=True)
+
+
+async def _pack_write(
+    user: User,
+    op: str,
+    params: Optional[list[tuple[str, str]]] = None,
+    content: Optional[bytes] = None,
+) -> Response:
+    """One pack write as the signed-in admin; the new ``PackState`` comes back as Medic sent it."""
+    global _status_cache
+    admin = f"user:{user.user_id}"
+    if not _ADMIN_LABEL.fullmatch(admin):
+        return _problem(422, "missing_admin_identity")
+    headers = {"X-Medic-Admin": admin}
+    if content is not None:
+        headers["Content-Type"] = "application/json"
+    r, err = await _call(
+        "POST",
+        f"/v1/pack/{op}",
+        params=params,
+        extra_headers=headers,
+        content=content,
+        pack=True,
+    )
+    if err is not None:
+        return err
+    _status_cache = None  # the status block's pack line must not lag the write
+    return _passthrough(r)
+
+
+@router.post("/pack/import")
+async def import_pack(
+    request: Request,
+    user: User = Depends(require_person_permission(MEDIC_ADMIN_PERMISSION)),
+) -> Response:
+    """Import the posted ``medic.pack/v1`` file, held to the admin's expected sha256."""
+    params, err = _query(request, frozenset({"sha256", "override"}))
+    if err is not None:
+        return err
+    q = dict(params)
+    if not _SHA256.fullmatch(q.get("sha256", "")) or q.get("override", "false") not in (
+        "true",
+        "false",
+    ):
+        return _problem(400, "invalid_parameter")
+    if request.headers.get("content-type", "").split(";")[0].strip().lower() != (
+        "application/json"
+    ):
+        return _problem(415, "unsupported_media_type")
+    length = request.headers.get("content-length", "")
+    if not (length.isascii() and length.isdigit()):  # missing: refused unread
+        return _problem(400, "invalid_parameter")
+    if int(length) > _MAX_PACK:
+        return _problem(413, "payload_too_large")
+    body = b""
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > _MAX_PACK:
+            return _problem(413, "payload_too_large")
+    return await _pack_write(user, "import", params, body)
+
+
+@router.post("/pack/revert")
+async def revert_pack(
+    request: Request,
+    user: User = Depends(require_person_permission(MEDIC_ADMIN_PERMISSION)),
+) -> Response:
+    """Make the previous (last-known-good) pack active again."""
+    _, err = _query(request, frozenset())
+    return err or await _pack_write(user, "revert")
+
+
+@router.post("/pack/switch-to-bundled")
+async def switch_to_bundled_pack(
+    request: Request,
+    user: User = Depends(require_person_permission(MEDIC_ADMIN_PERMISSION)),
+) -> Response:
+    """Make the release's bundled pack active."""
+    _, err = _query(request, frozenset())
+    return err or await _pack_write(user, "switch-to-bundled")

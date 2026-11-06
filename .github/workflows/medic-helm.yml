@@ -110,3 +110,85 @@ jobs:
       # nopolicy: check 14, refuse variant (exit 3 with the message).
       - name: e2e (${{ matrix.cni }})
         run: infra/helm/vigil/medic-tests/kind/e2e.sh ${{ matrix.cni }}
+
+  # All of Vigil on kind with Calico (e2e.sh full: backend, Postgres, Redis, Bifrost,
+  # daemon, LLM worker, agent-serve, agent worker, Medic), then the Helm fault cells
+  # on it. It also answers whether that fits an ubuntu-latest runner: the summary
+  # records peak memory, disk use and bring-up time. Cadence is #2044's.
+  medic-helm-full:
+    name: Vigil on kind (full) and the Helm fault cells
+    needs: medic-helm-render
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      CLUSTER: medic-helm-full
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.15.2
+
+      - name: Install kind
+        uses: helm/kind-action@v1
+        with:
+          install_only: true
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Test dependencies
+        run: pip install pytest jsonschema
+
+      - name: Build the images
+        run: |
+          start=$(date +%s)
+          docker build -f infra/docker/Dockerfile.medic -t vigil-medic:kind .
+          docker build -f infra/docker/Dockerfile.medic-gateway -t vigil-medic-gateway:kind .
+          docker build -f infra/docker/Dockerfile.backend -t vigil-backend:kind .
+          docker build -f infra/docker/Dockerfile.daemon -t vigil-daemon:kind .
+          docker build -f infra/docker/Dockerfile.agent -t vigil-agent:kind .
+          echo "build_s=$(( $(date +%s) - start ))" >> "$RUNNER_TEMP/measure.env"
+
+      # Peak memory is the larger of the whole runner's used memory and the kind
+      # node container's, sampled every 5 s until the job ends.
+      - name: Sample memory
+        run: |
+          nohup bash -c 'while true; do
+            host=$(free -m | awk "/^Mem:/ {print \$3}")
+            node=$(docker stats --no-stream --format "{{.MemUsage}}" "$CLUSTER-control-plane" 2>/dev/null | awk "{print \$1}" || true)
+            echo "$(date +%s),$host,$node"; sleep 5; done' > "$RUNNER_TEMP/mem.csv" 2>/dev/null &
+          df -m --output=used / | tail -1 | sed 's/^ */disk_before_mb=/' >> "$RUNNER_TEMP/measure.env"
+
+      - name: e2e full (checks 3, 7 with Bifrost, 11, 14, 15; Down)
+        run: KEEP=1 infra/helm/vigil/medic-tests/kind/e2e.sh full | tee "$RUNNER_TEMP/e2e-full.log"
+
+      - name: The Helm fault cells, twice each
+        run: |
+          VIGIL_MEDIC_EVAL_LIVE=1 VIGIL_MEDIC_HELM_CLUSTER="$CLUSTER" \
+            python -m pytest --noconftest -o addopts= -p no:cacheprovider tests/medic_eval/inject/test_helm_config_cells.py -v
+
+      - name: Does it fit? (peak memory, disk, bring-up)
+        if: always()
+        run: |
+          . "$RUNNER_TEMP/measure.env" || true
+          {
+            echo "### Vigil on kind (full) on $(nproc) cores, $(free -m | awk '/^Mem:/ {print $2}') MiB runner"
+            python3 - "$RUNNER_TEMP/mem.csv" <<'PY'
+          import sys
+          host = node = 0.0
+          for line in open(sys.argv[1]):
+              parts = line.strip().split(",")
+              if len(parts) < 3: continue
+              host = max(host, float(parts[1] or 0))
+              v = parts[2]
+              for unit, mul in (("GiB", 1024), ("MiB", 1)):
+                  if v.endswith(unit): node = max(node, float(v[:-3]) * mul)
+          print(f"- peak memory used on the runner: {host:.0f} MiB; peak of the kind node container: {node:.0f} MiB")
+          PY
+            echo "- disk used on /: $disk_before_mb MiB before, $(df -m --output=used / | tail -1 | tr -d ' ') MiB after"
+            echo "- image build: ${build_s:-?} s"
+            grep -E 'bring-up|PASS' "$RUNNER_TEMP/e2e-full.log" | sed 's/^ */- /'
+          } | tee -a "$GITHUB_STEP_SUMMARY"

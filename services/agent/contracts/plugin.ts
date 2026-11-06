@@ -68,6 +68,9 @@ export interface PluginManifest {
   // Capabilities, bound to this deployment's tools by their `provides` field, the
   // same binding an arch role's needs get.
   needs: string[];
+  // Needs held when bound and gone without otherwise, with no blind spot recorded:
+  // an opt-in integration that is not connected is not a gap in visibility.
+  optional?: string[];
   skills: SkillSpec[];
   conclusion: ConclusionSpec;
   guard?: GuardSpec;

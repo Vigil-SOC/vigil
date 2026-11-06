@@ -7,7 +7,6 @@ from collections import Counter
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import and_, case, exists
 from sqlalchemy.orm import noload
 
 from core.findings.alert_outcomes import (
@@ -23,6 +22,7 @@ from core.storage.connection import get_db_manager
 from core.storage.ip_exclusion_repository import exclusion_view_filter
 from core.storage.models import FederationSource, Finding, WorkflowRun, WorkflowRunPhase
 from core.time import utcnow
+from core.workflows.run_rating import RATED_STATUS
 from core.workflows.workflow_run_service import IN_FLIGHT_STATUSES
 from core.workflows.workflows_service import AGENT_RUN_PREFIX, WorkflowsService
 
@@ -86,25 +86,6 @@ _LIVE_ORDER = (
 _NODE_LABELS = {**TERMINAL_LABELS, "dismissed": "Dismissed as noise"}
 _TERMINAL_STATUSES = ("completed", "failed", "cancelled")
 _OPEN_PHASE = ("running", "pending_approval")
-
-
-# A run a person stopped by rejecting a step is stored failed, but that is the review
-# working, not the workflow failing. Rates read it as "rejected", so it is a run but
-# not in the rate, as a rejected step is for its agent (core/agents/run_stats.py).
-RATED_STATUS = case(
-    (
-        and_(
-            WorkflowRun.status == "failed",
-            exists().where(
-                WorkflowRunPhase.run_id == WorkflowRun.run_id,
-                WorkflowRunPhase.status == "failed",
-                WorkflowRunPhase.approval_state == "rejected",
-            ),
-        ),
-        "rejected",
-    ),
-    else_=WorkflowRun.status,
-)
 
 
 def completion_level(sample: int, completed: int) -> Optional[str]:

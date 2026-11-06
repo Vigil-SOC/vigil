@@ -32,7 +32,7 @@ step deps ok
 
 step frontend-deps start
 if ensure_npm_on_path && [ -d "$REPO_ROOT/clients/web" ]; then
-    if [ ! -d "$REPO_ROOT/clients/web/node_modules" ]; then
+    if frontend_deps_stale "$REPO_ROOT/clients/web"; then
         (cd "$REPO_ROOT/clients/web" && npm ci --prefer-offline) >&2 \
             || (cd "$REPO_ROOT/clients/web" && npm install) >&2
     fi

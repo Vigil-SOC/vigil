@@ -16,6 +16,8 @@ export interface WfRun {
   workflow_id?: string | null
   run_id: string
   status: string
+  /** The status as rates read it: a run a person rejected is stored failed and rated rejected. */
+  rated_status?: string | null
   triggered_by?: string
   started_at?: string | null
   duration_ms?: number | null
@@ -39,11 +41,18 @@ export function fmtDuration(ms?: number | null): string {
   return `${Math.round(ms / 60000)}m`
 }
 
+/** A phase's status as words; an unknown one is shown as sent. */
+export const PHASE_WORD: Record<string, string> = {
+  pending: 'Waiting', running: 'Running', completed: 'Done', failed: 'Failed', skipped: 'Skipped',
+  pending_approval: 'Waiting for approval', rejected: 'Rejected', cancelled: 'Stopped',
+}
+
 interface WfPhase {
   phase_id: string
   phase_order: number
   agent_id: string
   status: string
+  approval_state?: string | null
   duration_ms?: number | null
   cost_usd?: number | null
   error?: string | null
@@ -494,8 +503,16 @@ export function callFailure(call: unknown): CallFailure | null {
   return typeof result === 'string' ? ((FAILED_CALL.exec(result)?.[1] as CallFailure | undefined) ?? null) : null
 }
 
+/** What a run reads as: a step a person rejected ends it failed, which is a decision, not a fault. */
+export const shownStatus = (run: Pick<WfRun, 'status' | 'rated_status'>): string => run.rated_status ?? run.status
+
+/** The same for one step. */
+export const shownPhaseStatus = (p: Pick<WfPhase, 'status' | 'approval_state'>): string =>
+  p.status === 'failed' && p.approval_state === 'rejected' ? 'rejected' : p.status
+
 export function runStatusColor(s: string): string {
   if (s === 'completed') return 'var(--ok)'
+  if (s === 'rejected') return 'var(--tx-2)'
   if (s === 'failed' || s === 'cancelled') return 'var(--crit)'
   if (s === 'paused') return 'var(--high)'
   return 'var(--med)' // running

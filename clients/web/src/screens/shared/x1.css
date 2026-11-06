@@ -1,0 +1,13 @@
+/* The 1.X screens' look (Detections), the primitives it uses. Console tokens only (tokens.css), so both themes follow. */
+.x1 { display: grid; gap: 16px; min-width: 0; }
+/* the page itself, as the console mounts it: the shell title's 22px gutter */
+.screen > .x1 { padding: 4px 22px 26px; }
+@media (max-width: 760px) { .screen > .x1 { padding: 4px 16px 20px; } }
+.x1-card { background: var(--bg1); border: 1px solid var(--ln1); border-radius: var(--radius-card, 10px); padding: 14px 16px; min-width: 0; }
+.x1-card h3 { margin: 0 0 10px; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .6px; color: var(--tx2); }
+.x1-muted { color: var(--tx2); }
+.x1-mono { font-family: var(--font-mono); font-size: 12px; }
+.x1-link { color: var(--ac); background: none; border: 0; padding: 0; font: inherit; cursor: pointer; text-align: left; }
+.x1-link:hover { text-decoration: underline; }
+.x1-link:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+.x1-error { padding: 10px 12px; border-color: var(--poor-ln); background: var(--poor-bg); color: var(--tx0); font-size: 12.5px; }

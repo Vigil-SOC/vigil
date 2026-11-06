@@ -11,7 +11,13 @@ reserve held as a filler row, and a free-space guard. At a bound the writer
 stops recording: `append` raises RecordHeld, except for `reserve=True` records
 (the recording-stopped incident), which are written into the freed reserve.
 
-Not here yet (G3): retention and purge, anchors and the corruption reset.
+Retention (G3b): records older than 90 days are purged hourly, and at the cap
+those older than 7 days, each under an anchor sealed onto the head in the same
+transaction (see `_purge`). The chain is verified as a stream, one record at a time.
+
+Corruption (G3c): a store that fails `quick_check`, isn't a database, or whose chain
+doesn't verify is renamed aside and replaced by a fresh one that opens with a
+`store_reset` record. Busy, locked or unsafe stores are refused, never reset.
 """
 
 from __future__ import annotations
@@ -20,13 +26,14 @@ import fcntl
 import json
 import logging
 import os
+import re
 import shutil
 import sqlite3
 import threading
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Self
 
@@ -63,9 +70,24 @@ RESUME_MARGIN_PERCENT = 5
 DISK_FLOOR_PERCENT = 10
 DISK_FLOOR_MIN = 2 * GIB
 JOURNAL_SIZE_LIMIT = 16 * MIB
+# Retention (C4 §6.5): a fixed 90 days, not Vigil's DAEMON_CLEANUP_RETENTION_DAYS (that
+# ages the read log; honoring a shorter one would delete the chain). At the cap the
+# purge may reach newer records, but never inside the 7-day floor.
+RETENTION = timedelta(days=90)
+EARLY_PURGE_FLOOR = timedelta(days=7)
+HOURLY = timedelta(hours=1)  # the age purge and the head line
 # A reader waits this long for the file, then fails. Shorter than the writer's
 # 5 s: an open reader holds back WAL checkpoints (C4 §6.7).
 READER_BUSY_MS = 1000
+
+# Moved-aside stores (`medic.db.corrupt-<UTC>`, plus -wal/-shm) kept for `verify`:
+# the newest two, so repeated corruption can't fill the volume.
+MOVED_ASIDE_RE = re.compile(r"^medic\.db\.corrupt-\d{8}T\d{6}Z(-\d+)?$")
+MOVED_ASIDE_KEEP = 2
+DB_SUFFIXES = ("", "-wal", "-shm")
+RESET_HOLD_S = (
+    24 * 3600
+)  # how long a reset shows in /v1/status (watcher.store-reset's hold)
 
 ENVELOPE = ("seq", "prev", "hash")
 
@@ -73,7 +95,7 @@ ENVELOPE = ("seq", "prev", "hash")
 # deleting the rows it "covers" verify clean.
 WRITER_ONLY_TYPES = {
     "store_reset": "store_reset is written only by reset()",
-    "anchor": "anchors are written only by the purge (G3)",
+    "anchor": "anchors are written only by the purge",
 }
 
 
@@ -113,6 +135,10 @@ BEGIN SELECT RAISE(ABORT, 'records are append-only'); END;
 
 class StoreLocked(StoreRefused):
     """Another writer holds the store (C4 §6.7: one process per store)."""
+
+
+class StoreCorrupt(StoreRefused):
+    """The file is damaged or its chain is broken: the one refusal open_writer resets."""
 
 
 class StoreBusy(StoreError):
@@ -192,35 +218,79 @@ def _check_row(
     return rec, None
 
 
+def _checked(
+    rows: Iterable[tuple[int, str, str]],
+    validator: Draft202012Validator,
+    problem: list[tuple[str, int, str]],
+) -> Iterator[dict[str, Any]]:
+    """Yield each row's record; stop at the first bad row, recording it in `problem`."""
+    for seq, hash_col, text in rows:
+        rec, bad = _check_row(seq, hash_col, text, validator)
+        if bad:
+            problem.append((bad[0], seq, bad[1]))
+            return
+        yield rec
+
+
 def verify_rows(
-    rows: Iterable[tuple[int, str, str]], validator: Draft202012Validator
+    rows: Iterable[tuple[int, str, str]],
+    anchors: Mapping[int, str],
+    validator: Draft202012Validator,
 ) -> VerifyReport:
     """Walk (seq, hash, record) rows in seq order; name the first bad seq.
 
-    The row checks stop at the first bad row; the contract's verify() then
-    runs on the rows before it, so whichever problem comes first wins.
+    One record is held at a time. The row checks stop at the first bad row, and
+    the contract's verifier runs on the records before it, so whichever problem
+    comes first wins. `anchors` is `_anchors(conn)`.
 
     Limits of an unkeyed chain, caught only by the logged head (C4 §6.5):
     deleting the newest rows leaves a valid chain, and an edited record with a
     forged hash is named at the *next* seq (E-LINK).
     """
-    records: list[dict[str, Any]] = []
-    row_problem: tuple[str, int, str] | None = None
-    for seq, hash_col, text in rows:
-        rec, problem = _check_row(seq, hash_col, text, validator)
-        if problem:
-            row_problem = (problem[0], seq, problem[1])
-            break
-        records.append(rec)
+    problem: list[tuple[str, int, str]] = []
+    count = 0
+    last = None
+
+    def counted() -> Iterator[dict[str, Any]]:
+        nonlocal count, last
+        for rec in _checked(rows, validator, problem):
+            count += 1
+            last = rec["seq"]
+            yield rec
+
     try:
-        head = decision_chain.verify(records)
+        head = decision_chain.verify_stream(counted(), anchors)
     except decision_chain.ChainError as err:
-        return VerifyReport(False, len(records), None, "", err.code, err.seq, str(err))
-    if row_problem:
-        code, seq, detail = row_problem
-        return VerifyReport(False, len(records), None, "", code, seq, detail)
-    last = records[-1]["seq"] if records else None
-    return VerifyReport(True, len(records), last, head)
+        return VerifyReport(False, count, None, "", err.code, err.seq, str(err))
+    if problem:
+        code, seq, detail = problem[0]
+        return VerifyReport(False, count, None, "", code, seq, detail)
+    return VerifyReport(True, count, last, head)
+
+
+def _anchors(conn: sqlite3.Connection) -> dict[int, str]:
+    """The anchors in the store, read before the walk (an anchor sits after the
+    records it covers). A malformed row is skipped: the walk names it."""
+    found: dict[int, str] = {}
+    for (text,) in conn.execute(
+        "SELECT record FROM records WHERE CASE WHEN json_valid(record) "
+        "THEN json_extract(record, '$.type') END = 'anchor'"
+    ):
+        try:
+            body = json.loads(text)["body"]
+            found[body["deleted_last_seq"]] = body["last_deleted_hash"]
+        except (ValueError, TypeError, KeyError):
+            pass
+    return found
+
+
+def _verify(conn: sqlite3.Connection, validator: Draft202012Validator) -> VerifyReport:
+    """Verify the whole chain: the anchor pass and the walk in one read snapshot."""
+    conn.execute("BEGIN")
+    try:
+        return verify_rows(conn.execute(_SELECT_ALL), _anchors(conn), validator)
+    finally:
+        conn.execute("ROLLBACK")
 
 
 _SELECT_ALL = "SELECT seq, hash, record FROM records ORDER BY seq"
@@ -240,6 +310,7 @@ class DecisionWriter:
         *,
         guard: bool = True,
         disk_usage: Callable[[Path], Any] = shutil.disk_usage,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self.root = root
         self.instance_id = instance_id
@@ -257,8 +328,11 @@ class DecisionWriter:
             f"PRAGMA max_page_count = {pages}"
         ).fetchone()[0]
         self._filler = conn.execute("SELECT count(*) FROM reserve").fetchone()[0] > 0
+        self._clock = clock  # the one seam to the time of retention and the head line
+        self._hour_mark: datetime | None = None  # when the hourly work last ran
         self._stop: str | None = None  # why recording is stopped, if it is
         self.excerpts_dropped = 0
+        self.reset_on_open = False  # open_writer reset the store at this start
         if self._max_page_count * self._page_size(conn) > cap_bytes:
             log.warning(
                 "Store cap %d bytes is below the store's size; the effective cap is %d",
@@ -368,15 +442,7 @@ class DecisionWriter:
                 raise RecordHeld(
                     f"recording is stopped ({self._stop}); nothing was written"
                 )
-            try:
-                conn.execute("BEGIN IMMEDIATE")
-            except sqlite3.OperationalError as err:
-                if "locked" not in str(err) and "busy" not in str(err):
-                    raise
-                raise StoreBusy(
-                    f"{self.root / DB_NAME}: another connection holds the write lock "
-                    f"({err}); nothing was written"
-                ) from err
+            self._begin(conn)
             released = False
             try:
                 row = conn.execute(
@@ -399,8 +465,10 @@ class DecisionWriter:
                 if conn.in_transaction:
                     conn.execute("ROLLBACK")
                 if _is_full(err) and not self._stop:
-                    # The hard cap (or a full disk) beat the soft check.
-                    self._trip("full")
+                    # The hard cap (or a full disk) beat the soft check. Room freed
+                    # by the purge lets the held record in on the next refresh.
+                    if not self._early_purge(conn):
+                        self._trip("full")
                     raise RecordHeld("the store is full; nothing was written") from err
                 if _is_full(err) and reserve:
                     log.error(
@@ -414,6 +482,17 @@ class DecisionWriter:
                 # Fold the wal back, so the reserve's writes don't sit outside the cap.
                 conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             return sealed
+
+    def _begin(self, conn: sqlite3.Connection) -> None:
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError as err:
+            if "locked" not in str(err) and "busy" not in str(err):
+                raise
+            raise StoreBusy(
+                f"{self.root / DB_NAME}: another connection holds the write lock "
+                f"({err}); nothing was written"
+            ) from err
 
     def _check(self, sealed: dict[str, Any]) -> str:
         """Schema, gap order, then instance; returns the canonical text that is stored."""
@@ -432,11 +511,150 @@ class DecisionWriter:
             )
         return decision_chain.canonical(sealed).decode()
 
+    # -- retention ------------------------------------------------------------------
+
+    def _purge(
+        self,
+        conn: sqlite3.Connection,
+        cutoff: datetime,
+        reason: str,
+        min_bytes: int = 0,
+    ) -> int:
+        """Delete the longest seq prefix whose records are all before `cutoff`, and
+        seal an anchor for it onto the head: one transaction, so a failure leaves
+        the chain as it was. Delete first, so the anchor reuses the freed pages
+        even at the cap. Returns how many records went (0: nothing was eligible, or
+        fewer than `min_bytes` of them: each purge costs an anchor, so a trickle at
+        the cap would free nothing).
+
+        `at` isn't monotonic across record types, so the prefix ends at the first
+        record that isn't old enough (decision-record.md §3).
+        """
+        self._begin(conn)
+        try:
+            row = conn.execute(
+                "SELECT record FROM records ORDER BY seq DESC LIMIT 1"
+            ).fetchone()
+            count, size, first, last, last_hash, lo, hi = (
+                0,
+                0,
+                None,
+                None,
+                "",
+                None,
+                None,
+            )
+            for seq, hash_col, at, n in conn.execute(
+                "SELECT seq, hash, json_extract(record, '$.at'), length(record) "
+                "FROM records ORDER BY seq"
+            ):
+                try:
+                    when = decision_chain.instant(at)
+                    if when >= cutoff:
+                        break
+                except (ValueError, TypeError):
+                    break  # never delete what can't be read
+                count, size, last, last_hash = count + 1, size + n, seq, hash_col
+                first = seq if first is None else first
+                lo = at if lo is None or when < decision_chain.instant(lo) else lo
+                hi = at if hi is None or when > decision_chain.instant(hi) else hi
+            if not count or size < min_bytes:
+                conn.execute("ROLLBACK")
+                return 0
+            deleted = conn.execute("DELETE FROM records WHERE seq <= ?", (last,))
+            if deleted.rowcount != count:
+                raise StoreError(f"purge: deleted {deleted.rowcount} of {count} rows")
+            anchor = decision_chain.seal(
+                {
+                    "v": 1,
+                    "at": self._clock().strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                    "type": "anchor",
+                    "body": {
+                        "reason": reason,
+                        "deleted_first_seq": first,
+                        "deleted_last_seq": last,
+                        "deleted_count": count,
+                        "deleted_from": lo,
+                        "deleted_to": hi,
+                        "last_deleted_hash": last_hash,
+                    },
+                },
+                json.loads(row[0]),
+            )
+            text = self._check(anchor)
+            conn.execute(
+                "INSERT INTO records (seq, hash, record) VALUES (?, ?, ?)",
+                (anchor["seq"], anchor["hash"], text),
+            )
+            conn.execute("COMMIT")
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        # Give the freed pages back to the disk, then fold the wal into the file.
+        conn.execute("PRAGMA incremental_vacuum").fetchall()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        log.log(
+            logging.WARNING if reason == "early_purge" else logging.INFO,
+            "Purged %d records (seq %d to %d, %s) under anchor seq %d: %s",
+            count,
+            first,
+            last,
+            lo if count == 1 else f"{lo} to {hi}",
+            anchor["seq"],
+            reason,
+        )
+        return count
+
+    def _early_purge(self, conn: sqlite3.Connection) -> bool:
+        """At the cap: free room by purging what's older than the 7-day floor, if
+        that's enough to resume on (the margin `_assess` asks for)."""
+        try:
+            return (
+                self._purge(
+                    conn,
+                    self._clock() - EARLY_PURGE_FLOOR,
+                    "early_purge",
+                    self._cap * RESUME_MARGIN_PERCENT // 100,
+                )
+                > 0
+            )
+        except (StoreError, sqlite3.Error) as exc:
+            log.error("Early purge failed: %s", type(exc).__name__)
+            return False
+
+    def _hourly(self, conn: sqlite3.Connection) -> None:
+        """Once an hour: purge past retention, then log the head, an outside witness
+        (C4 §6.5) like the line at open. The head is the last row; it's not re-verified.
+        """
+        now = self._clock()
+        mark = self._hour_mark
+        if mark is not None and mark <= now < mark + HOURLY:
+            return
+        self._hour_mark = now  # also when the clock stepped back
+        try:
+            self._purge(conn, now - RETENTION, "retention")
+        except (StoreError, sqlite3.Error) as exc:
+            log.error("Retention purge failed: %s", type(exc).__name__)
+        if self._stop in ("cap", "full") and self._early_purge(conn):
+            self._assess(conn)  # data that has aged past the floor since the trip
+        if mark is None:
+            return  # the line at open is this hour's
+        row = conn.execute(
+            "SELECT seq, hash FROM records ORDER BY seq DESC LIMIT 1"
+        ).fetchone()
+        log.info(
+            "medic store head: seq %s hash %s, %d bytes on disk",
+            row[0] if row else None,
+            row[1] if row else decision_chain.GENESIS,
+            self._disk_bytes(),
+        )
+
     # -- reads ----------------------------------------------------------------------
 
     def verify(self) -> VerifyReport:
         with self._mutex:
-            return verify_rows(self._open_conn().execute(_SELECT_ALL), self._validator)
+            return _verify(self._open_conn(), self._validator)
 
     @property
     def stopped(self) -> bool:
@@ -453,7 +671,9 @@ class DecisionWriter:
         """Re-check the bounds (and resume if room came back); returns `stopped`."""
         with self._mutex:
             try:
-                self._assess(self._open_conn())
+                conn = self._open_conn()
+                self._assess(conn)
+                self._hourly(conn)
             except (StoreError, sqlite3.Error) as exc:
                 log.error("Store bounds not checked: %s", type(exc).__name__)
         return self.stopped
@@ -476,6 +696,8 @@ class DecisionWriter:
             states = ("near_cap",)
         else:
             states = ("ok",)
+        if self._reset_recent():
+            states = tuple(s for s in states if s != "ok") + ("reset_after_corruption",)
         return StoreUsage(
             used_bytes=used,
             cap_bytes=cap,
@@ -484,6 +706,23 @@ class DecisionWriter:
             free_bytes=self._disk_usage(self.root).free,
             states=states,
         )
+
+    def _reset_recent(self) -> bool:
+        """Did a reset open this store within the hold? A reset is its first record,
+        so the oldest row says, and it survives a restart."""
+        with self._mutex:
+            row = (
+                self._open_conn()
+                .execute("SELECT record FROM records ORDER BY seq LIMIT 1")
+                .fetchone()
+            )
+        if not row:
+            return False
+        first = json.loads(row[0])
+        if first.get("type") != "store_reset":
+            return False
+        age = datetime.now(UTC) - datetime.fromisoformat(first["at"])
+        return age.total_seconds() < RESET_HOLD_S
 
     # -- bounds ---------------------------------------------------------------------
 
@@ -545,9 +784,10 @@ class DecisionWriter:
         self._filler = True
         return True
 
-    def _assess(self, conn: sqlite3.Connection) -> None:
+    def _assess(self, conn: sqlite3.Connection, purged: bool = False) -> None:
         """Decide recording / stopped before a write: free space first, then size.
-        Stopped resumes only with room to spare, re-arming the reserve."""
+        Stopped resumes only with room to spare, re-arming the reserve. Where the
+        size would stop it, records older than 7 days go first (`purged`: once)."""
         try:
             du = self._disk_usage(self.root)
         except OSError as err:  # can't read free space: judge by size alone
@@ -564,6 +804,8 @@ class DecisionWriter:
                 not self._filler
                 and (live + self._reserve >= self._cap or not self._arm(conn))
             ):
+                if not purged and self._early_purge(conn):
+                    return self._assess(conn, True)
                 self._trip("cap")
             return
         # Stopped: room means the data, a reserve and a margin under the cap.
@@ -641,7 +883,7 @@ def _connect(db: Path, busy_timeout_ms: int) -> sqlite3.Connection:
         conn.execute(f"PRAGMA journal_size_limit = {JOURNAL_SIZE_LIMIT}")
         check = conn.execute("PRAGMA quick_check").fetchall()
         if check != [("ok",)]:
-            raise StoreRefused(f"{db}: quick_check failed: {check[:3]}")
+            raise StoreCorrupt(f"{db}: quick_check failed: {check[:3]}")
         conn.executescript(
             f"BEGIN IMMEDIATE; {_DDL} INSERT OR IGNORE INTO meta (key, value) "
             f"VALUES ('schema_version', '{SCHEMA_VERSION}'); COMMIT;"
@@ -659,6 +901,97 @@ def _connect(db: Path, busy_timeout_ms: int) -> sqlite3.Connection:
     return conn
 
 
+def _inspect(
+    db: Path, busy_timeout_ms: int, validator: Draft202012Validator
+) -> tuple[sqlite3.Connection, int, VerifyReport]:
+    """Connect and check `db`: (conn, record count, chain report).
+
+    Damage (not a database, quick_check, a malformed page) is StoreCorrupt. A
+    transient OperationalError (locked, disk I/O) is a plain StoreRefused: moving
+    a healthy store aside because it was busy would lose data.
+    """
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = _connect(db, busy_timeout_ms)
+        (count,) = conn.execute("SELECT count(*) FROM records").fetchone()
+        return conn, count, _verify(conn, validator)
+    except BaseException as err:
+        if conn is not None:
+            conn.close()
+        if isinstance(err, sqlite3.OperationalError):
+            raise StoreRefused(
+                f"{db}: can't read the store ({err}); not reset"
+            ) from err
+        if isinstance(err, sqlite3.DatabaseError):
+            raise StoreCorrupt(f"{db}: not a readable SQLite store ({err})") from err
+        raise
+
+
+def _move_aside(root: Path) -> str:
+    """Rename medic.db and its -wal/-shm to `medic.db.corrupt-<UTC>` (a rename keeps
+    the 0600 mode); returns the name, which a SQLite open of it also pairs with
+    its -wal/-shm. Keeps the newest two sets."""
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    name, n = f"{DB_NAME}.corrupt-{stamp}", 0
+    while any(os.path.lexists(root / (name + sfx)) for sfx in DB_SUFFIXES):
+        n += 1
+        name = f"{DB_NAME}.corrupt-{stamp}-{n}"
+    for sfx in DB_SUFFIXES:
+        try:
+            os.rename(root / (DB_NAME + sfx), root / (name + sfx))
+        except FileNotFoundError:
+            pass
+    older = sorted(
+        p.name
+        for p in root.iterdir()
+        if MOVED_ASIDE_RE.match(p.name) and p.name != name
+    )
+    for old in older[: max(0, len(older) - (MOVED_ASIDE_KEEP - 1))]:
+        for sfx in DB_SUFFIXES:
+            try:
+                os.unlink(root / (old + sfx))
+            except FileNotFoundError:
+                pass
+            except OSError as err:  # the new store matters more than the cleanup
+                log.warning("Can't remove old moved-aside %s%s: %s", old, sfx, err)
+    return name
+
+
+def _salvage_head(path: Path, validator: Draft202012Validator) -> dict[str, Any] | None:
+    """Best effort: {seq, hash} of the last record of a damaged store whose own
+    hash and chain still check, or None. Never raises."""
+    rows: list[tuple[int, str, str]] = []
+    anchors: dict[int, str] = {}
+    try:
+        conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            try:
+                anchors = _anchors(conn)
+            except sqlite3.Error:
+                pass
+            rows.extend(
+                conn.execute(_SELECT_ALL)
+            )  # keeps what was read before a bad page
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        pass
+    try:
+        report = verify_rows(rows, anchors, validator)
+        good = rows
+        if not report.ok:
+            bad = next(
+                (i for i, r in enumerate(rows) if r[0] == report.first_bad_seq), 0
+            )
+            good = rows[:bad]
+        if not good:
+            return None
+        rec = json.loads(good[-1][2])
+        return {"seq": rec["seq"], "hash": rec["hash"]}
+    except (ValueError, KeyError, TypeError):  # a damaged file can't stop the recovery
+        return None
+
+
 def open_writer(
     root: Path,
     *,
@@ -666,16 +999,20 @@ def open_writer(
     busy_timeout_ms: int = 5000,
     shape: str = "compose",
     disk_usage: Callable[[Path], Any] = shutil.disk_usage,
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> DecisionWriter:
     """Open (or create) `<root>/medic.db` as its one writer.
 
     `shape` picks the disk rule: on Helm the volume is Medic's own, so the cap is
     clamped to half of it; elsewhere the disk is shared and recording stops below
-    the free-space floor. `disk_usage` is the seam to the filesystem.
+    the free-space floor. `disk_usage` is the seam to the filesystem, `clock` to the time of retention.
 
     Refuses (StoreRefused) a root or file that isn't private (files.mode_problem),
-    a second writer (StoreLocked), a bad or missing instance id, a corrupt file,
-    and a chain that doesn't verify: appending would extend a tampered head.
+    a second writer (StoreLocked), a bad or missing instance id, a newer layout,
+    and a busy or unreadable-for-now file. A corrupt file or a chain that doesn't
+    verify is moved aside and replaced by a fresh store opening with a
+    `store_reset` record (`reset_on_open` is then True): appending to a tampered
+    head would extend it.
     """
     root = Path(root)
     prepare_root(root)
@@ -684,23 +1021,34 @@ def open_writer(
         cap_bytes = min(cap_bytes, disk_usage(root).total // 2)
     lock_fd = _take_lock(root)
     conn: sqlite3.Connection | None = None
+    moved: str | None = None
+    previous_head: dict[str, Any] | None = None
     try:
         db = root / DB_NAME
+        validator = _validator()
         if not os.path.lexists(db):
             create_private_file(db)
         try:
-            conn = _connect(db, busy_timeout_ms)
-        except sqlite3.DatabaseError as err:
-            raise StoreRefused(f"{db}: not a readable SQLite store ({err})") from err
-        (count,) = conn.execute("SELECT count(*) FROM records").fetchone()
+            conn, count, report = _inspect(db, busy_timeout_ms, validator)
+            if not report.ok:
+                raise StoreCorrupt(
+                    f"{db}: the decision chain is broken ({report.code} at seq "
+                    f"{report.first_bad_seq}: {report.detail})"
+                )
+        except StoreCorrupt as err:
+            if (
+                conn is not None
+            ):  # a chain that doesn't verify; a damaged file never gave one
+                conn.close()
+                conn = None
+            log.error("Medic's store is corrupt, resetting it: %s", err)
+            # Refuses, leaving the store alone, if the id is gone: don't mint a second.
+            load_or_create_instance_id(root, store_is_empty=False)
+            moved = _move_aside(root)
+            previous_head = _salvage_head(root / moved, validator)
+            create_private_file(db)
+            conn, count, report = _inspect(db, busy_timeout_ms, validator)
         instance_id = load_or_create_instance_id(root, store_is_empty=count == 0)
-        validator = _validator()
-        report = verify_rows(conn.execute(_SELECT_ALL), validator)
-        if not report.ok:
-            raise StoreRefused(
-                f"{db}: the decision chain is broken ({report.code} at seq "
-                f"{report.first_bad_seq}: {report.detail}); Medic won't append to it"
-            )
     except BaseException:
         if conn is not None:
             conn.close()
@@ -715,7 +1063,7 @@ def open_writer(
         instance_id,
     )
     try:
-        return DecisionWriter(
+        writer = DecisionWriter(
             root,
             conn,
             lock_fd,
@@ -724,19 +1072,35 @@ def open_writer(
             validator,
             guard=not helm,
             disk_usage=disk_usage,
+            clock=clock,
         )
     except BaseException:
         conn.close()
         os.close(lock_fd)
         raise
+    if moved is not None:
+        try:
+            stored = writer.reset(previous_head=previous_head, moved_aside=moved)
+        except BaseException:
+            writer.close()
+            raise
+        writer.reset_on_open = True
+        log.warning(
+            "Medic's store was reset: moved aside as %s, previous head %s, new seq %d",
+            moved,
+            previous_head,
+            stored["seq"],
+        )
+    return writer
 
 
 @contextmanager
-def open_reader(root: Path) -> Iterator[sqlite3.Connection]:
+def open_reader(root: Path, name: str = DB_NAME) -> Iterator[sqlite3.Connection]:
     """A separate read-only connection (C4 §6.7). One connection, closed by the
     caller when the read returns. `query_only` plus a short `busy_timeout`: a
-    reader that can't get the file fails instead of sitting on the WAL."""
-    db = Path(root) / DB_NAME
+    reader that can't get the file fails instead of sitting on the WAL. `name`
+    picks a moved-aside file (`medic.db.corrupt-...`) in the root."""
+    db = Path(root) / name
     if not db.exists():
         raise StoreRefused(f"{db}: no store here")
     conn = sqlite3.connect(
@@ -750,7 +1114,7 @@ def open_reader(root: Path) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-def verify_store(root: Path) -> VerifyReport:
+def verify_store(root: Path, name: str = DB_NAME) -> VerifyReport:
     """Verify the whole chain through a reader; needs no lock, so anyone can run it."""
-    with open_reader(root) as conn:
-        return verify_rows(conn.execute(_SELECT_ALL), _validator())
+    with open_reader(root, name) as conn:
+        return _verify(conn, _validator())

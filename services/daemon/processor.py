@@ -67,13 +67,15 @@ TRIAGE_MAX_TOKENS = 8192
 
 def not_offered_reason(action: str, band: str, confidence: float, bar: float) -> str:
     """Why the gate turned an alert down, in the terms of the gate's own test."""
-    first = (
-        "triage said dismiss"
-        if action == "dismiss"
-        else "this install does not investigate that severity"
-    )
+    if action == "dismiss":
+        # Confidence in a dismissal is not a shortfall against the bar.
+        return (
+            f"Not offered: triage said dismiss. Severity {band}, "
+            f"confidence {confidence:.0%}, no threat-intel hit."
+        )
     return (
-        f"Not offered: {first}. Severity {band}, confidence {confidence:.0%} "
+        f"Not offered: this install does not investigate that severity. "
+        f"Severity {band}, confidence {confidence:.0%} "
         f"is under the {bar:.0%} bar, no threat-intel hit."
     )
 
@@ -709,7 +711,8 @@ class FindingProcessor:
             if response:
                 # Parse and apply AI assessment
                 finding = self._apply_triage_result(finding, response)
-                self.stats["triaged"] += 1
+                if not finding.get("ai_triage_error"):
+                    self.stats["triaged"] += 1
             else:
                 finding["ai_triage_error"] = error or "empty LLM response"
 
@@ -892,6 +895,16 @@ REASONING: [Brief explanation]
             fields[key] = None if key in fields else value.strip()
 
         severity = (fields.get("SEVERITY") or "").lower()
+        action = (fields.get("RECOMMENDED_ACTION") or "").lower()
+        # No usable verdict: record a failure, not a finished triage, so the
+        # backfill sweep asks again.
+        if (
+            severity not in ["critical", "high", "medium", "low"]
+            and action not in TRIAGE_ACTIONS
+        ):
+            finding["ai_triage_error"] = "reply had no parseable action or severity"
+            return finding
+
         if severity in ["critical", "high", "medium", "low"]:
             finding["severity"] = severity
             triage_result["severity"] = severity
@@ -911,7 +924,6 @@ REASONING: [Brief explanation]
             triage_result["category"] = category.lower()
             finding["category"] = category.lower()
 
-        action = (fields.get("RECOMMENDED_ACTION") or "").lower()
         if action in TRIAGE_ACTIONS:
             triage_result["recommended_action"] = action
             finding["recommended_action"] = action
@@ -1148,7 +1160,11 @@ REASONING: [Brief explanation]
         should_respond = (
             severity in ["critical", "high"]
             or recommended_action in ["isolate", "block"]
-            or confidence >= self.response_config.review_threshold
+            # Confidence in a dismissal is confidence there is nothing to look at.
+            or (
+                recommended_action != "dismiss"
+                and confidence >= self.response_config.review_threshold
+            )
         )
 
         # A threat-intel feed hit (stamped by _enrich_finding) offers the same
