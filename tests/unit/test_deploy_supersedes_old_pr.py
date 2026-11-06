@@ -145,11 +145,12 @@ def deploy(github, monkeypatch):
     monkeypatch.setattr(rollout.exceptions, "listed", lambda _s, _rid: [])
     monkeypatch.setattr(rollout, "_stopped", lambda: False)
     monkeypatch.setattr(core.secrets, "get_secret", lambda key, default=None: TOKEN)
-    monkeypatch.setattr(
-        rollout,
-        "_record_deploy",
-        lambda c, out: recorded.__setitem__((c.rule_id, c.version), out),
-    )
+
+    def record(c, out, *_):  # *_: the actor, where _deploy passes one
+        recorded[(c.rule_id, c.version)] = out
+        return out
+
+    monkeypatch.setattr(rollout, "_record_deploy", record)
     monkeypatch.setattr(
         rollout,
         "_record_superseded",
