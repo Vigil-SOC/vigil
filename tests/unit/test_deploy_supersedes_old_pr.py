@@ -89,6 +89,9 @@ class FakeGitHub:
             number = self.pr(body["head"], title=body["title"])
             return httpx.Response(201, json=self.pulls[number - 1])
         m = re.fullmatch(rf"{base}/issues/(\d+)/comments", path)
+        if m and method == "GET":
+            said = self.comments.get(int(m[1]), [])
+            return httpx.Response(200, json=[{"body": b} for b in said])
         if m and method == "POST":
             self.comments.setdefault(int(m[1]), []).append(body["body"])
             return httpx.Response(201, json={})
@@ -99,7 +102,8 @@ class FakeGitHub:
         return httpx.Response(404, json={"message": f"no route {method} {path}"})
 
 
-def _copy(version, rule_id=7):
+def _copy(version, rule_id=7, deploy=None):
+    """A live copy; ``deploy`` is what an earlier sweep recorded on this version."""
     return rollout.Copy(
         rule_id=rule_id,
         version=version,
@@ -107,7 +111,7 @@ def _copy(version, rule_id=7):
         language="elastic",
         stage="live",
         stage_at=datetime.now(timezone.utc),
-        checks={},
+        checks={"deploy": deploy} if deploy else {},
         rule={},
         key="key-7",
         toml=f'[rule]\nname = "v{version}"\n',
@@ -216,18 +220,69 @@ def test_a_new_pr_a_person_closed_supersedes_nothing(github, deploy):
     assert _state(github, v1) == "open"
 
 
-def test_a_failed_close_is_retried_with_the_reused_pr(github, deploy):
+def test_a_failed_close_keeps_the_new_pr_and_is_retried_without_a_second_comment(
+    github, deploy
+):
     v1 = github.pr("vigil/rule-7-v1")
     github.fail = ("PATCH", r"/pulls/\d+$")
-    recorded = deploy(_copy(2))
-    assert "500" in recorded[(7, 2)]["error"]
+    first = dict(deploy(_copy(2))[(7, 2)])
+    # The v2 PR is open: its record says so (the Stop dialog shows it opened),
+    # and the failed close sits beside it rather than in place of it.
+    assert first["pr_url"].endswith("/pull/2")
+    assert "error" not in first
+    assert "500" in first["supersede_error"]
     assert _state(github, v1) == "open"
-    # Next sweep: the v2 PR from the first try is reused, and v1 gets closed.
+    # Next sweep, from what was recorded: v2's PR is reused and v1 gets closed.
     github.fail = None
-    recorded = deploy(_copy(2))
-    assert recorded[(7, 2)]["pr_url"].endswith("/pull/2")
+    recorded = deploy(_copy(2, deploy=first))
+    assert recorded[(7, 2)]["pr_url"] == first["pr_url"]
+    assert "supersede_error" not in recorded[(7, 2)]
     assert _state(github, v1) == "closed"
+    assert github.comments[v1] == ["Superseded by #2 (rule Certutil download v2)"]
     assert sum(1 for p in github.pulls if p["head"]["ref"] == "vigil/rule-7-v2") == 1
+
+
+def test_a_failed_comment_is_retried_and_posted_once(github, deploy):
+    v1 = github.pr("vigil/rule-7-v1")
+    github.fail = ("POST", r"/comments$")
+    first = dict(deploy(_copy(2))[(7, 2)])
+    assert first["pr_url"] and "500" in first["supersede_error"]
+    assert _state(github, v1) == "open" and v1 not in github.comments
+    github.fail = None
+    deploy(_copy(2, deploy=first))
+    assert github.comments[v1] == ["Superseded by #2 (rule Certutil download v2)"]
+    assert _state(github, v1) == "closed"
+
+
+def test_a_recorded_pr_with_nothing_left_to_close_is_not_retried(github, deploy):
+    done = {"version": 2, "at": "x", "pr_url": f"https://github.com/{REPO}/pull/9"}
+    deploy(_copy(2, deploy=done))
+    assert github.calls == []
+
+
+def test_one_failed_close_does_not_stop_the_others(github, deploy):
+    v1, v2 = github.pr("vigil/rule-7-v1"), github.pr("vigil/rule-7-v2")
+    github.fail = ("PATCH", rf"/pulls/{v1}$")
+    recorded = deploy(_copy(3))
+    assert _state(github, v1) == "open" and _state(github, v2) == "closed"
+    assert recorded[(7, 3)]["pr_url"].endswith("/pull/3")
+    assert f"/pulls/{v1}" in recorded[(7, 3)]["supersede_error"]
+    assert recorded[(7, 2)]["superseded_by"] == recorded[(7, 3)]["pr_url"]
+    assert (7, 1) not in recorded
+
+
+def test_a_version_already_in_the_repo_closes_the_older_prs_too(github, deploy):
+    v1 = github.pr("vigil/rule-7-v1")
+    github.files[("main", "rules/certutil.toml")] = _copy(2).toml.encode()
+    recorded = deploy(_copy(2))
+    assert recorded[(7, 2)]["in_repo"] == "rules/certutil.toml on main"
+    assert _state(github, v1) == "closed"
+    assert github.comments[v1] == [
+        "Superseded: rule Certutil download v2 is already in rules/certutil.toml on main"
+    ]
+    assert recorded[(7, 1)]["superseded_by"] == "rules/certutil.toml on main"
+    # No branch or PR is made for a version that is already there.
+    assert not any(p["head"]["ref"] == "vigil/rule-7-v2" for p in github.pulls)
 
 
 def test_the_token_goes_only_in_the_header_and_never_to_a_log(github, deploy, caplog):
