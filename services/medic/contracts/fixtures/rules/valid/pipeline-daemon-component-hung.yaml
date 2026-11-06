@@ -23,5 +23,5 @@ keep_firing_for: 10m
 advice:
   summary: Findings are arriving but the soc-daemon processor has processed none for 15 minutes while reporting running.
   fix: >-
-    Send this incident to DeepTempo Support with the evidence report. Restarting
+    Report it as a Vigil defect with this incident. Restarting
     soc-daemon usually restores the processor; record that you did so.
