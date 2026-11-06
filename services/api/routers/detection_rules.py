@@ -12,6 +12,7 @@ from core.auth.permissions import permission_gate
 from core.deps import provide_detection_rules, provide_mcp_client, provide_mcp_registry
 from core.detections import exceptions
 from core.detections.detection_rules_service import (
+    DEPLOY_FORMATS,
     DetectionRulesService,
     is_vendor_repo,
 )
@@ -88,9 +89,20 @@ def list_sources(
     Returns:
         List of sources with metadata (name, format, rule count, status, etc.)
     """
-    # vendor_repo: a shipped vendor repo, which can never be a deploy target
+    # vendor_repo: a shipped vendor repo, which can never be a deploy target.
+    # deploy_target is the one rollout honours per format, so a saved file
+    # holding two flags of one format never shows both as on.
+    honoured = {
+        target["id"]
+        for fmt in DEPLOY_FORMATS
+        if (target := service.deploy_target(fmt)) is not None
+    }
     sources = [
-        {**s, "vendor_repo": is_vendor_repo(s.get("git_url", ""))}
+        {
+            **s,
+            "vendor_repo": is_vendor_repo(s.get("git_url", "")),
+            "deploy_target": s.get("id") in honoured,
+        }
         for s in service.list_sources()
     ]
     return {"sources": sources, "count": len(sources)}

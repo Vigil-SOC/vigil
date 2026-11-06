@@ -4865,6 +4865,16 @@
       text-overflow: ellipsis;
    }
 
+   /* A source's name wraps rather than clips, and its status pill drops below when it can't fit beside it */
+   .data-name {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px 8px;
+      white-space: normal;
+      overflow-wrap: anywhere;
+   }
+
    .data-table th:nth-child(1) { width: 24%; }
    .data-table:not(.data-rules) th:nth-child(3) { width: 150px; }
    .data-table:not(.data-rules) th:nth-child(4) { width: 90px; }
