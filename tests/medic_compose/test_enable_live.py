@@ -65,8 +65,7 @@ pytestmark = [
 ]
 
 STATUS = (
-    "from core.platform.medic_status import medic_status; "
-    "print(medic_status().value)"
+    "from core.platform.medic_status import medic_status; print(medic_status().value)"
 )
 GATEWAY_READ = r"""
 import json, urllib.request
@@ -86,7 +85,9 @@ for _ in range(n):
     req = urllib.request.Request(
         "http://localhost:6987/api/auth/login",
         data=json.dumps({"username_or_email": user, "password": "wrong-" + "x" * 30}).encode(),
-        headers={"Content-Type": "application/json"},
+        # CSRF is enforced: the double-submit pair, as the gateway sends it.
+        headers={"Content-Type": "application/json",
+                 "Cookie": "csrf_token=medic-test", "X-CSRF-Token": "medic-test"},
     )
     try:
         urllib.request.urlopen(req, timeout=20)
@@ -95,6 +96,14 @@ for _ in range(n):
         codes.append(e.code)
 print(json.dumps(codes))
 """
+
+
+class ComposeFailed(subprocess.CalledProcessError):
+    """CalledProcessError whose message carries compose's stderr (and, for
+    `up`/`build`, the project's state), so a failed fixture says why."""
+
+    def __str__(self) -> str:
+        return f"{super().__str__()}\n{self.stderr}"
 
 
 class Stack:
@@ -136,14 +145,43 @@ class Stack:
         )
         if medic:
             cmd[2:4] = ["--env-file", str(self.secrets_dir / "compose.env")]
-        return subprocess.run(
+        done = subprocess.run(
             [*cmd, "-p", self.project, *args],
             env=self.env,
             capture_output=True,
             text=True,
-            check=check,
+            check=False,
             **kw,
         )
+        if check and done.returncode:
+            # A failed `up` or `build` says why: compose's stderr, every
+            # container's state and the logs of any that exited non-zero or
+            # went unhealthy.
+            detail = done.stderr
+            if args and args[0] in ("up", "build"):
+                detail += self._diagnose(medic)
+            raise ComposeFailed(done.returncode, done.args, done.stdout, detail)
+        return done
+
+    def _diagnose(self, medic: bool) -> str:
+        ps = self.compose("ps", "-a", "--format", "json", medic=medic, check=False)
+        out = f"\n--- docker compose ps -a ---\n{ps.stdout}{ps.stderr}"
+        rows = [json.loads(line) for line in ps.stdout.splitlines() if line.strip()]
+        for row in rows:
+            if (row.get("State") == "exited" and row.get("ExitCode")) or row.get(
+                "Health"
+            ) == "unhealthy":
+                logs = self.compose(
+                    "logs",
+                    "--no-color",
+                    "--tail",
+                    "80",
+                    row["Service"],
+                    medic=medic,
+                    check=False,
+                )
+                out += f"\n--- logs {row['Service']} ---\n{logs.stdout}{logs.stderr}"
+        return out
 
     def py(self, service: str, code: str, *argv: str, medic: bool = False) -> str:
         done = self.compose(
@@ -294,19 +332,21 @@ def test_gateway_logs_in_and_serves_a_read(stack, enabled) -> None:
 
 def test_failed_logins_do_not_lock_the_service_account(stack, enabled) -> None:
     name = stack.secret("viewer_username")
-    # The login limiter allows 5/min per IP; the threshold is 5.
+    # The login limiter allows 5/min per account; the lockout threshold is 5.
     codes = json.loads(stack.py("backend", BAD_LOGINS, name, "5"))
     assert codes == [401] * 5, codes
     row = stack.sql(
         f"SELECT failed_login_count, locked_until IS NULL FROM users WHERE username = '{name}'"
     )
     assert row == "5|t"
-    # The gateway (another IP) can still log in: restart it so it logs in afresh.
+    # The gateway can still log in: restart it so it logs in afresh. The
+    # per-account limiter (5/min) throttles it until the minute passes, which
+    # is a wait, not a lockout.
     stack.compose("restart", "medic-gateway", medic=True)
     out = stack.wait(
         lambda: json.loads(stack.py("medic", GATEWAY_READ, medic=True)),
         lambda o: o["read"][0] == 200,
-        timeout=60,
+        timeout=180,
     )
     assert json.loads(out["status"][1])["state"] == "ok"
 
