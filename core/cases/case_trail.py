@@ -16,7 +16,11 @@ import sys
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 from core.audit import trail
-from core.cases.agent_closure import actor_identity, principal_for_username
+from core.cases.agent_closure import (
+    actor_identity,
+    principal_for_username,
+    run_agent,
+)
 from core.storage import case_trail_hook
 from core.storage.case_trail_hook import TrailWriteError  # noqa: F401 - its home
 
@@ -120,13 +124,9 @@ def _actor(session, signed_in: Optional[str]) -> tuple:
     """
     from core.auth.tool_principal import current_claims
 
-    claims = current_claims()
-    if claims is not None:
-        from core.agents.attribution import phase_actor
-
-        agent = phase_actor(claims.run_id or "") or claims.agent_id
-        if agent:
-            return agent, agent, claims.person_id
+    agent = run_agent()[0]
+    if agent:
+        return agent, agent, current_claims().person_id
     principal, actor_text = actor_identity(session, signed_in)
     return principal, actor_text, None
 
