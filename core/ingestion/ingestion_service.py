@@ -1187,6 +1187,83 @@ class IngestionService:
             logger.warning(f"No handler for format '{fmt}', skipping {file_path}")
             return {}
 
+    # Memory destination (#3965): rows are handed to the episodic writer and never
+    # reach bulk_create_findings, ingest_case or the triage signal.
+    # A row with any of these filled is a ticket. Values, not keys: a CSV or
+    # Parquet row has every column, filled or not.
+    _TICKET_FIELDS = ("closed_at", "disposition", "closed_by")
+
+    def _history_rows(self, file_path: Path, fmt: str) -> Iterable[Any]:
+        """Each row of a history file; a JSON object carries both kinds."""
+        if fmt == "json":
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                for kind in ("alerts", "tickets"):
+                    for row in data.get(kind) or []:
+                        yield kind, row
+                return
+            if not isinstance(data, list):
+                raise ValueError("expected {alerts, tickets} or an array of rows")
+            yield from ((None, row) for row in data)
+        elif fmt == "jsonl":
+            for line in _utf8_lines(file_path):
+                if line.strip():
+                    try:
+                        yield None, json.loads(line)
+                    except ValueError:
+                        yield None, None
+        elif fmt == "csv":
+            yield from ((None, row) for row in csv.DictReader(_utf8_lines(file_path)))
+        elif fmt == "parquet":
+            import pyarrow.parquet as pq
+
+            for batch in pq.ParquetFile(file_path).iter_batches(batch_size=1000):
+                yield from ((None, row) for row in batch.to_pylist())
+
+    def ingest_history_file(
+        self, file_path: Path, fmt: str, source_system: str, actor: str
+    ) -> Dict[str, Any]:
+        """Alerts and closed tickets become one import in episodic memory."""
+        from core.memory.imported_history import import_id, write_import
+        from core.storage.unit_of_work import unit_of_work
+
+        self.reset_stats()
+        self.stats.update(alerts_total=0, tickets_total=0, rows_unreadable=0)
+        rows: Dict[str, List[Dict[str, Any]]] = {"alerts": [], "tickets": []}
+        try:
+            for kind, row in self._history_rows(file_path, fmt):
+                if not isinstance(row, dict):
+                    self.stats["rows_unreadable"] += 1
+                    continue
+                kind = kind or (
+                    "tickets"
+                    if any(row.get(f) not in (None, "") for f in self._TICKET_FIELDS)
+                    else "alerts"
+                )
+                rows[kind].append(row)
+                self.stats[f"{kind}_total"] += 1
+        except Exception as e:
+            self._record_error(f"Could not read the {fmt} file: {e}")
+            self.stats["rows_unreadable"] += 1
+            return self.stats
+
+        investigation_id = import_id(
+            rows["alerts"] + rows["tickets"], file_path.read_bytes(), source_system
+        )
+        with unit_of_work() as session:
+            write_import(
+                session,
+                investigation_id=investigation_id,
+                alerts=rows["alerts"],
+                tickets=rows["tickets"],
+                actor=actor,
+                stats=self.stats,
+            )
+        self.import_id = investigation_id
+        logger.info("History import %s complete: %s", investigation_id, self.stats)
+        return self.stats
+
     def ingest_from_string(
         self, data_string: str, format: str = "json", data_type: str = "finding"
     ) -> Dict[str, Any]:

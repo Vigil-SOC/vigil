@@ -4071,6 +4071,10 @@ export interface paths {
         /**
          * Upload And Ingest File
          * @description Accept a file and ingest it as a background job; poll /ingest/jobs/{id}.
+         *
+         *     ``history`` takes alerts and closed tickets (a JSON object may carry both
+         *     arrays) into episodic memory as one import named ``<source_system>:<hash>``;
+         *     it creates no findings or Cases.
          */
         post: operations["post_api_ingest_upload"];
         delete?: never;
@@ -4672,6 +4676,46 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/memory/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Imports
+         * @description Every import, newest upload first.
+         */
+        get: operations["get_api_memory_imports"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/memory/imports/{import_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Import
+         * @description Delete one whole import: its Verdicts, Sightings and marker.
+         */
+        delete: operations["delete_api_memory_imports_import_id"];
         options?: never;
         head?: never;
         patch?: never;
@@ -7605,6 +7649,11 @@ export interface components {
             file: string;
             /** Format */
             format?: string | null;
+            /**
+             * Source System
+             * @default
+             */
+            source_system: string;
         };
         /** Body_upload_skill_api_skills_upload_post */
         Body_upload_skill_api_skills_upload_post: {
@@ -9600,6 +9649,34 @@ export interface components {
             iocs: {
                 [key: string]: unknown;
             }[];
+        };
+        /** ImportListResponse */
+        ImportListResponse: {
+            /** Imports */
+            imports: components["schemas"]["ImportOut"][];
+            /** Total */
+            total: number;
+        };
+        /** ImportOut */
+        ImportOut: {
+            /**
+             * Concluded At
+             * Format: date-time
+             */
+            concluded_at: string;
+            /** Import Id */
+            import_id: string;
+            /**
+             * Imported At
+             * Format: date-time
+             */
+            imported_at: string;
+            /** Sightings Written */
+            sightings_written: number;
+            /** Source System */
+            source_system: string;
+            /** Verdicts Written */
+            verdicts_written: number;
         };
         /**
          * IngestionJobStatus
@@ -20284,6 +20361,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_memory_imports: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_memory_imports_import_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                import_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportOut"];
                 };
             };
             /** @description Validation Error */

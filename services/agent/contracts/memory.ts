@@ -34,8 +34,9 @@ export type Stance = (typeof STANCES)[number];
 
 // Keyed by kind and id, never run_id: a run-keyed schema cannot represent the
 // Case-authored Verdicts the writer split requires. `analyst` is a note a person
-// wrote on an entity, and its id is the note's.
-export const INVESTIGATION_KINDS = ["hunt", "case", "analyst"] as const;
+// wrote on an entity, and its id is the note's. `imported` is pre-install history
+// from a file, keyed `<source system>:<content hash>` (#3965).
+export const INVESTIGATION_KINDS = ["hunt", "case", "analyst", "imported"] as const;
 export type InvestigationKind = (typeof INVESTIGATION_KINDS)[number];
 
 // handed_off is terminal for the hunt and not an ending of the claim, so it ranks
