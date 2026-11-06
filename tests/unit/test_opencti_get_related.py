@@ -104,3 +104,68 @@ async def test_a_non_container_has_no_objects(monkeypatch):
     assert out["count"] == 1
     assert out["relationships"][0]["to"]["x_mitre_id"] == "T1059.001"
     assert "objects" not in out and "object_count" not in out
+
+
+IP = {"id": "ip-1", "entity_type": "IPv4-Addr", "observable_value": "198.51.100.23"}
+
+
+@pytest.mark.asyncio
+async def test_an_indicators_targets_are_named(monkeypatch):
+    # get_related on an indicator: which group it indicates, which IP it's based on.
+    rels = [
+        {"relationship_type": "indicates", "confidence": 80, "to": GROUP},
+        {"relationship_type": "based-on", "confidence": 80, "to": IP},
+    ]
+    data = {"stixCoreRelationships": _edges(*rels), "stixDomainObject": {}}
+    service, _ = _service(monkeypatch, data)
+    out = await service.get_related(REPORT, limit=5)
+    assert [(r["relationship_type"], r["to"]) for r in out["relationships"]] == [
+        ("indicates", {"id": "is-1", "entity_type": "Intrusion-Set", "name": "APT-X"}),
+        (
+            "based-on",
+            {"id": "ip-1", "entity_type": "IPv4-Addr", "name": "198.51.100.23"},
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_targets_and_objects_share_one_shape(monkeypatch):
+    data = {
+        "stixCoreRelationships": _edges(
+            {"relationship_type": "uses", "confidence": 80, "to": TECHNIQUE}
+        ),
+        "stixDomainObject": {"objects": _edges(TECHNIQUE, GROUP, INDICATOR, IP)},
+    }
+    service, _ = _service(monkeypatch, data)
+    out = await service.get_related(REPORT, limit=5)
+    technique = {
+        "id": "ap-1",
+        "entity_type": "Attack-Pattern",
+        "name": "[T1059.001] PowerShell",
+        "x_mitre_id": "T1059.001",
+    }
+    assert out["relationships"][0]["to"] == technique
+    assert out["objects"] == [
+        technique,
+        {"id": "is-1", "entity_type": "Intrusion-Set", "name": "APT-X"},
+        {"id": "in-1", "entity_type": "Indicator", "name": "evil.example"},
+        {"id": "ip-1", "entity_type": "IPv4-Addr", "name": "198.51.100.23"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_target_matching_no_fragment_reads_as_unnamed(monkeypatch):
+    # A relationship to a relationship matches neither fragment: no name to give.
+    data = {
+        "stixCoreRelationships": _edges(
+            {"relationship_type": "related-to", "confidence": 50, "to": {}}
+        ),
+        "stixDomainObject": {},
+    }
+    service, _ = _service(monkeypatch, data)
+    out = await service.get_related(REPORT, limit=5)
+    assert out["relationships"][0]["to"] == {
+        "id": None,
+        "entity_type": None,
+        "name": None,
+    }
