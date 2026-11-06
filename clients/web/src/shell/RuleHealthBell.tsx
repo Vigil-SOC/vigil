@@ -7,20 +7,21 @@ import { relativeTime } from '../screens/settings/integrationHealth'
 import type { ConsoleScreenGoOptions } from '../shared/types'
 
 /** Each check's flag as a person reads it, and its tone on the Rules page. */
-const KIND: Record<string, { label: string; plural: string; tone: string }> = {
-  runs: { label: 'Stopped running', plural: 'stopped running', tone: 'poor' },
-  sees: { label: 'Lost its data', plural: 'lost their data', tone: 'fair' },
-  quiet: { label: 'Too loud', plural: 'too loud', tone: 'high' },
-  accurate: { label: 'Mostly false positives', plural: 'mostly false positives', tone: 'fair' },
-  noisy: { label: 'Went noisy', plural: 'went noisy', tone: 'high' },
-  silent: { label: 'Went silent', plural: 'went silent', tone: 'ac' },
-  drift: { label: 'Changed outside the repo', plural: 'changed outside the repo', tone: 'ac' },
+/** Each check's flag as a person reads it, a one-line why, and its tone on the Rules page. */
+const KIND: Record<string, { label: string; plural: string; why: string; tone: string }> = {
+  runs: { label: 'Stopped running', plural: 'stopped running', why: 'Its query errors in the SIEM.', tone: 'poor' },
+  sees: { label: 'Lost its data', plural: 'lost their data', why: 'The data it searches stopped arriving.', tone: 'fair' },
+  quiet: { label: 'Too loud', plural: 'too loud', why: 'Over its alerts-per-day limit.', tone: 'high' },
+  accurate: { label: 'Mostly false positives', plural: 'mostly false positives', why: 'Most of its judged alerts were not real.', tone: 'fair' },
+  noisy: { label: 'Went noisy', plural: 'went noisy', why: 'Far more alerts today than its usual.', tone: 'high' },
+  silent: { label: 'Went silent', plural: 'went silent', why: 'It fired regularly, then stopped.', tone: 'ac' },
+  drift: { label: 'Changed outside the repo', plural: 'changed outside the repo', why: 'Edited, disabled or removed in the SIEM, not in its repo.', tone: 'ac' },
 }
-const kindOf = (check: string) => KIND[check] ?? { label: `${check} failing`, plural: `${check} failing`, tone: 'poor' }
+const kindOf = (check: string) => KIND[check] ?? { label: `${check} failing`, plural: `${check} failing`, why: 'A check that passed now fails.', tone: 'poor' }
 const SIEM_NAME: Record<string, string> = { elastic: 'Elastic', splunk: 'Splunk', wazuh: 'Wazuh', overlay: 'Vigil', repo: 'Repo' }
 const POLL_MS = 60_000
 
-/** The top bar's bell: rule-health flags for the signed-in person, read or unread. In-app only. */
+/** The top bar's bell: notifications for the signed-in person, read or unread; only rule health for now. In-app only. */
 export default function RuleHealthBell({ go }: { go: (screen: string, options?: ConsoleScreenGoOptions) => void }) {
   const [box, setBox] = useState<HealthInbox | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -100,7 +101,7 @@ export default function RuleHealthBell({ go }: { go: (screen: string, options?: 
       .map(([check, count]) => `${count.toLocaleString()} ${kindOf(check).plural}`)
       .join(' · ')
     : ''
-  const label = unread ? `Rule health, ${unread} unread` : 'Rule health'
+  const label = unread ? `Notifications, ${unread} unread` : 'Notifications'
 
   const root = ref.current?.closest('.soc-console') as HTMLElement | null
   const pop = open && pos ? (
@@ -108,11 +109,14 @@ export default function RuleHealthBell({ go }: { go: (screen: string, options?: 
       ref={popRef}
       className="rh-pop"
       role="dialog"
-      aria-label="Rule health"
+      aria-label="Notifications"
       style={{ position: 'fixed', top: pos.top, right: pos.right, zIndex: 80 }}
     >
       <div className="rh-head">
-        <span className="rh-title">Rule health{unread ? <span className="rh-count"> · {unread.toLocaleString()} unread</span> : null}</span>
+        <span className="rh-titles">
+          <span className="rh-title">Notifications{unread ? <span className="rh-count"> · {unread.toLocaleString()} unread</span> : null}</span>
+          <span className="rh-sub">Only rule health for now</span>
+        </span>
         <button type="button" className="rh-link" disabled={!unread || busy} onClick={() => markRead('all')}>Mark all read</button>
       </div>
       {error && <p className="rh-error" role="alert">{error}</p>}
@@ -145,6 +149,7 @@ export default function RuleHealthBell({ go }: { go: (screen: string, options?: 
               <div className="rh-body">
                 <div className={`rh-kind ${k.tone}`}>{k.label}{e.read ? '' : <span className="rh-sr"> (unread)</span>}</div>
                 <button type="button" className="rh-rule" title={e.name} onClick={() => openEntry(e)}>{e.name}</button>
+                <div className="rh-why">{k.why}</div>
                 <div className="rh-meta">
                   <span className="rh-siem">{SIEM_NAME[e.tool] ?? e.tool}</span>
                   <span>{relativeTime(e.since)}</span>
@@ -157,9 +162,10 @@ export default function RuleHealthBell({ go }: { go: (screen: string, options?: 
           )
         })}
       </ul>
-      {box && box.total > box.entries.length && (
-        <p className="rh-foot">Showing the newest {box.entries.length} of {box.total.toLocaleString()}.</p>
-      )}
+      <div className="rh-foot">
+        {box && box.total > box.entries.length && <span>Showing the newest {box.entries.length} of {box.total.toLocaleString()}.</span>}
+        <button type="button" className="rh-link strong" onClick={() => { setOpen(false); go('detections') }}>All rules needing attention</button>
+      </div>
     </div>
   ) : null
 

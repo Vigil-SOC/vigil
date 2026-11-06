@@ -2917,9 +2917,27 @@ select.vg-side-input {
   border-bottom: 1px solid var(--ln1);
 }
 
+.rh-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
 .rh-title {
   font-size: 13.5px;
   font-weight: 600;
+}
+
+.rh-sub {
+  font-size: 11.5px;
+  color: var(--tx2);
+}
+
+.rh-why {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--tx1);
 }
 
 .rh-count {
@@ -3077,8 +3095,13 @@ select.vg-side-input {
 }
 
 .rh-foot {
-  padding-top: 8px;
-  border-top: 1px solid var(--ln0);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--ln1);
 }
 
 .rh-sr {
