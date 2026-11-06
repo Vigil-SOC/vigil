@@ -9,6 +9,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Mapping, Optional, Sequence
 
+from sqlalchemy.orm import object_session
+
 from core.agents.projections import run_id_for
 from core.cases.closure import trust_word
 from core.cases.combined_state import budget_health as _budget_health
@@ -19,6 +21,7 @@ from core.storage.models import (
     RUN_LIVE_STATE,
     CaseClosureInfo,
     Investigation,
+    Principal,
     WorkflowRun,
 )
 
@@ -83,6 +86,11 @@ def closure_view(closure: Optional[CaseClosureInfo]) -> Optional[dict]:
         return None
     # The line names the person from the kept text. The word is derived.
     shown = (getattr(closure, "closed_by_text", None) or "").strip()
+    # No username beside the principal: a run's agent, named as the record names it.
+    session = object_session(closure)
+    if session is not None and closure.closed_by and shown == closure.closed_by:
+        principal = session.get(Principal, closure.closed_by)
+        shown = (principal.label if principal else None) or shown
     return {
         "closure_category": closure.closure_category,
         "closed_by": shown or closure.closed_by or "",
