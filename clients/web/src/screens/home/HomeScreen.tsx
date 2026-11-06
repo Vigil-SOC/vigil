@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { IntakeBanners } from '../../shared/AutoOpsOffBanner'
 import { useAutoOpsOff } from '../../shared/useAutoOpsOff'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
@@ -477,7 +477,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
             )}
             {setupError && <p role="alert">{setupError}</p>}
             {boardSteps.length > 0 ? (
-              <ul className="home-steps" style={{ gridTemplateColumns: `repeat(${boardSteps.length}, minmax(0, 1fr))` }}>
+              <ul className="home-steps" style={{ '--steps': boardSteps.length } as CSSProperties}>
                 {boardSteps.map((step, index) => (
                   <li key={step.id} className="home-step">
                     <span

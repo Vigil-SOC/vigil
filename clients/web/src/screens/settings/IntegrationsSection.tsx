@@ -369,7 +369,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
   )
 }
 
-/** Prose in a table cell: wraps, stops at two lines, full text on hover. */
+/** Prose in a table cell: wraps, stops at two lines, full text on hover and while the row holds keyboard focus. */
 function Clamp({ text }: { text: string }) {
   return text ? <span className="int-clamp" title={text}>{text}</span> : null
 }
