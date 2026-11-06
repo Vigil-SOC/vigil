@@ -18,5 +18,5 @@ keep_firing_for: 30m
 advice:
   summary: At least one investigation has been executing with no activity for over 30 minutes.
   fix: >-
-    Send this incident to DeepTempo Support. Cancelling the stuck run in the
-    console frees its slot; record that you did so.
+    Report it as a Vigil defect with this incident. Cancelling the stuck run in
+    the console frees its slot; record that you did so.
