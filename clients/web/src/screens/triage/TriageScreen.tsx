@@ -447,10 +447,12 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
   // no column carries a sortVal: rows stay in the server's order
   const columns = useMemo<ColumnDef<TriageRow>[]>(() => [
     { key: 'kind', label: 'Kind', render: (row) => <span className="tq-kind">{row.kind_label}</span> },
-    { key: 'source', label: 'Source', render: (row) => row.source ? <SourceName source={row.source} /> : BLANK },
+    { key: 'source', label: 'Source', className: 'col-low', render: (row) => row.source ? <SourceName source={row.source} /> : BLANK },
     {
       key: 'alert',
       label: 'Alert, in the source’s words',
+      // shown only while the col-low columns are hidden (styles.css, .col-low-note)
+      header: <>Alert, in the source’s words<span className="col-low-note tq-hide-note">Source, intake score, arrived and picked up in are hidden while Ask Vigil is open</span></>,
       render: (row) => {
         const text = alertText(row)
         // the full description stays reachable when a title stands in for it
@@ -466,6 +468,7 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
     {
       key: 'score',
       label: 'Intake score',
+      className: 'col-low',
       header: <span className="tq-th-info">Intake score{data && <InfoTip label="How the intake score is worked out" text={data.breakdown_info.score} align="start" />}</span>,
       render: (row) => (
         <button
@@ -483,10 +486,11 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
         </button>
       ),
     },
-    { key: 'arrived', label: 'Arrived', render: (row) => <span className="tq-time">{fmtArrived(row.created_at)}</span> },
+    { key: 'arrived', label: 'Arrived', className: 'col-low', render: (row) => <span className="tq-time">{fmtArrived(row.created_at)}</span> },
     {
       key: 'pickup',
       label: 'Picked up in',
+      className: 'col-low',
       render: (row) => <span className="tq-time">{row.pickup_seconds === null ? BLANK : fmtDuration(row.pickup_seconds)}</span>,
     },
     {
