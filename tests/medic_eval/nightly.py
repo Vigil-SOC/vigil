@@ -1,14 +1,21 @@
-"""The nightly Medic evaluation on Compose (.github/workflows/medic-nightly.yml).
+"""The nightly Medic evaluation (.github/workflows/medic-nightly.yml), on Compose or on Helm.
 
-    python -m tests.medic_eval.nightly --out DIR
+    python -m tests.medic_eval.nightly --out DIR                    # Compose
+    python -m tests.medic_eval.nightly --out DIR --shape helm --cni calico|kindnet
 
-One stack (compose.eval.yml, project medic-eval, Medic on with auth on), every Compose
+Compose: one stack (compose.eval.yml, project medic-eval, Medic on with auth on), every Compose
 cell held for its detect_within_s, scored against Medic's own decision log by
 services.medic.eval.score; then the flood, then the survival checks, each in its own
 phase so none overlaps a scored cell's window. Medic's containers are sampled
 (`docker stats`, once a minute) for the whole run.
 
-Red (exit 1) only for: bring-up, inject, verify or revert failing; harm to Vigil;
+Helm: `e2e.sh full` on kind with the CNI (its checks are the privilege checks; its
+failure is a failed bring-up), then helm_cells.CELLS on a HelmStack through the same
+run_one, scoring, sampling (`crictl stats` on the node) and red rule. No flood and no
+survival checks: those stay Compose-only. `--cluster NAME` uses a cluster e2e.sh
+already left up (KEEP=1) and leaves it up.
+
+Red (exit 1) only for: bring-up (on Helm, e2e.sh full), inject, verify or revert failing; harm to Vigil;
 Medic over 1 vCPU / 1 GiB; a survival check or a flood floor failing. Detection,
 time to detect, the lane matrix, false alarms and the advisory bars are reported with
 their n and never red. DIR/metrics.json and DIR/summary.md are written on red too.
@@ -23,6 +30,7 @@ import argparse
 import dataclasses
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import threading
@@ -35,18 +43,21 @@ import yaml
 
 from services.medic.eval import score
 from tests.medic_eval import flood, medic_api, sample
-from tests.medic_eval.inject import config_cells, pipeline_cells, stub_cells, survival_checks
+from tests.medic_eval.inject import config_cells, helm_cells, pipeline_cells, stub_cells, survival_checks
 from tests.medic_eval.inject.config_cells import PUSH_EVERY_S
 from tests.medic_eval.inject.contract import Cell, run_cell
+from tests.medic_eval.inject.helm_stack import E2E, HelmStack
 from tests.medic_eval.inject.stack import REPO, Stack
 
 RULES = REPO / "services" / "medic" / "packs" / "medic-core" / "rules"
 CELLS = (*config_cells.CELLS, *stub_cells.CELLS, *pipeline_cells.CELLS)
+HELM_CELLS = helm_cells.CELLS
 # P-2.c holds 8100 s. These run beside it because none touches soc-daemon; every other
 # cell recreates or signals it (I-3.a, I-3.b, P-3.a too) and runs on its own.
 BESIDE_P2C = ("I-5.b", "L-1.c", "L-2.a", "L-5.a")
 JOB_BUDGET_S = 5.5 * 3600  # the job's 6 h, less the report and teardown
 BRINGUP_S = 20 * 60  # enable-compose.sh builds three images
+HELM_BRINGUP_S = 30 * 60  # e2e.sh full on kind: images loaded, 177 s to Ready in #3900, then its checks
 STEP_S = 3 * 60  # a cell's inject, verify and revert around its hold (a daemon recreate each)
 FLOOD_PHASE_S = flood.DURATION_S + flood.SETTLE_S + 120
 SURVIVAL_PHASE_S = 30 * 60  # measured ~29 min in #3893
@@ -180,22 +191,43 @@ def run_one(cell: Cell, stack: Stack, out: Path, args, forced: dict) -> dict:
     return result
 
 
+# ---- Helm bring-up ----------------------------------------------------------
+
+
+def e2e_full(cluster: str, cni: str, out: Path) -> int:
+    """`e2e.sh full` on a new kind cluster, kept for the cells; its checks are the privilege checks."""
+    started = time.time()
+    log = out / "e2e-full.log"
+    with log.open("w") as f:
+        done = subprocess.run(
+            [str(E2E), "full"], env={**os.environ, "CLUSTER": cluster, "CNI": cni, "KEEP": "1"},
+            stdout=f, stderr=subprocess.STDOUT, check=False,
+        )
+    if done.returncode:
+        lines = log.read_text().splitlines()
+        why = next((x.strip() for x in lines if "FAIL" in x), lines[-1] if lines else "no output")
+        raise RuntimeError(f"e2e.sh full on {cni} exited {done.returncode}: {why} (e2e-full.log has the rest)")
+    return round(time.time() - started)
+
+
 # ---- the schedule -----------------------------------------------------------
 
 
-def estimate_s(cells: list[Cell]) -> float:
+def estimate_s(cells: list[Cell], shape: str = "compose") -> float:
     """The wall time of the whole run for `cells`, from their holds."""
     cost = {c.cause: c.detect_within_s + STEP_S for c in cells}
+    if shape == "helm":  # one after another, no flood, no survival
+        return HELM_BRINGUP_S + sum(cost.values())
     beside = sum(cost[c] for c in BESIDE_P2C if c in cost)
     long_cost = cost.get("P-2.c", 0)
     rest = sum(v for k, v in cost.items() if k not in BESIDE_P2C and k != "P-2.c")
     return BRINGUP_S + max(long_cost, beside) + rest + FLOOD_PHASE_S + SURVIVAL_PHASE_S
 
 
-def fit(cells: list[Cell], budget_s: float) -> tuple[list[Cell], list[Cell]]:
+def fit(cells: list[Cell], budget_s: float, shape: str = "compose") -> tuple[list[Cell], list[Cell]]:
     """Cells that fit the budget, and the ones dropped (longest hold first)."""
     keep, dropped = list(cells), []
-    while keep and estimate_s(keep) > budget_s:
+    while keep and estimate_s(keep, shape) > budget_s:
         longest = max(keep, key=lambda c: c.detect_within_s)
         keep.remove(longest)
         dropped.append(longest)
@@ -308,10 +340,10 @@ def vigil_harm(stack: Stack) -> list[str]:
             problems.append("the backend's /api/health is not 200")
     except Exception as e:  # noqa: BLE001
         problems.append(f"the backend could not be asked: {e}")
-    for svc in ("backend", "soc-daemon", "agent-serve", "agent-worker", "llm-worker", "postgres", "redis"):
-        up = stack.compose("ps", "--status", "running", "-q", svc, check=False).stdout.strip()
-        if not up:
-            problems.append(f"{svc} is not running")
+    try:
+        problems += [f"{svc} is not running" for svc in stack.not_running()]
+    except Exception as e:  # noqa: BLE001
+        problems.append(f"the services could not be listed: {e}")
     return problems
 
 
@@ -322,10 +354,11 @@ def summary(m: dict) -> str:
     rate = (m["scoring"].get("metrics") or {}).get("detection_rate") or {}
     ttd = (m["scoring"].get("metrics") or {}).get("time_to_detect_s") or {}
     lines = [
-        f"# Medic nightly evaluation: {'RED' if m['verdict']['red'] else 'green'}",
+        f"# Medic nightly evaluation ({m['shape']}): {'RED' if m['verdict']['red'] else 'green'}",
         "",
         *(f"- red: {r}" for r in m["verdict"]["reasons"]),
         "",
+        *([f"Bring-up: e2e.sh full on {m['cni']}, {m['e2e_s']} s (its privilege checks passed)."] if m.get("e2e_s") else []),
         f"Detection rate (on time, n={rate.get('n')}): {rate.get('hits')}/{rate.get('n')}. "
         f"Median time to detect (n={ttd.get('n')}): {ttd.get('median')} s. Reported, never red.",
         "",
@@ -339,19 +372,21 @@ def summary(m: dict) -> str:
             how = "no rule" if c.get("skipped") == "no rule" else c.get("skipped") or ""
         lines.append(f"| {c['cause']} | {c['rule'] or '-'} | {c['hold_s']} | {c['status']} | {how} |")
     f = m["flood"]
-    lines += ["", "Flood: " + ("not run" if not f else "; ".join(f["failures"]) or "floors held")]
-    lines += ["", "Survival: " + (", ".join(f"{s['check']} {s['status']}" for s in m["survival"]) or "not run")]
+    only = " (Compose only)" if m["shape"] == "helm" else ""
+    lines += ["", "Flood: " + ("not run" + only if not f else "; ".join(f["failures"]) or "floors held")]
+    lines += ["", "Survival: " + (", ".join(f"{s['check']} {s['status']}" for s in m["survival"]) or "not run" + only)]
     return "\n".join(lines) + "\n"
 
 
 def resources(sampler: sample.Sampler, store: list, started: float) -> dict:
+    stack = sampler.stack
     kib = [k for k in store if k is not None]
     elapsed = time.time() - started
     growth = (kib[-1] - kib[0]) / 1024 / elapsed * 86400 if len(kib) == 2 and elapsed > 0 else None
     return {
         "interval_s": sampler.interval_s,
         "stats_failures": sampler.failures,
-        "usage": sample.summarize(sampler.samples),
+        "usage": sample.summarize(sampler.samples, stack.medic_services),
         "store_kib": store,
         "store_n": len(kib),
         "store_elapsed_s": round(elapsed),
@@ -392,6 +427,9 @@ def parse_forced(items: list[str]) -> dict:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--shape", choices=("compose", "helm"), default="compose")
+    p.add_argument("--cni", choices=("calico", "kindnet"), default="calico", help="helm: the kind cluster's CNI")
+    p.add_argument("--cluster", help="helm: a kind cluster e2e.sh full left up; used as it is and kept")
     p.add_argument("--budget-s", type=float, default=JOB_BUDGET_S)
     p.add_argument("--sample-interval", type=float, default=60)
     p.add_argument("--only", help="comma-separated causes (verification only)")
@@ -403,14 +441,16 @@ def main(argv: list[str] | None = None) -> int:
     forced = parse_forced(args.force)
     survival = tuple(s for s in args.survival.split(",") if s and s != "none")
 
-    cells = [c for c in CELLS if not args.only or c.cause in args.only.split(",")]
-    cells, long = fit(cells, args.budget_s)
+    helm = args.shape == "helm"
+    cells = [c for c in (HELM_CELLS if helm else CELLS) if not args.only or c.cause in args.only.split(",")]
+    cells, long = fit(cells, args.budget_s, args.shape)
     args.out.mkdir(parents=True, exist_ok=True)
     traces = args.out / "traces"
     traces.mkdir(exist_ok=True)
 
     m: dict = {
-        "started_at": now(), "commit": os.environ.get("GITHUB_SHA"), "estimate_s": estimate_s(cells),
+        "shape": args.shape, "cni": args.cni if helm else None,
+        "started_at": now(), "commit": os.environ.get("GITHUB_SHA"), "estimate_s": estimate_s(cells, args.shape),
         "budget_s": args.budget_s, "cells": [], "scoring": {}, "flood": None, "survival": [],
         "resources": {}, "vigil_harm": [], "bringup_error": None,
         "too_long": [
@@ -424,10 +464,17 @@ def main(argv: list[str] | None = None) -> int:
         stack = sampler = None
         store: list = []
         try:
-            stack = Stack(Path(home))
+            if helm:
+                cluster = args.cluster or f"medic-helm-{args.cni}"
+                stack = HelmStack(cluster)
+                if not args.cluster:
+                    m["e2e_s"] = e2e_full(cluster, args.cni, args.out)
+                stack.start()  # the stub, the daemon's token, the first admin
+            else:
+                stack = Stack(Path(home))
+                stack.start()
+                settle(stack)
             sampler = sample.Sampler(stack, args.sample_interval)
-            stack.start()
-            settle(stack)
             sampler.start()
             store.append(sample.store_kib(stack))
             m["cells"] = run_cells(stack, cells, traces, args, forced)
@@ -440,12 +487,13 @@ def main(argv: list[str] | None = None) -> int:
             except Exception as e:  # noqa: BLE001
                 traceback.print_exc()
                 m["scoring"] = {"error": f"{type(e).__name__}: {e}"[:1500], "metrics": None}
-            try:
-                m["flood"] = flood.run_flood(stack, args.flood_seconds)
-            except Exception as e:  # noqa: BLE001 - the flood failing to run is a floor missed
-                traceback.print_exc()
-                m["flood"] = {"failures": [f"the flood phase did not complete: {type(e).__name__}: {e}"[:1500]]}
-            m["survival"] = run_survival(stack, survival)
+            if not helm:
+                try:
+                    m["flood"] = flood.run_flood(stack, args.flood_seconds)
+                except Exception as e:  # noqa: BLE001 - the flood failing to run is a floor missed
+                    traceback.print_exc()
+                    m["flood"] = {"failures": [f"the flood phase did not complete: {type(e).__name__}: {e}"[:1500]]}
+                m["survival"] = run_survival(stack, survival)
             m["vigil_harm"] = vigil_harm(stack)
             store.append(sample.store_kib(stack))
         except Exception as e:  # noqa: BLE001 - bring-up or an unexpected failure: red, with whatever was gathered
@@ -461,7 +509,7 @@ def main(argv: list[str] | None = None) -> int:
             (args.out / "metrics.json").write_text(json.dumps(m, indent=2, default=str) + "\n")
             (args.out / "summary.md").write_text(summary(m))
             try:
-                if stack:
+                if stack and not (helm and args.cluster):  # a cluster handed in is kept
                     stack.stop()
             except Exception:  # noqa: BLE001
                 traceback.print_exc()
