@@ -25,6 +25,7 @@ from tests.medic_compose.compose import (
     compose_project,
     require_compose_project,
 )
+from tests.medic_eval.sample import FORMAT as STATS_FORMAT, SERVICES as SAMPLED, parse_stats
 
 HERE = Path(__file__).resolve().parent
 OVERRIDE = HERE / "compose.eval.yml"
@@ -239,6 +240,41 @@ class Stack:
             subprocess.run(
                 ["docker", "image", "rm", "-f", image], capture_output=True, check=False
             )
+
+    # ---- what nightly.py reads from outside Medic (HelmStack has its own) --------
+
+    medic_key_file = "/run/secrets/medic_api_key"
+    medic_services = SAMPLED
+    vigil_services = ("backend", "soc-daemon", "agent-serve", "agent-worker", "llm-worker", "postgres", "redis")
+
+    def medic_exec(self, *argv: str) -> str:
+        """stdout of a command run in the Medic container ('' if it fails)."""
+        return self.compose("exec", "-T", "medic", *argv, check=False).stdout
+
+    def usage(self) -> dict[str, tuple[float, float]]:
+        """{Medic service: (vCPU, MiB)} now, from `docker stats` of its containers."""
+        by_id = {}
+        for cid in self.compose("ps", "-q", *SAMPLED, check=False).stdout.split():
+            svc = subprocess.run(
+                ["docker", "inspect", "-f", '{{index .Config.Labels "com.docker.compose.service"}}', cid],
+                capture_output=True, text=True, check=False,
+            ).stdout.strip()
+            if svc in SAMPLED:
+                by_id[cid[:12]] = svc
+        if not by_id:
+            return {}
+        done = subprocess.run(
+            ["docker", "stats", "--no-stream", "--format", STATS_FORMAT, *by_id],
+            capture_output=True, text=True, check=False,
+        )
+        return {by_id[c[:12]]: r for c, r in parse_stats(done.stdout).items() if c[:12] in by_id}
+
+    def not_running(self) -> list[str]:
+        """Vigil's services that are not running."""
+        return [
+            svc for svc in self.vigil_services
+            if not self.compose("ps", "--status", "running", "-q", svc, check=False).stdout.strip()
+        ]
 
     # ---- reads --------------------------------------------------------------
 

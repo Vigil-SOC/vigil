@@ -50,10 +50,13 @@ has no PR recorded gets one, opened by fixed code over the GitHub REST API
 (github.com, or GitHub Enterprise Server at ``<host>/api/v3``): branch
 ``vigil/rule-<id>-v<version>``, the overlay TOML or ESCU YAML file exactly as
 stored under the target's subdirectory, its active exceptions listed in the
-description. A branch or PR an earlier attempt left is reused. The outcome (PR
-url, the file already on the default branch, or an error) lands in
-checks['deploy']; a failed one is retried next sweep. None is opened while Stop
-is set.
+description. A branch or PR an earlier attempt left is reused. Once a version's
+PR is open, Vigil closes each still-open PR it opened for an earlier version of
+the same rule (its ``vigil/rule-<id>-v<n>`` branch, never a merged PR or one
+Vigil didn't open), with a "Superseded by" comment, and records that on the old
+version. The outcome (PR url, the file already on the default branch, or an
+error) lands in checks['deploy']; a failed one is retried next sweep. None is
+opened while Stop is set.
 
 While Stop is set (or the ceiling cannot be read) no copy is run: no search,
 no checks written, no findings. Its last successful run stays put, so the stopped
@@ -945,8 +948,7 @@ def _deploy(
         for c in copies
         if targets.get(c.language)
         and c.toml  # a Splunk copy whose file went unread has nothing to add
-        # A PR recorded for an earlier version doesn't count: the new one gets its own.
-        and not {"pr_url", "in_repo"} & set(_deployed(c) or {})
+        and _deploy_due(c)
     ]
     outcomes: Dict[int, Dict[str, Any]] = {}
     if not pending:
@@ -973,10 +975,23 @@ def _deploy(
                     "no GitHub token: set the github integration's token"
                 )
             done = _open_pr(copy, target, _pr_body(copy, excepted[copy.rule_id]), token)
+            superseded = done.pop("superseded", [])
             outcome.update(done)
-            report.deploys.append(
-                f"{copy.rule_id} v{copy.version}: {next(iter(done.values()))}"
-            )
+            landed = done.get("pr_url") or done.get("in_repo")
+            for old in superseded:
+                _record_superseded(copy, old, landed, now)
+            report.deploys.append(f"{copy.rule_id} v{copy.version}: {landed}")
+            if done.get("supersede_error"):
+                # The new version's PR stands; closing an older one is retried next sweep.
+                report.deploys.append(
+                    f"{copy.rule_id} v{copy.version}: closing an older PR failed: "
+                    f"{done['supersede_error']}"
+                )
+                logger.warning(
+                    "detection rules: closing rule %s's older deploy PRs failed: %s",
+                    copy.rule_id,
+                    done["supersede_error"],
+                )
         except Exception as exc:  # noqa: BLE001 -- the promotion already landed
             outcome["error"] = (str(exc) or type(exc).__name__)[:500]
             report.deploys.append(f"{copy.rule_id} v{copy.version}: {outcome['error']}")
@@ -1000,6 +1015,14 @@ def _deploy(
             why = f"{what}: not recorded ({exc}); the next sweep records it"
             outcomes[copy.rule_id] = {**outcome, "error": why[:500]}
     return outcomes
+
+
+def _deploy_due(copy: Copy) -> bool:
+    """Whether the sweep still has work for this copy's current version: no PR
+    or in_repo recorded yet (one recorded for an earlier version doesn't count;
+    the new one gets its own), or closing an older version's PR failed."""
+    done = _deployed(copy) or {}
+    return not {"pr_url", "in_repo"} & set(done) or bool(done.get("supersede_error"))
 
 
 def _api_of(git_url: str) -> Tuple[str, str]:
@@ -1061,11 +1084,12 @@ def _pr_body(copy: Copy, excepted: List[Dict[str, Any]]) -> str:
 
 def _open_pr(
     copy: Copy, target: Mapping[str, Any], body: str, token: str
-) -> Dict[str, str]:
+) -> Dict[str, Any]:
     """{"pr_url"} of the pull request adding ``copy``'s file to ``target``, or
     {"in_repo"} when the default branch already holds it byte for byte. Reuses
     the branch or PR an earlier attempt left, so a crash between calls opens no
-    duplicate."""
+    duplicate. Either way older versions' open PRs are closed (``superseded``);
+    a failure there is ``supersede_error`` beside the result, not instead of it."""
     import base64
     import posixpath
     from urllib.parse import quote
@@ -1100,10 +1124,22 @@ def _open_pr(
             http.get(f"{r}/pulls", params={"head": f"{owner}:{branch}", "state": "all"})
         ).json()
         if pulls:
-            return {"pr_url": pulls[0]["html_url"]}
+            pr = pulls[0]
+            # A PR a person closed stays their answer: nothing older is closed for it.
+            if pr.get("state") != "open":
+                return {"pr_url": pr["html_url"]}
+            return {
+                "pr_url": pr["html_url"],
+                **_supersede(http, r, owner, copy, _by_pr(copy, pr)),
+            }
         base = _ok(http.get(r)).json()["default_branch"]
         if _same(http, f"{r}/contents/{quote(path)}", base, data)[1]:
-            return {"in_repo": f"{path} on {base}"}  # a PR would have no commits
+            in_repo = f"{path} on {base}"  # a PR would have no commits
+            # The file landing outside Vigil's PR still makes older versions' PRs stale.
+            note = (
+                f"Superseded: rule {copy.name} v{copy.version} is already in {in_repo}"
+            )
+            return {"in_repo": in_repo, **_supersede(http, r, owner, copy, note)}
         ref = http.get(f"{r}/git/ref/heads/{quote(branch)}")
         if ref.status_code == 404:
             sha = _ok(http.get(f"{r}/git/ref/heads/{quote(base)}")).json()["object"]
@@ -1149,7 +1185,61 @@ def _open_pr(
                 if not found.is_error and found.json():
                     return {"pr_url": found.json()[0]["html_url"]}
             raise
-        return {"pr_url": pr["html_url"]}
+        return {
+            "pr_url": pr["html_url"],
+            **_supersede(http, r, owner, copy, _by_pr(copy, pr)),
+        }
+
+
+def _by_pr(copy: Copy, new: Mapping[str, Any]) -> str:
+    return f"Superseded by #{new['number']} (rule {copy.name} v{copy.version})"
+
+
+def _supersede(http: Any, r: str, owner: str, copy: Copy, note: str) -> Dict[str, Any]:
+    """Close each still-open PR Vigil opened for an earlier version of
+    ``copy``'s rule, commenting ``note`` on it once (a retry finds it already
+    there). Only Vigil's own branch for that rule and version, in this repo,
+    and never a merged PR. {"superseded": [{version, pr_url}] closed, and
+    "supersede_error" when a lookup, comment or close failed}; one failure
+    doesn't stop the others."""
+    repo = r.removeprefix("/repos/")
+    closed: List[Dict[str, Any]] = []
+    errors: List[str] = []
+    for version in range(1, copy.version):
+        branch = f"vigil/rule-{copy.rule_id}-v{version}"
+        try:
+            pulls = _ok(
+                http.get(
+                    f"{r}/pulls", params={"head": f"{owner}:{branch}", "state": "open"}
+                )
+            ).json()
+        except Exception as exc:  # noqa: BLE001 -- the new version's result stands
+            errors.append(str(exc) or type(exc).__name__)
+            continue
+        for old in pulls:
+            head = old.get("head") or {}
+            if (
+                old.get("state") != "open"
+                or old.get("merged_at")
+                or head.get("ref") != branch
+                or str((head.get("repo") or {}).get("full_name", "")).lower()
+                != repo.lower()
+            ):
+                continue
+            comments = f"{r}/issues/{old['number']}/comments"
+            try:
+                said = _ok(http.get(comments, params={"per_page": 100})).json()
+                if not any(c.get("body") == note for c in said):
+                    _ok(http.post(comments, json={"body": note}))
+                _ok(http.patch(f"{r}/pulls/{old['number']}", json={"state": "closed"}))
+            except Exception as exc:  # noqa: BLE001 -- the new version's result stands
+                errors.append(str(exc) or type(exc).__name__)
+                continue
+            closed.append({"version": version, "pr_url": old["html_url"]})
+    out: Dict[str, Any] = {"superseded": closed}
+    if errors:
+        out["supersede_error"] = "; ".join(errors)[:500]
+    return out
 
 
 def _same(http: Any, url: str, ref: str, data: bytes) -> Tuple[Optional[str], bool]:
@@ -1206,6 +1296,33 @@ def _record_deploy(
                 changed_by=actor,
             )
     return outcome
+
+
+def _record_superseded(
+    copy: Copy, old: Mapping[str, Any], new_url: str, now: datetime
+) -> None:
+    """On the old version's checks['deploy']: its PR was closed for ``new_url``,
+    the new version's PR, or where its file already is when it landed in_repo."""
+    from core.detections.inventory.sync import _write_checks
+
+    with get_db_manager().session_scope() as session:
+        checks = session.scalar(
+            select(DetectionRuleVersion.checks).where(
+                DetectionRuleVersion.rule_id == copy.rule_id,
+                DetectionRuleVersion.version == old["version"],
+            )
+        )
+        if checks is None:
+            return
+        deploy = {
+            **(checks.get("deploy") or {}),
+            "pr_url": old["pr_url"],
+            "superseded_by": new_url,
+            "superseded_at": now.isoformat(),
+        }
+        _write_checks(
+            session, [(copy.rule_id, old["version"], {**checks, "deploy": deploy})]
+        )
 
 
 def _deployed(copy: Copy) -> Optional[Dict[str, Any]]:
@@ -1304,7 +1421,10 @@ def deploy_overlay_only(
     )
     return {
         "opened": [
-            {"rule_id": r, **{k: o[k] for k in ("pr_url", "in_repo") if k in o}}
+            {
+                "rule_id": r,
+                **{k: o[k] for k in ("pr_url", "in_repo", "supersede_error") if k in o},
+            }
             for r, o in outcomes.items()
             if "error" not in o
         ],

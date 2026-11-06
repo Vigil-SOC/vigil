@@ -1,4 +1,4 @@
-"""The Helm release the Helm fault cells break (e2e.sh full on kind with Calico).
+"""The Helm release the Helm fault cells break (e2e.sh full on kind, with Calico or kindnet).
 
 The real backend, Postgres, Redis, Bifrost, SOC daemon, LLM worker, agent-serve
 and agent worker, with Medic and its gateway, and auth on. HelmStack offers the
@@ -11,13 +11,15 @@ Service names are Compose's (`soc-daemon`, `siem-stub`, ...), mapped to workload
 
 from __future__ import annotations
 
+import json
 import secrets
 import subprocess
+import time
 
 from tests.medic_compose.compose import REPO
 from tests.medic_eval.inject.stack import NODE_FETCH, ComposeFailed, Stack
 
-E2E = REPO / "infra" / "helm" / "medic-tests" / "kind" / "e2e.sh"
+E2E = REPO / "infra" / "helm" / "vigil" / "medic-tests" / "kind" / "e2e.sh"
 STUB = REPO / "tests" / "medic_compose" / "stub.py"
 # The Elastic the daemon polls (I-4.b): tests/medic_compose/stub.py in a pod, as
 # Compose's siem-stub is. Runs in the backend image (Python, already on the node).
@@ -55,6 +57,9 @@ class KubectlFailed(ComposeFailed):
 
 
 class HelmStack(Stack):
+    medic_key_file = "/run/secrets/medic-api/api_key"  # the chart's apiKeyDir and key path
+    medic_services = ("medic", "medic-gateway")  # container names; there is no docker proxy on Helm
+
     def __init__(self, cluster: str, namespace: str = "vigil", release: str = "rel") -> None:
         # Not Stack.__init__: no Compose project here. The inherited reads and API
         # calls need only these.
@@ -64,6 +69,7 @@ class HelmStack(Stack):
         fn = f"{release}-vigil"
         self.backend_host = f"{fn}-backend"
         self.hosts = {"backend": self.backend_host, "soc-daemon": f"{fn}-daemon"}
+        self.medic_workload = f"deploy/{fn}-medic"
         self.workloads = {
             "backend": f"deploy/{fn}-backend",
             "soc-daemon": f"sts/{fn}-daemon",
@@ -131,6 +137,47 @@ class HelmStack(Stack):
     def logs(self, service: str) -> str:
         done = self.kubectl("logs", self.workloads[service], check=False)
         return done.stdout + done.stderr
+
+    # ---- what nightly.py reads from outside Medic ------------------------------------
+
+    def medic_exec(self, *argv: str) -> str:
+        return self.kubectl("exec", self.medic_workload, "--", *argv, check=False).stdout
+
+    def _crictl(self) -> dict[str, tuple[int, int]]:
+        """{container: (cumulative CPU ns, working-set bytes)} of Medic's containers, from the node."""
+        done = subprocess.run(
+            ["docker", "exec", f"{self.cluster}-control-plane", "crictl", "stats", "-o", "json"],
+            capture_output=True, text=True, check=False,
+        )
+        rows = {}
+        for st in json.loads(done.stdout or '{"stats": []}')["stats"]:
+            name = st["attributes"]["metadata"]["name"]
+            if name in self.medic_services and st["attributes"]["labels"].get("io.kubernetes.pod.namespace") == self.ns:
+                rows[name] = (
+                    int(st["cpu"]["usageCoreNanoSeconds"]["value"]),
+                    int(st["memory"]["workingSetBytes"]["value"]),
+                )
+        return rows
+
+    def usage(self) -> dict[str, tuple[float, float]]:
+        """{container: (vCPU, MiB)}: two `crictl stats` a couple of seconds apart (no metrics-server on kind)."""
+        first, t0 = self._crictl(), time.monotonic()
+        time.sleep(2)
+        second, dt = self._crictl(), time.monotonic() - t0
+        return {
+            n: (max(c1 - first[n][0], 0) / 1e9 / dt, mem / 1024**2)
+            for n, (c1, mem) in second.items() if n in first
+        }
+
+    def not_running(self) -> list[str]:
+        """Workloads whose ready replicas are fewer than the spec asks for."""
+        bad = []
+        for name, w in self.workloads.items():
+            got = self.kubectl("get", w, "-o", "jsonpath={.spec.replicas}/{.status.readyReplicas}", check=False).stdout
+            want, _, ready = got.partition("/")
+            if not want or int(ready or 0) < int(want):
+                bad.append(name)
+        return bad
 
     # ---- the faults Compose makes with its environment ---------------------------
 

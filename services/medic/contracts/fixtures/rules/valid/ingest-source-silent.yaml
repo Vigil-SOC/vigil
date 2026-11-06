@@ -26,4 +26,4 @@ advice:
   fix: >-
     Check the source's credentials and configuration in Settings, Integrations,
     and confirm the source itself produced alerts in this period. If both are
-    correct, send this incident to DeepTempo Support.
+    correct, report it as a Vigil defect with this incident.
