@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import subprocess
 import time
@@ -81,6 +82,20 @@ NODE_FETCH = (
 )
 
 
+CODE_FRAME = re.compile(r"^\s*\d+ \| ")  # BuildKit's Dockerfile excerpt on a failed step
+
+
+def _tail(text: str, limit: int) -> str:
+    """The last lines of `text` within `limit` chars, each long line cut in its middle."""
+    lines = [ln if len(ln) <= 300 else f"{ln[:100]} … {ln[-160:]}" for ln in text.splitlines()]
+    out: list[str] = []
+    for ln in reversed(lines):
+        if sum(len(x) + 1 for x in out) + len(ln) > limit:
+            break
+        out.append(ln)
+    return "\n".join(reversed(out))
+
+
 class ComposeFailed(AssertionError):
     pass
 
@@ -148,9 +163,17 @@ class Stack:
             **kw,
         )
         if check and done.returncode:
-            # Compose's own words, not just the exit status.
+            # Compose's own words, not just the exit status. A build's step output
+            # (the failing step's last lines) is on stdout; stderr adds unset-variable
+            # warnings and a Dockerfile code frame (both dropped) and the whole RUN
+            # command (long lines are cut in the middle, keeping the exit code).
+            err = "\n".join(
+                ln for ln in done.stderr.splitlines()
+                if ln.strip() and not CODE_FRAME.match(ln) and "level=warning" not in ln
+            )
             raise ComposeFailed(
-                f"docker compose {' '.join(args)[:200]}: {done.stderr[-1500:]}"
+                f"docker compose {' '.join(args)[:200]}: "
+                f"{_tail(done.stdout, 1000)}\n{_tail(err, 2000)}".strip()
             )
         return done
 
