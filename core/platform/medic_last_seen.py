@@ -180,7 +180,7 @@ def _classify(response: httpx.Response) -> Outcome:
         if code == "upstream_timeout":
             return _fail(FailureKind.TIMEOUT, status)
         return _fail(FailureKind.SERVER_ERROR, status)
-    # Read whole by httpx first; the gateway caps what it relays at 2 MiB.
+    # Read whole by httpx first; the gateway caps what it relays at 4 MiB.
     if len(response.content) > _MAX_BODY:
         return _fail(FailureKind.SERVER_ERROR, status)
     try:
