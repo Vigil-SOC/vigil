@@ -102,11 +102,11 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
   return (
     <AgentRowsProvider value={agents.rows}>
       <div className={`flex flex-col gap-3.5 px-[26px] pt-5${watching ? ' hidden' : ''}`}>
-        <div className="flex items-end justify-between gap-5">
+        <div className="wf-head flex items-end justify-between gap-5">
           <div className="flex flex-col gap-[5px] min-w-0">
             {/* inline weight: the shell's unlayered h1 rule would beat a utility class */}
             <h1 className="m-0 text-[20px] leading-[1.25] tracking-[-0.2px] text-tx" style={{ fontWeight: 700 }}>{PAGE_TITLE}</h1>
-            <p className="m-0 text-[13px] leading-[1.5] text-tx-2 max-w-[760px]">{PAGE_DESC}</p>
+            <p className="m-0 text-[13px] leading-[1.5] text-tx-2 max-w-[var(--text-max)]">{PAGE_DESC}</p>
           </div>
           <button className="btn primary wf-new" onClick={() => setDescribing('')}><Icon name="plus" /> New workflow</button>
         </div>
@@ -136,7 +136,7 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
   )
 }
 
-const CMD_GRID = 'grid grid-cols-[150px_minmax(0,2fr)_minmax(0,1.6fr)_170px_56px] gap-3 px-4'
+const CMD_GRID = 'grid grid-cols-[150px_minmax(0,2fr)_minmax(0,1.6fr)_170px_56px] gap-3 px-4 min-w-[640px]'
 
 /** The command bar's rows, read from COMMANDS. Later rows are marked and carry
  *  nothing focusable; nothing in the table runs a command. */
@@ -146,7 +146,8 @@ function CommandsTab() {
       <span className="text-xs leading-[1.45] text-[var(--tx2)]">
         Type a command in search or in Ask Vigil. Each command runs a workflow or an action; anything that changes something still asks you.
       </span>
-      <div role="table" aria-label="Commands" className="bg-[var(--bg1)] border border-[var(--ln0)] rounded-[14px] overflow-hidden">
+      {/* rows keep their columns and the table scrolls in its card when narrow; no row opens, so no cell clips its text */}
+      <div role="table" aria-label="Commands" className="bg-[var(--bg1)] border border-[var(--ln0)] rounded-[14px] overflow-x-auto">
         <div role="row" className={`${CMD_GRID} py-[11px] text-[11px] font-bold text-[var(--tx2)]`}>
           <span role="columnheader">Command</span>
           <span role="columnheader">What it does</span>
@@ -161,10 +162,10 @@ function CommandsTab() {
             aria-disabled={command.later || undefined}
             className={`${CMD_GRID} items-center py-[11px] border-t border-[var(--ln0)]`}
           >
-            <span role="cell" className="font-mono text-[13px] text-[var(--ac)] truncate">{command.name}</span>
-            <span role="cell" title={command.desc} className="text-xs text-[var(--tx1)] line-clamp-2">{command.desc}</span>
-            <span role="cell" title={command.runs} className="text-xs font-[650] text-[var(--tx0)] line-clamp-2">{command.runs}</span>
-            <span role="cell" title={command.hint} className="font-mono text-[11px] text-[var(--tx2)] truncate">{command.hint}</span>
+            <span role="cell" className="font-mono text-[13px] text-[var(--ac)] break-words">{command.name}</span>
+            <span role="cell" className="text-xs text-[var(--tx1)]">{command.desc}</span>
+            <span role="cell" className="text-xs font-[650] text-[var(--tx0)]">{command.runs}</span>
+            <span role="cell" className="font-mono text-[11px] text-[var(--tx2)] break-words">{command.hint}</span>
             <span role="cell" className="text-[11px] font-semibold text-[var(--tx2)]">{command.later ? 'Later' : ''}</span>
           </div>
         ))}
@@ -306,6 +307,14 @@ function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>;
   // the board always shows one workflow in the reader; the first row until one is chosen
   const shown = open ?? (phase === 'ready' ? list[0] : undefined)
   const layoutRef = useFillHeight<HTMLDivElement>()
+  // stacked below 700px, the reader sits under every card: bring it into view on a pick
+  const pick = (id: string) => {
+    setOpenId(id)
+    const layout = layoutRef.current
+    if (layout && getComputedStyle(layout).flexDirection === 'column') {
+      requestAnimationFrame(() => layout.querySelector('.wfk-reader')?.scrollIntoView({ block: 'start' }))
+    }
+  }
   return (
     <>
       {phase === 'loading' && <StateMsg><EmptyState loading compact icon="flow" title="Loading workflows…" /></StateMsg>}
@@ -325,7 +334,7 @@ function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>;
         <div className="wfk-layout" ref={layoutRef}>
           <div className="wfk-col pl-[26px] pr-0 py-5">
             {list.map((w) => (
-              <WorkflowCard key={w.id} wf={w} selected={shown?.id === w.id} onSelect={() => setOpenId(w.id)} />
+              <WorkflowCard key={w.id} wf={w} selected={shown?.id === w.id} onSelect={() => pick(w.id)} />
             ))}
             <div className="wfk-new">
               <span className="text-[13px] font-semibold leading-[1.35] text-tx">Start from a description</span>
@@ -3985,11 +3994,12 @@ function AgentTable({ agents, onOpen, onToggle, renderActions }: {
     <div className="ag-card">
       <table className="tbl agents-tbl">
         <colgroup>
-          <col className="c-agent" /><col className="c-does" /><col className="c-model" /><col className="c-skills" /><col className="c-changes" />
-          <col className="c-runs" /><col className="c-success" /><col className="c-on" />
+          <col className="c-agent" /><col className="c-does" /><col className="c-model" /><col className="c-skills col-low" /><col className="c-changes col-low" />
+          <col className="c-runs col-low" /><col className="c-success" /><col className="c-on" />
         </colgroup>
         <thead><tr>
-          <th>Agent</th><th>What it does</th><th>Model</th><th>Skills</th><th>Changes things?</th><th>Runs, 7 days</th>
+          <th>Agent<span className="col-low-note ag-hide-note">Skills, changes things and runs are hidden while Ask Vigil is open</span></th>
+          <th>What it does</th><th>Model</th><th className="col-low">Skills</th><th className="col-low">Changes things?</th><th className="col-low">Runs, 7 days</th>
           <th><span className="ag-th-info">Success<InfoTip label="How success is calculated" {...SUCCESS_TIP} /></span></th><th>On</th>
         </tr></thead>
         <tbody>
@@ -4012,13 +4022,13 @@ function AgentTable({ agents, onOpen, onToggle, renderActions }: {
                     ? <span className="ag-model"><span className="ag-model-name" title={a.model}>{a.model}</span>{source && <span className="ag-sub">{source}</span>}</span>
                     : <span className="ag-dash">—</span>}
                 </td>
-                <td className="ag-num">{a.skills}</td>
-                <td>
+                <td className="ag-num col-low">{a.skills}</td>
+                <td className="col-low">
                   {a.changes
                     ? <span className={`ag-chg ${a.changes}`} title={a.changes === 'asks_first' ? CHANGES_TIP : undefined}>{CHANGES_LABEL[a.changes]}</span>
                     : <span className="ag-dash">—</span>}
                 </td>
-                <td className="ag-num">{a.runs7d === null ? '—' : a.runs7d.toLocaleString('en-US')}</td>
+                <td className="ag-num col-low">{a.runs7d === null ? '—' : a.runs7d.toLocaleString('en-US')}</td>
                 <td>
                   <span className="ag-rate">
                     {a.successPct === null ? '—' : `${a.successPct.toFixed(1)}%`}
@@ -4106,7 +4116,7 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
 
   return (
     <>
-      <div className="flex items-center gap-3 px-[22px] pt-[14px]">
+      <div className="sk-bar flex items-center gap-3 px-[22px] pt-[14px]">
         <div className="flex-1 min-w-0">
           <span className="block text-[12px] leading-[1.45] text-tx-3">A skill is a folder with a SKILL.md file: when to use it, the steps, and any scripts. Agents read the skills they are given. Editing one saves a new version.</span>
           <span className="sk-offered" title={`Every skill is offered to: ${offeredText}`}>

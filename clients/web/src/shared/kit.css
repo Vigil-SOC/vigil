@@ -98,7 +98,7 @@
 
 .page-head p {
   margin: 0;
-  max-width: 760px;
+  max-width: var(--text-max);
   font-size: 13px;
   line-height: 1.5;
   color: var(--tx1);
@@ -535,4 +535,10 @@
   background: var(--bg1);
   color: var(--tx0);
   box-shadow: 0 1px 2px var(--shadow);
+}
+
+/* reflow tier (.main under 700px): the head stacks and its actions wrap under the text */
+@container main (max-width: 699px) {
+  .page-head.with-actions { flex-direction: column; align-items: stretch; gap: 12px; }
+  .page-head-actions { flex-wrap: wrap; flex-shrink: 1; min-width: 0; }
 }

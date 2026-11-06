@@ -208,7 +208,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
       .then((r) => {
         const { opened, failed, skipped } = r.data
         if (opened.length) notify('ok', `${opened.length === 1 ? 'A deploy pull request is' : `${opened.length} deploy pull requests are`} open; each rule joins your SIEM when its PR merges.`)
-        if (failed.length) notify('err', `${failed.length === 1 ? 'A deploy pull request' : `${failed.length} deploy pull requests`} could not be opened: ${failed[0].error}`)
+        if (failed.length) notify('err', `${failed.length === 1 ? 'A deploy pull request' : `${failed.length} deploy pull requests`} could not be opened: ${failed[0].reason}`)
         if (!opened.length && !failed.length && skipped.length) notify('info', `Nothing opened: ${skipped[0].reason}.`)
         return readOverlayOnly()
       })
@@ -977,9 +977,11 @@ function StopOverlayOnly({
                   <a className="stop-link" href={r.deploy.pr_url} target="_blank" rel="noreferrer">PR opened</a>
                 ) : r.deploy?.in_repo ? (
                   <span className="text-tx-3" title={r.deploy.in_repo}>Already in the repo</span>
+                ) : r.target_refused ? (
+                  <Link className="stop-link" to="/settings?section=data" title={r.target_refused}>Target isn’t GitHub</Link>
                 ) : r.deploy_target && r.deploy?.error ? (
                   <span className="stop-failed">
-                    <span className="stop-why" title={r.deploy.error}>{r.deploy.error}</span>
+                    <span className="stop-why" title={`${r.deploy.reason ?? ''}\n\n${r.deploy.error}`.trim()}>{(r.deploy.reason ?? r.deploy.error).split('. ')[0].replace(/\.$/, '')}</span>
                     <button type="button" className="stop-link" disabled={deploying != null} onClick={() => onDeploy([r.id])}>
                       {busy(r.id) ? 'Opening…' : 'Retry'}
                     </button>

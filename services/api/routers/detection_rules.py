@@ -335,19 +335,8 @@ def deploy_overlay_only(
     one is tried again. Says what each came to and why others were skipped."""
     from core.detections.inventory import rollout
 
-    result = rollout.deploy_overlay_only(body.rule_ids)
-    if result["opened"] or result["failed"]:
-        try:
-            get_config_service(user_id=str(user.user_id)).record_audit(
-                config_type="detection_rules",
-                config_key="overlay_deploy",
-                action="update",
-                old_value=None,
-                new_value={"opened": result["opened"], "failed": result["failed"]},
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Could not write overlay deploy audit log: %s", e)
-    return result
+    # Each outcome's trail row is written with its checks['deploy'], as this user.
+    return rollout.deploy_overlay_only(body.rule_ids, actor=user.username)
 
 
 class AddExceptionRequest(BaseModel):

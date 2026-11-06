@@ -1,6 +1,5 @@
 /* Settings › AI models, top half: data-residency banner, provider cards, per-agent model table. Tokens only. */
 .aim-banner {
-  max-width: 1280px; /* the cards below it (.settings-card.wide) stop here too */
   display: flex;
   align-items: flex-start;
   gap: 12px;
@@ -20,7 +19,6 @@ button.aim-model-chip { font-family: inherit; cursor: pointer; }
 button.aim-model-chip:hover { border-color: var(--ac); color: var(--tx0); }
 
 .aim-cards {
-  max-width: 1280px;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
@@ -44,11 +42,12 @@ button.aim-model-chip:hover { border-color: var(--ac); color: var(--tx0); }
 .aim-card-where.local { color: var(--good); }
 
 .aim-table tbody td { white-space: normal; vertical-align: middle; }
-.aim-table th, .aim-table td { padding-left: 10px; padding-right: 10px; }
+/* unlayered, so it beats the hide rule outright: leave a hidden (.col-low) column alone */
+.aim-table :is(th, td):not(.col-low) { padding-left: 10px; padding-right: 10px; }
 .aim-model { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .aim-model > * { min-width: 0; }
-.aim-model > :first-child { flex: 0 0 150px; }
-.aim-model > :last-child { flex: 1 1 150px; }
+.aim-model > :first-child { flex: 0 0 116px; }
+.aim-model > :last-child { flex: 1 1 116px; }
 /* fixed width, so a long model id wraps instead of widening the table */
 .aim-fallback { width: 160px; }
 .aim-fallback .field-select { padding: 7px 7px 7px 9px; gap: 4px; font-size: 12px; }

@@ -35,7 +35,6 @@
         "incident_updated",
         "incident_resolved",
         "feedback",
-        "adjudication",
         "anchor",
         "store_reset",
         "pack_event",
@@ -116,22 +115,6 @@
         "properties": {
           "body": {
             "$ref": "#/$defs/feedback"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "type": {
-            "const": "adjudication"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "body": {
-            "$ref": "#/$defs/adjudication"
           }
         }
       }
@@ -446,7 +429,7 @@
           "$ref": "#/$defs/incident_id"
         },
         "subject": {
-          "description": "vigil = a fault in Vigil; watcher = the watcher's own state (E3 watcher.sensor-blind). Watcher incidents are routed like any other but left out of gate lane metrics and the lane-3 case rate.",
+          "description": "vigil = a fault in Vigil; watcher = the watcher's own state (E3 watcher.sensor-blind). Watcher incidents are routed like any other but left out of the lane-3 case rate.",
           "enum": [
             "vigil",
             "watcher"
@@ -934,8 +917,7 @@
         },
         "source": {
           "enum": [
-            "live",
-            "replay"
+            "live"
           ],
           "x-medic-type": "enum"
         },
@@ -944,10 +926,6 @@
         },
         "comment": {
           "$ref": "#/$defs/excerpt"
-        },
-        "replay_head": {
-          "description": "Head hash of the replay store (E6) the admin was judging. Required when source is replay, forbidden when live (S0 review R12).",
-          "$ref": "#/$defs/hash"
         }
       },
       "allOf": [
@@ -964,88 +942,8 @@
               }
             }
           }
-        },
-        {
-          "if": {
-            "properties": {
-              "source": {
-                "const": "replay"
-              }
-            },
-            "required": [
-              "source"
-            ]
-          },
-          "then": {
-            "required": [
-              "replay_head"
-            ]
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "source": {
-                "const": "live"
-              }
-            },
-            "required": [
-              "source"
-            ]
-          },
-          "then": {
-            "not": {
-              "required": [
-                "replay_head"
-              ]
-            }
-          }
         }
       ]
-    },
-    "adjudication": {
-      "description": "Ground-truth verdict for scoring (I1, A4). Never shown as admin feedback.",
-      "type": "object",
-      "required": [
-        "incident_id",
-        "verdict",
-        "by",
-        "basis"
-      ],
-      "additionalProperties": false,
-      "properties": {
-        "incident_id": {
-          "$ref": "#/$defs/incident_id"
-        },
-        "verdict": {
-          "enum": [
-            "true_fault",
-            "false_alarm",
-            "watcher_caused",
-            "unknown"
-          ],
-          "x-medic-type": "enum"
-        },
-        "true_lane": {
-          "enum": [
-            1,
-            2,
-            3
-          ],
-          "x-medic-type": "enum"
-        },
-        "by": {
-          "$ref": "#/$defs/id"
-        },
-        "basis": {
-          "enum": [
-            "admin_mark",
-            "weekly_readout",
-            "log_review"
-          ],
-          "x-medic-type": "enum"
-        }
-      }
     },
     "anchor": {
       "description": "Written before a purge deletes records (C4 6.5). Verification starts at the oldest anchor.",
@@ -1162,7 +1060,7 @@
       "x-medic-type": "id"
     },
     "pack_event": {
-      "description": "Pack lifecycle in the chain (X1 ⚑3a): what was active when, who changed it, and which rules were not evaluated. A4's per-rule exposure reads it.",
+      "description": "Pack lifecycle in the chain (X1 ⚑3a): what was active when, who changed it, and which rules were not evaluated.",
       "type": "object",
       "required": [
         "event",

@@ -11,10 +11,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from core.auth.tool_principal import current_claims
-from core.cases.agent_closure import CALLER_UNAUTHENTICATED
+from core.cases.agent_closure import actor, run_agent
 from core.detections.inventory.catalog import in_repo
-from core.integrations.mcp.surface import current_caller
 from core.storage.config_service import ConfigService
 from core.storage.connection import get_db_manager
 from core.storage.models import DetectionRule
@@ -47,10 +45,9 @@ def _who() -> tuple:
 
     A run no person started has no caller, only its signed claims.
     """
-    claims = current_claims()
-    agent = {"agent_id": claims.agent_id, "run_id": claims.run_id} if claims else {}
-    who = current_caller() or agent.get("agent_id") or CALLER_UNAUTHENTICATED
-    return who, {k: v for k, v in agent.items() if v}
+    agent_id, run_id = run_agent()
+    run = {"agent_id": agent_id, "run_id": run_id}
+    return actor(), {k: v for k, v in run.items() if v}
 
 
 def link_rule(

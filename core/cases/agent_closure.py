@@ -87,6 +87,30 @@ def close_channel() -> str:
     return CHANNEL_AGENT
 
 
+def run_agent() -> tuple[Optional[str], Optional[str]]:
+    """``(agent principal, run id)`` of the run whose signed claims are bound.
+
+    The agent is the one the playbook names for the running phase, else the
+    run's own. ``(None, None)`` outside a run's tool call.
+    """
+    # Lazy: tool_principal reads the JWT secret on import, which an upgrade lacks.
+    from core.auth.tool_principal import current_claims
+
+    claims = current_claims()
+    if claims is None:
+        return None, None
+    from core.agents.phase_actor import phase_actor
+
+    return phase_actor(claims.run_id or "") or claims.agent_id, claims.run_id
+
+
+def _headless_agent() -> Optional[str]:
+    """The run's agent when no person is behind the call, else None."""
+    if current_caller() or _http.get() is not None:
+        return None
+    return run_agent()[0]
+
+
 def principal_for_username(session: Session, username: str) -> Optional[str]:
     """The principal id of a live username, or None.
 
@@ -113,10 +137,15 @@ def actor_identity(
 
     ``explicit`` is text the caller already had (a merge's ``merged_by``, a
     run id). Otherwise the text is the bound caller, the signed-in username,
-    or ``agent`` when nobody is bound. An unset caller stores no principal.
+    the agent of a run no person started, or ``agent`` when nobody is bound.
+    An unset caller with no run stores no principal.
     """
     http = _http.get()
     caller = current_caller()
+    # A run no person started: its agent is already a principal id, not a username.
+    agent = _headless_agent()
+    if agent and explicit in (None, agent):
+        return agent, agent
     if explicit is None:
         if caller:
             name = caller
@@ -176,6 +205,9 @@ def record_close(
         payload["actor"] = principal_id
     if credential_id:
         payload["credential_id"] = credential_id
+    run_id = run_agent()[1]
+    if run_id:
+        payload["run_id"] = run_id
     trail.append(
         session,
         payload,
@@ -188,10 +220,11 @@ def record_close(
 # A caller that supplies its own name is not identifying itself, it is choosing
 # what the record will say, so the name comes from the credential the door
 # bound: the /mcp surface, or chat through the principal token
-# /internal/tools/invoke verifies. A call with no person behind it binds nothing.
+# /internal/tools/invoke verifies. A call with no person behind it binds nothing
+# but its signed claims, so it records the run's agent.
 def actor() -> str:
     """Who this call writes into a record. Never an argument the model supplied."""
-    return current_caller() or CALLER_UNAUTHENTICATED
+    return current_caller() or _headless_agent() or CALLER_UNAUTHENTICATED
 
 
 @contextmanager

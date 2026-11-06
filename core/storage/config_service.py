@@ -17,7 +17,7 @@ from core.exceptions import default_on_error
 from core.storage.connection import get_db_manager
 from core.storage.models import ConfigAuditLog, IntegrationConfig, SystemConfig
 from core.storage.schemas import IntegrationConfigSchema
-from core.telemetry_sanitizer import SensitiveAttributeScrubber
+from core.telemetry_sanitizer import _SECRET_VALUE_PATTERNS, SensitiveAttributeScrubber
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 CONFIG_CHANGE = "config.change"
 _REDACTED = "[REDACTED]"
 _scrubber = SensitiveAttributeScrubber()
+# The long-hex value pattern: on its own it blanks only the hex runs (_redact_tree).
+_LONG_HEX = next(p for p in _SECRET_VALUE_PATTERNS if "{32,}" in p.pattern)
 # Set by core.integrations.integration_secrets. Storage cannot import that
 # module; an integration audit with no redactor fails the write.
 _integration_redactor = None
@@ -397,6 +399,12 @@ def _redact_tree(value: Any, key: str = "") -> Any:
             return _REDACTED
         return [_redact_tree(item, key) for item in value]
     if key and _scrubber._should_redact(key, value):
+        if isinstance(value, str) and not _scrubber._should_redact(key, ""):
+            # A long hex run alone (a commit SHA in a git error, or an old 40-hex
+            # GitHub token) blanks just the run, keeping the message around it.
+            hits = [p for p in _SECRET_VALUE_PATTERNS if p.search(value)]
+            if hits == [_LONG_HEX]:
+                return _LONG_HEX.sub(_REDACTED, value)
         return _REDACTED
     return value
 

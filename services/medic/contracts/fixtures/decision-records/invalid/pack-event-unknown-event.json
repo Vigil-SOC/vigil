@@ -13,7 +13,7 @@
     "rule": "llm.budget-exhausted",
     "reason": "needs_engine_minor"
   },
-  "seq": 11,
-  "prev": "323d54f15d13a24261b6c2cd10c581f40c1703c22ae0612b092bcd992959642b",
-  "hash": "876e1d9d0b00b69e1ae729be9c022772e786a50cd9092088374d54f34ed98dde"
+  "seq": 10,
+  "prev": "6423809862bb8b6777301f07f38d06b4413270accb34aaff45f77f5fb70d636d",
+  "hash": "0117a70e004527235316bb1db1db9efd2586a8cf45894df1ecb4c94dc2fb9ad1"
 }

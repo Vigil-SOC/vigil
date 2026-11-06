@@ -7,7 +7,7 @@
 
 .home-screen .home-page {
   width: 100%;
-  max-width: 1140px;
+  max-width: var(--page-max); /* a reading page (DESIGN.md §7) */
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -142,6 +142,7 @@
   margin: 0;
   padding: 0;
   display: grid;
+  grid-template-columns: repeat(var(--steps), minmax(0, 1fr));
   gap: 1px;
   background: var(--ln0);
   border: 1px solid var(--ln0);
@@ -187,12 +188,11 @@
   color: var(--bg1);
 }
 
+/* wrap rather than clip: a step's link goes to where it is done, not to this text, so a cut-off line could not be read */
 .home-screen .home-step h3,
 .home-screen .home-step p {
   margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .home-screen .home-step h3 {
@@ -325,6 +325,11 @@
   -webkit-line-clamp: 2;
   overflow: hidden;
   overflow-wrap: anywhere;
+}
+
+/* a card without a case opens nowhere: tabbing to its buttons shows the rest (DESIGN.md §7) */
+.home-screen .home-card:focus-within .home-card-meta {
+  -webkit-line-clamp: unset;
 }
 
 .home-screen .home-actions {
@@ -642,4 +647,12 @@
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+
+/* reflow tier (.main under 700px): section heads wrap their actions under the title; the setup steps stack */
+@container main (max-width: 699px) {
+  .home-screen { padding: 24px 16px; }
+  .home-screen .home-head { flex-direction: column; gap: 6px; }
+  .home-screen .home-head-actions { flex-wrap: wrap; flex-shrink: 1; }
+  .home-screen .home-steps { grid-template-columns: minmax(0, 1fr); }
 }

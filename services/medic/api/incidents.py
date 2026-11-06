@@ -106,9 +106,8 @@ class _Fold:
         elif kind == "incident_resolved":
             self.resolved, self.resolving = rec, False
             self.last_eval = body.get("eval", self.last_eval)
-        elif kind == "feedback" and body["source"] == "live":
-            # Each admin's latest live rating; replay feedback and adjudication
-            # are never ratings.
+        elif kind == "feedback":
+            # Each admin's latest rating.
             self.ratings.pop(body["admin"], None)
             self.ratings[body["admin"]] = {
                 "admin": body["admin"],

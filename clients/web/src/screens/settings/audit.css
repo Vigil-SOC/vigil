@@ -1,7 +1,7 @@
 /* Settings → Audit (#2766). List and chips follow the Cases list; entry detail and verify follow the case Record tab. */
 .audit-top {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); /* one column when narrower than a box */
   gap: 12px;
 }
 
@@ -72,12 +72,20 @@
   background: var(--bg1);
   border: 1px solid var(--ln0);
   border-radius: 14px;
-  overflow: hidden;
+  overflow-x: auto; /* below its minimum the trail scrolls in its card */
+}
+
+/* fixed tracks, Actor's floor, gaps and padding (580px) plus What's floor; Outcome and
+   Marks (208px) step aside while Ask Vigil is docked */
+.audit-grid { --ag-tracks: 580px; min-width: calc(var(--ag-tracks) + var(--col-main-min)); }
+@container main (max-width: 1399px) {
+  .main.chat-open .audit-grid { --ag-tracks: 372px; }
+  .main.chat-open .ag-row { grid-template-columns: 56px 128px minmax(96px, 1fr) minmax(var(--col-main-min), 1.6fr) 0 0; }
 }
 
 .ag-row {
   display: grid;
-  grid-template-columns: 64px 150px minmax(0, 1fr) minmax(0, 1.6fr) 120px 200px;
+  grid-template-columns: 56px 128px minmax(96px, 1fr) minmax(var(--col-main-min), 1.6fr) 100px 108px;
   gap: 12px;
   align-items: center;
   padding: 11px 16px;

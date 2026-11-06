@@ -74,6 +74,21 @@ def _nodes(connection: Any) -> List[Dict[str, Any]]:
     return [e["node"] for e in edges if isinstance(e, dict) and e.get("node")]
 
 
+def _target(node: Dict[str, Any]) -> Dict[str, Any]:
+    """A relationship target or container object as one shape: its id, type and
+    name (a named entity's representative name, or an observable's value), and
+    an attack pattern's ATT&CK id."""
+    named = (node.get("representative") or {}).get("main")
+    out = {
+        "id": node.get("id"),
+        "entity_type": node.get("entity_type"),
+        "name": named if named is not None else node.get("observable_value"),
+    }
+    if node.get("x_mitre_id"):
+        out["x_mitre_id"] = node["x_mitre_id"]
+    return out
+
+
 class OpenCTIService:
     def __init__(
         self,
@@ -237,7 +252,10 @@ class OpenCTIService:
             " edges { node {" + _TARGET_FIELDS + "} } } } } }",
             {"id": entity_id, "ids": [entity_id], "n": _limit(limit)},
         )
-        relationships = _nodes(data.get("stixCoreRelationships"))
+        relationships = [
+            {**r, "to": _target(r.get("to") or {})}
+            for r in _nodes(data.get("stixCoreRelationships"))
+        ]
         out: Dict[str, Any] = {
             "id": entity_id,
             "count": len(relationships),
@@ -246,7 +264,7 @@ class OpenCTIService:
         container = data.get("stixDomainObject") or {}
         if "objects" in container:
             # Relationships a report holds match neither fragment and come back empty.
-            objects = [o for o in _nodes(container["objects"]) if o.get("id")]
+            objects = [_target(o) for o in _nodes(container["objects"]) if o.get("id")]
             # object_count is what the container holds, not the capped page: a
             # report of 9 read with limit=3 says 9, with 3 objects listed.
             total = ((container["objects"] or {}).get("pageInfo") or {}).get(

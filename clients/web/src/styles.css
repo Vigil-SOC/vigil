@@ -845,6 +845,12 @@
       cursor: pointer;
    }
 
+   /* the Cases rows' ring: a row that opens is a tab stop */
+   .tbl tbody tr.clickable:focus-visible {
+      outline: 2px solid var(--ac);
+      outline-offset: -2px;
+   }
+
    .tbl tbody tr.sel {
       background: var(--accent-dim);
    }
@@ -1354,20 +1360,7 @@
       flex: 0 0 auto;
    }
 
-   /* ---------- cases / decisions master-detail ---------- */
-   .split {
-      display: flex;
-      height: 100%;
-   }
-
-   .list-pane {
-      flex: 0 0 380px;
-      border-right: 1px solid var(--line);
-      display: flex;
-      flex-direction: column;
-      min-width: 0;
-   }
-
+   /* ---------- case detail (the full page and the drawer) ---------- */
    .detail-pane {
       flex: 1;
       min-width: 0;
@@ -2325,16 +2318,6 @@
 
    }
 
-   /* Cases master-detail + open Vigil dock on smaller screens: the list rail
-     (380px) + chat (400px) leave the detail pane too cramped, so drop the
-     list rail while the dock is open. Above 1100px the dock still pushes
-     (shrinks) .main, so the detail pane keeps its full remaining width. */
-   @media (max-width: 1280px) {
-      .chat-active .split .list-pane {
-         display: none;
-      }
-   }
-
    /* ---------- Workflows & Skills ---------- */
    .agent-chip {
       display: inline-flex;
@@ -2383,7 +2366,8 @@
    .wfk-layout > .wfk-col { width: 346px; flex-shrink: 0; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; }
    .wfk-reader { flex: 1; min-width: 0; overflow-y: auto; overscroll-behavior: contain; }
    /* the board's reader starts 16px from the column; standalone panes (draft) keep 22px */
-   .wfk-reader .wfk-pane { padding-left: 16px; padding-right: 16px; }
+   .wfk-reader .wfk-pane { padding-left: 16px; padding-right: 16px; max-width: var(--page-max); } /* workflow detail is a reading page (DESIGN.md §7) */
+   .wfk-reader .wfk-pane p { max-width: var(--text-max); }
    .wfk.off .wfk-name { color: var(--tx2); }
 
    .wfk-main {
@@ -2463,7 +2447,7 @@
       tokens.json (sentence-case 12px heads, square initial,
       22px state pills); the shared .tbl, .toggle and .row-act rules stay. */
    .ag-page {
-      padding: 14px 26px 96px; /* bottom room so the Ask Vigil button never covers the last row */
+      padding: 14px 26px 28px;
       display: flex;
       flex-direction: column;
       gap: 12px;
@@ -2542,25 +2526,48 @@
       border: 1px solid var(--ln0);
       border-radius: 14px;
       overflow: hidden;
+      overflow-x: auto; /* below its min-width the table scrolls in the card, never the page */
       container-type: inline-size;
    }
 
+   /* Fixed cols at compact widths; Agent (no width) takes the rest and keeps --col-main-min */
    .agents-tbl {
       table-layout: fixed;
+      --ag-tracks: 808px; /* 1280 with the side bar fits without scrolling */
+      min-width: calc(var(--ag-tracks) + var(--col-main-min));
    }
 
-   /* The board's grid is 1.6fr / 2fr plus fixed tracks, 12px gaps and 16px edges. Cells here carry
-      12px padding a side, so each fixed col is the board track + 12px (On also takes the 16px edge).
-      716px = those fixed cols (688px) + the 28px the first two cols' padding adds. cqw, not %:
-      a col width with calc(% ...) is ignored by table layout. */
-   .agents-tbl col.c-agent { width: calc((100cqw - 716px) * 4 / 9 + 16px); }
-   .agents-tbl col.c-does { width: calc((100cqw - 716px) * 5 / 9 + 12px); }
-   .agents-tbl col.c-model { width: 162px; }
-   .agents-tbl col.c-skills { width: 82px; }
-   .agents-tbl col.c-changes { width: 132px; }
-   .agents-tbl col.c-runs { width: 102px; }
-   .agents-tbl col.c-success { width: 122px; }
-   .agents-tbl col.c-on { width: 88px; }
+   .agents-tbl col.c-does { width: 220px; }
+   .agents-tbl col.c-model { width: 140px; }
+   .agents-tbl col.c-skills { width: 64px; }
+   .agents-tbl col.c-changes { width: 116px; }
+   .agents-tbl col.c-runs { width: 88px; }
+   .agents-tbl col.c-success { width: 112px; }
+   .agents-tbl col.c-on { width: 68px; }
+
+   @container main (min-width: 1400px) {
+      .agents-tbl { --ag-tracks: 1088px; }
+      .agents-tbl col.c-does { width: 400px; }
+      .agents-tbl col.c-model { width: 162px; }
+      .agents-tbl col.c-skills { width: 82px; }
+      .agents-tbl col.c-changes { width: 132px; }
+      .agents-tbl col.c-runs { width: 102px; }
+      .agents-tbl col.c-success { width: 122px; }
+      .agents-tbl col.c-on { width: 88px; }
+   }
+
+   /* Skills, Changes things? and Runs (268px) step aside while Ask Vigil is docked.
+      A col's width outranks its cells', so their cols carry col-low too, which zeroes them. */
+   @container main (max-width: 1399px) {
+      .main.chat-open .agents-tbl { --ag-tracks: 540px; }
+   }
+
+   .ag-hide-note {
+      margin-top: 2px;
+      white-space: normal;
+      font-weight: 400;
+      color: var(--tx3);
+   }
 
    .agents-tbl thead th {
       position: static;
@@ -3558,8 +3565,10 @@
       border-top: 1px solid var(--line-soft);
    }
 
+   /* the text takes its own width (up to a reading measure), so the switch sits by its label, not across a wide card */
    .toggle-row-text {
-      flex: 1;
+      flex: 0 1 auto;
+      max-width: var(--text-max);
       min-width: 0;
       display: flex;
       flex-direction: column;
@@ -3757,6 +3766,42 @@
    .int-table th:last-child,
    .int-table td:last-child { padding-right: 16px; text-align: right; }
 
+   /* Connected tab: the table scrolls in its own card below its minimum; Integration takes the rest */
+   .int-table-wrap {
+      background: var(--bg1);
+      border: 1px solid var(--ln0);
+      border-radius: 14px;
+   }
+
+   .int-table-wrap .int-table {
+      --int-tracks: 602px;
+      min-width: calc(var(--int-tracks) + var(--col-main-min));
+      border: 0;
+      border-radius: 0;
+      background: none;
+   }
+
+   .int-table-wrap th:nth-child(2) { width: 96px; }
+   .int-table-wrap th:nth-child(3) { width: 92px; }
+   .int-table-wrap th:nth-child(4) { width: 130px; }
+   .int-table-wrap th:nth-child(5) { width: 120px; }
+   .int-table-wrap th:nth-child(6) { width: 52px; }
+   .int-table-wrap th:nth-child(7) { width: 112px; }
+
+   @container main (min-width: 1400px) {
+      .int-table-wrap .int-table { --int-tracks: 792px; }
+      .int-table-wrap th:nth-child(4) { width: 240px; }
+      .int-table-wrap th:nth-child(5) { width: 200px; }
+   }
+
+   /* Last verified and the agents description (222px) step aside while Ask Vigil is docked.
+      It scrolls only below the full tier, where it can't fit: a scroll box clips the ⓘ popover. */
+   @container main (max-width: 1399px) {
+      .int-table-wrap { overflow-x: auto; }
+
+      .main.chat-open .int-table-wrap .int-table { --int-tracks: 380px; }
+   }
+
    .int-name {
       display: flex;
       flex-wrap: wrap;
@@ -3947,7 +3992,13 @@
       -webkit-box-orient: vertical;
       -webkit-line-clamp: 2;
       overflow: hidden;
+      overflow-wrap: anywhere;
       line-height: 1.4;
+   }
+
+   /* an integration row opens nowhere: tabbing to its switch or action shows the rest (DESIGN.md §7) */
+   .int-table tbody tr:focus-within .int-clamp {
+      -webkit-line-clamp: unset;
    }
 
    .int-act {
@@ -4168,7 +4219,6 @@
    .mcp-onoff {
       display: flex;
       align-items: center;
-      justify-content: space-between;
       gap: 12px;
       padding: 10px 12px;
       border-radius: 12px;
@@ -4176,6 +4226,8 @@
    }
 
    .mcp-onoff-text {
+      flex: 0 1 auto;
+      max-width: var(--text-max);
       display: flex;
       flex-direction: column;
       gap: 2px;
@@ -4194,8 +4246,7 @@
       flex: 1;
       min-width: 0;
       overflow-y: auto;
-      /* bottom room so the floating Ask Vigil button never sits on the last row's control */
-      padding: 22px 22px 84px;
+      padding: 22px;
       display: flex;
       flex-direction: column;
       gap: 18px;
@@ -4207,7 +4258,12 @@
       flex-shrink: 0;
    }
 
-   .settings-content>.settings-card {
+   /* Settings is a reading page: everything on it stops at --page-max (DESIGN.md §7) */
+   .settings-content>* {
+      max-width: var(--page-max);
+   }
+
+   .settings-content>.settings-card:not(.wide) {
       max-width: 860px;
    }
 
@@ -4215,10 +4271,6 @@
      clipped by the global .card overflow:hidden */
    .settings-card {
       overflow: visible;
-   }
-
-   .settings-content>.settings-card.wide {
-      max-width: 1280px;
    }
 
    /* Settings and Setup cards, on the board's tokens (components/card.md) */
@@ -4254,7 +4306,16 @@
       padding: 12px 18px 16px;
    }
 
-   .settings-content .tbl thead th {
+   .settings-content .col-low-note {
+      margin-top: 2px;
+      white-space: normal;
+      font-size: 11px;
+      font-weight: 400;
+      color: var(--tx3);
+   }
+
+   /* :where() keeps these Settings cell rules below .main.chat-open .col-low, so a hidden column collapses */
+   :where(.settings-content) .tbl thead th {
       background: transparent;
       font-size: 12px;
       font-weight: 600;
@@ -4262,6 +4323,26 @@
       text-transform: none;
       color: var(--tx2);
       border-bottom-color: var(--ln0);
+   }
+
+   /* A Settings table that can't fit scrolls inside its card; its action column (.col-act)
+      stays in view while it does. Its minimum width is its fixed tracks plus --col-main-min,
+      lowered by the .col-low tracks while those are hidden (DESIGN.md §7). */
+   .settings-content .col-act,
+   .settings-content .tbl thead th.col-act {
+      position: sticky;
+      right: 0;
+      z-index: 1;
+      /* fades in from its left edge, so a column scrolled under it reads as cut, not missing */
+      background: linear-gradient(90deg, transparent, var(--bg1) 12px);
+   }
+
+   .settings-content .tbl thead th.col-act {
+      z-index: 3; /* above the sticky header row's other cells */
+   }
+
+   .settings-content .tbl tbody tr:hover>.col-act {
+      background: linear-gradient(var(--hover), var(--hover)), linear-gradient(90deg, transparent, var(--bg1) 12px);
    }
 
    /* Alert collection: the master card and table sit on the board's 16px card padding */
@@ -4273,9 +4354,20 @@
       padding: 0;
    }
 
-   .settings-content .fed-table thead th,
-   .settings-content .fed-table tbody td {
-      padding: 9px 12px;
+   @container main (max-width: 1399px) {
+      .fed-wrap {
+         overflow-x: auto;
+      }
+   }
+
+   :where(.settings-content) .fed-table thead th,
+   :where(.settings-content) .fed-table tbody td {
+      padding: 9px 8px;
+   }
+
+   /* the source's second line wraps rather than widening its column */
+   .settings-content .fed-table tbody td:first-child {
+      white-space: normal;
    }
 
    .settings-content .fed-table thead th:first-child,
@@ -4293,9 +4385,14 @@
       padding: 8px 16px 10px;
    }
 
-   .settings-content .sla-tbl thead th,
-   .settings-content .sla-tbl tbody td {
+   :where(.settings-content) .sla-tbl thead th,
+   :where(.settings-content) .sla-tbl tbody td {
       padding: 10px 2px;
+   }
+
+   /* two-line heads, so "Respond within" doesn't set its column's width */
+   .settings-content .sla-tbl thead th {
+      white-space: normal;
    }
 
    .sla-name {
@@ -4321,11 +4418,9 @@
       color: var(--tx3);
    }
 
-   /* room under it for the floating Ask Vigil button */
    .sla-edit {
       border-color: var(--ac-ln);
-      scroll-margin-bottom: 96px;
-      margin-bottom: 72px;
+      scroll-margin-bottom: 22px;
    }
 
    .sla-grid {
@@ -4392,7 +4487,8 @@
    }
 
    .lim-switch .toggle-row-text {
-      flex: 1;
+      flex: 0 1 auto;
+      max-width: var(--text-max);
       min-width: 0;
       display: flex;
       flex-direction: column;
@@ -4567,7 +4663,7 @@
    /* A deploy PR that failed: its reason, clipped (full text on hover), and a retry. */
    .stop-dark-act { min-width: 0; max-width: 100%; overflow: hidden; }
    .stop-failed { display: inline-flex; align-items: center; gap: 10px; }
-   .stop-why { display: inline-block; max-width: 170px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; color: var(--poor); }
+   .stop-why { display: inline-block; max-width: 185px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; color: var(--poor); }
 
    .lim-row-ctl {
       justify-self: end;
@@ -4675,10 +4771,9 @@
       color: var(--tx1);
    }
 
+   /* breaks rather than clips: a tool row opens nowhere, so a cut-off name could not be read */
    .lim-tool-name {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      overflow-wrap: anywhere;
       font-family: var(--mono);
    }
 
@@ -4716,7 +4811,6 @@
       display: flex;
       flex-direction: column;
       gap: 18px;
-      max-width: 1280px;
    }
 
    .data-anchor {
@@ -4752,19 +4846,19 @@
       color: var(--tx2);
    }
 
+   /* a read-only value wraps rather than clips; it opens nowhere */
    .data-ro-value {
-      height: 34px;
+      min-height: 34px;
+      box-sizing: border-box;
       display: flex;
       align-items: center;
-      padding: 0 12px;
+      padding: 6px 12px;
       background: var(--bg2);
       border: 1px solid var(--ln1);
       border-radius: 10px;
       font-size: 12.5px;
       color: var(--tx0);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      overflow-wrap: anywhere;
    }
 
    .data-ro-value.empty {
@@ -4791,9 +4885,7 @@
    .data-loglm-msg {
       flex: 1;
       min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      overflow-wrap: anywhere;
    }
 
    .data-drop {
@@ -4874,6 +4966,13 @@
       overflow: hidden;
    }
 
+   /* text wraps rather than clips: a source row opens nowhere, so cut-off text (a URL, or a
+      format name under WCAG text spacing) would have no way to be read (DESIGN.md §7) */
+   .data-table tbody tr:not(.data-expand) > td:not(.data-act) {
+      white-space: normal;
+      overflow-wrap: anywhere;
+   }
+
    .data-table td b {
       font-weight: 700;
       color: var(--tx0);
@@ -4882,11 +4981,6 @@
    .data-table td.muted,
    .data-table .muted {
       color: var(--tx2);
-   }
-
-   .data-clip {
-      overflow: hidden;
-      text-overflow: ellipsis;
    }
 
    /* A source's name wraps rather than clips, and its status pill drops below when it can't fit beside it */
@@ -4899,7 +4993,20 @@
       overflow-wrap: anywhere;
    }
 
-   .data-table th:nth-child(1) { width: 24%; }
+   /* the name column never narrows below --col-main-min; below the tracks plus it, the table scrolls */
+   .data-table th:nth-child(1) { width: var(--col-main-min); }
+   @container main (min-width: 1400px) {
+      .data-table th:nth-child(1) { width: 24%; }
+   }
+   .data-table:not(.data-rules) { min-width: calc(360px + var(--col-main-min)); } /* Settings' 120px floor, Status, action */
+   .data-rules { min-width: calc(566px + var(--col-main-min)); } /* Where's 96px floor and the fixed tracks */
+
+   /* Settings (120px), and Format, Deploy target and Where (326px), step aside while Ask Vigil is docked */
+   @container main (max-width: 1399px) {
+      .main.chat-open .data-table:not(.data-rules) { min-width: calc(240px + var(--col-main-min)); }
+      .main.chat-open .data-rules { min-width: calc(240px + var(--col-main-min)); }
+   }
+
    .data-table:not(.data-rules) th:nth-child(3) { width: 150px; }
    .data-table:not(.data-rules) th:nth-child(4) { width: 90px; }
    .data-rules th:nth-child(2) { width: 120px; }
@@ -5373,9 +5480,8 @@
       margin-left: auto;
    }
 
-   /* bottom room so the last row clears the floating Ask Vigil button */
    .exclusions {
-      margin: 6px 22px 88px;
+      margin: 6px 22px 22px;
       border: 1px solid var(--line);
       border-radius: 8px;
       background: var(--panel);
@@ -5732,6 +5838,8 @@
          width the modal cannot meet. Inherited, so every descendant gets it. */
       overflow-wrap: anywhere;
    }
+
+   .run-detail { max-width: var(--page-max); }
 
    .run-detail .tbl {
       margin-top: 4px;
@@ -6167,7 +6275,7 @@
 
    .tq-title p {
       margin: 0;
-      max-width: 760px;
+      max-width: var(--text-max);
       font-size: 13px;
       line-height: 1.5;
       color: var(--tx1);
@@ -6608,6 +6716,81 @@
       color: var(--tx-2);
       margin: 0;
       font-family: var(--mono);
+   }
+
+   /* reflow tier (.main under 700px, 200%–400% zoom): one column; toolbars wrap, side panels
+      stack, and only tables and diagrams scroll sideways, inside their card. Last in the
+      layer so it outranks the rules above; its unlayered twin follows the 1024px toolbar rule below. */
+   @container main (max-width: 699px) {
+      /* Settings: the section list sits above the section, and the two scroll as one */
+      .settings-wrap {
+         flex-direction: column;
+         overflow-y: auto;
+      }
+
+      .settings-nav {
+         flex: none;
+         flex-flow: row wrap;
+         border-right: 0;
+         border-bottom: 1px solid var(--ln0);
+         overflow: visible;
+      }
+
+      .settings-nav-title {
+         flex-basis: 100%;
+      }
+
+      .settings-nav-item {
+         width: auto;
+      }
+
+      .settings-content {
+         flex: none;
+         overflow: visible;
+         padding: 16px;
+      }
+
+      /* a Settings card's actions drop under its title */
+      .settings-card .card-h {
+         flex-wrap: wrap;
+      }
+
+      .settings-card-actions {
+         flex-wrap: wrap;
+         max-width: 100%;
+      }
+
+      .tq-head {
+         flex-direction: column;
+         gap: 12px;
+      }
+
+      .tq-head-r {
+         flex-wrap: wrap;
+      }
+
+      .tq-tiles {
+         grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      /* the case page's tab body grows in its stage, which scrolls (cases.css) */
+      .case-stage > .detail-body {
+         flex: none;
+         overflow: visible;
+      }
+
+      .wf-tabs {
+         flex-wrap: wrap;
+         gap: 0 22px;
+      }
+
+      .ag-bar {
+         flex-wrap: wrap;
+      }
+
+      .ag-summary {
+         flex-basis: 100%;
+      }
    }
 }
 
@@ -7065,9 +7248,37 @@
    }
 }
 
-@container main (max-width: 720px) {
+/* reflow tier (.main under 700px), unlayered rules; the layered twin closes @layer components */
+@container main (max-width: 699px) {
    .soc-console .search {
       min-width: 120px;
+   }
+
+   /* the workflow cards above the reader, not beside it; the page scrolls, not each column
+      (!important: useFillHeight sizes the layout inline, and the column's padding is utilities) */
+   .wfk-layout {
+      flex-direction: column;
+      height: auto !important;
+   }
+
+   .wfk-layout > .wfk-col {
+      width: auto;
+      overflow: visible;
+      padding-right: 26px;
+   }
+
+   .wfk-reader {
+      overflow: visible;
+   }
+
+   /* Agents & workflows head and the Skills bar: the button drops under the text */
+   .wf-head,
+   .sk-bar {
+      flex-wrap: wrap;
+   }
+
+   .sk-bar > :first-child {
+      flex-basis: 100%;
    }
 }
 
@@ -7439,6 +7650,21 @@
    border-radius: 10px;
    font-size: 12px;
    font-weight: 600;
+}
+
+/* reflow tier (.main under 700px): the notice's button drops under its text */
+@container main (max-width: 699px) {
+   .autoops-off {
+      flex-wrap: wrap;
+   }
+
+   .autoops-off > span {
+      flex-basis: calc(100% - 40px);
+   }
+
+   .autoops-off .btn {
+      margin-left: 28px;
+   }
 }
 
 /* Triage queue: the verdict the daemon's triage saved */

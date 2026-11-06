@@ -1124,12 +1124,18 @@ medic:
       repository: ""   # empty → <registry>/<namespace>-medic-gateway
       tag: ""
       pullPolicy: ""
+    # C7-final: the Compose numbers (nightly sampler run 42209860355 and a live
+    # run; no Helm sampler output exists yet, same code and sensors). Sustained
+    # CPU is ~0.015 vCPU at 8 req/min (budget 20). The two exec probes (every
+    # 10 s and 30 s) each start a Python of ~0.4 CPU-s inside this container,
+    # so ~0.06 vCPU on average and 0.3-0.5 for a second: 200m throttled each to
+    # 2 s or more, with 10 s probe timeouts. Memory peaks at 34 MiB under flood.
     resources:
       requests:
-        cpu: 50m
+        cpu: 100m
         memory: 64Mi
       limits:
-        cpu: 200m
+        cpu: 500m
         memory: 128Mi
     # The Viewer account the gateway logs in as. Required when medic.enabled.
     # The password comes from an existing Secret, mounted as a file; it is

@@ -735,10 +735,19 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    # C7-final, from the nightly sampler (run 42209860355) and a live Compose run
+    # with the real sensors (8.2 req/min, budget 20). Sustained CPU is ~0.015
+    # vCPU; the spikes to 0.3-0.5 are the 30 s `check` healthcheck, a fresh
+    # Python started inside this cgroup (~0.4 CPU-s), not log volume: the
+    # gateway is off the log path, and a 60 s flood left its rate unchanged.
+    # 0.5 lets that burst finish in about a second, well inside the 5 s timeout.
     cpus: 0.5
-    mem_limit: 256m
-    # A thread per connection: 32 per listener, plus upstream calls.
-    pids_limit: 128
+    # Peak RSS 34 MiB under flood. 128m covers eight 2 MiB replies in flight
+    # (each held about twice while joined) and a probe process, ~3.5x the peak.
+    mem_limit: 128m
+    # Two threads per open connection (handler and its deadline timer): 32 per
+    # listener x 2 listeners x 2 = 128, plus the listeners, main and a probe.
+    pids_limit: 192
     environment:
       VIGIL_MEDIC_GATEWAY_BACKEND: backend:6987
       VIGIL_MEDIC_GATEWAY_MEDIC: medic:8470
@@ -779,8 +788,16 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    # C7-final: nightly sampler (run 42209860355), flood of 5,000 lines/s x 3
+    # streams. Sustained CPU there is 0.08-0.15 vCPU (11 us/line), so the settled
+    # 1,000 lines/s x 7 streams (~0.08) sits at about a sixth of 0.5. Short pins at
+    # 0.5 (max 0.506) are the 30 s healthcheck's fresh Python on top of the
+    # flood; throttling them is harmless, so the CPU is not tightened or raised.
     cpus: 0.5
-    mem_limit: 256m
+    # Peak RSS 45 MiB under flood. 128m adds room for two 8 MiB JSON replies
+    # read whole, parsed and projected (~3x each) at once.
+    mem_limit: 128m
+    # asyncio: one thread, plus the resolver's pool at start; 32 is ample.
     pids_limit: 32
     environment:
       VIGIL_MEDIC_DOCKERPROXY_BIND: medic-dockerproxy:8472
