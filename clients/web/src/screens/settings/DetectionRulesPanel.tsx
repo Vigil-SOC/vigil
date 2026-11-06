@@ -32,6 +32,7 @@ const EMPTY_SOURCE: AddSourcePayload = {
   subdirectory: '',
   story_subdirectory: '',
   deploy_target: false,
+  github_enterprise: false,
 }
 
 const fmtNum = (n: number) => n.toLocaleString()
@@ -39,6 +40,20 @@ const fmtNum = (n: number) => n.toLocaleString()
 // Formats whose live overlay rules Vigil offers to a customer git repo by pull request.
 const DEPLOY_FORMATS = ['splunk', 'elastic']
 const deployable = (s: DetectionSource) => s.type === 'git' && DEPLOY_FORMATS.includes(s.format)
+
+// A git URL's host, lowercased: https/ssh URLs and scp-style user@host:path.
+const hostOf = (url: string) => {
+  const u = url.trim()
+  const m = /^[a-z][\w+.-]*:\/\/(?:[^/@]+@)?([^/:]+)/i.exec(u) || /^(?:[^@/]+@)?([^:/]+):/.exec(u)
+  return (m?.[1] ?? '').toLowerCase()
+}
+// Vigil opens deploy pull requests with its GitHub token, so a deploy target is
+// github.com, or a host the person says is GitHub Enterprise; the server refuses the rest.
+const isGithubCom = (url: string) => hostOf(url) === 'github.com'
+// Hosted services that are never GitHub: no GitHub Enterprise mark is offered for them.
+const NEVER_GITHUB = ['gitlab.com', 'bitbucket.org', 'dev.azure.com', 'ssh.dev.azure.com', 'codeberg.org', 'gitea.com', 'git.sr.ht']
+const neverGithub = (url: string) => NEVER_GITHUB.includes(hostOf(url)) || hostOf(url).endsWith('.visualstudio.com')
+const GITHUB_ONLY = 'Only GitHub repos (github.com or GitHub Enterprise) can be deploy targets.'
 
 export default function DetectionRulesPanel({ notify }: SectionProps) {
   const { sources, stats, phase, error, reload, addSource, removeSource, updateSource, updateAll, setDeployTarget } =
@@ -48,6 +63,7 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
   const [form, setForm] = useState<AddSourcePayload>(EMPTY_SOURCE)
   const [saving, setSaving] = useState(false)
   const [confirmDel, setConfirmDel] = useState<DetectionSource | null>(null)
+  const [confirmGhe, setConfirmGhe] = useState<DetectionSource | null>(null)
 
   const title = 'Detection rule sources'
   const desc = 'Rules agents can search and compare against when they explain coverage.'
@@ -87,10 +103,10 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
     }
   }
 
-  const onDeployTarget = async (s: DetectionSource, on: boolean) => {
+  const onDeployTarget = async (s: DetectionSource, on: boolean, githubEnterprise?: boolean) => {
     setUpdating(`target:${s.id}`)
     try {
-      await setDeployTarget(s.id, on)
+      await setDeployTarget(s.id, on, githubEnterprise)
       notify('ok', on ? `${s.name} is the ${formatName(s.format)} deploy target.` : `${s.name} is no longer a deploy target.`)
     } catch (e) {
       notify('err', (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to change the deploy target.')
@@ -110,7 +126,8 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
         path: form.source_type === 'local' ? form.path : undefined,
         subdirectory: form.subdirectory,
         story_subdirectory: form.story_subdirectory,
-        deploy_target: formDeployable && !!form.deploy_target,
+        deploy_target: formDeployable && !formNotGithub && !!form.deploy_target,
+        github_enterprise: formDeployable && !!form.deploy_target && formGhe && !!form.github_enterprise,
       })
       notify('ok', `Added source: ${form.name}.`)
       setAddOpen(false)
@@ -134,7 +151,13 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
   }
 
   const formDeployable = form.source_type === 'git' && DEPLOY_FORMATS.includes(form.format)
-  const addValid = !!form.name && (form.source_type === 'git' ? !!form.url : !!form.path)
+  // A deploy target on a host other than github.com: the person must say it is GitHub Enterprise.
+  const formNotGithub = neverGithub(form.url || '')
+  const formGhe = !!hostOf(form.url || '') && !isGithubCom(form.url || '') && !formNotGithub
+  const addValid =
+    !!form.name &&
+    (form.source_type === 'git' ? !!form.url : !!form.path) &&
+    !(formDeployable && form.deploy_target && (formNotGithub || (formGhe && !form.github_enterprise)))
 
   return (
     <>
@@ -180,13 +203,22 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
                       )}
                     </td>
                     <td>{formatName(s.format)}</td>
-                    <td title={deployable(s) ? `When one of Vigil's ${formatName(s.format)} rules goes live, an agent opens a pull request adding it here; it waits for approval.` : undefined}>
+                    <td
+                      title={
+                        !deployable(s) ? undefined
+                        : neverGithub(s.git_url) ? `${GITHUB_ONLY} ${hostOf(s.git_url)} is not GitHub.`
+                        : `When one of Vigil's ${formatName(s.format)} rules goes live, an agent opens a pull request adding it here; it waits for approval.`
+                      }
+                    >
                       {deployable(s) && (
                         <Toggle
                           checked={!!s.deploy_target}
-                          disabled={!!updating}
+                          disabled={!!updating || (neverGithub(s.git_url) && !s.deploy_target)}
                           label={`${s.name}: deploy target for ${formatName(s.format)} rules`}
-                          onChange={(on) => onDeployTarget(s, on)}
+                          onChange={(on) =>
+                            // A host other than github.com gets the GitHub token only once the person says it is GitHub Enterprise.
+                            on && !isGithubCom(s.git_url) && !s.github_enterprise ? setConfirmGhe(s) : onDeployTarget(s, on)
+                          }
                         />
                       )}
                     </td>
@@ -245,9 +277,22 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
           {formDeployable && (
             <ToggleRow
               label="Deploy target"
-              hint={`When one of Vigil's ${formatName(form.format)} rules goes live, an agent opens a pull request adding it here.`}
-              checked={!!form.deploy_target}
+              hint={
+                formNotGithub
+                  ? `${GITHUB_ONLY} ${hostOf(form.url || '')} is not GitHub.`
+                  : `When one of Vigil's ${formatName(form.format)} rules goes live, an agent opens a pull request adding it here.`
+              }
+              checked={!formNotGithub && !!form.deploy_target}
+              disabled={formNotGithub}
               onChange={(v) => setForm({ ...form, deploy_target: v })}
+            />
+          )}
+          {formDeployable && form.deploy_target && formGhe && (
+            <ToggleRow
+              label="This is GitHub Enterprise"
+              hint={`Only GitHub repos (github.com or GitHub Enterprise) can be deploy targets: Vigil opens the pull request with its GitHub token, sent to ${hostOf(form.url || '')}/api/v3. Turn this on only if ${hostOf(form.url || '')} runs GitHub Enterprise.`}
+              checked={!!form.github_enterprise}
+              onChange={(v) => setForm({ ...form, github_enterprise: v })}
             />
           )}
           <div className="flex justify-end gap-2.5 mt-1">
@@ -256,6 +301,31 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
               {saving ? 'Adding…' : 'Add Source'}
             </button>
           </div>
+        </div>
+      </Popup>
+
+      {/* GitHub Enterprise confirm: a non-github.com host gets Vigil's GitHub token only once the person says so */}
+      <Popup open={!!confirmGhe} onClose={() => setConfirmGhe(null)} title="Is this GitHub Enterprise?" width={480}>
+        <p className="text-sm text-tx-2 leading-relaxed">
+          Only GitHub repos (github.com or GitHub Enterprise) can be deploy targets. Vigil opens each pull request with its
+          GitHub token, so making <strong>{confirmGhe?.name}</strong> the target sends that token to:
+        </p>
+        <p className="text-sm font-mono mt-2 break-all">{confirmGhe && `${hostOf(confirmGhe.git_url)}/api/v3`}</p>
+        <p className="text-sm text-tx-2 leading-relaxed mt-2">
+          Confirm only if {confirmGhe && hostOf(confirmGhe.git_url)} runs GitHub Enterprise. GitLab, Bitbucket and other hosts are refused.
+        </p>
+        <div className="flex justify-end gap-2.5 mt-5">
+          <button className="btn ghost" onClick={() => setConfirmGhe(null)}>Cancel</button>
+          <button
+            className="btn primary"
+            onClick={() => {
+              const s = confirmGhe
+              setConfirmGhe(null)
+              if (s) void onDeployTarget(s, true, true)
+            }}
+          >
+            It’s GitHub Enterprise
+          </button>
         </div>
       </Popup>
 

@@ -902,6 +902,7 @@ def _deploy(
     ]
     if not pending:
         return
+    from core.detections.detection_rules_service import deploy_host_refused
     from core.secrets import get_secret
 
     with get_db_manager().session_scope() as session:
@@ -913,6 +914,11 @@ def _deploy(
         target = targets[copy.language]
         outcome: Dict[str, Any] = {"version": copy.version, "at": now.isoformat()}
         try:
+            # Again here, not only when the target was set: a hand-edited file
+            # must not send the GitHub token to a GitLab or Bitbucket host.
+            refused = deploy_host_refused(target)
+            if refused:
+                raise RuntimeError(f"{target.get('git_url')}: {refused}")
             if not token:
                 raise RuntimeError(
                     "no GitHub token: set the github integration's token"
@@ -1005,6 +1011,13 @@ def _open_pr(
 
     import httpx
 
+    from core.detections.detection_rules_service import deploy_host_refused
+
+    # Last guard before the token leaves: whoever calls this, an unmarked
+    # non-github.com host gets no request at all.
+    refused = deploy_host_refused(target)
+    if refused:
+        raise RuntimeError(f"{target.get('git_url')}: {refused}")
     api, repo = _api_of(str(target.get("git_url") or ""))
     owner = repo.partition("/")[0]
     branch = f"vigil/rule-{copy.rule_id}-v{copy.version}"
