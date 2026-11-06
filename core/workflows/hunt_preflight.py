@@ -17,8 +17,8 @@ from core.workflows.playbook_resolver import (
     CAPABILITIES,
     HUNT_CAPABILITIES,
     INVESTIGATE_CAPABILITIES,
+    OPTIONAL_HUNT_CAPABILITIES,
     UnknownPlaybook,
-    extra_hunt_capabilities,
 )
 from core.workflows.workflows_service import (
     ADJUDICATE_RUN_KIND,
@@ -57,7 +57,7 @@ def capabilities(
         return capability_report(registry, needs or HUNT_CAPABILITIES)
     except Exception as exc:  # noqa: BLE001
         logger.debug("could not read bound capabilities: %s", exc)
-        return {"bound": [], "unbound": []}
+        return {"bound": [], "unbound": [], "absent": []}
 
 
 # What the run will be charged at, and how confidently. An unpriced model is
@@ -113,12 +113,20 @@ def _helper(phase: Dict[str, Any], tools: Optional[List[str]] = None) -> Dict[st
     }
 
 
+# The needs a hunt-like kind's plugin declares. Adjudicate's does not take the
+# optional intel needs, so its preflight neither lists nor reports them.
+def _hunt_needs(kind: str) -> Tuple[str, ...]:
+    if kind == HUNT_RUN_KIND:
+        return HUNT_CAPABILITIES
+    return tuple(c for c in HUNT_CAPABILITIES if c not in OPTIONAL_HUNT_CAPABILITIES)
+
+
 def _roles(definition: WorkflowDefinition) -> Tuple[Dict[str, Any], Optional[str]]:
     """``{lead, helpers, reviewer}`` for this kind, and a note when it is empty."""
     kind = definition.run_kind
     # A hunt is one agent and a critic: the plugin's, not the definition's.
     if is_hunt_like(kind):
-        tools = list(HUNT_CAPABILITIES) + list(LEAD_TOOLS[kind])
+        tools = list(_hunt_needs(kind)) + list(LEAD_TOOLS[kind])
         lead = {"name": LEAD_NAMES[kind], "tools": tools}
         return {
             "lead": lead,
@@ -195,6 +203,10 @@ def _permissions(
         }
         if name in report["unbound"]:
             row["bound"] = False
+        elif name in report.get("absent", []):
+            # Not connected, and the run counts nothing against it.
+            row["bound"] = False
+            row["optional"] = True
         elif name in report["bound"]:
             row["bound"] = True
         rows.append(row)
@@ -288,18 +300,11 @@ def preflight(
     hunt_like = is_hunt_like(definition.run_kind)
     investigate = definition.run_kind == INVESTIGATE_RUN_KIND
     if hunt_like:
-        # A malformed `capabilities` list refuses the run itself, with the reason;
-        # preflight still answers, over the shared set, rather than failing outright.
-        try:
-            extra = extra_hunt_capabilities(definition)
-        except UnknownPlaybook as exc:
-            logger.warning("%s", exc)
-            extra = ()
-        report = capabilities(registry, (*HUNT_CAPABILITIES, *extra))
+        report = capabilities(registry, _hunt_needs(definition.run_kind))
     elif investigate:
         report = capabilities(registry, INVESTIGATE_CAPABILITIES)
     else:
-        report = {"bound": [], "unbound": []}
+        report = {"bound": [], "unbound": [], "absent": []}
     roles, roles_note = _roles(definition)
     model, model_source = _model()
     skills, skills_note = _skills(roles, definition.run_kind)

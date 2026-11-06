@@ -58,11 +58,17 @@ export function parsePlugin(text: string, available: readonly SkillSpec[], where
   if (q !== undefined && (typeof q?.reader !== "string" || typeof q?.guidance !== "string")) throw new SpecError(`${where}: quarantine needs reader and guidance`);
   const quarantine = q === undefined ? undefined : { reader: q.reader as string, guidance: q.guidance as string };
 
+  const needs = strings(raw["needs"] ?? [], `${where}: needs`);
+  const optional = strings(raw["optional"] ?? [], `${where}: optional`);
+  const stray = optional.filter((need) => !needs.includes(need));
+  if (stray.length > 0) throw new SpecError(`${where}: optional names ${stray.join(", ")}, which needs does not`);
+
   return {
     id,
     description: text_(raw, "description", where),
     system: text_(raw, "system", where),
-    needs: strings(raw["needs"] ?? [], `${where}: needs`),
+    needs,
+    ...(optional.length === 0 ? {} : { optional }),
     skills,
     conclusion,
     ...(guard === undefined ? {} : { guard }),

@@ -18,8 +18,6 @@ ROUTED_WORKFLOWS = frozenset(
 SCHEDULED_WORKFLOW = "threat-hunt"
 # Run beside every admitted finding, executing nothing.
 SHADOW_WORKFLOW_ID = "shadow-adjudication"
-# Hunts that start from a threat intelligence claim. Person-started and opt-in.
-INTEL_LED_HUNT_WORKFLOW_ID = "intel-led-hunt"
 
 
 def triggers_for(workflow_id: str) -> List[str]:
