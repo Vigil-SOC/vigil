@@ -216,7 +216,7 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
                         !deployable(s) ? notDeployable(s)
                         : s.vendor_repo ? 'A vendor’s public repo can’t be a deploy target; add your own repo for that.'
                         : taken ||
-                          `When one of Vigil's ${formatName(s.format)} rules goes live, an agent opens a pull request adding it here; it waits for approval.`
+                          `When one of Vigil's ${formatName(s.format)} rules goes live, Vigil opens a pull request adding it here; it waits for approval.`
                       }
                     >
                       {!deployable(s) ? (
@@ -290,7 +290,7 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
           {formDeployable && (
             <ToggleRow
               label="Deploy target"
-              hint={formTaken || `When one of Vigil's ${formatName(form.format)} rules goes live, an agent opens a pull request adding it here.`}
+              hint={formTaken || `When one of Vigil's ${formatName(form.format)} rules goes live, Vigil opens a pull request adding it here.`}
               checked={!formTaken && !!form.deploy_target}
               disabled={!!formTaken}
               onChange={(v) => setForm({ ...form, deploy_target: v })}
@@ -316,7 +316,7 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
       {/* Deploy target confirm: Vigil will open pull requests into this repo */}
       <Popup open={!!confirmTarget} onClose={() => setConfirmTarget(null)} title="Make this the deploy target?" width={480}>
         <p className="text-sm text-tx-2 leading-relaxed">
-          When one of Vigil's {confirmTarget && formatName(confirmTarget.format)} rules goes live, an agent will open a pull
+          When one of Vigil's {confirmTarget && formatName(confirmTarget.format)} rules goes live, Vigil will open a pull
           request adding it to <strong>{confirmTarget?.name}</strong>:
         </p>
         <p className="text-sm font-mono mt-2 break-all">{confirmTarget?.url}</p>
