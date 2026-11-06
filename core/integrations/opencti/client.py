@@ -203,8 +203,11 @@ class OpenCTIService:
                 f"Unknown entity_type {entity_type!r}; use one of "
                 + ", ".join(sorted(ENTITY_QUERIES))
             )
+        # No query lists the newest-updated first (recent intel); a named
+        # search keeps OpenCTI's relevance order.
+        order = "" if query else ", orderBy: updated_at, orderMode: desc"
         data = await self._query(
-            f"query($s: String, $n: Int) {{ {field}(search: $s, first: $n)"
+            f"query($s: String, $n: Int) {{ {field}(search: $s, first: $n{order})"
             " { edges { node {"
             + _ENTITY_FIELDS
             + _EXTRA_ENTITY_FIELDS.get(entity_type, "")

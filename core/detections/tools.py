@@ -16,6 +16,7 @@ from core.detections.gaps import (
     missed_runs_report,
     read_alert_labels,
     read_ledger,
+    technique_check,
 )
 from core.detections.inventory import catalog
 from core.detections.inventory.links import link_rule
@@ -175,7 +176,11 @@ class SecurityDetectionsTools:
         return {"total": sum(counts.values()), "by_source": counts}
 
     async def identify_gaps(
-        self, context: str = "", since_days: int = 30, **_kwargs: object
+        self,
+        context: str = "",
+        since_days: int = 30,
+        techniques: Any = None,
+        **_kwargs: object,
     ) -> Dict:
         """Techniques seen on stored alerts that no active rule declares, with what it cannot say,
         and the proven hunts and closed Cases no rule alerted on (``runs_rules_missed``),
@@ -185,20 +190,41 @@ class SecurityDetectionsTools:
         Args:
             context: A case id, an ATT&CK label to match, or empty for every stored alert.
             since_days: How far back Verdicts are read for runs_rules_missed.
+            techniques: ATT&CK ids from any source (e.g. what threat intel names);
+                each is bucketed in ``techniques_checked``.
         """
         # A model may send "30"; keep the window within what timedelta can hold.
         since_days = min(max(int(since_days), 0), 3650)
         alerts = read_alert_labels(context)
         rules_by_technique = catalog.rules_by_technique()
+        siem_checks = catalog.siem_checks_by_technique()
         report = gap_report(
             context,
             alerts,
             rules_by_technique,
             catalog.rules_by_tactic(),
             catalog.rule_counts(),
-            catalog.siem_checks_by_technique(),
+            siem_checks,
             catalog.blind_spots(),
         )
+        if techniques:
+            if isinstance(techniques, str):
+                techniques = techniques.replace(",", " ").split()
+            checked = technique_check(techniques, rules_by_technique, siem_checks)
+            report["techniques_checked"] = checked
+            if checked["rejected"]:
+                report["unknown"].append(
+                    "Not ATT&CK technique ids, so not checked: "
+                    + ", ".join(checked["rejected"])
+                )
+            if report["rules_loaded"] and checked["gaps"]:
+                report["answer"] = "gaps_found"
+            elif (
+                report["rules_loaded"]
+                and checked["checked"]
+                and report["answer"] == "unknown"
+            ):
+                report["answer"] = "no_gaps_found"
         data = DatabaseDataService()
         report["runs_rules_missed"] = missed_runs_report(
             context,

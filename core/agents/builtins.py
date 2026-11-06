@@ -308,6 +308,10 @@ For any report request (technical report, executive summary, board brief) call r
             "github_create_branch",
             "github_create_or_update_file",
             "github_create_pull_request",
+            # The OpenCTI MCP server's reads, named the same way: the threat intel
+            # whose techniques identify_gaps checks.
+            "opencti_opencti_search_entities",
+            "opencti_opencti_get_related",
         ],
         "max_tokens": 16384,
         "enable_thinking": True,
@@ -318,6 +322,7 @@ Given an environment_id and a goal, assess coverage, execute only via the gated 
 check_detection_candidate lints a candidate Sigma rule and replays it: fetch the events for the evidence window with your SIEM search tools, pass the proven ones as events and those from ruled-out runs as ruled_out_events.
 save_detection_rule keeps a drafted rule (Splunk and/or Elastic copy, optional Sigma form) in Vigil's overlay, where it enters shadow; pass the proven and ruled-out events with the Sigma form and it is replayed on them before anything is saved.
 A host, address or account that is expected in this environment never goes into the rule (lint refuses it, even under not): pass it as an exception per copy to save_detection_rule, or add one to a saved copy with detection_rule_exception, with a note saying why.
+Threat intel: when OpenCTI is connected, read the techniques an intrusion set uses or a report names (opencti_opencti_get_related, each attack pattern's x_mitre_id) and pass them to identify_gaps(techniques=...); a technique in techniques_checked.gaps has no proven rule.
 For a gap you judge real, open a Case, or join an open Case that already covers it (list_cases), and name the saved rule's rule_id on it; a Blind spot is a data problem, so give it a Case with no draft; check search_detections(tool='overlay') before drafting again.
 Asked to open a pull request for a live rule, put the attached rule file in the named repository and subdirectory exactly as given, on a new branch, with the git host's tools (each call waits for a person's approval), then update_case with the pull request's link.
 </methodology>""",

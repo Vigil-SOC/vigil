@@ -225,10 +225,11 @@ run_schema_upgrade || exit 1
 start_backup_loop
 
 # --- Frontend deps ---
+# Also reinstalls when a pull changed the lockfile since the last install, so a
+# newly added dependency does not leave Vite failing to resolve it.
 if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "clients/web" ] && frontend_deps_stale clients/web; then
-    echo "Frontend dependencies missing or out of date; installing..."
-    if [ -f "clients/web/package-lock.json" ]; then
-        (cd clients/web && npm ci)
+    if [ -f clients/web/package-lock.json ]; then
+        (cd clients/web && npm ci) || (cd clients/web && npm install)
     else
         (cd clients/web && npm install)
     fi

@@ -356,14 +356,17 @@ ensure_npm_on_path() {
     return 1
 }
 
-# True when clients/web needs an install: node_modules or npm's own install
-# record (.package-lock.json, rewritten on every install) is missing, or the
-# lockfile changed after the last install (e.g. a pull that added a dep).
+# True (0) when the web client's installed dependencies are missing or older
+# than its lockfile. npm rewrites node_modules/.package-lock.json on every
+# install, so a lockfile newer than it means a pull changed the dependencies
+# after the last install. A client without a lockfile only needs node_modules.
+#   $1 web client dir
 frontend_deps_stale() {
-    local web="${1:-clients/web}"
-    [ -d "$web/node_modules" ] || return 0
-    [ -f "$web/node_modules/.package-lock.json" ] || return 0
-    [ -f "$web/package-lock.json" ] && [ "$web/package-lock.json" -nt "$web/node_modules/.package-lock.json" ]
+    local dir="$1"
+    [ -d "$dir/node_modules" ] || return 0
+    [ -f "$dir/package-lock.json" ] || return 1
+    [ -f "$dir/node_modules/.package-lock.json" ] || return 0
+    [ "$dir/package-lock.json" -nt "$dir/node_modules/.package-lock.json" ]
 }
 
 # Where dependency versions come from. requirements.lock is fully pinned and
