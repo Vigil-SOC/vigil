@@ -7,7 +7,8 @@ first); a list field matches when any element does, and a CIDR value matches an
 address inside it. Vigil's runner drops matching documents before they are
 counted or become findings; save_detection_rule's replay counts a ruled-out
 event a Sigma exception matches as excluded. Adding or removing one makes no
-rule version. Removal fills in the removal columns; nothing is deleted.
+rule version. Removal fills in the removal columns; nothing is deleted. Each
+add and removal is written to the config audit log in the same transaction.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 from sqlalchemy import select
 
 from core.detections.inventory import readers
+from core.storage.config_service import ConfigService
 from core.storage.connection import get_db_manager
 from core.storage.models import (
     DetectionRule,
@@ -27,6 +29,7 @@ from core.storage.models import (
 )
 
 ACTIONS = ("add", "remove")
+AUDIT_TYPE = "detection_rule_exception"
 _ABSENT = object()
 
 
@@ -224,10 +227,40 @@ def _row(r: DetectionRuleException) -> Dict[str, Any]:
     }
 
 
+def _audit(
+    session: Any,
+    who: Tuple[str, Dict[str, Any]],
+    action: str,
+    old: Optional[Dict[str, Any]],
+    new: Dict[str, Any],
+    reason: str,
+) -> None:
+    from core.agents.attribution import principal_id_for_username
+
+    caller, run = who
+    # The trail names people by principal id; the exception row keeps the username.
+    actor = principal_id_for_username(caller) or caller
+    ConfigService(user_id=actor)._create_audit_log(
+        session,
+        config_type=AUDIT_TYPE,
+        config_key=f"detection_rule:{new['rule_id']}",
+        action=action,
+        old_value=old,
+        new_value={**new, **run},
+        change_reason=reason,
+    )
+
+
 def add_many(
-    session: Any, rule_id: int, items: List[Tuple[Dict[str, Any], str]], who: str
+    session: Any,
+    rule_id: int,
+    items: List[Tuple[Dict[str, Any], str]],
+    who: Tuple[str, Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """Add each (match, note) to ``rule_id``; one already active with that match stays."""
+    """Add each (match, note) to ``rule_id``; one already active with that match stays.
+
+    ``who`` is ``_who()``: the caller and, for an agent's run, its agent and run id.
+    """
     have = {
         repr(sorted(m.items()))
         for m in session.scalars(
@@ -244,18 +277,19 @@ def add_many(
             continue
         have.add(key)
         row = DetectionRuleException(
-            rule_id=rule_id, match=match, note=note, created_by=who
+            rule_id=rule_id, match=match, note=note, created_by=who[0]
         )
         session.add(row)
         session.flush()
         added.append(_row(row))
+        _audit(session, who, "create", None, added[-1], note)
     return added
 
 
-def _who() -> str:
+def _who() -> Tuple[str, Dict[str, Any]]:
     from core.detections.inventory.links import _who as who
 
-    return who()[0]
+    return who()
 
 
 def edit_exception(
@@ -307,7 +341,9 @@ def edit_exception(
                 "error": f"Exception {eid} is already removed",
                 "exception": _row(row),
             }
+        old = _row(row)
         row.removed_at = datetime.now(timezone.utc)
-        row.removed_by, row.removal_reason = who, reason
+        row.removed_by, row.removal_reason = who[0], reason
         session.flush()
+        _audit(session, who, "delete", old, _row(row), reason)
         return {"success": True, "action": "remove", "exception": _row(row)}
