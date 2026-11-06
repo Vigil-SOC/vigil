@@ -4939,7 +4939,10 @@
       top: calc(100% + 6px);
       left: 0;
       min-width: 260px;
-      max-width: 360px;
+      max-width: min(360px, calc(100vw - 24px));
+      /* inside a short window (1280×600); its options scroll within */
+      max-height: calc(100dvh - 120px);
+      overflow-y: auto;
       background: var(--bg-2);
       border: 1px solid var(--line);
       border-radius: 12px;
