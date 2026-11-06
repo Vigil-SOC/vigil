@@ -85,7 +85,9 @@ for _ in range(n):
     req = urllib.request.Request(
         "http://localhost:6987/api/auth/login",
         data=json.dumps({"username_or_email": user, "password": "wrong-" + "x" * 30}).encode(),
-        headers={"Content-Type": "application/json"},
+        # CSRF is enforced: the double-submit pair, as the gateway sends it.
+        headers={"Content-Type": "application/json",
+                 "Cookie": "csrf_token=medic-test", "X-CSRF-Token": "medic-test"},
     )
     try:
         urllib.request.urlopen(req, timeout=20)
