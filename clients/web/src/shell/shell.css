@@ -58,6 +58,11 @@
   --vg-top: 52px;
 }
 
+/* Dialogs and side drawers mount here (OverlayPortal); it adds no box of its own. */
+.vg-overlay-host {
+  display: contents;
+}
+
 /* Vertical layout: the header keeps the full width; the nav and the page sit side by side below it. */
 .soc-console.vg-vertical .vg-shell {
   display: grid;
@@ -67,6 +72,44 @@
 
 .soc-console.vg-vertical .vg-shell > .vg-header {
   grid-column: 1 / -1;
+}
+
+/* A short window (720px at 200% zoom) can't spare ~100px for a pinned header
+   and nav: the shell becomes the page's one scroller and they scroll away with
+   it (their sticky left only holds them still sideways). The screen grows to
+   its content instead of scrolling inside .view, and the side bar's foot follows
+   its screens rather than the page's far end. */
+@media (max-height: 500px) {
+  .soc-console .vg-shell {
+    overflow: auto;
+  }
+
+  .soc-console .vg-shell > .main {
+    flex: none;
+    min-height: calc(100dvh - var(--vg-top));
+  }
+
+  /* not a scroll container either, so sticky table heads stick to the page;
+     !important as SocConsole sets its overflow inline */
+  .soc-console .vg-shell > .main > .view {
+    flex: none;
+    overflow-x: clip !important;
+    overflow-y: visible !important;
+  }
+
+  /* an auto row stretches to the window on its own; an explicit min-height
+     would cap the row at it and leave the screen overflowing the page */
+  .soc-console.vg-vertical .vg-shell {
+    grid-template-rows: auto auto;
+  }
+
+  .soc-console.vg-vertical .vg-shell > .main {
+    min-height: auto;
+  }
+
+  .soc-console.vg-vertical .vg-shell > .vg-nav .vg-nav-end {
+    margin-top: 8px;
+  }
 }
 
 .soc-console .demo-banner {
@@ -1034,11 +1077,92 @@
   font-size: 11px;
 }
 
-/* A phone has no ⌘K; its room goes to the input beside the paperclip. */
+/* The narrow header's search button face; hidden until the bar folds to a button. */
+.vg-command-search {
+  display: none;
+}
+
+/* A phone has no ⌘K; its room goes to the input beside the paperclip. In the
+   header the bar folds to a search button and, once focused, opens across the
+   whole header with its menu spanning the window (360px wide at 400% zoom). */
 @media (max-width: 600px) {
   .vg-command-kbd {
     display: none;
   }
+
+  .vg-header-center,
+  .vg-header .vg-command-slot {
+    position: static;
+  }
+
+  .vg-header .vg-command-bar {
+    position: relative;
+    width: var(--size-search);
+    box-sizing: border-box;
+    padding: 0;
+    gap: 0;
+  }
+
+  .vg-header .vg-command-bar:not(.is-open):not(:focus-within) > :not(input) {
+    display: none;
+  }
+
+  .vg-header .vg-command-bar:not(.is-open):not(:focus-within) > .vg-command-search {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--tx1);
+    pointer-events: none;
+  }
+
+  .vg-header .vg-command-bar:not(.is-open):not(:focus-within) input {
+    cursor: pointer;
+  }
+
+  .vg-header .vg-command-bar:not(.is-open):not(:focus-within) input,
+  .vg-header .vg-command-bar:not(.is-open):not(:focus-within) input::placeholder {
+    color: transparent;
+  }
+
+  .vg-header .vg-command-bar:not(.is-open):not(:focus-within):hover {
+    background: var(--bg3);
+  }
+
+  .vg-header .vg-command-bar.is-open,
+  .vg-header .vg-command-bar:focus-within {
+    position: absolute;
+    top: calc((52px - var(--size-search)) / 2);
+    left: 12px;
+    right: 12px;
+    width: auto;
+    z-index: 71;
+    gap: 8px;
+    padding: 0 6px 0 8px;
+  }
+
+  .vg-header .vg-command-menu {
+    left: 12px;
+    right: 12px;
+    min-width: 0;
+  }
+
+  /* a row keeps its command's name; the argument hint gives way */
+  .vg-header .vg-command-hint {
+    display: none;
+  }
+
+  /* the description gives way long before the name, which still ends in … */
+  .vg-header .vg-command-desc {
+    flex-shrink: 100;
+  }
+}
+
+/* The header's menu stays inside a short window and scrolls within it. */
+.vg-header .vg-command-menu {
+  max-height: calc(100dvh - 64px);
+  overflow-y: auto;
 }
 
 .vg-command-ask {
@@ -1969,8 +2093,9 @@ select.vg-side-input {
   font-weight: 500;
 }
 
-/* A phone's header holds logo, mode and avatar; the brand's floor and the chip's words give way */
-@media (max-width: 600px) {
+/* A narrow header (640px at 200% zoom) holds logo, search, mode and avatar; the
+   brand's floor and the chip's words give way so search never runs under the chip */
+@media (max-width: 860px) {
   .vg-header {
     grid-template-columns: auto minmax(0, 1fr) auto;
   }
@@ -1978,6 +2103,32 @@ select.vg-side-input {
   .vg-autonomy-label,
   .vg-autonomy-detail {
     display: none;
+  }
+}
+
+/* A phone's header is too narrow for the ⓘ's 280px tip beside the chip: it
+   drops from the header's own edges instead, its hover bridge spanning the gap. */
+@media (max-width: 600px) {
+  .vg-header .vg-autonomy,
+  .vg-header .vg-autonomy .info-tip {
+    position: static;
+  }
+
+  .vg-header .vg-autonomy .info-tip-pop {
+    top: calc(100% + 4px);
+    left: 12px;
+    right: 12px;
+    width: auto;
+  }
+
+  /* a column under the ⓘ alone (avatar 34 + gaps and padding to its right),
+     so it takes no clicks meant for the chip, search or avatar */
+  .vg-header .vg-autonomy .info-tip:has(> .info-tip-pop)::after {
+    top: 37px;
+    height: 20px;
+    left: auto;
+    right: 60px;
+    width: 30px;
   }
 }
 
@@ -2211,10 +2362,8 @@ select.vg-side-input {
   gap: 7px;
   height: 28px;
   box-sizing: border-box;
-  max-width: 320px;
-  /* shrinks to a truncated label before nav screens fold into More */
-  min-width: 120px;
-  flex-shrink: 1;
+  /* whole, or its dot (.is-dot) before nav screens fold into More; never cut mid-word */
+  flex-shrink: 0;
   padding: 0 10px;
   border: 1px solid var(--ln1);
   border-radius: 999px;
@@ -2245,9 +2394,6 @@ select.vg-side-input {
 }
 
 .vg-status-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -2296,6 +2442,9 @@ select.vg-side-input {
 .soc-console .user-pop {
   box-sizing: border-box;
   width: 300px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 60px);
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -2305,6 +2454,11 @@ select.vg-side-input {
   border-radius: 14px;
   box-shadow: 0 24px 60px var(--shadow);
   font-family: var(--font-ui);
+}
+
+/* capped by a short window, the rows keep their height and the menu scrolls */
+.soc-console .user-pop > * {
+  flex-shrink: 0;
 }
 
 .user-pop-head {
@@ -2426,6 +2580,9 @@ select.vg-side-input {
   gap: 10px;
   box-sizing: border-box;
   width: 330px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
   padding: 16px;
   background: var(--bg2);
   border: 1px solid var(--ac-ln);
@@ -2583,9 +2740,19 @@ select.vg-side-input {
   border-top: 1px solid var(--ln0);
 }
 
+/* the side bar's width is fixed, so a long status wraps rather than cuts off */
 .vg-nav.vertical .vg-status-chip {
+  height: auto;
+  min-height: 28px;
+  padding: 5px 10px;
+  border-radius: 14px;
+}
+
+.vg-nav.vertical .vg-status-text {
   min-width: 0;
-  max-width: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
 }
 
 .vg-nav.vertical .vg-setup-text {
@@ -2597,16 +2764,38 @@ select.vg-side-input {
 }
 
 /* the status as its dot alone; Finish setup as its icon and count */
-.vg-nav.vertical.collapsed .vg-status-chip {
+.vg-nav.vertical.collapsed .vg-status-chip,
+.vg-status-chip.is-dot {
   width: 28px;
+  height: 28px;
+  min-height: 0;
   justify-content: center;
   padding: 0;
+  border-radius: 999px;
 }
 
-.vg-nav.vertical.collapsed .vg-status-text,
+/* hidden to the eye only: the chip is a live region, so a new sentence is still announced */
+.vg-status-chip.is-dot .vg-status-text,
+.vg-nav.vertical.collapsed .vg-status-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .vg-nav.vertical.collapsed .vg-setup-text,
 .vg-nav.vertical.collapsed .vg-setup-left {
   display: none;
+}
+
+/* A phone's top bar (320px at 400% zoom) has no room for Finish setup's words */
+@media (max-width: 600px) {
+  .vg-nav:not(.vertical) .vg-setup-text,
+  .vg-nav:not(.vertical) .vg-setup-left {
+    display: none;
+  }
 }
 
 .vg-nav-toggle {

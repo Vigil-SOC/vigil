@@ -2,7 +2,7 @@
 .x1 { display: grid; gap: 16px; min-width: 0; }
 /* the page itself, as the console mounts it: the shell title's 22px gutter */
 .screen > .x1 { padding: 4px 22px 26px; }
-@media (max-width: 760px) { .screen > .x1 { padding: 4px 16px 20px; } }
+@container main (max-width: 760px) { .screen > .x1 { padding: 4px 16px 20px; } }
 .x1-card { background: var(--bg1); border: 1px solid var(--ln1); border-radius: var(--radius-card, 10px); padding: 14px 16px; min-width: 0; }
 .x1-card h3 { margin: 0 0 10px; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .6px; color: var(--tx2); }
 .x1-muted { color: var(--tx2); }

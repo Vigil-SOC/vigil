@@ -211,6 +211,8 @@ class DetectionRulesService:
             except Exception as e:
                 logger.error(f"Error loading detection sources config: {e}")
             else:
+                if self._clear_stray_targets():
+                    self._save_config()
                 # Outside the try: a rescan failure must not fall through to
                 # _seed_defaults, which would overwrite the user's sources.
                 # The saved status is a snapshot from whenever the file was last
@@ -306,11 +308,39 @@ class DetectionRulesService:
         # Resolved here, not in __init__: write=True creates the directory, and
         # this service is constructed on the API startup path (#695).
         self._keep_overlay()
+        self._clear_stray_targets()
         try:
             with open(vigil_path(_CONFIG_FILENAME, write=True), "w") as f:
                 json.dump({"sources": self.sources, "version": 1}, f, indent=2)
         except Exception as e:
             logger.error(f"Error saving detection sources config: {e}")
+
+    def _clear_stray_targets(self) -> bool:
+        """Keep the deploy_target flag only on the target each format honours.
+
+        A hand-edited file can flag a second repo of one format (or a vendor
+        repo, or a format that can't be deployed). Left in place, turning the
+        honoured target off would silently promote the next flagged one, with no
+        confirm and no audit; cleared, a source becomes a target only through
+        set_deploy_target or add_source. True when a flag was cleared.
+        """
+        honoured = {
+            target["id"]
+            for fmt in DEPLOY_FORMATS
+            if (target := _deploy_target_of(self.sources, fmt)) is not None
+        }
+        cleared = False
+        for source in self.sources:
+            if source.get("deploy_target") and source.get("id") not in honoured:
+                source["deploy_target"] = False
+                cleared = True
+                logger.warning(
+                    "Cleared deploy_target on %r (%s): not the %s target Vigil honours",
+                    source.get("name"),
+                    source.get("id"),
+                    source.get("format"),
+                )
+        return cleared
 
     def _keep_overlay(self):
         """Carry over the overlay source another instance saved since this one loaded.

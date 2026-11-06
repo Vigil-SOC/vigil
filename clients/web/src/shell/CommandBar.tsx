@@ -401,6 +401,10 @@ export default function CommandBar({
           setOpen(false)
         }
       }}
+      // Tabbing out closes it, as a click outside does; a click's blur has no relatedTarget
+      onBlur={(event) => {
+        if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node)) setOpen(false)
+      }}
       onDragOver={(event) => {
         if (!carriesFile(event)) return
         event.preventDefault()
@@ -437,6 +441,8 @@ export default function CommandBar({
             <Icon name="paperclip" size={placement === 'hero' ? 20 : 16} />
           </button>
         </span>
+        {/* the narrow header's search button face; clicks fall through to the input */}
+        <span className="vg-command-search" aria-hidden="true"><Icon name="search" size={16} /></span>
         <input
           ref={inputRef}
           role="combobox"

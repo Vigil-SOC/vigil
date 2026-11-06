@@ -96,6 +96,11 @@
   --size-header-row: 52px;
   --size-nav-row: 46px;
   --size-search: 38px;
+  /* Layout (DESIGN.md §7): reading pages cap at --page-max, free text on data pages at
+     --text-max, and a table's main column never narrows below --col-main-min. */
+  --page-max: 1280px;
+  --text-max: 75ch;
+  --col-main-min: 200px;
 }
 
 /* Motion */

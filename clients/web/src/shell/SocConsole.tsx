@@ -10,6 +10,7 @@ import { Icon } from '../shared/icons'
 import { InfoTip } from '../shared/InfoTip'
 import { anyActs } from '../shared/autonomy'
 import { PageHead } from '../shared/PageHead'
+import { OverlayHost } from '../shared/ui'
 import type { ConsoleScreenKey } from '../data/data'
 import { ExtensionProvider, useExtensions } from '../extensions/ExtensionProvider'
 import ExtensionHost from '../extensions/ExtensionHost'
@@ -175,6 +176,16 @@ function SocConsoleInner() {
   const onCommandHost = useCallback((node: HTMLElement | null) => setCommandHost(node), [])
   const onHeaderSlot = useCallback((node: HTMLDivElement | null) => setHeaderSlot(node), [])
   const [viewFull, setViewFull] = useState(false)
+  // Dialogs and side drawers portal here, outside .main (a size container). Created up front and attached
+  // by the root's ref, so an overlay open on the first render already has its host before its effects run.
+  const [overlayHost] = useState(() => {
+    const el = document.createElement('div')
+    el.className = 'vg-overlay-host'
+    return el
+  })
+  const attachOverlayHost = useCallback((root: HTMLDivElement | null) => {
+    if (root && overlayHost.parentNode !== root) root.appendChild(overlayHost)
+  }, [overlayHost])
   const [wallMode, setWallMode] = useState(false)
   const homePerm = SCREEN_PERMS.home
   const canTourHome = !homePerm || hasPermission(homePerm)
@@ -458,7 +469,10 @@ function SocConsoleInner() {
   // end, so what stays is always its first few screens in order, whichever is
   // open. Home never folds; the vertical bar scrolls instead.
   const foldable = bar.map((item) => item[2]).filter((key) => key !== 'home').reverse()
-  const foldedKeys = new Set(vertical ? [] : foldable.slice(0, folded))
+  // On the top bar the status chip yields first, to its dot, never a cut-off sentence
+  const statusStep = status && !vertical ? 1 : 0
+  const statusDot = statusStep === 1 && folded > 0
+  const foldedKeys = new Set(vertical ? [] : foldable.slice(0, Math.max(0, folded - statusStep)))
   const barShown = bar.filter((item) => !foldedKeys.has(item[2]))
   const more = [...bar.filter((item) => foldedKeys.has(item[2])), ...rest]
   const moreCurrent = more.some((item) => valid && item[2] === current)
@@ -471,7 +485,7 @@ function SocConsoleInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useLayoutEffect(() => {
     const nav = navRef.current
-    if (!vertical && !moreOpen && nav && nav.scrollWidth > nav.clientWidth && folded < foldable.length) setFolded(folded + 1)
+    if (!vertical && !moreOpen && nav && nav.scrollWidth > nav.clientWidth && folded < foldable.length + statusStep) setFolded(folded + 1)
   })
   // The open menu shifts as far as it needs to stay inside the window: left on
   // the top bar, down beside the vertical one, where it rises from More.
@@ -485,10 +499,10 @@ function SocConsoleInner() {
     const over = box.right - (window.innerWidth - 12)
     if (!vertical && over > 0) menu.style.left = `${-over}px`
   }, [moreOpen, vertical, folded])
-  const barKey = `${bar.map((item) => item[2]).join()}|${iconsOnly}`
+  const barKey = `${bar.map((item) => item[2]).join()}|${iconsOnly}|${status?.sentence ?? ''}`
   // A width change can make room again: start over and refold. The window
   // can also change width while the wall hides the bar, so refold on return,
-  // and a change to what the bar holds refolds too.
+  // and a change to what the bar holds or the status says refolds too.
   useEffect(() => {
     const nav = navRef.current
     setFolded(0)
@@ -498,6 +512,10 @@ function SocConsoleInner() {
       if (nav.clientWidth !== width) {
         width = nav.clientWidth
         setFolded(0)
+      } else if (!nav.querySelector('.vg-more-menu') && nav.scrollWidth > nav.clientWidth) {
+        // the chips grew with no render (a web font swapping in): fold one more;
+        // past the last step it changes nothing
+        setFolded((f) => f + 1)
       }
     }
     if (typeof ResizeObserver === 'undefined') {
@@ -506,6 +524,8 @@ function SocConsoleInner() {
     }
     const observer = new ResizeObserver(onResize)
     observer.observe(nav)
+    const end = nav.querySelector('.vg-nav-end')
+    if (end) observer.observe(end)
     return () => observer.disconnect()
   }, [wallMode, vertical, barKey])
 
@@ -595,10 +615,12 @@ function SocConsoleInner() {
 
   return (
     <div
+      ref={attachOverlayHost}
       className={wrapperClass}
       data-theme={scheme}
       style={consoleStyle}
     >
+      <OverlayHost.Provider value={overlayHost}>
       <ToastProvider>
       <div className="shell vg-shell">
         {!wallMode && <header className="vg-header">
@@ -692,9 +714,9 @@ function SocConsoleInner() {
           <div className="vg-nav-end">
             {status && (
               <div
-                className={`vg-status-chip${status.level === 'poor' ? ' is-poor' : ''}`}
+                className={`vg-status-chip${status.level === 'poor' ? ' is-poor' : ''}${statusDot ? ' is-dot' : ''}`}
                 role="status"
-                aria-label="System status"
+                aria-label={`System status: ${status.sentence}`}
                 data-level={status.level}
                 title={status.sentence}
               >
@@ -809,6 +831,7 @@ function SocConsoleInner() {
         />
       )}
       </ToastProvider>
+      </OverlayHost.Provider>
     </div>
   )
 }
