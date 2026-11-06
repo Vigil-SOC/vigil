@@ -182,9 +182,12 @@ def deploy(monkeypatch):
     monkeypatch.setattr(rollout, "get_db_manager", lambda: _Db())
     monkeypatch.setattr(rollout.exceptions, "listed", lambda _s, _rid: [])
     monkeypatch.setattr(rollout, "_stopped", lambda: False)
-    monkeypatch.setattr(
-        rollout, "_record_deploy", lambda c, out: seen["outcomes"].append(out)
-    )
+
+    def record(copy, out, actor="system"):
+        seen["outcomes"].append(out)
+        return out
+
+    monkeypatch.setattr(rollout, "_record_deploy", record)
     monkeypatch.setattr(core.secrets, "get_secret", lambda key, default=None: "ghp_secret")
 
     def run(target):
