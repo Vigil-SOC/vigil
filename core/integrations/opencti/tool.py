@@ -92,7 +92,8 @@ async def handle_list_tools():
             name="opencti_search_entities",
             description=(
                 "Search OpenCTI by name or alias for threat actors, intrusion sets, malware, "
-                "attack patterns, tools, campaigns or reports. Attack patterns carry "
+                "attack patterns, tools, campaigns or reports; an empty query lists the most "
+                "recently updated first. Attack patterns carry "
                 "x_mitre_id, the ATT&CK technique id (e.g. T1003.001). To read what a report "
                 "names, pass its id to opencti_get_related."
             ),
@@ -146,11 +147,11 @@ async def handle_call_tool(name: str, arguments: dict | None):
                 return result({"error": "indicator_id required"})
             return result(await service.get_indicator(args["indicator_id"]))
         if name == "opencti_search_entities":
-            if not args.get("query") or not args.get("entity_type"):
+            if args.get("query") is None or not args.get("entity_type"):
                 return result({"error": "query and entity_type required"})
             return result(
                 await service.search_entities(
-                    args["query"], args["entity_type"], args.get("limit", 10)
+                    args["query"] or None, args["entity_type"], args.get("limit", 10)
                 )
             )
         if name == "opencti_get_related":
