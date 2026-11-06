@@ -97,3 +97,56 @@ def test_the_list_shows_only_the_target_rollout_honours(service):
     assert [sid for sid, s in listed.items() if s["deploy_target"]] == ["own-e1"]
     assert listed["vendor-e"]["vendor_repo"] is True
     assert listed["own-e2"]["vendor_repo"] is False
+
+
+# --- a sources file with stray flags (hand-edited) ---------------------------
+
+
+@pytest.fixture
+def saved(tmp_path, monkeypatch):
+    """A sources file that flags two own Elastic repos, a vendor repo and Sigma."""
+    import json
+
+    monkeypatch.setenv("VIGIL_DIR", str(tmp_path / "vd"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "vd").mkdir()
+    path = tmp_path / "vd" / "detection_sources.json"
+    sources = [
+        _git("own-e1", "elastic", "https://github.com/acme/detections.git", True),
+        _git("own-e2", "elastic", "https://github.com/acme/more-detections.git", True),
+        _git("vendor-e", "elastic", VENDOR_ELASTIC, True),
+        _git("sigma", "sigma", "https://github.com/acme/sigma.git", True),
+        _git("own-s1", "splunk", "https://github.com/acme/searches.git", True),
+    ]
+    path.write_text(json.dumps({"sources": sources, "version": 1}))
+
+    def flagged_on_disk():
+        return {
+            s["id"]
+            for s in json.loads(path.read_text())["sources"]
+            if s.get("deploy_target")
+        }
+
+    return flagged_on_disk
+
+
+def test_loading_keeps_only_the_honoured_target_per_format(saved):
+    svc = DetectionRulesService()
+    assert _on(svc) == {"own-e1", "own-s1"}
+    assert saved() == {"own-e1", "own-s1"}
+
+
+def test_turning_the_target_off_promotes_no_other_flagged_source(saved):
+    svc = DetectionRulesService()
+    svc.set_deploy_target("own-e1", False)
+    assert svc.deploy_target("elastic") is None
+    assert saved() == {"own-s1"}
+    # A fresh service reads the same: no Elastic target until one is set.
+    assert DetectionRulesService().deploy_target("elastic") is None
+
+
+def test_saving_clears_a_flag_set_around_set_deploy_target(saved):
+    svc = DetectionRulesService()
+    svc.get_source("own-e2")["deploy_target"] = True
+    svc._save_config()
+    assert saved() == {"own-e1", "own-s1"}
