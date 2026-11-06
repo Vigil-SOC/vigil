@@ -55,7 +55,7 @@ tags:
 components:
   examples:
     RecordOpened:
-      summary: chain-01 seq 0 (fixtures/decision-records/valid/chain-01-pilot-day.jsonl)
+      summary: chain-01 seq 0 (fixtures/decision-records/valid/chain-01-lane-2-incident.jsonl)
       value: &rec_opened
         at: "2026-12-07T09:15:00Z"
         body:
@@ -495,7 +495,7 @@ components:
                   x-medic-type: enum
                 at: { $ref: "./decision-record.schema.json#/$defs/ts" }
         dev_mode:
-          description: The source pack runs, with no pack lifecycle; results don't count toward the gate (UX-9).
+          description: The source pack runs, with no pack lifecycle; no pack lifecycle events are written (UX-9).
           type: boolean
           x-medic-type: enum
         store: { $ref: "#/components/schemas/StoreHealth" }
@@ -1044,7 +1044,7 @@ paths:
       summary: One incident, with its full incident_opened record (H2 §5)
       description: |
         The timeline (UX-16) is `GET /v1/decisions?incident_id=...`, which pages through every
-        record about this incident in `seq` order, feedback and adjudication included.
+        record about this incident in `seq` order, feedback included.
       x-medic-permission: read
       parameters:
         - $ref: "#/components/parameters/IncidentId"

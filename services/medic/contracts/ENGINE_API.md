@@ -35,7 +35,7 @@
 | `group_by` | | ≤ 3 names, each produced by a signal's `by` or `keys`. One incident per group |
 | `when` | ✔ | A condition tree (§4) |
 | `for`, `keep_firing_for` | | Prometheus semantics: the condition must hold this long before firing, and firing holds this long after it stops. **Defaults: E3 §4** (`for` 2 m, `keep_firing_for` 5 m), not Prometheus's 0 (X1 #12) |
-| `detection` | | `event` (default) or `absence`: does the rule fire on something happening, or on something expected not happening? Copied to the decision record's `detection_type` for A4's time-to-detect bar (X1 ⚑4a). Rules built on `absent_for` or `increase == 0` declare `absence` |
+| `detection` | | `event` (default) or `absence`: does the rule fire on something happening, or on something expected not happening? Copied to the decision record's `detection_type` (X1 ⚑4a). Rules built on `absent_for` or `increase == 0` declare `absence` |
 | `params` | | ≤ 8 site-overridable numbers or durations, each with `default`, `min` and `max`. Conditions use them as `{param: name}` |
 | `advice` | ✔ | `summary` (≤ 200 chars) and `fix` (≤ 1,000 chars), both **static text** |
 

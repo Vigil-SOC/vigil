@@ -1,5 +1,5 @@
 id: lanes-12-watcher-store-reset
-description: The built-in watcher.store-reset is lane 3, because a corrupt store is a defect to report. It routes like any lane-3 incident and is never a suppression child. Its record has subject watcher, so it is left out of gate lane metrics and the lane-3 case rate (R7).
+description: The built-in watcher.store-reset is lane 3, because a corrupt store is a defect to report. It routes like any lane-3 incident and is never a suppression child. Its record has subject watcher, so it is left out of the lane-3 case rate (R7).
 until: 3600
 incidents:
   - {id: a, rule: watcher.store-reset, lane: 3, trust: trusted, signals: 1, samples: 1, opened_at: 0}

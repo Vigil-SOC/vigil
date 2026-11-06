@@ -185,8 +185,6 @@ CORE_010 = {"id": "medic-core", "channel": "stable", "version": "0.1.0"}
 CORE_011 = {"id": "medic-core", "channel": "stable", "version": "0.1.1"}
 SHA_010 = "5c1e9a7d3b2f4a60918e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a3921"
 SHA_011 = "a3f0c91d84e7b6521c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b"
-# Head hash of the replay store an admin reviewed (E6); the replay itself is a separate store.
-REPLAY_HEAD = "9" * 64
 
 
 def rec(at: str, type_: str, body: dict) -> dict:
@@ -201,7 +199,7 @@ def chain(raw: list[dict], start: dict | None = None) -> list[dict]:
     return out
 
 
-def pilot_day() -> list[dict]:
+def lane_2_incident_day() -> list[dict]:
     return chain(
         [
             rec("2026-12-07T09:15:00Z", "incident_opened", OPEN_LANE2),
@@ -255,26 +253,14 @@ def pilot_day() -> list[dict]:
                 {"incident_id": IDC, "change": "routed"},
             ),
             rec(
-                "2026-12-10T16:00:00Z",
-                "adjudication",
-                {
-                    "incident_id": ID1,
-                    "verdict": "true_fault",
-                    "true_lane": 1,
-                    "by": "craig",
-                    "basis": "weekly_readout",
-                },
-            ),
-            rec(
                 "2026-12-10T16:01:00Z",
                 "feedback",
                 {
                     "incident_id": ID1,
                     "value": "wrong_lane",
                     "suggested_lane": 3,
-                    "source": "replay",
+                    "source": "live",
                     "admin": "user:7f3c",
-                    "replay_head": REPLAY_HEAD,
                 },
             ),
             # X1 ⚑3a: pack lifecycle (wall-clock `at`: not engine output).
@@ -547,9 +533,9 @@ INVALID_GAP = {
 
 
 def main() -> None:
-    day = pilot_day()
+    day = lane_2_incident_day()
     for name, records in {
-        "chain-01-pilot-day": day,
+        "chain-01-lane-2-incident": day,
         "chain-02-after-purge": after_purge(day),
         "chain-03-store-reset": store_reset(day),
         "chain-04-gap": gaps(),
