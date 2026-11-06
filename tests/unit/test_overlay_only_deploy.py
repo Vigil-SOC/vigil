@@ -68,11 +68,12 @@ def estate(monkeypatch):
     monkeypatch.setattr(rollout, "_deploy_targets", lambda: state["targets"])
     monkeypatch.setattr(rollout, "_stopped", lambda: state["stopped"])
     monkeypatch.setattr(rollout, "_open_pr", open_pr)
-    monkeypatch.setattr(
-        rollout,
-        "_record_deploy",
-        lambda c, out: state["recorded"].__setitem__(c.rule_id, out),
-    )
+
+    def record(copy, out, actor="system"):
+        state["recorded"][copy.rule_id] = out
+        return out
+
+    monkeypatch.setattr(rollout, "_record_deploy", record)
     monkeypatch.setattr(rollout.exceptions, "listed", lambda _s, _rid: [])
     monkeypatch.setattr(core.secrets, "get_secret", lambda key, default=None: "ghp_x")
     return state

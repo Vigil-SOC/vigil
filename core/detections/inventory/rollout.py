@@ -889,10 +889,12 @@ def _deploy(
     targets: Mapping[str, Dict[str, Any]],
     now: datetime,
     report: RolloutReport,
+    actor: str = "system",
 ) -> Dict[int, Dict[str, Any]]:
     """Open a PR for each live copy whose format has a target and whose current
     version has none recorded yet (nor its file already on the default branch);
-    record each outcome in checks['deploy'] and return them by rule id."""
+    record each outcome in checks['deploy'], with a config-trail row as
+    ``actor``, and return them by rule id."""
     pending = [
         c
         for c in copies
@@ -940,8 +942,18 @@ def _deploy(
                 target.get("git_url"),
                 outcome["error"],
             )
-        _record_deploy(copy, outcome)
-        outcomes[copy.rule_id] = outcome
+        try:
+            outcomes[copy.rule_id] = _record_deploy(copy, outcome, actor)
+        except Exception as exc:  # noqa: BLE001 -- nothing written; redone next pass
+            what = outcome.get("pr_url") or outcome.get("in_repo") or outcome["error"]
+            logger.error(
+                "detection rules: deploy of rule %s v%s not recorded: %s",
+                copy.rule_id,
+                copy.version,
+                exc,
+            )
+            why = f"{what}: not recorded ({exc}); the next sweep records it"
+            outcomes[copy.rule_id] = {**outcome, "error": why[:500]}
     return outcomes
 
 
@@ -1093,21 +1105,49 @@ def _same(http: Any, url: str, ref: str, data: bytes) -> Tuple[Optional[str], bo
     return meta["sha"], base64.b64decode(meta.get("content") or "") == data
 
 
-def _record_deploy(copy: Copy, outcome: Dict[str, Any]) -> None:
-    """checks['deploy'] on the copy's version, merged into its checks as they are now."""
+def _record_deploy(
+    copy: Copy, outcome: Dict[str, Any], actor: str = "system"
+) -> Dict[str, Any]:
+    """checks['deploy'] on the copy's version, merged into its checks as they are
+    now, with its config-trail row in the same transaction: a trail failure
+    records neither, so the next sweep re-finds the PR and records both. Returns
+    the outcome left recorded: a PR a racing attempt recorded is not replaced by
+    this one's error."""
     from core.detections.inventory.sync import _write_checks
+    from core.storage.config_service import write_config_audit
 
     with get_db_manager().session_scope() as session:
+        # Locked, so a racing attempt reads what this one wrote.
         checks = session.scalar(
-            select(DetectionRuleVersion.checks).where(
+            select(DetectionRuleVersion.checks)
+            .where(
                 DetectionRuleVersion.rule_id == copy.rule_id,
                 DetectionRuleVersion.version == copy.version,
             )
+            .with_for_update()
         )
+        had = (checks or {}).get("deploy")
+        if not (isinstance(had, dict) and had.get("version") == copy.version):
+            had = None
+        if had and "error" in outcome and {"pr_url", "in_repo"} & set(had):
+            return had
         _write_checks(
             session,
             [(copy.rule_id, copy.version, {**(checks or {}), "deploy": outcome})],
         )
+        # One row per change of outcome, not one per sweep retrying the same error.
+        new = {k: v for k, v in outcome.items() if k != "at"}
+        if not had or {k: v for k, v in had.items() if k != "at"} != new:
+            write_config_audit(
+                session,
+                config_type="detection_rules",
+                config_key="overlay_deploy",
+                action="update",
+                old_value=None,
+                new_value={"rule_id": copy.rule_id, **new},
+                changed_by=actor,
+            )
+    return outcome
 
 
 def _deployed(copy: Copy) -> Optional[Dict[str, Any]]:
@@ -1137,12 +1177,15 @@ def overlay_only() -> List[Dict[str, Any]]:
     ]
 
 
-def deploy_overlay_only(rule_ids: Optional[List[int]] = None) -> Dict[str, Any]:
+def deploy_overlay_only(
+    rule_ids: Optional[List[int]] = None, actor: str = "system"
+) -> Dict[str, Any]:
     """Open the deploy PR now, as the sweep would, for live overlay-only copies
     (these ``rule_ids``, or all) whose format has a GitHub deploy target and
     with no PR opened yet; one that failed is tried again. Says what each came
     to (``opened``: pr_url or in_repo; ``failed``: error) and why each other one
-    was skipped. Nothing is opened while Stop is set."""
+    was skipped. Nothing is opened while Stop is set. Each outcome's
+    config-trail row names ``actor``."""
     from core.detections.detection_rules_service import deploy_host_refused
 
     live = [c for c in _copies() if c.stage == "live"]
@@ -1184,7 +1227,9 @@ def deploy_overlay_only(rule_ids: Optional[List[int]] = None) -> Dict[str, Any]:
             {c.rule_id: "Vigil is stopped; it opens no pull request" for c in todo}
         )
         todo = []
-    outcomes = _deploy(todo, targets, datetime.now(timezone.utc), RolloutReport())
+    outcomes = _deploy(
+        todo, targets, datetime.now(timezone.utc), RolloutReport(), actor
+    )
     return {
         "opened": [
             {"rule_id": r, **{k: o[k] for k in ("pr_url", "in_repo") if k in o}}
