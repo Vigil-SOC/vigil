@@ -44,10 +44,16 @@ all rules), live -> shadow when half its findings are judged not real
 (``accurate.verdicts``: the latest analyst determination wins), a loud day or a
 Sees fail (its data stopped), shadow -> off after ``OFF_AFTER_FAILURES``
 failed runs in a row. No stage row is written while Stop is set, or while the
-ceiling cannot be read. A copy's move to live, when a git source is marked
-``deploy_target`` for its format (elastic or splunk), queues one
-``agent-run-mitre_analyst`` run that opens a pull request adding the rule there:
-the overlay TOML or ESCU YAML file exactly as stored.
+ceiling cannot be read. After those rows commit, each live copy whose format
+(elastic or splunk) has a git source marked ``deploy_target`` and whose version
+has no PR recorded gets one, opened by fixed code over the GitHub REST API
+(github.com, or GitHub Enterprise Server at ``<host>/api/v3``): branch
+``vigil/rule-<id>-v<version>``, the overlay TOML or ESCU YAML file exactly as
+stored under the target's subdirectory, its active exceptions listed in the
+description. A branch or PR an earlier attempt left is reused. The outcome (PR
+url, the file already on the default branch, or an error) lands in
+checks['deploy']; a failed one is retried next sweep. None is opened while Stop
+is set.
 
 While Stop is set (or the ceiling cannot be read) no copy is run: no search,
 no checks written, no findings. Its last successful run stays put, so the stopped
@@ -93,7 +99,6 @@ from core.storage.models import (
     DetectionRuleStage,
     DetectionRuleVersion,
     Finding,
-    IntakeTrigger,
 )
 
 logger = logging.getLogger(__name__)
@@ -146,7 +151,7 @@ class RolloutReport:
     written: int = 0
     moves: List[str] = field(default_factory=list)
     held: int = 0  # due moves not written: Stop set or the ceiling unread
-    queued: List[int] = field(default_factory=list)  # intake rows for deploy PRs
+    deploys: List[str] = field(default_factory=list)  # "<rule> v<n>: <PR url | error>"
     findings: List[Dict[str, Any]] = field(default_factory=list, repr=False)
     error: Optional[str] = None
     skipped: List[str] = field(default_factory=list)
@@ -792,7 +797,7 @@ def sweep(now: datetime, report: RolloutReport) -> None:
     targets = _deploy_targets()
     if targets.get("splunk"):
         # Off disk before the transaction: a read must not roll back stage rows.
-        _read_splunk_files([c for c in copies if c.stage == "shadow"])
+        _read_splunk_files([c for c in copies if c.stage in ("shadow", "live")])
     with get_db_manager().session_scope() as session:
         live_24h = session.scalar(
             select(func.count())
@@ -802,7 +807,7 @@ def sweep(now: datetime, report: RolloutReport) -> None:
                 DetectionRuleStage.at >= now - timedelta(hours=24),
             )
         )
-        rows, promoted = [], []
+        rows, live = [], [c for c in copies if c.stage == "live"]
         for copy in copies:
             due = _due(session, copy, now, live_24h)
             if due is None:
@@ -822,17 +827,15 @@ def sweep(now: datetime, report: RolloutReport) -> None:
             )
             live_24h += stage == "live"
             if stage == "live":
-                promoted.append(copy)
+                live.append(copy)
+            elif copy.stage == "live":
+                live.remove(copy)
         if rows:
             session.execute(insert(DetectionRuleStage), rows)
-            # In the same transaction: a promotion and its PR run land together.
-            for trigger in _deploy_runs(session, promoted, targets):
-                session.add(trigger)
-                session.flush()
-                report.queued.append(trigger.id)
-
-
-DEPLOY_WORKFLOW = "agent-run-mitre_analyst"
+    # After the stage rows commit: a PR that fails leaves the promotion standing,
+    # and the next sweep is its retry.
+    if not stopped:
+        _deploy(live, targets, now, report)
 
 
 def _deploy_targets() -> Dict[str, Dict[str, Any]]:
@@ -865,7 +868,8 @@ def _read_splunk_files(copies: List[Copy]) -> None:
         if copy.language != "splunk":
             continue
         try:
-            copy.toml = (root / copy.path).read_text() if copy.path else ""
+            # Bytes as stored: read_text would rewrite CRLF line ends.
+            copy.toml = (root / copy.path).read_bytes().decode() if copy.path else ""
         except (OSError, UnicodeDecodeError) as exc:
             logger.warning(
                 "detection rules: overlay file of rule %s unread: %s", copy.rule_id, exc
@@ -877,61 +881,229 @@ def _read_splunk_files(copies: List[Copy]) -> None:
             )
 
 
-def _deploy_brief(copy: Copy, target: Dict[str, Any]) -> str:
-    where = target.get("subdirectory") or "the repository root"
-    splunk = copy.language == "splunk"
-    return (
-        f"Open a pull request adding the live Vigil rule {copy.name!r} "
-        f"({'ESCU id' if splunk else 'rule_id'} {copy.key}, "
-        f"Vigil detection rule {copy.rule_id}) to "
-        f"{target['git_url']} under {where}, with the attached "
-        f"{'ESCU YAML' if splunk else 'TOML'} "
-        f"(Vigil's {copy.path or 'overlay file'}) as its file content "
-        "exactly as given, and record the pull request's link on this Case."
-    )
+DEPLOY_TIMEOUT = 20.0
 
 
-def _excepted_brief(session: Any, copy: Copy) -> str:
-    """The copy's active exceptions for the PR description; the rule file has none."""
-    rows = exceptions.listed(session, copy.rule_id)
-    if not rows:
-        return ""
-    lines = "\n".join(
-        f"- {json.dumps(r['match'], sort_keys=True)}: {r['note']}" for r in rows
-    )
-    return (
-        " List these customer-specific exceptions in the pull request's "
-        "description, not in the rule file: Vigil applied them to this rule's "
-        "hits and stops once the SIEM runs it, so the reviewer can carry them into "
-        "the SIEM's own exception mechanism (for example a Kibana exception "
-        f"list).\n{lines}"
-    )
-
-
-def _deploy_runs(
-    session: Any, promoted: List[Copy], targets: Mapping[str, Dict[str, Any]]
-) -> List[IntakeTrigger]:
-    """A queued mitre_analyst run per promoted copy whose format has a target."""
-    return [
-        IntakeTrigger(
-            kind="schedule",
-            state="queued",
-            priority="low",
-            payload={
-                "workflow_id": DEPLOY_WORKFLOW,
-                # Not "scheduled": the daily gaps run reads its clock off those.
-                "trigger_type": "rollout",
-                "finding_ids": [],
-                "hypothesis": _deploy_brief(copy, targets[copy.language])
-                + _excepted_brief(session, copy),
-                # The overlay file whole, exclusions included; the brief carries it.
-                "document": copy.toml,
-            },
-        )
-        for copy in promoted
-        # A Splunk copy whose file went unread has nothing to attach.
-        if targets.get(copy.language) and (copy.language == "elastic" or copy.toml)
+def _deploy(
+    copies: List[Copy],
+    targets: Mapping[str, Dict[str, Any]],
+    now: datetime,
+    report: RolloutReport,
+) -> None:
+    """Open a PR for each live copy whose format has a target and whose current
+    version has none recorded yet (nor its file already on the default branch);
+    record each outcome in checks['deploy']."""
+    pending = [
+        c
+        for c in copies
+        if targets.get(c.language)
+        and c.toml  # a Splunk copy whose file went unread has nothing to add
+        and not {"pr_url", "in_repo"} & set(c.checks.get("deploy") or {})
     ]
+    if not pending:
+        return
+    from core.detections.detection_rules_service import deploy_host_refused
+    from core.secrets import get_secret
+
+    with get_db_manager().session_scope() as session:
+        excepted = {c.rule_id: exceptions.listed(session, c.rule_id) for c in pending}
+    token = get_secret("GITHUB_TOKEN")
+    for copy in pending:
+        if _stopped():  # Stop set mid-pass: the rest wait for the sweep after it lifts
+            return
+        target = targets[copy.language]
+        outcome: Dict[str, Any] = {"version": copy.version, "at": now.isoformat()}
+        try:
+            # Again here, not only when the target was set: a hand-edited file
+            # must not send the GitHub token to a GitLab or Bitbucket host.
+            refused = deploy_host_refused(target)
+            if refused:
+                raise RuntimeError(f"{target.get('git_url')}: {refused}")
+            if not token:
+                raise RuntimeError(
+                    "no GitHub token: set the github integration's token"
+                )
+            done = _open_pr(copy, target, _pr_body(copy, excepted[copy.rule_id]), token)
+            outcome.update(done)
+            report.deploys.append(
+                f"{copy.rule_id} v{copy.version}: {next(iter(done.values()))}"
+            )
+        except Exception as exc:  # noqa: BLE001 -- the promotion already landed
+            outcome["error"] = (str(exc) or type(exc).__name__)[:500]
+            report.deploys.append(f"{copy.rule_id} v{copy.version}: {outcome['error']}")
+            logger.warning(
+                "detection rules: deploy PR for rule %s v%s to %s failed: %s",
+                copy.rule_id,
+                copy.version,
+                target.get("git_url"),
+                outcome["error"],
+            )
+        _record_deploy(copy, outcome)
+
+
+def _api_of(git_url: str) -> Tuple[str, str]:
+    """(REST API base, "owner/repo") of a github.com or GitHub Enterprise Server URL."""
+    from urllib.parse import urlsplit
+
+    from core.detections.detection_rules_service import _repo_key
+
+    host, _, repo = _repo_key(git_url).partition("/")
+    if host == "github.com":
+        return "https://api.github.com", repo
+    parts = urlsplit(git_url.strip())
+    # An http(s) URL keeps its scheme and port; ssh and scp forms reach https.
+    if parts.scheme in ("http", "https"):
+        origin = f"{parts.scheme}://{parts.netloc.rpartition('@')[2]}"
+    else:
+        origin = f"https://{host}"
+    return f"{origin}/api/v3", repo
+
+
+def _ok(resp: Any) -> Any:
+    if resp.is_error:
+        try:
+            why = resp.json().get("message")
+        except ValueError:
+            why = resp.text[:200]
+        raise RuntimeError(
+            f"{resp.request.method} {resp.request.url.path}: {resp.status_code} {why}"
+        )
+    return resp
+
+
+def _pr_title(copy: Copy) -> str:
+    return f"Add Vigil rule {copy.name} ({copy.key})"
+
+
+def _pr_body(copy: Copy, excepted: List[Dict[str, Any]]) -> str:
+    """What the rule is, and its active exceptions; the rule file has none."""
+    splunk = copy.language == "splunk"
+    body = (
+        f"Vigil detection rule {copy.rule_id} v{copy.version}, {copy.name!r} "
+        f"({'ESCU id' if splunk else 'rule_id'} {copy.key}), is live in Vigil. "
+        f"This adds its {'ESCU YAML' if splunk else 'TOML'} exactly as Vigil "
+        f"stores it ({copy.path or 'its overlay file'})."
+    )
+    if excepted:
+        lines = "\n".join(
+            f"- `{json.dumps(r['match'], sort_keys=True)}`: {r['note']}"
+            for r in excepted
+        )
+        body += (
+            "\n\nCustomer-specific exceptions, not in the rule file: Vigil applied "
+            "them to this rule's hits and stops once the SIEM runs it, so carry "
+            "them into the SIEM's own exception mechanism (for example a Kibana "
+            f"exception list).\n{lines}"
+        )
+    return body
+
+
+def _open_pr(
+    copy: Copy, target: Mapping[str, Any], body: str, token: str
+) -> Dict[str, str]:
+    """{"pr_url"} of the pull request adding ``copy``'s file to ``target``, or
+    {"in_repo"} when the default branch already holds it byte for byte. Reuses
+    the branch or PR an earlier attempt left, so a crash between calls opens no
+    duplicate."""
+    import base64
+    import posixpath
+    from urllib.parse import quote
+
+    import httpx
+
+    from core.detections.detection_rules_service import deploy_host_refused
+
+    # Last guard before the token leaves: whoever calls this, an unmarked
+    # non-github.com host gets no request at all.
+    refused = deploy_host_refused(target)
+    if refused:
+        raise RuntimeError(f"{target.get('git_url')}: {refused}")
+    api, repo = _api_of(str(target.get("git_url") or ""))
+    owner = repo.partition("/")[0]
+    branch = f"vigil/rule-{copy.rule_id}-v{copy.version}"
+    ext = "yml" if copy.language == "splunk" else "toml"
+    name = posixpath.basename(copy.path or "") or f"vigil-rule-{copy.rule_id}.{ext}"
+    path = posixpath.join(str(target.get("subdirectory") or "").strip("/"), name)
+    data = copy.toml.encode()
+    r = f"/repos/{repo}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    with httpx.Client(
+        base_url=api, headers=headers, timeout=DEPLOY_TIMEOUT, follow_redirects=True
+    ) as http:
+        # Any state: a PR a person closed is their answer, not a reason to reopen.
+        pulls = _ok(
+            http.get(f"{r}/pulls", params={"head": f"{owner}:{branch}", "state": "all"})
+        ).json()
+        if pulls:
+            return {"pr_url": pulls[0]["html_url"]}
+        base = _ok(http.get(r)).json()["default_branch"]
+        if _same(http, f"{r}/contents/{quote(path)}", base, data)[1]:
+            return {"in_repo": f"{path} on {base}"}  # a PR would have no commits
+        ref = http.get(f"{r}/git/ref/heads/{quote(branch)}")
+        if ref.status_code == 404:
+            sha = _ok(http.get(f"{r}/git/ref/heads/{quote(base)}")).json()["object"]
+            _ok(
+                http.post(
+                    f"{r}/git/refs",
+                    json={"ref": f"refs/heads/{branch}", "sha": sha["sha"]},
+                )
+            )
+        else:
+            _ok(ref)
+        put: Dict[str, Any] = {
+            "message": _pr_title(copy),
+            "content": base64.b64encode(data).decode(),
+            "branch": branch,
+        }
+        sha, same = _same(http, f"{r}/contents/{quote(path)}", branch, data)
+        if sha:
+            put["sha"] = sha  # the file is there: update it in place
+        if not same:
+            _ok(http.put(f"{r}/contents/{quote(path)}", json=put))
+        pr = _ok(
+            http.post(
+                f"{r}/pulls",
+                json={
+                    "title": _pr_title(copy),
+                    "head": branch,
+                    "base": base,
+                    "body": body,
+                },
+            )
+        ).json()
+        return {"pr_url": pr["html_url"]}
+
+
+def _same(http: Any, url: str, ref: str, data: bytes) -> Tuple[Optional[str], bool]:
+    """(blob sha or None, whether it is ``data``) of the file at ``url`` on ``ref``."""
+    import base64
+
+    have = http.get(url, params={"ref": ref})
+    meta = _ok(have).json() if have.status_code != 404 else {}
+    if not isinstance(meta, dict) or not meta.get("sha"):
+        return None, False
+    return meta["sha"], base64.b64decode(meta.get("content") or "") == data
+
+
+def _record_deploy(copy: Copy, outcome: Dict[str, Any]) -> None:
+    """checks['deploy'] on the copy's version, merged into its checks as they are now."""
+    from core.detections.inventory.sync import _write_checks
+
+    with get_db_manager().session_scope() as session:
+        checks = session.scalar(
+            select(DetectionRuleVersion.checks).where(
+                DetectionRuleVersion.rule_id == copy.rule_id,
+                DetectionRuleVersion.version == copy.version,
+            )
+        )
+        _write_checks(
+            session,
+            [(copy.rule_id, copy.version, {**(checks or {}), "deploy": outcome})],
+        )
 
 
 def run_copies(live: bool) -> RolloutReport:

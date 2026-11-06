@@ -7440,6 +7440,11 @@ export interface components {
             deploy_target: boolean;
             /** Format */
             format: string;
+            /**
+             * Github Enterprise
+             * @default false
+             */
+            github_enterprise: boolean;
             /** Name */
             name: string;
             /** Path */
@@ -9053,6 +9058,8 @@ export interface components {
         DeployTargetRequest: {
             /** Deploy Target */
             deploy_target: boolean;
+            /** Github Enterprise */
+            github_enterprise?: boolean | null;
         };
         /** DirectiveRequest */
         DirectiveRequest: {
