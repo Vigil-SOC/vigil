@@ -332,19 +332,21 @@ def test_gateway_logs_in_and_serves_a_read(stack, enabled) -> None:
 
 def test_failed_logins_do_not_lock_the_service_account(stack, enabled) -> None:
     name = stack.secret("viewer_username")
-    # The login limiter allows 5/min per IP; the threshold is 5.
+    # The login limiter allows 5/min per account; the lockout threshold is 5.
     codes = json.loads(stack.py("backend", BAD_LOGINS, name, "5"))
     assert codes == [401] * 5, codes
     row = stack.sql(
         f"SELECT failed_login_count, locked_until IS NULL FROM users WHERE username = '{name}'"
     )
     assert row == "5|t"
-    # The gateway (another IP) can still log in: restart it so it logs in afresh.
+    # The gateway can still log in: restart it so it logs in afresh. The
+    # per-account limiter (5/min) throttles it until the minute passes, which
+    # is a wait, not a lockout.
     stack.compose("restart", "medic-gateway", medic=True)
     out = stack.wait(
         lambda: json.loads(stack.py("medic", GATEWAY_READ, medic=True)),
         lambda o: o["read"][0] == 200,
-        timeout=60,
+        timeout=180,
     )
     assert json.loads(out["status"][1])["state"] == "ok"
 
