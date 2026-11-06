@@ -29,6 +29,7 @@ const ICON = {
   arrowDn: '<path d="M12 5v14M6 13l6 6 6-6"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   alert: '<path d="M12 3l9 16H3L12 3zM12 9v5M12 17h.01"/>',
+  bell: '<path d="M6 16V11a6 6 0 0112 0v5l1.5 2h-15L6 16z"/><path d="M10 20.5a2 2 0 004 0"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   link: '<path d="M9 15l6-6M10 6l1-1a3.5 3.5 0 015 5l-1 1M14 18l-1 1a3.5 3.5 0 01-5-5l1-1"/>',
   note: '<path d="M4 4h16v12l-4 4H4V4z"/><path d="M16 20v-4h4"/>',

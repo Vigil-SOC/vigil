@@ -22,6 +22,7 @@ import { DOCK_MIN, DOCK_WIDTH, useDockWidth } from './useDockWidth'
 import CommandBar from './CommandBar'
 import DevModeWarning from './DevModeWarning'
 import UserMenu from './UserMenu'
+import RuleHealthBell from './RuleHealthBell'
 import { landingScreen } from './landing'
 import ConsoleTour, { type TourStopId } from './ConsoleTour'
 import { markConsoleTourSeen, readConsoleTourSeen } from './consoleTourSeen'
@@ -655,6 +656,7 @@ function SocConsoleInner() {
                 />
               </div>
             )}
+            {hasPermission('detections.read') && <RuleHealthBell go={go} />}
             <UserMenu
               onShowTour={startTour}
               setupLeft={setupLeft}

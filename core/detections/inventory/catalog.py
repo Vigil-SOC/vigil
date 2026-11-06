@@ -197,6 +197,28 @@ def _summary(
     }
 
 
+def open_flags() -> List[Dict[str, Any]]:
+    """Every open flag, newest first. ``change_id`` is its pass -> fail change row,
+    so a check that clears and breaks again is a new flag with a new id."""
+    with get_db_manager().session_scope() as session:
+        flags = [
+            {
+                "change_id": row.id,
+                "rule_id": row.rule_id,
+                "name": row.DetectionRule.name,
+                "tool": tool_of(row.DetectionRule.source),
+                "status": row.DetectionRule.status,
+                **_change_row(row),
+                "since": row.changed_at.isoformat(),
+            }
+            for row in session.execute(_flags()).all()
+        ]
+    flags.sort(key=lambda f: f["since"], reverse=True)
+    for flag in flags:
+        del flag["changed_at"]
+    return flags
+
+
 def rule_health(days: int = 7) -> Dict[str, Any]:
     """The open flags, and how many flags opened and cleared in the last ``days``."""
     since = datetime.now(timezone.utc) - timedelta(days=days)
@@ -215,19 +237,10 @@ def rule_health(days: int = 7) -> Dict[str, Any]:
         .where(RESULT_CHANGED)
         .subquery()
     )
+    flags = [
+        {k: v for k, v in flag.items() if k != "change_id"} for flag in open_flags()
+    ]
     with get_db_manager().session_scope() as session:
-        flags = [
-            {
-                "rule_id": row.rule_id,
-                "name": row.DetectionRule.name,
-                "tool": tool_of(row.DetectionRule.source),
-                "status": row.DetectionRule.status,
-                **_change_row(row),
-                "since": row.changed_at.isoformat(),
-            }
-            for row in session.execute(_flags()).all()
-        ]
-        flags.sort(key=lambda f: f["since"], reverse=True)
         opened, cleared = session.execute(
             select(
                 func.count().filter(
@@ -240,8 +253,6 @@ def rule_health(days: int = 7) -> Dict[str, Any]:
                 ),
             ).where(history.c.changed_at >= since)
         ).one()
-    for flag in flags:
-        del flag["changed_at"]
     return {
         "flags": flags,
         "days": days,
@@ -973,11 +984,13 @@ def health_listing(
     q: Optional[str] = None,
     offset: int = 0,
     sort: str = "worst",
+    rule_ids: Optional[Iterable[int]] = None,
 ) -> Dict[str, Any]:
     """Every listed copy's health, ``RULE_ROWS`` from ``offset``, narrowed to one
-    ``health`` (or "attention", the states to act on), one ``tool`` and a ``q``
-    over name, technique, reason and data source before the cap. ``sort`` is one
-    of SORTS: worst first (the default), most or fewest fires, or by name.
+    ``health`` (or "attention", the states to act on), one ``tool``, a ``q`` over
+    name, technique, reason and data source, and ``rule_ids`` (the copies a
+    rule-health entry names) before the cap. ``sort`` is one of SORTS: worst
+    first (the default), most or fewest fires, or by name.
 
     The counts cover every copy of ``tool`` (every copy when none); rule_total
     and mapped count each rule once, across every tool. With ``q``,
@@ -988,13 +1001,22 @@ def health_listing(
         ATTENTION if health == "attention" else (health,) if health else HEALTH_ORDER
     )
     needle = (q or "").strip().lower()
+    ids = None if rule_ids is None else set(rule_ids)
+
+    def kept(row_tool: str, hay: str, row: Dict[str, Any]) -> bool:
+        return (
+            (tool is None or row_tool == tool)
+            and needle in hay
+            and (ids is None or row["rule_id"] in ids)
+        )
+
     # by_state keeps worst-first order, so the states' lists in HEALTH_ORDER are too.
     shown = [
         row
         for state in HEALTH_ORDER
         if state in states
         for row_tool, hay, row in built["by_state"][state]
-        if (tool is None or row_tool == tool) and needle in hay
+        if kept(row_tool, hay, row)
     ]
     # A search that misses here may hit in a view the chips leave out: say where,
     # so a healthy rule's name never reads as "no such rule".
@@ -1005,8 +1027,8 @@ def health_listing(
         if (
             n := sum(
                 1
-                for row_tool, hay, _row in built["by_state"][state]
-                if (tool is None or row_tool == tool) and needle in hay
+                for row_tool, hay, row in built["by_state"][state]
+                if kept(row_tool, hay, row)
             )
         )
     }

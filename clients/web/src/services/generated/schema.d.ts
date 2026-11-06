@@ -3184,6 +3184,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/detection-rules/health-inbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Health Inbox
+         * @description The open rule-health flags, newest first, each read or unread for the
+         *     signed-in person, with a summary when many are unread. Read-only.
+         */
+        get: operations["get_api_detection-rules_health-inbox"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/health-inbox/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read Health Inbox
+         * @description Marks entries read for the signed-in person only; returns the inbox.
+         */
+        post: operations["post_api_detection-rules_health-inbox_read"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/detection-rules/mcp-env": {
         parameters: {
             query?: never;
@@ -3286,7 +3327,8 @@ export interface paths {
          * Get Rules
          * @description Every listed rule copy's health with its reason and data source, capped at
          *     catalog.RULE_ROWS rows from ``offset``, narrowed by ``health`` ("attention"
-         *     is every state to act on), ``tool`` and the search ``q``, in ``sort`` order
+         *     is every state to act on), ``tool``, the search ``q`` and ``rules`` (comma-
+         *     separated rule ids, as a rule-health entry links them), in ``sort`` order
          *     (worst first by default); the counts, the per-SIEM tallies and the blind
          *     spots cover them all. Read-only.
          */
@@ -9503,6 +9545,19 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * HealthReadRequest
+         * @description Which rule-health entries to mark read: ``change_ids``, or every open one.
+         */
+        HealthReadRequest: {
+            /**
+             * All
+             * @default false
+             */
+            all: boolean;
+            /** Change Ids */
+            change_ids?: number[] | null;
         };
         /**
          * HuntCoverageRequest
@@ -17586,6 +17641,72 @@ export interface operations {
             };
         };
     };
+    "get_api_detection-rules_health-inbox": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_health-inbox_read": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HealthReadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "get_api_detection-rules_mcp-env": {
         parameters: {
             query?: never;
@@ -17722,6 +17843,7 @@ export interface operations {
                 q?: string | null;
                 offset?: number;
                 sort?: "worst" | "most_fires" | "fewest_fires" | "name";
+                rules?: string | null;
             };
             header?: {
                 authorization?: string | null;
