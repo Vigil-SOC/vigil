@@ -274,7 +274,7 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
                         />
                       )}
                     </td>
-                    <td className="data-clip font-mono col-low" title={s.git_url || undefined}>{where || '—'}</td>
+                    <td className="font-mono col-low" title={s.git_url || undefined}>{where || '—'}</td>
                     <td>{fmtNum(s.rule_count)}</td>
                     <td className="data-act col-act">
                       <button className="data-link" disabled={!!updating} onClick={() => onUpdateSource(s.id)}>

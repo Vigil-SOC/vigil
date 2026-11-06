@@ -2078,3 +2078,14 @@
 .case-edit-conflicts p { margin: 0; }
 .case-edit-conflict { display: flex; flex-direction: column; gap: 8px; overflow-wrap: anywhere; }
 .case-edit-conflict > p { max-height: 120px; overflow-y: auto; }
+
+/* reflow tier (.main under 700px): the head's search takes its own line; on the case page the
+   side panel drops under the tab and the two scroll as one. The list and a case are already
+   separate pages (?case=), so only one of them is ever on screen. */
+@container main (max-width: 699px) {
+  .cases-top { padding: 16px; }
+  .cases-top .search { flex: 1 1 100%; width: auto; }
+  .case-page .detail-head { padding: 14px 16px 0; }
+  .case-page .case-stage { flex-direction: column; overflow-y: auto; }
+  .case-side { flex: none; width: auto; border-left: 0; border-top: 1px solid var(--ln0); overflow: visible; padding: 16px; }
+}

@@ -29,8 +29,8 @@ from core.storage.unit_of_work import unit_of_work
 logger = logging.getLogger(__name__)
 
 APPROVE_PERMISSION = "ai_decisions.approve"
-# Medic, the install's health watcher: view it, and every write (feedback, pack,
-# export). Seeded by 45_medic_permissions.sql; pinned by test_medic_route_matrix.
+# Medic, the install's health watcher: view it, and every write (feedback,
+# pack). Seeded by 45_medic_permissions.sql; pinned by test_medic_route_matrix.
 MEDIC_READ_PERMISSION = "medic.read"
 MEDIC_ADMIN_PERMISSION = "medic.admin"
 

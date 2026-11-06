@@ -18,6 +18,9 @@
 #                    # daemon, LLM worker, agent-serve and the real agent worker
 #                    # (no stubs; Bifrost stays on). Same checks as backend. KEEP=1
 #                    # leaves the cluster for tests/medic_eval/inject/test_helm_config_cells.py.
+#   CNI=kindnet e2e.sh full   # full (or backend) on kind's default CNI instead of Calico,
+#                    # the same checks. If kindnet does not enforce a policy one needs,
+#                    # the run fails: nothing is weakened for it. Give it its own CLUSTER.
 # calico also runs the REJECT leg: Calico set to reject denied traffic, and
 # Medic must still read the policy as enforced (S7-2).
 #
@@ -33,6 +36,9 @@
 set -euo pipefail
 
 MODE=${1:?usage: e2e.sh calico|kindnet|nopolicy|backend}
+# The CNI under the real-backend modes: calico (default) or kindnet. The other modes are their CNI.
+CNI=${CNI:-calico}
+[[ $CNI == calico || $CNI == kindnet ]] || { echo "CNI must be calico or kindnet, not $CNI" >&2; exit 2; }
 CLUSTER=${CLUSTER:-medic-$MODE}
 TAG=${TAG:-kind}
 NS=vigil
@@ -47,6 +53,8 @@ PASS=0
 T0=$(date +%s)
 REAL=0 # the real backend (backend, full)
 [[ $MODE == backend || $MODE == full ]] && REAL=1
+USE_CALICO=0 # Calico is the CNI: its mode, or a real-backend mode on it
+[[ $MODE == calico || ($REAL == 1 && $CNI == calico) ]] && USE_CALICO=1
 
 say() { printf '\n== %s\n' "$*"; }
 ok() { PASS=$((PASS + 1)); printf '   ok  %s\n' "$*"; }
@@ -73,13 +81,18 @@ reach() { $K -n "$NS" exec "deploy/$FN-${4:-medic}" -- python -c "$CONNECT" "$1"
 say "kind cluster $CLUSTER ($MODE)"
 cfg=$(mktemp)
 case $MODE in
-  calico | backend | full) printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnetworking:\n  disableDefaultCNI: true\n  podSubnet: 192.168.0.0/16\n' >"$cfg" ;;
+  calico | backend | full)
+    if [[ $USE_CALICO == 1 ]]; then
+      printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnetworking:\n  disableDefaultCNI: true\n  podSubnet: 192.168.0.0/16\n' >"$cfg"
+    else
+      printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\n' >"$cfg"
+    fi ;;
   nopolicy) printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnetworking:\n  disableDefaultCNI: true\n  podSubnet: 10.244.0.0/16\n' >"$cfg" ;;
   kindnet) printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\n' >"$cfg" ;;
   *) echo "unknown mode $MODE" >&2; exit 2 ;;
 esac
 kind create cluster --name "$CLUSTER" --config "$cfg" --wait 0s
-if [[ $MODE == calico || $REAL == 1 ]]; then
+if [[ $USE_CALICO == 1 ]]; then
   $K apply -f "https://raw.githubusercontent.com/projectcalico/calico/$CALICO/manifests/calico.yaml" >/dev/null
   $K -n kube-system rollout status ds/calico-node --timeout=300s
 fi

@@ -35,5 +35,5 @@ advice:
   fix: >-
     Restart the llm-worker container (docker compose restart llm-worker). If it
     turns unhealthy again, check that Redis is up and accepting writes (its log
-    shows MISCONF or OOM errors if not) and send this incident to DeepTempo
-    Support with the evidence report.
+    shows MISCONF or OOM errors if not). Report it as a Vigil defect with this
+    incident and attach the llm-worker log from before the restart.

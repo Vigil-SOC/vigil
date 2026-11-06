@@ -838,7 +838,7 @@ export function StreamsCard({ notify }: SectionProps) {
             {rows.flatMap((r) => [
               <tr key={r.key}>
                 <td><b>{r.name}</b></td>
-                <td className="data-clip col-low" title={r.settings}>{r.settings}</td>
+                <td className="col-low" title={r.settings}>{r.settings}</td>
                 <td><StatusCell status={r.status} /></td>
                 <td className="data-act col-act">
                   <button

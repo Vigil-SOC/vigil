@@ -22,4 +22,4 @@ advice:
   summary: Findings are being stored, but AI triage has completed none in 30 minutes.
   fix: >-
     Check the LLM path (Settings, LLM providers and the Bifrost gateway). If the
-    LLM path is healthy, send this incident to DeepTempo Support.
+    LLM path is healthy, report it as a Vigil defect with this incident.

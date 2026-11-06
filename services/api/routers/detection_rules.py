@@ -302,18 +302,20 @@ def get_rules(
     tool: Optional[Literal["elastic", "splunk", "wazuh"]] = None,
     q: Optional[str] = Query(default=None, max_length=200),
     offset: int = Query(default=0, ge=0),
+    sort: Literal["worst", "most_fires", "fewest_fires", "name"] = "worst",
     rules: Optional[str] = Query(
         default=None, max_length=4000, pattern=r"^[0-9]{1,12}(,[0-9]{1,12})*$"
     ),
 ):
-    """Every listed rule copy's health with its reason, worst first, capped at
+    """Every listed rule copy's health with its reason and data source, capped at
     catalog.RULE_ROWS rows from ``offset``, narrowed by ``health`` ("attention"
     is every state to act on), ``tool``, the search ``q`` and ``rules`` (comma-
-    separated rule ids, as a rule-health entry links them); the counts, the
-    per-SIEM tallies and the blind spots cover them all. Read-only."""
+    separated rule ids, as a rule-health entry links them), in ``sort`` order
+    (worst first by default); the counts, the per-SIEM tallies and the blind
+    spots cover them all. Read-only."""
     rule_ids = [int(i) for i in rules.split(",")] if rules else None
     return catalog.health_listing(
-        health, tool=tool, q=q, offset=offset, rule_ids=rule_ids
+        health, tool=tool, q=q, offset=offset, sort=sort, rule_ids=rule_ids
     )
 
 

@@ -112,6 +112,13 @@ HEALTH_ORDER = (
 ATTENTION = ("fails_to_run", "data_silent", "missing_field", "never_fired")
 CANT_FIRE = ("fails_to_run", "data_silent", "missing_field")
 LISTING_SIEMS = ("elastic", "splunk", "wazuh")
+# The listing's orders besides worst first (HEALTH_ORDER, then rule id). Each
+# ties on rule id, so a page boundary never moves between requests.
+SORTS = {
+    "most_fires": lambda row: (-row["fires"], row["rule_id"]),
+    "fewest_fires": lambda row: (row["fires"], row["rule_id"]),
+    "name": lambda row: (row["name"].strip().casefold(), row["rule_id"]),
+}
 FIRES_WINDOW_DAYS = 90
 RULE_ROWS = 300
 
@@ -817,8 +824,25 @@ def _by_siem(listed: List[Dict[str, Any]]) -> Dict[str, Dict[str, int]]:
 
 
 def _haystack(row: Dict[str, Any]) -> str:
-    """What a search reads, lowercased once: name, reason and techniques."""
-    return "\n".join((row["name"], row["why"], *row["techniques"])).lower()
+    """What a search reads, lowercased once: name, reason, techniques and where
+    the rule reads its data."""
+    return "\n".join(
+        (row["name"], row["why"], row["where"] or "", *row["techniques"])
+    ).lower()
+
+
+def _where(checks: Dict[str, Any], tool: str) -> Optional[str]:
+    """The data source a rule reads, as its Sees check names it: a Kibana index
+    pattern, a Wazuh decoder, or a Splunk index/sourcetype or data model. A
+    leading tool name ("wazuh decoder x") is dropped: the row names the tool."""
+    sees = checks.get("sees")
+    source = sees.get("data_source") if isinstance(sees, dict) else None
+    if not isinstance(source, str) or not source.strip():
+        return None
+    source = source.strip()
+    if source.lower().startswith(tool + " "):
+        source = source[len(tool) + 1 :].strip()
+    return source or None
 
 
 # The listing reads every listed copy (about 2 s on 19k copies), so it is built
@@ -900,6 +924,7 @@ def _health_rows(copies: Dict[str, Any], fires: Dict[str, int]) -> Dict[str, Any
                 "tool": tool_of(rule.source),
                 "status": rule.status,
                 "techniques": list(rule.techniques or []),
+                "where": _where(checks, tool_of(rule.source)),
                 "health": state,
                 "why": why,
                 "raw": raw,
@@ -958,12 +983,14 @@ def health_listing(
     tool: Optional[str] = None,
     q: Optional[str] = None,
     offset: int = 0,
+    sort: str = "worst",
     rule_ids: Optional[Iterable[int]] = None,
 ) -> Dict[str, Any]:
-    """Every listed copy's health, worst first, ``RULE_ROWS`` from ``offset``,
-    narrowed to one ``health`` (or "attention", the states to act on), one
-    ``tool``, a ``q`` over name, technique and reason, and ``rule_ids`` (the
-    copies a rule-health entry names) before the cap.
+    """Every listed copy's health, ``RULE_ROWS`` from ``offset``, narrowed to one
+    ``health`` (or "attention", the states to act on), one ``tool``, a ``q`` over
+    name, technique, reason and data source, and ``rule_ids`` (the copies a
+    rule-health entry names) before the cap. ``sort`` is one of SORTS: worst
+    first (the default), most or fewest fires, or by name.
 
     The counts cover every copy of ``tool`` (every copy when none); rule_total
     and mapped count each rule once, across every tool. With ``q``,
@@ -1005,6 +1032,8 @@ def health_listing(
             )
         )
     }
+    if sort != "worst":
+        shown = sorted(shown, key=SORTS[sort])
     return {
         "total": built["total"],
         "rule_total": built["rule_total"],

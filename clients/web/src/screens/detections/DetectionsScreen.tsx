@@ -17,6 +17,13 @@ type RuleHealth =
   | 'disabled'
   | 'no_fire_data'
 type View = RuleHealth | 'attention' | 'all'
+type Sort = 'worst' | 'most_fires' | 'fewest_fires' | 'name'
+const SORTS: { key: Sort; label: string }[] = [
+  { key: 'worst', label: 'Worst first' },
+  { key: 'most_fires', label: 'Most fires' },
+  { key: 'fewest_fires', label: 'Fewest fires' },
+  { key: 'name', label: 'Name A–Z' },
+]
 type Siem = 'elastic' | 'splunk' | 'wazuh'
 
 interface RuleRow {
@@ -25,6 +32,8 @@ interface RuleRow {
   language: string
   tool: string
   techniques: string[]
+  /** The data source its Sees check reads: an index pattern, decoder or index/sourcetype. */
+  where: string | null
   health: RuleHealth
   why: string
   /** The failing check's reason as stored, when it says more than ``why``. */
@@ -114,6 +123,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   const [siem, setSiem] = useState<Siem | 'all'>('all')
   const [typed, setTyped] = useState('')
   const [q, setQ] = useState('')
+  const [sort, setSort] = useState<Sort>('worst')
   const [report, setReport] = useState<RulesReport | null>(null)
   const [rows, setRows] = useState<RuleRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -136,7 +146,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
     return () => window.clearTimeout(t)
   }, [typed])
 
-  const params = { health: view === 'all' ? undefined : view, tool: siem === 'all' ? undefined : siem, q: q || undefined, rules: picked || undefined }
+  const params = { health: view === 'all' ? undefined : view, tool: siem === 'all' ? undefined : siem, q: q || undefined, sort: sort === 'worst' ? undefined : sort, rules: picked || undefined }
 
   // Each view, SIEM and search asks the server: the listing is capped, so narrowing capped rows here would miss rules.
   useEffect(() => {
@@ -157,9 +167,9 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
       .catch((e) => { if (live) setError(errorText(e, 'Rule health did not load.')) })
       .finally(() => { if (live) setLoading(false) })
     return () => { live = false }
-    // params follows view, siem, q and picked
+    // params follows view, siem, q, sort and picked
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, siem, q, picked])
+  }, [view, siem, q, sort, picked])
 
   const matched = report?.matched ?? 0
   const hasMore = !loading && rows.length < matched
@@ -208,14 +218,15 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   const elsewhereN = elsewhere.reduce((a, [, c]) => a + c, 0)
   const elsewhereText = elsewhere.map(([h, c]) => `${n(c)} in ${HEALTH[h].label}`).join(', ')
   const showAll = () => { setView('all'); setOpen(null) }
+  const order = sort === 'worst' ? 'worst first' : sort === 'name' ? 'by name' : sort === 'most_fires' ? 'most fires first' : 'fewest fires first'
   const note = q
     ? `${plural(report.matched, 'rule matches', 'rules match')} “${q}” in ${viewName}${elsewhereN ? ` · ${n(elsewhereN)} more in other views` : ''}`
     : picked
-      ? `${plural(report.matched, 'rule', 'rules')} in ${viewName}, worst first`
+      ? `${plural(report.matched, 'rule', 'rules')} in ${viewName}, ${order}`
     : view === 'attention'
-      ? `${n(of)} of ${n(viewCount(report, 'all'))} rules need attention, worst first`
+      ? `${n(of)} of ${n(viewCount(report, 'all'))} rules need attention, ${order}`
       : view === 'all'
-        ? `All ${n(of)} rules, worst first`
+        ? `All ${n(of)} rules, ${order}`
         : `${plural(of, 'rule', 'rules')} · ${HEALTH[view].note}`
 
   return (
@@ -327,8 +338,11 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
             </div>
             <label className="de-search">
               <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
-              <input type="search" aria-label="Search rules" placeholder="Search name, technique or reason" value={typed} onChange={(e) => setTyped(e.target.value)} />
+              <input type="search" aria-label="Search rules" placeholder="Search name, index, technique or reason" value={typed} onChange={(e) => setTyped(e.target.value)} />
             </label>
+            <select aria-label="Sort rules" className="de-sort" value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
+              {SORTS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
           </div>
         </div>
 
@@ -367,7 +381,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
         <p className="col-low-note de-pad de-hide-note">The health column is hidden while Ask Vigil is open; the chips above still filter by it.</p>
         <div ref={listRef} className={`de-table list-scroll${loading ? ' loading' : ''}`} data-testid="de-rules">
           <div className="de-tr de-th">
-            <span>Rule</span><span className="col-low">Health ↓</span><span>Why</span><span className="de-right">Action</span>
+            <span>Rule</span><span>Where</span><span>Technique</span><span className="col-low">Health{sort === 'worst' ? ' ↓' : ''}</span><span className="de-right">Fires · {days}d{sort === 'most_fires' ? ' ↓' : sort === 'fewest_fires' ? ' ↑' : ''}</span><span className="de-right">Action</span>
           </div>
           <div className="de-rows" style={{ height: virtual.getTotalSize() }}>
           {shown.map((item) => {
@@ -375,27 +389,15 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
             const h = HEALTH[r.health]
             const isOpen = open?.id === r.rule_id && open.what === 'raw'
             const excOpen = open?.id === r.rule_id && open.what === 'exceptions'
-            const fired = r.fires > 0 ? `${plural(r.fires, 'fire', 'fires')} in ${days}d` : r.health === 'no_fire_data' ? 'No fire data' : `No fires in ${days}d`
+            const fired = r.fires > 0 ? n(r.fires) : r.health === 'no_fire_data' ? 'No data' : 'None'
             return (
               <div key={item.key} data-index={item.index} ref={virtual.measureElement} className="de-tr de-row" style={{ transform: `translateY(${item.start - HEAD_ROW}px)` }}>
                 <div className="de-rule">
                   <div className="de-name" title={r.name}>{r.name}</div>
-                  <div className="de-meta">
-                    <span className="de-where">{SIEM_NAME[r.tool] ?? r.tool}</span>
-                    {r.techniques.length > 0 && <span className="x1-mono">{r.techniques.slice(0, 2).join(', ')}{r.techniques.length > 2 ? ` +${r.techniques.length - 2}` : ''}</span>}
-                    <span>{!r.checks_run ? 'Not checked' : r.checks_passing ? plural(r.checks_passing, 'check passes', 'checks pass') : 'No check passes'}</span>
-                    {/* A rule that fires says how often in its Why, so the count isn't repeated here. */}
-                    {r.health !== 'fires' && (
-                      <>
-                        <span aria-hidden="true">·</span>
-                        <span className={r.fires > 0 ? 'de-fired' : ''}>{fired}</span>
-                      </>
-                    )}
-                  </div>
-                </div>
-                <div className="col-low"><span className={`de-health ${h.tone}`}><i />{h.label}</span></div>
-                <div className="de-why">
                   <div className="de-why-text" title={r.why}>{r.why}</div>
+                  <div className="de-meta">
+                    <span>{!r.checks_run ? 'Not checked' : r.checks_passing ? plural(r.checks_passing, 'check passes', 'checks pass') : 'No check passes'}</span>
+                  </div>
                   <div className="de-toggles">
                     {r.raw && (
                       <button type="button" className="de-raw-toggle" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : { id: r.rule_id, what: 'raw' })}>
@@ -412,6 +414,15 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                   </div>
                   {isOpen && r.raw && <pre className="de-raw">{r.raw}</pre>}
                 </div>
+                <div className="de-where-cell">
+                  <span className="de-where">{SIEM_NAME[r.tool] ?? r.tool}</span>
+                  {r.where && <span className="de-source" title={r.where}>{r.where}</span>}
+                </div>
+                <div className="de-tech" title={r.techniques.length ? r.techniques.join(', ') : 'No technique declared'}>
+                  {r.techniques.length ? <>{r.techniques[0]}{r.techniques.length > 1 && <span className="de-tech-more"> +{r.techniques.length - 1}</span>}</> : <span className="de-none">—</span>}
+                </div>
+                <div className="col-low"><span className={`de-health ${h.tone}`}><i />{h.label}</span></div>
+                <div className={`de-right de-fires${r.fires > 0 ? ' de-fired' : ''}`}>{fired}</div>
                 <div className="de-right">
                   <button type="button" className="btn ghost de-act" onClick={() => openChat(prompt(r, days))}>{h.action}</button>
                 </div>

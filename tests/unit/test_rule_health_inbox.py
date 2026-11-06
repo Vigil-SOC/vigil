@@ -265,7 +265,9 @@ def test_the_rules_route_parses_the_ids(monkeypatch):
     monkeypatch.setattr(
         catalog, "health_listing", lambda *a, **kw: seen.update(kw) or {"rules": []}
     )
-    routes.get_rules(health=None, tool=None, q=None, offset=0, rules="7,12,7")
+    routes.get_rules(
+        health=None, tool=None, q=None, offset=0, sort="worst", rules="7,12,7"
+    )
     assert seen["rule_ids"] == [7, 12, 7]
-    routes.get_rules(health=None, tool=None, q=None, offset=0, rules=None)
+    routes.get_rules(health=None, tool=None, q=None, offset=0, sort="worst", rules=None)
     assert seen["rule_ids"] is None
