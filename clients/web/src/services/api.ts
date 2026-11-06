@@ -902,12 +902,43 @@ export interface OverlayOnlyRule {
   deploy: { version: number; at: string; pr_url?: string; in_repo?: string; error?: string; reason?: string } | null
 }
 
+/** One open rule-health flag: a check on a live rule that went pass -> fail. */
+export interface HealthEntry {
+  change_id: number
+  rule_id: number
+  name: string
+  tool: string
+  status: string
+  check: string
+  reason: string | null
+  since: string
+  read: boolean
+}
+
+export interface HealthInbox {
+  entries: HealthEntry[]
+  total: number
+  unread: number
+  /** Past five unread: the unread count by check and the rules they name. */
+  summary: { count: number; by_check: Record<string, number>; rules: number; rule_ids: number[]; since: string } | null
+}
+
 export const detectionRulesApi = {
   listSources: () => api.get('/detection-rules/sources'),
 
   /** Every listed rule copy's health and its reason, worst first; one health's when given. */
-  rules: (params: { health?: string; tool?: string; q?: string; offset?: number } = {}) =>
+  rules: (params: { health?: string; tool?: string; q?: string; offset?: number; rules?: string } = {}) =>
     api.get('/detection-rules/rules', { params }),
+
+  /** The open rule-health flags, newest first, read or unread for the signed-in person. */
+  healthInbox: () => api.get<HealthInbox>('/detection-rules/health-inbox'),
+
+  /** Marks these entries read for the signed-in person, or every open one; returns the inbox. */
+  markHealthRead: (changeIds: number[] | 'all') =>
+    api.post<HealthInbox>(
+      '/detection-rules/health-inbox/read',
+      changeIds === 'all' ? { all: true } : { change_ids: changeIds },
+    ),
 
   /** An overlay copy's exceptions, active and removed, with per-day matches. */
   exceptions: (ruleId: number) => api.get(`/detection-rules/rules/${ruleId}/exceptions`),
