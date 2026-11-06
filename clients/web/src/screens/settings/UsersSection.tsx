@@ -221,14 +221,17 @@ export default function UsersSection({ notify }: SectionProps) {
           <table className="tbl">
             <thead>
               <tr>
-                <th>Username</th>
-                <th>Full Name</th>
+                <th style={{ minWidth: 'var(--col-main-min)' }}>
+                  Username
+                  <span className="col-low-note">Full name, MFA and last login are hidden while Ask Vigil is open</span>
+                </th>
+                <th className="col-low">Full Name</th>
                 <th>Email</th>
                 <th>Role</th>
                 <th>Status</th>
-                <th>MFA</th>
-                <th>Last Login</th>
-                <th style={{ textAlign: 'right' }}>Actions</th>
+                <th className="col-low">MFA</th>
+                <th className="col-low">Last Login</th>
+                <th className="col-act" style={{ textAlign: 'right' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -242,7 +245,7 @@ export default function UsersSection({ notify }: SectionProps) {
               {users.map((u) => (
                 <tr key={u.user_id}>
                   <td>{u.username}</td>
-                  <td style={{ whiteSpace: 'normal' }}>
+                  <td className="col-low" style={{ whiteSpace: 'normal' }}>
                     <span className="line-clamp-2 break-words" title={u.full_name}>
                       {u.full_name}
                     </span>
@@ -268,15 +271,15 @@ export default function UsersSection({ notify }: SectionProps) {
                       <span className="text-xs text-tx-3">{u.is_active ? 'Active' : 'Inactive'}</span>
                     </div>
                   </td>
-                  <td>
+                  <td className="col-low">
                     <span className={`status ${u.mfa_enabled ? 'closed' : 'open'}`}>
                       {u.mfa_enabled ? 'Enabled' : 'Disabled'}
                     </span>
                   </td>
-                  <td className="muted">
+                  <td className="muted col-low">
                     {u.last_login ? new Date(u.last_login).toLocaleDateString() : 'Never'}
                   </td>
-                  <td style={{ textAlign: 'right' }}>
+                  <td className="col-act" style={{ textAlign: 'right' }}>
                     <div className="inline-flex gap-1.5">
                       {canWrite && (
                         <button className="btn ghost icon" title="Edit" onClick={() => openEdit(u)}>
@@ -550,11 +553,14 @@ function RolesCard({
         <table className="tbl">
           <thead>
             <tr>
-              <th>Role</th>
-              <th>Description</th>
+              <th style={{ minWidth: 'var(--col-main-min)' }}>
+                Role
+                <span className="col-low-note">Description is hidden while Ask Vigil is open</span>
+              </th>
+              <th className="col-low">Description</th>
               <th>Permissions</th>
               <th>Accounts</th>
-              <th style={{ textAlign: 'right' }}>Actions</th>
+              <th className="col-act" style={{ textAlign: 'right' }}>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -572,14 +578,14 @@ function RolesCard({
                     )}
                   </div>
                 </td>
-                <td className="muted">
+                <td className="muted col-low">
                   <span className="line-clamp-2 break-words" title={r.description}>
                     {r.description}
                   </span>
                 </td>
                 <td className="muted font-mono">{granted(r.permissions).length}</td>
                 <td className="muted font-mono">{r.holders}</td>
-                <td style={{ textAlign: 'right' }}>
+                <td className="col-act" style={{ textAlign: 'right' }}>
                   <div className="inline-flex gap-1.5">
                     <button
                       className="btn ghost icon"

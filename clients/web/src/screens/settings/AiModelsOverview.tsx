@@ -414,12 +414,15 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
             <table className="tbl aim-table">
               <thead>
                 <tr>
-                  <th>Who uses it</th>
+                  <th>
+                    Who uses it
+                    <span className="col-low-note">Cost per case is hidden while Ask Vigil is open</span>
+                  </th>
                   <th>Model</th>
                   <th>If it is unavailable</th>
                   <th>Thinking</th>
-                  <th>Cost per case</th>
-                  <th aria-label="Actions" />
+                  <th className="col-low">Cost per case</th>
+                  <th className="col-act" aria-label="Actions" />
                 </tr>
               </thead>
               <tbody>
@@ -436,7 +439,7 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                         <div className="aim-who">{meta.label}</div>
                         <div className="aim-note">{meta.description}</div>
                       </td>
-                      <td style={{ minWidth: 340 }}>
+                      <td style={{ minWidth: 260 }}>
                         {editing === c ? (
                           <div className="aim-model">
                             <Select
@@ -496,8 +499,8 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                           />
                         )}
                       </td>
-                      <td className="aim-nowrap"><NotMeasured /></td>
-                      <td className="aim-nowrap">
+                      <td className="aim-nowrap col-low"><NotMeasured /></td>
+                      <td className="aim-nowrap col-act">
                         <button
                           className="btn ghost"
                           disabled={resetting && c !== CHAT_DEFAULT_KEY && editing !== c}
@@ -535,8 +538,8 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                       />
                     </td>
                     <td>{row.thinking ? 'On' : 'Off'}</td>
-                    <td className="aim-nowrap"><NotMeasured /></td>
-                    <td />
+                    <td className="aim-nowrap col-low"><NotMeasured /></td>
+                    <td className="col-act" />
                   </tr>
                 ))}
               </tbody>

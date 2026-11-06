@@ -207,12 +207,15 @@ export default function SlaPoliciesSection({ notify }: SectionProps) {
           <table className="tbl sla-tbl">
             <thead>
               <tr>
-                <th>Policy</th>
+                <th style={{ minWidth: 'var(--col-main-min)' }}>
+                  Policy
+                  <span className="col-low-note">Hours that count and Warn at are hidden while Ask Vigil is open</span>
+                </th>
                 <th>Severity</th>
                 <th>Respond within</th>
                 <th>Resolve within</th>
-                <th>Hours that count</th>
-                <th>Warn at <InfoTip label="About Warn at" text={WARN_TIP} align="start" /></th>
+                <th className="col-low">Hours that count</th>
+                <th className="col-low"><span>Warn at <InfoTip label="About Warn at" text={WARN_TIP} align="start" /></span></th>
                 <th>
                   Met this month
                   <InfoTip
@@ -220,7 +223,7 @@ export default function SlaPoliciesSection({ notify }: SectionProps) {
                     calculation="Cases created since the 1st of this month, UTC, that did not breach this policy, over all cases created in that time."
                   />
                 </th>
-                <th aria-label="Edit" />
+                <th className="col-act" aria-label="Edit" />
               </tr>
             </thead>
             <tbody>
@@ -246,10 +249,10 @@ export default function SlaPoliciesSection({ notify }: SectionProps) {
                     </td>
                     <td>{formatDuration(p.response_time_hours)}</td>
                     <td>{formatDuration(p.resolution_time_hours)}</td>
-                    <td className="muted">{p.business_hours_only ? 'Business hours' : 'Around the clock'}</td>
-                    <td className="muted">{warnAt(p)}</td>
+                    <td className="muted col-low">{p.business_hours_only ? 'Business hours' : 'Around the clock'}</td>
+                    <td className="muted col-low">{warnAt(p)}</td>
                     <td>{met(p)}</td>
-                    <td style={{ textAlign: 'right' }}>
+                    <td className="col-act" style={{ textAlign: 'right' }}>
                       <button className="btn ghost" aria-label={`Edit ${p.name}`} onClick={() => openEdit(p)}>Edit</button>
                     </td>
                   </tr>

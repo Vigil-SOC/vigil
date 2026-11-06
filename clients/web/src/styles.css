@@ -3558,8 +3558,10 @@
       border-top: 1px solid var(--line-soft);
    }
 
+   /* the text takes its own width (up to a reading measure), so the switch sits by its label, not across a wide card */
    .toggle-row-text {
-      flex: 1;
+      flex: 0 1 auto;
+      max-width: var(--text-max);
       min-width: 0;
       display: flex;
       flex-direction: column;
@@ -3756,6 +3758,42 @@
    .int-table td:first-child { padding-left: 16px; }
    .int-table th:last-child,
    .int-table td:last-child { padding-right: 16px; text-align: right; }
+
+   /* Connected tab: the table scrolls in its own card below its minimum; Integration takes the rest */
+   .int-table-wrap {
+      background: var(--bg1);
+      border: 1px solid var(--ln0);
+      border-radius: 14px;
+   }
+
+   .int-table-wrap .int-table {
+      --int-tracks: 602px;
+      min-width: calc(var(--int-tracks) + var(--col-main-min));
+      border: 0;
+      border-radius: 0;
+      background: none;
+   }
+
+   .int-table-wrap th:nth-child(2) { width: 96px; }
+   .int-table-wrap th:nth-child(3) { width: 92px; }
+   .int-table-wrap th:nth-child(4) { width: 130px; }
+   .int-table-wrap th:nth-child(5) { width: 120px; }
+   .int-table-wrap th:nth-child(6) { width: 52px; }
+   .int-table-wrap th:nth-child(7) { width: 112px; }
+
+   @container main (min-width: 1400px) {
+      .int-table-wrap .int-table { --int-tracks: 792px; }
+      .int-table-wrap th:nth-child(4) { width: 240px; }
+      .int-table-wrap th:nth-child(5) { width: 200px; }
+   }
+
+   /* Last verified and the agents description (222px) step aside while Ask Vigil is docked.
+      It scrolls only below the full tier, where it can't fit: a scroll box clips the ⓘ popover. */
+   @container main (max-width: 1399px) {
+      .int-table-wrap { overflow-x: auto; }
+
+      .main.chat-open .int-table-wrap .int-table { --int-tracks: 380px; }
+   }
 
    .int-name {
       display: flex;
@@ -4168,7 +4206,6 @@
    .mcp-onoff {
       display: flex;
       align-items: center;
-      justify-content: space-between;
       gap: 12px;
       padding: 10px 12px;
       border-radius: 12px;
@@ -4176,6 +4213,8 @@
    }
 
    .mcp-onoff-text {
+      flex: 0 1 auto;
+      max-width: var(--text-max);
       display: flex;
       flex-direction: column;
       gap: 2px;
@@ -4194,8 +4233,7 @@
       flex: 1;
       min-width: 0;
       overflow-y: auto;
-      /* bottom room so the floating Ask Vigil button never sits on the last row's control */
-      padding: 22px 22px 84px;
+      padding: 22px;
       display: flex;
       flex-direction: column;
       gap: 18px;
@@ -4207,7 +4245,12 @@
       flex-shrink: 0;
    }
 
-   .settings-content>.settings-card {
+   /* Settings is a reading page: everything on it stops at --page-max (DESIGN.md §7) */
+   .settings-content>* {
+      max-width: var(--page-max);
+   }
+
+   .settings-content>.settings-card:not(.wide) {
       max-width: 860px;
    }
 
@@ -4215,10 +4258,6 @@
      clipped by the global .card overflow:hidden */
    .settings-card {
       overflow: visible;
-   }
-
-   .settings-content>.settings-card.wide {
-      max-width: 1280px;
    }
 
    /* Settings and Setup cards, on the board's tokens (components/card.md) */
@@ -4254,7 +4293,16 @@
       padding: 12px 18px 16px;
    }
 
-   .settings-content .tbl thead th {
+   .settings-content .col-low-note {
+      margin-top: 2px;
+      white-space: normal;
+      font-size: 11px;
+      font-weight: 400;
+      color: var(--tx3);
+   }
+
+   /* :where() keeps these Settings cell rules below .main.chat-open .col-low, so a hidden column collapses */
+   :where(.settings-content) .tbl thead th {
       background: transparent;
       font-size: 12px;
       font-weight: 600;
@@ -4262,6 +4310,26 @@
       text-transform: none;
       color: var(--tx2);
       border-bottom-color: var(--ln0);
+   }
+
+   /* A Settings table that can't fit scrolls inside its card; its action column (.col-act)
+      stays in view while it does. Its minimum width is its fixed tracks plus --col-main-min,
+      lowered by the .col-low tracks while those are hidden (DESIGN.md §7). */
+   .settings-content .col-act,
+   .settings-content .tbl thead th.col-act {
+      position: sticky;
+      right: 0;
+      z-index: 1;
+      /* fades in from its left edge, so a column scrolled under it reads as cut, not missing */
+      background: linear-gradient(90deg, transparent, var(--bg1) 12px);
+   }
+
+   .settings-content .tbl thead th.col-act {
+      z-index: 3; /* above the sticky header row's other cells */
+   }
+
+   .settings-content .tbl tbody tr:hover>.col-act {
+      background: linear-gradient(var(--hover), var(--hover)), linear-gradient(90deg, transparent, var(--bg1) 12px);
    }
 
    /* Alert collection: the master card and table sit on the board's 16px card padding */
@@ -4273,9 +4341,20 @@
       padding: 0;
    }
 
-   .settings-content .fed-table thead th,
-   .settings-content .fed-table tbody td {
-      padding: 9px 12px;
+   @container main (max-width: 1399px) {
+      .fed-wrap {
+         overflow-x: auto;
+      }
+   }
+
+   :where(.settings-content) .fed-table thead th,
+   :where(.settings-content) .fed-table tbody td {
+      padding: 9px 8px;
+   }
+
+   /* the source's second line wraps rather than widening its column */
+   .settings-content .fed-table tbody td:first-child {
+      white-space: normal;
    }
 
    .settings-content .fed-table thead th:first-child,
@@ -4293,9 +4372,14 @@
       padding: 8px 16px 10px;
    }
 
-   .settings-content .sla-tbl thead th,
-   .settings-content .sla-tbl tbody td {
+   :where(.settings-content) .sla-tbl thead th,
+   :where(.settings-content) .sla-tbl tbody td {
       padding: 10px 2px;
+   }
+
+   /* two-line heads, so "Respond within" doesn't set its column's width */
+   .settings-content .sla-tbl thead th {
+      white-space: normal;
    }
 
    .sla-name {
@@ -4321,11 +4405,9 @@
       color: var(--tx3);
    }
 
-   /* room under it for the floating Ask Vigil button */
    .sla-edit {
       border-color: var(--ac-ln);
-      scroll-margin-bottom: 96px;
-      margin-bottom: 72px;
+      scroll-margin-bottom: 22px;
    }
 
    .sla-grid {
@@ -4392,7 +4474,8 @@
    }
 
    .lim-switch .toggle-row-text {
-      flex: 1;
+      flex: 0 1 auto;
+      max-width: var(--text-max);
       min-width: 0;
       display: flex;
       flex-direction: column;
@@ -4692,7 +4775,6 @@
       display: flex;
       flex-direction: column;
       gap: 18px;
-      max-width: 1280px;
    }
 
    .data-anchor {
@@ -4865,7 +4947,20 @@
       text-overflow: ellipsis;
    }
 
-   .data-table th:nth-child(1) { width: 24%; }
+   /* the name column never narrows below --col-main-min; below the tracks plus it, the table scrolls */
+   .data-table th:nth-child(1) { width: var(--col-main-min); }
+   @container main (min-width: 1400px) {
+      .data-table th:nth-child(1) { width: 24%; }
+   }
+   .data-table:not(.data-rules) { min-width: calc(360px + var(--col-main-min)); } /* Settings' 120px floor, Status, action */
+   .data-rules { min-width: calc(566px + var(--col-main-min)); } /* Where's 96px floor and the fixed tracks */
+
+   /* Settings (120px), and Format, Deploy target and Where (326px), step aside while Ask Vigil is docked */
+   @container main (max-width: 1399px) {
+      .main.chat-open .data-table:not(.data-rules) { min-width: calc(240px + var(--col-main-min)); }
+      .main.chat-open .data-rules { min-width: calc(240px + var(--col-main-min)); }
+   }
+
    .data-table:not(.data-rules) th:nth-child(3) { width: 150px; }
    .data-table:not(.data-rules) th:nth-child(4) { width: 90px; }
    .data-rules th:nth-child(2) { width: 120px; }
@@ -5339,9 +5434,8 @@
       margin-left: auto;
    }
 
-   /* bottom room so the last row clears the floating Ask Vigil button */
    .exclusions {
-      margin: 6px 22px 88px;
+      margin: 6px 22px 22px;
       border: 1px solid var(--line);
       border-radius: 8px;
       background: var(--panel);
