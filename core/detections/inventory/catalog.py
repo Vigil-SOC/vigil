@@ -35,6 +35,7 @@ import binascii
 import logging
 import re
 import threading
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
@@ -761,9 +762,12 @@ def _fires(session: Any) -> Dict[str, Dict[Any, List[Dict[str, Any]]]]:
         resolve_findings(
             session,
             {
+                # The alert time picks the rule version: without it no SIEM
+                # finding resolves.
                 r.finding_id: {
                     "data_source": r.data_source,
                     "entity_context": r.entity_context,
+                    "timestamp": r.timestamp,
                 }
                 for r in rows
             },
@@ -798,12 +802,15 @@ def _fires(session: Any) -> Dict[str, Dict[Any, List[Dict[str, Any]]]]:
 
 
 def _fired(
-    fires: Dict[str, Dict[Any, List[Dict[str, Any]]]], rule: Any
-) -> List[Dict[str, Any]]:
-    """A copy's findings: those traced to it, then those only its name matches."""
-    return fires.get("by_rule", {}).get(rule.id, []) + fires.get("by_name", {}).get(
-        rule.name, []
-    )
+    fires: Dict[str, Dict[Any, List[Dict[str, Any]]]], rule: Any, shared: bool
+) -> Tuple[List[Dict[str, Any]], int]:
+    """A copy's findings (those traced to it, then those only its name matches)
+    and how many name-only findings it left out. A name more than one listed
+    copy carries (``shared``) can't tell them apart, so its name-only findings
+    count on none of them."""
+    traced = fires.get("by_rule", {}).get(rule.id, [])
+    named = fires.get("by_name", {}).get(rule.name, [])
+    return (traced, len(named)) if shared else (traced + named, 0)
 
 
 def _siem_alerts(checks: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]:
@@ -1019,12 +1026,13 @@ def _health_rows(copies: Dict[str, Any], fires: Dict[str, int]) -> Dict[str, Any
     rule_of = copies["rule_of"]
     listed = []
     fired: Dict[int, List[Dict[str, Any]]] = {}
+    names = Counter(rule.name for rule in copies["rows"])
     mapped = set()
     for rule in copies["rows"]:
         checks = rule.checks or {}
         if rule.techniques:
             mapped.add(rule_of[rule.id])
-        hits = _fired(fires, rule)
+        hits, unsure = _fired(fires, rule, names[rule.name] > 1)
         fired[rule.id] = hits[:FIRES_LISTED]
         count = len(hits)
         alerts, days_counted = _siem_alerts(checks)
@@ -1048,6 +1056,8 @@ def _health_rows(copies: Dict[str, Any], fires: Dict[str, int]) -> Dict[str, Any
                 "why": why,
                 "raw": raw,
                 "fires": count,
+                # Findings that name it but also another listed copy: on neither.
+                "fires_unsure": unsure,
                 "siem_alerts": alerts,
                 "siem_days": days_counted,
                 "checks_passing": results.count("pass"),
@@ -1205,6 +1215,7 @@ def rule_findings(rule_id: int) -> Dict[str, Any]:
                     "total": row["fires"],
                     "days": FIRES_WINDOW_DAYS,
                     "findings": built["fired"].get(rule_id, []),
+                    "unsure": row.get("fires_unsure", 0),
                 }
     return {"rule_id": rule_id, "total": 0, "days": FIRES_WINDOW_DAYS, "findings": []}
 

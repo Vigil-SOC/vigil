@@ -50,6 +50,8 @@ interface RuleRow {
   /** Findings Vigil traced to it (else that name it) in the fires window. */
   fires: number
   /** Alerts the SIEM itself counted (Quiet), and over how many days; null when it reports none. */
+  /** Findings that carry its name but also another listed copy's: counted on neither. */
+  fires_unsure: number
   siem_alerts: number | null
   siem_days: number | null
   checks_passing: number
@@ -467,7 +469,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                       {n(r.fires)}
                     </button>
                   ) : (
-                    <span title={siemOnly ? `The SIEM counted ${n(r.siem_alerts ?? 0)} alerts${r.siem_days ? ` in ${r.siem_days} days` : ''}; none became a finding in Vigil.` : undefined}>{fired}</span>
+                    <span title={(r.fires_unsure ?? 0) > 0 ? `${plural(r.fires_unsure, 'finding carries', 'findings carry')} this rule's name, but so does another rule, so they count on neither.` : siemOnly ? `The SIEM counted ${n(r.siem_alerts ?? 0)} alerts${r.siem_days ? ` in ${r.siem_days} days` : ''}; none became a finding in Vigil.` : undefined}>{fired}</span>
                   )}
                 </div>
                 <div className="de-right">

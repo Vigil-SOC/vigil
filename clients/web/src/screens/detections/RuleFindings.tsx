@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { errorText } from '../../shared/errorText'
-import { utcDayClock } from '../../shared/utc'
+import { format } from 'date-fns'
 import { detectionRulesApi } from '../../services/api'
 
 interface FiredFinding {
@@ -12,8 +12,17 @@ interface FiredFinding {
 
 interface Listing {
   total: number
+  /** Findings that carry its name, but so does another listed rule: counted on neither. */
+  unsure?: number
   days: number
   findings: FiredFinding[]
+}
+
+/** The finding's time as its popup shows it: local, "MMM d, HH:mm". */
+function when(timestamp: string | null): string {
+  if (!timestamp) return ''
+  const at = new Date(timestamp)
+  return Number.isNaN(at.getTime()) ? '' : format(at, 'MMM d, HH:mm')
 }
 
 /** The findings a rule copy fired in the fires window, as the list counts them; each opens. */
@@ -38,6 +47,7 @@ export default function RuleFindings({ ruleId, onOpen }: { ruleId: number; onOpe
         {data.total > data.findings.length && <span className="x1-muted">Newest {data.findings.length} shown</span>}
       </div>
       {data.findings.length === 0 && <p className="de-x-none">No finding in the last {data.days} days.</p>}
+      {(data.unsure ?? 0) > 0 && <p className="de-x-none">{data.unsure} more {data.unsure === 1 ? 'finding carries' : 'findings carry'} this rule’s name, but so does another rule, so they count on neither.</p>}
       {data.findings.length > 0 && (
         <ul className="de-fd-list">
           {data.findings.map((f) => (
@@ -45,7 +55,7 @@ export default function RuleFindings({ ruleId, onOpen }: { ruleId: number; onOpe
               <button type="button" className="de-fd" onClick={() => onOpen(f.finding_id)}>
                 <span className={`de-fd-sev ${(f.severity ?? '').toLowerCase()}`}>{f.severity ?? '—'}</span>
                 <span className="de-fd-title" title={f.title ?? f.finding_id}>{f.title || f.finding_id}</span>
-                <span className="de-fd-when">{f.timestamp ? `${utcDayClock(f.timestamp)} UTC` : ''}</span>
+                <span className="de-fd-when">{when(f.timestamp)}</span>
               </button>
             </li>
           ))}

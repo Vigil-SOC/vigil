@@ -2,7 +2,7 @@
 fired them (not matched by title), the SIEM's own alert count counts too, Never
 fired counts rules not copies, and a rule's count opens its findings."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -207,3 +207,71 @@ def test_the_listing_reports_never_fired_rules(listing):
 
 def test_the_findings_route(listing):
     assert routes.get_rule_findings(1)["total"] == 3
+
+
+class _InventorySession(_Session):
+    """Findings for _fires' read; the inventory for the real resolve_findings."""
+
+    def __init__(self, rows, rule, versions):
+        super().__init__(rows)
+        self.rule, self.versions = rule, versions
+
+    def scalars(self, statement):
+        entity = statement.column_descriptions[0]["entity"]
+        if entity is catalog.DetectionRule:
+            return [self.rule]
+        if entity is catalog.DetectionRuleVersion:
+            return list(self.versions)
+        return []
+
+
+def test_a_siem_finding_resolves_to_its_rule_by_its_alert_time():
+    # The real resolve_findings: it picks the version by the alert's time, so
+    # _fires must hand it the finding's timestamp.
+    rule = SimpleNamespace(
+        id=10893,
+        source="elastic",
+        native_key="rule-uuid-1",
+        name="Lab rule",
+        status="active",
+        latest_version=1,
+    )
+    version = SimpleNamespace(
+        rule_id=10893,
+        version=1,
+        first_seen=datetime(2026, 11, 1, tzinfo=timezone.utc),
+    )
+    alert = {
+        "source_evidence": {
+            "records": [{"_source": {"kibana.alert.rule.rule_id": "rule-uuid-1"}}]
+        }
+    }
+    session = _InventorySession(
+        [_finding("f1", "Some alert title", alert, when=datetime(2026, 11, 5, 12, 0))],
+        rule,
+        [version],
+    )
+    fires = catalog._fires(session)
+    assert [h["finding_id"] for h in fires["by_rule"][10893]] == ["f1"]
+    assert fires["by_name"] == {}
+
+
+def test_a_name_shared_by_two_copies_counts_on_neither():
+    built = _built(
+        [_copy(1, "Same name"), _copy(2, "Same name"), _copy(3, "Own name")],
+        {"by_name": {"Same name": [HIT] * 4, "Own name": [HIT] * 2}},
+    )
+    rows = _rows(built)
+    assert (rows[1]["fires"], rows[1]["fires_unsure"]) == (0, 4)
+    assert (rows[2]["fires"], rows[2]["fires_unsure"]) == (0, 4)
+    assert (rows[3]["fires"], rows[3]["fires_unsure"]) == (2, 0)
+
+
+def test_a_shared_name_still_counts_findings_traced_to_each_copy():
+    built = _built(
+        [_copy(1, "Same name"), _copy(2, "Same name")],
+        {"by_rule": {1: [HIT] * 3}, "by_name": {"Same name": [HIT]}},
+    )
+    rows = _rows(built)
+    assert rows[1]["fires"] == 3
+    assert rows[2]["fires"] == 0
