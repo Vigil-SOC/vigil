@@ -30,7 +30,7 @@ import { DENIAL_RECHECK_MS } from "./leases.js";
 import { logger } from "./log.js";
 import { scrub } from "./security.js";
 import type { ToolDispatch } from "./seams.js";
-import { declaredCapabilities, unboundCapabilities, type RunSpec, type ToolSpec } from "./spec.js";
+import { unboundCapabilities, type RunSpec, type ToolSpec } from "./spec.js";
 import { hardStop, persistAsk, schemaErrors, streamTurn, type StreamEvent } from "./stream.js";
 import { childRunId, Framer } from "./frames.js";
 import { classify, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, SKILL_TOOL, starved, type RecordBackend } from "./record.js";
@@ -204,21 +204,25 @@ export function pluginGrants(
   plugin: PluginManifest,
   tools: readonly ToolSpec[],
   own: readonly string[] = [],
-  extra: readonly string[] = [],
 ): Record<string, readonly string[]> {
   // "*" is every tool the deployment declares: a conversation's config is assembled
   // per request, so which tools it may reach is the caller's answer, not the plugin's.
-  const needs = [...plugin.needs, ...extra];
-  const bound = needs.includes("*")
+  const bound = plugin.needs.includes("*")
     ? [...tools]
-    : tools.filter((tool) => typeof tool["provides"] === "string" && needs.includes(tool["provides"] as string));
+    : tools.filter((tool) => typeof tool["provides"] === "string" && plugin.needs.includes(tool["provides"] as string));
   const loader = plugin.skills.length === 0 ? [] : [SKILL_TOOL];
   return { [AGENT_ROLE]: [...new Set([...bound.map((tool) => tool.id), ...own, ...loader])], [REVIEW_ROLE]: [] };
 }
 
+// Needs whose absence is a blind spot: every need but the optional ones.
+export function requiredNeeds(plugin: PluginManifest): string[] {
+  const optional = new Set(plugin.optional ?? []);
+  return plugin.needs.filter((need) => !optional.has(need));
+}
+
 // Needs this deployment answers with nothing. Declaration order, so a replay reads the same.
-export function unboundNeeds(plugin: PluginManifest, tools: readonly ToolSpec[], extra: readonly string[] = []): string[] {
-  return unboundCapabilities([...plugin.needs, ...extra], tools);
+export function unboundNeeds(plugin: PluginManifest, tools: readonly ToolSpec[]): string[] {
+  return unboundCapabilities(requiredNeeds(plugin), tools);
 }
 
 // Progressive disclosure: the system prompt carries each skill's name and one
@@ -374,7 +378,7 @@ function equipped(harness: Harness<Kinds>, options: AgentOptions, turn: () => nu
       ? layered(harness.registry, own)
       : registryOf(
           dedupe([...(options.tools ?? []), ...own, ...(options.plugin.skills.length === 0 ? [] : [skillTool(options.plugin)])]),
-          pluginGrants(options.plugin, options.spec.tools, own.map((tool) => tool.id), declaredCapabilities(options.spec.sections)),
+          pluginGrants(options.plugin, options.spec.tools, own.map((tool) => tool.id)),
         );
   const dispatch = options.hooks?.dispatch?.(ctx, harness.dispatch) ?? harness.dispatch;
   return { ...harness, registry, dispatch };
@@ -1370,7 +1374,7 @@ async function open(harness: Harness<Kinds>, options: AgentOptions): Promise<voi
     await options.hooks.open({ harness, options, turn: () => 0 }, base);
     return;
   }
-  const unbound = unboundNeeds(options.plugin, options.spec.tools, declaredCapabilities(options.spec.sections)).map((capability) =>
+  const unbound = unboundNeeds(options.plugin, options.spec.tools).map((capability) =>
     event(options, "unbound", { capability, reason: `no tool in this deployment answers ${capability}` }),
   );
   await harness.state.append(options.run_id, [
