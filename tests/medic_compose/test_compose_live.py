@@ -19,6 +19,7 @@ which needs the real backend and Postgres: test_enable_live.py covers it.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import secrets
@@ -177,6 +178,18 @@ def stack(tmp_path_factory):
         s.compose("down", "-v", "--remove-orphans", check=False)
 
 
+def host_addresses() -> list[str]:
+    """The host's IPv4 addresses other than loopback (Linux; elsewhere the
+    daemon runs in a VM and the gateways stand for the host)."""
+    if os.uname().sysname != "Linux":
+        return []
+    out = subprocess.run(
+        ["ip", "-o", "-4", "addr", "show"], capture_output=True, text=True, check=True
+    ).stdout
+    addrs = [line.split()[3].split("/")[0] for line in out.splitlines()]
+    return [a for a in addrs if not a.startswith("127.")]
+
+
 def _wait(what: str, fn, timeout: float, every: float = 5.0):
     deadline = time.monotonic() + timeout
     while True:
@@ -211,21 +224,32 @@ def probe(healthy):
             if net.endswith("deeptempo-network"):
                 ips[name] = info["IPAddress"]
     assert set(ips) == {"backend", "redis", "bifrost", "postgres"}
-    gateways = [
-        cfg["Gateway"]
+    # Every host address Medic might reach: the address each Medic bridge would
+    # have (its subnet's first host, which the host no longer takes), the
+    # deeptempo-network gateway, and each of the host's own IPv4 addresses.
+    nets = {
+        net: json.loads(s.docker("network", "inspect", f"{s.project}_{net}").stdout)[0]
+        for net in (*MEDIC_NETWORKS, "deeptempo-network")
+    }
+    gateways = set(host_addresses())
+    for info in nets.values():
+        for cfg in info["IPAM"]["Config"] or []:
+            if cfg.get("Gateway"):
+                gateways.add(cfg["Gateway"])
+            if ":" not in cfg.get("Subnet", ":"):
+                gateways.add(str(next(ipaddress.ip_network(cfg["Subnet"]).hosts())))
+    s.medic_bridges = {
+        net: nets[net]["Options"].get("com.docker.network.bridge.name")
+        or f"br-{nets[net]['Id'][:12]}"
         for net in MEDIC_NETWORKS
-        for cfg in json.loads(
-            s.docker("network", "inspect", f"{s.project}_{net}").stdout
-        )[0]["IPAM"]["Config"]
-        if cfg.get("Gateway")
-    ]
+    }
     # compose.test.yml publishes the backend stub on 0.0.0.0, a random port, as
     # the real backend publishes 6987.
     published = int(
         s.compose("port", "backend", "6987").stdout.strip().rsplit(":", 1)[1]
     )
     args = {
-        "gateways": gateways,
+        "gateways": sorted(gateways),
         "host_ports": [published, 6987, 8081, 9090, 11434, 22],
         "deeptempo_ips": ips,
         "ports": [6987, 6379, 8080, 5432, 22, 80, 443],
@@ -342,9 +366,22 @@ def test_check7_no_internet(probe) -> None:
     assert all(v != "connected" for v in probe["internet"].values()), probe["internet"]
 
 
-def test_check7_no_route_to_the_host_through_the_bridge(probe) -> None:
+def test_check7_no_route_to_the_host_through_the_bridge(probe, healthy) -> None:
     reached = {k: v for k, v in probe["host_gateway"].items() if v == "connected"}
     assert probe["host_gateway"] and not reached, reached
+    if os.uname().sysname == "Linux":
+        # The host side: no IPv4 address on either Medic bridge, so nothing
+        # bound to 0.0.0.0 on the host listens where Medic's networks can reach.
+        on_bridge = {
+            net: subprocess.run(
+                ["ip", "-o", "-4", "addr", "show", "dev", dev],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            for net, dev in healthy.medic_bridges.items()
+        }
+        assert not any(on_bridge.values()), on_bridge
 
 
 def test_medic_reaches_its_members(probe) -> None:
@@ -413,6 +450,7 @@ def test_check4_docker_proxy(probe) -> None:
 # --- the S6 goal: a /readyz fault becomes a chained, redacted incident ------
 
 _INCIDENTS = """
+import ipaddress
 import json
 from services.medic.store import open_reader
 from services.medic.app import config
