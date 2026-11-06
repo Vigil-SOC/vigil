@@ -892,19 +892,21 @@ def _deploy(
     targets: Mapping[str, Dict[str, Any]],
     now: datetime,
     report: RolloutReport,
-) -> None:
+) -> Dict[int, Dict[str, Any]]:
     """Open a PR for each live copy whose format has a target and whose current
     version has none recorded yet (nor its file already on the default branch);
-    record each outcome in checks['deploy']."""
+    record each outcome in checks['deploy'] and return them by rule id."""
     pending = [
         c
         for c in copies
         if targets.get(c.language)
         and c.toml  # a Splunk copy whose file went unread has nothing to add
-        and not {"pr_url", "in_repo"} & set(c.checks.get("deploy") or {})
+        # A PR recorded for an earlier version doesn't count: the new one gets its own.
+        and not {"pr_url", "in_repo"} & set(_deployed(c) or {})
     ]
+    outcomes: Dict[int, Dict[str, Any]] = {}
     if not pending:
-        return
+        return outcomes
     from core.detections.detection_rules_service import deploy_host_refused
     from core.secrets import get_secret
 
@@ -913,7 +915,7 @@ def _deploy(
     token = get_secret("GITHUB_TOKEN")
     for copy in pending:
         if _stopped():  # Stop set mid-pass: the rest wait for the sweep after it lifts
-            return
+            return outcomes
         target = targets[copy.language]
         outcome: Dict[str, Any] = {"version": copy.version, "at": now.isoformat()}
         try:
@@ -945,6 +947,8 @@ def _deploy(
                 outcome["error"],
             )
         _record_deploy(copy, outcome)
+        outcomes[copy.rule_id] = outcome
+    return outcomes
 
 
 def _api_of(git_url: str) -> Tuple[str, str]:
@@ -1185,6 +1189,96 @@ def _record_superseded(
         _write_checks(
             session, [(copy.rule_id, old["version"], {**checks, "deploy": deploy})]
         )
+
+
+def _deployed(copy: Copy) -> Optional[Dict[str, Any]]:
+    """The deploy outcome recorded on the copy's current version, if any."""
+    out = copy.checks.get("deploy")
+    return out if isinstance(out, dict) and out.get("version") == copy.version else None
+
+
+def overlay_only() -> List[Dict[str, Any]]:
+    """Live overlay copies no SIEM rule runs: only Vigil detects with these, so
+    Stop halts their detection. Each says whether its format has a deploy
+    target and what its deploy PR came to (``deploy``: pr_url, in_repo or
+    error, from checks['deploy'] on its current version; None before one)."""
+    live = [c for c in _copies() if c.stage == "live"]
+    gone = handed_off([c.rule_id for c in live])
+    targets = _deploy_targets()
+    return [
+        {
+            "id": c.rule_id,
+            "name": c.name,
+            "language": c.language,
+            "deploy_target": c.language in targets,
+            "deploy": _deployed(c),
+        }
+        for c in live
+        if c.rule_id not in gone
+    ]
+
+
+def deploy_overlay_only(rule_ids: Optional[List[int]] = None) -> Dict[str, Any]:
+    """Open the deploy PR now, as the sweep would, for live overlay-only copies
+    (these ``rule_ids``, or all) whose format has a GitHub deploy target and
+    with no PR opened yet; one that failed is tried again. Says what each came
+    to (``opened``: pr_url or in_repo; ``failed``: error) and why each other one
+    was skipped. Nothing is opened while Stop is set."""
+    from core.detections.detection_rules_service import deploy_host_refused
+
+    live = [c for c in _copies() if c.stage == "live"]
+    gone = handed_off([c.rule_id for c in live])
+    wanted = [
+        c
+        for c in live
+        if c.rule_id not in gone and (rule_ids is None or c.rule_id in rule_ids)
+    ]
+    targets = _deploy_targets()
+    if targets.get("splunk"):
+        _read_splunk_files(wanted)
+    skipped: Dict[int, str] = {}
+    if rule_ids is not None:
+        found = {c.rule_id for c in wanted}
+        skipped.update(
+            {r: "not a live rule only Vigil runs" for r in rule_ids if r not in found}
+        )
+    todo = []
+    for copy in wanted:
+        target = targets.get(copy.language)
+        done = _deployed(copy) or {}
+        if not target:
+            skipped[copy.rule_id] = f"no {copy.language} deploy target is set"
+        elif deploy_host_refused(target):
+            skipped[copy.rule_id] = deploy_host_refused(target)
+        elif done.get("pr_url"):
+            skipped[copy.rule_id] = (
+                f"its pull request is already open: {done['pr_url']}"
+            )
+        elif done.get("in_repo"):
+            skipped[copy.rule_id] = f"it is already in the repo: {done['in_repo']}"
+        elif not copy.toml:
+            skipped[copy.rule_id] = "its overlay file could not be read"
+        else:
+            todo.append(copy)
+    if todo and _stopped():
+        skipped.update(
+            {c.rule_id: "Vigil is stopped; it opens no pull request" for c in todo}
+        )
+        todo = []
+    outcomes = _deploy(todo, targets, datetime.now(timezone.utc), RolloutReport())
+    return {
+        "opened": [
+            {"rule_id": r, **{k: o[k] for k in ("pr_url", "in_repo") if k in o}}
+            for r, o in outcomes.items()
+            if "error" not in o
+        ],
+        "failed": [
+            {"rule_id": r, "error": o["error"]}
+            for r, o in outcomes.items()
+            if "error" in o
+        ],
+        "skipped": [{"rule_id": r, "reason": why} for r, why in skipped.items()],
+    }
 
 
 def run_copies(live: bool) -> RolloutReport:

@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from dataclasses import asdict
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -316,15 +316,38 @@ def get_overlay_only():
     so Stop halts their detection. Read-only."""
     from core.detections.inventory import rollout
 
-    live = [c for c in rollout._copies() if c.stage == "live"]
-    gone = rollout.handed_off([c.rule_id for c in live])
-    return {
-        "rules": [
-            {"id": c.rule_id, "name": c.name, "language": c.language}
-            for c in live
-            if c.rule_id not in gone
-        ]
-    }
+    return {"rules": rollout.overlay_only()}
+
+
+class DeployOverlayRequest(BaseModel):
+    """Which live overlay-only rules to deploy; none means all of them."""
+
+    rule_ids: Optional[List[int]] = None
+
+
+@router.post("/overlay-only/deploy", dependencies=_SETTINGS_WRITE)
+def deploy_overlay_only(
+    body: DeployOverlayRequest,
+    user: User = Depends(get_current_active_user),
+):
+    """Open the deploy pull request now, as the rollout sweep would, into the
+    deploy target for each live rule only Vigil runs (these, or all); a failed
+    one is tried again. Says what each came to and why others were skipped."""
+    from core.detections.inventory import rollout
+
+    result = rollout.deploy_overlay_only(body.rule_ids)
+    if result["opened"] or result["failed"]:
+        try:
+            get_config_service(user_id=str(user.user_id)).record_audit(
+                config_type="detection_rules",
+                config_key="overlay_deploy",
+                action="update",
+                old_value=None,
+                new_value={"opened": result["opened"], "failed": result["failed"]},
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Could not write overlay deploy audit log: %s", e)
+    return result
 
 
 class AddExceptionRequest(BaseModel):
