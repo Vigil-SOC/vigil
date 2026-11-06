@@ -17,5 +17,5 @@ keep_firing_for: 24h
 advice:
   summary: A known-answer test finding was injected but Vigil didn't detect or triage it as expected.
   fix: >-
-    Send this incident to DeepTempo Support with the evidence report. The probe
+    Report it as a Vigil defect with this incident. The probe
     checks the whole path from ingestion to triage.

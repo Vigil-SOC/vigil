@@ -1,13 +1,16 @@
 name: Medic nightly
 
-# Medic's evaluation on Compose, nightly: every injector cell held for what its rule
+# Medic's evaluation, nightly. On Compose: every injector cell held for what its rule
 # needs and scored against Medic's own decision log, a flood, the survival checks,
-# and the live Compose suites. Two jobs, because each runs its own Compose stack and
-# two must not share a runner. The metrics artifact (tests/medic_eval/nightly.py's
-# metrics.json and summary.md) is uploaded even when the run is red.
+# and the live Compose suites. On Helm: all of Vigil on kind (e2e.sh full, with its
+# privilege checks), once with Calico and once with kindnet, and the six Helm cells
+# held and scored the same way (no flood or survival checks there). Each is its own
+# job, because each runs its own stack and two must not share a runner. The metrics
+# artifact (tests/medic_eval/nightly.py's metrics.json and summary.md) is uploaded
+# even when the run is red. Helm fits an ubuntu-latest runner (#3900), so nightly.
 #
 # Red only for a failed bring-up, inject, verify or revert, a privilege check (the
-# live suites), harm to Vigil, Medic over 1 vCPU / 1 GiB, or a failed survival check
+# live suites, e2e.sh full), harm to Vigil, Medic over 1 vCPU / 1 GiB, or a failed survival check
 # or flood floor. Detection, time to detect, the lane matrix, false alarms and the
 # advisory bars are reported with their n and never turn it red.
 
@@ -76,5 +79,60 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: medic-eval-metrics
+          path: medic-eval-out
+          if-no-files-found: warn
+
+  # Vigil on kind with the CNI, e2e.sh full (nightly.py runs it, so a failure is a red
+  # run with an artifact), then the Helm cells held and scored. Replaces the PR job
+  # medic-helm-full.
+  helm:
+    name: Helm on kind (${{ matrix.cni }})
+    if: github.event_name == 'workflow_dispatch' || github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        cni: [calico, kindnet]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.15.2
+
+      - name: Install kind
+        uses: helm/kind-action@v1
+        with:
+          install_only: true
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.7"
+
+      - name: Build the images
+        run: |
+          docker build -f infra/docker/Dockerfile.medic -t vigil-medic:kind .
+          docker build -f infra/docker/Dockerfile.medic-gateway -t vigil-medic-gateway:kind .
+          docker build -f infra/docker/Dockerfile.backend -t vigil-backend:kind .
+          docker build -f infra/docker/Dockerfile.daemon -t vigil-daemon:kind .
+          docker build -f infra/docker/Dockerfile.agent -t vigil-agent:kind .
+
+      - name: Evaluate
+        run: |
+          uv run --no-project --python 3.12 --with pyyaml --with jsonschema \
+            python -m tests.medic_eval.nightly --out medic-eval-out --shape helm --cni ${{ matrix.cni }}
+
+      - name: Summary
+        if: always()
+        run: test -f medic-eval-out/summary.md && cat medic-eval-out/summary.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload metrics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: medic-eval-metrics-helm-${{ matrix.cni }}
           path: medic-eval-out
           if-no-files-found: warn

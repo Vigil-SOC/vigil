@@ -307,7 +307,7 @@ class Denied(Exception):
     """Not allowed for whom the call runs as. A run parks on the reason."""
 
 
-def _denial(claims: Claims, tool: str) -> Optional[str]:
+def _denial(claims: Claims, tool: str, args: Dict[str, Any]) -> Optional[str]:
     """Why the call that runs may not run for whom it runs as, or None (#3306).
 
     A person is held to their live role, a run no person started to the
@@ -318,7 +318,7 @@ def _denial(claims: Claims, tool: str) -> Optional[str]:
         refusal = permission_refusal(permission) if permission else None
         return None if refusal is None else refusal["error"]
     writes = not (permission or "").endswith(".read")
-    return unattended_refusal(tool, writes=writes, run_id=claims.run_id)
+    return unattended_refusal(tool, writes=writes, run_id=claims.run_id, args=args)
 
 
 def _note_unbound(tool: str) -> None:
@@ -370,7 +370,7 @@ async def _run(body: InvokeRequest, registry: MCPRegistry) -> Tuple[Any, bool, s
     args = _bounded(raw, body.bounds.max_rows, tool, registry)
 
     claims = current_claims()
-    denial = None if claims is None else _denial(claims, tool)
+    denial = None if claims is None else _denial(claims, tool, raw)
     if denial is not None:
         if attributed(claims):
             _outcome(claims, tool, raw, "denied")

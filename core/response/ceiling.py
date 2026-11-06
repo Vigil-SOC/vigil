@@ -587,15 +587,37 @@ def asks_first(names: Iterable[str]) -> frozenset[str]:
 STOPPED = "Stopped"
 
 
+# Own tools that change what Vigil detects: held to the ceiling as reversible
+# (#3949). Fixed here, not a stored class an operator could loosen to read.
+def _own_reversible(tool: str, args: Optional[Mapping[str, Any]]) -> Optional[str]:
+    """Why the call is refused unless the run may act, or None for an ordinary write."""
+    held = "and the autonomy ceiling does not let a run no person started make it"
+    if tool == "detection_rule_exception":
+        return f"{tool} changes what a rule detects, {held}"
+    exceptions = (args or {}).get("exceptions")
+    if tool == "save_detection_rule" and isinstance(exceptions, Mapping):
+        if any(exceptions.values()):
+            return (
+                f"{tool} with exceptions changes what a rule detects, {held}; "
+                "save it without exceptions"
+            )
+    return None
+
+
 def unattended_refusal(
-    tool: str, *, writes: bool, run_id: Optional[str] = None
+    tool: str,
+    *,
+    writes: bool,
+    run_id: Optional[str] = None,
+    args: Optional[Mapping[str, Any]] = None,
 ) -> Optional[str]:
     """Why a run no person started may not make this call, or None (#3306).
 
     Reads run, stopped or not. ``writes`` says whether one of Vigil's own tools
-    changes a record; those run unless stopped. An outside call runs only under
-    the effective act its class needs, for the run's own workflow (#3624). A
-    ceiling that cannot be read grants nothing.
+    changes a record; those run unless stopped, except a rule exception, which
+    needs the effective act a reversible call does (#3949). An outside call runs
+    only under the effective act its class needs, for the run's own workflow
+    (#3624). A ceiling that cannot be read grants nothing.
     """
     classes = tool_classes([tool])
     own = tool not in classes
@@ -608,7 +630,10 @@ def unattended_refusal(
     if stored.stopped:
         return STOPPED
     if own:
-        return None
+        refusal = _own_reversible(tool, args)
+        if refusal is None or effective_act(stored, REVERSIBLE, workflow_of(run_id)):
+            return None
+        return refusal
     effect = classes[tool]
     if effect in (REVERSIBLE, IRREVERSIBLE) and effective_act(
         stored, effect, workflow_of(run_id)

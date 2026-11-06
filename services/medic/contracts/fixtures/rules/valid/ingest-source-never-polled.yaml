@@ -21,4 +21,4 @@ advice:
   summary: The daemon hasn't polled this source for 30 minutes.
   fix: >-
     Restart soc-daemon after enabling or changing an integration. If polling
-    doesn't resume, send this incident to DeepTempo Support.
+    doesn't resume, report it as a Vigil defect with this incident.
