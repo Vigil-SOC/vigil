@@ -486,7 +486,8 @@ def _repo_deployed(session: Any, declares: Any) -> Dict[str, Dict[str, int]]:
 
 def siem_checks_by_technique() -> Dict[str, Dict[str, Any]]:
     """Each technique an active SIEM rule declares: its rules' Runs and Sees results
-    counted, how many rules, and how many fail either.
+    counted, how many rules, how many fail either, and how many are proven: pass
+    Runs and Sees on the same rule.
 
     A rule with no result yet counts as 'unchecked'.
     """
@@ -502,12 +503,16 @@ def siem_checks_by_technique() -> Dict[str, Dict[str, Any]]:
         ).all()
     out: Dict[str, Dict[str, Any]] = {}
     for t, runs, sees, count in rows:
-        entry = out.setdefault(t, {"runs": {}, "sees": {}, "rules": 0, "failing": 0})
+        entry = out.setdefault(
+            t, {"runs": {}, "sees": {}, "rules": 0, "failing": 0, "proven": 0}
+        )
         _tally(entry["runs"], runs, count)
         _tally(entry["sees"], sees, count)
         entry["rules"] += count
         if "fail" in (runs, sees):
             entry["failing"] += count
+        if runs == sees == "pass":
+            entry["proven"] += count
     return out
 
 

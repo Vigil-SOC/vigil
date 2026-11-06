@@ -42,6 +42,23 @@ Tokens in `tokens/`. Two themes, neutral grays, one accent. Summary:
 - Case drawer 75% width over a scrim; expand toggles to 100% (icons `expand`/`shrink`). Side panel 280px. Drawer z 28: above page, below header (30) and menus (60).
 - Chat dock 400px when off a case.
 
+### Width tiers
+
+Content layout follows the width the page actually gets, not the window: the side bar and the Ask Vigil dock both take width. `.main` is a named container (`main`), and content rules are `@container main (…)` queries; only the header, the nav and the dock itself stay on `@media`. The tiers are written once in `styles.css` (on `.main`) and repeated as literals, since a query can't use `var()`.
+
+| Tier | Content width | Tables |
+|---|---|---|
+| full | ≥ 1400px | Every column at full width |
+| compact | 1100–1399px | Columns at compact widths |
+| narrow | 700–1099px | Compact widths; a table that still doesn't fit scrolls inside its card |
+| reflow | < 700px | One column |
+
+- **Columns never hide with nothing docked.** Tables narrow, then scroll inside their card.
+- **Low-priority columns step aside only while Ask Vigil is docked** and the content is under 1400px. Their `th` and `td` carry `col-low` (`ColumnDef.className` in `DataTable`); a `col-low-note` in the table header says they are hidden. They come back when Ask Vigil closes. Drawers overlay the page, so they hide nothing.
+- **The main column and the column with the row's link never hide.** The main column never narrows below `--col-main-min` (200px): a table's minimum width is its fixed tracks plus that, lowered by the hidden columns while they are hidden.
+- **Reading pages** (Settings, the case Summary, workflow detail, setup) cap at `--page-max` (1280px). **Data pages** keep the full width; their free text caps at `--text-max` (75ch).
+- **Fixed overlays portal out.** As a container, `.main` would trap `position: fixed` descendants, so dialogs and side drawers render through `OverlayPortal`, outside `.main`.
+
 ### Screen rules
 
 Check every screen you change against these at 1440px and at 1920px, in a real browser with real data.

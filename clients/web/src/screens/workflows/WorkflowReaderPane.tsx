@@ -15,7 +15,7 @@ import { CHECKPOINT_CLASSES, HANDOFF_ROW, LOOP_CAPTION, composeStrip, stripFor, 
 interface Helper { agent: string; name: string; tools: string[]; approval_required: boolean }
 interface RoleLine { name: string; tools: string[] }
 interface Roles { lead: RoleLine | null; helpers: Helper[]; reviewer: RoleLine | null }
-interface Permission { name: string; label?: string; changes: 'asks_you' | 'on_its_own'; bound?: boolean }
+interface Permission { name: string; label?: string; changes: 'asks_you' | 'on_its_own'; bound?: boolean; optional?: boolean }
 interface Budgets { max_iterations?: number; max_turns?: number; max_calls?: number; max_cost_usd?: number; max_wall_ms?: number }
 
 /** GET /workflows/{id}/preflight. A draft has none of it but the phases, so every key may be absent. */
@@ -347,9 +347,10 @@ function MayDo({ entries, pre, stage, missing }: { entries: Entry[]; pre: Partia
       {!pre.permissions && <Muted>{missing}</Muted>}
       {pre.permissions && rows.length === 0 && <Muted>{stage ? 'Nothing it does at this stage needs a permission.' : pre.permissions_note ?? 'It holds no tools.'}</Muted>}
       {rows.map((p) => {
-        const state = p.bound === false ? { text: 'Not connected', color: 'var(--tx-3)' } : CHANGES[p.changes]
+        // optional: an opt-in source that is not connected, which the run counts nothing against
+        const state = p.bound === false ? { text: p.optional ? 'Optional' : 'Not connected', color: 'var(--tx-3)' } : CHANGES[p.changes]
         return (
-          <span key={p.name} className="flex justify-between gap-2 text-[12px]">
+          <span key={p.name} className="flex justify-between gap-2 text-[12px]" title={p.optional && p.bound === false ? 'Not connected. The run goes without it and counts nothing against its verdicts.' : undefined}>
             <span className={`min-w-0 break-words text-tx-2${p.label ? '' : ' font-mono'}`}>{p.label ?? p.name}</span>
             <span className="shrink-0" style={{ fontWeight: 700, color: state.color }}>{state.text}</span>
           </span>

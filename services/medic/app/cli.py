@@ -40,6 +40,7 @@ from services.medic.app.wiring import (
     PolicySensor,
     PolicyStartupSensor,
     RecordingSensor,
+    StoreResetSensor,
     grid_tick,
     load_engine_state,
     load_pack,
@@ -399,7 +400,12 @@ def _run(
                 data_dir,
                 shape,
                 pack,
-                [*sensors(pack.catalog), *policy_sensors, RecordingSensor(writer)],
+                [
+                    *sensors(pack.catalog),
+                    *policy_sensors,
+                    RecordingSensor(writer),
+                    StoreResetSensor(writer),
+                ],
                 clock,
                 vigil_dev_mode=vigil_dev_mode,
                 capture=start_capture(

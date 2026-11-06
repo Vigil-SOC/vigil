@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { LevelBadge, type Level } from '../../shared/LevelBadge'
 import { configApi, type IntegrationTestResult } from '../../services/api'
-import { Field, NumberInput, PasswordInput, Select, TextInput, ToggleRow } from '../../shared/ui'
+import { Field, NumberInput, OverlayPortal, PasswordInput, Select, TextInput, ToggleRow } from '../../shared/ui'
 import { Banner, extractApiError } from '../../shared/formKit'
 import { relativeTime, type LastTest } from './integrationHealth'
 import {
@@ -177,107 +177,109 @@ export default function IntegrationWizard({
   const lastRead = tested ? `last read ${relativeTime(tested.at)}` : 'never tested'
 
   return (
-    <div className="vg-side-scrim" onMouseDown={onClose}>
-      <aside
-        className="vg-side-panel"
-        role="dialog"
-        aria-label={`Set up ${integration.name}`}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="int-drawer-head">
-          <span className="flex flex-col gap-[3px] grow min-w-0">
-            <span className="int-drawer-title">
-              {integration.name}
-              <LevelBadge level={level} variant="pill" />
+    <OverlayPortal>
+      <div className="vg-side-scrim" onMouseDown={onClose}>
+        <aside
+          className="vg-side-panel"
+          role="dialog"
+          aria-label={`Set up ${integration.name}`}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <div className="int-drawer-head">
+            <span className="flex flex-col gap-[3px] grow min-w-0">
+              <span className="int-drawer-title">
+                {integration.name}
+                <LevelBadge level={level} variant="pill" />
+              </span>
+              <span className="vg-side-hint">{[category, lastRead].filter(Boolean).join(' · ')}</span>
             </span>
-            <span className="vg-side-hint">{[category, lastRead].filter(Boolean).join(' · ')}</span>
-          </span>
-          <button type="button" className="vg-side-close" aria-label="Close" onClick={onClose}>
-            <Icon name="close" size={16} />
-          </button>
-        </div>
-
-        <div className="int-steps" role="tablist" aria-label="Setup steps">
-          {STEPS.map((label, i) => (
-            <button
-              key={label}
-              role="tab"
-              aria-selected={step === i}
-              className={`int-step${i === 0 && configured && !dirty ? ' done' : ''}`}
-              disabled={i === 1 && !canVerify}
-              title={i === 1 && !canVerify ? 'Save the connection first' : label}
-              onClick={() => {
-                setStep(i)
-                if (i === 1 && probe.state === 'idle') void runTest()
-              }}
-            >
-              <span className="int-step-n">{i === 0 && configured && !dirty ? <Icon name="check2" size={11} /> : i + 1}</span>
-              <span>{label}</span>
+            <button type="button" className="vg-side-close" aria-label="Close" onClick={onClose}>
+              <Icon name="close" size={16} />
             </button>
-          ))}
-        </div>
-
-        {step === 0 && (
-          <>
-            <p className="text-sm text-tx-3 leading-relaxed">{integration.description}</p>
-            {integration.docs_url && (
-              <a className="text-xs text-accent-2 inline-flex items-center gap-1 -mt-1" href={integration.docs_url} target="_blank" rel="noreferrer">
-                <Icon name="link" size={12} /> Documentation
-              </a>
-            )}
-            {error && <Banner kind="err">{error}</Banner>}
-
-            {mainFields.map(renderField)}
-
-            {Object.entries(sections).map(([name, secFields]) => (
-              <div key={name} className="card card-sq shrink-0">
-                <button
-                  className="card-h w-full text-left"
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => setProxyOpen((o) => !o)}
-                >
-                  <h3 className="flex-1">{SECTION_LABELS[name] || name}</h3>
-                  <Icon name={proxyOpen ? 'chevD' : 'chevR'} size={15} />
-                </button>
-                {proxyOpen && <div className="card-b flex flex-col gap-3.5">{secFields.map(renderField)}</div>}
-              </div>
-            ))}
-          </>
-        )}
-        {step === 1 && <VerifyStep probe={probe} onRun={runTest} />}
-        {step === 2 && (
-          <StepLink to="/settings?section=federation" label="Open Alert collection">
-            Pull alerts from this tool on a schedule so agents can start on them. That is set in Alert collection.
-          </StepLink>
-        )}
-        {step === 3 && (
-          <StepLink to="/settings?section=autoinvestigate" label="Open Limits & autonomy">
-            Choose whether agents start on new alerts by themselves, and how much they may run and spend. That is set in Limits &amp; autonomy.
-          </StepLink>
-        )}
-
-        {hasSecret && (
-          <div className="int-sec">
-            <span className="int-sec-h">Security controls</span>
-            <span className="int-sec-row">
-              <Icon name="check2" size={13} />
-              Secrets are stored encrypted and never shown again; a blank field keeps the saved one.
-            </span>
           </div>
-        )}
 
-        <div className="vg-side-foot">
-          <button type="button" className="vg-side-btn" onClick={onClose} disabled={saving}>
-            {step === 0 ? 'Cancel' : 'Close'}
-          </button>
+          <div className="int-steps" role="tablist" aria-label="Setup steps">
+            {STEPS.map((label, i) => (
+              <button
+                key={label}
+                role="tab"
+                aria-selected={step === i}
+                className={`int-step${i === 0 && configured && !dirty ? ' done' : ''}`}
+                disabled={i === 1 && !canVerify}
+                title={i === 1 && !canVerify ? 'Save the connection first' : label}
+                onClick={() => {
+                  setStep(i)
+                  if (i === 1 && probe.state === 'idle') void runTest()
+                }}
+              >
+                <span className="int-step-n">{i === 0 && configured && !dirty ? <Icon name="check2" size={11} /> : i + 1}</span>
+                <span>{label}</span>
+              </button>
+            ))}
+          </div>
+
           {step === 0 && (
-            <button type="button" className="vg-side-btn primary" onClick={handleSave} disabled={saving}>
-              {saving ? 'Saving…' : 'Save and verify'}
-            </button>
+            <>
+              <p className="text-sm text-tx-3 leading-relaxed">{integration.description}</p>
+              {integration.docs_url && (
+                <a className="text-xs text-accent-2 inline-flex items-center gap-1 -mt-1" href={integration.docs_url} target="_blank" rel="noreferrer">
+                  <Icon name="link" size={12} /> Documentation
+                </a>
+              )}
+              {error && <Banner kind="err">{error}</Banner>}
+
+              {mainFields.map(renderField)}
+
+              {Object.entries(sections).map(([name, secFields]) => (
+                <div key={name} className="card card-sq shrink-0">
+                  <button
+                    className="card-h w-full text-left"
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => setProxyOpen((o) => !o)}
+                  >
+                    <h3 className="flex-1">{SECTION_LABELS[name] || name}</h3>
+                    <Icon name={proxyOpen ? 'chevD' : 'chevR'} size={15} />
+                  </button>
+                  {proxyOpen && <div className="card-b flex flex-col gap-3.5">{secFields.map(renderField)}</div>}
+                </div>
+              ))}
+            </>
           )}
-        </div>
-      </aside>
-    </div>
+          {step === 1 && <VerifyStep probe={probe} onRun={runTest} />}
+          {step === 2 && (
+            <StepLink to="/settings?section=federation" label="Open Alert collection">
+              Pull alerts from this tool on a schedule so agents can start on them. That is set in Alert collection.
+            </StepLink>
+          )}
+          {step === 3 && (
+            <StepLink to="/settings?section=autoinvestigate" label="Open Limits & autonomy">
+              Choose whether agents start on new alerts by themselves, and how much they may run and spend. That is set in Limits &amp; autonomy.
+            </StepLink>
+          )}
+
+          {hasSecret && (
+            <div className="int-sec">
+              <span className="int-sec-h">Security controls</span>
+              <span className="int-sec-row">
+                <Icon name="check2" size={13} />
+                Secrets are stored encrypted and never shown again; a blank field keeps the saved one.
+              </span>
+            </div>
+          )}
+
+          <div className="vg-side-foot">
+            <button type="button" className="vg-side-btn" onClick={onClose} disabled={saving}>
+              {step === 0 ? 'Cancel' : 'Close'}
+            </button>
+            {step === 0 && (
+              <button type="button" className="vg-side-btn primary" onClick={handleSave} disabled={saving}>
+                {saving ? 'Saving…' : 'Save and verify'}
+              </button>
+            )}
+          </div>
+        </aside>
+      </div>
+    </OverlayPortal>
   )
 }
 

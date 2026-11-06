@@ -5,9 +5,10 @@ compose.eval.yml, and verified by reading Vigil, never Medic. The verify
 functions are shared with the Helm cells (helm_cells.py), which run them on a
 HelmStack that offers the same methods.
 
-`detect_within_s` is the rule's `for:` where a merged rule has one (I-1.b). The
-I-4, I-5, P-1 and L-1 rules are still drafts (#2732-#2736); those cells use 300
-until they merge.
+`detect_within_s` is what the merged pack rule needs: its window, then its `for:`.
+I-5.a and I-5.b need a sender pushing while the fault is held (nightly.py's
+`with_sender`). I-4.b and L-1.c still carry 300: no merged rule names I-4.b, and
+L-1.c's rule counts calls this cell does not make.
 """
 
 from __future__ import annotations
@@ -24,6 +25,8 @@ GAP = "Elastic configuration incomplete (missing: elasticsearch_url)"
 EMBEDDING = "nomic-embed-text"
 CHAT = "llama3.1"
 WRONG_TOKEN = "not-the-webhook-token"
+PUSH_EVERY_S = 10  # the background sender's pace for I-5.a and I-5.b
+CYCLE_SLACK_S = 60  # Medic reads the daemon on a cycle; a rule can fire one late
 
 
 def _expect(got, want, what: str) -> None:
@@ -286,7 +289,9 @@ CELLS = (
     Cell(
         "I-5.a",
         2,
-        300,
+        # ingest-webhook-token-unset.yaml: >= 30 refusals within 30m (the sender
+        # pushes every PUSH_EVERY_S), then `for: 2m`.
+        30 * PUSH_EVERY_S + 120 + CYCLE_SLACK_S,
         i5a_inject,
         i5a_verify,
         i5a_revert,
@@ -296,7 +301,9 @@ CELLS = (
     Cell(
         "I-5.b",
         2,
-        300,
+        # ingest-webhook-bad-token.yaml: nothing accepted for 30m after the push
+        # nightly.py makes just before the fault, then `for: 10m`.
+        30 * 60 + 600 + CYCLE_SLACK_S,
         i5b_inject,
         i5b_verify,
         i5b_revert,
@@ -306,7 +313,8 @@ CELLS = (
     Cell(
         "P-1.c",
         2,
-        300,
+        # pipeline-agent-reads-failing.yaml: a latch with no window, then `for: 2m`.
+        120,
         p1c_inject,
         p1c_verify,
         p1c_revert,

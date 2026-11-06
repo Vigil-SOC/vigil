@@ -213,7 +213,8 @@ def gap_report(
     if alerts.total == 0:
         unknown.append(
             f"No stored alert matches {context!r}. Vigil keeps no map from a threat "
-            "name to techniques, so it cannot say what that threat would need."
+            "name to techniques: pass the techniques a threat uses (e.g. from threat "
+            "intel) as techniques to check each against the rules."
             if context and not alerts.scope.startswith("case ")
             else "No stored alert is in scope."
         )
@@ -264,6 +265,60 @@ def gap_report(
         "blind_spots": blind_spots or [],
         "techniques": seen,
         "tactics": tactic_rows,
+    }
+
+
+# --- Techniques asked about --------------------------------------------------
+
+TECHNIQUE_BUCKETS = ("proven", "siem_unproven", "repo_only", "none")
+
+
+def technique_check(
+    techniques: Collection[Any],
+    rules_by_technique: Mapping[str, Collection[int]],
+    siem_checks: Mapping[str, Mapping[str, Any]],
+) -> Dict[str, Any]:
+    """Each named technique in one bucket: proven (a SIEM rule passes Runs and Sees),
+    siem_unproven (SIEM rules, none passing both), repo_only (only repo or overlay
+    rules) or none. Every row that is not proven is a gap."""
+    rows: List[Dict[str, Any]] = []
+    rejected: List[str] = []
+    for raw in dict.fromkeys(str(t).strip() for t in techniques if str(t).strip()):
+        if not TECHNIQUE_ID.match(raw):
+            rejected.append(raw)
+            continue
+        technique = raw.upper()
+        if any(row["technique"] == technique for row in rows):
+            continue
+        checks = siem_checks.get(technique, {})
+        rules = len(set(rules_by_technique.get(technique, ())))
+        if checks.get("proven"):
+            bucket = "proven"
+        elif checks.get("rules"):
+            bucket = "siem_unproven"
+        elif rules:
+            bucket = "repo_only"
+        else:
+            bucket = "none"
+        rows.append(
+            {
+                "technique": technique,
+                "bucket": bucket,
+                "rules": rules,
+                "siem_rules": checks.get("rules", 0),
+                "siem_proven_rules": checks.get("proven", 0),
+                # Rules on its parent or subtechniques: reported, never proof.
+                "related_rules": _related_rules(technique, rules_by_technique),
+            }
+        )
+    return {
+        "checked": len(rows),
+        "by_bucket": {
+            b: sum(r["bucket"] == b for r in rows) for b in TECHNIQUE_BUCKETS
+        },
+        "gaps": [r["technique"] for r in rows if r["bucket"] != "proven"],
+        "rows": rows,
+        "rejected": rejected,
     }
 
 

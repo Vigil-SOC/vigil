@@ -2,7 +2,9 @@
    carrying the a11y affordances raw divs lack: Esc, focus return, outside
    click, role/aria. */
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useId,
   useRef,
@@ -13,6 +15,16 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon, type IconName } from './icons'
+
+/** Where fixed overlays mount: a node in `.soc-console` outside `.main`, which as a size
+    container would otherwise become their containing block and clip them to the content area. */
+export const OverlayHost = createContext<HTMLElement | null>(null)
+
+/** Renders a fixed overlay (dialog, side drawer) into the console's overlay host; inline outside the console. */
+export function OverlayPortal({ children }: { children: ReactNode }) {
+  const host = useContext(OverlayHost)
+  return host ? createPortal(children, host) : <>{children}</>
+}
 
 // Popup and portal-backed Select nest, so Escape is scoped to the most recently
 // opened layer — one keypress must not dismiss both.
@@ -142,24 +154,26 @@ export function Popup({
 
   if (!open) return null
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div
-        ref={panelRef}
-        className="modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        tabIndex={-1}
-        style={{ width }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="modal-head">
-          <h3 id={titleId}>{title}</h3>
-          <button className="modal-x" title="Close" aria-label="Close" onClick={onClose}><Icon name="close" size={16} /></button>
+    <OverlayPortal>
+      <div className="modal-overlay" onClick={onClose}>
+        <div
+          ref={panelRef}
+          className="modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          tabIndex={-1}
+          style={{ width }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="modal-head">
+            <h3 id={titleId}>{title}</h3>
+            <button className="modal-x" title="Close" aria-label="Close" onClick={onClose}><Icon name="close" size={16} /></button>
+          </div>
+          <div className="modal-body">{children}</div>
         </div>
-        <div className="modal-body">{children}</div>
       </div>
-    </div>
+    </OverlayPortal>
   )
 }
 

@@ -10,19 +10,13 @@ import logging
 from typing import Set
 
 from core.storage.config_service import get_config_service
-from core.workflows.routing import (
-    INTEL_LED_HUNT_WORKFLOW_ID,
-    SHADOW_WORKFLOW_ID,
-    always_on_reason,
-    can_disable,
-)
+from core.workflows.routing import SHADOW_WORKFLOW_ID, always_on_reason, can_disable
 
 logger = logging.getLogger(__name__)
 
 DISABLED_WORKFLOWS_KEY = "workflows.disabled"
-# Off until someone turns it on: shadow runs spend money beside every finding, and
-# an intel-led hunt needs a threat intelligence source the operator has connected.
-DEFAULT_DISABLED = frozenset({SHADOW_WORKFLOW_ID, INTEL_LED_HUNT_WORKFLOW_ID})
+# Off until someone turns it on: shadow runs spend money beside every finding.
+DEFAULT_DISABLED = frozenset({SHADOW_WORKFLOW_ID})
 
 
 def disabled_workflow_ids() -> Set[str]:

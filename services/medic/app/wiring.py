@@ -295,6 +295,27 @@ class RecordingSensor:
         ]
 
 
+class StoreResetSensor:
+    """`medic_store`/`reset`: true on the first collect of a start that reset the
+    store after corruption, false after. The built-in watcher.store-reset rule
+    opens its incident on true and keeps it on the console for 24 h."""
+
+    id = "medic.store-reset"
+    service = "medic"
+    interval_s = 60
+    timeout_s = 5.0
+    covers = ("medic_store",)
+    uses_vigil_api = False
+
+    def __init__(self, writer: DecisionWriter) -> None:
+        self.writer, self._reported = writer, False
+
+    async def collect(self, ctx: SensorContext) -> Sequence[Reading]:
+        flag = self.writer.reset_on_open and not self._reported
+        self._reported = True
+        return [Reading("medic_store", self.service, [Value.flag("reset", flag)])]
+
+
 class PolicyStartupSensor:
     """`medic_network_policy`/`unenforced`, once, after a startup refusal that
     lasted: true, then false on the next collect, so the incident opens and

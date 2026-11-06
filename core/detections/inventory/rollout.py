@@ -32,7 +32,9 @@ reverts in the same tick.
 A copy's active exceptions (``core/detections/exceptions.py``) drop the fetched
 documents they match before any of that: a dropped document is not in the
 day's hit count and becomes no finding, and checks['exceptions'] counts each
-exception's matches per day. A handed-off copy is not run, so its exceptions
+exception's matches per day, and after a run that fetched rows, its fields
+none of them carried (``seen``: a transforming search's rows lack its input
+fields, so an exception on one cannot match them, #3907). A handed-off copy is not run, so its exceptions
 are not applied; alerts the SIEM itself raises are never filtered.
 
 The sweep (after ``sync_repos``) then writes a stage row (actor 'system', proof
@@ -396,10 +398,11 @@ def _ran(
     end: datetime,
     outcome: Tuple[Optional[int], List[Dict], Optional[str]],
     searched_to: datetime,
-    excepted: Optional[Dict[str, int]] = None,
+    excepted: Optional[Tuple[Dict[str, int], Dict[str, List[str]], int]] = None,
 ) -> Dict[str, Any]:
-    """``checks`` after one run: Runs, and on a pass the stage's per-day hits
-    and each exception's per-day matches."""
+    """``checks`` after one run: Runs, and on a pass the stage's per-day hits,
+    each exception's per-day matches and, when the run fetched rows, which of
+    its fields none of them carried (``seen``)."""
     total, docs, error = outcome
     day = end.date().isoformat()
     runs = dict(checks.get("runs") or {})
@@ -426,11 +429,20 @@ def _ran(
             block["sample"] = [_sample(d) for d in docs[:SAMPLE]]
         out[stage] = block
         if excepted:
+            matched, absent, rows = excepted
             counts = dict(checks.get("exceptions") or {})
-            for eid, n in excepted.items():
-                per_day = dict((counts.get(eid) or {}).get("days") or {})
+            for eid, n in matched.items():
+                entry = dict(counts.get(eid) or {})
+                per_day = dict(entry.get("days") or {})
                 per_day[day] = int(per_day.get(day) or 0) + n
-                counts[eid] = {"days": _trimmed(per_day, day)}
+                entry["days"] = _trimmed(per_day, day)
+                if rows:  # a run with no rows teaches nothing: keep the last one's
+                    entry["seen"] = {
+                        "rows": rows,
+                        "missing": absent.get(eid) or [],
+                        "at": end.isoformat(),
+                    }
+                counts[eid] = entry
             out["exceptions"] = counts
     return out
 
@@ -542,7 +554,7 @@ def _write_runs(
     copies: List[Copy],
     results: Dict[int, tuple],
     now: datetime,
-    excepted: Optional[Dict[int, Dict[str, int]]] = None,
+    excepted: Optional[Dict[int, tuple]] = None,
 ) -> int:
     """Merge each run into its version's checks; record changed Runs results."""
     from core.detections.inventory.sync import _change, _last_results, _record_changes
@@ -1083,15 +1095,17 @@ def run(live: bool) -> RolloutReport:
 
 def _except(
     results: Dict[int, tuple],
-) -> Tuple[Dict[int, tuple], Dict[int, Dict[str, int]]]:
-    """Results with the documents an active exception matches dropped, and the
-    matches per exception id by rule id. The total drops by the same number."""
+) -> Tuple[Dict[int, tuple], Dict[int, tuple]]:
+    """Results with the documents an active exception matches dropped, and by
+    rule id (matches per exception id, each one's fields absent from every
+    fetched row, rows fetched). The total drops by the same number."""
     ran = [rid for rid, (_, _, error) in results.items() if not error]
     excepted = exceptions.active(ran)
     out, counts = dict(results), {}
     for rid, rules in excepted.items():
         total, docs, error = results[rid]
-        kept, counts[rid] = exceptions.split(docs, rules)
+        kept, matched, absent = exceptions.split(docs, rules)
+        counts[rid] = (matched, absent, len(docs))
         out[rid] = (max(int(total or 0) - (len(docs) - len(kept)), 0), kept, error)
     return out, counts
 

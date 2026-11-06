@@ -9,6 +9,7 @@ Every regex runs on RE2 (linear time, K1 T-10).
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Collection
 from dataclasses import dataclass, field
 
 import re2
@@ -147,12 +148,12 @@ def frames_of(exception: str | None) -> tuple[str, ...]:
     return tuple(found[-MAX_FRAMES:])
 
 
-def template_trust(line: LogLine, catalog: set[tuple[str, str]]) -> str:
+def template_trust(line: LogLine, catalog: Collection[tuple[str, str]]) -> str:
     """'catalog' only for an exact (logger, template) catalog hit that was really
     rendered from args (fingerprint.md §2). Everything else is untrusted."""
     if not line.template or (line.logger or "", line.template) not in catalog:
         return "untrusted"
-    if _PLACEHOLDER.search(line.template) and line.message == line.template:
+    if line.message == line.template and _PLACEHOLDER.search(line.template):
         return "untrusted"  # an f-string that happens to equal a catalog entry
     return "catalog"
 

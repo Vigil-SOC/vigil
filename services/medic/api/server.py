@@ -155,7 +155,12 @@ class Handler(BaseHTTPRequestHandler):
         return given if given and REQUEST_ID.fullmatch(given) else str(uuid.uuid4())
 
     def _send(self, status: int, doc: dict[str, Any], ctype: str) -> None:
-        body = json.dumps(doc, separators=(",", ":")).encode()
+        # Raw UTF-8, as stored (records are returned byte-for-byte); escaped only when the
+        # doc holds a lone surrogate (echoed request text), which UTF-8 cannot carry.
+        try:
+            body = json.dumps(doc, separators=(",", ":"), ensure_ascii=False).encode()
+        except UnicodeEncodeError:
+            body = json.dumps(doc, separators=(",", ":")).encode()
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Cache-Control", "no-store")

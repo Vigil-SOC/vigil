@@ -1,0 +1,135 @@
+"""The flood phase: Medic's log streams over capacity, from outside.
+
+Throwaway containers carrying the eval project's own Compose labels for three Vigil
+services log RATE lines/s each for `seconds`; the Docker proxy lists them like the
+real ones, so Medic's log tail reads them. Own phase: it overlaps no scored cell.
+
+Two hard floors: Medic stays under 1 vCPU / 1 GiB and keeps writing (the heartbeat
+cycle advances and its store keeps recording; Medic writes decisions on events, not
+on a clock, so the seq is reported and fails only if it goes backwards); the flooded
+streams count dropped lines (`dropped_last_hour`, #3478). The API shows no per-sensor
+`degraded` (that is the sensor_health observation's state, which is not served), so
+`dropped_last_hour` is what it can read. Everything else is reported.
+"""
+
+from __future__ import annotations
+
+import subprocess
+import time
+
+from tests.medic_eval import medic_api
+from tests.medic_eval.sample import CPU_TOLERANCE, HARD_CPU_VCPU, HARD_RSS_MIB, Sampler, summarize
+
+SERVICES = ("backend", "soc-daemon", "llm-worker")  # three of the seven log streams
+RATE = 5000  # lines/s per stream
+DURATION_S = 60
+SETTLE_S = 90  # for Medic's tail to catch up and its sensors to report
+
+SCRIPT = r"""
+import sys, time
+svc, seconds, rate = sys.argv[1], float(sys.argv[2]), int(sys.argv[3])
+per, tick, n = rate // 10, 0.1, 0
+end = time.monotonic() + seconds
+while time.monotonic() < end:
+    t = time.monotonic()
+    sys.stdout.write("".join(f"flood {svc} line {n + i} padding padding padding\n" for i in range(per)))
+    sys.stdout.flush()
+    n += per
+    time.sleep(max(0.0, tick - (time.monotonic() - t)))
+print(f"FLOOD-DONE {svc} {n}", flush=True)
+"""
+
+
+def _run(*argv: str) -> subprocess.CompletedProcess:
+    return subprocess.run(argv, capture_output=True, text=True, check=False)
+
+
+def _sensor_ids(sensors: dict, service: str) -> list[str]:
+    """The log sensor ids for a service (`...logs.<service>` or `log_<service>`)."""
+    key = service.replace("-", "_")
+    return [i for i in sensors if i.endswith(("." + service, "." + key)) and "log" in i]
+
+
+def run_flood(stack, seconds: int = DURATION_S, rate: int = RATE) -> dict:
+    """Run the flood and return what it showed, with `failures` for each floor missed."""
+    before, sensors_before = medic_api.status(stack), medic_api.sensors(stack)
+    names = {s: f"{stack.project}-flood-{s}" for s in SERVICES}
+    image = f"{stack.project}-backend:local"
+    sampler = Sampler(stack, interval_s=5)
+    started = time.time()
+    try:
+        for svc, name in names.items():
+            _run("docker", "rm", "-f", name)
+            done = _run(
+                "docker", "run", "-d", "--name", name, "--network", "none",
+                "--label", f"com.docker.compose.project={stack.project}",
+                "--label", f"com.docker.compose.service={svc}",
+                "--entrypoint", "python", image, "-c", SCRIPT, svc, str(seconds), str(rate),
+            )
+            if done.returncode:
+                raise AssertionError(f"flood container {name}: {done.stderr[-500:]}")
+        sampler.start()
+        time.sleep(seconds + 5)
+        # Medic's tail reads a stream at its own pace: settle until each flooded sensor has counted.
+        flooded = {s: _sensor_ids(medic_api.sensors(stack), s) for s in SERVICES}
+        deadline = time.monotonic() + SETTLE_S
+        while time.monotonic() < deadline:
+            now = medic_api.sensors(stack)
+            if all(any((now.get(i, {}).get("dropped_last_hour") or 0) > 0 for i in ids) for ids in flooded.values() if ids):
+                break
+            time.sleep(5)
+        sampler.stop()
+        after, sensors_after = medic_api.status(stack), medic_api.sensors(stack)
+        emitted = {
+            s: _run("docker", "logs", "--tail", "1", n).stdout.strip() for s, n in names.items()
+        }
+    finally:
+        sampler.stop()
+        for name in names.values():
+            _run("docker", "rm", "-f", name)
+
+    streams = {}
+    for svc in SERVICES:
+        rows = [sensors_after[i] for i in _sensor_ids(sensors_after, svc)]
+        streams[svc] = [
+            {"sensor": r["id"], "state": r["state"], "dropped_last_hour": r.get("dropped_last_hour")}
+            for r in rows
+        ]
+    usage = summarize(sampler.samples)
+    cycle = lambda st: st["cycle"] if st else None  # noqa: E731
+    seq = lambda st: ((st or {}).get("chain_head") or {}).get("seq")  # noqa: E731
+    failures = []
+    for svc, u in usage.items():
+        if u["n"] and u["cpu_p95_vcpu"] > HARD_CPU_VCPU + CPU_TOLERANCE:
+            failures.append(f"{svc} p95 CPU {u['cpu_p95_vcpu']} vCPU over {HARD_CPU_VCPU}")
+        if u["n"] and u["rss_peak_mib"] > HARD_RSS_MIB:
+            failures.append(f"{svc} peak memory {u['rss_peak_mib']} MiB over {HARD_RSS_MIB:.0f}")
+    if not usage["medic"]["n"]:
+        failures.append("no docker stats samples of Medic during the flood")
+    if not (before and after):
+        failures.append("Medic's status could not be read around the flood")
+    else:
+        if cycle(after) <= cycle(before):
+            failures.append(f"heartbeat cycle did not advance ({cycle(before)} -> {cycle(after)})")
+        if (seq(after) or -1) < (seq(before) or -1):
+            failures.append(f"decision seq went backwards ({seq(before)} -> {seq(after)})")
+        if after["store"]["states"] != ["ok"] or after["store"]["decisions_lost"] > before["store"]["decisions_lost"]:
+            failures.append(f"Medic's store is not recording ({after['store']['states']}, lost {after['store']['decisions_lost']})")
+    for svc, rows in streams.items():
+        if not rows:
+            failures.append(f"no log sensor found for {svc}")
+        elif not any((r["dropped_last_hour"] or 0) > 0 for r in rows):
+            failures.append(f"{svc}: no dropped lines counted")
+    return {
+        "lines_per_s_per_stream": rate,
+        "seconds": seconds,
+        "emitted": emitted,
+        "started_at": started,
+        "usage": usage,
+        "stats_samples": len(sampler.samples),
+        "cycle": [cycle(before), cycle(after)],
+        "decision_seq": [seq(before), seq(after)],
+        "medic_state": [(before or {}).get("state"), (after or {}).get("state")],
+        "streams": streams,
+        "failures": failures,
+    }

@@ -129,22 +129,20 @@ CAPABILITIES: Dict[str, Tuple[Candidate, ...]] = {
         Candidate("virustotal", ("get_ip_report", "get_domain_report")),
     ),
     "findings_search": (Candidate(None, ("search_findings",)),),
-    # Threat-intelligence platform lookups, asked for only by a workflow that lists
-    # them under `capabilities` (intel-led-hunt). One tool each: a capability binds
-    # the first tool present, so OpenCTI's four tools are four capabilities.
-    "intel_observable": (
-        Candidate("opencti", ("opencti_search_observable",)),
-        Candidate("misp", ("misp_search_ioc",)),
-    ),
-    "intel_indicator": (Candidate("opencti", ("opencti_get_indicator",)),),
-    "intel_entity_search": (Candidate("opencti", ("opencti_search_entities",)),),
-    "intel_related": (Candidate("opencti", ("opencti_get_related",)),),
     # One candidate and no fallback: episodic memory is Vigil's own tier, so a
     # deployment either carries it or has no history to offer.
     "entity_recall": (Candidate(None, ("recall_entity",)),),
     "case_records": (Candidate(None, ("case_records",)),),
     "case_evidence": (Candidate(None, ("read_case_evidence",)),),
     "get_finding": (Candidate(None, ("get_finding",)),),
+    # A threat-intel platform's own graph, one tool each: an observable's indicators,
+    # one indicator, named actors and malware, and what an entity links to. OpenCTI is
+    # opt-in, so a hunt holds these when it is connected and misses nothing when not
+    # (OPTIONAL_HUNT_CAPABILITIES).
+    "intel_observable": (Candidate("opencti", ("opencti_search_observable",)),),
+    "intel_indicator": (Candidate("opencti", ("opencti_get_indicator",)),),
+    "intel_entities": (Candidate("opencti", ("opencti_search_entities",)),),
+    "intel_relationships": (Candidate("opencti", ("opencti_get_related",)),),
 }
 
 
@@ -156,11 +154,6 @@ CAPABILITY_BOUNDS: Dict[str, Dict[str, int]] = {
     "telemetry_search": {"timeout_ms": 120_000, "max_rows": 500},
     "indicator_lookup": {"timeout_ms": 60_000, "max_rows": 200},
     "findings_search": {"timeout_ms": 30_000, "max_rows": 200},
-    # A platform's GraphQL or REST API; its tools cap a page at 50.
-    "intel_observable": {"timeout_ms": 60_000, "max_rows": 50},
-    "intel_indicator": {"timeout_ms": 60_000, "max_rows": 50},
-    "intel_entity_search": {"timeout_ms": 60_000, "max_rows": 50},
-    "intel_related": {"timeout_ms": 60_000, "max_rows": 50},
     # A read of our own Postgres, so the findings timeout is generous. The row
     # cap is stated because the bounds model requires one, not because it bites:
     # recall answers with one envelope, and the injected `limit` is in
@@ -173,6 +166,16 @@ CAPABILITY_BOUNDS: Dict[str, Dict[str, int]] = {
     # One row of our own Postgres. Its size is the record behind the alert, which
     # result_cap bounds, so the row cap is only the shape the bounds model asks for.
     "get_finding": {"timeout_ms": 15_000, "max_rows": 1},
+    # Each tool caps its own list at 50; this is the shape the bounds model asks for.
+    **{
+        name: {"timeout_ms": 60_000, "max_rows": 50}
+        for name in (
+            "intel_observable",
+            "intel_indicator",
+            "intel_entities",
+            "intel_relationships",
+        )
+    },
 }
 
 
@@ -202,7 +205,12 @@ def _bound_capabilities(
             )
             break
         else:
-            logger.warning(
+            # An opt-in integration that is not connected is the expected case.
+            (
+                logger.debug
+                if capability in OPTIONAL_HUNT_CAPABILITIES
+                else logger.warning
+            )(
                 "no tool in this deployment provides %s; roles needing it lose it",
                 capability,
             )
@@ -460,6 +468,20 @@ HUNT_CAPABILITIES = (
     # Bound on the run rather than granted to every role: `needs` in the arch is
     # what decides who holds it, and the lead and critic are not granted it.
     "entity_recall",
+    "intel_observable",
+    "intel_indicator",
+    "intel_entities",
+    "intel_relationships",
+)
+
+# Needs a hunt holds when the deployment answers them and goes without otherwise,
+# with no blind spot journalled: an opt-in integration that is not connected is not
+# a gap in this estate's visibility. Mirrors `optional` in the hunt plugin.yaml.
+OPTIONAL_HUNT_CAPABILITIES = (
+    "intel_observable",
+    "intel_indicator",
+    "intel_entities",
+    "intel_relationships",
 )
 
 # A hunt is bounded by iterations rather than phases. Separate ceilings: max_calls
@@ -502,6 +524,8 @@ INVESTIGATE_BUDGETS = {
 
 # What this deployment can and cannot answer, without resolving a whole playbook. The
 # console asks before a run starts, so the deployment gap is told before the spend.
+# An optional need nothing answers is absent, not unbound: the run goes without it
+# and records no gap.
 def capability_report(
     registry: Optional["MCPRegistry"] = None,
     needs: Tuple[str, ...] = HUNT_CAPABILITIES,
@@ -512,9 +536,11 @@ def capability_report(
         for tool in _bound_capabilities(list(needs), catalogue)
         if tool.get("provides")
     }
+    missing = [name for name in needs if name not in bound]
     return {
         "bound": [name for name in needs if name in bound],
-        "unbound": [name for name in needs if name not in bound],
+        "unbound": [n for n in missing if n not in OPTIONAL_HUNT_CAPABILITIES],
+        "absent": [n for n in missing if n in OPTIONAL_HUNT_CAPABILITIES],
     }
 
 
@@ -528,22 +554,6 @@ def _strings(value: Any) -> List[str]:
     if isinstance(value, str):
         return [value]
     return [str(item) for item in value or [] if str(item).strip()]
-
-
-# What a hunt workflow asks for beyond the shared set, from its `capabilities` front
-# matter. Refused when unknown, for the reason checkpoints are: a typo would otherwise
-# leave a hunt quietly without the tools its author meant it to have.
-def extra_hunt_capabilities(definition: "WorkflowDefinition") -> Tuple[str, ...]:
-    declared = definition.metadata.get("capabilities") or []
-    if not isinstance(declared, list) or not all(isinstance(c, str) for c in declared):
-        raise UnknownPlaybook(f"{definition.id}: capabilities must be a list of names")
-    unknown = [c for c in declared if c not in CAPABILITIES]
-    if unknown:
-        raise UnknownPlaybook(
-            f"{definition.id} asks for capabilities this backend does not define: "
-            f"{', '.join(unknown)}"
-        )
-    return tuple(c for c in dict.fromkeys(declared) if c not in HUNT_CAPABILITIES)
 
 
 # The two layers a hunt run needs. Same tools and the same dump as a compose one;
@@ -565,7 +575,6 @@ def resolve_hunt(
     # Empty is the shipped case, not an error: what a hunt tests belongs to the caller.
     # A run with none from either source is refused in execute_workflow.
     hypotheses = _strings(definition.metadata.get("hypotheses"))
-    extra = extra_hunt_capabilities(definition)
 
     playbook = {
         "name": definition.name,
@@ -578,7 +587,6 @@ def resolve_hunt(
         "hypotheses": hypotheses,
         "attack_techniques": _strings(definition.metadata.get("attack_techniques")),
         "data_domains": _strings(definition.metadata.get("data_domains")),
-        **({"capabilities": list(extra)} if extra else {}),
         "narrative": definition.body,
     }
 
@@ -588,9 +596,7 @@ def resolve_hunt(
         **({"effort": effort} if effort else {}),
         "budgets": dict(HUNT_BUDGETS),
         "runtime": DEFAULT_RUNTIME,
-        "tools": _bound_capabilities(
-            [*HUNT_CAPABILITIES, *extra], _tool_catalogue(registry)
-        )
+        "tools": _bound_capabilities(list(HUNT_CAPABILITIES), _tool_catalogue(registry))
         + [_expand_tool()],
         # The hunt gates on its own checkpoint classes, which are a property of
         # what it is about to conclude rather than of a tool it happens to call.

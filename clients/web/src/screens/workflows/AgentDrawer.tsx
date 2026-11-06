@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Icon } from '../../shared/icons'
-import { ConfirmDialog } from '../../shared/ui'
+import { ConfirmDialog, OverlayPortal } from '../../shared/ui'
 import { agentsApi, aiConfigApi, type AIModelInfo, type GeneratedAgentDraft } from '../../services/api'
 import type { ToolChange } from '../../data/appData'
 import { errMsg } from './runRead'
@@ -347,7 +347,7 @@ export function AgentDrawer({
   const holdsSkills = form.tools.includes(READ_SKILL)
 
   return (
-    <>
+    <OverlayPortal>
       <div className="vg-side-scrim" onMouseDown={close}>
         <aside
           className="vg-side-panel"
@@ -573,6 +573,6 @@ export function AgentDrawer({
         onConfirm={onClose}
         onClose={() => setConfirmClose(false)}
       />
-    </>
+    </OverlayPortal>
   )
 }

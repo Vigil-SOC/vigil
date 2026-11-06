@@ -7,7 +7,8 @@ first); a list field matches when any element does, and a CIDR value matches an
 address inside it. Vigil's runner drops matching documents before they are
 counted or become findings; save_detection_rule's replay counts a ruled-out
 event a Sigma exception matches as excluded. Adding or removing one makes no
-rule version. Removal fills in the removal columns; nothing is deleted.
+rule version. Removal fills in the removal columns; nothing is deleted. Each
+add and removal is written to the config audit log in the same transaction.
 """
 
 from __future__ import annotations
@@ -19,10 +20,16 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 from sqlalchemy import select
 
 from core.detections.inventory import readers
+from core.storage.config_service import ConfigService
 from core.storage.connection import get_db_manager
-from core.storage.models import DetectionRule, DetectionRuleException
+from core.storage.models import (
+    DetectionRule,
+    DetectionRuleException,
+    DetectionRuleVersion,
+)
 
 ACTIONS = ("add", "remove")
+AUDIT_TYPE = "detection_rule_exception"
 _ABSENT = object()
 
 
@@ -107,10 +114,23 @@ def matches(match: Mapping[str, Any], doc: Mapping[str, Any]) -> bool:
     return True
 
 
+def absent(
+    docs: List[Dict[str, Any]], excepted: List[Tuple[int, Dict[str, Any]]]
+) -> Dict[str, List[str]]:
+    """Per exception id, its match fields no hit's ``_source`` carries (#3907),
+    e.g. an input field of a transforming search, whose rows are its output."""
+    sources = [(d.get("_source") if isinstance(d, dict) else None) or {} for d in docs]
+    return {
+        str(eid): [f for f in m if all(_resolve(s, f) is _ABSENT for s in sources)]
+        for eid, m in excepted
+    }
+
+
 def split(
     docs: List[Dict[str, Any]], excepted: List[Tuple[int, Dict[str, Any]]]
-) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
-    """(docs no exception matches, matches per exception id) over hit ``_source``s.
+) -> Tuple[List[Dict[str, Any]], Dict[str, int], Dict[str, List[str]]]:
+    """(docs no exception matches, matches per exception id, each one's fields
+    absent from every doc) over hit ``_source``s.
 
     A document two exceptions match counts once, against the first.
     """
@@ -126,7 +146,7 @@ def split(
             kept.append(doc)
         else:
             counts[str(hit)] += 1
-    return kept, counts
+    return kept, counts, absent(docs, excepted)
 
 
 def active(rule_ids: List[int]) -> Dict[int, List[Tuple[int, Dict[str, Any]]]]:
@@ -152,17 +172,59 @@ def active(rule_ids: List[int]) -> Dict[int, List[Tuple[int, Dict[str, Any]]]]:
     return out
 
 
-def listed(session: Any, rule_id: int) -> List[Dict[str, Any]]:
-    """A rule's active exceptions: id, match, note, created_by."""
-    rows = session.scalars(
-        select(DetectionRuleException)
-        .where(
-            DetectionRuleException.rule_id == rule_id,
-            DetectionRuleException.removed_at.is_(None),
-        )
-        .order_by(DetectionRuleException.id)
-    ).all()
+def listed(session: Any, rule_id: int, removed: bool = False) -> List[Dict[str, Any]]:
+    """A rule's active exceptions (and its removed ones too with ``removed``)."""
+    query = select(DetectionRuleException).where(
+        DetectionRuleException.rule_id == rule_id
+    )
+    if not removed:
+        query = query.where(DetectionRuleException.removed_at.is_(None))
+    rows = session.scalars(query.order_by(DetectionRuleException.id)).all()
     return [_row(r) for r in rows]
+
+
+def of_copy(rule_id: int) -> Dict[str, Any]:
+    """Every exception on an overlay copy, active and removed, with each one's
+    per-day matches from the copy's latest version, what its last run with rows
+    saw (``seen``: {rows, missing, at}, or None), and whether a SIEM copy runs
+    it instead (``handed_off``: Vigil no longer applies them).
+
+    LookupError when there is no such rule, ValueError when it isn't an overlay copy.
+    """
+    from core.detections.inventory.rollout import handed_off
+
+    with get_db_manager().session_scope() as session:
+        rule = session.get(DetectionRule, rule_id)
+        if rule is None:
+            raise LookupError(f"No detection rule {rule_id}")
+        if rule.source != readers.OVERLAY_SOURCE:
+            raise ValueError(f"Rule {rule_id} is not one of Vigil's overlay copies")
+        checks = session.scalar(
+            select(DetectionRuleVersion.checks).where(
+                DetectionRuleVersion.rule_id == rule_id,
+                DetectionRuleVersion.version == rule.latest_version,
+            )
+        )
+        counts = (checks or {}).get("exceptions") or {}
+        rows = []
+        for r in listed(session, rule_id, removed=True):
+            mine = counts.get(str(r["exception_id"])) or {}
+            rows.append({**r, "days": mine.get("days") or {}, "seen": mine.get("seen")})
+    return {
+        "rule_id": rule_id,
+        "handed_off": rule_id in handed_off([rule_id]),
+        "exceptions": rows,
+    }
+
+
+def rule_of(exception_id: int) -> Optional[int]:
+    """The rule an exception belongs to, or None when there is no such exception."""
+    with get_db_manager().session_scope() as session:
+        return session.scalar(
+            select(DetectionRuleException.rule_id).where(
+                DetectionRuleException.id == exception_id
+            )
+        )
 
 
 def _row(r: DetectionRuleException) -> Dict[str, Any]:
@@ -179,10 +241,40 @@ def _row(r: DetectionRuleException) -> Dict[str, Any]:
     }
 
 
+def _audit(
+    session: Any,
+    who: Tuple[str, Dict[str, Any]],
+    action: str,
+    old: Optional[Dict[str, Any]],
+    new: Dict[str, Any],
+    reason: str,
+) -> None:
+    from core.agents.attribution import principal_id_for_username
+
+    caller, run = who
+    # The trail names people by principal id; the exception row keeps the username.
+    actor = principal_id_for_username(caller) or caller
+    ConfigService(user_id=actor)._create_audit_log(
+        session,
+        config_type=AUDIT_TYPE,
+        config_key=f"detection_rule:{new['rule_id']}",
+        action=action,
+        old_value=old,
+        new_value={**new, **run},
+        change_reason=reason,
+    )
+
+
 def add_many(
-    session: Any, rule_id: int, items: List[Tuple[Dict[str, Any], str]], who: str
+    session: Any,
+    rule_id: int,
+    items: List[Tuple[Dict[str, Any], str]],
+    who: Tuple[str, Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """Add each (match, note) to ``rule_id``; one already active with that match stays."""
+    """Add each (match, note) to ``rule_id``; one already active with that match stays.
+
+    ``who`` is ``_who()``: the caller and, for an agent's run, its agent and run id.
+    """
     have = {
         repr(sorted(m.items()))
         for m in session.scalars(
@@ -199,18 +291,19 @@ def add_many(
             continue
         have.add(key)
         row = DetectionRuleException(
-            rule_id=rule_id, match=match, note=note, created_by=who
+            rule_id=rule_id, match=match, note=note, created_by=who[0]
         )
         session.add(row)
         session.flush()
         added.append(_row(row))
+        _audit(session, who, "create", None, added[-1], note)
     return added
 
 
-def _who() -> str:
+def _who() -> Tuple[str, Dict[str, Any]]:
     from core.detections.inventory.links import _who as who
 
-    return who()[0]
+    return who()
 
 
 def edit_exception(
@@ -262,7 +355,9 @@ def edit_exception(
                 "error": f"Exception {eid} is already removed",
                 "exception": _row(row),
             }
+        old = _row(row)
         row.removed_at = datetime.now(timezone.utc)
-        row.removed_by, row.removal_reason = who, reason
+        row.removed_by, row.removal_reason = who[0], reason
         session.flush()
+        _audit(session, who, "delete", old, _row(row), reason)
         return {"success": True, "action": "remove", "exception": _row(row)}

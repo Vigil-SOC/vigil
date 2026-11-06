@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import calendar
+import functools
 import hashlib
 import json
 import logging
@@ -89,6 +90,7 @@ ADMIT_STREAM_PER_S = 500
 OVERFLOW_SIGNAL = "log_overflow"  # sample, not a log signal: counts, no line text
 OVERFLOW_EPOCH = "log-overflow"  # in-memory counters; a stable epoch across collects
 _WARNING_UP = frozenset({"WARNING", "ERROR", "CRITICAL"})
+_WARNING_UP_B = tuple(w.encode() for w in _WARNING_UP)
 REDISCOVER_S = 10  # shared by the seven sensors: one container list per cycle
 BACKOFF_MAX_S = 30.0
 MAX_FRAME = 1 << 20  # a Docker log frame is one message, 16 KiB plus a timestamp
@@ -192,7 +194,11 @@ def _overflow_bucket(
     Returns ('template', hash), ('level', LEVEL) or ('dropped', None). The
     message lives only for `template_trust`'s f-string check, then is dropped.
     """
-    text = raw[:MAX_LINE].decode("utf-8", "replace")
+    raw = raw[:MAX_LINE]
+    # Not JSON and no WARNING+ name in it: parse_text can only read it as INFO.
+    if not raw.startswith(b"{") and not any(w in raw for w in _WARNING_UP_B):
+        return "dropped", None
+    text = raw.decode("utf-8", "replace")
     kind, doc = _json_kind(text)
     if kind == "python_json" and doc is not None:
         logger = doc.get("logger")
@@ -208,7 +214,7 @@ def _overflow_bucket(
         trusted = (
             template_trust(
                 LogLine(service, "python_json", level, logger, template, message),
-                set(catalog),
+                catalog,
             )
             == "catalog"
         )
@@ -335,17 +341,38 @@ class Reader:
             if len(self._buf) > MAX_FRAME:
                 raise ProtocolError
             return
-        while len(self._buf) >= 8:
-            size = int.from_bytes(self._buf[4:8], "big")
-            if self._buf[0] > 2 or self._buf[1:4] != b"\0\0\0" or size > MAX_FRAME:
-                raise ProtocolError
-            if len(self._buf) < 8 + size:
-                return
-            kind, payload = self._buf[0], bytes(self._buf[8 : 8 + size])
-            del self._buf[: 8 + size]
+        # Walk the frames by offset and cut the buffer once per chunk, not per frame.
+        data, pos, frames, bad = bytes(self._buf), 0, [], False
+        while len(data) - pos >= 8:
+            size = int.from_bytes(data[pos + 4 : pos + 8], "big")
+            if (
+                data[pos] > 2
+                or data[pos + 1 : pos + 4] != b"\0\0\0"
+                or size > MAX_FRAME
+            ):
+                bad = True  # the frames before it still go out first
+                break
+            if len(data) - pos < 8 + size:
+                break
+            frames.append((data[pos], data[pos + 8 : pos + 8 + size]))
+            pos += 8 + size
+        if pos:
+            del self._buf[:pos]
+        for kind, payload in frames:
             yield from self._frame(kind, payload)
+        if bad:
+            raise ProtocolError
 
     def _frame(self, kind: int, payload: bytes) -> Iterator[Line]:
+        if (
+            payload
+            and kind not in self._part
+            and payload.find(b"\n") == len(payload) - 1
+        ):
+            # The usual frame: one whole line, nothing held.
+            ts_ns, text = _split_ts(payload[:-1])
+            yield Line(ts_ns, text[:MAX_LINE], len(text) > MAX_LINE)
+            return
         parts = payload.split(b"\n")
         for i, seg in enumerate(parts):
             last = i == len(parts) - 1
@@ -370,10 +397,16 @@ def _split_ts(seg: bytes) -> tuple[int | None, bytes]:
     m = _TS.match(seg)
     if m is None:
         return None, seg
-    y, mo, d, h, mi, s = (int(g) for g in m.groups()[:6])
     frac = (m.group(7) or b"0").ljust(9, b"0")
-    secs = calendar.timegm((y, mo, d, h, mi, s))
-    return secs * 1_000_000_000 + int(frac), seg[m.end() :]
+    return _epoch_s(seg[:19]) * 1_000_000_000 + int(frac), seg[m.end() :]
+
+
+@functools.lru_cache(maxsize=64)
+def _epoch_s(stamp: bytes) -> int:
+    """`YYYY-MM-DDTHH:MM:SS` -> epoch seconds. A stream's lines share a second."""
+    y, mo, d = int(stamp[0:4]), int(stamp[5:7]), int(stamp[8:10])
+    h, mi, s = int(stamp[11:13]), int(stamp[14:16]), int(stamp[17:19])
+    return calendar.timegm((y, mo, d, h, mi, s))
 
 
 def _since(ts_ns: int) -> str:
@@ -476,7 +509,8 @@ class _Stream:
     name: str | None
     service: str
     last_ns: int  # the cursor: newest timestamp seen …
-    hashes: set[str] = field(default_factory=set)  # … raw-line hashes at that ns
+    # … `hash()` of each raw line at that ns: in-process, as the cursor is
+    hashes: set[int] = field(default_factory=set)
     error: ReadError | None = None
     task: asyncio.Task[None] | None = None
     # Helm only. `container_id` is the app container; a change is a restart.
@@ -657,12 +691,13 @@ class LogTail:
         return got
 
     def _deliver(
-        self, stream: _Stream, line: Line, base_ns: int, base_hashes: set[str]
+        self, stream: _Stream, line: Line, base_ns: int, base_hashes: set[int]
     ) -> bool:
         """Queue one line; False if it was a replay of one already delivered.
 
-        The cursor moves for an overflow line too. Dedupe stores a hash of the
-        raw line, so a replay of one that was never fingerprinted is still skipped.
+        The cursor moves for an overflow line too. Dedupe keeps the builtin `hash()`
+        of the raw line (in-process like the cursor, no line text, no digest to pay
+        for), so a replay of one that was never fingerprinted is still skipped.
         The observation's `line_hash` stays the redacted one from `line_drafts`.
         """
         assert self._bus is not None and self._clock is not None
@@ -671,9 +706,8 @@ class LogTail:
         # nothing older than the cursor is new.
         if ts is not None and ts < base_ns:
             return False
-        sensor_id = f"{self._id_prefix}.{stream.service}"
-        raw_hash = hashlib.sha256(line.raw).hexdigest()[:16]
         if ts is not None:
+            raw_hash = hash(line.raw)
             if ts == base_ns and raw_hash in base_hashes:
                 return False
             if ts > stream.last_ns:
@@ -683,6 +717,7 @@ class LogTail:
         if self._over_rate(stream):
             self._count_overflow(stream, line)
             return True
+        sensor_id = f"{self._id_prefix}.{stream.service}"
         failed: str | None = None
         try:
             drafts, _line_hash = line_drafts(

@@ -166,10 +166,47 @@
       display: flex;
       flex-direction: column;
       transition: margin-right .26s cubic-bezier(.4, 0, .2, 1);
+      /* Content layout follows the space the page gets, not the window: the side bar and
+         Ask Vigil take width a @media query can't see. As a container, .main also contains
+         position:fixed descendants, so dialogs and drawers portal out (OverlayPortal).
+
+         Tiers, by .main's width (CSS can't use var() in a query, so these are repeated as literals):
+           full     ≥ 1400px     every column at full width
+           compact  1100–1399px  columns at compact widths
+           narrow   700–1099px   compact widths; a table that still doesn't fit scrolls in its card
+           reflow   < 700px      one column
+         Columns never hide with nothing docked. While Ask Vigil is docked and the content is
+         under 1400px, cells marked .col-low hide and a .col-low-note in the header says so. */
+      container: main / inline-size;
    }
 
    .main.chat-open {
       margin-right: var(--chat-w);
+   }
+
+   /* low-priority columns step aside while Ask Vigil is docked (tiers above); never the main or link column */
+   .col-low-note {
+      display: none;
+   }
+
+   @container main (max-width: 1399px) {
+      /* collapsed to nothing rather than display:none, which would leave a full-width row's
+         colSpan (an expanded panel, the empty state) making empty columns that squeeze the rest */
+      .main.chat-open .col-low {
+         width: 0;
+         padding: 0;
+         border: 0;
+         font-size: 0;
+         visibility: hidden;
+      }
+
+      .main.chat-open .col-low > * {
+         display: none;
+      }
+
+      .main.chat-open .col-low-note {
+         display: block;
+      }
    }
 
    /* ---------- access denied (permission-gated screen) ---------- */
@@ -4647,7 +4684,7 @@
       color: var(--tx0);
    }
 
-   @media (max-width: 900px) {
+   @container main (max-width: 900px) {
       .lim-profiles,
       .lim-classes {
          grid-template-columns: minmax(0, 1fr);
@@ -4848,6 +4885,16 @@
       text-overflow: ellipsis;
    }
 
+   /* A source's name wraps rather than clips, and its status pill drops below when it can't fit beside it */
+   .data-name {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px 8px;
+      white-space: normal;
+      overflow-wrap: anywhere;
+   }
+
    .data-table th:nth-child(1) { width: 24%; }
    .data-table:not(.data-rules) th:nth-child(3) { width: 150px; }
    .data-table:not(.data-rules) th:nth-child(4) { width: 90px; }
@@ -4959,7 +5006,10 @@
       top: calc(100% + 6px);
       left: 0;
       min-width: 260px;
-      max-width: 360px;
+      max-width: min(360px, calc(100vw - 24px));
+      /* inside a short window (1280×600); its options scroll within */
+      max-height: calc(100dvh - 120px);
+      overflow-y: auto;
       background: var(--bg-2);
       border: 1px solid var(--line);
       border-radius: 12px;
@@ -6221,7 +6271,6 @@
    .tq-card {
       flex: 1 1 0; /* the rows scroll inside the card instead of growing the page */
       min-height: 230px; /* room for an ⓘ popover under a short list */
-      padding-bottom: 96px; /* bottom room so the Ask Vigil button never covers the last row */
       background: var(--bg1);
       border: 1px solid var(--ln0);
       border-radius: 14px;
@@ -6231,7 +6280,16 @@
    /* Fixed tracks, so Alert takes the free width and wraps to two lines instead of widening the table */
    .tq-table {
       table-layout: fixed;
-      min-width: 1360px; /* below it the table scrolls in its card, so Alert and why never shrink to a letter a line */
+      /* the fixed tracks plus Alert's floor: below it the table scrolls in its card */
+      --tq-tracks: 952px;
+      min-width: calc(var(--tq-tracks) + var(--col-main-min));
+   }
+
+   /* Source, Arrived, Picked up in and Intake score (360px) step aside while Ask Vigil is docked */
+   @container main (max-width: 1399px) {
+      .main.chat-open .tq-table {
+         --tq-tracks: 592px;
+      }
    }
 
    .tq-table thead th {
@@ -6272,19 +6330,35 @@
       overflow-wrap: anywhere;
    }
 
-   .tq-table thead th:nth-child(1) { width: 100px; }
-   .tq-table thead th:nth-child(2) { width: 124px; }
-   .tq-table thead th:nth-child(4) { width: 190px; }
-   .tq-table thead th:nth-child(5) { width: 108px; }
-   .tq-table thead th:nth-child(6) { width: 116px; } /* fits "26 Oct 12:40" on an older row */
-   .tq-table thead th:nth-child(7) { width: 108px; }
-   .tq-table thead th:nth-child(8) { width: 176px; }
-   .tq-table thead th:nth-child(9) { width: 20%; }
+   /* compact widths; Alert (3) takes the rest */
+   .tq-table thead th:nth-child(1) { width: 96px; }
+   .tq-table thead th:nth-child(2) { width: 88px; }
+   .tq-table thead th:nth-child(4) { width: 156px; }
+   .tq-table thead th:nth-child(5) { width: 84px; }
+   .tq-table thead th:nth-child(6) { width: 104px; }
+   .tq-table thead th:nth-child(7) { width: 84px; }
+   .tq-table thead th:nth-child(8) { width: 140px; }
+   .tq-table thead th:nth-child(9) { width: 200px; }
+
+   /* at full tier, room for what the compact widths cut: "26 Oct 12:40", "561 h 32 min", "case-… (new)" */
+   @container main (min-width: 1400px) {
+      .tq-table { --tq-tracks: 1020px; }
+      .tq-table thead th:nth-child(6) { width: 116px; }
+      .tq-table thead th:nth-child(7) { width: 108px; }
+      .tq-table thead th:nth-child(9) { width: 232px; }
+   }
 
    .tq-th-info {
       display: inline-flex;
       align-items: center;
       gap: 4px;
+   }
+
+   .tq-hide-note {
+      margin-top: 2px;
+      white-space: normal;
+      font-weight: 400;
+      color: var(--tx3);
    }
 
    .tq-kind {
@@ -6975,7 +7049,7 @@
    box's 240px floor forcing a half-empty wrap. Let it shrink (and tighten the
    .bar-row gap) below desktop. Unlayered + media-gated, so the desktop layout
    (>1024px) is untouched. ---- */
-@media (max-width: 1024px) {
+@container main (max-width: 1024px) {
    .soc-console .search {
       min-width: 160px;
    }
@@ -6987,7 +7061,7 @@
    }
 }
 
-@media (max-width: 720px) {
+@container main (max-width: 720px) {
    .soc-console .search {
       min-width: 120px;
    }

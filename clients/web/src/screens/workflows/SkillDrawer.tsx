@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
-import { Popup } from '../../shared/ui'
+import { OverlayPortal, Popup } from '../../shared/ui'
 import { skillsApi, type ApiSkillDetail, type ApiSkillTest } from '../../services/skillsApi'
 import { skillUsageText, type Skill } from '../../data/appData'
 
@@ -165,187 +165,189 @@ export function SkillDrawer({
   const err = (text: string) => <span className="text-[12px]" style={{ color: 'var(--crit)' }}>{text}</span>
 
   return (
-    <div className="vg-side-scrim" onMouseDown={onClose}>
-      <aside
-        className="vg-side-panel"
-        role="dialog"
-        aria-label={creating ? 'Build a skill' : `Edit ${name}`}
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-start gap-3">
-          <span className="flex flex-col gap-[3px] grow min-w-0">
-            <span className="text-[20px] font-bold leading-[1.25] tracking-[-0.2px] text-tx break-words">
-              {creating ? 'Build a skill' : `Skill · ${name}`}
-            </span>
-            {ready && <span className="vg-side-hint">{subtitle}</span>}
-          </span>
-          <button type="button" className="vg-side-close" aria-label="Close" onClick={onClose}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />
-            </svg>
-          </button>
-        </div>
-        {loadError && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{loadError}</div>}
-        {!ready && !loadError && <p className="text-[13px] text-tx-3">Loading skill…</p>}
-        {ready && (
-          <>
-            {!canWrite && <p className="text-[13px] text-tx-2 leading-[1.5]">{READ_ONLY}</p>}
-            {canWrite && pathUnset && <p className="text-[13px] text-tx-2 leading-[1.5]">{PATH_OFF}</p>}
-            {detail?.bundled && (
-              <p className="text-[13px] text-tx-2 leading-[1.5]">
-                Saving writes a new skill under the operator root and leaves the bundled directory unchanged.
-              </p>
-            )}
-            {canDescribe && (
-              <div className="vg-side-field">
-                <label htmlFor="vg-s-describe" className="vg-side-label">Describe the skill</label>
-                <textarea
-                  id="vg-s-describe"
-                  className="vg-side-input"
-                  rows={2}
-                  autoFocus
-                  value={aiText}
-                  placeholder="e.g. Decides whether a reported login from a new country is the user travelling or a stolen account."
-                  onChange={(e) => setAiText(e.target.value)}
-                />
-                <span className="vg-side-hint">Vigil drafts the fields below for you to edit, replacing what they hold. Nothing is saved until Save.</span>
-                <div className="flex items-center justify-end gap-2.5">
-                  {aiErr && <span className="vg-side-err mr-auto">{aiErr}</span>}
-                  <button type="button" className="vg-side-btn small line" disabled={aiBusy || !aiText.trim()} onClick={generate}>
-                    <Icon name="sparkle" size={13} />&nbsp;{aiBusy ? 'Generating…' : 'Generate draft'}
-                  </button>
-                </div>
-              </div>
-            )}
-            <div className="vg-side-field">
-              <label htmlFor="vg-s-name" className="vg-side-label">Name</label>
-              <input
-                id="vg-s-name"
-                className="vg-side-input mono"
-                value={skillName}
-                maxLength={64}
-                disabled={nameLocked}
-                autoComplete="off"
-                placeholder={creating ? 'lowercase-with-hyphens' : undefined}
-                autoFocus={creating && !canDescribe}
-                onChange={(e) => setSkillName(e.target.value)}
-              />
-              <span className="vg-side-hint">Lower case and hyphens, 64 characters at most</span>
-              {nameTaken && err(`A skill named ${skillName.trim()} already exists. Choose another name.`)}
-              {needsNewName && <span className="vg-side-hint">Choose a new name. A bundled skill cannot be overwritten.</span>}
-            </div>
-            <div className="vg-side-field">
-              <label htmlFor="vg-s-desc" className="vg-side-label">When to use it</label>
-              <textarea
-                id="vg-s-desc"
-                className="vg-side-input"
-                rows={3}
-                maxLength={1024}
-                value={description}
-                readOnly={aiBusy}
-                onChange={(e) => setDescription(e.target.value)}
-              />
-              <span className="vg-side-hint">Agents read this to decide whether the skill applies (1,024 characters at most)</span>
-              {!description.trim() && err('Describe when an agent should use this skill.')}
-            </div>
-            {openFile === null ? (
-              <div className="vg-side-field">
-                <label htmlFor="vg-s-body" className="vg-side-label">Steps (SKILL.md)</label>
-                <textarea
-                  id="vg-s-body"
-                  className="vg-side-input mono"
-                  rows={9}
-                  value={body}
-                  readOnly={aiBusy}
-                  onChange={(e) => setBody(e.target.value)}
-                />
-                {!body.trim() && err('Add the steps an agent should follow.')}
-              </div>
-            ) : (
-              <div className="vg-side-field">
-                <div className="flex items-center justify-between gap-3">
-                  <label htmlFor="vg-s-file" className="vg-side-label mono">
-                    <span className="break-all">{openFile}</span>{' '}
-                    <span className="whitespace-nowrap">· read-only</span>
-                  </label>
-                  <button type="button" className="vg-side-btn" onClick={() => setOpenFile(null)}>Back to steps</button>
-                </div>
-                {file.error && err(file.error)}
-                {!file.error && file.content === undefined && <span className="vg-side-hint">Loading file…</span>}
-                {file.content !== undefined && (
-                  <textarea id="vg-s-file" className="vg-side-input mono" rows={9} readOnly value={file.content} />
-                )}
-              </div>
-            )}
-            {detail && detail.files.length > 0 && (
-              <div className="vg-side-field">
-                <span className="vg-skill-files-title">Files in this skill</span>
-                {detail.files.map((f) => (
-                  <button
-                    key={f.path}
-                    type="button"
-                    className="vg-skill-file"
-                    aria-current={(openFile ?? 'SKILL.md') === f.path}
-                    onClick={() => setOpenFile(f.path === 'SKILL.md' ? null : f.path)}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tx2)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M5 4h10l4 4v12H5zM15 4v4h4M8.5 12h7M8.5 15.5h5" />
-                    </svg>
-                    <span className="min-w-0 break-all">{f.path}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-            {(testing || test || testError) && (
-              <div ref={panel} className="vg-side-field" role="status" aria-label="Test results">
-                <span className="vg-skill-files-title">Test results</span>
-                {testing && <span className="vg-side-hint vg-skill-wait"><span className="vg-skill-spin" aria-hidden="true" />Running the cases on the chat model…</span>}
-                {testError && err(testError)}
-                {test?.no_cases && <span className="vg-side-hint">This skill has no test cases.</span>}
-                {test && !test.no_cases && (
-                  <>
-                    <span className="vg-side-hint">
-                      {test.results.filter((r) => r.passed).length} of {test.results.length} passed
-                      {test.model && <> · {test.model}</>}
-                    </span>
-                    {test.results.map((r) => (
-                      <div key={r.name} className="vg-skill-result" data-passed={r.passed}>
-                        <span className="vg-skill-result-head">
-                          <span className="vg-skill-result-mark">{r.passed ? 'Pass' : 'Fail'}</span>
-                          <span className="min-w-0 break-words">{r.name}</span>
-                        </span>
-                        {r.missing.length > 0 && (
-                          <span className="vg-skill-missing">Missing: {r.missing.join(' · ')}</span>
-                        )}
-                      </div>
-                    ))}
-                  </>
-                )}
-              </div>
-            )}
-            {error && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{error}</div>}
-            <div className="vg-side-foot">
-              {!creating && (
-                <button type="button" className="vg-side-btn" disabled={testing} onClick={runTest}>
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M9.5 3.5h5M10.5 3.5v6L5.4 18.2a1.6 1.6 0 0 0 1.4 2.3h10.4a1.6 1.6 0 0 0 1.4-2.3l-5.1-8.7v-6" />
-                  </svg>
-                  {testing ? 'Testing…' : 'Test with a sample'}
-                </button>
-              )}
-              <span className="vg-skill-foot-end">
-                <button type="button" className="vg-side-btn" onClick={onClose}>Cancel</button>
-                {canWrite && (
-                  <button type="button" className="vg-side-btn primary" disabled={saveDisabled} onClick={save}>
-                    {busy ? 'Saving…' : creating ? 'Save' : 'Save new version'}
-                  </button>
-                )}
+    <OverlayPortal>
+      <div className="vg-side-scrim" onMouseDown={onClose}>
+        <aside
+          className="vg-side-panel"
+          role="dialog"
+          aria-label={creating ? 'Build a skill' : `Edit ${name}`}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-start gap-3">
+            <span className="flex flex-col gap-[3px] grow min-w-0">
+              <span className="text-[20px] font-bold leading-[1.25] tracking-[-0.2px] text-tx break-words">
+                {creating ? 'Build a skill' : `Skill · ${name}`}
               </span>
-            </div>
-          </>
-        )}
-      </aside>
-    </div>
+              {ready && <span className="vg-side-hint">{subtitle}</span>}
+            </span>
+            <button type="button" className="vg-side-close" aria-label="Close" onClick={onClose}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />
+              </svg>
+            </button>
+          </div>
+          {loadError && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{loadError}</div>}
+          {!ready && !loadError && <p className="text-[13px] text-tx-3">Loading skill…</p>}
+          {ready && (
+            <>
+              {!canWrite && <p className="text-[13px] text-tx-2 leading-[1.5]">{READ_ONLY}</p>}
+              {canWrite && pathUnset && <p className="text-[13px] text-tx-2 leading-[1.5]">{PATH_OFF}</p>}
+              {detail?.bundled && (
+                <p className="text-[13px] text-tx-2 leading-[1.5]">
+                  Saving writes a new skill under the operator root and leaves the bundled directory unchanged.
+                </p>
+              )}
+              {canDescribe && (
+                <div className="vg-side-field">
+                  <label htmlFor="vg-s-describe" className="vg-side-label">Describe the skill</label>
+                  <textarea
+                    id="vg-s-describe"
+                    className="vg-side-input"
+                    rows={2}
+                    autoFocus
+                    value={aiText}
+                    placeholder="e.g. Decides whether a reported login from a new country is the user travelling or a stolen account."
+                    onChange={(e) => setAiText(e.target.value)}
+                  />
+                  <span className="vg-side-hint">Vigil drafts the fields below for you to edit, replacing what they hold. Nothing is saved until Save.</span>
+                  <div className="flex items-center justify-end gap-2.5">
+                    {aiErr && <span className="vg-side-err mr-auto">{aiErr}</span>}
+                    <button type="button" className="vg-side-btn small line" disabled={aiBusy || !aiText.trim()} onClick={generate}>
+                      <Icon name="sparkle" size={13} />&nbsp;{aiBusy ? 'Generating…' : 'Generate draft'}
+                    </button>
+                  </div>
+                </div>
+              )}
+              <div className="vg-side-field">
+                <label htmlFor="vg-s-name" className="vg-side-label">Name</label>
+                <input
+                  id="vg-s-name"
+                  className="vg-side-input mono"
+                  value={skillName}
+                  maxLength={64}
+                  disabled={nameLocked}
+                  autoComplete="off"
+                  placeholder={creating ? 'lowercase-with-hyphens' : undefined}
+                  autoFocus={creating && !canDescribe}
+                  onChange={(e) => setSkillName(e.target.value)}
+                />
+                <span className="vg-side-hint">Lower case and hyphens, 64 characters at most</span>
+                {nameTaken && err(`A skill named ${skillName.trim()} already exists. Choose another name.`)}
+                {needsNewName && <span className="vg-side-hint">Choose a new name. A bundled skill cannot be overwritten.</span>}
+              </div>
+              <div className="vg-side-field">
+                <label htmlFor="vg-s-desc" className="vg-side-label">When to use it</label>
+                <textarea
+                  id="vg-s-desc"
+                  className="vg-side-input"
+                  rows={3}
+                  maxLength={1024}
+                  value={description}
+                  readOnly={aiBusy}
+                  onChange={(e) => setDescription(e.target.value)}
+                />
+                <span className="vg-side-hint">Agents read this to decide whether the skill applies (1,024 characters at most)</span>
+                {!description.trim() && err('Describe when an agent should use this skill.')}
+              </div>
+              {openFile === null ? (
+                <div className="vg-side-field">
+                  <label htmlFor="vg-s-body" className="vg-side-label">Steps (SKILL.md)</label>
+                  <textarea
+                    id="vg-s-body"
+                    className="vg-side-input mono"
+                    rows={9}
+                    value={body}
+                    readOnly={aiBusy}
+                    onChange={(e) => setBody(e.target.value)}
+                  />
+                  {!body.trim() && err('Add the steps an agent should follow.')}
+                </div>
+              ) : (
+                <div className="vg-side-field">
+                  <div className="flex items-center justify-between gap-3">
+                    <label htmlFor="vg-s-file" className="vg-side-label mono">
+                      <span className="break-all">{openFile}</span>{' '}
+                      <span className="whitespace-nowrap">· read-only</span>
+                    </label>
+                    <button type="button" className="vg-side-btn" onClick={() => setOpenFile(null)}>Back to steps</button>
+                  </div>
+                  {file.error && err(file.error)}
+                  {!file.error && file.content === undefined && <span className="vg-side-hint">Loading file…</span>}
+                  {file.content !== undefined && (
+                    <textarea id="vg-s-file" className="vg-side-input mono" rows={9} readOnly value={file.content} />
+                  )}
+                </div>
+              )}
+              {detail && detail.files.length > 0 && (
+                <div className="vg-side-field">
+                  <span className="vg-skill-files-title">Files in this skill</span>
+                  {detail.files.map((f) => (
+                    <button
+                      key={f.path}
+                      type="button"
+                      className="vg-skill-file"
+                      aria-current={(openFile ?? 'SKILL.md') === f.path}
+                      onClick={() => setOpenFile(f.path === 'SKILL.md' ? null : f.path)}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tx2)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M5 4h10l4 4v12H5zM15 4v4h4M8.5 12h7M8.5 15.5h5" />
+                      </svg>
+                      <span className="min-w-0 break-all">{f.path}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {(testing || test || testError) && (
+                <div ref={panel} className="vg-side-field" role="status" aria-label="Test results">
+                  <span className="vg-skill-files-title">Test results</span>
+                  {testing && <span className="vg-side-hint vg-skill-wait"><span className="vg-skill-spin" aria-hidden="true" />Running the cases on the chat model…</span>}
+                  {testError && err(testError)}
+                  {test?.no_cases && <span className="vg-side-hint">This skill has no test cases.</span>}
+                  {test && !test.no_cases && (
+                    <>
+                      <span className="vg-side-hint">
+                        {test.results.filter((r) => r.passed).length} of {test.results.length} passed
+                        {test.model && <> · {test.model}</>}
+                      </span>
+                      {test.results.map((r) => (
+                        <div key={r.name} className="vg-skill-result" data-passed={r.passed}>
+                          <span className="vg-skill-result-head">
+                            <span className="vg-skill-result-mark">{r.passed ? 'Pass' : 'Fail'}</span>
+                            <span className="min-w-0 break-words">{r.name}</span>
+                          </span>
+                          {r.missing.length > 0 && (
+                            <span className="vg-skill-missing">Missing: {r.missing.join(' · ')}</span>
+                          )}
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
+              {error && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{error}</div>}
+              <div className="vg-side-foot">
+                {!creating && (
+                  <button type="button" className="vg-side-btn" disabled={testing} onClick={runTest}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M9.5 3.5h5M10.5 3.5v6L5.4 18.2a1.6 1.6 0 0 0 1.4 2.3h10.4a1.6 1.6 0 0 0 1.4-2.3l-5.1-8.7v-6" />
+                    </svg>
+                    {testing ? 'Testing…' : 'Test with a sample'}
+                  </button>
+                )}
+                <span className="vg-skill-foot-end">
+                  <button type="button" className="vg-side-btn" onClick={onClose}>Cancel</button>
+                  {canWrite && (
+                    <button type="button" className="vg-side-btn primary" disabled={saveDisabled} onClick={save}>
+                      {busy ? 'Saving…' : creating ? 'Save' : 'Save new version'}
+                    </button>
+                  )}
+                </span>
+              </div>
+            </>
+          )}
+        </aside>
+      </div>
+    </OverlayPortal>
   )
 }
 

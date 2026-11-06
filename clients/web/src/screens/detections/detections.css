@@ -84,7 +84,7 @@
    and the card's head, chips and footer stay put, so a long view never grows the page.
    The offset is the top bar + the card's head, chips and footer, so the whole card fits
    the window once scrolled to; the floor keeps a short window usable. */
-.de-table { border-top: 1px solid var(--ln1); border-bottom: 1px solid var(--ln0); overflow-x: auto; transition: opacity .15s; }
+.de-table { border-top: 1px solid var(--ln1); border-bottom: 1px solid var(--ln0); overflow-x: auto; transition: opacity .15s; container-type: inline-size; }
 .de-table.list-scroll { max-height: clamp(300px, calc(100vh - 260px), 1400px); overscroll-behavior: contain; }
 .de-th { position: sticky; top: 0; z-index: 2; box-sizing: border-box; }
 .de-table.loading { opacity: .55; }
@@ -114,3 +114,47 @@
 .de-end:empty { padding: 0; }
 .de-empty { padding: 44px 20px; text-align: center; font-size: 13px; color: var(--tx2); border-bottom: 1px solid var(--ln0); }
 .de-foot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 20px; font-size: 12.5px; color: var(--tx2); }
+
+/* A Vigil copy's exceptions: opened under its row, across every column. */
+.de-toggles { display: flex; flex-wrap: wrap; gap: 14px; }
+/* Pinned to the visible width, so a narrow screen reads it without scrolling the table sideways. */
+.de-x { position: sticky; left: 20px; box-sizing: border-box; max-width: calc(100cqi - 40px); grid-column: 1 / -1; display: grid; gap: 10px; margin-top: 4px; padding: 14px 16px; border-radius: 10px; background: var(--bg2); border: 1px solid var(--ln0); font-size: 12.5px; color: var(--tx1); }
+.de-row:hover .de-x { background: var(--bg1); }
+.de-x-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; }
+.de-x-head > b { font-size: 13px; font-weight: 650; color: var(--tx0); }
+.de-x-head > b span { font-weight: 500; color: var(--tx3); }
+.de-x-off { font-size: 12px; color: var(--tx3); font-style: italic; }
+.de-x-add { margin-left: auto; font-size: 12.5px; font-weight: 600; }
+.de-x-none { margin: 0; color: var(--tx2); }
+.de-x-err { color: var(--poor); font-size: 12.5px; }
+.de-x-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; background: var(--ln0); border: 1px solid var(--ln0); border-radius: 8px; overflow: hidden; }
+.de-x-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 16px; padding: 10px 12px; background: var(--bg1); }
+/* Handed off: the SIEM runs the rule, so these are kept but not applied. */
+.de-x-list.off li { opacity: .6; }
+.de-x-body { display: grid; gap: 4px; min-width: 0; }
+.de-x-match { display: flex; flex-wrap: wrap; gap: 6px; }
+.de-x-match code { padding: 1px 7px; border-radius: 5px; background: var(--bg3); font-family: var(--font-mono); font-size: 12px; color: var(--tx0); overflow-wrap: anywhere; }
+.de-x-note { color: var(--tx1); line-height: 18px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.de-x-by { font-size: 12px; color: var(--tx3); overflow-wrap: anywhere; }
+.de-x-miss { font-size: 12px; color: var(--fair); overflow-wrap: anywhere; }
+.de-x-miss code { font-family: var(--font-mono); color: var(--tx0); }
+.de-x-side { display: grid; justify-items: end; align-content: start; gap: 6px; text-align: right; }
+.de-x-n { font-size: 12px; color: var(--tx2); white-space: nowrap; }
+.de-x-n b { font-family: var(--font-mono); font-weight: 600; color: var(--tx0); }
+.de-x-rm { font-size: 12px; color: var(--poor); }
+.de-x-removed summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--tx2); }
+.de-x-removed summary:hover { color: var(--tx0); }
+.de-x-removed .de-x-list { margin-top: 8px; }
+.de-x-removed .de-x-list li { background: var(--bg2); }
+.de-x-form { display: grid; gap: 8px; max-width: 880px; padding: 12px; border-radius: 8px; background: var(--bg1); border: 1px solid var(--ln1); }
+.de-x-remove { grid-column: 1 / -1; max-width: 560px; padding: 10px 0 0; border: 0; border-radius: 0; background: none; }
+.de-x-pair { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto; align-items: center; gap: 8px; color: var(--tx3); }
+.de-x-in { width: 100%; min-width: 0; box-sizing: border-box; height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--ln1); background: var(--bg0); color: var(--tx0); font: inherit; font-size: 12.5px; outline: none; }
+.de-x-in.mono { font-family: var(--font-mono); font-size: 12px; }
+.de-x-in::placeholder { color: var(--tx3); }
+.de-x-in:focus { border-color: var(--ac-ln); }
+.de-x-more { justify-self: start; font-size: 12px; }
+.de-x-actions { display: flex; gap: 8px; }
+.de-x-btn { height: 28px; padding: 0 12px; font-size: 12px; }
+.de-x-btn.danger { background: var(--poor-bg); border-color: var(--poor-ln); color: var(--poor); }
+.de-x-removed summary:focus-visible, .de-x-in:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
