@@ -845,6 +845,12 @@
       cursor: pointer;
    }
 
+   /* the Cases rows' ring: a row that opens is a tab stop */
+   .tbl tbody tr.clickable:focus-visible {
+      outline: 2px solid var(--ac);
+      outline-offset: -2px;
+   }
+
    .tbl tbody tr.sel {
       background: var(--accent-dim);
    }
@@ -1354,20 +1360,7 @@
       flex: 0 0 auto;
    }
 
-   /* ---------- cases / decisions master-detail ---------- */
-   .split {
-      display: flex;
-      height: 100%;
-   }
-
-   .list-pane {
-      flex: 0 0 380px;
-      border-right: 1px solid var(--line);
-      display: flex;
-      flex-direction: column;
-      min-width: 0;
-   }
-
+   /* ---------- case detail (the full page and the drawer) ---------- */
    .detail-pane {
       flex: 1;
       min-width: 0;
@@ -2323,16 +2316,6 @@
          width: 100vw;
       }
 
-   }
-
-   /* Cases master-detail + open Vigil dock on smaller screens: the list rail
-     (380px) + chat (400px) leave the detail pane too cramped, so drop the
-     list rail while the dock is open. Above 1100px the dock still pushes
-     (shrinks) .main, so the detail pane keeps its full remaining width. */
-   @media (max-width: 1280px) {
-      .chat-active .split .list-pane {
-         display: none;
-      }
    }
 
    /* ---------- Workflows & Skills ---------- */
@@ -4009,7 +3992,13 @@
       -webkit-box-orient: vertical;
       -webkit-line-clamp: 2;
       overflow: hidden;
+      overflow-wrap: anywhere;
       line-height: 1.4;
+   }
+
+   /* an integration row opens nowhere: tabbing to its switch or action shows the rest (DESIGN.md §7) */
+   .int-table tbody tr:focus-within .int-clamp {
+      -webkit-line-clamp: unset;
    }
 
    .int-act {
@@ -4782,10 +4771,9 @@
       color: var(--tx1);
    }
 
+   /* breaks rather than clips: a tool row opens nowhere, so a cut-off name could not be read */
    .lim-tool-name {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      overflow-wrap: anywhere;
       font-family: var(--mono);
    }
 
@@ -4858,19 +4846,19 @@
       color: var(--tx2);
    }
 
+   /* a read-only value wraps rather than clips; it opens nowhere */
    .data-ro-value {
-      height: 34px;
+      min-height: 34px;
+      box-sizing: border-box;
       display: flex;
       align-items: center;
-      padding: 0 12px;
+      padding: 6px 12px;
       background: var(--bg2);
       border: 1px solid var(--ln1);
       border-radius: 10px;
       font-size: 12.5px;
       color: var(--tx0);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      overflow-wrap: anywhere;
    }
 
    .data-ro-value.empty {
@@ -4897,9 +4885,7 @@
    .data-loglm-msg {
       flex: 1;
       min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      overflow-wrap: anywhere;
    }
 
    .data-drop {
@@ -4980,6 +4966,13 @@
       overflow: hidden;
    }
 
+   /* text wraps rather than clips: a source row opens nowhere, so cut-off text (a URL, or a
+      format name under WCAG text spacing) would have no way to be read (DESIGN.md §7) */
+   .data-table tbody tr:not(.data-expand) > td:not(.data-act) {
+      white-space: normal;
+      overflow-wrap: anywhere;
+   }
+
    .data-table td b {
       font-weight: 700;
       color: var(--tx0);
@@ -4988,11 +4981,6 @@
    .data-table td.muted,
    .data-table .muted {
       color: var(--tx2);
-   }
-
-   .data-clip {
-      overflow: hidden;
-      text-overflow: ellipsis;
    }
 
    /* A source's name wraps rather than clips, and its status pill drops below when it can't fit beside it */
@@ -6729,6 +6717,81 @@
       margin: 0;
       font-family: var(--mono);
    }
+
+   /* reflow tier (.main under 700px, 200%–400% zoom): one column; toolbars wrap, side panels
+      stack, and only tables and diagrams scroll sideways, inside their card. Last in the
+      layer so it outranks the rules above; its unlayered twin follows the 1024px toolbar rule below. */
+   @container main (max-width: 699px) {
+      /* Settings: the section list sits above the section, and the two scroll as one */
+      .settings-wrap {
+         flex-direction: column;
+         overflow-y: auto;
+      }
+
+      .settings-nav {
+         flex: none;
+         flex-flow: row wrap;
+         border-right: 0;
+         border-bottom: 1px solid var(--ln0);
+         overflow: visible;
+      }
+
+      .settings-nav-title {
+         flex-basis: 100%;
+      }
+
+      .settings-nav-item {
+         width: auto;
+      }
+
+      .settings-content {
+         flex: none;
+         overflow: visible;
+         padding: 16px;
+      }
+
+      /* a Settings card's actions drop under its title */
+      .settings-card .card-h {
+         flex-wrap: wrap;
+      }
+
+      .settings-card-actions {
+         flex-wrap: wrap;
+         max-width: 100%;
+      }
+
+      .tq-head {
+         flex-direction: column;
+         gap: 12px;
+      }
+
+      .tq-head-r {
+         flex-wrap: wrap;
+      }
+
+      .tq-tiles {
+         grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      /* the case page's tab body grows in its stage, which scrolls (cases.css) */
+      .case-stage > .detail-body {
+         flex: none;
+         overflow: visible;
+      }
+
+      .wf-tabs {
+         flex-wrap: wrap;
+         gap: 0 22px;
+      }
+
+      .ag-bar {
+         flex-wrap: wrap;
+      }
+
+      .ag-summary {
+         flex-basis: 100%;
+      }
+   }
 }
 
 /* Honour the OS reduced-motion preference inside the console shell. */
@@ -7185,9 +7248,37 @@
    }
 }
 
-@container main (max-width: 720px) {
+/* reflow tier (.main under 700px), unlayered rules; the layered twin closes @layer components */
+@container main (max-width: 699px) {
    .soc-console .search {
       min-width: 120px;
+   }
+
+   /* the workflow cards above the reader, not beside it; the page scrolls, not each column
+      (!important: useFillHeight sizes the layout inline, and the column's padding is utilities) */
+   .wfk-layout {
+      flex-direction: column;
+      height: auto !important;
+   }
+
+   .wfk-layout > .wfk-col {
+      width: auto;
+      overflow: visible;
+      padding-right: 26px;
+   }
+
+   .wfk-reader {
+      overflow: visible;
+   }
+
+   /* Agents & workflows head and the Skills bar: the button drops under the text */
+   .wf-head,
+   .sk-bar {
+      flex-wrap: wrap;
+   }
+
+   .sk-bar > :first-child {
+      flex-basis: 100%;
    }
 }
 
@@ -7559,6 +7650,21 @@
    border-radius: 10px;
    font-size: 12px;
    font-weight: 600;
+}
+
+/* reflow tier (.main under 700px): the notice's button drops under its text */
+@container main (max-width: 699px) {
+   .autoops-off {
+      flex-wrap: wrap;
+   }
+
+   .autoops-off > span {
+      flex-basis: calc(100% - 40px);
+   }
+
+   .autoops-off .btn {
+      margin-left: 28px;
+   }
 }
 
 /* Triage queue: the verdict the daemon's triage saved */

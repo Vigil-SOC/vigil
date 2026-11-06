@@ -540,7 +540,7 @@ function Header({ name, wf, actions, definition, onSave, onChangeDescription }: 
         </div>
       )}
       {wf && actions && (
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0 max-w-full">
           <WatchButton wf={wf} />
           <button className="btn ghost" onClick={actions.onHistory}><Icon name="clock" /> History</button>
           {wf.source === 'custom' && (

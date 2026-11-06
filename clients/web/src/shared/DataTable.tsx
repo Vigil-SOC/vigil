@@ -1,5 +1,6 @@
 import { Fragment, useMemo, useState, type ReactNode } from 'react'
 import { Icon } from './icons'
+import { activateOnKey } from './ui'
 
 /**
  * Hand-written <thead>/<td> pairs keep five things in sync by hand: header cells,
@@ -123,6 +124,10 @@ export function DataTable<T>({
               <tr
                 className={onRowClick ? 'clickable' : undefined}
                 onClick={onRowClick ? () => onRowClick(r) : undefined}
+                // opens from the keyboard too, as clipped cells read in full where the row opens (DESIGN.md §7);
+                // the target check keeps Enter on a control inside the row to that control
+                tabIndex={onRowClick ? 0 : undefined}
+                onKeyDown={onRowClick ? (e) => { if (e.target === e.currentTarget) activateOnKey(() => onRowClick(r))(e) } : undefined}
               >
                 {columns.map((c) => <td key={c.key} className={c.className}>{c.render(r)}</td>)}
               </tr>
