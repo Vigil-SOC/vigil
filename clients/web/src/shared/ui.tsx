@@ -609,6 +609,7 @@ export function ConfirmDialog({
   danger = true,
   busy = false,
   confirmDisabled = false,
+  width = 440,
   onConfirm,
   onClose,
 }: {
@@ -619,12 +620,14 @@ export function ConfirmDialog({
   danger?: boolean
   busy?: boolean
   confirmDisabled?: boolean
+  /** Wider for a body that carries a list or table. */
+  width?: number
   onConfirm: () => void
   onClose: () => void
 }) {
   return (
-    <Popup open={open} onClose={onClose} title={title} width={440}>
-      <p className="text-sm text-tx-2 leading-relaxed">{body}</p>
+    <Popup open={open} onClose={onClose} title={title} width={width}>
+      <div className="text-sm text-tx-2 leading-relaxed">{body}</div>
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn ghost" onClick={onClose} disabled={busy}>
           Cancel

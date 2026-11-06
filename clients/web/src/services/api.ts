@@ -888,6 +888,17 @@ export const timelineApi = {
   
 }
 
+/** A live rule only Vigil runs: Stop halts its detection. */
+export interface OverlayOnlyRule {
+  id: number
+  name: string
+  language: string
+  /** Its format has a deploy target, so Vigil can open a deploy pull request. */
+  deploy_target: boolean
+  /** What its deploy pull request came to on its current version; null before one. */
+  deploy: { version: number; at: string; pr_url?: string; in_repo?: string; error?: string } | null
+}
+
 export const detectionRulesApi = {
   listSources: () => api.get('/detection-rules/sources'),
 
@@ -937,9 +948,15 @@ export const detectionRulesApi = {
 
   /** Live overlay rules no SIEM rule runs: only Vigil detects with them. */
   getOverlayOnly: () =>
-    api.get<{ rules: { id: number; name: string; language: string }[] }>(
-      '/detection-rules/overlay-only',
-    ),
+    api.get<{ rules: OverlayOnlyRule[] }>('/detection-rules/overlay-only'),
+
+  /** Queue a deploy pull request for these live overlay-only rules (all when none given). */
+  deployOverlayOnly: (ruleIds?: number[]) =>
+    api.post<{
+      opened: { rule_id: number; pr_url?: string; in_repo?: string }[]
+      failed: { rule_id: number; error: string }[]
+      skipped: { rule_id: number; reason: string }[]
+    }>('/detection-rules/overlay-only/deploy', { rule_ids: ruleIds ?? null }),
   
   
   reload: () => api.post('/detection-rules/reload'),
