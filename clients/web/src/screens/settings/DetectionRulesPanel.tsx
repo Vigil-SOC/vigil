@@ -40,6 +40,18 @@ const fmtNum = (n: number) => n.toLocaleString()
 const DEPLOY_FORMATS = ['splunk', 'elastic']
 const deployable = (s: DetectionSource) => s.type === 'git' && DEPLOY_FORMATS.includes(s.format)
 
+// Why a row can't be a deploy target at all; '' when it can.
+const notDeployable = (s: DetectionSource) =>
+  !DEPLOY_FORMATS.includes(s.format)
+    ? `${formatName(s.format)} rules can't be a deploy target; only Splunk and Elastic rules are deployed.`
+    : s.type !== 'git'
+      ? "A local folder can't be a deploy target; Vigil opens pull requests, so it needs a git repo."
+      : ''
+
+// Why a deploy target of this format can't be turned on: another source already is one.
+const targetTaken = (format: string, other: DetectionSource | undefined) =>
+  other ? `${other.name} is already the ${formatName(format)} deploy target; turn it off first.` : ''
+
 // A deploy target awaiting the person's confirmation: an existing row, or the add form.
 type PendingTarget = { name: string; url: string; format: string; source?: DetectionSource }
 
@@ -121,7 +133,7 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
         path: form.source_type === 'local' ? form.path : undefined,
         subdirectory: form.subdirectory,
         story_subdirectory: form.story_subdirectory,
-        deploy_target: formDeployable && !!form.deploy_target,
+        deploy_target: wantsTarget,
       })
       notify('ok', `Added source: ${form.name}.`)
       setAddOpen(false)
@@ -145,6 +157,10 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
   }
 
   const formDeployable = form.source_type === 'git' && DEPLOY_FORMATS.includes(form.format)
+  // The source each format already deploys to (at most one per format; the server refuses a second).
+  const targetOf = (format: string) => sources.find((s) => s.deploy_target && s.format === format)
+  const formTaken = targetTaken(form.format, targetOf(form.format))
+  const wantsTarget = formDeployable && !formTaken && !!form.deploy_target
   const addValid = !!form.name && (form.source_type === 'git' ? !!form.url : !!form.path)
 
   return (
@@ -180,36 +196,44 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
               {sources.map((s) => {
                 const where = whereOf(s.git_url || '')
                 const updated = s.last_updated ? `Last updated ${new Date(s.last_updated).toLocaleString()}` : ''
+                const other = targetOf(s.format)
+                const taken = other && other.id !== s.id ? targetTaken(s.format, other) : ''
                 return (
                   <tr key={s.id}>
-                    <td className="data-clip" title={updated || undefined}>
-                      <b>{s.name}</b>
-                      {s.status !== 'ready' && (
-                        <span className={`level-pill ${s.status === 'error' ? 'poor' : 'idle'} ml-2`}>
-                          {s.status === 'not_cloned' ? 'Not cloned' : s.status}
-                        </span>
-                      )}
+                    <td title={updated || undefined}>
+                      <div className="data-name">
+                        <b>{s.name}</b>
+                        {s.status !== 'ready' && (
+                          <span className={`level-pill ${s.status === 'error' ? 'poor' : 'idle'}`}>
+                            {s.status === 'not_cloned' ? 'Not cloned' : s.status}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td>{formatName(s.format)}</td>
                     <td
                       title={
-                        !deployable(s) ? undefined
+                        !deployable(s) ? notDeployable(s)
                         : s.vendor_repo ? 'A vendor’s public repo can’t be a deploy target; add your own repo for that.'
-                        : `When one of Vigil's ${formatName(s.format)} rules goes live, an agent opens a pull request adding it here; it waits for approval.`
+                        : taken ||
+                          `When one of Vigil's ${formatName(s.format)} rules goes live, an agent opens a pull request adding it here; it waits for approval.`
                       }
                     >
-                      {deployable(s) && (s.vendor_repo ? (
+                      {!deployable(s) ? (
+                        <span className="text-tx-3" aria-label={notDeployable(s)}>—</span>
+                      ) : s.vendor_repo ? (
                         <span className="text-xs text-tx-3">Vendor repo</span>
                       ) : (
                         <Toggle
                           checked={!!s.deploy_target}
-                          disabled={!!updating}
+                          disabled={!!updating || !!taken}
                           label={`${s.name}: deploy target for ${formatName(s.format)} rules`}
+                          title={taken || undefined}
                           onChange={(on) =>
                             on ? setConfirmTarget({ name: s.name, url: s.git_url, format: s.format, source: s }) : onDeployTarget(s, false)
                           }
                         />
-                      ))}
+                      )}
                     </td>
                     <td className="data-clip font-mono" title={s.git_url || undefined}>{where || '—'}</td>
                     <td>{fmtNum(s.rule_count)}</td>
@@ -266,8 +290,9 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
           {formDeployable && (
             <ToggleRow
               label="Deploy target"
-              hint={`When one of Vigil's ${formatName(form.format)} rules goes live, an agent opens a pull request adding it here.`}
-              checked={!!form.deploy_target}
+              hint={formTaken || `When one of Vigil's ${formatName(form.format)} rules goes live, an agent opens a pull request adding it here.`}
+              checked={!formTaken && !!form.deploy_target}
+              disabled={!!formTaken}
               onChange={(v) => setForm({ ...form, deploy_target: v })}
             />
           )}
@@ -276,7 +301,7 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
             <button
               className="btn primary"
               onClick={() =>
-                formDeployable && form.deploy_target
+                wantsTarget
                   ? setConfirmTarget({ name: form.name, url: form.url || '', format: form.format })
                   : onAdd()
               }
