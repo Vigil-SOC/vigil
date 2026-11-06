@@ -10,6 +10,7 @@ import { Icon } from '../shared/icons'
 import { InfoTip } from '../shared/InfoTip'
 import { anyActs } from '../shared/autonomy'
 import { PageHead } from '../shared/PageHead'
+import { OverlayHost } from '../shared/ui'
 import type { ConsoleScreenKey } from '../data/data'
 import { ExtensionProvider, useExtensions } from '../extensions/ExtensionProvider'
 import ExtensionHost from '../extensions/ExtensionHost'
@@ -175,6 +176,16 @@ function SocConsoleInner() {
   const onCommandHost = useCallback((node: HTMLElement | null) => setCommandHost(node), [])
   const onHeaderSlot = useCallback((node: HTMLDivElement | null) => setHeaderSlot(node), [])
   const [viewFull, setViewFull] = useState(false)
+  // Dialogs and side drawers portal here, outside .main (a size container). Created up front and attached
+  // by the root's ref, so an overlay open on the first render already has its host before its effects run.
+  const [overlayHost] = useState(() => {
+    const el = document.createElement('div')
+    el.className = 'vg-overlay-host'
+    return el
+  })
+  const attachOverlayHost = useCallback((root: HTMLDivElement | null) => {
+    if (root && overlayHost.parentNode !== root) root.appendChild(overlayHost)
+  }, [overlayHost])
   const [wallMode, setWallMode] = useState(false)
   const homePerm = SCREEN_PERMS.home
   const canTourHome = !homePerm || hasPermission(homePerm)
@@ -595,10 +606,12 @@ function SocConsoleInner() {
 
   return (
     <div
+      ref={attachOverlayHost}
       className={wrapperClass}
       data-theme={scheme}
       style={consoleStyle}
     >
+      <OverlayHost.Provider value={overlayHost}>
       <ToastProvider>
       <div className="shell vg-shell">
         {!wallMode && <header className="vg-header">
@@ -809,6 +822,7 @@ function SocConsoleInner() {
         />
       )}
       </ToastProvider>
+      </OverlayHost.Provider>
     </div>
   )
 }

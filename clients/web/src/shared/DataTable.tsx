@@ -23,6 +23,8 @@ export interface ColumnDef<T> {
   headless?: boolean
   /** replaces the label in an unsortable header, e.g. a label with an ⓘ */
   header?: ReactNode
+  /** on the column's th and every td, e.g. `col-low` (DESIGN.md §7) */
+  className?: string
 }
 
 type SortState = { key: string; dir: 'asc' | 'desc' }
@@ -51,10 +53,10 @@ export function sortRows<T>(rows: T[], columns: ColumnDef<T>[], sort: SortState)
 function SortHeader<T>(
   { col, sort, onSort }: { col: ColumnDef<T>; sort: SortState; onSort: (k: string) => void },
 ) {
-  if (!col.sortVal) return <th>{col.headless ? null : col.header ?? col.label}</th>
+  if (!col.sortVal) return <th className={col.className}>{col.headless ? null : col.header ?? col.label}</th>
   const active = sort.key === col.key
   return (
-    <th className={`sortable${active ? ' sorted' : ''}`} onClick={() => onSort(col.key)}>
+    <th className={`sortable${active ? ' sorted' : ''}${col.className ? ` ${col.className}` : ''}`} onClick={() => onSort(col.key)}>
       {col.label}
       {active && (
         <span className="arr"><Icon name={sort.dir === 'asc' ? 'arrowUp' : 'arrowDn'} size={12} /></span>
@@ -122,7 +124,7 @@ export function DataTable<T>({
                 className={onRowClick ? 'clickable' : undefined}
                 onClick={onRowClick ? () => onRowClick(r) : undefined}
               >
-                {columns.map((c) => <td key={c.key}>{c.render(r)}</td>)}
+                {columns.map((c) => <td key={c.key} className={c.className}>{c.render(r)}</td>)}
               </tr>
               {renderExpanded && key === expandedKey && (
                 <tr className="row-expanded">

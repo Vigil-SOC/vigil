@@ -58,6 +58,11 @@
   --vg-top: 52px;
 }
 
+/* Dialogs and side drawers mount here (OverlayPortal); it adds no box of its own. */
+.vg-overlay-host {
+  display: contents;
+}
+
 /* Vertical layout: the header keeps the full width; the nav and the page sit side by side below it. */
 .soc-console.vg-vertical .vg-shell {
   display: grid;
