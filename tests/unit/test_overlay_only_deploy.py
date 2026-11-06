@@ -114,7 +114,7 @@ def test_a_pr_that_fails_says_why(estate):
         {
             "rule_id": 1,
             "error": "POST /repos/acme/detections/pulls: 502 bad gateway",
-            "reason": "GitHub had a problem on its side. Try again.",
+            "reason": "GitHub error. Try again.",
         }
     ]
     assert "502" in estate["recorded"][1]["error"]
@@ -186,23 +186,23 @@ def test_a_github_target_is_not_refused(estate):
 def test_a_failed_row_says_what_to_do_and_keeps_the_raw_line(estate):
     row = {r["id"]: r for r in rollout.overlay_only()}[6]
     assert row["deploy"]["error"] == "POST /pulls: 422"
-    assert row["deploy"]["reason"].startswith("GitHub turned the pull request down")
+    assert row["deploy"]["reason"].startswith("GitHub refused the PR")
 
 
 @pytest.mark.parametrize(
     "raw, starts",
     [
         ("no GitHub token: set the github integration's token", "No GitHub token"),
-        ("https://gitlab.com/x.git: " + GITHUB_ONLY, "The deploy target isn't"),
-        ("GET /repos/a/b: 401 Bad credentials", "GitHub didn't accept the token"),
+        ("https://gitlab.com/x.git: " + GITHUB_ONLY, "Not a GitHub repo"),
+        ("GET /repos/a/b: 401 Bad credentials", "Token not accepted"),
         (
             "POST /repos/a/b/pulls: 403 Resource not accessible by personal access token",
-            "The GitHub token can't write",
+            "Token can't write here",
         ),
-        ("GET /repos/a/b: 404 Not Found", "GitHub couldn't find the repo"),
-        ("PUT /api/v3/repos/a/b/contents/x: 500 boom", "GitHub had a problem"),
+        ("GET /repos/a/b: 404 Not Found", "Repo not found"),
+        ("PUT /api/v3/repos/a/b/contents/x: 500 boom", "GitHub error"),
         ("ConnectTimeout", "GitHub didn't answer"),
-        ("something else entirely", "The pull request couldn't be opened"),
+        ("something else entirely", "Couldn't open the PR"),
     ],
 )
 def test_plain_reasons(raw, starts):

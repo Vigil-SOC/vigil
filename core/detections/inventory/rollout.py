@@ -891,29 +891,29 @@ RACE_WAITS = (0.0, 1.0, 2.0)
 _PLAIN = (
     (
         r"no GitHub token",
-        "No GitHub token is set. Add one to the GitHub integration in Settings.",
+        "No GitHub token. Add one to the GitHub integration in Settings.",
     ),
     (
         r"only GitHub",
-        "The deploy target isn't a GitHub repo. Choose a github.com or GitHub Enterprise repo.",
+        "Not a GitHub repo. Choose a github.com or GitHub Enterprise repo.",
     ),
     (
         r": 401\b",
-        "GitHub didn't accept the token. Check the GitHub integration's token.",
+        "Token not accepted. Check the GitHub integration's token.",
     ),
     (
         r": 403\b",
-        "The GitHub token can't write to this repo. Give it access to contents and pull requests.",
+        "Token can't write here. Give it access to contents and pull requests.",
     ),
     (
         r": 404\b",
-        "GitHub couldn't find the repo or its branch. Check the deploy target's URL.",
+        "Repo not found. Check the deploy target's URL.",
     ),
     (
         r": 422\b",
-        "GitHub turned the pull request down. Try again; if it repeats, check the repo.",
+        "GitHub refused the PR. Try again; if it repeats, check the repo.",
     ),
-    (r": 5\d\d\b", "GitHub had a problem on its side. Try again."),
+    (r": 5\d\d\b", "GitHub error. Try again."),
     (
         r"Timeout|ConnectError|could not be reached|Name or service",
         "GitHub didn't answer. Try again.",
@@ -926,7 +926,7 @@ def plain_deploy_error(error: str) -> str:
     for pattern, said in _PLAIN:
         if re.search(pattern, error or ""):
             return said
-    return "The pull request couldn't be opened. Try again."
+    return "Couldn't open the PR. Try again."
 
 
 def _deploy(
