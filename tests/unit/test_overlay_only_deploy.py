@@ -35,7 +35,9 @@ def estate(monkeypatch):
     state = {
         "copies": [
             _copy(1),  # nothing yet
-            _copy(2, deploy={"version": 2, "pr_url": "https://github.com/acme/d/pull/7"}),
+            _copy(
+                2, deploy={"version": 2, "pr_url": "https://github.com/acme/d/pull/7"}
+            ),
             _copy(3, language="splunk"),  # no splunk target
             _copy(4, stage="shadow"),
             _copy(5),  # handed off to a SIEM copy
@@ -110,7 +112,11 @@ def test_a_pr_that_fails_says_why(estate):
     out = rollout.deploy_overlay_only([1])
     assert out["opened"] == []
     assert out["failed"] == [
-        {"rule_id": 1, "error": "POST /repos/acme/detections/pulls: 502 bad gateway"}
+        {
+            "rule_id": 1,
+            "error": "POST /repos/acme/detections/pulls: 502 bad gateway",
+            "reason": "GitHub error. Try again.",
+        }
     ]
     assert "502" in estate["recorded"][1]["error"]
 
@@ -161,3 +167,119 @@ def test_a_splunk_rule_needs_its_overlay_file(estate, monkeypatch):
     assert out["skipped"] == [
         {"rule_id": 3, "reason": "its overlay file could not be read"}
     ]
+
+
+# --- the Stop prompt's rows say what a person can do ---------------------------
+
+
+def test_a_refused_target_is_no_target_for_the_button(estate):
+    estate["targets"]["elastic"]["git_url"] = "https://gitlab.com/acme/detections.git"
+    row = {r["id"]: r for r in rollout.overlay_only()}[1]
+    assert row["deploy_target"] is False
+    assert row["target_refused"] == GITHUB_ONLY
+
+
+def test_a_github_target_is_not_refused(estate):
+    row = {r["id"]: r for r in rollout.overlay_only()}[1]
+    assert row["deploy_target"] is True and row["target_refused"] is None
+
+
+def test_a_failed_row_says_what_to_do_and_keeps_the_raw_line(estate):
+    row = {r["id"]: r for r in rollout.overlay_only()}[6]
+    assert row["deploy"]["error"] == "POST /pulls: 422"
+    assert row["deploy"]["reason"].startswith("GitHub refused the PR")
+
+
+@pytest.mark.parametrize(
+    "raw, starts",
+    [
+        ("no GitHub token: set the github integration's token", "No GitHub token"),
+        ("https://gitlab.com/x.git: " + GITHUB_ONLY, "Not a GitHub repo"),
+        ("GET /repos/a/b: 401 Bad credentials", "Token not accepted"),
+        (
+            "POST /repos/a/b/pulls: 403 Resource not accessible by personal access token",
+            "Token can't write here",
+        ),
+        ("GET /repos/a/b: 404 Not Found", "Repo not found"),
+        ("PUT /api/v3/repos/a/b/contents/x: 500 boom", "GitHub error"),
+        ("ConnectTimeout", "GitHub didn't answer"),
+        ("something else entirely", "Couldn't open the PR"),
+    ],
+)
+def test_plain_reasons(raw, starts):
+    assert rollout.plain_deploy_error(raw).startswith(starts)
+
+
+# --- a raced click resolves to the PR the other one opened -------------------
+
+
+class _RacedGitHub:
+    """A repo where another click made the branch, wrote the file or opened the
+    PR between this call's checks and its writes."""
+
+    def __init__(self, opened_by_other_after):
+        self.calls = 0
+        self.lists = 0
+        self.opened_after = opened_by_other_after  # PR lists before the other PR shows
+
+    def handle(self, request):
+        import httpx
+
+        self.calls += 1
+        path, method = request.url.path, request.method
+        if method == "GET" and path.endswith("/pulls"):
+            self.lists += 1
+            if self.lists > self.opened_after:
+                return httpx.Response(
+                    200, json=[{"html_url": "https://github.com/acme/d/pull/9"}]
+                )
+            return httpx.Response(200, json=[])
+        if method == "GET" and path == "/repos/acme/detections":
+            return httpx.Response(200, json={"default_branch": "main"})
+        if method == "GET" and "/contents/" in path:
+            return httpx.Response(404, json={"message": "Not Found"})
+        if method == "GET" and "/git/ref/heads/" in path:
+            if path.endswith("/main"):
+                return httpx.Response(200, json={"object": {"sha": "s"}})
+            return httpx.Response(404, json={"message": "Not Found"})
+        if method == "POST" and path.endswith("/git/refs"):
+            return httpx.Response(422, json={"message": "Reference already exists"})
+        if method == "PUT":
+            return httpx.Response(409, json={"message": "sha wasn't supplied"})
+        if method == "POST" and path.endswith("/pulls"):
+            return httpx.Response(
+                422, json={"message": "A pull request already exists"}
+            )
+        return httpx.Response(404, json={"message": "no route"})
+
+
+@pytest.fixture
+def raced(monkeypatch):
+    import httpx
+
+    def make(opened_after):
+        fake = _RacedGitHub(opened_after)
+        real = httpx.Client
+        monkeypatch.setattr(
+            httpx,
+            "Client",
+            lambda **kw: real(transport=httpx.MockTransport(fake.handle), **kw),
+        )
+        monkeypatch.setattr(rollout, "RACE_WAITS", (0.0, 0.0, 0.0))
+        return fake
+
+    return make
+
+
+@pytest.mark.parametrize("opened_after", [1, 2, 3])
+def test_a_raced_click_resolves_to_the_other_ones_pr(raced, opened_after):
+    # The first look finds nothing; the other click's PR shows up a little later.
+    raced(opened_after)
+    out = rollout._open_pr(_copy(1), TARGET, "body", "ghp_x")
+    assert out == {"pr_url": "https://github.com/acme/d/pull/9"}
+
+
+def test_a_real_failure_still_fails_after_looking_again(raced):
+    raced(99)  # no other PR ever shows up
+    with pytest.raises(RuntimeError, match="409"):
+        rollout._open_pr(_copy(1), TARGET, "body", "ghp_x")
