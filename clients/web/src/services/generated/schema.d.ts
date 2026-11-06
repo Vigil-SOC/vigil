@@ -2987,7 +2987,7 @@ export interface paths {
         };
         /**
          * Get Setup Steps
-         * @description Home's setup list: tools, a notify route, rules on disk, model variety, a custom skill.
+         * @description Home's setup list: tools, a notify route, rules on disk, imported history, model variety, a custom skill.
          */
         get: operations["get_api_config_setup-steps"];
         put?: never;
