@@ -59,7 +59,11 @@ export function SensorsTab({ status, open }: { status: StatusRead; open: (id: st
   }
 
   const cols: ColumnDef<Sensor>[] = [
-    { key: 'id', label: 'Sensor', render: (s) => <span className="mdc-mono mdc-wrap" title={safeTitle(s.id)}>{safeText(s.id)}</span> },
+    {
+      key: 'id', label: 'Sensor',
+      header: <>Sensor<span className="col-low-note mdc-hide-note">Since, last good reading and dropped lines are hidden while Ask Vigil is open</span></>,
+      render: (s) => <span className="mdc-mono mdc-wrap" title={safeTitle(s.id)}>{safeText(s.id)}</span>,
+    },
     {
       key: 'state', label: 'State',
       render: (s) => {
@@ -69,8 +73,8 @@ export function SensorsTab({ status, open }: { status: StatusRead; open: (id: st
         return <span className={`mdc-state ${tone}`}>{word}</span>
       },
     },
-    { key: 'since', label: 'Since', render: (s) => <span className="mdc-mono" title={safeTitle(s.since)}>{time(s.since, asOf)}</span> },
-    { key: 'good', label: 'Last good reading', render: (s) => <span className="mdc-mono" title={safeTitle(s.last_good_at)}>{time(s.last_good_at, asOf)}</span> },
+    { key: 'since', label: 'Since', className: 'col-low', render: (s) => <span className="mdc-mono" title={safeTitle(s.since)}>{time(s.since, asOf)}</span> },
+    { key: 'good', label: 'Last good reading', className: 'col-low', render: (s) => <span className="mdc-mono" title={safeTitle(s.last_good_at)}>{time(s.last_good_at, asOf)}</span> },
     {
       key: 'reason', label: 'Reason',
       render: (s) => {
@@ -81,7 +85,7 @@ export function SensorsTab({ status, open }: { status: StatusRead; open: (id: st
       },
     },
     {
-      key: 'dropped', label: 'Dropped lines, last hour',
+      key: 'dropped', label: 'Dropped lines, last hour', className: 'col-low',
       render: (s) => (own(STATE, s.state) && Number.isFinite(s.dropped_last_hour) && (s.dropped_last_hour as number) >= 0
         ? <span className="mdc-mono">{s.dropped_last_hour}</span>
         : <NotMeasured />),

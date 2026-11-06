@@ -332,9 +332,11 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
 
         {error && <div className="de-pad"><Failure>{error}</Failure></div>}
 
+        {/* outside the 38px header row, whose height the virtual list counts on */}
+        <p className="col-low-note de-pad de-hide-note">The health column is hidden while Ask Vigil is open; the chips above still filter by it.</p>
         <div ref={listRef} className={`de-table list-scroll${loading ? ' loading' : ''}`} data-testid="de-rules">
           <div className="de-tr de-th">
-            <span>Rule</span><span>Health ↓</span><span>Why</span><span className="de-right">Action</span>
+            <span>Rule</span><span className="col-low">Health ↓</span><span>Why</span><span className="de-right">Action</span>
           </div>
           <div className="de-rows" style={{ height: virtual.getTotalSize() }}>
           {shown.map((item) => {
@@ -355,7 +357,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                     <span className={r.fires > 0 ? 'de-fired' : ''}>{fired}</span>
                   </div>
                 </div>
-                <div><span className={`de-health ${h.tone}`}><i />{h.label}</span></div>
+                <div className="col-low"><span className={`de-health ${h.tone}`}><i />{h.label}</span></div>
                 <div className="de-why">
                   <div className="de-why-text" title={r.why}>{r.why}</div>
                   <div className="de-toggles">
