@@ -91,9 +91,11 @@ export function IncidentsTab({ status, incidentId, open }: {
         </span>
       ),
     },
-    { key: 'lane', label: 'Lane', render: ({ inc }) => <span className="mdc-mono">{inc.lane.value}</span> },
+    { key: 'lane', label: 'Lane', className: 'col-low', render: ({ inc }) => <span className="mdc-mono">{inc.lane.value}</span> },
     {
       key: 'what', label: 'What',
+      // shown only while the col-low columns are hidden (styles.css, .col-low-note)
+      header: <>What<span className="col-low-note mdc-hide-note">Lane, duration and rating are hidden while Ask Vigil is open</span></>,
       render: ({ inc, child, kids }) => (
         <div className="mdc-what">
           <button type="button" className={`mdc-open${child ? ' child' : ''}`} title={safeTitle(what(inc))} onClick={(e) => { e.stopPropagation(); open(inc.incident_id) }}>
@@ -113,9 +115,9 @@ export function IncidentsTab({ status, incidentId, open }: {
       ),
     },
     { key: 'opened', label: 'Opened', render: ({ inc }) => <span className="mdc-mono" title={safeTitle(inc.opened_at)}>{stamp(inc.opened_at)}</span> },
-    { key: 'duration', label: 'Duration', render: ({ inc }) => <span className="mdc-mono">{durationWord(inc, now)}</span> },
+    { key: 'duration', label: 'Duration', className: 'col-low', render: ({ inc }) => <span className="mdc-mono">{durationWord(inc, now)}</span> },
     {
-      key: 'rating', label: 'Rating',
+      key: 'rating', label: 'Rating', className: 'col-low',
       render: ({ inc }) => {
         const w = ratingWord(inc)
         return w ? <span title={safeTitle(w)}>{safeText(w)}</span> : <span className="mdc-unrated">Unrated</span>

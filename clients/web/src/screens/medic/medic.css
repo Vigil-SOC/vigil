@@ -38,15 +38,17 @@
 
 /* list: fixed columns so prose cannot decide a width; the title stops at two lines */
 .mdc-card:has(.mdc-tbl), .mdc-card:has(.mdc-sens) { padding: 0; overflow: hidden; }
-/* seven columns do not fit a phone: the table keeps a readable width and scrolls inside its card (shell.css) */
-.mdc-card:has(.mdc-sens) { overflow-x: auto; }
-.mdc-tbl { table-layout: fixed; }
+/* below its min-width (the fixed columns plus the main column's floor) a table scrolls inside its card */
+.mdc-card:has(.mdc-tbl), .mdc-card:has(.mdc-sens) { overflow-x: auto; }
+.mdc-tbl { table-layout: fixed; --mdc-tracks: 520px; min-width: calc(var(--mdc-tracks) + var(--col-main-min)); }
 .mdc-tbl thead th, .mdc-tbl tbody td { overflow: hidden; }
-.mdc-tbl thead th:nth-child(1) { width: 19%; }
-.mdc-tbl thead th:nth-child(2) { width: 64px; }
-.mdc-tbl thead th:nth-child(4) { width: 96px; }
-.mdc-tbl thead th:nth-child(5) { width: 112px; }
-.mdc-tbl thead th:nth-child(6) { width: 15%; }
+/* compact widths; What (3) takes the rest */
+.mdc-tbl thead th:nth-child(1) { width: 132px; }
+.mdc-tbl thead th:nth-child(2) { width: 72px; }
+.mdc-tbl thead th:nth-child(4) { width: 112px; }
+.mdc-tbl thead th:nth-child(5) { width: 92px; }
+.mdc-tbl thead th:nth-child(6) { width: 112px; }
+.mdc-hide-note { margin-top: 2px; white-space: normal; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--tx3); }
 .mdc-tbl tbody td { vertical-align: top; white-space: normal; }
 .mdc-tbl tbody td:has(.empty-state-table) { white-space: normal; }
 .mdc-state { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-weight: 600; color: var(--tx0); overflow-wrap: anywhere; }
@@ -72,14 +74,24 @@
 .mdc-unrated { color: var(--tx2); }
 .mdc-more { display: flex; justify-content: center; }
 
-/* sensors: fixed columns too, long ids and reasons wrap inside their cell */
-.mdc-sens { table-layout: fixed; min-width: 700px; }
+/* sensors: fixed columns too, long ids and reasons wrap inside their cell; Sensor (1) takes the rest */
+.mdc-sens { table-layout: fixed; --mdc-tracks: 760px; min-width: calc(var(--mdc-tracks) + var(--col-main-min)); }
 .mdc-sens thead th, .mdc-sens tbody td { overflow: hidden; white-space: normal; overflow-wrap: anywhere; vertical-align: top; }
-.mdc-sens thead th:nth-child(1) { width: 20%; }
-.mdc-sens thead th:nth-child(2) { width: 13%; }
-.mdc-sens thead th:nth-child(3), .mdc-sens thead th:nth-child(4) { width: 11%; }
-.mdc-sens thead th:nth-child(5) { width: 17%; }
-.mdc-sens thead th:nth-child(6) { width: 13%; }
+.mdc-sens thead th:nth-child(2) { width: 104px; }
+.mdc-sens thead th:nth-child(3) { width: 88px; }
+.mdc-sens thead th:nth-child(4) { width: 112px; }
+.mdc-sens thead th:nth-child(5) { width: 160px; }
+.mdc-sens thead th:nth-child(6) { width: 136px; }
+.mdc-sens thead th:nth-child(7) { width: 160px; }
+
+/* Incidents: Lane, Duration and Rating (276px); Sensors: Since, Last good reading and Dropped lines (336px)
+   step aside while Ask Vigil is docked */
+@container main (max-width: 1399px) {
+  .main.chat-open .mdc-tbl { --mdc-tracks: 244px; }
+  .main.chat-open .mdc-sens { --mdc-tracks: 424px; }
+  /* this file is unlayered, so the widths above outrank the shared .col-low rule (styles.css) */
+  .main.chat-open :is(.mdc-tbl, .mdc-sens) .col-low { width: 0; }
+}
 .mdc-sens tbody td:has(.empty-state-table) { white-space: normal; }
 .mdc-wrap { overflow-wrap: anywhere; }
 .mdc-link.mdc-cant { margin: 0; color: var(--poor); font-weight: 600; }
@@ -96,7 +108,7 @@
 .mdc-would p { margin: 0 0 4px; font-size: 13px; line-height: 1.5; color: var(--tx1); }
 .mdc-would p.mdc-nothing { margin-top: 6px; color: var(--tx0); font-weight: 600; }
 .mdc-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
-@media (max-width: 1100px) { .mdc-cols { grid-template-columns: minmax(0, 1fr); } }
+@container main (max-width: 1100px) { .mdc-cols { grid-template-columns: minmax(0, 1fr); } }
 
 .mdc-pre {
   margin: 4px 0 0; padding: 8px 10px; background: var(--bg2); border: 1px solid var(--ln0); border-radius: 8px;
@@ -122,12 +134,12 @@
 .mdc-comment-row textarea { flex: 1; min-width: 0; resize: vertical; }
 .mdc-save-failed { margin: 8px 0 0; font-size: 13px; color: var(--poor); }
 .mdc-saved { margin-top: 8px; }
-@media (max-width: 560px) { .mdc-comment-row { flex-direction: column; align-items: stretch; } }
+@container main (max-width: 560px) { .mdc-comment-row { flex-direction: column; align-items: stretch; } }
 
 /* content pack: facts, actions, lists (UX-25…27) */
 .mdc-strip.good { color: var(--good); background: var(--good-bg); border-color: var(--good-ln); }
 .mdc-packs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
-@media (max-width: 1100px) { .mdc-packs { grid-template-columns: minmax(0, 1fr); } }
+@container main (max-width: 1100px) { .mdc-packs { grid-template-columns: minmax(0, 1fr); } }
 .mdc-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 0; font-size: 13px; color: var(--tx1); }
 .mdc-facts dt { color: var(--tx2); }
 .mdc-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }

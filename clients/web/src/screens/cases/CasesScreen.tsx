@@ -367,12 +367,12 @@ function CasesTable({
           <div className="cg-row cg-head" role="row">
             <span role="columnheader"><span className="sr-only">Select</span></span>
             <span role="columnheader">Case</span>
-            <span role="columnheader">What it is</span>
-            <span role="columnheader">Kind</span>
+            <span role="columnheader">What it is<span className="col-low-note cg-hide-note">Kind, owner and time left are hidden while Ask Vigil is open</span></span>
+            <span role="columnheader" className="col-low">Kind</span>
             <span role="columnheader">Severity</span>
             <span role="columnheader">Status</span>
-            <span role="columnheader">Owner</span>
-            <span role="columnheader" className="cg-th-info">Time left (SLA)<InfoTip label="How time left is calculated" {...TIME_LEFT_TIP} /></span>
+            <span role="columnheader" className="col-low">Owner</span>
+            <span role="columnheader" className="cg-th-info col-low">Time left (SLA)<InfoTip label="How time left is calculated" {...TIME_LEFT_TIP} /></span>
             <span role="columnheader"><span className="sr-only">Comments</span></span>
           </div>
           <div role="rowgroup">
@@ -412,17 +412,17 @@ function CasesTable({
                       <span className="cg-title">{c.title}</span>
                       <span className="cg-sub">{metaLine(c)}</span>
                     </span>
-                    <span role="cell" className="cg-kind" title={kindName(c)}>{kindName(c)}</span>
+                    <span role="cell" className="cg-kind col-low" title={kindName(c)}>{kindName(c)}</span>
                     <span role="cell"><SeverityMark level={c.prio} /></span>
                     <span role="cell"><StatePill state={c.status} needs={c.needsYou} /></span>
-                    <span role="cell" className="cg-owner">
+                    <span role="cell" className="cg-owner col-low">
                       <span className="cg-avatar" aria-hidden="true">{c.owner}</span>
                       <span className="cg-owner-name">
                         {c.ownerName === 'unassigned' ? 'Unassigned' : c.ownerName}
                         {me && c.ownerName === me && ' (you)'}
                       </span>
                     </span>
-                    <span role="cell" className="cg-time">
+                    <span role="cell" className="cg-time col-low">
                       <span>{c.timeLeft}</span>
                       {!c.slaPaused && c.timeLeft !== '—' && <LevelBadge level={slaLevel(c.slaHealth)} variant="pill" />}
                     </span>

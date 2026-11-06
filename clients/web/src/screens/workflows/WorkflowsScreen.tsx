@@ -3985,11 +3985,12 @@ function AgentTable({ agents, onOpen, onToggle, renderActions }: {
     <div className="ag-card">
       <table className="tbl agents-tbl">
         <colgroup>
-          <col className="c-agent" /><col className="c-does" /><col className="c-model" /><col className="c-skills" /><col className="c-changes" />
-          <col className="c-runs" /><col className="c-success" /><col className="c-on" />
+          <col className="c-agent" /><col className="c-does" /><col className="c-model" /><col className="c-skills col-low" /><col className="c-changes col-low" />
+          <col className="c-runs col-low" /><col className="c-success" /><col className="c-on" />
         </colgroup>
         <thead><tr>
-          <th>Agent</th><th>What it does</th><th>Model</th><th>Skills</th><th>Changes things?</th><th>Runs, 7 days</th>
+          <th>Agent<span className="col-low-note ag-hide-note">Skills, changes things and runs are hidden while Ask Vigil is open</span></th>
+          <th>What it does</th><th>Model</th><th className="col-low">Skills</th><th className="col-low">Changes things?</th><th className="col-low">Runs, 7 days</th>
           <th><span className="ag-th-info">Success<InfoTip label="How success is calculated" {...SUCCESS_TIP} /></span></th><th>On</th>
         </tr></thead>
         <tbody>
@@ -4012,13 +4013,13 @@ function AgentTable({ agents, onOpen, onToggle, renderActions }: {
                     ? <span className="ag-model"><span className="ag-model-name" title={a.model}>{a.model}</span>{source && <span className="ag-sub">{source}</span>}</span>
                     : <span className="ag-dash">—</span>}
                 </td>
-                <td className="ag-num">{a.skills}</td>
-                <td>
+                <td className="ag-num col-low">{a.skills}</td>
+                <td className="col-low">
                   {a.changes
                     ? <span className={`ag-chg ${a.changes}`} title={a.changes === 'asks_first' ? CHANGES_TIP : undefined}>{CHANGES_LABEL[a.changes]}</span>
                     : <span className="ag-dash">—</span>}
                 </td>
-                <td className="ag-num">{a.runs7d === null ? '—' : a.runs7d.toLocaleString('en-US')}</td>
+                <td className="ag-num col-low">{a.runs7d === null ? '—' : a.runs7d.toLocaleString('en-US')}</td>
                 <td>
                   <span className="ag-rate">
                     {a.successPct === null ? '—' : `${a.successPct.toFixed(1)}%`}

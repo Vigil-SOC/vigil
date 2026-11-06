@@ -2463,7 +2463,7 @@
       tokens.json (sentence-case 12px heads, square initial,
       22px state pills); the shared .tbl, .toggle and .row-act rules stay. */
    .ag-page {
-      padding: 14px 26px 96px; /* bottom room so the Ask Vigil button never covers the last row */
+      padding: 14px 26px 28px;
       display: flex;
       flex-direction: column;
       gap: 12px;
@@ -2542,25 +2542,48 @@
       border: 1px solid var(--ln0);
       border-radius: 14px;
       overflow: hidden;
+      overflow-x: auto; /* below its min-width the table scrolls in the card, never the page */
       container-type: inline-size;
    }
 
+   /* Fixed cols at compact widths; Agent (no width) takes the rest and keeps --col-main-min */
    .agents-tbl {
       table-layout: fixed;
+      --ag-tracks: 808px; /* 1280 with the side bar fits without scrolling */
+      min-width: calc(var(--ag-tracks) + var(--col-main-min));
    }
 
-   /* The board's grid is 1.6fr / 2fr plus fixed tracks, 12px gaps and 16px edges. Cells here carry
-      12px padding a side, so each fixed col is the board track + 12px (On also takes the 16px edge).
-      716px = those fixed cols (688px) + the 28px the first two cols' padding adds. cqw, not %:
-      a col width with calc(% ...) is ignored by table layout. */
-   .agents-tbl col.c-agent { width: calc((100cqw - 716px) * 4 / 9 + 16px); }
-   .agents-tbl col.c-does { width: calc((100cqw - 716px) * 5 / 9 + 12px); }
-   .agents-tbl col.c-model { width: 162px; }
-   .agents-tbl col.c-skills { width: 82px; }
-   .agents-tbl col.c-changes { width: 132px; }
-   .agents-tbl col.c-runs { width: 102px; }
-   .agents-tbl col.c-success { width: 122px; }
-   .agents-tbl col.c-on { width: 88px; }
+   .agents-tbl col.c-does { width: 220px; }
+   .agents-tbl col.c-model { width: 140px; }
+   .agents-tbl col.c-skills { width: 64px; }
+   .agents-tbl col.c-changes { width: 116px; }
+   .agents-tbl col.c-runs { width: 88px; }
+   .agents-tbl col.c-success { width: 112px; }
+   .agents-tbl col.c-on { width: 68px; }
+
+   @container main (min-width: 1400px) {
+      .agents-tbl { --ag-tracks: 1088px; }
+      .agents-tbl col.c-does { width: 400px; }
+      .agents-tbl col.c-model { width: 162px; }
+      .agents-tbl col.c-skills { width: 82px; }
+      .agents-tbl col.c-changes { width: 132px; }
+      .agents-tbl col.c-runs { width: 102px; }
+      .agents-tbl col.c-success { width: 122px; }
+      .agents-tbl col.c-on { width: 88px; }
+   }
+
+   /* Skills, Changes things? and Runs (268px) step aside while Ask Vigil is docked.
+      A col's width outranks its cells', so their cols carry col-low too, which zeroes them. */
+   @container main (max-width: 1399px) {
+      .main.chat-open .agents-tbl { --ag-tracks: 540px; }
+   }
+
+   .ag-hide-note {
+      margin-top: 2px;
+      white-space: normal;
+      font-weight: 400;
+      color: var(--tx3);
+   }
 
    .agents-tbl thead th {
       position: static;
