@@ -16,9 +16,9 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from core.agents.phase_actor import phase_actor  # noqa: F401 - re-exported
 from core.audit import trail
 from core.auth.principals import SYSTEM_PRINCIPAL_ID, agent_principal_id
-from core.agents.phase_actor import phase_actor  # noqa: F401 - re-exported
 from core.auth.tool_principal import Claims, bound_claims, current_claims  # noqa: F401
 from core.response.ceiling import REVERSIBLE, effective_act, read_ceiling, workflow_of
 
