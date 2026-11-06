@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from core.audit import trail
 from core.auth.principals import SYSTEM_PRINCIPAL_ID, agent_principal_id
+from core.agents.phase_actor import phase_actor  # noqa: F401 - re-exported
 from core.auth.tool_principal import Claims, bound_claims, current_claims  # noqa: F401
 from core.response.ceiling import REVERSIBLE, effective_act, read_ceiling, workflow_of
 
@@ -357,47 +358,6 @@ def note_tool(claims: Claims, tool: str, args: Any, *, outcome: Optional[str]) -
     if outcome is not None:
         payload["outcome"] = outcome
     append_now(payload)
-
-
-def phase_actor(run_id: str) -> Optional[str]:
-    """The agent the playbook stored at start names for the running phase.
-
-    The phase row's own agent text is not read: the body that reported the
-    phase is not the source of the actor.
-    """
-    if not run_id:
-        return None
-    session = _open()
-    if session is None:
-        return None
-    try:
-        context = session.execute(
-            text("SELECT trigger_context FROM workflow_runs WHERE run_id = :run_id"),
-            {"run_id": run_id},
-        ).scalar()
-        if isinstance(context, str):
-            context = json.loads(context)
-        agents = context.get("phase_agents") if isinstance(context, dict) else None
-        if not isinstance(agents, dict) or not agents:
-            return None
-        phase = session.execute(
-            text(
-                "SELECT phase_id FROM workflow_run_phases "
-                "WHERE run_id = :run_id AND status = 'running' "
-                "ORDER BY phase_order DESC LIMIT 1"
-            ),
-            {"run_id": run_id},
-        ).scalar()
-        if isinstance(phase, str) and isinstance(agents.get(phase), str):
-            return agents[phase]
-        if phase is None and len(agents) == 1:
-            only = next(iter(agents.values()))
-            return only if isinstance(only, str) else None
-        return None
-    except Exception:  # noqa: BLE001 - a missing row is not a phase agent
-        return None
-    finally:
-        session.close()
 
 
 def originating_person(session: Session, run_id: str) -> Optional[str]:

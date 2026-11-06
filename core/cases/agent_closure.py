@@ -10,7 +10,6 @@ from typing import Iterator, Optional
 from sqlalchemy.orm import Session
 
 from core.audit import trail
-from core.auth.tool_principal import current_claims
 from core.cases.closure import CHANNEL_AGENT, CHANNEL_COOKIE
 from core.integrations.mcp.surface import current_caller
 from core.storage.connection import get_db_session
@@ -94,10 +93,13 @@ def run_agent() -> tuple[Optional[str], Optional[str]]:
     The agent is the one the playbook names for the running phase, else the
     run's own. ``(None, None)`` outside a run's tool call.
     """
+    # Lazy: tool_principal reads the JWT secret on import, which an upgrade lacks.
+    from core.auth.tool_principal import current_claims
+
     claims = current_claims()
     if claims is None:
         return None, None
-    from core.agents.attribution import phase_actor
+    from core.agents.phase_actor import phase_actor
 
     return phase_actor(claims.run_id or "") or claims.agent_id, claims.run_id
 
