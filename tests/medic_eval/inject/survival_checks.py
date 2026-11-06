@@ -80,6 +80,7 @@ class Outage:
     samples: list[dict | None]
     after: dict | None
     incidents: list = field(default_factory=list)
+    restored: list[str] = field(default_factory=list)
 
 
 def medic_id(s: Stack) -> str:
@@ -115,6 +116,27 @@ def healthy(s: Stack, service: str) -> bool:
     return '"healthy"' in s.compose("ps", "-a", "--format", "json", service).stdout
 
 
+def up(s: Stack, service: str) -> bool:
+    """Running, and healthy if it has a healthcheck."""
+    out = s.compose("ps", "--format", "json", service, check=False).stdout
+    return '"State":"running"' in out and ('"Health":""' in out or '"healthy"' in out)
+
+
+def restore(s: Stack, down_before: set[str]) -> list[str]:
+    """Start the Vigil services that went down during an outage, as the shipped
+    `unless-stopped` policy would (compose.eval.yml sets `restart: "no"`). Ones
+    down before it aren't the outage's doing: vigil_harm reports them."""
+    newly = [svc for svc in s.not_running() if svc not in down_before]
+    if newly:
+        s.compose("start", *newly, check=False)
+        for svc in newly:
+            try:
+                s.wait(lambda: up(s, svc), bool, timeout=240)
+            except AssertionError:
+                raise AssertionError(f"{svc} went down during the outage and didn't come back") from None
+    return newly
+
+
 def recovered(s: Stack, service: str) -> None:
     """The dependency, the backend and Medic are all healthy again."""
     s.wait(lambda: healthy(s, service), bool, timeout=240)
@@ -148,15 +170,17 @@ def run_outage(s: Stack, service: str) -> Outage:
     """Stop `service` for the window, start it, wait until it and Medic are healthy."""
     before, held = snapshot(s), incidents(s)
     assert before, "Medic isn't running before the outage"
+    down_before = set(s.not_running())
     s.compose("stop", service)
     try:
         samples = watch(s)
     finally:
         s.compose("start", service)
     recovered(s, service)
+    restored = restore(s, down_before)
     after = next_beat(s, (samples[-1] or before)["cycle"])
     opened = None if held is None else [i for i in incidents(s) or [] if i not in held]
-    return Outage(service, before, samples, after, opened)
+    return Outage(service, before, samples, after, opened, restored)
 
 
 def assert_alive(o: Outage) -> None:
@@ -177,7 +201,7 @@ def check_dependency_down(s: Stack, service: str) -> dict:
     o = run_outage(s, service)
     assert_alive(o)
     return {"service": service, "cycles": [o.before["cycle"], *(x["cycle"] for x in o.samples), o.after["cycle"]],
-            "incidents_opened": o.incidents}
+            "incidents_opened": o.incidents, "restored": o.restored}
 
 
 def check_viewer_revoked(s: Stack) -> dict:

@@ -374,7 +374,9 @@ def summary(m: dict) -> str:
     f = m["flood"]
     only = " (Compose only)" if m["shape"] == "helm" else ""
     lines += ["", "Flood: " + ("not run" + only if not f else "; ".join(f["failures"]) or "floors held")]
-    lines += ["", "Survival: " + (", ".join(f"{s['check']} {s['status']}" for s in m["survival"]) or "not run" + only)]
+    checks = (f"{s['check']} {s['status']}" + (f" (restored {', '.join(s['restored'])})" if s.get("restored") else "")
+              for s in m["survival"])
+    lines += ["", "Survival: " + (", ".join(checks) or "not run" + only)]
     return "\n".join(lines) + "\n"
 
 
