@@ -916,7 +916,11 @@ export interface HealthEntry {
 }
 
 export interface HealthInbox {
+  /** Unread entries, newest first; empty when the summary stands for them. */
   entries: HealthEntry[]
+  /** The newest few read entries, for the panel's Earlier row. */
+  earlier: HealthEntry[]
+  earlier_total: number
   total: number
   unread: number
   /** Past five unread: the unread count by check and the rules they name. */

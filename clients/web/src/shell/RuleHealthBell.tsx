@@ -26,6 +26,8 @@ export default function RuleHealthBell({ go }: { go: (screen: string, options?: 
   const [box, setBox] = useState<HealthInbox | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
+  // Read entries sit under a closed "Earlier" row; it closes again with the panel.
+  const [earlierOpen, setEarlierOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [pos, setPos] = useState<{ top: number; right: number } | null>(null)
   const ref = useRef<HTMLDivElement>(null)
@@ -50,7 +52,7 @@ export default function RuleHealthBell({ go }: { go: (screen: string, options?: 
   }, [])
 
   useEffect(() => {
-    if (!open) return
+    if (!open) { setEarlierOpen(false); return }
     place()
     load()
     const onDoc = (e: MouseEvent) => {
@@ -94,7 +96,10 @@ export default function RuleHealthBell({ go }: { go: (screen: string, options?: 
   const unread = box?.unread ?? 0
   const summary = box?.summary ?? null
   // With a summary, the unread entries fold into it; read ones still list.
-  const listed = (box?.entries ?? []).filter((e) => !summary || e.read)
+  // The server lists unread entries only (none when the summary stands for them).
+  const listed = box?.entries ?? []
+  const earlier = box?.earlier ?? []
+  const earlierTotal = box?.earlier_total ?? 0
   const breakdown = summary
     ? Object.entries(summary.by_check)
       .sort((a, b) => b[1] - a[1])
@@ -102,6 +107,27 @@ export default function RuleHealthBell({ go }: { go: (screen: string, options?: 
       .join(' · ')
     : ''
   const label = unread ? `Notifications, ${unread} unread` : 'Notifications'
+
+  const entryRow = (e: HealthEntry) => {
+    const k = kindOf(e.check)
+    return (
+      <li key={e.change_id} className={`rh-item${e.read ? '' : ' unread'}`}>
+        <span className={`rh-dot ${k.tone}`} aria-hidden="true" />
+        <div className="rh-body">
+          <div className={`rh-kind ${k.tone}`}>{k.label}{e.read ? '' : <span className="rh-sr"> (unread)</span>}</div>
+          <button type="button" className="rh-rule" title={e.name} onClick={() => openEntry(e)}>{e.name}</button>
+          <div className="rh-why">{k.why}</div>
+          <div className="rh-meta">
+            <span className="rh-siem">{SIEM_NAME[e.tool] ?? e.tool}</span>
+            <span>{relativeTime(e.since)}</span>
+            {!e.read && (
+              <button type="button" className="rh-link" disabled={busy} onClick={() => markRead([e.change_id])}>Mark read</button>
+            )}
+          </div>
+        </div>
+      </li>
+    )
+  }
 
   const root = ref.current?.closest('.soc-console') as HTMLElement | null
   const pop = open && pos ? (
@@ -141,29 +167,24 @@ export default function RuleHealthBell({ go }: { go: (screen: string, options?: 
             </div>
           </li>
         )}
-        {listed.map((e) => {
-          const k = kindOf(e.check)
-          return (
-            <li key={e.change_id} className={`rh-item${e.read ? '' : ' unread'}`}>
-              <span className={`rh-dot ${k.tone}`} aria-hidden="true" />
-              <div className="rh-body">
-                <div className={`rh-kind ${k.tone}`}>{k.label}{e.read ? '' : <span className="rh-sr"> (unread)</span>}</div>
-                <button type="button" className="rh-rule" title={e.name} onClick={() => openEntry(e)}>{e.name}</button>
-                <div className="rh-why">{k.why}</div>
-                <div className="rh-meta">
-                  <span className="rh-siem">{SIEM_NAME[e.tool] ?? e.tool}</span>
-                  <span>{relativeTime(e.since)}</span>
-                  {!e.read && (
-                    <button type="button" className="rh-link" disabled={busy} onClick={() => markRead([e.change_id])}>Mark read</button>
-                  )}
-                </div>
-              </div>
-            </li>
-          )
-        })}
+        {listed.map((e) => entryRow(e))}
       </ul>
+      {box && box.total > 0 && !unread && <p className="rh-empty">Nothing unread.</p>}
+      {earlierTotal > 0 && (
+        <div className="rh-earlier">
+          <button type="button" className="rh-earlier-toggle" aria-expanded={earlierOpen} onClick={() => setEarlierOpen((o) => !o)}>
+            <svg viewBox="0 0 24 24" aria-hidden="true" className={earlierOpen ? 'open' : ''}><path d="m9 6 6 6-6 6" /></svg>
+            Earlier ({earlierTotal.toLocaleString()})
+          </button>
+          {earlierOpen && (
+            <ul className="rh-list">
+              {earlier.map((e) => entryRow(e))}
+              {earlierTotal > earlier.length && <li className="rh-more">and {(earlierTotal - earlier.length).toLocaleString()} more, on Rules</li>}
+            </ul>
+          )}
+        </div>
+      )}
       <div className="rh-foot">
-        {box && box.total > box.entries.length && <span>Showing the newest {box.entries.length} of {box.total.toLocaleString()}.</span>}
         <button type="button" className="rh-link strong" onClick={() => { setOpen(false); go('detections') }}>All rules needing attention</button>
       </div>
     </div>

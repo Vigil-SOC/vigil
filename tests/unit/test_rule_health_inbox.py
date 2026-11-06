@@ -62,10 +62,8 @@ def test_marking_one_read_is_kept_for_that_person_only(store):
     assert after["unread"] == 1
     # A later read (a reload) sees the stored state.
     again = health_inbox.inbox("ana")
-    assert {e["change_id"]: e["read"] for e in again["entries"]} == {
-        11: True,
-        12: False,
-    }
+    assert [e["change_id"] for e in again["entries"]] == [12]
+    assert [e["change_id"] for e in again["earlier"]] == [11]
     assert health_inbox.inbox("ben")["unread"] == 2
 
 
@@ -151,13 +149,37 @@ def test_summary_links_at_most_rules_linked(store, monkeypatch):
     assert summary["rule_ids"] == [1, 2, 3]
 
 
-def test_entries_are_capped_but_counts_are_not(store, monkeypatch):
-    monkeypatch.setattr(health_inbox, "LISTED", 2)
-    store["flags"] = [_flag(i, i) for i in range(1, 5)]
+def test_a_read_entry_leaves_the_list_for_earlier(store):
+    store["flags"] = [_flag(11, 1), _flag(12, 2), _flag(13, 3)]
+    box = health_inbox.mark_read("ana", [12])
+    assert [e["change_id"] for e in box["entries"]] == [11, 13]
+    assert all(not e["read"] for e in box["entries"])
+    assert [e["change_id"] for e in box["earlier"]] == [12]
+    assert box["earlier_total"] == 1
+
+
+def test_earlier_keeps_the_newest_few_and_counts_them_all(store):
+    store["flags"] = [_flag(i, i) for i in range(1, 9)]
+    box = health_inbox.mark_read("ana")
+    assert box["entries"] == []
+    assert [e["change_id"] for e in box["earlier"]] == [1, 2, 3, 4, 5]
+    assert box["earlier_total"] == 8
+    assert box["total"] == 8
+
+
+def test_past_five_unread_the_summary_replaces_the_rows(store):
+    store["flags"] = [_flag(i, i) for i in range(1, 8)]
     box = health_inbox.inbox("ana")
-    assert len(box["entries"]) == 2
-    assert box["total"] == 4
-    assert box["unread"] == 4
+    assert box["summary"]["count"] == 7
+    assert box["entries"] == []
+    assert box["unread"] == 7
+
+
+def test_five_unread_list_one_row_each(store):
+    store["flags"] = [_flag(i, i) for i in range(1, 6)]
+    box = health_inbox.inbox("ana")
+    assert box["summary"] is None
+    assert [e["change_id"] for e in box["entries"]] == [1, 2, 3, 4, 5]
 
 
 # The routes read and write as the signed-in person.

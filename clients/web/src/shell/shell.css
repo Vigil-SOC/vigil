@@ -3104,6 +3104,51 @@ select.vg-side-input {
   border-top: 1px solid var(--ln1);
 }
 
+.rh-earlier {
+  border-top: 1px solid var(--ln0);
+}
+
+.rh-earlier-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--tx2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.rh-earlier-toggle:hover {
+  color: var(--tx0);
+}
+
+.rh-earlier-toggle svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.rh-earlier-toggle svg.open {
+  transform: rotate(90deg);
+}
+
+.rh-more {
+  padding: 8px 14px 12px;
+  font-size: 12px;
+  color: var(--tx2);
+}
+
 .rh-sr {
   position: absolute;
   width: 1px;

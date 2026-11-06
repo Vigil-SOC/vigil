@@ -9,9 +9,11 @@ Read state is per person: the change ids they read, in their
 ``user_preferences`` row under ``READ_KEY``. Each write keeps only ids still
 open, so the list never outgrows the open flags.
 
-Past ``SUMMARY_AT`` unread entries the inbox carries one summary instead of a
-row per rule: the unread count by check and the rules they name, for one link
-to Rules filtered to them (``RULES_LINKED`` at most, newest first).
+What the bell's panel shows is kept short. Up to ``SUMMARY_AT`` unread flags
+are listed one per rule; past that they fold into one summary instead: the
+unread count by check and the rules they name, for one link to Rules filtered
+to them (``RULES_LINKED`` at most, newest first). A read flag leaves the list;
+the newest ``EARLIER`` of them are kept under "Earlier", with their count.
 """
 
 from __future__ import annotations
@@ -27,8 +29,8 @@ from core.storage.models import UserPreference
 
 READ_KEY = "rule_health_read"
 SUMMARY_AT = 5
-# Entries returned, newest first; the counts cover every open flag.
-LISTED = 50
+# Read flags kept under "Earlier", newest first; earlier_total counts them all.
+EARLIER = 5
 # Rule ids a summary links to: the Rules URL carries them.
 RULES_LINKED = 200
 
@@ -53,6 +55,7 @@ def mark_read(
 def _inbox(flags: List[Dict[str, Any]], read: Set[int]) -> Dict[str, Any]:
     entries = [{**flag, "read": flag["change_id"] in read} for flag in flags]
     unread = [entry for entry in entries if not entry["read"]]
+    earlier = [entry for entry in entries if entry["read"]]
     summary = None
     if len(unread) > SUMMARY_AT:
         rule_ids = list(dict.fromkeys(entry["rule_id"] for entry in unread))
@@ -64,7 +67,10 @@ def _inbox(flags: List[Dict[str, Any]], read: Set[int]) -> Dict[str, Any]:
             "since": unread[0]["since"],
         }
     return {
-        "entries": entries[:LISTED],
+        # Unread flags one per rule, or none when the summary stands for them.
+        "entries": [] if summary else unread,
+        "earlier": earlier[:EARLIER],
+        "earlier_total": len(earlier),
         "total": len(entries),
         "unread": len(unread),
         "summary": summary,
