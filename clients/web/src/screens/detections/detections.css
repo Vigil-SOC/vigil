@@ -88,16 +88,18 @@
 .de-table.list-scroll { max-height: clamp(300px, calc(100vh - 260px), 1400px); overscroll-behavior: contain; }
 .de-th { position: sticky; top: 0; z-index: 2; box-sizing: border-box; }
 .de-table.loading { opacity: .55; }
-/* compact tracks: Rule keeps --col-main-min, Why 220px; below the sum the table scrolls in its card */
-.de-tr { --de-tracks: 556px; display: grid; grid-template-columns: minmax(var(--col-main-min), 1.3fr) 120px minmax(220px, 2fr) 128px; gap: 16px; padding: 0 20px; min-width: calc(var(--de-tracks) + var(--col-main-min)); }
+/* Rule (name, reason, toggles) keeps --col-main-min; Where, Technique, Health, Fires and
+   Action are fixed; below the sum the table scrolls in its card. --de-tracks is the fixed
+   tracks, their gaps and the row's side padding. */
+.de-tr { --de-tracks: 768px; display: grid; grid-template-columns: minmax(var(--col-main-min), 1fr) 200px 100px 130px 90px 128px; gap: 16px; padding: 0 20px; min-width: calc(var(--de-tracks) + var(--col-main-min)); }
 .de-th { align-items: center; height: 38px; background: var(--bg2); border-bottom: 1px solid var(--ln1); font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .5px; color: var(--tx2); }
 /* Virtual rows: absolutely placed in a box as tall as every row, so only on-screen rows are in the DOM. */
-.de-rows { --de-tracks: 556px; position: relative; min-width: calc(var(--de-tracks) + var(--col-main-min)); }
+.de-rows { --de-tracks: 768px; position: relative; min-width: calc(var(--de-tracks) + var(--col-main-min)); }
 /* Health (120px + a gap) steps aside while Ask Vigil is docked: the chips above still filter by it.
    A hidden grid cell would still take a track, so it leaves the grid and the tracks are redefined. */
 @container main (max-width: 1399px) {
-  .main.chat-open .de-tr, .main.chat-open .de-rows { --de-tracks: 420px; }
-  .main.chat-open .de-tr { grid-template-columns: minmax(var(--col-main-min), 1.3fr) minmax(220px, 2fr) 128px; }
+  .main.chat-open .de-tr, .main.chat-open .de-rows { --de-tracks: 622px; }
+  .main.chat-open .de-tr { grid-template-columns: minmax(var(--col-main-min), 1fr) 200px 100px 90px 128px; }
   .main.chat-open .de-tr > .col-low { display: none; }
 }
 .de-hide-note { margin: 0; font-size: 12px; color: var(--tx3); }
@@ -106,12 +108,20 @@
 .de-right { display: flex; justify-content: flex-end; text-align: right; }
 .de-name { font-size: 13.5px; line-height: 20px; font-weight: 550; color: var(--tx0); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .de-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; font-size: 12px; color: var(--tx3); }
-.de-where { padding: 1px 7px; border-radius: 5px; background: var(--bg3); color: var(--tx1); }
-.de-fired { color: var(--tx1); }
+.de-where { flex: none; padding: 1px 7px; border-radius: 5px; background: var(--bg3); color: var(--tx1); font-size: 12px; }
+.de-where-cell { min-width: 0; display: flex; align-items: center; gap: 8px; padding-top: 1px; }
+.de-source { min-width: 0; font-family: var(--font-mono); font-size: 11.5px; color: var(--tx2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.de-tech { font-family: var(--font-mono); font-size: 12px; line-height: 20px; color: var(--tx1); white-space: nowrap; }
+.de-tech-more, .de-none { color: var(--tx3); }
+.de-fires { font-size: 13px; line-height: 20px; color: var(--tx3); font-variant-numeric: tabular-nums; }
+.de-sort { height: 36px; padding: 0 10px; border-radius: 9px; background: var(--bg0); border: 1px solid var(--ln1); color: var(--tx0); font: inherit; font-size: 12.5px; }
+.de-sort:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+.de-fired { color: var(--tx0); font-weight: 600; }
 .de-health { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 600; white-space: nowrap; color: var(--t); border: 1px solid color-mix(in srgb, var(--t) 40%, transparent); background: color-mix(in srgb, var(--t) 12%, transparent); }
 .de-health.none, .de-health.idle { color: var(--tx1); }
 .de-health i { width: 6px; height: 6px; border-radius: 50%; background: var(--t); }
 .de-why { min-width: 0; }
+.de-rule .de-why-text { margin-top: 2px; }
 .de-why-text { font-size: 12.5px; line-height: 20px; color: var(--tx1); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .de-raw-toggle { display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; padding: 0; border: 0; background: none; color: var(--tx3); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; }
 .de-raw-toggle:hover { color: var(--ac); }

@@ -3284,10 +3284,11 @@ export interface paths {
         };
         /**
          * Get Rules
-         * @description Every listed rule copy's health with its reason, worst first, capped at
+         * @description Every listed rule copy's health with its reason and data source, capped at
          *     catalog.RULE_ROWS rows from ``offset``, narrowed by ``health`` ("attention"
-         *     is every state to act on), ``tool`` and the search ``q``; the counts, the
-         *     per-SIEM tallies and the blind spots cover them all. Read-only.
+         *     is every state to act on), ``tool`` and the search ``q``, in ``sort`` order
+         *     (worst first by default); the counts, the per-SIEM tallies and the blind
+         *     spots cover them all. Read-only.
          */
         get: operations["get_api_detection-rules_rules"];
         put?: never;
@@ -17720,6 +17721,7 @@ export interface operations {
                 tool?: ("elastic" | "splunk" | "wazuh") | null;
                 q?: string | null;
                 offset?: number;
+                sort?: "worst" | "most_fires" | "fewest_fires" | "name";
             };
             header?: {
                 authorization?: string | null;

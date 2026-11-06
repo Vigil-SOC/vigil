@@ -302,12 +302,14 @@ def get_rules(
     tool: Optional[Literal["elastic", "splunk", "wazuh"]] = None,
     q: Optional[str] = Query(default=None, max_length=200),
     offset: int = Query(default=0, ge=0),
+    sort: Literal["worst", "most_fires", "fewest_fires", "name"] = "worst",
 ):
-    """Every listed rule copy's health with its reason, worst first, capped at
+    """Every listed rule copy's health with its reason and data source, capped at
     catalog.RULE_ROWS rows from ``offset``, narrowed by ``health`` ("attention"
-    is every state to act on), ``tool`` and the search ``q``; the counts, the
-    per-SIEM tallies and the blind spots cover them all. Read-only."""
-    return catalog.health_listing(health, tool=tool, q=q, offset=offset)
+    is every state to act on), ``tool`` and the search ``q``, in ``sort`` order
+    (worst first by default); the counts, the per-SIEM tallies and the blind
+    spots cover them all. Read-only."""
+    return catalog.health_listing(health, tool=tool, q=q, offset=offset, sort=sort)
 
 
 @router.get("/overlay-only")
