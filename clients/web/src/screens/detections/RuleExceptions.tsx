@@ -54,7 +54,9 @@ function matched(days: Record<string, number>): { total: number; title: string }
   const entries = Object.entries(days).sort(([a], [b]) => a.localeCompare(b))
   return {
     total: entries.reduce((a, [, v]) => a + (Number(v) || 0), 0),
-    title: entries.length ? entries.map(([d, v]) => `${d}: ${v}`).join('\n') : 'No matches counted',
+    title:
+      'Hits this exception dropped before they became findings, so none of them count as fires.\n\n' +
+      (entries.length ? entries.map(([d, v]) => `${d}: ${v}`).join('\n') : 'None counted yet'),
   }
 }
 
@@ -99,7 +101,7 @@ export default function RuleExceptions({ ruleId }: { ruleId: number }) {
                   <Missing seen={x.seen} />
                 </div>
                 <div className="de-x-side">
-                  <span className="de-x-n" title={m.title}><b>{m.total.toLocaleString()}</b> matched in {KEEP_DAYS}d</span>
+                  <span className="de-x-n" title={m.title}><b>{m.total.toLocaleString()}</b> {m.total === 1 ? 'hit' : 'hits'} silenced in {KEEP_DAYS}d</span>
                   {canWrite && removing !== x.exception_id && (
                     <button type="button" className="x1-link de-x-rm" onClick={() => setRemoving(x.exception_id)}>Remove</button>
                   )}
