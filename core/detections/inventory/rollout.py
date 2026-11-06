@@ -68,6 +68,8 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
+import time
 import tomllib
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -882,6 +884,49 @@ def _read_splunk_files(copies: List[Copy]) -> None:
 
 
 DEPLOY_TIMEOUT = 20.0
+# After a failed write, how long to look again for a PR a raced call opened.
+RACE_WAITS = (0.0, 1.0, 2.0)
+
+# (pattern on the recorded error, what a person can do about it), first match wins.
+_PLAIN = (
+    (
+        r"no GitHub token",
+        "No GitHub token is set. Add one to the GitHub integration in Settings.",
+    ),
+    (
+        r"only GitHub",
+        "The deploy target isn't a GitHub repo. Choose a github.com or GitHub Enterprise repo.",
+    ),
+    (
+        r": 401\b",
+        "GitHub didn't accept the token. Check the GitHub integration's token.",
+    ),
+    (
+        r": 403\b",
+        "The GitHub token can't write to this repo. Give it access to contents and pull requests.",
+    ),
+    (
+        r": 404\b",
+        "GitHub couldn't find the repo or its branch. Check the deploy target's URL.",
+    ),
+    (
+        r": 422\b",
+        "GitHub turned the pull request down. Try again; if it repeats, check the repo.",
+    ),
+    (r": 5\d\d\b", "GitHub had a problem on its side. Try again."),
+    (
+        r"Timeout|ConnectError|could not be reached|Name or service",
+        "GitHub didn't answer. Try again.",
+    ),
+)
+
+
+def plain_deploy_error(error: str) -> str:
+    """What a person can do about a recorded deploy error; the raw line stays alongside."""
+    for pattern, said in _PLAIN:
+        if re.search(pattern, error or ""):
+            return said
+    return "The pull request couldn't be opened. Try again."
 
 
 def _deploy(
@@ -1050,12 +1095,13 @@ def _open_pr(
         ref = http.get(f"{r}/git/ref/heads/{quote(branch)}")
         if ref.status_code == 404:
             sha = _ok(http.get(f"{r}/git/ref/heads/{quote(base)}")).json()["object"]
-            _ok(
-                http.post(
-                    f"{r}/git/refs",
-                    json={"ref": f"refs/heads/{branch}", "sha": sha["sha"]},
-                )
+            made = http.post(
+                f"{r}/git/refs",
+                json={"ref": f"refs/heads/{branch}", "sha": sha["sha"]},
             )
+            # 422: another click or sweep made the branch first; carry on with it.
+            if made.status_code != 422:
+                _ok(made)
         else:
             _ok(ref)
         put: Dict[str, Any] = {
@@ -1066,19 +1112,31 @@ def _open_pr(
         sha, same = _same(http, f"{r}/contents/{quote(path)}", branch, data)
         if sha:
             put["sha"] = sha  # the file is there: update it in place
-        if not same:
-            _ok(http.put(f"{r}/contents/{quote(path)}", json=put))
-        pr = _ok(
-            http.post(
-                f"{r}/pulls",
-                json={
-                    "title": _pr_title(copy),
-                    "head": branch,
-                    "base": base,
-                    "body": body,
-                },
-            )
-        ).json()
+        try:
+            if not same:
+                _ok(http.put(f"{r}/contents/{quote(path)}", json=put))
+            pr = _ok(
+                http.post(
+                    f"{r}/pulls",
+                    json={
+                        "title": _pr_title(copy),
+                        "head": branch,
+                        "base": base,
+                        "body": body,
+                    },
+                )
+            ).json()
+        except RuntimeError:
+            # A raced click or sweep wrote the file or opened the PR first: its PR
+            # is this one. Look again briefly, as it may land a moment later.
+            for wait in RACE_WAITS:
+                time.sleep(wait)
+                found = http.get(
+                    f"{r}/pulls", params={"head": f"{owner}:{branch}", "state": "all"}
+                )
+                if not found.is_error and found.json():
+                    return {"pr_url": found.json()[0]["html_url"]}
+            raise
         return {"pr_url": pr["html_url"]}
 
 
@@ -1119,22 +1177,36 @@ def _deployed(copy: Copy) -> Optional[Dict[str, Any]]:
 def overlay_only() -> List[Dict[str, Any]]:
     """Live overlay copies no SIEM rule runs: only Vigil detects with these, so
     Stop halts their detection. Each says whether its format has a deploy
-    target and what its deploy PR came to (``deploy``: pr_url, in_repo or
-    error, from checks['deploy'] on its current version; None before one)."""
+    target Vigil deploys to (``target_refused``: why not, for one that isn't
+    GitHub) and what its deploy PR came to (``deploy``: pr_url, in_repo, or
+    error with a plain ``reason``, from checks['deploy'] on its current
+    version; None before one)."""
+    from core.detections.detection_rules_service import deploy_host_refused
+
     live = [c for c in _copies() if c.stage == "live"]
     gone = handed_off([c.rule_id for c in live])
     targets = _deploy_targets()
-    return [
-        {
-            "id": c.rule_id,
-            "name": c.name,
-            "language": c.language,
-            "deploy_target": c.language in targets,
-            "deploy": _deployed(c),
-        }
-        for c in live
-        if c.rule_id not in gone
-    ]
+    rows = []
+    for c in live:
+        if c.rule_id in gone:
+            continue
+        target = targets.get(c.language)
+        # A target Vigil won't deploy to (not GitHub) is no target for the button.
+        refused = deploy_host_refused(target) if target else ""
+        deploy = _deployed(c)
+        if deploy and deploy.get("error"):
+            deploy = {**deploy, "reason": plain_deploy_error(deploy["error"])}
+        rows.append(
+            {
+                "id": c.rule_id,
+                "name": c.name,
+                "language": c.language,
+                "deploy_target": bool(target) and not refused,
+                "target_refused": refused or None,
+                "deploy": deploy,
+            }
+        )
+    return rows
 
 
 def deploy_overlay_only(rule_ids: Optional[List[int]] = None) -> Dict[str, Any]:
@@ -1192,7 +1264,11 @@ def deploy_overlay_only(rule_ids: Optional[List[int]] = None) -> Dict[str, Any]:
             if "error" not in o
         ],
         "failed": [
-            {"rule_id": r, "error": o["error"]}
+            {
+                "rule_id": r,
+                "error": o["error"],
+                "reason": plain_deploy_error(o["error"]),
+            }
             for r, o in outcomes.items()
             if "error" in o
         ],

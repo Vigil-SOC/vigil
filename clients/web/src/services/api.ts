@@ -893,10 +893,13 @@ export interface OverlayOnlyRule {
   id: number
   name: string
   language: string
-  /** Its format has a deploy target, so Vigil can open a deploy pull request. */
+  /** Its format has a deploy target Vigil deploys to, so it can open a deploy pull request. */
   deploy_target: boolean
-  /** What its deploy pull request came to on its current version; null before one. */
-  deploy: { version: number; at: string; pr_url?: string; in_repo?: string; error?: string } | null
+  /** Why its format's deploy target is refused (not a GitHub repo); null when it isn't. */
+  target_refused: string | null
+  /** What its deploy pull request came to on its current version; null before one.
+   *  On a failure, error is the raw line and reason says what a person can do. */
+  deploy: { version: number; at: string; pr_url?: string; in_repo?: string; error?: string; reason?: string } | null
 }
 
 export const detectionRulesApi = {
@@ -954,7 +957,7 @@ export const detectionRulesApi = {
   deployOverlayOnly: (ruleIds?: number[]) =>
     api.post<{
       opened: { rule_id: number; pr_url?: string; in_repo?: string }[]
-      failed: { rule_id: number; error: string }[]
+      failed: { rule_id: number; error: string; reason: string }[]
       skipped: { rule_id: number; reason: string }[]
     }>('/detection-rules/overlay-only/deploy', { rule_ids: ruleIds ?? null }),
   
