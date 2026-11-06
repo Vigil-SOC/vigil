@@ -48,7 +48,7 @@
 .mdc-tbl thead th:nth-child(4) { width: 112px; }
 .mdc-tbl thead th:nth-child(5) { width: 92px; }
 .mdc-tbl thead th:nth-child(6) { width: 112px; }
-.mdc-hide-note { margin-top: 2px; white-space: normal; font-weight: 400; color: var(--tx3); }
+.mdc-hide-note { margin-top: 2px; white-space: normal; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--tx3); }
 .mdc-tbl tbody td { vertical-align: top; white-space: normal; }
 .mdc-tbl tbody td:has(.empty-state-table) { white-space: normal; }
 .mdc-state { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-weight: 600; color: var(--tx0); overflow-wrap: anywhere; }
@@ -75,19 +75,22 @@
 .mdc-more { display: flex; justify-content: center; }
 
 /* sensors: fixed columns too, long ids and reasons wrap inside their cell; Sensor (1) takes the rest */
-.mdc-sens { table-layout: fixed; --mdc-tracks: 740px; min-width: calc(var(--mdc-tracks) + var(--col-main-min)); }
+.mdc-sens { table-layout: fixed; --mdc-tracks: 760px; min-width: calc(var(--mdc-tracks) + var(--col-main-min)); }
 .mdc-sens thead th, .mdc-sens tbody td { overflow: hidden; white-space: normal; overflow-wrap: anywhere; vertical-align: top; }
-.mdc-sens thead th:nth-child(2) { width: 112px; }
-.mdc-sens thead th:nth-child(3), .mdc-sens thead th:nth-child(4) { width: 104px; }
+.mdc-sens thead th:nth-child(2) { width: 104px; }
+.mdc-sens thead th:nth-child(3) { width: 88px; }
+.mdc-sens thead th:nth-child(4) { width: 112px; }
 .mdc-sens thead th:nth-child(5) { width: 160px; }
-.mdc-sens thead th:nth-child(6) { width: 100px; }
+.mdc-sens thead th:nth-child(6) { width: 136px; }
 .mdc-sens thead th:nth-child(7) { width: 160px; }
 
-/* Incidents: Lane, Duration and Rating (276px); Sensors: Since, Last good reading and Dropped lines (308px)
+/* Incidents: Lane, Duration and Rating (276px); Sensors: Since, Last good reading and Dropped lines (336px)
    step aside while Ask Vigil is docked */
 @container main (max-width: 1399px) {
   .main.chat-open .mdc-tbl { --mdc-tracks: 244px; }
-  .main.chat-open .mdc-sens { --mdc-tracks: 432px; }
+  .main.chat-open .mdc-sens { --mdc-tracks: 424px; }
+  /* this file is unlayered, so the widths above outrank the shared .col-low rule (styles.css) */
+  .main.chat-open :is(.mdc-tbl, .mdc-sens) .col-low { width: 0; }
 }
 .mdc-sens tbody td:has(.empty-state-table) { white-space: normal; }
 .mdc-wrap { overflow-wrap: anywhere; }

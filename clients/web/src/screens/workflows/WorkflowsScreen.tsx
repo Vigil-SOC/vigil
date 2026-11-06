@@ -3985,12 +3985,12 @@ function AgentTable({ agents, onOpen, onToggle, renderActions }: {
     <div className="ag-card">
       <table className="tbl agents-tbl">
         <colgroup>
-          <col className="c-agent" /><col className="c-does col-low" /><col className="c-model" /><col className="c-skills col-low" /><col className="c-changes col-low" />
+          <col className="c-agent" /><col className="c-does" /><col className="c-model" /><col className="c-skills col-low" /><col className="c-changes col-low" />
           <col className="c-runs col-low" /><col className="c-success" /><col className="c-on" />
         </colgroup>
         <thead><tr>
-          <th>Agent<span className="col-low-note ag-hide-note">What it does, skills, changes things and runs are hidden while Ask Vigil is open</span></th>
-          <th className="col-low">What it does</th><th>Model</th><th className="col-low">Skills</th><th className="col-low">Changes things?</th><th className="col-low">Runs, 7 days</th>
+          <th>Agent<span className="col-low-note ag-hide-note">Skills, changes things and runs are hidden while Ask Vigil is open</span></th>
+          <th>What it does</th><th>Model</th><th className="col-low">Skills</th><th className="col-low">Changes things?</th><th className="col-low">Runs, 7 days</th>
           <th><span className="ag-th-info">Success<InfoTip label="How success is calculated" {...SUCCESS_TIP} /></span></th><th>On</th>
         </tr></thead>
         <tbody>
@@ -4007,7 +4007,7 @@ function AgentTable({ agents, onOpen, onToggle, renderActions }: {
                     <span onClick={stop}>{renderActions(a)}</span>
                   </div>
                 </td>
-                <td className="col-low"><span className="ag-does" title={a.does}>{a.does}</span></td>
+                <td><span className="ag-does" title={a.does}>{a.does}</span></td>
                 <td>
                   {a.model
                     ? <span className="ag-model"><span className="ag-model-name" title={a.model}>{a.model}</span>{source && <span className="ag-sub">{source}</span>}</span>

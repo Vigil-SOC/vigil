@@ -2549,17 +2549,17 @@
    /* Fixed cols at compact widths; Agent (no width) takes the rest and keeps --col-main-min */
    .agents-tbl {
       table-layout: fixed;
-      --ag-tracks: 870px;
+      --ag-tracks: 808px; /* 1280 with the side bar fits without scrolling */
       min-width: calc(var(--ag-tracks) + var(--col-main-min));
    }
 
-   .agents-tbl col.c-does { width: 240px; }
-   .agents-tbl col.c-model { width: 150px; }
-   .agents-tbl col.c-skills { width: 72px; }
-   .agents-tbl col.c-changes { width: 124px; }
-   .agents-tbl col.c-runs { width: 92px; }
-   .agents-tbl col.c-success { width: 116px; }
-   .agents-tbl col.c-on { width: 76px; }
+   .agents-tbl col.c-does { width: 220px; }
+   .agents-tbl col.c-model { width: 140px; }
+   .agents-tbl col.c-skills { width: 64px; }
+   .agents-tbl col.c-changes { width: 116px; }
+   .agents-tbl col.c-runs { width: 88px; }
+   .agents-tbl col.c-success { width: 112px; }
+   .agents-tbl col.c-on { width: 68px; }
 
    @container main (min-width: 1400px) {
       .agents-tbl { --ag-tracks: 1088px; }
@@ -2572,10 +2572,10 @@
       .agents-tbl col.c-on { width: 88px; }
    }
 
-   /* What it does, Skills, Changes things? and Runs (528px) step aside while Ask Vigil is docked.
+   /* Skills, Changes things? and Runs (268px) step aside while Ask Vigil is docked.
       A col's width outranks its cells', so their cols carry col-low too, which zeroes them. */
    @container main (max-width: 1399px) {
-      .main.chat-open .agents-tbl { --ag-tracks: 342px; }
+      .main.chat-open .agents-tbl { --ag-tracks: 540px; }
    }
 
    .ag-hide-note {

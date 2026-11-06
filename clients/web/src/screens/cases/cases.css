@@ -1582,14 +1582,14 @@
 }
 
 /* the fixed tracks, their gaps and the row's padding, plus the title's floor: below it the grid scrolls in its card */
-.cases-grid { --cg-tracks: 886px; min-width: calc(var(--cg-tracks) + var(--col-main-min)); }
+.cases-grid { --cg-tracks: 810px; min-width: calc(var(--cg-tracks) + var(--col-main-min)); }
 
 .cg-row {
   display: grid;
-  grid-template-columns: 26px 176px minmax(0, 1fr) 88px 80px 100px 132px 116px 40px; /* compact widths; the id keeps 176px (#2054) and the title takes the rest */
-  gap: 12px;
+  grid-template-columns: 22px 176px minmax(0, 1fr) 80px 72px 96px 116px 108px 32px; /* compact widths, so 1280 with the side bar fits; the id keeps 176px (#2054) and the title takes the rest */
+  gap: 10px;
   align-items: center;
-  padding: 11px 16px;
+  padding: 11px 14px;
   border-top: 1px solid var(--ln0);
 }
 
@@ -1607,11 +1607,11 @@
 .cg-th-info { display: flex; align-items: center; gap: 4px; }
 .cg-hide-note { margin-top: 2px; font-weight: 400; color: var(--tx3); }
 
-/* Kind, Owner and Time left (336px + 3 gaps) step aside while Ask Vigil is docked: a hidden grid cell
+/* Kind, Owner and Time left (304px + 3 gaps) step aside while Ask Vigil is docked: a hidden grid cell
    would still take a track, so the cells leave the grid and the tracks are redefined without them */
 @container main (max-width: 1399px) {
-  .main.chat-open .cases-grid { --cg-tracks: 514px; }
-  .main.chat-open .cg-row { grid-template-columns: 26px 176px minmax(0, 1fr) 80px 100px 40px; }
+  .main.chat-open .cases-grid { --cg-tracks: 476px; }
+  .main.chat-open .cg-row { grid-template-columns: 22px 176px minmax(0, 1fr) 72px 96px 32px; }
   .main.chat-open .cg-row > .col-low { display: none; }
 }
 
