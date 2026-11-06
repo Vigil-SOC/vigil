@@ -200,18 +200,19 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
     setOverlayOnly([])
     if (stopping) void readOverlayOnly()
   }, [stopping])
-  // Queues the deploy pull request a promotion to live would have: the rule joins the SIEM once it merges.
+  // Opens the deploy pull request now, as the rollout sweep would: the rule joins the SIEM once it merges.
   const deployOverlay = (ids?: number[]) => {
     setDeploying(ids ?? 'all')
     detectionRulesApi
       .deployOverlayOnly(ids)
       .then((r) => {
-        const { queued, skipped } = r.data
-        if (queued.length) notify('ok', `${queued.length === 1 ? 'A deploy pull request is' : `${queued.length} deploy pull requests are`} queued; each rule joins your SIEM when its PR merges.`)
-        else if (skipped.length) notify('info', `Nothing queued: ${skipped[0].reason}.`)
+        const { opened, failed, skipped } = r.data
+        if (opened.length) notify('ok', `${opened.length === 1 ? 'A deploy pull request is' : `${opened.length} deploy pull requests are`} open; each rule joins your SIEM when its PR merges.`)
+        if (failed.length) notify('err', `${failed.length === 1 ? 'A deploy pull request' : `${failed.length} deploy pull requests`} could not be opened: ${failed[0].error}`)
+        if (!opened.length && !failed.length && skipped.length) notify('info', `Nothing opened: ${skipped[0].reason}.`)
         return readOverlayOnly()
       })
-      .catch((e) => notify('err', errorText(e, 'The deploy pull request was not queued.')))
+      .catch((e) => notify('err', errorText(e, 'The deploy pull request was not opened.')))
       .finally(() => setDeploying(null))
   }
 
@@ -938,7 +939,9 @@ function StopOverlayOnly({
   onDeploy: (ids?: number[]) => void
 }) {
   const n = rules.length
-  const deployable = rules.filter((r) => r.deploy_target && !r.deploy_queued)
+  // A rule whose PR is open, or whose file is already in the repo, has nothing left to add; a failed one is retried.
+  const done = (r: OverlayOnlyRule) => !!(r.deploy?.pr_url || r.deploy?.in_repo)
+  const deployable = rules.filter((r) => r.deploy_target && !done(r))
   const busy = (id: number) => deploying === 'all' || (Array.isArray(deploying) && deploying.includes(id))
   return (
     <>
@@ -954,7 +957,7 @@ function StopOverlayOnly({
         </div>
         {deployable.length > 0 && (
           <button type="button" className="btn stop-add-all" disabled={deploying != null} onClick={() => onDeploy(deployable.length === n ? undefined : deployable.map((r) => r.id))}>
-            {deploying === 'all' ? 'Queuing…' : deployable.length === 1 ? 'Add it to SIEM' : `Add all ${deployable.length} to SIEM`}
+            {deploying === 'all' ? 'Opening…' : deployable.length === 1 ? 'Add it to SIEM' : `Add all ${deployable.length} to SIEM`}
           </button>
         )}
       </div>
@@ -970,11 +973,20 @@ function StopOverlayOnly({
               <span role="cell" className="stop-dark-name" title={r.name}>{r.name}</span>
               <span role="cell"><span className="stop-siem">{SIEM_NAME[r.language] ?? r.language}</span></span>
               <span role="cell" className="stop-dark-act">
-                {r.deploy_queued ? (
-                  <span className="text-tx-3">Deploy PR queued</span>
+                {r.deploy?.pr_url ? (
+                  <a className="stop-link" href={r.deploy.pr_url} target="_blank" rel="noreferrer">PR opened</a>
+                ) : r.deploy?.in_repo ? (
+                  <span className="text-tx-3" title={r.deploy.in_repo}>Already in the repo</span>
+                ) : r.deploy_target && r.deploy?.error ? (
+                  <span className="stop-failed">
+                    <span className="stop-why" title={r.deploy.error}>{r.deploy.error}</span>
+                    <button type="button" className="stop-link" disabled={deploying != null} onClick={() => onDeploy([r.id])}>
+                      {busy(r.id) ? 'Opening…' : 'Retry'}
+                    </button>
+                  </span>
                 ) : r.deploy_target ? (
                   <button type="button" className="stop-link" disabled={deploying != null} onClick={() => onDeploy([r.id])}>
-                    {busy(r.id) ? 'Queuing…' : 'Add to SIEM'}
+                    {busy(r.id) ? 'Opening…' : 'Add to SIEM'}
                   </button>
                 ) : (
                   <Link className="stop-link" to="/settings?section=data">Set a deploy target</Link>

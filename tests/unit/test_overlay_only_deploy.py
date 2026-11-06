@@ -1,29 +1,28 @@
-"""Deploying the live rules only Vigil runs: the deploy-PR run a promotion to
-live queues, for each rule whose format has a deploy target and none queued yet."""
+"""Add to SIEM from the Stop prompt: the live rules only Vigil runs get their
+deploy PR opened now, by the same direct GitHub calls the rollout sweep makes,
+and each row reads what its PR came to from checks['deploy']."""
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from itertools import count
 
 import pytest
 
+import core.secrets
+from core.detections.detection_rules_service import GITHUB_ONLY
 from core.detections.inventory import rollout
 
-TARGET = {
-    "git_url": "https://example.invalid/acme/detections.git",
-    "subdirectory": "rules",
-}
+TARGET = {"git_url": "https://github.com/acme/detections.git", "subdirectory": "rules"}
 
 
-def _copy(rule_id, language="elastic", stage="live", toml=""):
+def _copy(rule_id, language="elastic", stage="live", toml="[rule]\n", deploy=None):
     return rollout.Copy(
         rule_id=rule_id,
-        version=1,
+        version=2,
         name=f"rule {rule_id}",
         language=language,
         stage=stage,
         stage_at=datetime.now(timezone.utc),
-        checks={},
+        checks={"deploy": deploy} if deploy else {},
         rule={},
         key=f"key-{rule_id}",
         toml=toml,
@@ -31,128 +30,133 @@ def _copy(rule_id, language="elastic", stage="live", toml=""):
     )
 
 
-class _Session:
-    def __init__(self):
-        self.added = []
-        self._ids = count(1)
-
-    def add(self, row):
-        self.added.append(row)
-
-    def flush(self):
-        for row in self.added:
-            if getattr(row, "id", None) is None:
-                row.id = next(self._ids)
-
-
 @pytest.fixture
 def estate(monkeypatch):
-    session = _Session()
+    state = {
+        "copies": [
+            _copy(1),  # nothing yet
+            _copy(2, deploy={"version": 2, "pr_url": "https://github.com/acme/d/pull/7"}),
+            _copy(3, language="splunk"),  # no splunk target
+            _copy(4, stage="shadow"),
+            _copy(5),  # handed off to a SIEM copy
+            _copy(6, deploy={"version": 2, "error": "POST /pulls: 422"}),  # retried
+            _copy(7, deploy={"version": 1, "pr_url": "https://old/pull/1"}),  # stale
+            _copy(8, deploy={"version": 2, "in_repo": "rules/8.toml on main"}),
+        ],
+        "gone": {5},
+        "targets": {"elastic": dict(TARGET)},
+        "stopped": False,
+        "fail": set(),
+        "opened": [],
+        "recorded": {},
+    }
 
     class _Db:
         @contextmanager
         def session_scope(self):
-            yield session
+            yield object()
 
-    state = {
-        "copies": [
-            _copy(1),
-            _copy(2),
-            _copy(3, language="splunk"),
-            _copy(4, stage="shadow"),
-            _copy(5),
-        ],
-        "gone": {5},
-        "targets": {"elastic": TARGET},
-        "queued": {2},
-    }
+    def open_pr(copy, target, body, token):
+        state["opened"].append((copy.rule_id, target["git_url"], token))
+        if copy.rule_id in state["fail"]:
+            raise RuntimeError("POST /repos/acme/detections/pulls: 502 bad gateway")
+        return {"pr_url": f"https://github.com/acme/detections/pull/{copy.rule_id}"}
+
     monkeypatch.setattr(rollout, "get_db_manager", lambda: _Db())
     monkeypatch.setattr(rollout, "_copies", lambda: state["copies"])
     monkeypatch.setattr(rollout, "handed_off", lambda ids: state["gone"] & set(ids))
     monkeypatch.setattr(rollout, "_deploy_targets", lambda: state["targets"])
+    monkeypatch.setattr(rollout, "_stopped", lambda: state["stopped"])
+    monkeypatch.setattr(rollout, "_open_pr", open_pr)
     monkeypatch.setattr(
-        rollout, "_deploys_queued", lambda _s, ids: state["queued"] & set(ids)
+        rollout,
+        "_record_deploy",
+        lambda c, out: state["recorded"].__setitem__(c.rule_id, out),
     )
     monkeypatch.setattr(rollout.exceptions, "listed", lambda _s, _rid: [])
-    return state, session
+    monkeypatch.setattr(core.secrets, "get_secret", lambda key, default=None: "ghp_x")
+    return state
 
 
-def test_overlay_only_lists_live_rules_no_siem_runs(estate):
-    rules = {r["id"]: r for r in rollout.overlay_only()}
-    # shadow (4) and handed off (5) are not listed
-    assert sorted(rules) == [1, 2, 3]
-    assert rules[1]["deploy_target"] and not rules[1]["deploy_queued"]
-    assert rules[2]["deploy_queued"]
-    assert not rules[3]["deploy_target"]
+def test_each_row_reads_its_deploy_state_from_its_current_version(estate):
+    rows = {r["id"]: r for r in rollout.overlay_only()}
+    assert sorted(rows) == [1, 2, 3, 6, 7, 8]  # not shadow (4) nor handed off (5)
+    assert rows[1]["deploy_target"] and rows[1]["deploy"] is None
+    assert rows[2]["deploy"]["pr_url"].endswith("/pull/7")
+    assert not rows[3]["deploy_target"]
+    assert rows[6]["deploy"]["error"]
+    assert rows[7]["deploy"] is None  # an earlier version's PR isn't this one's
+    assert rows[8]["deploy"]["in_repo"]
 
 
-def test_deploy_all_queues_only_what_can_go(estate):
-    _, session = estate
+def test_add_all_opens_what_can_go_and_retries_a_failed_one(estate):
     out = rollout.deploy_overlay_only()
-    assert [q["rule_id"] for q in out["queued"]] == [1]
+    assert [o["rule_id"] for o in out["opened"]] == [1, 6, 7]
+    assert out["opened"][0]["pr_url"].endswith("/pull/1")
+    assert out["failed"] == []
     assert {s["rule_id"]: s["reason"] for s in out["skipped"]} == {
-        2: "a deploy pull request is already queued",
+        2: "its pull request is already open: https://github.com/acme/d/pull/7",
         3: "no splunk deploy target is set",
+        8: "it is already in the repo: rules/8.toml on main",
     }
-    (trigger,) = session.added
-    assert trigger.payload["workflow_id"] == rollout.DEPLOY_WORKFLOW
-    assert rollout._deploy_marker(1) in trigger.payload["hypothesis"]
+    # Recorded on each version, as the sweep records it.
+    assert estate["recorded"][1]["pr_url"].endswith("/pull/1")
+    assert estate["recorded"][1]["version"] == 2
 
 
-def test_deploy_named_rules_says_why_others_are_skipped(estate):
-    out = rollout.deploy_overlay_only([1, 4, 99])
-    assert [q["rule_id"] for q in out["queued"]] == [1]
-    assert {s["rule_id"] for s in out["skipped"]} == {4, 99}
-
-
-def test_a_splunk_rule_needs_its_overlay_file(estate, monkeypatch):
-    state, session = estate
-    state["targets"] = {"splunk": TARGET}
-    monkeypatch.setattr(rollout, "_read_splunk_files", lambda copies: None)
-    out = rollout.deploy_overlay_only([3])
-    assert out["queued"] == []
-    assert out["skipped"] == [
-        {"rule_id": 3, "reason": "its overlay file could not be read"}
+def test_a_pr_that_fails_says_why(estate):
+    estate["fail"] = {1}
+    out = rollout.deploy_overlay_only([1])
+    assert out["opened"] == []
+    assert out["failed"] == [
+        {"rule_id": 1, "error": "POST /repos/acme/detections/pulls: 502 bad gateway"}
     ]
-    assert session.added == []
+    assert "502" in estate["recorded"][1]["error"]
+
+
+def test_named_rules_say_why_others_are_skipped(estate):
+    out = rollout.deploy_overlay_only([1, 4, 5, 99])
+    assert [o["rule_id"] for o in out["opened"]] == [1]
+    assert {s["rule_id"] for s in out["skipped"]} == {4, 5, 99}
 
 
 @pytest.mark.parametrize(
-    "trigger_state, run_status, blocks",
-    [
-        ("queued", None, True),
-        ("launched", "executing", True),
-        ("launched", "waiting_approval", True),
-        ("launched", "failed", False),
-        ("launched", "completed", False),
-        ("merged", "executing", True),
-        ("expired", None, False),
-        ("not_offered", None, False),
-    ],
+    "url",
+    ["https://gitlab.com/acme/detections.git", "git@bitbucket.org:acme/d.git"],
 )
-def test_only_a_deploy_in_flight_blocks_another(trigger_state, run_status, blocks):
-    assert rollout._deploy_in_flight(trigger_state, run_status) is blocks
+def test_a_non_github_target_gets_no_request(estate, url):
+    estate["targets"]["elastic"]["git_url"] = url
+    out = rollout.deploy_overlay_only([1])
+    assert estate["opened"] == []
+    assert out["skipped"] == [{"rule_id": 1, "reason": GITHUB_ONLY}]
 
 
-def test_a_failed_deploy_run_can_be_queued_again(monkeypatch):
-    brief = f"... {rollout._deploy_marker(1)} ..."
-
-    class _Rows:
-        def all(self):
-            return [(brief, "launched", "failed"), (brief, "expired", None)]
-
-    class _S:
-        def execute(self, _stmt):
-            return _Rows()
-
-    assert rollout._deploys_queued(_S(), [1]) == set()
-
-
-def test_no_target_wins_over_an_old_queued_run(estate):
-    state, session = estate
-    state["targets"] = {}
-    out = rollout.deploy_overlay_only([2])
-    assert out["skipped"] == [
-        {"rule_id": 2, "reason": "no elastic deploy target is set"}
+def test_a_marked_github_enterprise_target_is_deployed_to(estate):
+    estate["targets"]["elastic"] = {
+        "git_url": "https://ghe.acme.internal/soc/detections.git",
+        "github_enterprise": True,
+    }
+    rollout.deploy_overlay_only([1])
+    assert estate["opened"] == [
+        (1, "https://ghe.acme.internal/soc/detections.git", "ghp_x")
     ]
-    assert session.added == []
+
+
+def test_nothing_opens_while_stopped(estate):
+    estate["stopped"] = True
+    out = rollout.deploy_overlay_only()
+    assert estate["opened"] == []
+    assert {s["rule_id"]: s["reason"] for s in out["skipped"]}[1] == (
+        "Vigil is stopped; it opens no pull request"
+    )
+
+
+def test_a_splunk_rule_needs_its_overlay_file(estate, monkeypatch):
+    estate["targets"] = {"splunk": dict(TARGET)}
+    estate["copies"][2] = _copy(3, language="splunk", toml="")
+    monkeypatch.setattr(rollout, "_read_splunk_files", lambda copies: None)
+    out = rollout.deploy_overlay_only([3])
+    assert estate["opened"] == []
+    assert out["skipped"] == [
+        {"rule_id": 3, "reason": "its overlay file could not be read"}
+    ]

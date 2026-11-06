@@ -51,6 +51,8 @@ class AddSourceRequest(BaseModel):
     subdirectory: str = ""
     story_subdirectory: str = ""
     deploy_target: bool = False
+    # The person says this non-github.com host is GitHub Enterprise.
+    github_enterprise: bool = False
 
 
 def _audit_deploy_target(user: User, source: dict, old: bool, new: bool) -> None:
@@ -66,6 +68,7 @@ def _audit_deploy_target(user: User, source: dict, old: bool, new: bool) -> None
                 "name": source.get("name"),
                 "format": source.get("format"),
                 "git_url": source.get("git_url"),
+                "github_enterprise": bool(source.get("github_enterprise")),
                 "deploy_target": new,
             },
         )
@@ -77,6 +80,9 @@ class DeployTargetRequest(BaseModel):
     """Whether this git source receives Vigil's live rules of its format."""
 
     deploy_target: bool
+    # With deploy_target on: the person says the non-github.com host is GitHub
+    # Enterprise. Omitted keeps what is saved.
+    github_enterprise: Optional[bool] = None
 
 
 @router.get("/sources")
@@ -157,6 +163,7 @@ def add_source(
             subdirectory=request.subdirectory,
             story_subdirectory=request.story_subdirectory,
             deploy_target=request.deploy_target,
+            github_enterprise=request.github_enterprise,
         )
         if request.deploy_target:
             was = before is not None and before.get("id") == source["id"]
@@ -231,7 +238,9 @@ def set_deploy_target(
     """Mark or unmark a git source as where Vigil's live rules of its format go."""
     old = bool((service.get_source(source_id) or {}).get("deploy_target"))
     try:
-        source = service.set_deploy_target(source_id, request.deploy_target)
+        source = service.set_deploy_target(
+            source_id, request.deploy_target, request.github_enterprise
+        )
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
@@ -321,19 +330,20 @@ def deploy_overlay_only(
     body: DeployOverlayRequest,
     user: User = Depends(get_current_active_user),
 ):
-    """Queue a deploy pull request into the deploy target for each live rule only
-    Vigil runs (these, or all), as a promotion to live does."""
+    """Open the deploy pull request now, as the rollout sweep would, into the
+    deploy target for each live rule only Vigil runs (these, or all); a failed
+    one is tried again. Says what each came to and why others were skipped."""
     from core.detections.inventory import rollout
 
     result = rollout.deploy_overlay_only(body.rule_ids)
-    if result["queued"]:
+    if result["opened"] or result["failed"]:
         try:
             get_config_service(user_id=str(user.user_id)).record_audit(
                 config_type="detection_rules",
                 config_key="overlay_deploy",
                 action="update",
                 old_value=None,
-                new_value={"queued": result["queued"]},
+                new_value={"opened": result["opened"], "failed": result["failed"]},
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("Could not write overlay deploy audit log: %s", e)

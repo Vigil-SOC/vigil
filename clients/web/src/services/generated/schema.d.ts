@@ -3239,8 +3239,9 @@ export interface paths {
         put?: never;
         /**
          * Deploy Overlay Only
-         * @description Queue a deploy pull request into the deploy target for each live rule only
-         *     Vigil runs (these, or all), as a promotion to live does.
+         * @description Open the deploy pull request now, as the rollout sweep would, into the
+         *     deploy target for each live rule only Vigil runs (these, or all); a failed
+         *     one is tried again. Says what each came to and why others were skipped.
          */
         post: operations["post_api_detection-rules_overlay-only_deploy"];
         delete?: never;
@@ -7461,6 +7462,11 @@ export interface components {
             deploy_target: boolean;
             /** Format */
             format: string;
+            /**
+             * Github Enterprise
+             * @default false
+             */
+            github_enterprise: boolean;
             /** Name */
             name: string;
             /** Path */
@@ -9082,6 +9088,8 @@ export interface components {
         DeployTargetRequest: {
             /** Deploy Target */
             deploy_target: boolean;
+            /** Github Enterprise */
+            github_enterprise?: boolean | null;
         };
         /** DirectiveRequest */
         DirectiveRequest: {

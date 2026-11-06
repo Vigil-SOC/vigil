@@ -32,6 +32,7 @@ const EMPTY_SOURCE: AddSourcePayload = {
   subdirectory: '',
   story_subdirectory: '',
   deploy_target: false,
+  github_enterprise: false,
 }
 
 const fmtNum = (n: number) => n.toLocaleString()
@@ -52,6 +53,21 @@ const notDeployable = (s: DetectionSource) =>
 const targetTaken = (format: string, other: DetectionSource | undefined) =>
   other ? `${other.name} is already the ${formatName(format)} deploy target; turn it off first.` : ''
 
+// A git URL's host, lowercased: https/ssh URLs and scp-style user@host:path.
+const hostOf = (url: string) => {
+  const u = url.trim()
+  const m = /^[a-z][\w+.-]*:\/\/(?:[^/@]+@)?([^/:]+)/i.exec(u) || /^(?:[^@/]+@)?([^:/]+):/.exec(u)
+  return (m?.[1] ?? '').toLowerCase()
+}
+// Vigil opens deploy pull requests with its GitHub token, so a deploy target is
+// github.com, or a host the person says is GitHub Enterprise; the server refuses the rest.
+const isGithubCom = (url: string) => hostOf(url) === 'github.com'
+// Hosted services that are never GitHub: no GitHub Enterprise mark is offered for them.
+const NEVER_GITHUB = ['gitlab.com', 'bitbucket.org', 'dev.azure.com', 'ssh.dev.azure.com', 'codeberg.org', 'gitea.com', 'git.sr.ht']
+const neverGithub = (url: string) => NEVER_GITHUB.includes(hostOf(url)) || hostOf(url).endsWith('.visualstudio.com')
+const GITHUB_ONLY = 'Only GitHub repos (github.com or GitHub Enterprise) can be deploy targets.'
+const notGithub = (url: string) => `${GITHUB_ONLY} ${hostOf(url)} is not GitHub.`
+
 // A deploy target awaiting the person's confirmation: an existing row, or the add form.
 type PendingTarget = { name: string; url: string; format: string; source?: DetectionSource }
 
@@ -64,6 +80,12 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
   const [saving, setSaving] = useState(false)
   const [confirmDel, setConfirmDel] = useState<DetectionSource | null>(null)
   const [confirmTarget, setConfirmTarget] = useState<PendingTarget | null>(null)
+  // In the confirm, for a host other than github.com: the person says it is GitHub Enterprise.
+  const [confirmGhe, setConfirmGhe] = useState(false)
+  const askTarget = (t: PendingTarget) => {
+    setConfirmGhe(!!t.source?.github_enterprise)
+    setConfirmTarget(t)
+  }
 
   const title = 'Detection rule sources'
   const desc = 'Rules agents can search and compare against when they explain coverage.'
@@ -103,10 +125,10 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
     }
   }
 
-  const onDeployTarget = async (s: DetectionSource, on: boolean) => {
+  const onDeployTarget = async (s: DetectionSource, on: boolean, githubEnterprise?: boolean) => {
     setUpdating(`target:${s.id}`)
     try {
-      await setDeployTarget(s.id, on)
+      await setDeployTarget(s.id, on, githubEnterprise)
       notify('ok', on ? `${s.name} is the ${formatName(s.format)} deploy target.` : `${s.name} is no longer a deploy target.`)
     } catch (e) {
       notify('err', (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to change the deploy target.')
@@ -118,11 +140,12 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
   const onConfirmTarget = () => {
     if (!confirmTarget) return
     setConfirmTarget(null)
-    if (confirmTarget.source) void onDeployTarget(confirmTarget.source, true)
-    else void onAdd()
+    const ghe = isGithubCom(confirmTarget.url) ? undefined : confirmGhe
+    if (confirmTarget.source) void onDeployTarget(confirmTarget.source, true, ghe)
+    else void onAdd(!!ghe)
   }
 
-  const onAdd = async () => {
+  const onAdd = async (githubEnterprise = false) => {
     setSaving(true)
     try {
       await addSource({
@@ -134,6 +157,7 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
         subdirectory: form.subdirectory,
         story_subdirectory: form.story_subdirectory,
         deploy_target: wantsTarget,
+        github_enterprise: wantsTarget && githubEnterprise,
       })
       notify('ok', `Added source: ${form.name}.`)
       setAddOpen(false)
@@ -160,7 +184,9 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
   // The source each format already deploys to (at most one per format; the server refuses a second).
   const targetOf = (format: string) => sources.find((s) => s.deploy_target && s.format === format)
   const formTaken = targetTaken(form.format, targetOf(form.format))
-  const wantsTarget = formDeployable && !formTaken && !!form.deploy_target
+  const formNotGithub = neverGithub(form.url || '')
+  const wantsTarget = formDeployable && !formTaken && !formNotGithub && !!form.deploy_target
+  const confirmNeedsGhe = !!confirmTarget && !isGithubCom(confirmTarget.url)
   const addValid = !!form.name && (form.source_type === 'git' ? !!form.url : !!form.path)
 
   return (
@@ -215,6 +241,7 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
                       title={
                         !deployable(s) ? notDeployable(s)
                         : s.vendor_repo ? 'A vendor’s public repo can’t be a deploy target; add your own repo for that.'
+                        : neverGithub(s.git_url) ? notGithub(s.git_url)
                         : taken ||
                           `When one of Vigil's ${formatName(s.format)} rules goes live, Vigil opens a pull request adding it here; it waits for approval.`
                       }
@@ -226,11 +253,11 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
                       ) : (
                         <Toggle
                           checked={!!s.deploy_target}
-                          disabled={!!updating || !!taken}
+                          disabled={!!updating || ((!!taken || neverGithub(s.git_url)) && !s.deploy_target)}
                           label={`${s.name}: deploy target for ${formatName(s.format)} rules`}
-                          title={taken || undefined}
+                          title={(neverGithub(s.git_url) && notGithub(s.git_url)) || taken || undefined}
                           onChange={(on) =>
-                            on ? setConfirmTarget({ name: s.name, url: s.git_url, format: s.format, source: s }) : onDeployTarget(s, false)
+                            on ? askTarget({ name: s.name, url: s.git_url, format: s.format, source: s }) : onDeployTarget(s, false)
                           }
                         />
                       )}
@@ -290,9 +317,12 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
           {formDeployable && (
             <ToggleRow
               label="Deploy target"
-              hint={formTaken || `When one of Vigil's ${formatName(form.format)} rules goes live, Vigil opens a pull request adding it here.`}
-              checked={!formTaken && !!form.deploy_target}
-              disabled={!!formTaken}
+              hint={
+                formTaken ||
+                (formNotGithub ? notGithub(form.url || '') : `When one of Vigil's ${formatName(form.format)} rules goes live, Vigil opens a pull request adding it here.`)
+              }
+              checked={!formTaken && !formNotGithub && !!form.deploy_target}
+              disabled={!!formTaken || formNotGithub}
               onChange={(v) => setForm({ ...form, deploy_target: v })}
             />
           )}
@@ -302,7 +332,7 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
               className="btn primary"
               onClick={() =>
                 wantsTarget
-                  ? setConfirmTarget({ name: form.name, url: form.url || '', format: form.format })
+                  ? askTarget({ name: form.name, url: form.url || '', format: form.format })
                   : onAdd()
               }
               disabled={!addValid || saving}
@@ -323,9 +353,23 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
         <p className="text-sm text-tx-2 leading-relaxed mt-2">
           Each pull request waits for a person's approval. Only choose a repo your organisation owns.
         </p>
+        {confirmNeedsGhe && confirmTarget && (
+          <div className="mt-3">
+            <p className="text-sm text-tx-2 leading-relaxed">
+              {GITHUB_ONLY} Vigil opens each pull request with its GitHub token, sent to{' '}
+              <span className="font-mono">{hostOf(confirmTarget.url)}/api/v3</span>.
+            </p>
+            <ToggleRow
+              label={`${hostOf(confirmTarget.url)} is GitHub Enterprise`}
+              hint="Turn this on only if it is. GitLab, Bitbucket and other hosts are refused."
+              checked={confirmGhe}
+              onChange={setConfirmGhe}
+            />
+          </div>
+        )}
         <div className="flex justify-end gap-2.5 mt-5">
           <button className="btn ghost" onClick={() => setConfirmTarget(null)}>Cancel</button>
-          <button className="btn primary" onClick={onConfirmTarget}>Make deploy target</button>
+          <button className="btn primary" onClick={onConfirmTarget} disabled={confirmNeedsGhe && !confirmGhe}>Make deploy target</button>
         </div>
       </Popup>
 

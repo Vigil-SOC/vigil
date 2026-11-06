@@ -893,10 +893,10 @@ export interface OverlayOnlyRule {
   id: number
   name: string
   language: string
-  /** Its format has a deploy target, so a deploy pull request can be queued. */
+  /** Its format has a deploy target, so Vigil can open a deploy pull request. */
   deploy_target: boolean
-  /** A deploy pull request was already queued for it. */
-  deploy_queued: boolean
+  /** What its deploy pull request came to on its current version; null before one. */
+  deploy: { version: number; at: string; pr_url?: string; in_repo?: string; error?: string } | null
 }
 
 export const detectionRulesApi = {
@@ -925,11 +925,15 @@ export const detectionRulesApi = {
     subdirectory?: string
     story_subdirectory?: string
     deploy_target?: boolean
+    github_enterprise?: boolean
   }) => api.post('/detection-rules/sources', data),
 
   /** Mark (or clear) the git source Vigil's live rules of its format go to. */
-  setDeployTarget: (sourceId: string, deployTarget: boolean) =>
-    api.post(`/detection-rules/sources/${sourceId}/deploy-target`, { deploy_target: deployTarget }),
+  setDeployTarget: (sourceId: string, deployTarget: boolean, githubEnterprise?: boolean) =>
+    api.post(`/detection-rules/sources/${sourceId}/deploy-target`, {
+      deploy_target: deployTarget,
+      ...(githubEnterprise === undefined ? {} : { github_enterprise: githubEnterprise }),
+    }),
   
   removeSource: (sourceId: string, deleteFiles: boolean = false) =>
     api.delete(`/detection-rules/sources/${sourceId}`, { params: { delete_files: deleteFiles } }),
@@ -949,7 +953,8 @@ export const detectionRulesApi = {
   /** Queue a deploy pull request for these live overlay-only rules (all when none given). */
   deployOverlayOnly: (ruleIds?: number[]) =>
     api.post<{
-      queued: { rule_id: number; trigger_id: number }[]
+      opened: { rule_id: number; pr_url?: string; in_repo?: string }[]
+      failed: { rule_id: number; error: string }[]
       skipped: { rule_id: number; reason: string }[]
     }>('/detection-rules/overlay-only/deploy', { rule_ids: ruleIds ?? null }),
   
