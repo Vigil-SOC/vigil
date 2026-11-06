@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Union
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, create_model
+from sqlalchemy import exists, select
 
 from core.api.v1.findings_router import data_service as findings_data_service
 from core.audit.feed import INTEGRATION_ID as AUDIT_FEED_INTEGRATION_ID
@@ -38,6 +39,7 @@ from core.integrations.integration_secrets import (
 )
 from core.intent import intent_file
 from core.llm.defaults import DEFAULT_MODEL
+from core.memory.recall_contract import InvestigationKind
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import (
     SECRET_WRITE_REFUSED_DETAIL,
@@ -54,7 +56,12 @@ from core.skills.skill_library import (
     skill_roots,
 )
 from core.storage.config_service import get_config_service
-from core.storage.models import AIModelConfig, CustomAgent, User
+from core.storage.models import (
+    AIModelConfig,
+    CustomAgent,
+    EpisodicDistilMarker,
+    User,
+)
 from core.time import utcnow
 from services.api.errors import INTERNAL_ERROR_DETAIL
 from services.api.middleware.auth import get_current_active_user
@@ -655,8 +662,9 @@ def build_setup_steps(
     demo_enabled: bool,
     skills_root_set: bool = False,
     custom_skills: int = 0,
+    history_imported: bool = False,
 ) -> dict:
-    """Four or five setup steps from config that already exists. No ranking, no dismissal.
+    """Five or six setup steps from config that already exists. No ranking, no dismissal.
 
     The custom skill step is served unless operator skills are off (``VIGIL_SKILLS_PATH`` set empty), so it can always be finished.
     """
@@ -708,6 +716,17 @@ def build_setup_steps(
             "/settings?section=data&tab=detection",
         ),
         _step(
+            "history",
+            "Bring your alert and ticket history",
+            (
+                "History is in agent memory"
+                if history_imported
+                else "No alert or ticket history imported"
+            ),
+            history_imported,
+            "/settings?section=data&tab=history",
+        ),
+        _step(
             "per_agent",
             "Pick a model per agent",
             model_line,
@@ -745,7 +764,7 @@ def get_setup_steps(
     session: UnitOfWorkSession,
     detection_rules: DetectionRulesService = Depends(provide_detection_rules),
 ):
-    """Home's setup list: tools, a notify route, rules on disk, model variety, a custom skill."""
+    """Home's setup list: tools, a notify route, rules on disk, imported history, model variety, a custom skill."""
     loaded = load_integrations_config(get_config_service())
     skills_root_set = operator_skills_root() is not None
     try:
@@ -763,6 +782,16 @@ def get_setup_steps(
         demo_enabled=is_demo_mode(),
         skills_root_set=skills_root_set,
         custom_skills=custom_skills,
+        history_imported=bool(
+            session.scalar(
+                select(
+                    exists().where(
+                        EpisodicDistilMarker.investigation_kind
+                        == InvestigationKind.IMPORTED.value
+                    )
+                )
+            )
+        ),
     )
 
 

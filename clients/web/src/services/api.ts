@@ -241,6 +241,14 @@ export const notesApi = {
   withdraw: (id: string) => api.delete<Note>(`/memory/notes/${encodeURIComponent(id)}`),
 }
 
+export type HistoryImport = Schema<'ImportOut'>
+
+/** Alert and ticket history imported into agent memory (#3965); an id holds a ':'. */
+export const importsApi = {
+  list: () => api.get<Schema<'ImportListResponse'>>('/memory/imports'),
+  remove: (id: string) => api.delete<HistoryImport>(`/memory/imports/${encodeURIComponent(id)}`),
+}
+
 export interface CaseRecordRow {
   id: string
   at: string
@@ -769,10 +777,11 @@ export const ingestionApi = {
   ingestS3File: (key: string) =>
     api.post('/ingest/s3-file', { key }),
   // returns once the body is spooled; the ingest runs as a background job
-  uploadFile: (file: File, dataType: string = 'finding') => {
+  uploadFile: (file: File, dataType: string = 'finding', sourceSystem?: string) => {
     const formData = new FormData()
     formData.append('file', file)
     formData.append('data_type', dataType)
+    if (sourceSystem) formData.append('source_system', sourceSystem)
     return api.post<IngestionJob>('/ingest/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 0,

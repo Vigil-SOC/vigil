@@ -1,4 +1,7 @@
-import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
+import { useAuth } from '../../contexts/AuthContext'
+import { errorText } from '../../shared/errorText'
+import { utcDay, utcDayClock } from '../../shared/utc'
 import { Icon } from '../../shared/icons'
 import { LevelBadge } from '../../shared/LevelBadge'
 import {
@@ -11,7 +14,7 @@ import {
   TextInput,
   ToggleRow,
 } from '../../shared/ui'
-import { configApi, ingestionApi, type IngestionJob } from '../../services/api'
+import { configApi, importsApi, ingestionApi, type HistoryImport, type IngestionJob } from '../../services/api'
 import {
   useDarktrace,
   useIngestionJob,
@@ -230,19 +233,48 @@ export const ACCEPTED_UPLOAD_TYPES = '.parquet,.csv,.json,.jsonl,.ndjson'
 
 export function UploadCard({ notify }: SectionProps) {
   const { job, attaching, upload } = useIngestionJob()
+  return (
+    <SettingsCard title="Upload files" desc="Import findings or cases from a file. Duplicates are skipped.">
+      <FileDrop
+        running={job?.status === 'running'}
+        attaching={attaching}
+        testId="manual-upload-input"
+        onUpload={async (file) => {
+          await upload(file)
+          notify('ok', `Ingesting ${file.name} in the background.`)
+        }}
+        notify={notify}
+      />
+      {job && <IngestionJobStatus job={job} />}
+    </SettingsCard>
+  )
+}
+
+/** The drop zone both upload cards share; onUpload throws to keep the chosen file. */
+function FileDrop({
+  running,
+  attaching,
+  testId,
+  onUpload,
+  notify,
+}: {
+  running: boolean
+  attaching: boolean
+  testId: string
+  onUpload: (file: File) => Promise<void>
+  notify: SectionProps['notify']
+}) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [dragging, setDragging] = useState(false)
-  const running = job?.status === 'running'
 
   const doUpload = async () => {
     if (!file) return
     setSubmitting(true)
     try {
-      await upload(file)
+      await onUpload(file)
       setFile(null)
-      notify('ok', `Ingesting ${file.name} in the background.`)
     } catch (e) {
       notify('err', (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Upload failed.')
     } finally {
@@ -258,46 +290,169 @@ export function UploadCard({ notify }: SectionProps) {
   }
 
   return (
-    <SettingsCard title="Upload files" desc="Import findings or cases from a file. Duplicates are skipped.">
-      <div
-        className={`data-drop${dragging ? ' over' : ''}`}
-        onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={onDrop}
-      >
-        <Icon name="upload" size={20} />
-        <span className="data-drop-title">Drop a file to import, or choose a file</span>
-        <span className="data-drop-sub">
-          {ACCEPTED_UPLOAD_TYPES.split(',').join(', ')} · large files keep importing in the background
-        </span>
-        <input
-          ref={fileRef}
-          type="file"
-          accept={ACCEPTED_UPLOAD_TYPES}
-          className="hidden"
-          data-testid="manual-upload-input"
-          onChange={(e) => setFile(e.target.files?.[0] || null)}
-          onClick={(e) => { (e.target as HTMLInputElement).value = '' }} // lets the same file be retried
-        />
-        <div className="flex items-center justify-center gap-2.5 flex-wrap">
-          <button className={`btn ${file ? 'ghost' : 'primary'}`} onClick={() => fileRef.current?.click()} disabled={running}>
-            <Icon name="paperclip" /> {file ? file.name : 'Choose File'}
+    <div
+      className={`data-drop${dragging ? ' over' : ''}`}
+      onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={onDrop}
+    >
+      <Icon name="upload" size={20} />
+      <span className="data-drop-title">Drop a file to import, or choose a file</span>
+      <span className="data-drop-sub">
+        {ACCEPTED_UPLOAD_TYPES.split(',').join(', ')} · large files keep importing in the background
+      </span>
+      <input
+        ref={fileRef}
+        type="file"
+        accept={ACCEPTED_UPLOAD_TYPES}
+        className="hidden"
+        data-testid={testId}
+        onChange={(e) => setFile(e.target.files?.[0] || null)}
+        onClick={(e) => { (e.target as HTMLInputElement).value = '' }} // lets the same file be retried
+      />
+      <div className="flex items-center justify-center gap-2.5 flex-wrap">
+        <button className={`btn ${file ? 'ghost' : 'primary'}`} onClick={() => fileRef.current?.click()} disabled={running}>
+          <Icon name="paperclip" /> {file ? file.name : 'Choose File'}
+        </button>
+        {file && <span className="text-xs text-tx-3">{formatFileSize(file.size)}</span>}
+        {file && (
+          <button className="btn primary" disabled={submitting || running || attaching} onClick={doUpload}>
+            <Icon name="upload" /> {submitting ? 'Uploading…' : 'Upload'}
           </button>
-          {file && <span className="text-xs text-tx-3">{formatFileSize(file.size)}</span>}
-          {file && (
-            <button className="btn primary" disabled={submitting || running || attaching} onClick={doUpload}>
-              <Icon name="upload" /> {submitting ? 'Uploading…' : 'Upload'}
-            </button>
-          )}
-        </div>
+        )}
       </div>
+    </div>
+  )
+}
 
-      {job && <IngestionJobStatus job={job} />}
+const HISTORY_DESC =
+  'Closed tickets become Verdicts and alerts become Sightings in agent memory, so agents recall how your team decided before. ' +
+  'Nothing goes to triage: no findings or cases are created.'
+
+export function HistoryImportCard({ notify }: SectionProps) {
+  const { job, attaching, upload } = useIngestionJob('history')
+  const canWrite = useAuth().hasPermission('findings.write')
+  const [imports, setImports] = useState<HistoryImport[] | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [source, setSource] = useState('')
+  const [removing, setRemoving] = useState<HistoryImport | null>(null)
+  const [busy, setBusy] = useState(false)
+  const running = job?.status === 'running'
+
+  const load = useCallback(() => {
+    importsApi
+      .list()
+      .then((res) => { setImports(res.data.imports); setLoadError(null) })
+      .catch((e) => setLoadError(errorText(e, 'Could not load imports.')))
+  }, [])
+  // on open, and again when an import finishes, so it lists without a reload
+  useEffect(load, [load, job?.job_id, running])
+
+  const remove = async () => {
+    if (!removing) return
+    setBusy(true)
+    try {
+      await importsApi.remove(removing.import_id)
+      notify('ok', `Deleted the ${removing.source_system} import.`)
+      setRemoving(null)
+      load()
+    } catch (e) {
+      notify('err', errorText(e, 'Could not delete the import.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <SettingsCard title="Alert and ticket history" desc={HISTORY_DESC}>
+      {canWrite && (
+        <>
+          <div className="data-history-source">
+            <Field label="Source system" hint="Optional. Names the import; left blank, Vigil reads it from the file.">
+              <TextInput
+                value={source}
+                maxLength={64}
+                placeholder="e.g. servicenow"
+                onChange={(e) => setSource(e.target.value)}
+                disabled={running}
+              />
+            </Field>
+          </div>
+          <FileDrop
+            running={running}
+            attaching={attaching}
+            testId="history-upload-input"
+            onUpload={async (file) => {
+              await upload(file, source.trim() || undefined)
+              notify('ok', `Importing ${file.name} into agent memory in the background.`)
+            }}
+            notify={notify}
+          />
+          {job && <IngestionJobStatus job={job} wrap />}
+        </>
+      )}
+
+      {loadError ? (
+        <div className="data-history-empty">
+          {loadError} <button className="data-link" onClick={load}>Retry</button>
+        </div>
+      ) : imports === null ? (
+        <div className="data-history-empty">Loading…</div>
+      ) : imports.length === 0 ? (
+        <div className="data-history-empty">No history imported yet.</div>
+      ) : (
+        <div className="table-wrap data-history-list">
+          <table className="tbl data-imports">
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th className="num">Verdicts</th>
+                <th className="num">Sightings</th>
+                <th>Latest record</th>
+                <th>Imported</th>
+                {canWrite && <th className="col-act" aria-label="Action" />}
+              </tr>
+            </thead>
+            <tbody>
+              {imports.map((row) => (
+                <tr key={row.import_id}>
+                  <td title={row.import_id}><b>{row.source_system || 'file'}</b></td>
+                  <td className="num">{row.verdicts_written}</td>
+                  <td className="num">{row.sightings_written}</td>
+                  <td className="muted">{utcDay(row.concluded_at)}</td>
+                  <td className="muted">{utcDayClock(row.imported_at)}</td>
+                  {canWrite && (
+                    <td className="data-act col-act">
+                      <button
+                        className="data-link"
+                        aria-label={`Delete the ${row.source_system} import`}
+                        onClick={() => setRemoving(row)}
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <ConfirmDialog
+        open={removing !== null}
+        title="Delete import"
+        body={`Deletes the ${removing?.verdicts_written ?? 0} Verdicts and ${removing?.sightings_written ?? 0} Sightings this ${removing?.source_system ?? ''} import wrote to agent memory. Agents stop recalling them.`}
+        confirmLabel="Delete"
+        busy={busy}
+        onConfirm={remove}
+        onClose={() => setRemoving(null)}
+      />
     </SettingsCard>
   )
 }
 
-function IngestionJobStatus({ job }: { job: IngestionJob }) {
+// wrap: a history job's message names what was left out and why, so it is shown whole
+function IngestionJobStatus({ job, wrap = false }: { job: IngestionJob; wrap?: boolean }) {
   const running = job.status === 'running'
   const ok = job.status === 'succeeded'
   const pct = job.determinate && job.total > 0
@@ -307,7 +462,7 @@ function IngestionJobStatus({ job }: { job: IngestionJob }) {
     ? pct !== null ? `${job.processed} of ${job.total} rows (${pct}%)` : `${job.processed} rows so far`
     : job.message
   return (
-    <div className="data-job" role="status" aria-live="polite">
+    <div className={`data-job${wrap ? ' wrap' : ''}`} role="status" aria-live="polite">
       <span className="font-mono data-job-name" title={job.filename}>{job.filename}</span>
       <span className="data-job-msg" title={message}>{message}</span>
       {running ? (

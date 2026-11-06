@@ -4947,6 +4947,57 @@
       color: var(--tx2);
    }
 
+   /* a history job's message lists what was left out; it wraps instead of clipping */
+   .data-job.wrap {
+      align-items: flex-start;
+   }
+
+   .data-job.wrap .data-job-msg {
+      white-space: normal;
+      text-align: left;
+      overflow-wrap: anywhere;
+   }
+
+   .data-history-source {
+      max-width: 320px;
+      margin-bottom: 12px;
+   }
+
+   .data-history-list {
+      margin-top: 14px;
+   }
+
+   .data-history-empty {
+      margin-top: 14px;
+      font-size: 12.5px;
+      color: var(--tx2);
+   }
+
+   .data-imports th:first-child,
+   .data-imports td:first-child {
+      padding-left: 2px;
+   }
+
+   .data-imports th:last-child,
+   .data-imports td:last-child {
+      padding-right: 2px;
+   }
+
+   .data-imports .num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+   }
+
+   /* the source never narrows below --col-main-min; past that the table scrolls in its card */
+   .data-imports th:first-child {
+      min-width: var(--col-main-min);
+   }
+
+   .data-imports tbody td:first-child {
+      white-space: normal;
+      overflow-wrap: anywhere;
+   }
+
    /* Streams and rule-source tables: fixed layout so long settings or URLs ellipsize instead of widening the page */
    .settings-content .tbl.data-table {
       table-layout: fixed;
