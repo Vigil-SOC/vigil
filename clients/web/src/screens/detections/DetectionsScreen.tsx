@@ -48,6 +48,8 @@ interface RulesReport {
   mapped: number
   counts: Record<RuleHealth, number>
   matched: number
+  /** With a search: how many it matches in each view outside this one. */
+  matched_elsewhere: Partial<Record<RuleHealth, number>>
   offset: number
   rules: RuleRow[]
   by_siem: Partial<Record<Siem, SiemTally>>
@@ -190,8 +192,15 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   const siems = SIEMS.filter((s) => report.by_siem[s])
   const cantFire = siems.reduce((a, s) => a + (report.by_siem[s]?.cant_fire ?? 0), 0)
   const of = viewCount(report, view)
+  const viewName = view === 'attention' ? 'Needs attention' : view === 'all' ? 'All rules' : HEALTH[view].label
+  // A search that misses here may hit in a view the chips leave out (a healthy rule
+  // under Needs attention): say how many and where, one click from all of them.
+  const elsewhere = Object.entries(report.matched_elsewhere ?? {}) as [RuleHealth, number][]
+  const elsewhereN = elsewhere.reduce((a, [, c]) => a + c, 0)
+  const elsewhereText = elsewhere.map(([h, c]) => `${n(c)} in ${HEALTH[h].label}`).join(', ')
+  const showAll = () => { setView('all'); setOpen(null) }
   const note = q
-    ? `${plural(report.matched, 'rule matches', 'rules match')} “${q}”`
+    ? `${plural(report.matched, 'rule matches', 'rules match')} “${q}” in ${viewName}${elsewhereN ? ` · ${n(elsewhereN)} more in other views` : ''}`
     : view === 'attention'
       ? `${n(of)} of ${n(viewCount(report, 'all'))} rules need attention, worst first`
       : view === 'all'
@@ -342,7 +351,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
             const h = HEALTH[r.health]
             const isOpen = open?.id === r.rule_id && open.what === 'raw'
             const excOpen = open?.id === r.rule_id && open.what === 'exceptions'
-            const fired = r.fires > 0 ? `${plural(r.fires, 'fire', 'fires')} in ${days}d` : r.health === 'no_fire_data' ? 'No fire data' : r.health === 'fires' ? 'Alerted in the SIEM' : `No fires in ${days}d`
+            const fired = r.fires > 0 ? `${plural(r.fires, 'fire', 'fires')} in ${days}d` : r.health === 'no_fire_data' ? 'No fire data' : `No fires in ${days}d`
             return (
               <div key={item.key} data-index={item.index} ref={virtual.measureElement} className="de-tr de-row" style={{ transform: `translateY(${item.start - HEAD_ROW}px)` }}>
                 <div className="de-rule">
@@ -351,8 +360,13 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                     <span className="de-where">{SIEM_NAME[r.tool] ?? r.tool}</span>
                     {r.techniques.length > 0 && <span className="x1-mono">{r.techniques.slice(0, 2).join(', ')}{r.techniques.length > 2 ? ` +${r.techniques.length - 2}` : ''}</span>}
                     <span>{!r.checks_run ? 'Not checked' : r.checks_passing ? plural(r.checks_passing, 'check passes', 'checks pass') : 'No check passes'}</span>
-                    <span aria-hidden="true">·</span>
-                    <span className={r.fires > 0 ? 'de-fired' : ''}>{fired}</span>
+                    {/* A rule that fires says how often in its Why, so the count isn't repeated here. */}
+                    {r.health !== 'fires' && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span className={r.fires > 0 ? 'de-fired' : ''}>{fired}</span>
+                      </>
+                    )}
                   </div>
                 </div>
                 <div><span className={`de-health ${h.tone}`}><i />{h.label}</span></div>
@@ -383,12 +397,25 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
           })}
           </div>
           {rows.length === 0 && !loading && (
-            <div className="de-empty">{q ? `No rules match “${q}”.` : 'No rules in this view.'}</div>
+            <div className="de-empty">
+              {!q ? 'No rules in this view.' : elsewhereN ? (
+                <>
+                  No rules in {viewName} match “{q}”. {plural(elsewhereN, 'rule matches', 'rules match')} in other views ({elsewhereText}).{' '}
+                  <button type="button" className="de-link" onClick={showAll}>Show all rules</button>
+                </>
+              ) : `No rules match “${q}”.`}
+            </div>
           )}
           <div className="de-end" aria-hidden="true">{more ? 'Loading more rules…' : hasMore ? '' : rows.length ? 'End of the list' : ''}</div>
         </div>
         <div className="de-foot">
           <span aria-live="polite">Showing {n(rows.length)} of {n(report.matched)}{more ? ' · loading more…' : ''}</span>
+          {elsewhereN > 0 && rows.length > 0 && (
+            <span>
+              {plural(elsewhereN, 'more rule matches', 'more rules match')} in other views ({elsewhereText}).{' '}
+              <button type="button" className="de-link" onClick={showAll}>Show all rules</button>
+            </span>
+          )}
         </div>
       </section>
 

@@ -953,7 +953,8 @@ def health_listing(
     ``tool`` and a ``q`` over name, technique and reason before the cap.
 
     The counts cover every copy of ``tool`` (every copy when none); rule_total
-    and mapped count each rule once, across every tool.
+    and mapped count each rule once, across every tool. With ``q``,
+    ``matched_elsewhere`` counts its matches per health state outside this view.
     """
     built = _listing_now()
     states = (
@@ -968,12 +969,27 @@ def health_listing(
         for row_tool, hay, row in built["by_state"][state]
         if (tool is None or row_tool == tool) and needle in hay
     ]
+    # A search that misses here may hit in a view the chips leave out: say where,
+    # so a healthy rule's name never reads as "no such rule".
+    elsewhere = {
+        state: n
+        for state in HEALTH_ORDER
+        if needle and state not in states
+        if (
+            n := sum(
+                1
+                for row_tool, hay, _row in built["by_state"][state]
+                if (tool is None or row_tool == tool) and needle in hay
+            )
+        )
+    }
     return {
         "total": built["total"],
         "rule_total": built["rule_total"],
         "mapped": built["mapped"],
         "counts": built["counts"].get(tool, dict.fromkeys(HEALTH_ORDER, 0)),
         "matched": len(shown),
+        "matched_elsewhere": elsewhere,
         "offset": offset,
         "rules": shown[offset : offset + RULE_ROWS],
         "by_siem": built["by_siem"],
