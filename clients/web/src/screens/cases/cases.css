@@ -11,6 +11,13 @@
   --stack-gap: 1px;
   min-height: 0; /* lets .detail-body scroll so the composer stays on screen in the drawer */
   height: 100%; /* the full-page route's parent is a block, so flex: 1 alone leaves the pinned composer short of, or past, the bottom */
+  max-width: var(--page-max); /* a reading page (DESIGN.md §7) */
+  margin-inline: auto;
+}
+
+/* Once capped, the page's edges are drawn so the header band and side panel don't end in mid-air. */
+@container main (min-width: 1281px) {
+  .case-page { border-inline: 1px solid var(--ln0); }
 }
 
 .case-page .detail-head {
@@ -399,10 +406,9 @@
   background: var(--bg1);
   overflow-y: auto;
   /* The scrollbar's room is kept whether or not it shows, out of the right pad, so the columns are as wide
-     with a scrollbar as without and a value that fits is never cut when one appears (#2564). The bottom
-     pad clears the floating Ask Vigil button (110px, as the Watch page pads it). */
+     with a scrollbar as without and a value that fits is never cut when one appears (#2564). */
   scrollbar-gutter: stable;
-  padding: 16px 8px 110px 18px;
+  padding: 16px 8px 16px 18px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -1582,14 +1588,15 @@
   margin-bottom: 0;
 }
 
-.cases-grid { min-width: 1000px; }
+/* the fixed tracks, their gaps and the row's padding, plus the title's floor: below it the grid scrolls in its card */
+.cases-grid { --cg-tracks: 810px; min-width: calc(var(--cg-tracks) + var(--col-main-min)); }
 
 .cg-row {
   display: grid;
-  grid-template-columns: 26px 176px minmax(0, 3fr) 96px 86px 104px 150px 128px 44px; /* the id keeps 176px (#2054); Kind, Status and SLA give the title their slack */
-  gap: 12px;
+  grid-template-columns: 22px 176px minmax(0, 1fr) 80px 72px 96px 116px 108px 32px; /* compact widths, so 1280 with the side bar fits; the id keeps 176px (#2054) and the title takes the rest */
+  gap: 10px;
   align-items: center;
-  padding: 11px 16px;
+  padding: 11px 14px;
   border-top: 1px solid var(--ln0);
 }
 
@@ -1605,6 +1612,15 @@
 }
 
 .cg-th-info { display: flex; align-items: center; gap: 4px; }
+.cg-hide-note { margin-top: 2px; font-weight: 400; color: var(--tx3); }
+
+/* Kind, Owner and Time left (304px + 3 gaps) step aside while Ask Vigil is docked: a hidden grid cell
+   would still take a track, so the cells leave the grid and the tracks are redefined without them */
+@container main (max-width: 1399px) {
+  .main.chat-open .cases-grid { --cg-tracks: 476px; }
+  .main.chat-open .cg-row { grid-template-columns: 22px 176px minmax(0, 1fr) 72px 96px 32px; }
+  .main.chat-open .cg-row > .col-low { display: none; }
+}
 
 .cg-case { scroll-margin-top: 44px; /* a focused row clears the pinned header */ cursor: pointer; font-size: 12px; color: var(--tx1); }
 .cg-case:hover { background: var(--bg2); }
@@ -1873,7 +1889,8 @@
 .case-page .checked-call .num { font-family: var(--font-mono); font-size: 12px; text-align: right; white-space: nowrap; }
 .case-page .checked-call .num.poor { color: var(--sev-high); }
 .case-page .checked-call .chev { color: var(--tx3); }
-@media (max-width: 720px) {
+/* the card's own width, so the case drawer (outside .main) narrows it too */
+@container (max-width: 720px) {
   .case-page .checked-call { grid-template-columns: 34px minmax(0, 1fr) 108px 56px 14px; }
   .case-page .checked-call .tool { display: none; }
 }

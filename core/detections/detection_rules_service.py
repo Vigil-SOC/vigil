@@ -115,6 +115,55 @@ def is_vendor_repo(url: str) -> bool:
     return bool(url) and _repo_key(url) in _VENDOR_REPOS
 
 
+GITHUB_ONLY = (
+    "only GitHub (github.com or GitHub Enterprise) repos can be deploy targets"
+)
+
+
+# Hosted services that are never GitHub, so a "GitHub Enterprise" mark on one is a
+# mistake: refused even when marked.
+_NEVER_GITHUB = frozenset(
+    {
+        "gitlab.com",
+        "bitbucket.org",
+        "dev.azure.com",
+        "ssh.dev.azure.com",
+        "codeberg.org",
+        "gitea.com",
+        "git.sr.ht",
+    }
+)
+
+
+def _host(url: str) -> str:
+    return _repo_key(url).partition("/")[0]
+
+
+def is_github_com(url: str) -> bool:
+    return bool(url) and _host(url) == "github.com"
+
+
+def never_github(url: str) -> bool:
+    host = _host(url or "")
+    return host in _NEVER_GITHUB or host.endswith(".visualstudio.com")
+
+
+def deploy_host_refused(source: Dict[str, Any]) -> str:
+    """Why Vigil's GitHub token may not go to this target's host; '' when it may.
+
+    A deploy opens its pull request with the github integration's token, so the
+    host must be github.com, or one the person marked as GitHub Enterprise
+    (``github_enterprise``). Any other host never gets it, nor does a hosted
+    service that is never GitHub (gitlab.com, bitbucket.org, ...) even if marked.
+    """
+    url = source.get("git_url") or ""
+    if is_github_com(url):
+        return ""
+    if source.get("github_enterprise") is True and not never_github(url):
+        return ""
+    return GITHUB_ONLY
+
+
 def _deploy_target_of(sources: List[Dict[str, Any]], fmt: str) -> Optional[Dict]:
     return next(
         (
@@ -162,6 +211,8 @@ class DetectionRulesService:
             except Exception as e:
                 logger.error(f"Error loading detection sources config: {e}")
             else:
+                if self._clear_stray_targets():
+                    self._save_config()
                 # Outside the try: a rescan failure must not fall through to
                 # _seed_defaults, which would overwrite the user's sources.
                 # The saved status is a snapshot from whenever the file was last
@@ -257,11 +308,39 @@ class DetectionRulesService:
         # Resolved here, not in __init__: write=True creates the directory, and
         # this service is constructed on the API startup path (#695).
         self._keep_overlay()
+        self._clear_stray_targets()
         try:
             with open(vigil_path(_CONFIG_FILENAME, write=True), "w") as f:
                 json.dump({"sources": self.sources, "version": 1}, f, indent=2)
         except Exception as e:
             logger.error(f"Error saving detection sources config: {e}")
+
+    def _clear_stray_targets(self) -> bool:
+        """Keep the deploy_target flag only on the target each format honours.
+
+        A hand-edited file can flag a second repo of one format (or a vendor
+        repo, or a format that can't be deployed). Left in place, turning the
+        honoured target off would silently promote the next flagged one, with no
+        confirm and no audit; cleared, a source becomes a target only through
+        set_deploy_target or add_source. True when a flag was cleared.
+        """
+        honoured = {
+            target["id"]
+            for fmt in DEPLOY_FORMATS
+            if (target := _deploy_target_of(self.sources, fmt)) is not None
+        }
+        cleared = False
+        for source in self.sources:
+            if source.get("deploy_target") and source.get("id") not in honoured:
+                source["deploy_target"] = False
+                cleared = True
+                logger.warning(
+                    "Cleared deploy_target on %r (%s): not the %s target Vigil honours",
+                    source.get("name"),
+                    source.get("id"),
+                    source.get("format"),
+                )
+        return cleared
 
     def _keep_overlay(self):
         """Carry over the overlay source another instance saved since this one loaded.
@@ -411,6 +490,7 @@ class DetectionRulesService:
         subdirectory: str = "",
         story_subdirectory: str = "",
         deploy_target: bool = False,
+        github_enterprise: bool = False,
     ) -> Dict[str, Any]:
         """
         Add a new detection rule source.
@@ -424,6 +504,8 @@ class DetectionRulesService:
             subdirectory: Subdirectory within the repo/path containing rules
             story_subdirectory: Subdirectory for Splunk stories (optional)
             deploy_target: Where Vigil's live rules of this format go (git, splunk/elastic)
+            github_enterprise: The person says this non-github.com host is GitHub
+                Enterprise, so a deploy may send it the GitHub token
         """
         source_id = str(uuid.uuid4())[:8]
 
@@ -456,7 +538,13 @@ class DetectionRulesService:
         existing = self._find_existing(local_path, subdirectory, format)
         if deploy_target:
             self._check_deploy_target(
-                existing or {"type": source_type, "format": format, "git_url": url}
+                {
+                    **(
+                        existing
+                        or {"type": source_type, "format": format, "git_url": url}
+                    ),
+                    "github_enterprise": bool(github_enterprise),
+                }
             )
         if existing is not None:
             if not Path(local_path).exists():
@@ -470,6 +558,7 @@ class DetectionRulesService:
             existing["status"] = "ready"
             if deploy_target:
                 existing["deploy_target"] = True
+                existing["github_enterprise"] = bool(github_enterprise)
             self._save_config()
             logger.info(
                 f"Source already registered as {existing['name']!r} "
@@ -491,6 +580,7 @@ class DetectionRulesService:
             "last_updated": None,
             "status": "not_cloned" if source_type == "git" else "unknown",
             "deploy_target": bool(deploy_target),
+            "github_enterprise": bool(github_enterprise),
         }
 
         # If git, clone the repo
@@ -573,19 +663,34 @@ class DetectionRulesService:
                 f"{source.get('git_url')} is a vendor's public repo; a deploy target "
                 "must be your own repo, since Vigil opens pull requests into it"
             )
+        refused = deploy_host_refused(source)
+        if refused:
+            raise ValueError(refused)
         other = self.deploy_target(fmt)
         if other is not None and other.get("id") != source.get("id"):
             raise ValueError(
                 f"{other['name']!r} is already the {fmt} deploy target; clear it first"
             )
 
-    def set_deploy_target(self, source_id: str, on: bool) -> Dict[str, Any]:
-        """Set or clear the source's deploy_target flag (at most one per format)."""
+    def set_deploy_target(
+        self, source_id: str, on: bool, github_enterprise: Optional[bool] = None
+    ) -> Dict[str, Any]:
+        """Set or clear the source's deploy_target flag (at most one per format).
+
+        ``github_enterprise``, when given with ``on``, records whether the person
+        says the repo's non-github.com host is GitHub Enterprise.
+        """
         source = self.get_source(source_id)
         if not source:
             raise LookupError(f"Source not found: {source_id}")
+        marked = (
+            {}
+            if github_enterprise is None
+            else {"github_enterprise": bool(github_enterprise)}
+        )
         if on:
-            self._check_deploy_target(source)
+            self._check_deploy_target({**source, **marked})
+            source.update(marked)
         source["deploy_target"] = bool(on)
         self._save_config()
         logger.info(f"Deploy target {'set' if on else 'cleared'}: {source['name']}")

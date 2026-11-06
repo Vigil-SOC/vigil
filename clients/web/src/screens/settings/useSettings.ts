@@ -1412,6 +1412,10 @@ export interface DetectionSource {
   status: string
   /** Vigil opens pull requests for its live rules of this format here */
   deploy_target?: boolean
+  /** A vendor repo Vigil ships as a source: never a deploy target */
+  vendor_repo?: boolean
+  /** The person said this non-github.com host is GitHub Enterprise */
+  github_enterprise?: boolean
 }
 
 interface DetectionStats {
@@ -1429,6 +1433,7 @@ export interface AddSourcePayload {
   subdirectory?: string
   story_subdirectory?: string
   deploy_target?: boolean
+  github_enterprise?: boolean
 }
 
 export function useDetectionRules() {
@@ -1474,7 +1479,8 @@ export function useDetectionRules() {
     [reload],
   )
   const setDeployTarget = useCallback(
-    (id: string, on: boolean) => detectionRulesApi.setDeployTarget(id, on).then(() => reload()),
+    (id: string, on: boolean, githubEnterprise?: boolean) =>
+      detectionRulesApi.setDeployTarget(id, on, githubEnterprise).then(() => reload()),
     [reload],
   )
   const updateAll = useCallback(

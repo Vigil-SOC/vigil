@@ -888,6 +888,17 @@ export const timelineApi = {
   
 }
 
+/** A live rule only Vigil runs: Stop halts its detection. */
+export interface OverlayOnlyRule {
+  id: number
+  name: string
+  language: string
+  /** Its format has a deploy target, so Vigil can open a deploy pull request. */
+  deploy_target: boolean
+  /** What its deploy pull request came to on its current version; null before one. */
+  deploy: { version: number; at: string; pr_url?: string; in_repo?: string; error?: string } | null
+}
+
 export const detectionRulesApi = {
   listSources: () => api.get('/detection-rules/sources'),
 
@@ -914,11 +925,15 @@ export const detectionRulesApi = {
     subdirectory?: string
     story_subdirectory?: string
     deploy_target?: boolean
+    github_enterprise?: boolean
   }) => api.post('/detection-rules/sources', data),
 
   /** Mark (or clear) the git source Vigil's live rules of its format go to. */
-  setDeployTarget: (sourceId: string, deployTarget: boolean) =>
-    api.post(`/detection-rules/sources/${sourceId}/deploy-target`, { deploy_target: deployTarget }),
+  setDeployTarget: (sourceId: string, deployTarget: boolean, githubEnterprise?: boolean) =>
+    api.post(`/detection-rules/sources/${sourceId}/deploy-target`, {
+      deploy_target: deployTarget,
+      ...(githubEnterprise === undefined ? {} : { github_enterprise: githubEnterprise }),
+    }),
   
   removeSource: (sourceId: string, deleteFiles: boolean = false) =>
     api.delete(`/detection-rules/sources/${sourceId}`, { params: { delete_files: deleteFiles } }),
@@ -933,9 +948,15 @@ export const detectionRulesApi = {
 
   /** Live overlay rules no SIEM rule runs: only Vigil detects with them. */
   getOverlayOnly: () =>
-    api.get<{ rules: { id: number; name: string; language: string }[] }>(
-      '/detection-rules/overlay-only',
-    ),
+    api.get<{ rules: OverlayOnlyRule[] }>('/detection-rules/overlay-only'),
+
+  /** Queue a deploy pull request for these live overlay-only rules (all when none given). */
+  deployOverlayOnly: (ruleIds?: number[]) =>
+    api.post<{
+      opened: { rule_id: number; pr_url?: string; in_repo?: string }[]
+      failed: { rule_id: number; error: string }[]
+      skipped: { rule_id: number; reason: string }[]
+    }>('/detection-rules/overlay-only/deploy', { rule_ids: ruleIds ?? null }),
   
   
   reload: () => api.post('/detection-rules/reload'),

@@ -3228,6 +3228,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/detection-rules/overlay-only/deploy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deploy Overlay Only
+         * @description Open the deploy pull request now, as the rollout sweep would, into the
+         *     deploy target for each live rule only Vigil runs (these, or all); a failed
+         *     one is tried again. Says what each came to and why others were skipped.
+         */
+        post: operations["post_api_detection-rules_overlay-only_deploy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/detection-rules/reload": {
         parameters: {
             query?: never;
@@ -7440,6 +7462,11 @@ export interface components {
             deploy_target: boolean;
             /** Format */
             format: string;
+            /**
+             * Github Enterprise
+             * @default false
+             */
+            github_enterprise: boolean;
             /** Name */
             name: string;
             /** Path */
@@ -9047,12 +9074,22 @@ export interface components {
             enabled: boolean;
         };
         /**
+         * DeployOverlayRequest
+         * @description Which live overlay-only rules to deploy; none means all of them.
+         */
+        DeployOverlayRequest: {
+            /** Rule Ids */
+            rule_ids?: number[] | null;
+        };
+        /**
          * DeployTargetRequest
          * @description Whether this git source receives Vigil's live rules of its format.
          */
         DeployTargetRequest: {
             /** Deploy Target */
             deploy_target: boolean;
+            /** Github Enterprise */
+            github_enterprise?: boolean | null;
         };
         /** DirectiveRequest */
         DirectiveRequest: {
@@ -17589,6 +17626,41 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_overlay-only_deploy": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeployOverlayRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

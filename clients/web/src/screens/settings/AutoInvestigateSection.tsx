@@ -1,5 +1,6 @@
 // Changes save automatically, and take ~60s to apply (runtime-config TTL).
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { DurationPicker } from '../../shared/DurationPicker'
 import { formatDuration } from '../../shared/duration'
@@ -22,7 +23,7 @@ import {
 } from './useSettings'
 import type { SectionProps } from './types'
 import IntentReportCard from './IntentReportCard'
-import type { EffectClass, ToolClass } from '../../services/api'
+import { detectionRulesApi, type EffectClass, type OverlayOnlyRule, type ToolClass } from '../../services/api'
 import { errorText } from '../../shared/errorText'
 
 // Raising any of these needs a confirm; lowering applies at once. Settings also
@@ -114,7 +115,7 @@ const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
     case 'stop':
       return {
         title: 'Stop autonomy?',
-        body: 'No tool acts on its own, and unattended writes, proposals and outside actions are off until you resume; reads continue. Automatic investigation turns off and investigations in progress are marked failed.',
+        body: 'No tool acts on its own, and unattended writes, proposals, outside actions and Vigil’s own detection rules are off until you resume; other reads continue. Automatic investigation turns off and investigations in progress are marked failed.',
       }
     case 'workflow': {
       const shown = agreementText(pending.workflow.agreement)
@@ -186,6 +187,34 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
   const [advanced, setAdvanced] = useState(false)
   const [intentRevision, setIntentRevision] = useState(0)
   const [pending, setPending] = useState<PendingSave | null>(null)
+  // Live rules only Vigil runs: Stop halts their detection, so the Stop prompt names them
+  const [overlayOnly, setOverlayOnly] = useState<OverlayOnlyRule[]>([])
+  const [deploying, setDeploying] = useState<number[] | 'all' | null>(null)
+  const stopping = pending?.kind === 'stop'
+  const readOverlayOnly = () =>
+    detectionRulesApi
+      .getOverlayOnly()
+      .then((r) => setOverlayOnly(r.data.rules))
+      .catch(() => {}) // unread: the prompt says nothing extra
+  useEffect(() => {
+    setOverlayOnly([])
+    if (stopping) void readOverlayOnly()
+  }, [stopping])
+  // Opens the deploy pull request now, as the rollout sweep would: the rule joins the SIEM once it merges.
+  const deployOverlay = (ids?: number[]) => {
+    setDeploying(ids ?? 'all')
+    detectionRulesApi
+      .deployOverlayOnly(ids)
+      .then((r) => {
+        const { opened, failed, skipped } = r.data
+        if (opened.length) notify('ok', `${opened.length === 1 ? 'A deploy pull request is' : `${opened.length} deploy pull requests are`} open; each rule joins your SIEM when its PR merges.`)
+        if (failed.length) notify('err', `${failed.length === 1 ? 'A deploy pull request' : `${failed.length} deploy pull requests`} could not be opened: ${failed[0].error}`)
+        if (!opened.length && !failed.length && skipped.length) notify('info', `Nothing opened: ${skipped[0].reason}.`)
+        return readOverlayOnly()
+      })
+      .catch((e) => notify('err', errorText(e, 'The deploy pull request was not opened.')))
+      .finally(() => setDeploying(null))
+  }
 
   configRef.current = config
   useEffect(() => {
@@ -726,7 +755,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
             {ceil.stopped && (
               <div className="settings-banner err mb-3">
                 <Icon name="alert" size={14} />
-                <span>Stopped. Unattended writes, proposals and outside actions are off until someone resumes; reads continue. The choices below apply after that.</span>
+                <span>Stopped. Unattended writes, proposals, outside actions and Vigil’s own detection rules are off until someone resumes; other reads continue. The choices below apply after that.</span>
               </div>
             )}
             {locked && (
@@ -872,16 +901,101 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                 % agree, required
               </label>
             </>
+          ) : stopping && overlayOnly.length > 0 ? (
+            <StopOverlayOnly rules={overlayOnly} deploying={deploying} onDeploy={deployOverlay} />
           ) : (
             dialog?.body ?? ''
           )
         }
         confirmDisabled={pending?.kind === 'workflow' && !floorValid}
-        confirmLabel={pending?.kind === 'stop' ? 'Stop' : pending?.kind === 'tool' ? 'Confirm' : 'Save'}
+        confirmLabel={
+          pending?.kind === 'stop'
+            ? overlayOnly.length
+              ? `Stop · ${overlayOnly.length === 1 ? '1 rule goes' : `${overlayOnly.length} rules go`} dark`
+              : 'Stop'
+            : pending?.kind === 'tool'
+              ? 'Confirm'
+              : 'Save'
+        }
+        width={stopping && overlayOnly.length > 0 ? 680 : undefined}
         danger={pending?.kind === 'stop'}
         onConfirm={confirmPending}
         onClose={dismissPending}
       />
+    </>
+  )
+}
+
+const SIEM_NAME: Record<string, string> = { elastic: 'Elastic', splunk: 'Splunk' }
+
+/** Stop's prompt when live rules run only in Vigil: what Stop turns off, then those rules and a way to put each in the SIEM. */
+function StopOverlayOnly({
+  rules,
+  deploying,
+  onDeploy,
+}: {
+  rules: OverlayOnlyRule[]
+  deploying: number[] | 'all' | null
+  onDeploy: (ids?: number[]) => void
+}) {
+  const n = rules.length
+  // A rule whose PR is open, or whose file is already in the repo, has nothing left to add; a failed one is retried.
+  const done = (r: OverlayOnlyRule) => !!(r.deploy?.pr_url || r.deploy?.in_repo)
+  const deployable = rules.filter((r) => r.deploy_target && !done(r))
+  const busy = (id: number) => deploying === 'all' || (Array.isArray(deploying) && deploying.includes(id))
+  return (
+    <>
+      <ul className="stop-lines">
+        <li>No tool acts on its own; reads continue.</li>
+        <li>Unattended writes, proposals and outside actions are off until you resume.</li>
+        <li>Automatic investigation turns off; investigations in progress are marked failed.</li>
+      </ul>
+      <div className="stop-dark-head">
+        <div>
+          <b>{n === 1 ? '1 live rule goes dark' : `${n} live rules go dark`}</b>
+          <span>Vigil’s own detection rules are off while stopped. These have no copy in your SIEM.</span>
+        </div>
+        {deployable.length > 0 && (
+          <button type="button" className="btn stop-add-all" disabled={deploying != null} onClick={() => onDeploy(deployable.length === n ? undefined : deployable.map((r) => r.id))}>
+            {deploying === 'all' ? 'Opening…' : deployable.length === 1 ? 'Add it to SIEM' : `Add all ${deployable.length} to SIEM`}
+          </button>
+        )}
+      </div>
+      <div className="stop-dark-table" role="table" aria-label="Live rules only Vigil runs">
+        <div className="stop-dark-row stop-dark-th" role="row">
+          <span role="columnheader">Rule</span>
+          <span role="columnheader">SIEM</span>
+          <span role="columnheader">Keep it detecting</span>
+        </div>
+        <div className="stop-dark-body">
+          {rules.map((r) => (
+            <div key={r.id} className="stop-dark-row" role="row">
+              <span role="cell" className="stop-dark-name" title={r.name}>{r.name}</span>
+              <span role="cell"><span className="stop-siem">{SIEM_NAME[r.language] ?? r.language}</span></span>
+              <span role="cell" className="stop-dark-act">
+                {r.deploy?.pr_url ? (
+                  <a className="stop-link" href={r.deploy.pr_url} target="_blank" rel="noreferrer">PR opened</a>
+                ) : r.deploy?.in_repo ? (
+                  <span className="text-tx-3" title={r.deploy.in_repo}>Already in the repo</span>
+                ) : r.deploy_target && r.deploy?.error ? (
+                  <span className="stop-failed">
+                    <span className="stop-why" title={r.deploy.error}>{r.deploy.error}</span>
+                    <button type="button" className="stop-link" disabled={deploying != null} onClick={() => onDeploy([r.id])}>
+                      {busy(r.id) ? 'Opening…' : 'Retry'}
+                    </button>
+                  </span>
+                ) : r.deploy_target ? (
+                  <button type="button" className="stop-link" disabled={deploying != null} onClick={() => onDeploy([r.id])}>
+                    {busy(r.id) ? 'Opening…' : 'Add to SIEM'}
+                  </button>
+                ) : (
+                  <Link className="stop-link" to="/settings?section=data">Set a deploy target</Link>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
     </>
   )
 }

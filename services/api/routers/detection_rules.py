@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from dataclasses import asdict
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -12,6 +12,7 @@ from core.auth.permissions import permission_gate
 from core.deps import provide_detection_rules, provide_mcp_client, provide_mcp_registry
 from core.detections import exceptions
 from core.detections.detection_rules_service import (
+    DEPLOY_FORMATS,
     DetectionRulesService,
     is_vendor_repo,
 )
@@ -50,6 +51,8 @@ class AddSourceRequest(BaseModel):
     subdirectory: str = ""
     story_subdirectory: str = ""
     deploy_target: bool = False
+    # The person says this non-github.com host is GitHub Enterprise.
+    github_enterprise: bool = False
 
 
 def _audit_deploy_target(user: User, source: dict, old: bool, new: bool) -> None:
@@ -65,6 +68,7 @@ def _audit_deploy_target(user: User, source: dict, old: bool, new: bool) -> None
                 "name": source.get("name"),
                 "format": source.get("format"),
                 "git_url": source.get("git_url"),
+                "github_enterprise": bool(source.get("github_enterprise")),
                 "deploy_target": new,
             },
         )
@@ -76,6 +80,9 @@ class DeployTargetRequest(BaseModel):
     """Whether this git source receives Vigil's live rules of its format."""
 
     deploy_target: bool
+    # With deploy_target on: the person says the non-github.com host is GitHub
+    # Enterprise. Omitted keeps what is saved.
+    github_enterprise: Optional[bool] = None
 
 
 @router.get("/sources")
@@ -88,9 +95,20 @@ def list_sources(
     Returns:
         List of sources with metadata (name, format, rule count, status, etc.)
     """
-    # vendor_repo: a shipped vendor repo, which can never be a deploy target
+    # vendor_repo: a shipped vendor repo, which can never be a deploy target.
+    # deploy_target is the one rollout honours per format, so a saved file
+    # holding two flags of one format never shows both as on.
+    honoured = {
+        target["id"]
+        for fmt in DEPLOY_FORMATS
+        if (target := service.deploy_target(fmt)) is not None
+    }
     sources = [
-        {**s, "vendor_repo": is_vendor_repo(s.get("git_url", ""))}
+        {
+            **s,
+            "vendor_repo": is_vendor_repo(s.get("git_url", "")),
+            "deploy_target": s.get("id") in honoured,
+        }
         for s in service.list_sources()
     ]
     return {"sources": sources, "count": len(sources)}
@@ -145,6 +163,7 @@ def add_source(
             subdirectory=request.subdirectory,
             story_subdirectory=request.story_subdirectory,
             deploy_target=request.deploy_target,
+            github_enterprise=request.github_enterprise,
         )
         if request.deploy_target:
             was = before is not None and before.get("id") == source["id"]
@@ -219,7 +238,9 @@ def set_deploy_target(
     """Mark or unmark a git source as where Vigil's live rules of its format go."""
     old = bool((service.get_source(source_id) or {}).get("deploy_target"))
     try:
-        source = service.set_deploy_target(source_id, request.deploy_target)
+        source = service.set_deploy_target(
+            source_id, request.deploy_target, request.github_enterprise
+        )
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
@@ -295,15 +316,38 @@ def get_overlay_only():
     so Stop halts their detection. Read-only."""
     from core.detections.inventory import rollout
 
-    live = [c for c in rollout._copies() if c.stage == "live"]
-    gone = rollout.handed_off([c.rule_id for c in live])
-    return {
-        "rules": [
-            {"id": c.rule_id, "name": c.name, "language": c.language}
-            for c in live
-            if c.rule_id not in gone
-        ]
-    }
+    return {"rules": rollout.overlay_only()}
+
+
+class DeployOverlayRequest(BaseModel):
+    """Which live overlay-only rules to deploy; none means all of them."""
+
+    rule_ids: Optional[List[int]] = None
+
+
+@router.post("/overlay-only/deploy", dependencies=_SETTINGS_WRITE)
+def deploy_overlay_only(
+    body: DeployOverlayRequest,
+    user: User = Depends(get_current_active_user),
+):
+    """Open the deploy pull request now, as the rollout sweep would, into the
+    deploy target for each live rule only Vigil runs (these, or all); a failed
+    one is tried again. Says what each came to and why others were skipped."""
+    from core.detections.inventory import rollout
+
+    result = rollout.deploy_overlay_only(body.rule_ids)
+    if result["opened"] or result["failed"]:
+        try:
+            get_config_service(user_id=str(user.user_id)).record_audit(
+                config_type="detection_rules",
+                config_key="overlay_deploy",
+                action="update",
+                old_value=None,
+                new_value={"opened": result["opened"], "failed": result["failed"]},
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Could not write overlay deploy audit log: %s", e)
+    return result
 
 
 class AddExceptionRequest(BaseModel):
