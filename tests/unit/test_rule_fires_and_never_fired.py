@@ -275,3 +275,15 @@ def test_a_shared_name_still_counts_findings_traced_to_each_copy():
     rows = _rows(built)
     assert rows[1]["fires"] == 3
     assert rows[2]["fires"] == 0
+
+
+def test_a_linked_copy_and_its_origin_share_a_name_as_one_rule():
+    # SIEM copy 7688 links to repo rule 19829; both carry the rule's name.
+    built = _built(
+        [_copy(7688, "Same name"), _copy(19829, "Same name")],
+        {"by_name": {"Same name": [HIT] * 3}},
+        rule_of={7688: (19829,), 19829: (19829,)},
+    )
+    rows = _rows(built)
+    assert (rows[7688]["fires"], rows[7688]["fires_unsure"]) == (3, 0)
+    assert (rows[19829]["fires"], rows[19829]["fires_unsure"]) == (3, 0)

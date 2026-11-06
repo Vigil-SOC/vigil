@@ -35,7 +35,6 @@ import binascii
 import logging
 import re
 import threading
-from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
@@ -1026,13 +1025,17 @@ def _health_rows(copies: Dict[str, Any], fires: Dict[str, int]) -> Dict[str, Any
     rule_of = copies["rule_of"]
     listed = []
     fired: Dict[int, List[Dict[str, Any]]] = {}
-    names = Counter(rule.name for rule in copies["rows"])
+    # The rules (not copies) carrying each name: a SIEM copy and its linked
+    # repo origin share one, and are one rule.
+    names: Dict[str, set] = {}
+    for rule in copies["rows"]:
+        names.setdefault(rule.name, set()).add(rule_of[rule.id])
     mapped = set()
     for rule in copies["rows"]:
         checks = rule.checks or {}
         if rule.techniques:
             mapped.add(rule_of[rule.id])
-        hits, unsure = _fired(fires, rule, names[rule.name] > 1)
+        hits, unsure = _fired(fires, rule, len(names[rule.name]) > 1)
         fired[rule.id] = hits[:FIRES_LISTED]
         count = len(hits)
         alerts, days_counted = _siem_alerts(checks)
