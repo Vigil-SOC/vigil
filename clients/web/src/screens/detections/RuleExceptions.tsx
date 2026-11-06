@@ -15,6 +15,8 @@ interface RuleException {
   removal_reason: string | null
   /** Matches per UTC day, as Vigil's runner counted them (the last 14 days). */
   days: Record<string, number>
+  /** The runner's last run that fetched rows: how many, and which match fields none carried. */
+  seen: { rows: number; missing: string[]; at: string } | null
 }
 
 interface Listing {
@@ -29,6 +31,21 @@ function Match({ match }: { match: Record<string, unknown> }) {
   return (
     <div className="de-x-match">
       {Object.entries(match).map(([f, v]) => <code key={f}>{f} = {String(v)}</code>)}
+    </div>
+  )
+}
+
+/** A match field absent from every row of the last run (a transforming search's input field, say). */
+function Missing({ seen }: { seen: RuleException['seen'] }) {
+  if (!seen?.missing?.length) return null
+  const one = seen.rows === 1
+  const verb = seen.missing.length === 1 ? 'was' : 'were'
+  return (
+    <div className="de-x-miss" title={`Last run with rows: ${utcDayClock(seen.at)}`}>
+      {seen.missing.map((f, i) => <span key={f}>{i > 0 && ', '}<code>{f}</code></span>)}{' '}
+      {one
+        ? `${verb} not in the 1 row this rule's last run fetched, so this exception can't match it.`
+        : `${verb} in none of the ${seen.rows.toLocaleString()} rows this rule's last run fetched, so this exception can't match them.`}
     </div>
   )
 }
@@ -79,6 +96,7 @@ export default function RuleExceptions({ ruleId }: { ruleId: number }) {
                   <Match match={x.match} />
                   <div className="de-x-note" title={x.note}>{x.note}</div>
                   <div className="de-x-by">Added by {x.created_by ?? 'unknown'}{x.created_at && ` · ${utcDayClock(x.created_at)}`}</div>
+                  <Missing seen={x.seen} />
                 </div>
                 <div className="de-x-side">
                   <span className="de-x-n" title={m.title}><b>{m.total.toLocaleString()}</b> matched in {KEEP_DAYS}d</span>

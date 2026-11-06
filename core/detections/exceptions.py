@@ -111,10 +111,23 @@ def matches(match: Mapping[str, Any], doc: Mapping[str, Any]) -> bool:
     return True
 
 
+def absent(
+    docs: List[Dict[str, Any]], excepted: List[Tuple[int, Dict[str, Any]]]
+) -> Dict[str, List[str]]:
+    """Per exception id, its match fields no hit's ``_source`` carries (#3907),
+    e.g. an input field of a transforming search, whose rows are its output."""
+    sources = [(d.get("_source") if isinstance(d, dict) else None) or {} for d in docs]
+    return {
+        str(eid): [f for f in m if all(_resolve(s, f) is _ABSENT for s in sources)]
+        for eid, m in excepted
+    }
+
+
 def split(
     docs: List[Dict[str, Any]], excepted: List[Tuple[int, Dict[str, Any]]]
-) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
-    """(docs no exception matches, matches per exception id) over hit ``_source``s.
+) -> Tuple[List[Dict[str, Any]], Dict[str, int], Dict[str, List[str]]]:
+    """(docs no exception matches, matches per exception id, each one's fields
+    absent from every doc) over hit ``_source``s.
 
     A document two exceptions match counts once, against the first.
     """
@@ -130,7 +143,7 @@ def split(
             kept.append(doc)
         else:
             counts[str(hit)] += 1
-    return kept, counts
+    return kept, counts, absent(docs, excepted)
 
 
 def active(rule_ids: List[int]) -> Dict[int, List[Tuple[int, Dict[str, Any]]]]:
@@ -169,7 +182,8 @@ def listed(session: Any, rule_id: int, removed: bool = False) -> List[Dict[str, 
 
 def of_copy(rule_id: int) -> Dict[str, Any]:
     """Every exception on an overlay copy, active and removed, with each one's
-    per-day matches from the copy's latest version and whether a SIEM copy runs
+    per-day matches from the copy's latest version, what its last run with rows
+    saw (``seen``: {rows, missing, at}, or None), and whether a SIEM copy runs
     it instead (``handed_off``: Vigil no longer applies them).
 
     LookupError when there is no such rule, ValueError when it isn't an overlay copy.
@@ -189,10 +203,10 @@ def of_copy(rule_id: int) -> Dict[str, Any]:
             )
         )
         counts = (checks or {}).get("exceptions") or {}
-        rows = [
-            {**r, "days": (counts.get(str(r["exception_id"])) or {}).get("days") or {}}
-            for r in listed(session, rule_id, removed=True)
-        ]
+        rows = []
+        for r in listed(session, rule_id, removed=True):
+            mine = counts.get(str(r["exception_id"])) or {}
+            rows.append({**r, "days": mine.get("days") or {}, "seen": mine.get("seen")})
     return {
         "rule_id": rule_id,
         "handed_off": rule_id in handed_off([rule_id]),
