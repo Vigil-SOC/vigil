@@ -7,7 +7,7 @@
 
 .home-screen .home-page {
   width: 100%;
-  max-width: 1140px;
+  max-width: var(--page-max); /* a reading page (DESIGN.md §7) */
   display: flex;
   flex-direction: column;
   gap: 20px;

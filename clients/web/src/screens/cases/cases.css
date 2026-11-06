@@ -11,6 +11,13 @@
   --stack-gap: 1px;
   min-height: 0; /* lets .detail-body scroll so the composer stays on screen in the drawer */
   height: 100%; /* the full-page route's parent is a block, so flex: 1 alone leaves the pinned composer short of, or past, the bottom */
+  max-width: var(--page-max); /* a reading page (DESIGN.md §7) */
+  margin-inline: auto;
+}
+
+/* Once capped, the page's edges are drawn so the header band and side panel don't end in mid-air. */
+@container main (min-width: 1281px) {
+  .case-page { border-inline: 1px solid var(--ln0); }
 }
 
 .case-page .detail-head {

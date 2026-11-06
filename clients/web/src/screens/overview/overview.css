@@ -35,7 +35,7 @@
 
 .ov-head p {
   margin: 5px 0 0;
-  max-width: 760px;
+  max-width: var(--text-max);
   font-size: 13px;
   color: var(--tx1);
 }
@@ -90,6 +90,8 @@
   font-size: 12px;
   color: var(--tx2);
 }
+
+.ov-screen:not(.wall) .ov-flow-sub { max-width: var(--text-max); } /* free text on a data page; full screen is exempt */
 
 /* the flow takes the height left in .ov-main; the wrap's own content never sizes it, so it can shrink back */
 .ov-flow {

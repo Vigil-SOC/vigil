@@ -2383,7 +2383,8 @@
    .wfk-layout > .wfk-col { width: 346px; flex-shrink: 0; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; }
    .wfk-reader { flex: 1; min-width: 0; overflow-y: auto; overscroll-behavior: contain; }
    /* the board's reader starts 16px from the column; standalone panes (draft) keep 22px */
-   .wfk-reader .wfk-pane { padding-left: 16px; padding-right: 16px; }
+   .wfk-reader .wfk-pane { padding-left: 16px; padding-right: 16px; max-width: var(--page-max); } /* workflow detail is a reading page (DESIGN.md §7) */
+   .wfk-reader .wfk-pane p { max-width: var(--text-max); }
    .wfk.off .wfk-name { color: var(--tx2); }
 
    .wfk-main {
@@ -5756,6 +5757,8 @@
       overflow-wrap: anywhere;
    }
 
+   .run-detail { max-width: var(--page-max); }
+
    .run-detail .tbl {
       margin-top: 4px;
    }
@@ -6190,7 +6193,7 @@
 
    .tq-title p {
       margin: 0;
-      max-width: 760px;
+      max-width: var(--text-max);
       font-size: 13px;
       line-height: 1.5;
       color: var(--tx1);

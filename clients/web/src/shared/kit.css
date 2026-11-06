@@ -98,7 +98,7 @@
 
 .page-head p {
   margin: 0;
-  max-width: 760px;
+  max-width: var(--text-max);
   font-size: 13px;
   line-height: 1.5;
   color: var(--tx1);
