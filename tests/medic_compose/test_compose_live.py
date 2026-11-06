@@ -238,6 +238,14 @@ def probe(healthy):
                 gateways.add(cfg["Gateway"])
             if ":" not in cfg.get("Subnet", ":"):
                 gateways.add(str(next(ipaddress.ip_network(cfg["Subnet"]).hosts())))
+    # With no host address Docker may hand the first host to a member (the
+    # soc-daemon stub listens on 8081/9090): a member is not the host.
+    gateways -= {
+        c["IPv4Address"].split("/")[0]
+        for net in MEDIC_NETWORKS
+        for c in (nets[net]["Containers"] or {}).values()
+        if c.get("IPv4Address")
+    }
     s.medic_bridges = {
         net: nets[net]["Options"].get("com.docker.network.bridge.name")
         or f"br-{nets[net]['Id'][:12]}"
@@ -450,7 +458,6 @@ def test_check4_docker_proxy(probe) -> None:
 # --- the S6 goal: a /readyz fault becomes a chained, redacted incident ------
 
 _INCIDENTS = """
-import ipaddress
 import json
 from services.medic.store import open_reader
 from services.medic.app import config
