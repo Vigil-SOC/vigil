@@ -14,7 +14,15 @@ import {
   TextInput,
   ToggleRow,
 } from '../../shared/ui'
-import { configApi, importsApi, ingestionApi, type HistoryImport, type IngestionJob } from '../../services/api'
+import {
+  configApi,
+  federationApi,
+  importsApi,
+  ingestionApi,
+  type ConnectedHistorySource,
+  type HistoryImport,
+  type IngestionJob,
+} from '../../services/api'
 import {
   useDarktrace,
   useIngestionJob,
@@ -329,8 +337,89 @@ const HISTORY_DESC =
   'Closed tickets become Verdicts and alerts become Sightings in agent memory, so agents recall how your team decided before. ' +
   'Nothing goes to triage: no findings or cases are created.'
 
+const CONNECTED_SOURCES: { value: ConnectedHistorySource; label: string }[] = [
+  { value: 'microsoft_defender', label: 'Microsoft Defender' },
+  { value: 'azure_sentinel', label: 'Azure Sentinel' },
+]
+
+/** Reads a configured Defender's or Sentinel's closed records; shown only when one is. */
+function ConnectedHistoryImport({
+  running,
+  attaching,
+  onImport,
+}: {
+  running: boolean
+  attaching: boolean
+  onImport: (source: ConnectedHistorySource, label: string, days: number) => Promise<void>
+}) {
+  const [configured, setConfigured] = useState<typeof CONNECTED_SOURCES>([])
+  const [source, setSource] = useState<ConnectedHistorySource | ''>('')
+  const [days, setDays] = useState('90')
+  const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => {
+    federationApi
+      .listSources()
+      .then((res) => {
+        const ready = new Set(res.data.sources.filter((s) => s.is_configured).map((s) => s.source_id))
+        const offered = CONNECTED_SOURCES.filter((s) => ready.has(s.value))
+        setConfigured(offered)
+        setSource(offered[0]?.value ?? '')
+      })
+      .catch(() => setConfigured([])) // no integrations.read, or no sources: nothing to offer
+  }, [])
+
+  if (!configured.length || !source) return null
+  const n = Number(days)
+  const valid = Number.isInteger(n) && n >= 1 && n <= 180
+  const label = configured.find((s) => s.value === source)?.label ?? source
+
+  const go = async () => {
+    setSubmitting(true)
+    try {
+      await onImport(source, label, n)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="data-connected">
+      <span className="data-drop-title">From a connected source</span>
+      <span className="data-drop-sub">
+        {configured.length > 1
+          ? 'Resolved Defender alerts and closed Sentinel incidents'
+          : `${label}: ${source === 'azure_sentinel' ? 'closed incidents' : 'resolved alerts'}`}{' '}
+        that carry a classification. Importing again replaces that source’s earlier import.
+      </span>
+      <div className="data-connected-row">
+        {configured.length > 1 && (
+          <div className="data-connected-source">
+            <Field label="Source">
+              <Select
+                value={source}
+                options={configured}
+                onSelect={(v) => setSource(v as ConnectedHistorySource)}
+                disabled={running}
+              />
+            </Field>
+          </div>
+        )}
+        <div className="data-connected-days">
+          <Field label="Last days" error={valid ? null : '1 to 180'}>
+            <NumberInput value={days} min={1} max={180} onChange={(e) => setDays(e.target.value)} disabled={running} />
+          </Field>
+        </div>
+        <button className="btn primary" disabled={!valid || running || attaching || submitting} onClick={go}>
+          <Icon name="upload" /> {submitting ? 'Starting…' : 'Import'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export function HistoryImportCard({ notify }: SectionProps) {
-  const { job, attaching, upload } = useIngestionJob('history')
+  const { job, attaching, upload, start } = useIngestionJob('history')
   const canWrite = useAuth().hasPermission('findings.write')
   const [imports, setImports] = useState<HistoryImport[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -387,6 +476,18 @@ export function HistoryImportCard({ notify }: SectionProps) {
               notify('ok', `Importing ${file.name} into agent memory in the background.`)
             }}
             notify={notify}
+          />
+          <ConnectedHistoryImport
+            running={running}
+            attaching={attaching}
+            onImport={async (src, label, days) => {
+              try {
+                await start(ingestionApi.importConnectedHistory(src, days))
+                notify('ok', `Importing ${label} history into agent memory in the background.`)
+              } catch (e) {
+                notify('err', errorText(e, 'Could not start the import.'))
+              }
+            }}
           />
           {job && <IngestionJobStatus job={job} wrap />}
         </>

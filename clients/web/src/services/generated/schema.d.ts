@@ -3916,6 +3916,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ingest/history/connected": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Connected History
+         * @description Read a connected source's closed, classified records from the last
+         *     ``days`` into episodic memory as the import ``<source>:connected``; running
+         *     it again re-derives that import. Poll /ingest/jobs/{id}.
+         */
+        post: operations["post_api_ingest_history_connected"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ingest/ingest-string": {
         parameters: {
             query?: never;
@@ -8909,6 +8931,19 @@ export interface components {
             settings?: {
                 [key: string]: unknown;
             };
+        };
+        /** ConnectedHistoryRequest */
+        ConnectedHistoryRequest: {
+            /**
+             * Days
+             * @default 90
+             */
+            days: number;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "microsoft_defender" | "azure_sentinel";
         };
         /**
          * ContentBlock
@@ -18994,6 +19029,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    post_api_ingest_history_connected: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectedHistoryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IngestionJobStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

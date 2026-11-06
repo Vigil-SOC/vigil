@@ -31,6 +31,9 @@ DEFAULT_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=5.0)
 # login endpoints redirect.
 _FOLLOW_REDIRECTS = True
 
+# The /api/alerts maximum page size.
+_HISTORY_PAGE = 10000
+
 
 def _push(bucket: List[str], value: Any) -> None:
     text = str(value).strip() if value else ""
@@ -176,6 +179,67 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
         except Exception as e:
             logger.error(f"Error fetching Microsoft Defender alerts: {e}")
             raise
+
+    async def fetch_closed_history(self, days: int) -> List[Dict[str, Any]]:
+        """Resolved, classified alerts created in the last ``days``, as ticket
+        rows for ``write_import`` (#3981). Pages with $skip so a long window is
+        not cut at $top. Raises when credentials are missing or a call fails."""
+        token = await asyncio.to_thread(self._get_access_token)
+        if not token:
+            raise RuntimeError("Microsoft Defender credentials are not configured")
+        # Naive UTC, formatted here: an aware isoformat() would read "+00:00Z".
+        end = utcnow().replace(microsecond=0)
+        start = end - timedelta(days=days)
+        headers = {"Authorization": f"Bearer {token}"}
+        rows: List[Dict[str, Any]] = []
+        skip = 0
+        while True:
+            params = {
+                "$filter": (
+                    f"alertCreationTime ge {start.isoformat()}Z"
+                    f" and alertCreationTime le {end.isoformat()}Z"
+                ),
+                "$orderby": "alertCreationTime asc",
+                # Without it evidence[] comes back empty: no IPs, users or hashes.
+                "$expand": "evidence",
+                "$top": _HISTORY_PAGE,
+                "$skip": skip,
+            }
+            response = await asyncio.to_thread(
+                httpx.get,
+                "https://api.securitycenter.microsoft.com/api/alerts",
+                headers=headers,
+                params=params,
+                timeout=DEFAULT_TIMEOUT,
+                follow_redirects=_FOLLOW_REDIRECTS,
+            )
+            response.raise_for_status()
+            page = response.json().get("value", [])
+            for alert in page:
+                # Legacy alerts say "Unknown" where nobody classified them.
+                if alert.get("status") == "Resolved" and alert.get(
+                    "classification"
+                ) not in (None, "", "Unknown"):
+                    rows.append(self._history_row(alert))
+            if len(page) < _HISTORY_PAGE:
+                break
+            skip += len(page)
+        logger.info(f"Read {len(rows)} resolved alerts from Microsoft Defender")
+        return rows
+
+    def _history_row(self, alert: Dict[str, Any]) -> Dict[str, Any]:
+        finding = self.transform_alert_to_finding(alert) or {}
+        return {
+            "id": alert.get("id"),
+            "title": alert.get("title"),
+            "disposition": alert.get("classification"),
+            "opened_at": alert.get("alertCreationTime"),
+            "closed_at": alert.get("resolvedTime"),
+            "closed_by": alert.get("assignedTo"),
+            "close_notes": alert.get("determination"),
+            "entity_context": finding.get("entity_context") or {},
+            "source_system": "microsoft_defender",
+        }
 
     def transform_alert_to_finding(
         self, alert: Dict[str, Any]

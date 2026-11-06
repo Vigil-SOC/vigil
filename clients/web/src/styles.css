@@ -4958,6 +4958,18 @@
       overflow-wrap: anywhere;
    }
 
+   /* reflow: the message takes its own line under the name and pill */
+   @container main (max-width: 699px) {
+      .data-job.wrap {
+         flex-wrap: wrap;
+      }
+
+      .data-job.wrap .data-job-msg {
+         order: 1;
+         flex-basis: 100%;
+      }
+   }
+
    .data-history-source {
       max-width: 320px;
       margin-bottom: 12px;
@@ -4965,6 +4977,35 @@
 
    .data-history-list {
       margin-top: 14px;
+   }
+
+   .data-connected {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-top: 14px;
+   }
+
+   .data-connected-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      gap: 12px;
+      margin-top: 8px;
+   }
+
+   .data-connected-source {
+      flex: 0 1 240px;
+      min-width: 0;
+   }
+
+   .data-connected-days {
+      width: 110px;
+   }
+
+   /* level with the inputs, below their labels */
+   .data-connected-row > .btn {
+      margin-top: 24px;
    }
 
    .data-history-empty {

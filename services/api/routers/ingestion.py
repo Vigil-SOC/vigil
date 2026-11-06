@@ -14,21 +14,23 @@ import logging
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from core.auth.current_user import get_current_user
 from core.auth.permissions import deny_unless, permission_gate
 from core.config import get_settings, is_demo_mode
 from core.ingestion.ingestion_jobs import (
+    CONNECTED_HISTORY_SOURCES,
     HISTORY,
     IngestionJob,
     IngestionJobConflict,
     get_job_registry,
+    run_connected_history_job,
     run_job,
     summarize_stats,
 )
@@ -199,6 +201,61 @@ async def upload_and_ingest_file(
         )
 
     task = asyncio.create_task(run_in_threadpool(run_job, job, temp_path))
+    _running_tasks.add(task)
+    task.add_done_callback(_running_tasks.discard)
+
+    return IngestionJobStatus(**job.snapshot())
+
+
+class ConnectedHistoryRequest(BaseModel):
+    source: Literal["microsoft_defender", "azure_sentinel"]
+    days: int = Field(90, ge=1, le=180)
+
+
+@router.post(
+    "/history/connected",
+    response_model=IngestionJobStatus,
+    status_code=202,
+    dependencies=_FINDINGS_WRITE,
+)
+async def import_connected_history(
+    request: ConnectedHistoryRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Read a connected source's closed, classified records from the last
+    ``days`` into episodic memory as the import ``<source>:connected``; running
+    it again re-derives that import. Poll /ingest/jobs/{id}."""
+    from core.federation import registry as fed_registry
+
+    adapter = fed_registry.get_adapter(request.source)
+    try:
+        configured = adapter is not None and bool(adapter.is_configured())
+    except Exception:
+        configured = False
+    label = CONNECTED_HISTORY_SOURCES[request.source]
+    if not configured:
+        raise HTTPException(
+            status_code=400, detail=f"{label} is not configured. Set it up first."
+        )
+
+    job = IngestionJob(
+        filename=f"{label}, last {request.days} days",
+        fmt="connected",
+        data_type=HISTORY,
+        actor=current_user.username or current_user.user_id,
+        source_system=request.source,
+    )
+    try:
+        get_job_registry().start(job)
+    except IngestionJobConflict as conflict:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Already ingesting '{conflict.active.filename}'. Wait for it to finish.",
+        )
+
+    task = asyncio.create_task(
+        run_in_threadpool(run_connected_history_job, job, request.days)
+    )
     _running_tasks.add(task)
     task.add_done_callback(_running_tasks.discard)
 
