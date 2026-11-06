@@ -214,9 +214,20 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
             secondary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }}
           />
         ) : (
+          <div className="table-wrap">
           <table className="tbl data-table data-rules">
             <thead>
-              <tr><th>Rule source</th><th>Format</th><th>Deploy target</th><th>Where</th><th>Rules</th><th aria-label="Actions" /></tr>
+              <tr>
+                <th>
+                  Rule source
+                  <span className="col-low-note">Format, deploy target and where are hidden while Ask Vigil is open</span>
+                </th>
+                <th className="col-low">Format</th>
+                <th className="col-low">Deploy target</th>
+                <th className="col-low">Where</th>
+                <th>Rules</th>
+                <th className="col-act" aria-label="Actions" />
+              </tr>
             </thead>
             <tbody>
               {sources.map((s) => {
@@ -236,8 +247,9 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
                         )}
                       </div>
                     </td>
-                    <td>{formatName(s.format)}</td>
+                    <td className="col-low">{formatName(s.format)}</td>
                     <td
+                      className="col-low"
                       title={
                         !deployable(s) ? notDeployable(s)
                         : s.vendor_repo ? 'A vendor’s public repo can’t be a deploy target; add your own repo for that.'
@@ -262,9 +274,9 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
                         />
                       )}
                     </td>
-                    <td className="data-clip font-mono" title={s.git_url || undefined}>{where || '—'}</td>
+                    <td className="data-clip font-mono col-low" title={s.git_url || undefined}>{where || '—'}</td>
                     <td>{fmtNum(s.rule_count)}</td>
-                    <td className="data-act">
+                    <td className="data-act col-act">
                       <button className="data-link" disabled={!!updating} onClick={() => onUpdateSource(s.id)}>
                         {updating === s.id ? 'Working…' : s.status === 'not_cloned' ? 'Clone' : 'Update'}
                       </button>
@@ -277,6 +289,7 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
               })}
             </tbody>
           </table>
+          </div>
         )}
 
         <p className="text-xs text-tx-3 mt-3">

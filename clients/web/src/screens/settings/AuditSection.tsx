@@ -219,9 +219,12 @@ export default function AuditSection({ notify }: SectionProps) {
             <span role="columnheader">Seq</span>
             <span role="columnheader">When (UTC)</span>
             <span role="columnheader">Actor</span>
-            <span role="columnheader">What it was</span>
-            <span role="columnheader">Outcome</span>
-            <span role="columnheader">Marks</span>
+            <span role="columnheader">
+              What it was
+              <span className="col-low-note">Outcome and marks are hidden while Ask Vigil is open</span>
+            </span>
+            <span role="columnheader" className="col-low">Outcome</span>
+            <span role="columnheader" className="col-low">Marks</span>
           </div>
           <div role="rowgroup">
             {phase === 'loading' && <div className="ag-state"><EmptyState loading table compact icon="clock" title="Reading the trail…" /></div>}
@@ -257,8 +260,8 @@ export default function AuditSection({ notify }: SectionProps) {
                     <span className="ag-action">{e.sentence || str(e.payload.action) || '—'}</span>
                     <span className="ag-sub">{[str(e.payload.action), subjectOf(e)].filter(Boolean).join(' · ')}</span>
                   </span>
-                  <span role="cell" className="ag-clip">{str(e.payload.outcome) || '—'}</span>
-                  <span role="cell" className="ag-marks"><Marks entry={e} /></span>
+                  <span role="cell" className="ag-clip col-low">{str(e.payload.outcome) || '—'}</span>
+                  <span role="cell" className="ag-marks col-low"><Marks entry={e} /></span>
                 </div>
                 {open === e.seq && <EntryDetail entry={e} />}
               </Fragment>

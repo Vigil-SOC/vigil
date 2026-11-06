@@ -165,7 +165,6 @@ export default function IntegrationsSection({ notify }: SectionProps) {
     ['Available to add', available, 'var(--tx0)'],
   ]
 
-  // pb-20: the floating Ask Vigil button covers nothing at the end of the scroll
   return (
     <>
     <PageHead
@@ -178,7 +177,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
         </>
       }
     />
-    <div className="settings-content-inner flex flex-col gap-4 pb-20" style={{ maxWidth: 1280 }}>
+    <div className="settings-content-inner flex flex-col gap-4">
       {ready && (
         <>
           {first && (
@@ -253,21 +252,16 @@ export default function IntegrationsSection({ notify }: SectionProps) {
         </div>
       )}
       {tab === 'connected' && ready && connected.length > 0 && (
+        <div className="int-table-wrap">
         <table className="int-table">
-          <colgroup>
-            <col />
-            <col style={{ width: 120 }} />
-            <col style={{ width: 120 }} />
-            <col style={{ width: '25%' }} />
-            <col style={{ width: '22%' }} />
-            <col style={{ width: 56 }} />
-            <col style={{ width: 112 }} />
-          </colgroup>
           <thead>
             <tr>
-              <th>Integration</th>
-              <th>Health</th>
               <th>
+                Integration
+                <span className="col-low-note">Last verified and what agents may do are hidden while Ask Vigil is open</span>
+              </th>
+              <th>Health</th>
+              <th className="col-low">
                 Last verified
                 <InfoTip
                   label="About Last verified"
@@ -276,10 +270,10 @@ export default function IntegrationsSection({ notify }: SectionProps) {
                   limit="Never-tested integrations show —. A failed test stays until the next test passes."
                 />
               </th>
-              <th>What agents may do with it</th>
+              <th className="col-low">What agents may do with it</th>
               <th>Note</th>
               <th>On</th>
-              <th><span className="sr-only">Action</span></th>
+              <th className="col-act"><span className="sr-only">Action</span></th>
             </tr>
           </thead>
           <tbody>
@@ -301,13 +295,13 @@ export default function IntegrationsSection({ notify }: SectionProps) {
                 <td>
                   {r.level ? <LevelBadge level={r.level} variant="pill" /> : <span className="int-neutral">{r.word}</span>}
                 </td>
-                <td className="int-time">
+                <td className="int-time col-low">
                   {r.lastTest ? <time dateTime={r.lastTest.at} title={r.lastTest.at}>{relativeTime(r.lastTest.at)}</time> : <span title="Never tested">—</span>}
                 </td>
-                <td><Clamp text={SERVER_DESCRIPTIONS.get(r.name) || r.integration?.description || 'Custom MCP integration.'} /></td>
+                <td className="col-low"><Clamp text={SERVER_DESCRIPTIONS.get(r.name) || r.integration?.description || 'Custom MCP integration.'} /></td>
                 <td className={r.level === 'poor' ? 'int-note poor' : 'int-note'}><Clamp text={r.note} /></td>
                 <td><RowToggle row={r} busy={busy} onMcp={onToggleMcp} onMaster={onToggleMaster} /></td>
-                <td>
+                <td className="col-act">
                   {r.setupAction === FETCH_RULES ? (
                     <button className="btn primary int-act" disabled={busy === r.name} onClick={() => void onFetchRules(r.name)}>
                       {busy === r.name ? 'Fetching…' : 'Fetch rules'}
@@ -322,6 +316,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
             ))}
           </tbody>
         </table>
+        </div>
       )}
 
       {tab === 'add' && ready && (

@@ -59,7 +59,7 @@ export default function AiConfigSection({ notify }: SectionProps) {
         description={AI_CONFIG_DESC}
         actions={<button className="btn primary" onClick={() => setAddProvider(true)}><Icon name="plus" /> Add provider</button>}
       />
-      <div ref={page} className="settings-content-inner flex flex-col gap-4 pb-20">
+      <div ref={page} className="settings-content-inner flex flex-col gap-4">
         <AiModelsOverview notify={notify} />
         <AiProvidersPanel notify={notify} addProviderRequested={addProvider} onAddProviderOpened={opened} />
         <AiBudgetsPanel notify={notify} />

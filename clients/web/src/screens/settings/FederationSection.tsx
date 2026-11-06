@@ -185,18 +185,21 @@ export default function FederationSection({ notify }: SectionProps) {
 
       <section className="card card-sq settings-card wide">
         <div className="card-b">
-          {/* no .table-wrap: its overflow would clip the ⓘ popover */}
-          <div>
+          {/* scrolls only below the full tier: a scroll box would clip the ⓘ popover */}
+          <div className="fed-wrap">
             <table className="tbl fed-table">
               <thead>
                 <tr>
-                  <th>Source</th>
+                  <th style={{ minWidth: 'var(--col-main-min)' }}>
+                    Source
+                    <span className="col-low-note">Poll every, the severity floor and errors are hidden while Ask Vigil is open</span>
+                  </th>
                   <th>On</th>
-                  <th>Poll every</th>
-                  <th>Only alerts at or above</th>
+                  <th className="col-low">Poll every</th>
+                  <th className="col-low">Only alerts at or above</th>
                   <th>Last poll</th>
-                  <th>Errors</th>
-                  <th><span className="sr-only">Poll now</span></th>
+                  <th className="col-low">Errors</th>
+                  <th className="col-act"><span className="sr-only">Poll now</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -233,14 +236,14 @@ export default function FederationSection({ notify }: SectionProps) {
                           onChange={(v) => onPatch(s.source_id, { enabled: v })}
                         />
                       </td>
-                      <td>
+                      <td className="col-low">
                         <EveryInput
                           seconds={s.interval_seconds}
                           label={`Poll ${name} every`}
                           onCommit={(sec) => onEvery(s.source_id, sec)}
                         />
                       </td>
-                      <td>
+                      <td className="col-low">
                         <div className="w-36">
                           <Select
                             value={s.min_severity || ''}
@@ -250,7 +253,7 @@ export default function FederationSection({ notify }: SectionProps) {
                         </div>
                       </td>
                       <td><LastPoll s={s} name={name} /></td>
-                      <td>
+                      <td className="col-low">
                         {(s.consecutive_errors || 0) > 0 ? (
                           <span style={{ color: 'var(--fair)' }} title={s.last_error || ''}>
                             {s.consecutive_errors}
@@ -259,7 +262,7 @@ export default function FederationSection({ notify }: SectionProps) {
                           <span className="muted">{s.last_poll_at ? 0 : '—'}</span>
                         )}
                       </td>
-                      <td style={{ textAlign: 'right' }}>
+                      <td className="col-act" style={{ textAlign: 'right' }}>
                         <button
                           className="btn ghost"
                           disabled={!s.is_configured}

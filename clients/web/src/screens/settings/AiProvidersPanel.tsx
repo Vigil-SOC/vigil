@@ -344,8 +344,12 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
           <table className="tbl">
             <thead>
               <tr>
-                <th>Key</th><th>Credential</th><th>Share</th><th>Models allowed</th><th>Health</th>
-                <th style={{ textAlign: 'right' }}>Edit</th>
+                <th style={{ minWidth: 'var(--col-main-min)' }}>
+                  Key
+                  <span className="col-low-note">Credential, share and models allowed are hidden while Ask Vigil is open</span>
+                </th>
+                <th className="col-low">Credential</th><th className="col-low">Share</th><th className="col-low">Models allowed</th><th>Health</th>
+                <th className="col-act" style={{ textAlign: 'right' }}>Edit</th>
               </tr>
             </thead>
             <tbody>
@@ -384,7 +388,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
                           )}
                         </span>
                       </td>
-                      <td style={{ textAlign: 'right' }}>
+                      <td className="col-act" style={{ textAlign: 'right' }}>
                         <div className="inline-flex gap-1.5">
                           <EditProviderButton provider={p} onEdit={setEditingProvider} />
                           {!p.custom_provider_config?.is_key_less && (
@@ -415,16 +419,19 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
                         </span>
                       </div>
                     </td>
-                    <td className="font-mono text-xs">
-                      {secretText(k.value) || (k.ollama_key_config ? secretText(k.ollama_key_config.url) : '—')}
+                    {/* text in a span: a utility font-size on the cell would hold a hidden column open */}
+                    <td className="col-low">
+                      <span className="font-mono text-xs">
+                        {secretText(k.value) || (k.ollama_key_config ? secretText(k.ollama_key_config.url) : '—')}
+                      </span>
                     </td>
-                    <td>
+                    <td className="col-low">
                       {k.enabled !== false && totalWeight > 0
                         ? `${Math.round(((Number(k.weight) || 0) / totalWeight) * 100)}%`
                         : '—'}
                     </td>
-                    <td className="text-xs">
-                      {k.models?.includes('*') ? 'All models' : `${k.models?.length || 0} allowed`}
+                    <td className="col-low">
+                      <span className="text-xs">{k.models?.includes('*') ? 'All models' : `${k.models?.length || 0} allowed`}</span>
                     </td>
                     <td>
                       <span className="inline-flex items-center gap-1.5">
@@ -441,7 +448,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
                         )}
                       </span>
                     </td>
-                    <td style={{ textAlign: 'right' }}>
+                    <td className="col-act" style={{ textAlign: 'right' }}>
                       <div className="inline-flex gap-1.5">
                         {p.name === 'vertex' && isExpressKey(k) && (
                           <button
