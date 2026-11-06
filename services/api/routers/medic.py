@@ -13,6 +13,7 @@ untouched. Only the status snapshot is parsed and cached (15 s, per process).
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import time
 from typing import Optional
@@ -32,6 +33,8 @@ from core.platform.medic_last_seen import read_key
 from core.platform.medic_status import MedicStatus, medic_enabled
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -184,7 +187,15 @@ async def _call(
         return None, _passthrough(r)
     if r.status_code >= 400:
         return None, _problem(r.status_code, _medic_code(r) or "internal")
-    if r.status_code not in (200, 201) or len(r.content) > _MAX_BODY:
+    if r.status_code not in (200, 201):
+        return None, _problem(503, "medic_unavailable")
+    if len(r.content) > _MAX_BODY:
+        logger.warning(
+            "medic response refused as too large: path=%s size=%d limit=%d",
+            path,
+            len(r.content),
+            _MAX_BODY,
+        )
         return None, _problem(503, "medic_unavailable")
     return r, None
 
