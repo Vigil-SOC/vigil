@@ -84,7 +84,7 @@
    and the card's head, chips and footer stay put, so a long view never grows the page.
    The offset is the top bar + the card's head, chips and footer, so the whole card fits
    the window once scrolled to; the floor keeps a short window usable. */
-.de-table { border-top: 1px solid var(--ln1); border-bottom: 1px solid var(--ln0); overflow-x: auto; transition: opacity .15s; }
+.de-table { border-top: 1px solid var(--ln1); border-bottom: 1px solid var(--ln0); overflow-x: auto; transition: opacity .15s; container-type: inline-size; }
 .de-table.list-scroll { max-height: clamp(300px, calc(100vh - 260px), 1400px); overscroll-behavior: contain; }
 .de-th { position: sticky; top: 0; z-index: 2; box-sizing: border-box; }
 .de-table.loading { opacity: .55; }
@@ -117,7 +117,8 @@
 
 /* A Vigil copy's exceptions: opened under its row, across every column. */
 .de-toggles { display: flex; flex-wrap: wrap; gap: 14px; }
-.de-x { grid-column: 1 / -1; display: grid; gap: 10px; margin-top: 4px; padding: 14px 16px; border-radius: 10px; background: var(--bg2); border: 1px solid var(--ln0); font-size: 12.5px; color: var(--tx1); }
+/* Pinned to the visible width, so a narrow screen reads it without scrolling the table sideways. */
+.de-x { position: sticky; left: 20px; box-sizing: border-box; max-width: calc(100cqi - 40px); grid-column: 1 / -1; display: grid; gap: 10px; margin-top: 4px; padding: 14px 16px; border-radius: 10px; background: var(--bg2); border: 1px solid var(--ln0); font-size: 12.5px; color: var(--tx1); }
 .de-row:hover .de-x { background: var(--bg1); }
 .de-x-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; }
 .de-x-head > b { font-size: 13px; font-weight: 650; color: var(--tx0); }
@@ -135,6 +136,8 @@
 .de-x-match code { padding: 1px 7px; border-radius: 5px; background: var(--bg3); font-family: var(--font-mono); font-size: 12px; color: var(--tx0); overflow-wrap: anywhere; }
 .de-x-note { color: var(--tx1); line-height: 18px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .de-x-by { font-size: 12px; color: var(--tx3); overflow-wrap: anywhere; }
+.de-x-miss { font-size: 12px; color: var(--fair); overflow-wrap: anywhere; }
+.de-x-miss code { font-family: var(--font-mono); color: var(--tx0); }
 .de-x-side { display: grid; justify-items: end; align-content: start; gap: 6px; text-align: right; }
 .de-x-n { font-size: 12px; color: var(--tx2); white-space: nowrap; }
 .de-x-n b { font-family: var(--font-mono); font-weight: 600; color: var(--tx0); }
