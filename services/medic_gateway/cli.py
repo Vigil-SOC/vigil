@@ -93,7 +93,8 @@ def load_config(env: Mapping[str, str]) -> Config:
 def build(cfg: Config) -> list:
     backend = server.Upstream(*cfg.backend, prefix=cfg.context_path)
     session = ViewerSession(backend, cfg.user, cfg.password_file)
-    medic = server.Upstream(*cfg.medic, max_body=8 << 20)  # above the 2 MiB default
+    # Same as the backend's _MAX_BODY (services/api/routers/medic.py): never hold more than it accepts.
+    medic = server.Upstream(*cfg.medic, max_body=4 << 20)
     return [
         server.make_server("outbound", cfg.out_bind, backend, session),
         server.make_server("inbound", cfg.in_bind, medic),

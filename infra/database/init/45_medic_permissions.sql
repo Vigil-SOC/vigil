@@ -1,6 +1,6 @@
 -- Medic permissions (C6/V3): medic.read to view Medic in the console, medic.admin
--- for every write (feedback, pack import, revert, export). The backend's
--- /api/medic routes (H3) check them; Medic itself can't tell roles apart.
+-- for every write (feedback, pack import, revert). The backend's /api/medic
+-- routes (H3) check them; Medic itself can't tell roles apart.
 --
 -- A new file rather than an edit to 06, for the reason 17_loglm_setup.sql gives:
 -- 06 seeds roles with ON CONFLICT DO NOTHING, and Helm's db-init only runs file
