@@ -906,7 +906,7 @@ export const detectionRulesApi = {
   listSources: () => api.get('/detection-rules/sources'),
 
   /** Every listed rule copy's health and its reason, worst first; one health's when given. */
-  rules: (params: { health?: string; tool?: string; q?: string; offset?: number } = {}) =>
+  rules: (params: { health?: string; tool?: string; q?: string; offset?: number; sort?: string } = {}) =>
     api.get('/detection-rules/rules', { params }),
 
   /** An overlay copy's exceptions, active and removed, with per-day matches. */
