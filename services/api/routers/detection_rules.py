@@ -303,13 +303,20 @@ def get_rules(
     q: Optional[str] = Query(default=None, max_length=200),
     offset: int = Query(default=0, ge=0),
     sort: Literal["worst", "most_fires", "fewest_fires", "name"] = "worst",
+    flag: Optional[
+        Literal["noisy", "quiet", "accurate", "silent", "drift", "caught"]
+    ] = None,
 ):
     """Every listed rule copy's health with its reason and data source, capped at
     catalog.RULE_ROWS rows from ``offset``, narrowed by ``health`` ("attention"
-    is every state to act on), ``tool`` and the search ``q``, in ``sort`` order
+    is every state to act on), ``tool``, ``flag`` (a failing Noisy, Quiet,
+    Accurate, Silent or drift check, or a passing Caught) and the search ``q``,
+    in ``sort`` order
     (worst first by default); the counts, the per-SIEM tallies and the blind
     spots cover them all. Read-only."""
-    return catalog.health_listing(health, tool=tool, q=q, offset=offset, sort=sort)
+    return catalog.health_listing(
+        health, tool=tool, q=q, offset=offset, sort=sort, flag=flag
+    )
 
 
 @router.get("/overlay-only")
