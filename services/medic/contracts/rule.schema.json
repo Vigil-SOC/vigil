@@ -24,7 +24,7 @@
       }
     },
     "lane": {"enum": [1, 2, 3]},
-    "detection": {"description": "Whether the rule fires on something happening (event) or on something expected not happening (absence). Default event. The router copies it to the decision record's detection_type, which A4's time-to-detect bar uses (X1 #3, ⚑4a).", "enum": ["event", "absence"]},
+    "detection": {"description": "Whether the rule fires on something happening (event) or on something expected not happening (absence). Default event. The router copies it to the decision record's detection_type (X1 #3, ⚑4a).", "enum": ["event", "absence"]},
     "input_trust": {"description": "Authors may only raise trust to 'untrusted'. The engine derives the effective value (ENGINE_API.md §4).", "const": "untrusted"},
     "shapes": {"description": "Install shapes the rule applies to. Default: all.", "type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["start_sh", "compose", "helm"]}},
     "signals": {

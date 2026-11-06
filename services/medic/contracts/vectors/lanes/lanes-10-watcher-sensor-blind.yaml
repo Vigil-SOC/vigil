@@ -1,5 +1,5 @@
 id: lanes-10-watcher-sensor-blind
-description: E3's built-in watcher.sensor-blind (K1 T-09) is lane 3 and is never a suppression child. It routes like any lane-3 incident. Its record has subject watcher, so it is left out of gate lane metrics and the lane-3 case rate (R7).
+description: E3's built-in watcher.sensor-blind (K1 T-09) is lane 3 and is never a suppression child. It routes like any lane-3 incident. Its record has subject watcher, so it is left out of the lane-3 case rate (R7).
 until: 3600
 incidents:
   - {id: a, rule: watcher.sensor-blind, lane: 3, trust: trusted, signals: 1, samples: 1, opened_at: 0}

@@ -162,8 +162,6 @@ export function timeline(opened: DecisionRecord, records: DecisionRecord[]): Tim
     } else if (r.type === 'feedback') {
       const c = b.comment as { text?: string } | undefined
       rows.push({ key: k, at: r.at, text: `${str(b.admin)}: ${feedbackWord(String(b.value), b.suggested_lane as number | undefined)}`, note: c?.text })
-    } else if (r.type === 'adjudication') {
-      rows.push({ key: k, at: r.at, text: `Evaluation verdict: ${str(b.verdict)} (${str(b.basis)}, by ${str(b.by)})` })
     } else {
       rows.push({ key: k, at: r.at, text: `Record: ${str(r.type)}` })
     }

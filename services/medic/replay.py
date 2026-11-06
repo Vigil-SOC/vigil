@@ -175,7 +175,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"replay failed: {exc}", file=sys.stderr)
         return 1
 
-    print(f"replay_head: seq {report.head_seq} hash {report.head_hash}")
+    print(f"head: seq {report.head_seq} hash {report.head_hash}")
     print(f"records: {report.count}")
     print(f"pack: {'/'.join(pack)} ({len(loaded.rules)} rules)")
     print(f"rules: {', '.join(sorted(r.id for r in loaded.rules))}")
