@@ -13,6 +13,9 @@ MAX_TRACKED_JOBS = 20
 
 DETERMINATE_FORMATS = frozenset({"parquet", "json"})  # row count known upfront
 
+# Pre-install alerts and closed tickets, written to episodic memory (#3965).
+HISTORY = "history"
+
 RUNNING = "running"
 SUCCEEDED = "succeeded"
 FAILED = "failed"
@@ -22,6 +25,8 @@ _PROGRESS_KEYS = tuple(
     for kind in ("findings", "cases")
     for outcome in ("imported", "skipped", "errors")
 )
+# A history import counts rows as it reads them; the write is one transaction.
+_HISTORY_ROWS = ("alerts_total", "tickets_total", "rows_unreadable")
 
 
 class IngestionJobConflict(RuntimeError):
@@ -31,11 +36,20 @@ class IngestionJobConflict(RuntimeError):
 
 
 class IngestionJob:
-    def __init__(self, filename: str, fmt: str, data_type: str):
+    def __init__(
+        self,
+        filename: str,
+        fmt: str,
+        data_type: str,
+        actor: str = "",
+        source_system: str = "",
+    ):
         self.job_id = f"ing-{uuid.uuid4().hex[:12]}"
         self.filename = filename
         self.format = fmt
         self.data_type = data_type
+        self.actor = actor
+        self.source_system = source_system
         self.status = RUNNING
         self.created_at = datetime.now(timezone.utc)
         self.finished_at: Optional[datetime] = None
@@ -61,8 +75,12 @@ class IngestionJob:
     def snapshot(self) -> Dict[str, Any]:
         """Readable while the job runs; counts are ints written by one thread."""
         stats = dict(self._stats)
-        processed = sum(stats.get(key, 0) for key in _PROGRESS_KEYS)
-        total = stats.get("findings_total", 0) + stats.get("cases_total", 0)
+        processed = sum(stats.get(key, 0) for key in _PROGRESS_KEYS + _HISTORY_ROWS)
+        total = (
+            stats.get("findings_total", 0)
+            + stats.get("cases_total", 0)
+            + sum(stats.get(key, 0) for key in _HISTORY_ROWS)
+        )
         return {
             "job_id": self.job_id,
             "filename": self.filename,
@@ -136,6 +154,8 @@ def summarize_stats(stats: Dict[str, int], first_error: Optional[str] = None) ->
 
     ``first_error`` is the reason the first row failed; it follows the counts.
     """
+    if "verdicts_written" in stats or "alerts_total" in stats:
+        return _summarize_history(stats, first_error)
     imported = stats.get("findings_imported", 0) + stats.get("cases_imported", 0)
     skipped = stats.get("findings_skipped", 0) + stats.get("cases_skipped", 0)
     errors = stats.get("findings_errors", 0) + stats.get("cases_errors", 0)
@@ -160,6 +180,30 @@ def summarize_stats(stats: Dict[str, int], first_error: Optional[str] = None) ->
     return success, ". ".join(messages) if messages else "No data imported"
 
 
+def _summarize_history(stats: Dict[str, int], first_error: Optional[str]) -> tuple:
+    """A history import: what memory got, and what was left out and why."""
+    if "verdicts_written" not in stats:
+        return False, first_error or "Nothing was written to memory"
+    verdicts = stats.get("verdicts_written", 0)
+    sightings = stats.get("sightings_written", 0)
+    messages = [f"Wrote {verdicts} verdicts and {sightings} sightings to memory"]
+    for kind in ("tickets", "alerts"):
+        dropped = {
+            key[len(f"{kind}_dropped_") :].replace("_", " "): n
+            for key, n in stats.items()
+            if key.startswith(f"{kind}_dropped_") and n
+        }
+        if dropped:
+            reasons = ", ".join(f"{n} {why}" for why, n in sorted(dropped.items()))
+            messages.append(f"Left out {kind}: {reasons}")
+    if stats.get("rows_unreadable"):
+        messages.append(f"{stats['rows_unreadable']} unreadable rows")
+    if first_error:
+        messages.append(first_error)
+    success = first_error is None
+    return success, ". ".join(messages)
+
+
 def run_job(job: IngestionJob, source_path: Path) -> None:
     """Ingest source_path on a worker thread, then delete it. Never raises."""
     from core.ingestion.ingestion_service import IngestionService
@@ -168,10 +212,16 @@ def run_job(job: IngestionJob, source_path: Path) -> None:
     try:
         service = IngestionService()
         job.track(service.stats)
-        stats = service._ingest_file_by_format(
-            source_path, job.format, data_type=job.data_type
-        )
-        signal_new_findings(service.stored_ids)
+        if job.data_type == HISTORY:
+            # Memory only: no findings are stored, so there is nothing to triage.
+            stats = service.ingest_history_file(
+                source_path, job.format, job.source_system, job.actor
+            )
+        else:
+            stats = service._ingest_file_by_format(
+                source_path, job.format, data_type=job.data_type
+            )
+            signal_new_findings(service.stored_ids)
         success, message = summarize_stats(stats or {}, service.first_error)
         if success:
             job.finish(message)

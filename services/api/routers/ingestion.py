@@ -25,6 +25,7 @@ from core.auth.current_user import get_current_user
 from core.auth.permissions import deny_unless, permission_gate
 from core.config import get_settings, is_demo_mode
 from core.ingestion.ingestion_jobs import (
+    HISTORY,
     IngestionJob,
     IngestionJobConflict,
     get_job_registry,
@@ -71,8 +72,9 @@ _running_tasks: set = set()  # asyncio only weak-refs tasks; unheld ones get GC'
 
 
 def _can_create_cases(data_type: str, fmt: Optional[str]) -> bool:
-    """JSON ingestion imports a ``cases`` array whatever ``data_type`` says."""
-    return data_type == "case" or fmt == "json"
+    """JSON ingestion imports a ``cases`` array whatever ``data_type`` says.
+    A history import writes episodic memory only."""
+    return data_type == "case" or (fmt == "json" and data_type != HISTORY)
 
 
 def _require_cases_write(user: User) -> None:
@@ -146,12 +148,18 @@ async def upload_and_ingest_file(
     file: UploadFile = File(...),
     data_type: str = Form("finding"),
     format: Optional[str] = Form(None),
+    source_system: str = Form("", max_length=64),
     current_user: User = Depends(get_current_user),
 ):
-    """Accept a file and ingest it as a background job; poll /ingest/jobs/{id}."""
-    if data_type not in ["finding", "case"]:
+    """Accept a file and ingest it as a background job; poll /ingest/jobs/{id}.
+
+    ``history`` takes alerts and closed tickets (a JSON object may carry both
+    arrays) into episodic memory as one import named ``<source_system>:<hash>``;
+    it creates no findings or Cases."""
+    if data_type not in ["finding", "case", HISTORY]:
         raise HTTPException(
-            status_code=400, detail="data_type must be 'finding' or 'case'"
+            status_code=400,
+            detail="data_type must be 'finding', 'case' or 'history'",
         )
 
     filename = file.filename or "upload"
@@ -174,7 +182,13 @@ async def upload_and_ingest_file(
 
     temp_path = await _spool_upload(file, f".{format}")
 
-    job = IngestionJob(filename=filename, fmt=format, data_type=data_type)
+    job = IngestionJob(
+        filename=filename,
+        fmt=format,
+        data_type=data_type,
+        actor=current_user.username or current_user.user_id,
+        source_system=source_system.strip(),
+    )
     try:
         get_job_registry().start(job)
     except IngestionJobConflict as conflict:
