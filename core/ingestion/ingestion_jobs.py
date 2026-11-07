@@ -16,6 +16,13 @@ DETERMINATE_FORMATS = frozenset({"parquet", "json"})  # row count known upfront
 # Pre-install alerts and closed tickets, written to episodic memory (#3965).
 HISTORY = "history"
 
+# Connected sources whose closed records carry a disposition RAW_LABELS maps
+# (#3981); each source's import id is fixed, so a re-run re-derives it.
+CONNECTED_HISTORY_SOURCES = {
+    "microsoft_defender": "Microsoft Defender",
+    "azure_sentinel": "Azure Sentinel",
+}
+
 RUNNING = "running"
 SUCCEEDED = "succeeded"
 FAILED = "failed"
@@ -202,6 +209,52 @@ def _summarize_history(stats: Dict[str, int], first_error: Optional[str]) -> tup
         messages.append(first_error)
     success = first_error is None
     return success, ". ".join(messages)
+
+
+def _connected_service(source: str):
+    if source == "microsoft_defender":
+        from core.integrations.microsoft_defender.ingestion import (
+            MicrosoftDefenderIngestion,
+        )
+
+        return MicrosoftDefenderIngestion()
+    from core.integrations.azure_sentinel.ingestion import AzureSentinelIngestion
+
+    return AzureSentinelIngestion()
+
+
+def run_connected_history_job(job: IngestionJob, days: int) -> None:
+    """Read a connected source's closed records into one import on a worker
+    thread. Never raises: any failure, a missing Azure SDK included, fails the job."""
+    import asyncio
+
+    from core.ingestion.ingestion_service import IngestionService
+    from core.memory.imported_history import write_import
+    from core.storage.unit_of_work import unit_of_work
+
+    try:
+        service = IngestionService()
+        service.reset_stats()
+        service.stats.update(alerts_total=0, tickets_total=0, rows_unreadable=0)
+        job.track(service.stats)
+        rows = asyncio.run(
+            _connected_service(job.source_system).fetch_closed_history(days)
+        )
+        service.stats["tickets_total"] = len(rows)
+        with unit_of_work() as session:
+            write_import(
+                session,
+                investigation_id=f"{job.source_system}:connected",
+                alerts=[],
+                tickets=rows,
+                actor=job.actor,
+                stats=service.stats,
+            )
+        success, message = summarize_stats(service.stats, service.first_error)
+        job.finish(message) if success else job.fail(message)
+    except Exception as e:
+        logger.error(f"Ingestion job {job.job_id} failed: {e}", exc_info=True)
+        job.fail(f"Import failed: {e}")
 
 
 def run_job(job: IngestionJob, source_path: Path) -> None:

@@ -79,6 +79,9 @@ RAW_LABELS: Mapping[str, ClosureCategory] = {
             "authorized_activity",
             "authorized_change",
             "authorized_change_ticket",
+            # Defender for Endpoint's benign classification (#3981).
+            "informationalexpectedactivity",
+            "informational_expected_activity",
             "fp",
             "false_positive",
             "falsepositive",

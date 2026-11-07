@@ -787,6 +787,9 @@ export const ingestionApi = {
       timeout: 0,
     })
   },
+  // closed, classified records from a configured Defender or Sentinel, read into memory
+  importConnectedHistory: (source: ConnectedHistorySource, days: number) =>
+    api.post<IngestionJob>('/ingest/history/connected', { source, days }),
   listJobs: () => api.get<IngestionJob[]>('/ingest/jobs'),
   getJob: (jobId: string) => api.get<IngestionJob>(`/ingest/jobs/${jobId}`),
   // a fixed set of example alerts, stored as findings the daemon triages
@@ -795,6 +798,7 @@ export const ingestionApi = {
   clearSampleAlerts: () => api.delete<SampleAlertsCleared>('/ingest/sample-alerts'),
 }
 
+export type ConnectedHistorySource = Schema<'ConnectedHistoryRequest'>['source']
 export type SampleAlertsStatus = Schema<'SampleAlertsStatus'>
 export type SampleAlertsCleared = Schema<'SampleAlertsCleared'>
 

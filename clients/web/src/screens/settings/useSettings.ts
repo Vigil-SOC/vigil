@@ -1545,5 +1545,11 @@ export function useIngestionJob(dataType: 'finding' | 'history' = 'finding') {
     [dataType],
   )
 
-  return { job, attaching, upload }
+  // any other request that answers with a job (a connected-source import)
+  const start = useCallback(
+    (request: Promise<{ data: IngestionJob }>) => request.then((res) => setJob(res.data)),
+    [],
+  )
+
+  return { job, attaching, upload, start }
 }
