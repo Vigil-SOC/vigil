@@ -15,8 +15,8 @@ interface RuleException {
   removal_reason: string | null
   /** Matches per UTC day, as Vigil's runner counted them (the last 14 days). */
   days: Record<string, number>
-  /** The runner's last run that fetched rows: how many, and which match fields none carried. */
-  seen: { rows: number; missing: string[]; at: string } | null
+  /** The runner's last run that fetched rows: how many, how many this dropped, and which match fields none carried. */
+  seen: { rows: number; matched?: number; missing: string[]; at: string } | null
   /** Its matches on the window's days. */
   silenced?: number
 }
@@ -32,6 +32,8 @@ interface Window {
 
 interface Listing {
   handed_off: boolean
+  /** What the copy's exceptions dropped together from its last run with rows. */
+  seen: { rows: number; matched: number; ids: number[]; at: string } | null
   exceptions: RuleException[]
   window?: Window
 }
@@ -88,6 +90,20 @@ function WindowStrip({ w }: { w: Window }) {
   )
 }
 
+/** Every row of a run dropped: the rule raised nothing. A strong hint, not proof (it may all be benign noise). */
+function droppedAll(seen: { rows: number; matched?: number } | null): boolean {
+  return !!seen && seen.rows > 0 && seen.matched === seen.rows
+}
+
+function Silenced({ seen, who }: { seen: { rows: number; at: string }; who: string }) {
+  const rows = seen.rows === 1 ? 'the 1 row' : `all ${seen.rows.toLocaleString()} rows`
+  return (
+    <div className="de-x-miss" title={`Last run with rows: ${utcDayClock(seen.at)}`}>
+      {who} {rows} this rule's last run fetched: the rule raised nothing.
+    </div>
+  )
+}
+
 function matched(days: Record<string, number>): { total: number; title: string } {
   const entries = Object.entries(days).sort(([a], [b]) => a.localeCompare(b))
   return {
@@ -117,6 +133,10 @@ export default function RuleExceptions({ ruleId }: { ruleId: number }) {
 
   const active = data.exceptions.filter((x) => !x.removed_at)
   const removed = data.exceptions.filter((x) => x.removed_at)
+  // Exceptions that silenced a run between them, none of them alone; only while all are still active.
+  const ids = new Set(active.map((x) => x.exception_id))
+  const together = droppedAll(data.seen) && data.seen!.ids.length > 1 && data.seen!.ids.every((i) => ids.has(i))
+    && !active.some((x) => droppedAll(x.seen) && x.seen!.at === data.seen!.at)
   return (
     <div className="de-x">
       <div className="de-x-head">
@@ -138,6 +158,7 @@ export default function RuleExceptions({ ruleId }: { ruleId: number }) {
                   <div className="de-x-note" title={x.note}>{x.note}</div>
                   <div className="de-x-by">Added by {x.created_by ?? 'unknown'}{x.created_at && ` · ${utcDayClock(x.created_at)}`}</div>
                   <Missing seen={x.seen} />
+                  {droppedAll(x.seen) && <Silenced seen={x.seen!} who="Dropped" />}
                 </div>
                 <div className="de-x-side">
                   <span className="de-x-n" title={m.title}><b>{(x.silenced ?? m.total).toLocaleString()}</b> {(x.silenced ?? m.total) === 1 ? 'hit' : 'hits'} silenced in {data.window?.days ?? KEEP_DAYS}d</span>
@@ -156,6 +177,7 @@ export default function RuleExceptions({ ruleId }: { ruleId: number }) {
           })}
         </ul>
       )}
+      {together && <Silenced seen={data.seen!} who="Together, these exceptions dropped" />}
       {adding && <AddForm ruleId={ruleId} onDone={(changed) => { if (changed) load().finally(() => setAdding(false)); else setAdding(false) }} />}
       {removed.length > 0 && (
         <details className="de-x-removed">

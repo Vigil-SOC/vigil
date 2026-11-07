@@ -50,6 +50,12 @@ def checked(match: Any, note: Any) -> Tuple[Dict[str, Any], str]:
             raise ValueError("every match field needs a name")
         if value is None or isinstance(value, (dict, list)):
             raise ValueError(f"match value for {field!r} must be a single value")
+        network = _network(value)
+        if network is not None and network.prefixlen == 0:
+            raise ValueError(
+                f"{field} = {value} is a /0 network: it would match every event "
+                f"that has {field}, so the rule could never raise anything"
+            )
     note = str(note or "").strip()
     if not note:
         raise ValueError("a note saying why this is expected is required")
@@ -193,17 +199,19 @@ def _in_window(days: Any, since_day: str) -> int:
 def of_copy(rule_id: int, now: Optional[datetime] = None) -> Dict[str, Any]:
     """Every exception on an overlay copy, active and removed, with each one's
     per-day matches from the copy's latest version, what its last run with rows
-    saw (``seen``: {rows, missing, at}, or None), and whether a SIEM copy runs
+    saw (``seen``: {rows, matched, missing, at}, or None), what the copy's
+    exceptions together dropped from that run (``seen``: {rows, matched, ids,
+    at}, or None), and whether a SIEM copy runs
     it instead (``handed_off``: Vigil no longer applies them).
 
     ``window`` puts the rule's own fires on the days the matches are counted
-    for (the runner keeps KEEP_DAYS): ``fired`` findings that name it,
+    for (the runner keeps KEEP_DAYS): ``fired`` the findings Fires counts for this copy (traced to it, or naming it when no other copy shares its name),
     ``silenced`` hits exceptions dropped, ``hits`` the two together. Each
     exception's ``silenced`` is its matches in that window.
 
     LookupError when there is no such rule, ValueError when it isn't an overlay copy.
     """
-    from core.detections.inventory.catalog import fired_since
+    from core.detections.inventory.catalog import fired_in_window
     from core.detections.inventory.rollout import KEEP_DAYS, handed_off
 
     today = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).date()
@@ -223,6 +231,7 @@ def of_copy(rule_id: int, now: Optional[datetime] = None) -> Dict[str, Any]:
             )
         )
         counts = (checks or {}).get("exceptions") or {}
+        together = (checks or {}).get("exceptions_seen")
         rows = []
         for r in listed(session, rule_id, removed=True):
             mine = counts.get(str(r["exception_id"])) or {}
@@ -235,13 +244,12 @@ def of_copy(rule_id: int, now: Optional[datetime] = None) -> Dict[str, Any]:
                     "silenced": _in_window(days, since_day),
                 }
             )
-        fired = fired_since(
-            session, rule.name, datetime(first.year, first.month, first.day)
-        )
+    fired = fired_in_window(rule_id, since_day)
     silenced = sum(r["silenced"] for r in rows)
     return {
         "rule_id": rule_id,
         "handed_off": rule_id in handed_off([rule_id]),
+        "seen": together,
         "exceptions": rows,
         "window": {
             "days": KEEP_DAYS,
