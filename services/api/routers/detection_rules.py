@@ -6,7 +6,7 @@ from dataclasses import asdict
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from core.auth.permissions import permission_gate
 from core.deps import provide_detection_rules, provide_mcp_client, provide_mcp_registry
@@ -409,9 +409,10 @@ def _edited(result: Dict[str, Any]) -> Dict[str, Any]:
 @router.get("/rules/{rule_id}/stages")
 def get_rule_stages(rule_id: int):
     """A rule's stage rows, newest first: version, from and to stage, actor,
-    reason and time. Read-only."""
+    reason and time; and ``held``, whether a person's Revert holds it in shadow.
+    Read-only."""
     try:
-        return {"rule_id": rule_id, "stages": stages.history(rule_id)}
+        return {"rule_id": rule_id, **stages.history(rule_id)}
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -420,6 +421,13 @@ class StageChangeRequest(BaseModel):
     """Why a person reverts a rule, or releases it."""
 
     reason: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("reason")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("reason must not be blank")
+        return value
 
 
 def _stage_change(change, rule_id: int, body: StageChangeRequest, user: User):
@@ -451,7 +459,8 @@ def release_rule(
     body: StageChangeRequest,
     current_user: User = Depends(get_current_active_user),
 ):
-    """Lifts a person's hold on a shadow rule; the normal rollout applies again."""
+    """Lifts a person's hold, leaving the rule in its current stage; the normal
+    rollout applies again."""
     return _stage_change(stages.release, rule_id, body, current_user)
 
 

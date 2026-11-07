@@ -3504,7 +3504,8 @@ export interface paths {
         /**
          * Get Rule Stages
          * @description A rule's stage rows, newest first: version, from and to stage, actor,
-         *     reason and time. Read-only.
+         *     reason and time; and ``held``, whether a person's Revert holds it in shadow.
+         *     Read-only.
          */
         get: operations["get_api_detection-rules_rules_rule_id_stages"];
         put?: never;

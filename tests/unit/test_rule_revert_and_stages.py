@@ -59,7 +59,9 @@ def db(monkeypatch):
     ))
 
     def held(session, rule_id):
-        keyed = [r for r in box.rows if "hold" in (r.proof or {})]
+        # Rows the session added count too, as autoflush would make them.
+        pending = list(reversed(getattr(session, "added", [])))
+        keyed = [r for r in pending + box.rows if "hold" in (r.proof or {})]
         return bool(keyed) and keyed[0].proof["hold"] is True
 
     monkeypatch.setattr(stages, "_held", held)
@@ -94,6 +96,21 @@ def test_stages_are_the_rows_newest_first_with_from_and_to(db):
         (None, "shadow", "system"),
     ]
     assert out[0]["reason"] == "too loud" and out[0]["version"] == 2 and out[0]["at"]
+
+
+@pytest.mark.parametrize(
+    "rows, held",
+    [
+        ([], False),
+        ([_stage(2, "shadow", "ana", "too loud", hold=True)], True),
+        # A new version's system row after the Revert doesn't lift the hold.
+        ([_stage(3, "shadow", "system", "v3"), _stage(2, "shadow", "ana", "x", hold=True)], True),
+        ([_stage(3, "shadow", "ana", "ok", hold=False), _stage(2, "shadow", "ana", "x", hold=True)], False),
+    ],
+)
+def test_stages_say_whether_a_person_holds_the_rule(db, rows, held):
+    db.rows = rows
+    assert routes.get_rule_stages(7)["held"] is held
 
 
 def test_stages_of_an_unknown_rule_is_404(db):
@@ -143,6 +160,9 @@ def test_reverting_an_unknown_rule_is_404(db):
 def test_a_reason_is_required():
     with pytest.raises(ValueError):
         routes.StageChangeRequest(reason="")
+    # Whitespace only is no reason either: a 422 like an empty one.
+    with pytest.raises(ValueError):
+        routes.StageChangeRequest(reason="   \n\t")
     with pytest.raises(ValueError):
         routes.StageChangeRequest()
 
@@ -279,3 +299,27 @@ def test_vigils_revert_is_a_bell_entry_for_everyone(monkeypatch):
     health_inbox.mark_read("ana", [-9])
     assert health_inbox.inbox("ana")["unread"] == 0
     assert health_inbox.inbox("ben")["unread"] == 1
+
+
+def test_releasing_a_held_rule_that_is_now_off_leaves_it_off(db):
+    """A release lifts the hold only; it never moves an off rule to shadow."""
+    db.rows = [
+        _stage(4, "off", "system", "rule disabled in the SIEM"),
+        _stage(3, "shadow", "ana", "too loud", hold=True),
+    ]
+    out = routes.release_rule(7, _body("ok again"), ANA)
+    (row,) = db.session.added
+    assert (row.stage, row.proof) == ("off", {"hold": False})
+    assert out["stage"] == "off" and out["hold"] is False
+
+
+def test_the_audit_old_value_is_the_hold_before_the_change(db):
+    db.rows = [_stage(2, "live")]
+    routes.revert_rule(7, _body("noisy"), ANA)
+    assert db.audits[-1]["old_value"]["hold"] is False
+    assert db.audits[-1]["new_value"]["hold"] is True
+
+    db.rows = [_stage(3, "shadow", "ana", hold=True)]
+    routes.release_rule(7, _body("fixed"), ANA)
+    assert db.audits[-1]["old_value"]["hold"] is True
+    assert db.audits[-1]["new_value"]["hold"] is False

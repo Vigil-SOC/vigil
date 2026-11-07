@@ -243,16 +243,13 @@ def open_reverts() -> List[Dict[str, Any]]:
     since, newest first, shaped like a flag. ``change_id`` is the stage row's
     id negated, so it never meets a check change's id."""
     s = DetectionRuleStage
-    ranked = (
-        select(
-            s,
-            func.lag(s.stage).over(partition_by=s.rule_id, order_by=s.id).label("prev"),
-            func.row_number()
-            .over(partition_by=s.rule_id, order_by=s.id.desc())
-            .label("rn"),
-        )
-        .subquery()
-    )
+    ranked = select(
+        s,
+        func.lag(s.stage).over(partition_by=s.rule_id, order_by=s.id).label("prev"),
+        func.row_number()
+        .over(partition_by=s.rule_id, order_by=s.id.desc())
+        .label("rn"),
+    ).subquery()
     with get_db_manager().session_scope() as session:
         rows = session.execute(
             select(ranked, DetectionRule)
