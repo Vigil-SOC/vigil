@@ -79,6 +79,8 @@ STATES = ("proven", "fires", "never_fired", "cant_fire")
 # The most rule copies a listed export takes. A coverage export has no cap: its
 # table reads every live rule and its cards are the rules behind its cells.
 MAX_RULES = 2000
+# The widest technique column the PDF's coverage table prints.
+TECH_W = 24
 
 _key_lock = threading.Lock()
 
@@ -356,12 +358,14 @@ def _pdf_lines(
 ) -> List[proof_pdf.Line]:
     lines: List[proof_pdf.Line] = []
 
-    def add(text: str, size: float = 9, bold: bool = False, indent: float = 0) -> None:
-        lines.append((text, size, bold, indent))
+    def add(
+        text: str, size: float = 9, font: str = "regular", indent: float = 0
+    ) -> None:
+        lines.append((text, size, font, indent))
 
     title = "Proven coverage" if card["kind"] == "coverage" else "Detection proof card"
-    add("VIGIL PROOF CARD", 8, True)
-    add(title, 16, True)
+    add("VIGIL PROOF CARD", 8, "bold")
+    add(title, 16, "bold")
     count = (
         f"{card['live_rules']} live rules; {card['rule_count']} behind its cells"
         if card["kind"] == "coverage"
@@ -372,7 +376,7 @@ def _pdf_lines(
         9,
     )
     add("")
-    add("How to check this report", 10, True)
+    add("How to check this report", 10, "bold")
     add(f"SHA-256 of proof-card.json: {digest}", 8)
     add(f"Ed25519 signature (key {kid}): {signature}", 8)
     add(
@@ -383,7 +387,7 @@ def _pdf_lines(
     )
     if card.get("coverage"):
         add("")
-        add("Coverage by technique and SIEM", 11, True)
+        add("Coverage by technique and SIEM", 11, "bold")
         add(
             "Proven: a live rule caught a real or replayed attack. Fires: it runs and sees its data. "
             "Never fired: it runs, no alert in its window. Can't fire: every rule fails Runs or Sees. "
@@ -395,10 +399,12 @@ def _pdf_lines(
             for t in COVERAGE_TOOLS
             if any(t in row["siems"] for row in card["coverage"])
         ]
+        # Courier, so padded columns line up; a technique wider than TECH_W is cut.
+        width = min(max(len(r["technique"]) for r in card["coverage"]) + 2, TECH_W)
         add(
-            "Technique".ljust(14) + "".join(TOOL_NAMES[t].ljust(14) for t in tools),
+            "Technique".ljust(width) + "".join(TOOL_NAMES[t].ljust(13) for t in tools),
             8,
-            True,
+            "mono",
         )
         label = {
             "proven": "Proven",
@@ -408,12 +414,13 @@ def _pdf_lines(
         }
         for row in card["coverage"]:
             cells = "".join(
-                label.get(row["siems"].get(t, ""), "-").ljust(14) for t in tools
+                label.get(row["siems"].get(t, ""), "-").ljust(13) for t in tools
             )
-            add(row["technique"].ljust(14) + cells, 8)
+            technique = row["technique"][: width - 2]
+            add(technique.ljust(width) + cells, 8, "mono")
     for rule in card["rules"]:
         add("")
-        add(rule["name"], 10.5, True)
+        add(rule["name"], 10.5, "bold")
         add(
             f"{TOOL_NAMES.get(rule['siem'], rule['siem'])} · {rule['status']} · version {rule['version']}"
             f" · techniques {', '.join(rule['techniques']) or 'none declared'}"
@@ -427,9 +434,9 @@ def _pdf_lines(
             when = check.get("checked_at") or check.get("at") or ""
             reason = str(check.get("reason") or "").replace("\n", " ")[:220]
             parts = [f"{CHECK_NAMES[key]}: {check.get('result', '?')}", when, reason]
-            add(" · ".join(p for p in parts if p), 8, False, 10)
+            add(" · ".join(p for p in parts if p), 8, "regular", 10)
         if rule["path_to_live"]:
-            add("Path to live", 8, True, 10)
+            add("Path to live", 8, "bold", 10)
             for step in rule["path_to_live"]:
                 parts = [
                     f"{step['stage']} v{step['version']}",
@@ -438,9 +445,12 @@ def _pdf_lines(
                     step["reason"] or "",
                 ]
                 add(
-                    " · ".join(p for p in parts if p) + f" ({step['of']})", 8, False, 20
+                    " · ".join(p for p in parts if p) + f" ({step['of']})",
+                    8,
+                    "regular",
+                    20,
                 )
         deploy = rule.get("deploy")
         if isinstance(deploy, dict) and deploy.get("pr_url"):
-            add(f"Deployed by {deploy['pr_url']}", 8, False, 10)
+            add(f"Deployed by {deploy['pr_url']}", 8, "regular", 10)
     return lines

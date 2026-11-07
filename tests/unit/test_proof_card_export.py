@@ -394,3 +394,15 @@ def test_the_routes_say_when_there_is_no_key(inventory, monkeypatch):
         with pytest.raises(HTTPException) as err:
             call()
         assert err.value.status_code == 503
+
+
+def test_the_pdf_coverage_table_lines_up_in_courier(inventory, key):
+    inventory["pairs"] = [
+        (_rule(1, "elastic"), _version(1)),
+        (_rule(2, "wazuh", techniques=("T1059.001",)), _version(2)),
+    ]
+    pdf = _unzip(proof_card.bundle(proof_card.build(now=NOW)))["proof-card.pdf"]
+    assert b"/BaseFont /Courier" in pdf
+    assert b"/F3 8.0 Tf 1 0 0 1 48.0" in pdf
+    assert b"(T1003.001  Fires        -            )" in pdf
+    assert b"(T1059.001  -            Fires        )" in pdf
