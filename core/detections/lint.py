@@ -39,9 +39,10 @@ _EXCEPTION_HINT = (
 )
 
 # IPv4 (optional CIDR). Candidates are confirmed with ipaddress.
-# Not after "<letter>/": a version (Chrome/120.0.0.0), not an address.
+# Not after "<letter>/" (Chrome/120.0.0.0) or glued to a word (FontCache3.0.0.0):
+# a version, not an address.
 _IPV4 = re.compile(
-    r"(?<![\d.])(?<![A-Za-z]/)(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?(?![\d.])"
+    r"(?<![\w.])(?<![A-Za-z]/)(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?(?![\d.])"
 )
 
 # FQDNs whose last label is an environment TLD. Negative lookahead stops
@@ -107,6 +108,51 @@ _SPECIAL_BLOCKS = frozenset(
     )
 )
 
+# Private-use space: a host or a narrower subnet here is one site's own network.
+# In any other special-purpose block (documentation, benchmarking, multicast,
+# protocol assignments) a narrower subnet names no site.
+_PRIVATE_BLOCKS = tuple(
+    ipaddress.ip_network(n)
+    for n in (
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "100.64.0.0/10",
+        "fc00::/7",
+    )
+)
+# Addresses and ranges every cloud or container platform uses alike: instance
+# metadata, Azure's WireServer, ECS task metadata, AWS's default VPC, Docker's
+# default bridge, and the whole locally assigned half of the unique-local block
+# (a site's own /48 in it stays a finding).
+_PLATFORM_ADDRESSES = frozenset(
+    ipaddress.ip_address(a)
+    for a in (
+        "169.254.169.254",
+        "169.254.170.2",
+        "169.254.170.23",
+        "fd00:ec2::254",
+        "168.63.129.16",
+        "100.100.100.200",
+    )
+)
+_PLATFORM_NETWORKS = frozenset(
+    ipaddress.ip_network(n) for n in ("172.31.0.0/16", "172.17.0.0/16", "fd00::/8")
+)
+# AWS's own IPv6 services (metadata, DNS, time sync): any address in it.
+_PLATFORM_RANGES = (ipaddress.ip_network("fd00:ec2::/32"),)
+# A public range at least this wide is a provider's (Microsoft's, Akamai's), not
+# one site's: a site's own public block is narrower.
+_PROVIDER_PREFIX = {4: 23, 6: 32}
+
+# Names that look like environment hosts but are files or platform endpoints:
+# /etc/rc.local, and the metadata and Docker host names every install shares.
+_WELL_KNOWN_NAMES = ("rc.local", "docker.internal", "metadata.google.internal")
+# A label before the TLD that makes the name a file (logonUI.exe.local is a DLL
+# redirection file), and labels reserved for names that resolve nowhere.
+_FILE_LABELS = frozenset({"exe", "dll", "sys", "ocx", "cpl", "drv", "manifest"})
+_RESERVED_LABELS = frozenset({"invalid", "example"})
+
 # Built-in / role accounts — not a specific person. Spec names SYSTEM,
 # Administrator, root, krbtgt and wildcards; nearby role names are the same cut.
 _WELL_KNOWN_USERS = frozenset(
@@ -151,7 +197,97 @@ _WELL_KNOWN_USERS = frozenset(
         "unknown",
         "null",
         "none",
+        # Linux system accounts.
+        "adm",
+        "lp",
+        "sync",
+        "shutdown",
+        "halt",
+        "operator",
+        "games",
+        "man",
+        "news",
+        "uucp",
+        "proxy",
+        "list",
+        "irc",
+        "gnats",
+        "backup",
+        "lighttpd",
+        "messagebus",
+        "uuidd",
+        "dbus",
+        "polkitd",
+        "rtkit",
+        "pipewire",
+        "tcpdump",
+        "clevis",
+        "libstoragemgmt",
+        "geoclue",
+        "tss",
+        "sssd",
+        "gnome-initial-setup",
+        "pesign",
+        "dnsmasq",
+        "chrony",
+        "avahi",
+        # Windows built-in accounts and groups.
+        "localsystem",
+        "trustedinstaller",
+        "dnsadmins",
+        "replicator",
+        "replicators",
+        "domainadmins",
+        "enterpriseadmins",
+        "schemaadmins",
+        "accountoperators",
+        "backupoperators",
+        "serveroperators",
+        "printoperators",
+        "remotedesktopusers",
+        "defaultapppool",
+        # Product defaults: PowerShell Web Access's app pool, Cisco SD-WAN's admin.
+        "pswa_pool",
+        "vmanage-admin",
+        # Kubernetes and managed-cluster identities.
+        "cluster-admin",
+        "kubernetes-admin",
+        "aksservice",
+        "aks-service",
+        "hcpservice",
+        "acsservice",
+        "masterclient",
+        "nodeclient",
+        "readinesschecker",
+        # kube-controller-manager's service accounts not named *-controller.
+        "cloud-provider",
+        "generic-garbage-collector",
+        "pod-garbage-collector",
+        "horizontal-pod-autoscaler",
+        "persistent-volume-binder",
+        "root-ca-cert-publisher",
+        "token-cleaner",
+        "bootstrap-signer",
+        # Role names any organisation (or an attacker posing as one) uses.
+        "support",
+        "helpdesk",
+        "servicedesk",
+        "it",
+        "itadmin",
+        "itsupport",
+        "ithelp",
+        "itassistant",
+        "upn",
     }
+)
+# Principals a platform owns, whole: SharePoint's app identity.
+_WELL_KNOWN_PRINCIPALS = frozenset({"app@sharepoint"})
+# Account families: Windows window-manager and font-driver virtual accounts,
+# AWS service-linked roles, versioned Tomcat users, Kubernetes controllers and
+# system users, systemd's, Debian's and underscore-named (_apt) daemon accounts.
+_SERVICE_ACCOUNT = re.compile(
+    r"^(?:(?:dwm|umfd)-\d+|awsservicerole\S*|tomcat\d+|\S+-controller"
+    r"|system:\S+|systemd-\S+|debian-\S+|_[a-z]\S*)$"
 )
 
 _USER_FIELDS = frozenset(
@@ -354,7 +490,14 @@ def lint_query(query: str, language: str) -> dict[str, Any]:
 
     # Addresses and hosts anywhere in the query, whatever field holds them.
     add(_findings_for("query", text))
+    # A value the search fills in itself (fillnull value=NotDA) is no literal.
+    filled = {
+        v.lower()
+        for v in re.findall(r'(?i)\bfillnull\b[^|]*?\bvalue\s*=\s*"?([^"\s|]+)', text)
+    }
     for field, value, negated in _query_pairs(text, language):
+        if value.strip().strip("'\"").lower() in filled:
+            continue
         add([f for f in _findings_for(field, value) if f["kind"] == "user"])
         host = _host_finding(field, value)
         if host is None:
@@ -463,6 +606,11 @@ def _iter_strings(
 def _findings_for(field: Optional[str], value: str) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
     field_name = field or ""
+    modifiers = set(field_name.lower().split("|")[1:])
+    if "fieldref" in modifiers:
+        return []  # the value names another field, not a literal
+    if _is_user_agent_field(field_name):
+        return []  # versions (Firefox 1.9.2.13), never an address or host
 
     for token in _IPV4.findall(value):
         kind, literal = _classify_ip_token(token)
@@ -479,13 +627,14 @@ def _findings_for(field: Optional[str], value: str) -> list[dict[str, str]]:
             continue
         findings.append(_finding(kind, literal, field_name))
 
-    hosts = _ENV_HOST.findall(value)
-    for host in hosts:
-        findings.append(_finding("hostname", host, field_name))
-    if not hosts and _is_env_host_suffix(value):
+    hosts = [] if _is_path_field(field_name) else _env_hosts(value)
+    for name in hosts:
+        findings.append(_finding("hostname", name, field_name))
+    if not hosts and not _is_path_field(field_name) and _is_env_host_suffix(value):
         findings.append(_finding("hostname", value.strip(), field_name))
 
-    if _is_user_field(field_name):
+    # A fragment (|contains AUTHORI, |startswith MSOL_) is no one account.
+    if _is_user_field(field_name) and not modifiers & _PARTIAL_MODIFIERS:
         person = _specific_person(value)
         if person is not None:
             findings.append(_finding("user", person, field_name))
@@ -519,7 +668,8 @@ def _is_env_host_suffix(value: str) -> bool:
     if not token.startswith("."):
         return False
     labels = [part for part in token.lower().split(".") if part]
-    return bool(labels) and labels[-1] in _ENV_TLDS
+    # ".local" alone is every mDNS name; ".corp.local" names one site.
+    return len(labels) >= 2 and labels[-1] in _ENV_TLDS
 
 
 def _classify_ip_token(token: str) -> tuple[Optional[str], Optional[str]]:
@@ -528,18 +678,64 @@ def _classify_ip_token(token: str) -> tuple[Optional[str], Optional[str]]:
             network = ipaddress.ip_network(token, strict=False)
         except ValueError:
             return None, None
-        if network in _SPECIAL_BLOCKS:
+        if network in _SPECIAL_BLOCKS or network in _PLATFORM_NETWORKS:
+            return None, None
+        if network.num_addresses == 1 and network[0] in _PLATFORM_ADDRESSES:
+            return None, None
+        if _within(network, _PLATFORM_RANGES):
+            return None, None
+        if not _within(network, _PRIVATE_BLOCKS) and (
+            _within(network, _SPECIAL_BLOCKS)
+            or network.prefixlen <= _PROVIDER_PREFIX[network.version]
+        ):
             return None, None
         return "cidr", token
     try:
         ip = ipaddress.ip_address(token)
     except ValueError:
         return None, None
-    if ip.is_loopback:
+    if ip.is_loopback or ip.is_link_local or ip in _PLATFORM_ADDRESSES:
+        return None, None
+    if _within(ipaddress.ip_network(ip), _PLATFORM_RANGES):
         return None, None
     if ip == _IPV4_BROADCAST or ipaddress.ip_network(ip) in _SPECIAL_BLOCKS:
         return None, None
     return "ip", token
+
+
+def _within(network: Any, blocks: Iterable[Any]) -> bool:
+    return any(network.version == b.version and network.subnet_of(b) for b in blocks)
+
+
+def _env_hosts(value: str) -> list[str]:
+    """Environment-TLD names in ``value`` that name a host: not a path segment
+    (/etc/rc.local), a file (logonUI.exe.local), a reserved name or a platform's."""
+    hosts = []
+    for m in _ENV_HOST.finditer(value):
+        before = value[max(0, m.start() - 2) : m.start()]
+        if before.endswith("/") and not before.endswith("//"):
+            continue
+        name = m.group(0).lower()
+        labels = name.split(".")
+        if (
+            any(name == w or name.endswith("." + w) for w in _WELL_KNOWN_NAMES)
+            or labels[-2] in _FILE_LABELS
+            or _RESERVED_LABELS & set(labels)
+        ):
+            continue
+        hosts.append(m.group(0))
+    return hosts
+
+
+def _is_path_field(field: str) -> bool:
+    """A field holding a file or config path (TargetFilename, ImageLoaded, cfgpath)."""
+    stem = _field_stem(field)
+    return any(w in stem for w in ("path", "file", "image", "folder", "directory"))
+
+
+def _is_user_agent_field(field: str) -> bool:
+    base = field.split("|", 1)[0].lower()
+    return "useragent" in re.sub(r"[-_.]", "", base)
 
 
 def _is_user_field(field: str) -> bool:
@@ -595,6 +791,8 @@ def _specific_person(value: str) -> Optional[str]:
     raw = value.strip().strip("'\"")
     if not raw or "*" in raw or "?" in raw:
         return None
+    if raw.lower() in _WELL_KNOWN_PRINCIPALS:
+        return None
     principal = raw.split("\\")[-1]
     principal = principal.split("@")[0].strip()
     if not principal or _SID.match(principal):
@@ -602,7 +800,7 @@ def _specific_person(value: str) -> Optional[str]:
     if principal.endswith("$"):
         return None
     folded = principal.lower().replace(" ", "")
-    if folded in _WELL_KNOWN_USERS:
+    if folded in _WELL_KNOWN_USERS or _SERVICE_ACCOUNT.match(folded):
         return None
     if not _PERSON_USER.match(principal):
         return None
