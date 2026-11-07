@@ -12,12 +12,8 @@ const STAGE_NAME: Record<RuleStageRow['to_stage'], string> = { shadow: 'Shadow',
 const who = (actor: string) => (actor === 'system' ? 'Vigil' : actor)
 const dayMonth = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 
-/** A person's Revert holds a rule in shadow until a person releases it: the newest
- * shadow move by a person says which (from live: a Revert; from shadow: a release). */
-function heldBy(rows: RuleStageRow[]): RuleStageRow | null {
-  const last = rows.find((r) => r.actor !== 'system' && r.to_stage === 'shadow')
-  return last && last.from_stage === 'live' ? last : null
-}
+/** The person's Revert that holds the rule: their newest live -> shadow move. */
+const revertOf = (rows: RuleStageRow[]) => rows.find((r) => r.actor !== 'system' && r.from_stage === 'live' && r.to_stage === 'shadow') ?? null
 
 export interface StageLine {
   text: string
@@ -33,15 +29,13 @@ export interface StageLine {
 export function stageLine({ stages: rows, held: isHeld }: Stages): StageLine | null {
   const now = rows[0]
   if (!now) return null
-  // The server's hold when it sends one; else read it from the moves.
-  const inferred = heldBy(rows)
-  const held = isHeld === undefined ? inferred : isHeld ? inferred ?? rows.find((r) => r.actor !== 'system') ?? now : null
+  const held = isHeld ? revertOf(rows) : null
   const backByVigil = now.to_stage === 'shadow' && now.from_stage === 'live' && now.actor === 'system'
-  const base = { title: `${who(now.actor)}: ${now.reason}`, amber: false, live: now.to_stage === 'live', held: !!held }
+  const base = { title: `${who(now.actor)}: ${now.reason}`, amber: false, live: now.to_stage === 'live', held: isHeld }
   if (backByVigil && Date.now() - new Date(now.at).getTime() < RECENT_MS) {
     return { ...base, amber: true, text: `Vigil moved it back to shadow ${relativeTime(now.at)}` }
   }
-  if (held) return { ...base, title: `${held.actor}: ${held.reason}`, text: `In shadow, held by ${held.actor} since ${dayMonth(held.at)}` }
+  if (isHeld && now.to_stage === 'shadow') return { ...base, ...(held && { title: `${held.actor}: ${held.reason}` }), text: held ? `In shadow, held by ${held.actor} since ${dayMonth(held.at)}` : 'In shadow, held by a person' }
   if (now.to_stage === 'live') return { ...base, text: `Live since ${dayMonth(now.at)}` }
   if (now.to_stage === 'off') return { ...base, text: `Off since ${dayMonth(now.at)}` }
   return { ...base, text: `In shadow since ${dayMonth(now.at)}` }
