@@ -145,6 +145,43 @@ class CaseDetailResponse(CaseSchema):
     alerts_since_last_run: int = 0
 
 
+class CaseRuleCard(BaseModel):
+    """One rule version behind a case's alerts, and its stored checks (#4013)."""
+
+    rule_id: int
+    version: int
+    latest_version: Optional[int] = None
+    name: str
+    source: str
+    tool: str
+    native_key: str
+    status: str
+    # runs, sees, quiet, accurate, noisy, silent, caught, drift: as stored.
+    checks: dict[str, dict[str, Any]] = {}
+    flags: list[str] = []
+    caught: bool = False
+    health: str
+    worst: str
+    # The overlay copy's current stage (shadow, live, off); None elsewhere.
+    stage: Optional[str] = None
+    findings: list[str] = []
+    # Of ``findings``, those traced only by the rule name or title they carry.
+    by_name: int = 0
+
+
+class CaseUnresolvedFinding(BaseModel):
+    finding_id: str
+    reason: str
+
+
+class CaseRulesResponse(BaseModel):
+    """``GET /cases/{id}/rules`` — worst first; alerts traced to no rule apart."""
+
+    rules: list[CaseRuleCard] = []
+    unresolved: int = 0
+    unresolved_findings: list[CaseUnresolvedFinding] = []
+
+
 class CaseRecordRow(BaseModel):
     id: str
     at: str

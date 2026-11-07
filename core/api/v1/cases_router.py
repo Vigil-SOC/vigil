@@ -42,6 +42,7 @@ from core.cases.linked_entities import (
     linked_iocs,
 )
 from core.deps import provide_workflows
+from core.detections.inventory import catalog
 from core.findings.arrival_counts import utc_day_bounds
 from core.findings.source_link import resolve_source_link
 from core.integrations.elastic.ingestion import ElasticIngestion
@@ -69,6 +70,7 @@ from core.storage.schemas.case_api import (
     CaseLinkedFinding,
     CaseListResponse,
     CaseMergeResponse,
+    CaseRulesResponse,
     CaseSearchResponse,
     CaseSuccessResponse,
     CaseSummaryResponse,
@@ -722,6 +724,32 @@ def add_evidence(
         _missing_case(case_id)
         raise HTTPException(status_code=500, detail="Failed to add evidence")
     return CaseEvidenceSchema.dump(evidence)
+
+
+@router.get("/{case_id}/rules", response_model=CaseRulesResponse)
+def get_case_rules(case_id: str, session: UnitOfWorkSession):
+    """The proof card of each rule version that raised the case's alerts (#4013).
+
+    Each linked finding is traced to the rule version that fired it as the
+    Detections page traces it; one version is one card, with its stored checks,
+    worst problem and (overlay) stage, worst first. Alerts traced to no rule are
+    counted in ``unresolved``, each with why.
+    """
+    if session.get(Case, case_id) is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    rows = session.execute(
+        select(
+            Finding.finding_id,
+            Finding.title,
+            Finding.timestamp,
+            Finding.data_source,
+            Finding.entity_context,
+        )
+        .join(case_findings, case_findings.c.finding_id == Finding.finding_id)
+        .where(case_findings.c.case_id == case_id)
+        .order_by(Finding.timestamp.desc(), Finding.finding_id)
+    ).all()
+    return catalog.case_rules(session, rows)
 
 
 @router.get("/{case_id}/evidence", response_model=CaseEvidenceListResponse)
