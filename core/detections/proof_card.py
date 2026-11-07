@@ -21,7 +21,7 @@ One export is one zip, made from one set of data and one signature:
 checks a JSON file against its signature and a public key.
 
 The signing key is the instance's own: an Ed25519 key kept in Vigil's secrets
-store under ``KEY_SECRET``, made on first export. Where secrets can't be
+store under ``KEY_SECRET``, made on first use. Where secrets can't be
 written (an ephemeral State Directory), set it in the environment instead.
 """
 
@@ -146,7 +146,8 @@ def coverage(rules: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def unmapped(rules: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Declared techniques that aren't ATT&CK ids, with how many live rules carry each."""
+    """Declared techniques that aren't ATT&CK technique ids (tactic ids, free text),
+    with how many live rules carry each."""
     counts: Dict[str, int] = {}
     for rule in rules:
         if rule["status"] != "active":
@@ -502,7 +503,8 @@ def _pdf_lines(
                 f"{u['technique']} ({u['rules']})" for u in card["unmapped"]
             )
             add(
-                "Declared techniques that aren't ATT&CK ids, left out of the table "
+                "Declared techniques that aren't ATT&CK technique ids (tactic ids, free text), "
+                "left out of the table "
                 f"(live rules carrying each): {odd}",
                 8,
             )

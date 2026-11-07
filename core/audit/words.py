@@ -186,7 +186,8 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "detections.proof_card_exported": lambda p: "Exported a proof card"
     + (f" ({p['kind']}, {p['rule_count']} rules)" if p.get("kind") else ""),
     "detections.proof_key_created": lambda p: "Made the proof card signing key"
-    + (f" on {p['triggered_by']}'s first export" if p.get("triggered_by") else ""),
+    # Export or key read made it; stored rows don't say which, so name neither.
+    + (f", first needed by {p['triggered_by']}" if p.get("triggered_by") else ""),
     "autonomy.tool_classified": lambda p: f"Classed {p.get('tool') or 'a tool'} as "
     f"{_word(p.get('class_after')) or 'unclassified'}",
     "tools.classified": "Classed outside tools on upgrade",
