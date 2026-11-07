@@ -63,9 +63,9 @@ interface RuleRow {
   exceptions?: number
   /** Its overlay copy's rollout stage (null without one), and whole days since a shadow stage began. */
   stage?: Stage | null
-  days_in_shadow?: number | null
-  /** When its current stage began (ISO), or null. */
+  /** When its current stage row was written (ISO), null without one. */
   stage_since?: string | null
+  days_in_shadow?: number | null
   silenced?: number
 }
 
