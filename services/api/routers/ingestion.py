@@ -14,20 +14,23 @@ import logging
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from core.auth.current_user import get_current_user
 from core.auth.permissions import deny_unless, permission_gate
 from core.config import get_settings, is_demo_mode
 from core.ingestion.ingestion_jobs import (
+    CONNECTED_HISTORY_SOURCES,
+    HISTORY,
     IngestionJob,
     IngestionJobConflict,
     get_job_registry,
+    run_connected_history_job,
     run_job,
     summarize_stats,
 )
@@ -71,8 +74,9 @@ _running_tasks: set = set()  # asyncio only weak-refs tasks; unheld ones get GC'
 
 
 def _can_create_cases(data_type: str, fmt: Optional[str]) -> bool:
-    """JSON ingestion imports a ``cases`` array whatever ``data_type`` says."""
-    return data_type == "case" or fmt == "json"
+    """JSON ingestion imports a ``cases`` array whatever ``data_type`` says.
+    A history import writes episodic memory only."""
+    return data_type == "case" or (fmt == "json" and data_type != HISTORY)
 
 
 def _require_cases_write(user: User) -> None:
@@ -146,12 +150,18 @@ async def upload_and_ingest_file(
     file: UploadFile = File(...),
     data_type: str = Form("finding"),
     format: Optional[str] = Form(None),
+    source_system: str = Form("", max_length=64),
     current_user: User = Depends(get_current_user),
 ):
-    """Accept a file and ingest it as a background job; poll /ingest/jobs/{id}."""
-    if data_type not in ["finding", "case"]:
+    """Accept a file and ingest it as a background job; poll /ingest/jobs/{id}.
+
+    ``history`` takes alerts and closed tickets (a JSON object may carry both
+    arrays) into episodic memory as one import named ``<source_system>:<hash>``;
+    it creates no findings or Cases."""
+    if data_type not in ["finding", "case", HISTORY]:
         raise HTTPException(
-            status_code=400, detail="data_type must be 'finding' or 'case'"
+            status_code=400,
+            detail="data_type must be 'finding', 'case' or 'history'",
         )
 
     filename = file.filename or "upload"
@@ -174,7 +184,13 @@ async def upload_and_ingest_file(
 
     temp_path = await _spool_upload(file, f".{format}")
 
-    job = IngestionJob(filename=filename, fmt=format, data_type=data_type)
+    job = IngestionJob(
+        filename=filename,
+        fmt=format,
+        data_type=data_type,
+        actor=current_user.username or current_user.user_id,
+        source_system=source_system.strip(),
+    )
     try:
         get_job_registry().start(job)
     except IngestionJobConflict as conflict:
@@ -185,6 +201,61 @@ async def upload_and_ingest_file(
         )
 
     task = asyncio.create_task(run_in_threadpool(run_job, job, temp_path))
+    _running_tasks.add(task)
+    task.add_done_callback(_running_tasks.discard)
+
+    return IngestionJobStatus(**job.snapshot())
+
+
+class ConnectedHistoryRequest(BaseModel):
+    source: Literal["microsoft_defender", "azure_sentinel"]
+    days: int = Field(90, ge=1, le=180)
+
+
+@router.post(
+    "/history/connected",
+    response_model=IngestionJobStatus,
+    status_code=202,
+    dependencies=_FINDINGS_WRITE,
+)
+async def import_connected_history(
+    request: ConnectedHistoryRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Read a connected source's closed, classified records from the last
+    ``days`` into episodic memory as the import ``<source>:connected``; running
+    it again re-derives that import. Poll /ingest/jobs/{id}."""
+    from core.federation import registry as fed_registry
+
+    adapter = fed_registry.get_adapter(request.source)
+    try:
+        configured = adapter is not None and bool(adapter.is_configured())
+    except Exception:
+        configured = False
+    label = CONNECTED_HISTORY_SOURCES[request.source]
+    if not configured:
+        raise HTTPException(
+            status_code=400, detail=f"{label} is not configured. Set it up first."
+        )
+
+    job = IngestionJob(
+        filename=f"{label}, last {request.days} days",
+        fmt="connected",
+        data_type=HISTORY,
+        actor=current_user.username or current_user.user_id,
+        source_system=request.source,
+    )
+    try:
+        get_job_registry().start(job)
+    except IngestionJobConflict as conflict:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Already ingesting '{conflict.active.filename}'. Wait for it to finish.",
+        )
+
+    task = asyncio.create_task(
+        run_in_threadpool(run_connected_history_job, job, request.days)
+    )
     _running_tasks.add(task)
     task.add_done_callback(_running_tasks.discard)
 

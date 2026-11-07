@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { NotMeasured } from '../../shared/NotMeasured'
 import { SettingsCard } from '../../shared/ui'
 import { useAlignOnSettle } from '../../shared/useAlignOnSettle'
-import { DemoDataClear, SampleAlertsCard, StreamsCard, UploadCard } from './DataIngestion'
+import { DemoDataClear, HistoryImportCard, SampleAlertsCard, StreamsCard, UploadCard } from './DataIngestion'
 import DetectionRulesPanel from './DetectionRulesPanel'
 import LoglmCard from './LoglmCard'
 import type { SectionProps } from './types'
@@ -15,12 +15,17 @@ const RETENTION_NOTE =
 export default function DataUploadsSection({ notify }: SectionProps) {
   const [searchParams] = useSearchParams()
   const page = useRef<HTMLDivElement>(null)
-  useAlignOnSettle(searchParams.get('tab') === 'detection' ? 'rule-sources' : null, page)
+  // Home's setup steps land on a card by tab
+  const anchor = { detection: 'rule-sources', history: 'history-imports' }[searchParams.get('tab') ?? '']
+  useAlignOnSettle(anchor ?? null, page)
 
   return (
     <div ref={page} className="data-page">
       <LoglmCard notify={notify} />
       <UploadCard notify={notify} />
+      <div id="history-imports" className="data-anchor">
+        <HistoryImportCard notify={notify} />
+      </div>
       <SampleAlertsCard notify={notify} />
       <StreamsCard notify={notify} />
       <div id="rule-sources" className="data-anchor">

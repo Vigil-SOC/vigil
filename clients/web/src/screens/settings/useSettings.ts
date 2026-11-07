@@ -1497,7 +1497,10 @@ export function useDetectionRules() {
 
 const JOB_POLL_MS = 1000
 
-export function useIngestionJob() {
+// History imports and finding/case uploads each show only their own jobs.
+const isHistory = (dataType: string) => dataType === 'history'
+
+export function useIngestionJob(dataType: 'finding' | 'history' = 'finding') {
   const [job, setJob] = useState<IngestionJob | null>(null)
   const [attaching, setAttaching] = useState(true)
 
@@ -1507,7 +1510,7 @@ export function useIngestionJob() {
       .listJobs()
       .then((res) => {
         if (cancelled) return
-        const jobs = res.data || []
+        const jobs = (res.data || []).filter((j) => isHistory(j.data_type) === isHistory(dataType))
         setJob(jobs.find((j) => j.status === 'running') || jobs[0] || null)
       })
       .catch(() => undefined)
@@ -1517,7 +1520,7 @@ export function useIngestionJob() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [dataType])
 
   useEffect(() => {
     if (job?.status !== 'running') return
@@ -1537,9 +1540,16 @@ export function useIngestionJob() {
   }, [job?.job_id, job?.status])
 
   const upload = useCallback(
-    (file: File) => ingestionApi.uploadFile(file).then((res) => setJob(res.data)),
+    (file: File, sourceSystem?: string) =>
+      ingestionApi.uploadFile(file, dataType, sourceSystem).then((res) => setJob(res.data)),
+    [dataType],
+  )
+
+  // any other request that answers with a job (a connected-source import)
+  const start = useCallback(
+    (request: Promise<{ data: IngestionJob }>) => request.then((res) => setJob(res.data)),
     [],
   )
 
-  return { job, attaching, upload }
+  return { job, attaching, upload, start }
 }

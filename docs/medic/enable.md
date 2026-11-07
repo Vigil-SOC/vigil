@@ -17,6 +17,8 @@ The account is created by `python -m core.auth.service_account ensure <name>`. I
 
 ## Docker Compose
 
+Medic's overlay needs **Docker Engine 28.0 or later** (tested on 28.0.4 and 29.9.3) with Compose v2. Its two networks are internal bridges that the host takes no address on (`com.docker.network.bridge.inhibit_ipv4`), so nothing on the host listening on every interface, such as sshd or a published port, can be reached from Medic or the agents. A network created by an older overlay gets the option when Compose recreates it on the next `up`.
+
 ```bash
 scripts/medic/enable-compose.sh
 ```

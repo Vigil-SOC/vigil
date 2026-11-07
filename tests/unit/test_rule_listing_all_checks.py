@@ -162,6 +162,6 @@ def test_the_route_passes_flag(monkeypatch):
         catalog, "health_listing", lambda *a, **kw: seen.update(kw) or {}
     )
     routes.get_rules(
-        health=None, tool=None, q=None, offset=0, sort="worst", flag="drift"
+        health=None, tool=None, q=None, offset=0, sort="worst", flag="drift", rules=None
     )
     assert seen["flag"] == "drift"
