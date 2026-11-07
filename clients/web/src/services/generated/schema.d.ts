@@ -2987,7 +2987,7 @@ export interface paths {
         };
         /**
          * Get Setup Steps
-         * @description Home's setup list: tools, a notify route, rules on disk, model variety, a custom skill.
+         * @description Home's setup list: tools, a notify route, rules on disk, imported history, model variety, a custom skill.
          */
         get: operations["get_api_config_setup-steps"];
         put?: never;
@@ -3184,6 +3184,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/detection-rules/health-inbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Health Inbox
+         * @description The open rule-health flags, newest first, each read or unread for the
+         *     signed-in person, with a summary when many are unread. Read-only.
+         */
+        get: operations["get_api_detection-rules_health-inbox"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/health-inbox/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read Health Inbox
+         * @description Marks entries read for the signed-in person only; returns the inbox.
+         */
+        post: operations["post_api_detection-rules_health-inbox_read"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/detection-rules/mcp-env": {
         parameters: {
             query?: never;
@@ -3328,7 +3369,8 @@ export interface paths {
          * Get Rules
          * @description Every listed rule copy's health with its reason and data source, capped at
          *     catalog.RULE_ROWS rows from ``offset``, narrowed by ``health`` ("attention"
-         *     is every state to act on), ``tool`` and the search ``q``, in ``sort`` order
+         *     is every state to act on), ``tool``, the search ``q`` and ``rules`` (comma-
+         *     separated rule ids, as a rule-health entry links them), in ``sort`` order
          *     (worst first by default); the counts, the per-SIEM tallies and the blind
          *     spots cover them all. Read-only.
          */
@@ -3916,6 +3958,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ingest/history/connected": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Connected History
+         * @description Read a connected source's closed, classified records from the last
+         *     ``days`` into episodic memory as the import ``<source>:connected``; running
+         *     it again re-derives that import. Poll /ingest/jobs/{id}.
+         */
+        post: operations["post_api_ingest_history_connected"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ingest/ingest-string": {
         parameters: {
             query?: never;
@@ -4071,6 +4135,10 @@ export interface paths {
         /**
          * Upload And Ingest File
          * @description Accept a file and ingest it as a background job; poll /ingest/jobs/{id}.
+         *
+         *     ``history`` takes alerts and closed tickets (a JSON object may carry both
+         *     arrays) into episodic memory as one import named ``<source_system>:<hash>``;
+         *     it creates no findings or Cases.
          */
         post: operations["post_api_ingest_upload"];
         delete?: never;
@@ -4672,6 +4740,46 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/memory/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Imports
+         * @description Every import, newest upload first.
+         */
+        get: operations["get_api_memory_imports"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/memory/imports/{import_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Import
+         * @description Delete one whole import: its Verdicts, Sightings and marker.
+         */
+        delete: operations["delete_api_memory_imports_import_id"];
         options?: never;
         head?: never;
         patch?: never;
@@ -7605,6 +7713,11 @@ export interface components {
             file: string;
             /** Format */
             format?: string | null;
+            /**
+             * Source System
+             * @default
+             */
+            source_system: string;
         };
         /** Body_upload_skill_api_skills_upload_post */
         Body_upload_skill_api_skills_upload_post: {
@@ -8861,6 +8974,19 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** ConnectedHistoryRequest */
+        ConnectedHistoryRequest: {
+            /**
+             * Days
+             * @default 90
+             */
+            days: number;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "microsoft_defender" | "azure_sentinel";
+        };
         /**
          * ContentBlock
          * @description Content block for message (text or image).
@@ -9547,6 +9673,19 @@ export interface components {
             detail?: components["schemas"]["ValidationError"][];
         };
         /**
+         * HealthReadRequest
+         * @description Which rule-health entries to mark read: ``change_ids``, or every open one.
+         */
+        HealthReadRequest: {
+            /**
+             * All
+             * @default false
+             */
+            all: boolean;
+            /** Change Ids */
+            change_ids?: number[] | null;
+        };
+        /**
          * HuntCoverageRequest
          * @description A threat report and/or what was already extracted from it (#903).
          */
@@ -9587,6 +9726,34 @@ export interface components {
             iocs: {
                 [key: string]: unknown;
             }[];
+        };
+        /** ImportListResponse */
+        ImportListResponse: {
+            /** Imports */
+            imports: components["schemas"]["ImportOut"][];
+            /** Total */
+            total: number;
+        };
+        /** ImportOut */
+        ImportOut: {
+            /**
+             * Concluded At
+             * Format: date-time
+             */
+            concluded_at: string;
+            /** Import Id */
+            import_id: string;
+            /**
+             * Imported At
+             * Format: date-time
+             */
+            imported_at: string;
+            /** Sightings Written */
+            sightings_written: number;
+            /** Source System */
+            source_system: string;
+            /** Verdicts Written */
+            verdicts_written: number;
         };
         /**
          * IngestionJobStatus
@@ -17636,6 +17803,72 @@ export interface operations {
             };
         };
     };
+    "get_api_detection-rules_health-inbox": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_health-inbox_read": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HealthReadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "get_api_detection-rules_mcp-env": {
         parameters: {
             query?: never;
@@ -17838,6 +18071,7 @@ export interface operations {
                 q?: string | null;
                 offset?: number;
                 sort?: "worst" | "most_fires" | "fewest_fires" | "name";
+                rules?: string | null;
             };
             header?: {
                 authorization?: string | null;
@@ -18911,6 +19145,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    post_api_ingest_history_connected: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectedHistoryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IngestionJobStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -20278,6 +20547,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_memory_imports: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_memory_imports_import_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                import_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportOut"];
                 };
             };
             /** @description Validation Error */

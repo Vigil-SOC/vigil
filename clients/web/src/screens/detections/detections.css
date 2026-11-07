@@ -134,6 +134,7 @@
 .de-empty { padding: 44px 20px; text-align: center; font-size: 13px; color: var(--tx2); border-bottom: 1px solid var(--ln0); }
 .de-foot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 20px; font-size: 12.5px; color: var(--tx2); }
 /* An inline action inside running text: the search's matches in other views. */
+.de-picked { font-size: 12.5px; color: var(--tx1); }
 .de-link { padding: 0; border: 0; background: none; color: var(--ac); font: inherit; font-weight: 600; cursor: pointer; }
 .de-link:hover { text-decoration: underline; }
 

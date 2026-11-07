@@ -500,7 +500,9 @@ def main(argv: list[str] | None = None) -> int:
             store.append(sample.store_kib(stack))
         except Exception as e:  # noqa: BLE001 - bring-up or an unexpected failure: red, with whatever was gathered
             print(traceback.format_exc(), file=sys.stderr)
-            m["bringup_error"] = f"{type(e).__name__}: {e}"[:1500]
+            err = f"{type(e).__name__}: {e}"
+            # The cause and exit code are at the end; keep it, bounded.
+            m["bringup_error"] = err if len(err) <= 4000 else f"{err[:300]} … {err[-3600:]}"
         finally:
             if sampler:
                 sampler.stop()

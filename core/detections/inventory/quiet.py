@@ -29,8 +29,8 @@ _audit and notables didn't count, a scheduled report aside, reads ``unknown``.
 Wazuh shares Wazuh Sees' gate: when elastic-siem is off, has no
 ``elasticsearch_url``, or the indexer lists no ``wazuh-alerts-*`` index, every
 active Wazuh rule reads ``unknown`` with that reason (its Noisy and Silent too),
-and nothing is spent. A Wazuh rule below the manager's alert level never alerts
-and reads ``pass``.
+and nothing is spent. A Wazuh rule below the manager's alert level is counted
+like any other: with no alerts it reads ``pass``.
 
 A rule's window runs from its latest version's first_seen day (capped at 30
 days) to now; under 24 h it reads ``unknown`` ("version too new"). Over
@@ -67,9 +67,10 @@ Both are ``unknown`` when the rule (its first version, not its latest) has been
 in the inventory under 7 days, was not counted this sync, or the search failed;
 for Splunk too, with Quiet's reason, when index=_audit is unreadable or empty
 (or, for a search _audit didn't count, the scheduler log).
-A Wazuh rule below Wazuh's default alert level (3) never alerts: once its
-search is read, both are ``pass`` and Silent carries no ``days_fired``, so it is
-never counted as never-firing, whatever its age.
+A Wazuh rule below Wazuh's default alert level (3) with no alerts cannot alert:
+once its search is read, both are ``pass`` and Silent carries no ``days_fired``,
+so it is never counted as never-firing, whatever its age. One that has alerts
+(a lowered log_alert_level) is judged on them.
 Each is written like Quiet: a pass -> fail change row is a rule_health flag.
 """
 

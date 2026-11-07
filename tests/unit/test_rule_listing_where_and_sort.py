@@ -151,5 +151,5 @@ def test_the_route_passes_sort(monkeypatch):
     monkeypatch.setattr(
         catalog, "health_listing", lambda *a, **kw: seen.update(kw) or {}
     )
-    routes.get_rules(health=None, tool=None, q=None, offset=0, sort="name")
+    routes.get_rules(health=None, tool=None, q=None, offset=0, sort="name", rules=None)
     assert seen["sort"] == "name"

@@ -97,9 +97,9 @@ try:
     out["internet_dns"] = "resolved"
 except OSError:
     out["internet_dns"] = "failed"
-# The host side of each Medic network's bridge (its IPAM gateway): Docker
-# publishes ports like the backend's 0.0.0.0:6987 on every host address, this
-# one included, so an internal network must drop traffic to it too.
+# The host: each Medic bridge's would-be gateway, deeptempo-network's gateway
+# and the host's own addresses. Docker publishes ports like the backend's
+# 0.0.0.0:6987 on every host address, so none of these may answer Medic.
 out["host_gateway"] = {
     f"{gw}:{port}": connect(gw, port)
     for gw in ARGS["gateways"]

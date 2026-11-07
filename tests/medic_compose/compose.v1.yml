@@ -14,7 +14,13 @@ services:
   medic-dockerproxy:
     container_name: !reset null
 
+  # The shipped file builds vigil-backend:local only through backup-pre-upgrade,
+  # which is a stand-in here, so the backend builds it (`build backend`).
+  # Without this a host with no such image can't create backend or upgrade.
   backend:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.backend
     container_name: !reset null
     ports: !reset []
     restart: "no"
@@ -38,6 +44,16 @@ services:
     volumes: !reset []
     depends_on: !reset {}
     restart: "no"
+
+  # The token one-shots only write a file; the stock Python image does that
+  # without building the MCP runner's image.
+  mcp-runner-token:
+    image: python:3.12-slim
+    build: !reset null
+    pull_policy: missing
+  metrics-token:
+    image: python:3.12-slim
+    pull_policy: missing
 
   backup-pre-upgrade:
     image: python:3.12-slim

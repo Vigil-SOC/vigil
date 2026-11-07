@@ -13,8 +13,8 @@
 # scripts/lib.sh `dc` (start.sh) and the console's service controls add it
 # whenever enable-compose.sh's compose.env exists (V1-4).
 #
-# Both networks are `internal: true`: nothing on them has a route off the host
-# (C3 R2). Neither holds the backend (R1), Redis, Postgres or Bifrost (C3 §5).
+# Both networks are `internal: true` and the host has no address on their
+# bridges: nothing on them has a route off the host or to it (C3 R2). Neither holds the backend (R1), Redis, Postgres or Bifrost (C3 §5).
 #   medic-net      Medic + the three below, whose readiness and status ports
 #                  Medic reads directly. They keep deeptempo-network, so their
 #                  own traffic is unchanged.
@@ -42,8 +42,16 @@ services:
   agent-serve:
     networks: [medic-net]
 
+# inhibit_ipv4: the host takes no address on these bridges. `internal` alone
+# drops forwarded traffic but leaves the host's own address on the bridge, so
+# anything on the host listening on 0.0.0.0 (sshd, a published port) answered
+# Medic and the agents there. Members still reach each other on the bridge.
 networks:
   medic-net:
     internal: true
+    driver_opts:
+      com.docker.network.bridge.inhibit_ipv4: "true"
   medic-private:
     internal: true
+    driver_opts:
+      com.docker.network.bridge.inhibit_ipv4: "true"

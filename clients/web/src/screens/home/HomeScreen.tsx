@@ -32,6 +32,7 @@ const STEP_ACTION: Record<string, string> = {
   connect_tools: 'Set up',
   notify: 'Set up',
   rules: 'Link',
+  history: 'Import',
   per_agent: 'Pick',
   custom_skill: 'Add',
 }
