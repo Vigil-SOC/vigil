@@ -953,7 +953,7 @@ export const detectionRulesApi = {
   listSources: () => api.get('/detection-rules/sources'),
 
   /** Every listed rule copy's health and its reason, worst first; one health's when given. */
-  rules: (params: { health?: string; tool?: string; q?: string; offset?: number; sort?: string; flag?: string; rules?: string } = {}) =>
+  rules: (params: { health?: string; tool?: string; q?: string; offset?: number; sort?: string; flag?: string; rules?: string; has_exceptions?: boolean } = {}) =>
     api.get('/detection-rules/rules', { params }),
 
   /** The findings a rule copy raised in the fires window, newest first, as the rules list counts them. */
