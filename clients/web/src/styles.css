@@ -3374,6 +3374,97 @@
       min-width: 100%;
    }
 
+   /* toolbar Select (ui.tsx Select `name`): "Name: value", 34px, sized to its text;
+      set to anything but its first option, it takes .filter-chip.active's accent */
+   .drop.field-drop.toolbar {
+      display: inline-flex;
+      width: auto;
+      min-width: 0;
+   }
+
+   .field-select.toolbar {
+      width: auto;
+      max-width: 100%;
+      height: 34px;
+      padding: 0 10px 0 12px;
+      background: var(--bg1);
+      border-color: var(--ln1);
+      border-radius: 10px;
+      color: var(--tx0);
+      font-weight: 600;
+      white-space: nowrap;
+   }
+
+   .field-select.toolbar > span:first-child {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+   }
+
+   .field-select.toolbar .field-name {
+      color: var(--tx2);
+      font-weight: 500;
+   }
+
+   .field-select.toolbar.set {
+      border-color: var(--ac);
+      background: var(--ac-bg);
+   }
+
+   .field-menu.toolbar {
+      right: auto;
+      width: max-content;
+      min-width: 240px;
+      max-width: min(360px, calc(100vw - 16px));
+   }
+
+   .field-menu.toolbar button {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      font-size: 13px;
+   }
+
+   /* a line under the first ("All") option */
+   .field-menu.toolbar [role="option"]:first-child {
+      position: relative;
+      margin-bottom: 9px;
+   }
+
+   .field-menu.toolbar [role="option"]:first-child::after {
+      content: '';
+      position: absolute;
+      left: 2px;
+      right: 2px;
+      bottom: -5px;
+      height: 1px;
+      background: var(--ln0);
+   }
+
+   .field-menu.toolbar button.zero:not(.sel) {
+      color: var(--tx3);
+   }
+
+   .drop-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      flex-shrink: 0;
+   }
+
+   .drop-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+   }
+
+   .drop-count {
+      margin-left: auto;
+      padding-left: 16px;
+      font-variant-numeric: tabular-nums;
+   }
+
    /* filter box pinned above the scrolling options (ui.tsx Select searchable) */
    .field-menu.searchable {
       scroll-padding-top: 42px;
@@ -6373,87 +6464,32 @@
       color: var(--tx1);
    }
 
-   .tq-tiles {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 12px;
-   }
-
-   .tq-tile {
-      position: relative;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      min-width: 0;
-      padding: 14px 16px;
-      background: var(--bg1);
-      border: 1px solid var(--ln0);
-      border-radius: 14px;
-   }
-
-   /* the ⓘ sits in the tile's top-right corner, where the board puts its level pill */
-   .tq-tile > .info-tip {
-      position: absolute;
-      top: 10px;
-      right: 12px;
-   }
-
-   .tq-tile-label {
-      padding-right: 24px;
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--tx2);
-   }
-
-   .tq-tile-val {
-      font-size: 24px;
-      font-weight: 700;
-      letter-spacing: -0.3px;
-      line-height: 1.2;
-      color: var(--tx0);
-   }
-
-   .tq-tile-val.unmeasured {
-      font-size: 14px;
-      font-weight: 600;
-      letter-spacing: 0;
-      color: var(--tx3);
-   }
-
-   .tq-tile-sub {
-      font-size: 12px;
-      color: var(--tx2);
-   }
-
-   .tq-filters {
+   /* the filter row: Kind, Source and What happened dropdowns, then the summary at the table's right edge */
+   .tq-filter-row {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 6px;
+      gap: 8px 16px;
    }
 
-   .tq-group-head {
+   .tq-dropdowns {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+   }
+
+   .tq-source-pick {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-   }
-
-   .tq-group-label {
-      font-size: 12px;
-      font-weight: 650;
-      color: var(--tx2);
-   }
-
-   .tq-rule {
-      width: 1px;
-      height: 20px;
-      margin: 0 6px;
-      background: var(--ln1);
+      gap: 2px;
+      min-width: 0;
    }
 
    .tq-summary {
       margin-left: auto;
-      font-size: 12px;
+      font-size: 13px;
       font-weight: 650;
       color: var(--ac);
       white-space: nowrap;
@@ -6861,8 +6897,10 @@
          flex-wrap: wrap;
       }
 
-      .tq-tiles {
-         grid-template-columns: repeat(2, minmax(0, 1fr));
+      /* the summary takes its own line */
+      .tq-summary {
+         flex-basis: 100%;
+         margin-left: 0;
       }
 
       /* the case page's tab body grows in its stage, which scrolls (cases.css) */

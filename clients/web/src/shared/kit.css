@@ -542,3 +542,75 @@
   .page-head.with-actions { flex-direction: column; align-items: stretch; gap: 12px; }
   .page-head-actions { flex-wrap: wrap; flex-shrink: 1; min-width: 0; }
 }
+
+/* Status cards (StatCard.tsx): four across, two by two at the reflow tier; never three and one */
+.stat-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+@container main (max-width: 699px) {
+  .stat-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.stat-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px 16px;
+  background: var(--bg1);
+  border: 1px solid var(--ln0);
+  border-radius: 14px;
+}
+.stat-card.clickable { cursor: pointer; }
+.stat-card.clickable:hover { border-color: var(--ln1); }
+.stat-card.clickable:has(.stat-card-hit:focus-visible) { outline: 2px solid var(--ac); outline-offset: 2px; }
+
+/* the clickable card's button sits under the content; clicks fall through to it */
+.stat-card-hit {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.stat-card-hit:focus-visible { outline: none; }
+.stat-card.clickable > :not(.stat-card-hit) { pointer-events: none; }
+.stat-card.clickable .info-tip { pointer-events: auto; z-index: 1; }
+
+/* at least 16px tall, so labels line up whether or not a card has an ⓘ */
+.stat-card-head {
+  display: flex;
+  align-items: flex-start; /* a wrapped label keeps its ⓘ and dot on the first line */
+  gap: 6px;
+  min-height: 16px;
+  min-width: 0;
+}
+.stat-card-head > .info-tip { margin: -3px -6px -3px auto; }
+.stat-card-dot { width: 7px; height: 7px; margin-top: 4.5px; border-radius: 999px; flex-shrink: 0; }
+.stat-card-label {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  color: var(--tx2);
+}
+.stat-card-val {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  line-height: 1.2;
+  color: var(--tx0);
+}
+.stat-card-val .unmeasured,
+.stat-card-val .not-measured {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--tx3);
+}
+.stat-card-sub { font-size: 12px; color: var(--tx2); }

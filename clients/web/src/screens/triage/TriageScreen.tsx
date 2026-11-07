@@ -3,11 +3,11 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { DataTable, type ColumnDef } from '../../shared/DataTable'
 import { Icon } from '../../shared/icons'
 import { usePageSnapshot } from '../../shell/pageSnapshot'
-import { FilterChip } from '../../shared/FilterChip'
 import { InfoTip } from '../../shared/InfoTip'
 import { NotMeasured } from '../../shared/NotMeasured'
 import { useSourceBadge } from '../../shared/useSourceBadge'
-import { EmptyState } from '../../shared/ui'
+import { EmptyState, Select } from '../../shared/ui'
+import { StatCard, StatCards } from '../../shared/StatCard'
 import { utcClock } from '../../shared/utc'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { parseSourceEvidence } from '../../data/sourceEvidence'
@@ -31,16 +31,18 @@ const PAGE_DESC_OFF =
 type Phase = 'loading' | 'error' | 'ready'
 type FilterKey = 'kind' | 'source' | 'state'
 
+const DETECTION = 'detection'
+const QUEUED = 'queued'
 const KINDS = [
   { value: 'detection', label: 'Alert' },
   { value: 'schedule', label: 'Schedule' },
   { value: 'human_ask', label: 'Ask' },
 ]
 
-// dot colours are tokens; the state's pill tone lives in styles.css
+// the table pill's words (_state_label in triage_read.py); dot colours are tokens, the pill tone lives in styles.css
 const STATES = [
   { value: 'queued', label: 'Waiting for triage', dot: 'tx1' },
-  { value: 'launched', label: 'Picked up or started a case', dot: 'good' },
+  { value: 'launched', label: 'Started a case', dot: 'good', title: 'Also holds runs picked up without a case, which the table shows as Picked up' },
   { value: 'merged', label: 'Added to a case', dot: 'ac' },
   { value: 'expired', label: 'Expired', dot: 'tx2' },
   // an alert's states below are Overview's groups, not intake words: not picked up is on no case and not waiting
@@ -119,40 +121,35 @@ function EvidenceBody({ row }: { row: TriageRow }) {
   )
 }
 
-function Tile({ label, info, children }: { label: string; info?: ReactNode; children: ReactNode }) {
-  return (
-    <div className="tq-tile" aria-label={label}>
-      {info}
-      <div className="tq-tile-label">{label}</div>
-      {children}
-    </div>
-  )
-}
-
-function Tiles({ data }: { data: TriagePayload }) {
+function Cards({ data, waitingOn, toggleWaiting }: { data: TriagePayload; waitingOn: boolean; toggleWaiting: () => void }) {
   const picked = data.strip.picked_up
   const info = data.strip_info
   const today = data.range !== 'all'
   const floor = info.trust_floor
   return (
-    <div className="tq-tiles" aria-label="Intake strip">
-      <Tile label="Picked up automatically" info={<InfoTip label="How picked up automatically is worked out" align="start" {...info.picked_up} />}>
-        <div className={`tq-tile-val${picked.share === null ? ' unmeasured' : ''}`}>{fmtShare(picked.share)}</div>
-        {picked.created_today > 0 && (
-          <div className="tq-tile-sub">{picked.launched_or_merged} of {picked.created_today}{today ? ' today' : ''}</div>
-        )}
-      </Tile>
-      <Tile label={today ? 'Cases created today' : 'Cases created'} info={<InfoTip label={`How cases created${today ? ' today' : ''} is worked out`} {...info.cases_created_today} />}>
-        <div className="tq-tile-val">{data.strip.cases_created_today}</div>
-      </Tile>
-      <Tile label="Waiting for triage" info={<InfoTip label="How waiting for triage is worked out" {...info.waiting} />}>
-        <div className="tq-tile-val">{data.strip.waiting}</div>
-        {data.strip.waiting_other > 0 && <div className="tq-tile-sub">+{data.strip.waiting_other} hunt or ask</div>}
-      </Tile>
-      <Tile label="Trust floor">
-        <NotMeasured className="tq-tile-val unmeasured" align="end" tip={`${floor.source} ${floor.calculation} ${floor.limit}`} />
-      </Tile>
-    </div>
+    <StatCards label="Intake strip">
+      <StatCard
+        label="Picked up automatically"
+        info={<InfoTip label="How picked up automatically is worked out" {...info.picked_up} />}
+        value={<span className={picked.share === null ? 'unmeasured' : undefined}>{fmtShare(picked.share)}</span>}
+        sub={picked.created_today > 0 && `${picked.launched_or_merged.toLocaleString()} of ${picked.created_today.toLocaleString()}${today ? ' today' : ''}`}
+      />
+      <StatCard
+        label={today ? 'Cases created today' : 'Cases created'}
+        info={<InfoTip label={`How cases created${today ? ' today' : ''} is worked out`} {...info.cases_created_today} />}
+        value={data.strip.cases_created_today.toLocaleString()}
+      />
+      {/* strip.waiting counts alerts only, so the card filters Kind = Alert and What happened = Waiting together */}
+      <StatCard
+        label="Waiting for triage"
+        info={<InfoTip label="How waiting for triage is worked out" {...info.waiting} />}
+        value={data.strip.waiting.toLocaleString()}
+        sub={data.strip.waiting_other > 0 && `+${data.strip.waiting_other} hunt or ask`}
+        onClick={toggleWaiting}
+        pressed={waitingOn}
+      />
+      <StatCard label="Trust floor" value={<NotMeasured align="end" tip={`${floor.source} ${floor.calculation} ${floor.limit}`} />} />
+    </StatCards>
   )
 }
 
@@ -170,61 +167,44 @@ function Filters({
   const { counts } = data
   const badge = useSourceBadge()
   const bySource = new Map(data.sources.map((row) => [row.data_source, row]))
-  // an Overview link to a source with no rows still shows its chip, selected
+  // an Overview link to a source with no rows still shows it, selected
   const sourceNames = Object.keys(counts.source)
   if (source && !sourceNames.includes(source)) sourceNames.push(source)
   sourceNames.sort()
   const filtered = Boolean(kind || source || state)
 
-  const group = (key: FilterKey, current: string, label: string, options: { value: string; label: string; dot?: string; title?: string }[], info?: ReactNode) => (
-    <>
-      <span className="tq-group-head">
-        <span className="tq-group-label">{label}</span>
-        {info}
-        <FilterChip list label="All" count={counts.total} active={!current} dot="var(--tx2)" onClick={() => setFilter(key, '')} />
-      </span>
-      {options.map((option) => (
-        <FilterChip
-          key={option.value}
-          list
-          label={option.label}
-          count={counts[key][option.value] ?? 0}
-          active={current === option.value}
-          dot={option.dot && `var(--${option.dot})`}
-          title={option.title}
-          onClick={() => setFilter(key, option.value)}
-        />
-      ))}
-    </>
-  )
+  // the first option is All; each option carries its count, zeros stay selectable
+  const menu = (key: FilterKey, options: { value: string; label: string; dot?: string; title?: string }[]) => [
+    { value: '', label: 'All', count: counts.total },
+    ...options.map((o) => ({ ...o, dot: o.dot && `var(--${o.dot})`, count: counts[key][o.value] ?? 0 })),
+  ]
+  const sources = sourceNames.map((name) => {
+    const row = bySource.get(name)
+    return {
+      value: name,
+      label: badge(name).label,
+      title: row ? [`${row.arrivals} arrived${data.range === 'all' ? '' : ' today'}`, lagNote(row)].filter(Boolean).join(' · ') : undefined,
+    }
+  })
+  const states = autoOpsOff ? STATES.map((s) => (s.value === QUEUED ? { ...s, label: `Waiting for triage: ${QUEUED_OFF}` } : s)) : STATES
 
   return (
-    <div className="tq-filters" role="group" aria-label="Filters">
-      {group('kind', kind, 'Kind', KINDS)}
-      <span className="tq-rule" />
-      {group(
-        'source',
-        source,
-        'Source',
-        sourceNames.map((name) => {
-          const row = bySource.get(name)
-          return {
-            value: name,
-            label: badge(name).label,
-            title: row ? [`${row.arrivals} arrived${data.range === 'all' ? '' : ' today'}`, lagNote(row)].filter(Boolean).join(' · ') : undefined,
-          }
-        }),
-        <InfoTip label={data.arrival_info} text={data.arrival_info} align="start" />,
-      )}
-      <span className="tq-rule" />
-      {group('state', state, 'What happened', autoOpsOff ? STATES.map((s) => (s.value === 'queued' ? { ...s, label: `Waiting for triage: ${QUEUED_OFF}` } : s)) : STATES)}
+    <div className="tq-filter-row" role="group" aria-label="Filters">
+      <div className="tq-dropdowns">
+        <Select name="Kind" value={kind} options={menu('kind', KINDS)} onSelect={(v) => setFilter('kind', v)} />
+        <span className="tq-source-pick">
+          <Select name="Source" value={source} options={menu('source', sources)} onSelect={(v) => setFilter('source', v)} />
+          <InfoTip label={data.arrival_info} text={data.arrival_info} align="start" />
+        </span>
+        <Select name="What happened" value={state} options={menu('state', states)} onSelect={(v) => setFilter('state', v)} />
+      </div>
       {filtered ? (
         <span className="tq-summary">
-          Showing {data.rows.length} of {data.matched} ·{' '}
+          Showing {data.rows.length.toLocaleString()} of {data.matched.toLocaleString()} ·{' '}
           <button type="button" onClick={clear}>Clear</button>
         </span>
       ) : data.matched > ROW_CAP ? (
-        <span className="tq-summary">Showing {ROW_CAP} of {data.matched}</span>
+        <span className="tq-summary">Showing {ROW_CAP} of {data.matched.toLocaleString()}</span>
       ) : null}
     </div>
   )
@@ -398,12 +378,18 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
   const loadTicket = useRef(0)
   const loadedFilter = useRef('')
 
-  const setFilter = (key: FilterKey, value: string) => {
+  // one URL update for any number of params, so none reads stale searchParams
+  const setFilters = (values: Partial<Record<FilterKey, string>>) => {
     const next = new URLSearchParams(searchParams)
-    if (value) next.set(key, value)
-    else next.delete(key)
+    for (const [key, value] of Object.entries(values)) {
+      if (value) next.set(key, value)
+      else next.delete(key)
+    }
     setSearchParams(next, { replace: true })
   }
+  const setFilter = (key: FilterKey, value: string) => setFilters({ [key]: value })
+  const waitingOn = kind === DETECTION && state === QUEUED
+  const toggleWaiting = () => setFilters(waitingOn ? { kind: '', state: '' } : { kind: DETECTION, state: QUEUED })
 
   const load = useCallback(() => {
     // only a filter change supersedes an in-flight request; a poll must not starve a slow one
@@ -544,7 +530,7 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
       )}
       {phase === 'ready' && data && (
         <>
-          <Tiles data={data} />
+          <Cards data={data} waitingOn={waitingOn} toggleWaiting={toggleWaiting} />
           <Filters
             data={data}
             kind={kind}
