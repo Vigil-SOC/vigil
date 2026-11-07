@@ -10,7 +10,11 @@ releases and how that changes. How `VERSION` itself is bumped is on the
   [`core/api/v1/contract.snapshot.json`](core/api/v1/contract.snapshot.json).
   Routes marked `x-vigil-beta` are served under `/api/v1` but are versioned,
   not frozen: they are left out of the snapshot and may change until their
-  shape settles.
+  shape settles. The resources it covers: findings, approvals, cases, case
+  metrics, the workflow catalog, agent runs, the audit trail reads (entries,
+  export, poll, verify) and the autonomy ceiling with its tool classes. An
+  audit entry freezes its envelope; its payload keys beyond `action`, `object`,
+  `outcome` and `run_id` are open per action and may grow.
 - **The frozen tools on the `vigil` MCP server** at `/mcp`. The name and input
   schema of every tool in `FROZEN_TOOLS` (`tools/mcp/vigil.py`), as held by
   [`tools/mcp/frozen_tools.snapshot.json`](tools/mcp/frozen_tools.snapshot.json).
@@ -21,7 +25,8 @@ releases and how that changes. How `VERSION` itself is bumped is on the
 
 - Every `/api/*` route without a version: the console's own wiring. That
   includes analytics and reporting, `/api/config`, `/api/orchestrator`,
-  `/api/llm/providers`, `/api/services` and `/api/ai`.
+  `/api/llm/providers`, `/api/services` and `/api/ai`, audit retention and
+  erasure, and a workflow's own autonomy tier (`/api/autonomy/workflows/{id}`).
 - `/internal/*`.
 - The web console (`clients/web/`).
 - The `WORKFLOW.md`, `SKILL.md` and `INTENT.md` file formats.
