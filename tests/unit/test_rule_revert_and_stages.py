@@ -225,6 +225,8 @@ HEALTHY_WEEK = {
         },
     },
     "sees": {"result": "pass"},
+    # Promotion also needs the version's lint pass (#4011).
+    "lint": {"result": "pass", "findings": []},
 }
 
 
