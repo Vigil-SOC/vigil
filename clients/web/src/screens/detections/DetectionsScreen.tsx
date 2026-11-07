@@ -3,10 +3,12 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { useLocation, useNavigate } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { errorText } from '../../shared/errorText'
-import { detectionRulesApi } from '../../services/api'
+import { detectionRulesApi, type RuleStages as Stages } from '../../services/api'
+import { useAuth } from '../../contexts/AuthContext'
 import { Empty, Failure } from '../shared/x1'
 import RuleExceptions, { KEEP_DAYS } from './RuleExceptions'
 import RuleFindings from './RuleFindings'
+import RuleStages, { stageLine } from './RuleStages'
 import FindingPopup from '../dashboard/FindingPopup'
 import ProofCardExport from './ProofCardExport'
 import './detections.css'
@@ -185,7 +187,14 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   const [more, setMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // One row opens at a time: its raw error, or (a Vigil copy) its exceptions.
-  const [open, setOpen] = useState<{ id: number; what: 'raw' | 'exceptions' | 'findings' } | null>(null)
+  const [open, setOpen] = useState<{ id: number; what: 'raw' | 'exceptions' | 'findings' | 'stages' | 'revert' } | null>(null)
+  const canWrite = useAuth().hasPermission('detections.write')
+  // Each listed Vigil rule's rollout moves, newest first (or why they didn't load), read as its row shows.
+  const [stagesOf, setStagesOf] = useState<Record<number, Stages | string>>({})
+  const loadStages = (id: number) =>
+    detectionRulesApi.ruleStages(id)
+      .then((res) => setStagesOf((m) => ({ ...m, [id]: res.data })))
+      .catch((e) => setStagesOf((m) => ({ ...m, [id]: errorText(e, 'Its rollout did not load.') })))
   // A finding opened from a rule's fire count.
   const [finding, setFinding] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
@@ -242,6 +251,12 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   })
   const shown = virtual.getVirtualItems()
   const last = shown.length ? shown[shown.length - 1].index : -1
+  const shownOverlay = shown.map((i) => rows[i.index]).filter((r) => r?.tool === 'overlay').map((r) => r.rule_id).join(',')
+  useEffect(() => {
+    for (const id of shownOverlay ? shownOverlay.split(',').map(Number) : []) if (!(id in stagesOf)) loadStages(id)
+    // stagesOf only guards against a second read of the same rule
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shownOverlay])
   // The next page loads as the list's end nears, inside the list's own scroll.
   useEffect(() => {
     if (!hasMore || more || last < rows.length - 40) return
@@ -475,6 +490,11 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
             const isOpen = open?.id === r.rule_id && open.what === 'raw'
             const excOpen = open?.id === r.rule_id && open.what === 'exceptions'
             const fdOpen = open?.id === r.rule_id && open.what === 'findings'
+            const stOpen = open?.id === r.rule_id && (open.what === 'stages' || open.what === 'revert')
+            const st = r.tool === 'overlay' ? stagesOf[r.rule_id] : undefined
+            const stages = st && typeof st !== 'string' ? st : null
+            const moves = stages?.stages ?? null
+            const line = stages ? stageLine(stages) : null
             const siemOnly = r.fires === 0 && (r.siem_alerts ?? 0) > 0
             const fired = siemOnly ? `${n(r.siem_alerts ?? 0)} in SIEM` : r.health === 'no_fire_data' ? 'No data' : r.health === 'never_fired' ? 'Never' : 'None'
             return (
@@ -489,6 +509,10 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                   )}
                   <div className="de-meta">
                     <span>{!r.checks_run ? 'Not checked' : r.checks_passing ? plural(r.checks_passing, 'check passes', 'checks pass') : 'No check passes'}</span>
+                    {line && <span className={`de-st-line${line.amber ? ' amber' : ''}`} title={line.title}>· {line.text}</span>}
+                    {line?.live && canWrite && (
+                      <span>· <button type="button" className="de-link de-st-revert" onClick={() => setOpen({ id: r.rule_id, what: 'revert' })}>Revert</button></span>
+                    )}
                   </div>
                   <div className="de-toggles">
                     {r.raw && (
@@ -506,6 +530,12 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                       <button type="button" className="de-raw-toggle" aria-expanded={excOpen} onClick={() => setOpen(excOpen ? null : { id: r.rule_id, what: 'exceptions' })}>
                         {excOpen ? 'Hide exceptions' : 'Exceptions'}
                         <svg viewBox="0 0 24 24" aria-hidden="true" className={excOpen ? 'up' : ''}><path d="m6 9 6 6 6-6" /></svg>
+                      </button>
+                    )}
+                    {moves && moves.length > 0 && (
+                      <button type="button" className="de-flag idle de-exc-pill de-st-pill" aria-expanded={stOpen} onClick={() => setOpen(stOpen ? null : { id: r.rule_id, what: 'stages' })}>
+                        History · {plural(moves.length, 'move', 'moves')}
+                        <svg viewBox="0 0 24 24" aria-hidden="true" className={stOpen ? 'up' : ''}><path d="m6 9 6 6 6-6" /></svg>
                       </button>
                     )}
                   </div>
@@ -533,6 +563,9 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                 </div>
                 {excOpen && <RuleExceptions ruleId={r.rule_id} />}
                 {fdOpen && <RuleFindings ruleId={r.rule_id} onOpen={setFinding} />}
+                {stOpen && (
+                  <RuleStages key={open.what} ruleId={r.rule_id} data={stages} error={typeof st === 'string' ? st : null} asking={open.what === 'revert'} onChanged={() => loadStages(r.rule_id)} />
+                )}
               </div>
             )
           })}

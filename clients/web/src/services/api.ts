@@ -965,6 +965,8 @@ export interface RuleStageRow {
 
 export interface RuleStages {
   rule_id: number
+  /** A person's Revert holds it in shadow until a person releases it. */
+  held?: boolean
   /** Newest first. */
   stages: RuleStageRow[]
 }
