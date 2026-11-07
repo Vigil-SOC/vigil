@@ -1280,7 +1280,7 @@
 }
 .cases-list > * { flex-shrink: 0; }
 
-/* Cases list head and chip rows */
+/* Cases list head: page head, status cards and the filter row */
 .cases-top {
   display: flex;
   flex-direction: column;
@@ -1298,21 +1298,6 @@
   border-radius: 10px;
   border: 1px solid var(--ln1);
   background: var(--bg2);
-}
-
-.cases-chips {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 22px;
-}
-
-/* each row wraps as a unit when the line is full, so a divider never dangles */
-.cases-chips .chip-group {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
 }
 
 /* Pinned case composer (components/composer.md, citation-chip.md). Scoped so the dock keeps the shared chat rules. */

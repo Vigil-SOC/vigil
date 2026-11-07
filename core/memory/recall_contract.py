@@ -45,11 +45,14 @@ class InvestigationKind(str, Enum):
     split requires. Wider than ``source_tier.InvestigationKind``, which selects
     a source vocabulary — an ``analyst`` investigation names no sources. It is
     an analyst's note on an entity (``episodic_notes``), and its id is the note's.
+    ``imported`` is a file of alerts and tickets closed in another system before
+    Vigil was installed, keyed ``<source system>:<content hash>`` (#3965).
     """
 
     HUNT = "hunt"
     CASE = "case"
     ANALYST = "analyst"
+    IMPORTED = "imported"
 
 
 class VerdictOutcome(str, Enum):

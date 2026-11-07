@@ -135,6 +135,12 @@ def _noise_clear(p: Mapping[str, Any]) -> str:
     return f"Cleared the noise mark on {p.get('finding_id') or 'an alert'}"
 
 
+def _import(verb: str) -> Callable[[Mapping[str, Any]], str]:
+    return lambda p: (
+        f"{verb} history {p['import_id']}" if p.get("import_id") else f"{verb} history"
+    )
+
+
 def _note(verb: str) -> Callable[[Mapping[str, Any]], str]:
     return lambda p: (
         f"{verb} a note on {p['entity_key']}"
@@ -231,6 +237,9 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     # Analyst notes on an entity (core/memory/notes.py)
     "memory.note.written": _note("Wrote"),
     "memory.note.withdrawn": _note("Withdrew"),
+    # Imported history (core/memory/imported_history.py)
+    "memory.import.written": _import("Imported"),
+    "memory.import.deleted": _import("Deleted"),
     # Old audit stores copied on upgrade (0018_legacy_audit_copy)
     "case.history": _case_history,
     "investigation.log": _investigation_log,

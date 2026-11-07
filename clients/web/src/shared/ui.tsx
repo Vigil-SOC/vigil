@@ -7,6 +7,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type InputHTMLAttributes,
@@ -180,7 +181,15 @@ export function Popup({
 interface DropOption {
   value: string
   label: string
+  // toolbar Select only: a right-aligned count, a state dot (a CSS colour) and a hover note
+  count?: number
+  dot?: string
+  title?: string
 }
+
+const MENU_GAP = 4 // between the trigger and its menu
+const EDGE = 8 // the least room a menu leaves at the window's edge
+const MIN_BELOW = 160 // below this, a menu that doesn't fit opens above when there's more room
 
 export function FilterButton({
   activeCount,
@@ -273,6 +282,7 @@ export function Select({
   placeholder = 'Select…',
   searchable = false,
   disabled,
+  name,
 }: {
   value: string
   options: DropOption[]
@@ -281,6 +291,9 @@ export function Select({
   // adds a filter input to the open menu, for long option lists
   searchable?: boolean
   disabled?: boolean
+  // the toolbar look: the button reads `name: value`, sizes to its text and takes
+  // the accent while the value is not the first ("All") option
+  name?: string
 }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -292,7 +305,12 @@ export function Select({
   const listId = useId()
   // a fixed-position portal, to escape overflow clipping (cards, .table-wrap,
   // the scrolling settings pane); anchored to the trigger's rect
-  const [pos, setPos] = useState<{ left: number; top: number; width: number } | null>(null)
+  const [anchor, setAnchor] = useState<DOMRect | null>(null)
+  // where the measured menu goes; until then it renders hidden at the trigger
+  const [geom, setGeom] = useState<{ left: number; top?: number; bottom?: number; maxHeight: number } | null>(null)
+  // the side chosen when the menu opened, kept while a filter shrinks the list
+  const sideRef = useRef<'below' | 'above' | null>(null)
+  const toolbar = name !== undefined
   const current = options.find((o) => o.value === value)
 
   const needle = query.trim().toLowerCase()
@@ -304,13 +322,47 @@ export function Select({
   const place = useCallback(() => {
     const el = ref.current
     if (!el) return
-    const r = el.getBoundingClientRect()
-    setPos({ left: r.left, top: r.bottom + 4, width: r.width })
+    setAnchor(el.getBoundingClientRect())
   }, [])
+
+  // Measure the open menu: under the trigger and left-aligned when it fits (today's
+  // geometry), else aligned to the trigger's right edge; capped at the window's
+  // height, scrolling inside, and above the trigger only when under it is cramped.
+  useLayoutEffect(() => {
+    const menu = menuRef.current
+    if (!open || !anchor || !menu) return
+    const prevMax = menu.style.maxHeight
+    const prevLeft = menu.style.left
+    menu.style.maxHeight = 'none'
+    menu.style.left = '0px'
+    const w = menu.offsetWidth
+    const natural = Math.min(menu.scrollHeight + 2, toolbar ? 400 : 280)
+    menu.style.maxHeight = prevMax
+    menu.style.left = prevLeft
+    const vw = document.documentElement.clientWidth
+    const vh = window.innerHeight
+    let left = anchor.left
+    if (left + w > vw - EDGE) left = Math.max(EDGE, anchor.right - w)
+    const below = vh - anchor.bottom - MENU_GAP - EDGE
+    const above = anchor.top - MENU_GAP - EDGE
+    // under the trigger unless that leaves too little room and above has more
+    sideRef.current ??= below >= Math.min(natural, MIN_BELOW) || below >= above ? 'below' : 'above'
+    // an above menu hangs from its bottom edge, so it shrinks toward the trigger
+    const next =
+      sideRef.current === 'below'
+        ? { left, top: anchor.bottom + MENU_GAP, maxHeight: Math.min(natural, Math.max(below, 0)) }
+        : { left, bottom: vh - anchor.top + MENU_GAP, maxHeight: Math.min(natural, Math.max(above, 0)) }
+    setGeom((g) =>
+      g && g.left === next.left && g.top === next.top && g.bottom === next.bottom && g.maxHeight === next.maxHeight ? g : next,
+    )
+  }, [open, anchor, shown, toolbar])
 
   const openMenu = () => {
     setQuery('')
     setActive(Math.max(0, options.findIndex((o) => o.value === value)))
+    setGeom(null)
+    sideRef.current = null
+    place() // a fresh rect, so the first frame doesn't measure against a stale one
     setOpen(true)
   }
   // the filter input unmounts with the menu, so hand focus back to the trigger
@@ -381,12 +433,24 @@ export function Select({
 
   const root = ref.current?.closest('.soc-console') as HTMLElement | null
   const menu =
-    open && pos ? (
+    open && anchor ? (
       <div
         ref={menuRef}
-        className={`drop-menu field-menu${searchable ? ' searchable' : ''}`}
+        className={`drop-menu field-menu${searchable ? ' searchable' : ''}${toolbar ? ' toolbar' : ''}`}
         // above the modal overlay (70), so a Select inside a Popup isn't hidden
-        style={{ position: 'fixed', left: pos.left, top: pos.top, width: pos.width, minWidth: pos.width, right: 'auto', zIndex: 80 }}
+        style={{
+          position: 'fixed',
+          left: geom?.left ?? anchor.left,
+          top: geom ? (geom.top ?? 'auto') : anchor.bottom + MENU_GAP,
+          bottom: geom?.bottom ?? 'auto',
+          // a field's menu matches its trigger; a toolbar menu sizes to its options (CSS)
+          ...(toolbar ? {} : { width: anchor.width, minWidth: anchor.width }),
+          maxHeight: geom?.maxHeight,
+          // unmeasured, it is transparent rather than hidden, so the filter input can take autoFocus
+          ...(geom ? {} : { opacity: 0, pointerEvents: 'none' as const }),
+          right: 'auto',
+          zIndex: 80,
+        }}
       >
         {searchable && (
           <input
@@ -410,19 +474,28 @@ export function Select({
         <div id={listId} role="listbox">
           {shown.map((o, i) => (
             <button
-              key={o.value}
+              key={`o-${o.value}`}
               id={optionId(i)}
               type="button"
               role="option"
               tabIndex={-1}
               aria-selected={o.value === value}
-              className={`${o.value === value ? 'sel' : ''}${i === active ? ' active' : ''}`}
+              title={o.title}
+              className={`${o.value === value ? 'sel' : ''}${i === active ? ' active' : ''}${o.count === 0 ? ' zero' : ''}`}
               // keep focus on the trigger / filter input
               onMouseDown={(e) => e.preventDefault()}
               onMouseEnter={() => setActive(i)}
               onClick={() => choose(o)}
             >
-              {o.label}
+              {toolbar ? (
+                <>
+                  {o.dot && <span className="drop-dot" style={{ background: o.dot }} aria-hidden="true" />}
+                  <span className="drop-label">{o.label}</span>
+                  {o.count !== undefined && <span className="drop-count">{o.count.toLocaleString()}</span>}
+                </>
+              ) : (
+                o.label
+              )}
             </button>
           ))}
           {shown.length === 0 && <div className="drop-empty">No matches</div>}
@@ -431,11 +504,11 @@ export function Select({
     ) : null
 
   return (
-    <div className="drop field-drop" ref={ref}>
+    <div className={`drop field-drop${toolbar ? ' toolbar' : ''}`} ref={ref}>
       <button
         ref={triggerRef}
         type="button"
-        className="field-select"
+        className={`field-select${toolbar ? ' toolbar' : ''}${toolbar && value !== options[0]?.value ? ' set' : ''}`}
         aria-haspopup="listbox"
         aria-expanded={open}
         disabled={disabled}
@@ -449,7 +522,13 @@ export function Select({
           }
         }}
       >
-        <span className={current ? '' : 'text-tx-3'}>{current?.label ?? placeholder}</span>
+        {toolbar ? (
+          <span>
+            <span className="field-name">{name}:</span> {current?.label ?? placeholder}
+          </span>
+        ) : (
+          <span className={current ? '' : 'text-tx-3'}>{current?.label ?? placeholder}</span>
+        )}
         <span className="dd"><Icon name="chevD" size={13} /></span>
       </button>
       {menu && (root ? createPortal(menu, root) : menu)}

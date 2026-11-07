@@ -28,7 +28,9 @@ What comes back is what earlier runs concluded from the evidence they had, not a
 standing judgement about the entity. A prior verdict of benign is not a reason
 to look less hard: an adversary working inside a window three runs called routine
 is the case this exists to catch. A prior verdict of malicious is not evidence
-for a new one either — recall never corroborates.
+for a new one either — recall never corroborates. Verdicts from an `imported`
+investigation are tickets the team closed in another system before Vigil was
+installed, and are held to the same rule as any benign verdict.
 
 Notes are what a person on the team said about an entity, with who wrote it and
 when. They are context to weigh, not evidence this run gathered, and a note

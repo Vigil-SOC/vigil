@@ -6,7 +6,7 @@ from dataclasses import asdict
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core.auth.permissions import permission_gate
 from core.deps import provide_detection_rules, provide_mcp_client, provide_mcp_registry
@@ -16,7 +16,7 @@ from core.detections.detection_rules_service import (
     DetectionRulesService,
     is_vendor_repo,
 )
-from core.detections.inventory import catalog
+from core.detections.inventory import catalog, health_inbox
 from core.detections.inventory.sync import sync_repos
 from core.integrations.mcp.registry import MCPRegistry, register_connected
 from core.integrations.mcp.surface import acting_as
@@ -306,17 +306,45 @@ def get_rules(
     flag: Optional[
         Literal["noisy", "quiet", "accurate", "silent", "drift", "caught"]
     ] = None,
+    rules: Optional[str] = Query(
+        default=None, max_length=4000, pattern=r"^[0-9]{1,12}(,[0-9]{1,12})*$"
+    ),
 ):
     """Every listed rule copy's health with its reason and data source, capped at
     catalog.RULE_ROWS rows from ``offset``, narrowed by ``health`` ("attention"
     is every state to act on), ``tool``, ``flag`` (a failing Noisy, Quiet,
-    Accurate, Silent or drift check, or a passing Caught) and the search ``q``,
-    in ``sort`` order
-    (worst first by default); the counts, the per-SIEM tallies and the blind
-    spots cover them all. Read-only."""
+    Accurate, Silent or drift check, or a passing Caught), the search ``q`` and
+    ``rules`` (comma-separated rule ids, as a rule-health entry links them), in
+    ``sort`` order (worst first by default); the counts, the per-SIEM tallies and
+    the blind spots cover them all. Read-only."""
+    rule_ids = [int(i) for i in rules.split(",")] if rules else None
     return catalog.health_listing(
-        health, tool=tool, q=q, offset=offset, sort=sort, flag=flag
+        health, tool=tool, q=q, offset=offset, sort=sort, flag=flag, rule_ids=rule_ids
     )
+
+
+class HealthReadRequest(BaseModel):
+    """Which rule-health entries to mark read: ``change_ids``, or every open one."""
+
+    change_ids: Optional[List[int]] = Field(default=None, max_length=1000)
+    all: bool = False
+
+
+@router.get("/health-inbox")
+def get_health_inbox(user: User = Depends(get_current_active_user)):
+    """The open rule-health flags, newest first, each read or unread for the
+    signed-in person, with a summary when many are unread. Read-only."""
+    return health_inbox.inbox(user.user_id)
+
+
+@router.post("/health-inbox/read")
+def read_health_inbox(
+    body: HealthReadRequest, user: User = Depends(get_current_active_user)
+):
+    """Marks entries read for the signed-in person only; returns the inbox."""
+    if body.all == (body.change_ids is not None):
+        raise HTTPException(status_code=422, detail="Send change_ids or all, not both.")
+    return health_inbox.mark_read(user.user_id, None if body.all else body.change_ids)
 
 
 @router.get("/overlay-only")

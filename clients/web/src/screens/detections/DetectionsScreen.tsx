@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
+import { useLocation, useNavigate } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { errorText } from '../../shared/errorText'
 import { detectionRulesApi } from '../../services/api'
@@ -167,13 +168,19 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   const listRef = useRef<HTMLDivElement>(null)
   // Bumped per view, so a page asked for under the last view is dropped.
   const generation = useRef(0)
+  // ?rules=1,2,3: the rules a rule-health alert named, listed in every health state.
+  const location = useLocation()
+  const navigate = useNavigate()
+  const picked = new URLSearchParams(location.search).get('rules') ?? ''
+  const pickedCount = picked ? new Set(picked.split(',')).size : 0
+  useEffect(() => { if (picked) setView('all') }, [picked])
 
   useEffect(() => {
     const t = window.setTimeout(() => setQ(typed.trim()), 250)
     return () => window.clearTimeout(t)
   }, [typed])
 
-  const params = { health: view === 'all' ? undefined : view, tool: siem === 'all' ? undefined : siem, q: q || undefined, sort: sort === 'worst' ? undefined : sort, flag: flag ?? undefined }
+  const params = { health: view === 'all' ? undefined : view, tool: siem === 'all' ? undefined : siem, q: q || undefined, sort: sort === 'worst' ? undefined : sort, flag: flag ?? undefined, rules: picked || undefined }
 
   // Each view, SIEM and search asks the server: the listing is capped, so narrowing capped rows here would miss rules.
   useEffect(() => {
@@ -194,9 +201,9 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
       .catch((e) => { if (live) setError(errorText(e, 'Rule health did not load.')) })
       .finally(() => { if (live) setLoading(false) })
     return () => { live = false }
-    // params follows view, siem, q, sort and flag
+    // params follows view, siem, q, sort, flag and picked
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, siem, q, sort, flag])
+  }, [view, siem, q, sort, flag, picked])
 
   const matched = report?.matched ?? 0
   const hasMore = !loading && rows.length < matched
@@ -250,6 +257,8 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
     ? `${plural(report.matched, 'rule', 'rules')} · ${FLAG[flag].note}, ${order}`
     : q
     ? `${plural(report.matched, 'rule matches', 'rules match')} “${q}” in ${viewName}${elsewhereN ? ` · ${n(elsewhereN)} more in other views` : ''}`
+    : picked
+      ? `${plural(report.matched, 'rule', 'rules')} in ${viewName}, ${order}`
     : view === 'attention'
       ? `${n(of)} of ${n(viewCount(report, 'all'))} rules need attention, ${order}`
       : view === 'all'
@@ -372,6 +381,17 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
             </select>
           </div>
         </div>
+
+        {picked && (
+          <div className="de-picked de-pad" role="status">
+            Showing the {plural(pickedCount, 'rule', 'rules')} a rule-health alert named
+            {!q && siem === 'all' && view === 'all' && report.matched < pickedCount
+              ? ` · ${n(pickedCount - report.matched)} no longer listed (removed or not a SIEM rule)`
+              : ''}
+            .{' '}
+            <button type="button" className="de-link" onClick={() => navigate('/detections')}>Show all rules</button>
+          </div>
+        )}
 
         <div className="de-chips-row">
           <div className="de-chips" role="group" aria-label="Health">
