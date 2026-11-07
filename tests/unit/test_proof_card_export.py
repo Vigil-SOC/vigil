@@ -483,7 +483,11 @@ def test_making_the_key_is_on_the_trail_with_who_asked(monkeypatch, trail):
     assert trail == [
         (
             "detections.proof_key_created",
-            {"actor": "user-viewer1", "key_id": made["key_id"]},
+            {
+                "actor": "system",
+                "triggered_by": "user-viewer1",
+                "key_id": made["key_id"],
+            },
             "safety",
         )
     ]

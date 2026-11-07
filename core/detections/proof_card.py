@@ -284,7 +284,7 @@ def canonical(card: Dict[str, Any]) -> bytes:
 
 def _private_key(actor: Optional[str] = None) -> Ed25519PrivateKey:
     """The instance's key; made and stored on first use, which the trail records
-    with ``actor`` (whoever's request made it)."""
+    as the system's act, triggered by ``actor`` (whoever's request needed it)."""
     with _key_lock:
         stored = get_secret(KEY_SECRET)
         if stored:
@@ -302,9 +302,13 @@ def _private_key(actor: Optional[str] = None) -> Ed25519PrivateKey:
         )
         if not set_secret(KEY_SECRET, base64.b64encode(raw).decode()):
             raise ProofKeyUnavailable("Could not store a new proof signing key.")
-        # The key exists now: recorded, or held to be recorded late.
+        # The key exists now: recorded, or held to be recorded late. Vigil makes
+        # it, whoever's request needed it first; that person is triggered_by.
         trail_events.safety(
-            KEY_CREATED, actor=actor or "system", key_id=key_id(key.public_key())
+            KEY_CREATED,
+            actor="system",
+            triggered_by=actor,
+            key_id=key_id(key.public_key()),
         )
         return key
 
