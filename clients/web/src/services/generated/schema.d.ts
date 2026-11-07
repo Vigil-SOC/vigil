@@ -2331,7 +2331,7 @@ export interface paths {
         };
         /**
          * Get Case Rules
-         * @description The proof card of each rule version that raised the case's alerts (#4013).
+         * @description The proof card of each rule version that raised the case's alerts.
          *
          *     Each linked finding is traced to the rule version that fired it as the
          *     Detections page traces it; one version is one card, with its stored checks,
@@ -6819,7 +6819,7 @@ export interface paths {
         };
         /**
          * Get Case Rules
-         * @description The proof card of each rule version that raised the case's alerts (#4013).
+         * @description The proof card of each rule version that raised the case's alerts.
          *
          *     Each linked finding is traced to the rule version that fired it as the
          *     Detections page traces it; one version is one card, with its stored checks,
@@ -8545,7 +8545,7 @@ export interface components {
         };
         /**
          * CaseRuleCard
-         * @description One rule version behind a case's alerts, and its stored checks (#4013).
+         * @description One rule version behind a case's alerts, and its stored checks.
          */
         CaseRuleCard: {
             /**
