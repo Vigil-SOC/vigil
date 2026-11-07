@@ -310,10 +310,11 @@ def get_rules(
         default=None, max_length=4000, pattern=r"^[0-9]{1,12}(,[0-9]{1,12})*$"
     ),
     has_exceptions: bool = False,
+    stage: Optional[Literal["shadow", "live", "off"]] = None,
 ):
     """Every listed rule copy's health with its reason and data source, capped at
     catalog.RULE_ROWS rows from ``offset``, narrowed by ``health`` ("attention"
-    is every state to act on), ``tool``, ``flag`` (a failing Noisy, Quiet,
+    is every state to act on), ``tool``, ``stage`` (the copy's rollout stage), ``flag`` (a failing Noisy, Quiet,
     Accurate, Silent or drift check, or a passing Caught), the search ``q`` and
     ``rules`` (comma-separated rule ids, as a rule-health entry links them), in
     ``sort`` order (worst first by default); with ``has_exceptions``, every copy
@@ -329,6 +330,7 @@ def get_rules(
         flag=flag,
         rule_ids=rule_ids,
         has_exceptions=has_exceptions,
+        stage=stage,
     )
 
 
