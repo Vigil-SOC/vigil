@@ -3291,6 +3291,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/detection-rules/proof-card": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Export Proof Card
+         * @description A zip of the proof card: proof-card.json (proof-card/v1), its Ed25519
+         *     signature, a PDF of the same data, and the public key. Read-only on the
+         *     inventory; makes the instance's signing key on first use. The trail records
+         *     each export, and the key's making, as this user.
+         */
+        post: operations["post_api_detection-rules_proof-card"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/proof-card/key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Proof Card Key
+         * @description The public key proof cards are signed with, and its id; made on first
+         *     use, which the trail records as this user.
+         */
+        get: operations["get_api_detection-rules_proof-card_key"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/detection-rules/reload": {
         parameters: {
             query?: never;
@@ -10724,6 +10768,14 @@ export interface components {
             max_cost_usd: number;
         };
         /**
+         * ProofCardRequest
+         * @description What to export: these rules, or (none) every live rule with coverage.
+         */
+        ProofCardRequest: {
+            /** Rule Ids */
+            rule_ids?: number[] | null;
+        };
+        /**
          * RecoveryCodesResponse
          * @description One-time MFA recovery codes (shown once, cannot be retrieved again).
          */
@@ -17897,6 +17949,72 @@ export interface operations {
                 "application/json": components["schemas"]["DeployOverlayRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_proof-card": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProofCardRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_detection-rules_proof-card_key": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
