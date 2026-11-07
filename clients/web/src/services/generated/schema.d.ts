@@ -731,6 +731,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audit/feed/webhook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Webhook
+         * @description URL, area filter and cursor. Never the signing secret.
+         */
+        get: operations["get_api_audit_feed_webhook"];
+        /**
+         * Update Webhook
+         * @description Save URL, area and enabled. A generated secret is returned here only.
+         */
+        put: operations["put_api_audit_feed_webhook"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/audit/feed/webhook/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Webhook
+         * @description Send one signed test event. Does not move the cursor or append a trail entry.
+         */
+        post: operations["post_api_audit_feed_webhook_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/audit/poll": {
         parameters: {
             query?: never;
@@ -11936,6 +11980,23 @@ export interface components {
             /** User Id */
             user_id: string;
         };
+        /** WebhookIn */
+        WebhookIn: {
+            /** Area */
+            area?: string | null;
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /** Secret */
+            secret?: string | null;
+            /**
+             * Url
+             * @default
+             */
+            url: string;
+        };
         /**
          * WorkflowAutonomyBody
          * @description One workflow's tier. No tier returns it to the fleet flags.
@@ -13465,6 +13526,103 @@ export interface operations {
         };
     };
     post_api_audit_feed_test: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_audit_feed_webhook: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_audit_feed_webhook: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebhookIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_audit_feed_webhook_test: {
         parameters: {
             query?: never;
             header?: {
