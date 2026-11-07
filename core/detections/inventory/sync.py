@@ -179,6 +179,8 @@ def _lint(record: RuleRecord, now: str) -> Optional[Dict[str, Any]]:
     return {
         "result": "pass" if report["passed"] else "fail",
         "findings": report["findings"],
+        # One host left out by name: the rule still passes; move it to an exception.
+        "warnings": report.get("warnings") or [],
         "checked_at": now,
     }
 
@@ -416,8 +418,8 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
             if (
                 lint
                 and fp == latest_fp
-                and (kept.get("result"), kept.get("findings"))
-                == (lint["result"], lint["findings"])
+                and (kept.get("result"), kept.get("findings"), kept.get("warnings"))
+                == (lint["result"], lint["findings"], lint["warnings"])
             ):
                 lint = None
             if fp != latest_fp:

@@ -13,6 +13,7 @@ one environment: rules name it to mean "internal" or "external".
 
 from __future__ import annotations
 
+import fnmatch
 import ipaddress
 import re
 from pathlib import Path
@@ -30,6 +31,11 @@ _REWRITE = (
     "(no `not filter_*` naming it) and add an exception instead: "
     "save_detection_rule's exceptions, or detection_rule_exception on a "
     "saved copy."
+)
+_EXCEPTION_HINT = (
+    "The rule leaves out a host by name. It still runs, but move that host to an "
+    "exception (save_detection_rule's exceptions, or detection_rule_exception on "
+    "a saved rule) so the rule itself names no machine."
 )
 
 # IPv4 (optional CIDR). Candidates are confirmed with ipaddress.
@@ -166,7 +172,9 @@ _USER_FIELDS = frozenset(
     }
 )
 # Fields that name the machine an event is on. Not DestinationHostname,
-# *.domain, dns.question.name or url.*: those hold internet names (IOCs).
+# *.domain, dns.question.name or url.*: those hold internet names (IOCs). Not
+# Workstation / WorkstationName either: a logon event records there the name the
+# remote client sends, so a rule names an attack tool's default (Rdesktop, RULER).
 _HOST_FIELDS = frozenset(
     {
         "host",
@@ -180,8 +188,6 @@ _HOST_FIELDS = frozenset(
         "srcnthost",
         "computername",
         "computer",
-        "workstation",
-        "workstationname",
     }
 )
 _HOST_PLACEHOLDERS = frozenset({"localhost", "unknown", "-", "null", "none", "n/a"})
@@ -263,24 +269,56 @@ def _lint_yaml(text: str) -> dict[str, Any]:
         return {"passed": False, "error": "Sigma rule YAML must be a mapping"}
 
     findings: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
     seen: set[tuple[str, str, str]] = set()
+    detection = parsed.get("detection")
+    negated = _negated_selections(detection) if isinstance(detection, dict) else set()
     for section in ("detection", "logsource"):
         if section not in parsed:
             continue
-        for field, value in _iter_strings(parsed[section]):
+        for field, value, selection in _section_strings(section, parsed[section]):
             for finding in _findings_for(field, value):
+                if selection in negated and finding == _host_finding(field, value):
+                    warnings.append(finding)
+                    continue
                 key = (finding["kind"], finding["value"], finding["field"])
                 if key in seen:
                     continue
                 seen.add(key)
                 findings.append(finding)
 
-    passed = not findings
+    title = parsed.get("title")
+    return _report(findings, warnings, title=title if isinstance(title, str) else None)
+
+
+def _section_strings(
+    section: str, node: Any
+) -> Iterable[tuple[Optional[str], str, Optional[str]]]:
+    """(field, value, selection) for each string; the selection is the detection
+    key the value sits under."""
+    if section == "detection" and isinstance(node, dict):
+        for name, child in node.items():
+            for field, value in _iter_strings(child, str(name)):
+                yield field, value, str(name)
+        return
+    for field, value in _iter_strings(node):
+        yield field, value, None
+
+
+_NOT_SELECTION = re.compile(r"(?i)\bnot\s+(?:(?:1|all)\s+of\s+)?([\w*]+)")
+
+
+def _negated_selections(detection: dict[str, Any]) -> set[str]:
+    """Detection keys the condition excludes (``not filter``, ``not 1 of filter_*``)."""
+    condition = detection.get("condition")
+    conditions = condition if isinstance(condition, list) else [condition]
+    patterns = [
+        p for c in conditions if isinstance(c, str) for p in _NOT_SELECTION.findall(c)
+    ]
     return {
-        "passed": passed,
-        "title": parsed.get("title") if isinstance(parsed.get("title"), str) else None,
-        "findings": findings,
-        "rewrite_guidance": _guidance(findings) if findings else None,
+        str(name)
+        for name in detection
+        if any(fnmatch.fnmatchcase(str(name), p) for p in patterns)
     }
 
 
@@ -305,6 +343,7 @@ def lint_query(query: str, language: str) -> dict[str, Any]:
     """Lint a native query: ``language`` is splunk, eql, esql or lucene."""
     text = normalize_query(query, language)
     findings: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
 
     def add(items: list[dict[str, str]]) -> None:
@@ -315,19 +354,35 @@ def lint_query(query: str, language: str) -> dict[str, Any]:
 
     # Addresses and hosts anywhere in the query, whatever field holds them.
     add(_findings_for("query", text))
-    for field, value in _query_pairs(text, language):
-        add(
-            [
-                f
-                for f in _findings_for(field, value)
-                if f["kind"] in ("user", "hostname")
-            ]
-        )
+    for field, value, negated in _query_pairs(text, language):
+        add([f for f in _findings_for(field, value) if f["kind"] == "user"])
+        host = _host_finding(field, value)
+        if host is None:
+            continue
+        if negated:
+            warnings.append(host)
+        else:
+            add([host])
+    return _report(findings, warnings, language=language)
+
+
+def _report(
+    findings: list[dict[str, str]], warnings: list[dict[str, str]], **extra: Any
+) -> dict[str, Any]:
+    """A lint result: findings fail it; warnings (one host left out by name) don't.
+    A host that is also a finding is not repeated as a warning."""
+    failing = {(f["kind"], f["value"].lower()) for f in findings}
+    kept: dict[tuple[str, str], dict[str, str]] = {}
+    for w in warnings:
+        if (w["kind"], w["value"].lower()) not in failing:
+            kept.setdefault((w["value"].lower(), w["field"]), w)
     return {
         "passed": not findings,
-        "language": language,
+        **extra,
         "findings": findings,
         "rewrite_guidance": _guidance(findings) if findings else None,
+        "warnings": list(kept.values()),
+        "warning_guidance": _EXCEPTION_HINT if kept else None,
     }
 
 
@@ -343,8 +398,10 @@ def lint_record(record: Any) -> Optional[dict[str, Any]]:
     return lint_query(record.query, language) if language in _NATIVE else None
 
 
-def _query_pairs(text: str, language: str) -> Iterable[tuple[str, str]]:
-    """(field, literal) pairs. EQL/ES|QL bare words, and SPL where's, are fields."""
+def _query_pairs(text: str, language: str) -> Iterable[tuple[str, str, bool]]:
+    """(field, literal, negated) triples. EQL/ES|QL bare words, and SPL where's,
+    are fields. ``negated``: the pair is excluded (!=, NOT IN, or NOT/not/!/- just
+    before it or before its opening parenthesis)."""
     if language == "splunk":
         segments = _SPL_PIPE.split(text)
         parts = [(segments[0], True)]
@@ -360,8 +417,14 @@ def _query_pairs(text: str, language: str) -> Iterable[tuple[str, str]]:
             if value is None and bare:
                 value = m.group(4)
             if value is not None:
-                yield m.group(1), value.replace("\\\\", "\\")
+                op = m.group(0)[len(m.group(1)) :].lstrip()
+                negated = op.startswith("!=") or _negated_before(part, m.start())
+                yield m.group(1), value.replace("\\\\", "\\"), negated
         for m in _LIST.finditer(part):
+            op = m.group(0)[len(m.group(1)) : m.group(0).index("(")]
+            negated = bool(re.search(r"(?i)\bnot\b", op)) or _negated_before(
+                part, m.start()
+            )
             for item in _LIST_ITEM.finditer(m.group(2)):
                 value = item.group(1) if item.group(1) is not None else item.group(2)
                 if (
@@ -371,7 +434,15 @@ def _query_pairs(text: str, language: str) -> Iterable[tuple[str, str]]:
                 ):
                     value = item.group(3)
                 if value is not None:
-                    yield m.group(1), value
+                    yield m.group(1), value, negated
+
+
+_NOT_BEFORE = re.compile(r"(?i)(?:\bnot|!)\s*\(?\s*$|(?:^|[\s(])-$")
+
+
+def _negated_before(part: str, start: int) -> bool:
+    """Whether NOT, not, ! (or Lucene's -) stands just before ``start``."""
+    return bool(_NOT_BEFORE.search(part[max(0, start - 12) : start]))
 
 
 def _iter_strings(
@@ -419,12 +490,19 @@ def _findings_for(field: Optional[str], value: str) -> list[dict[str, str]]:
         if person is not None:
             findings.append(_finding("user", person, field_name))
 
-    if _is_host_field(field_name):
-        host = _single_host(value)
-        if host is not None and host.lower() not in {h.lower() for h in hosts}:
-            findings.append(_finding("hostname", host, field_name))
+    host = _host_finding(field_name, value)
+    if host is not None and host["value"].lower() not in {h.lower() for h in hosts}:
+        findings.append(host)
 
     return findings
+
+
+def _host_finding(field: Optional[str], value: str) -> Optional[dict[str, str]]:
+    """The finding for one bare host named on a host field, or None."""
+    if not field or not _is_host_field(field):
+        return None
+    host = _single_host(value)
+    return _finding("hostname", host, field) if host is not None else None
 
 
 def _unbracket_ip(token: str) -> str:
@@ -480,6 +558,8 @@ def _is_host_field(field: str) -> bool:
     base, _, mods = field.partition("|")
     if _PARTIAL_MODIFIERS & set(mods.lower().split("|")):
         return False
+    if base.lower().startswith("esql."):
+        return False  # a column the query computes: often an internet domain
     parts = base.lower().split(".")
     # ECS host.name / host.hostname, and *.host.name under another object.
     if len(parts) > 1 and parts[-2] == "host" and parts[-1] in ("name", "hostname"):
@@ -494,6 +574,10 @@ def _single_host(value: str) -> Optional[str]:
         return None
     if not any(c.isalpha() for c in raw):
         return None  # a number or IP: the address checks own those
+    if "." in raw:
+        # Not bare: the environment-host check owns .corp/.local/.internal/.lan
+        # names, and any other dotted name is an internet domain (an IOC).
+        return None
     try:
         ipaddress.ip_address(raw)
         return None
