@@ -36,7 +36,7 @@ import binascii
 import logging
 import re
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
 from sqlalchemy import Text, and_, case, cast, func, select, text, tuple_
@@ -952,21 +952,35 @@ def _copies_listed(session: Any) -> Dict[str, Any]:
     }
 
 
-def _silenced(checks: Dict[str, Any], exception_ids: List[int]) -> int:
-    """Hits these active exceptions dropped in the days the runner keeps counts for."""
+def _window_start(today: Optional[date] = None) -> str:
+    """The first UTC day of the window the runner keeps exception matches for."""
+    from core.detections.inventory.rollout import KEEP_DAYS
+
+    today = today or datetime.now(timezone.utc).date()
+    return (today - timedelta(days=KEEP_DAYS - 1)).isoformat()
+
+
+def _silenced(checks: Dict[str, Any], exception_ids: List[int], since_day: str) -> int:
+    """Hits these active exceptions dropped on UTC days from ``since_day`` on. A
+    day the runner has not trimmed yet is outside the window and not counted."""
     counts = checks.get("exceptions") or {}
     total = 0
     for eid in exception_ids:
         mine = counts.get(str(eid))
         days = mine.get("days") if isinstance(mine, dict) else None
         if isinstance(days, dict):
-            total += sum(v for v in days.values() if isinstance(v, int))
+            total += sum(
+                v for d, v in days.items() if d >= since_day and isinstance(v, int)
+            )
     return total
 
 
-def _health_rows(copies: Dict[str, Any], fires: Dict[str, int]) -> Dict[str, Any]:
+def _health_rows(
+    copies: Dict[str, Any], fires: Dict[str, int], today: Optional[date] = None
+) -> Dict[str, Any]:
     """Each copy's health row, worst first, and the totals that don't depend on a filter."""
     rule_of = copies["rule_of"]
+    since_day = _window_start(today)
     excepted = copies.get("exceptions") or {}
     listed = []
     mapped = set()
@@ -1001,7 +1015,7 @@ def _health_rows(copies: Dict[str, Any], fires: Dict[str, int]) -> Dict[str, Any
                 "sees": checks.get("sees"),
                 # Its active exceptions, and the hits they silenced (#3794).
                 "exceptions": len(excepted.get(rule.id, [])),
-                "silenced": _silenced(checks, excepted.get(rule.id, [])),
+                "silenced": _silenced(checks, excepted.get(rule.id, []), since_day),
             }
         )
     listed.sort(key=lambda row: (HEALTH_ORDER.index(row["health"]), row["rule_id"]))

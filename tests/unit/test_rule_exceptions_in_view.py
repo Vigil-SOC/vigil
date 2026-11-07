@@ -2,6 +2,7 @@
 row says how many it has and what they silenced, a filter lists every rule with
 one whatever its health, and a view that leaves some out says how many."""
 
+from datetime import date
 from types import SimpleNamespace
 
 import pytest
@@ -119,3 +120,26 @@ def test_the_rules_route_passes_has_exceptions(monkeypatch):
         has_exceptions=True,
     )
     assert seen["has_exceptions"] is True
+
+
+def test_silenced_counts_only_the_runners_14_days():
+    # The window is today and the 13 UTC days before it, as the exceptions panel
+    # counts it; a day the runner hasn't trimmed yet falls outside.
+    checks = {
+        "runs": PASS,
+        "exceptions": {
+            "41": {"days": {"2026-10-23": 3, "2026-10-25": 2, "2026-11-06": 25}},
+        },
+    }
+    copies = {
+        "rows": [_copy(9, "Certutil downloading a remote file", checks=checks)],
+        "exceptions": {9: [41]},
+        "blind_spots": [],
+        "rule_of": {9: (9,)},
+    }
+    health = catalog._health_rows(copies, fires={}, today=date(2026, 11, 7))
+    (row,) = [
+        r for state in catalog.HEALTH_ORDER for _t, _h, r in health["by_state"][state]
+    ]
+    # 2026-10-23 is 15 days old: out. 2026-10-25, the window's first day: in.
+    assert row["silenced"] == 27
