@@ -740,12 +740,28 @@ def _rule_of_copy(session: Any) -> Dict[int, Tuple[Any, ...]]:
     }
 
 
+def _finding_rule_name() -> Any:
+    """The rule name a finding carries: what its alert named, else its title."""
+    return func.coalesce(Finding.entity_context["rule_name"].astext, Finding.title)
+
+
+def fired_since(session: Any, name: str, since: datetime) -> int:
+    """Findings naming ``name`` from ``since`` (naive UTC), counted as Fires counts them."""
+    named = _finding_rule_name()
+    return (
+        session.scalar(
+            select(func.count()).where(Finding.timestamp >= since, named == name)
+        )
+        or 0
+    )
+
+
 def _fires(session: Any) -> Dict[str, int]:
     """Findings per rule name in the window, read from what the alert named."""
     since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
         days=FIRES_WINDOW_DAYS
     )
-    named = func.coalesce(Finding.entity_context["rule_name"].astext, Finding.title)
+    named = _finding_rule_name()
     rows = session.execute(
         select(named, func.count())
         .where(Finding.timestamp >= since, named.is_not(None))

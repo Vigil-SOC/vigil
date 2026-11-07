@@ -189,6 +189,17 @@
   .de-inv-tools { flex: 1 1 100%; }
   .de-search { flex: 1 1 100%; width: auto; }
 }
+/* An overlay rule's hits over the days its exception matches are counted for */
+.de-x-win { margin: 10px 0 4px; padding: 10px 12px; border-radius: 8px; background: var(--bg2); }
+.de-x-win-head { font-size: 11px; font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase; color: var(--tx2); }
+.de-x-win-nums { display: flex; flex-wrap: wrap; gap: 6px 20px; margin-top: 6px; font-size: 12.5px; color: var(--tx2); }
+.de-x-win-nums b { font-family: var(--font-mono); font-size: 15px; font-weight: 600; color: var(--tx0); }
+.de-x-win-nums b.de-x-win-sil { color: var(--fair); }
+.de-x-win-bar { display: flex; height: 6px; margin-top: 8px; border-radius: 3px; overflow: hidden; background: var(--bg3); }
+.de-x-win-bar .fired { background: var(--good); }
+.de-x-win-bar .sil { background: var(--fair); }
+.de-x-win-none { margin: 8px 0 4px; font-size: 12.5px; color: var(--tx3); }
+.de-x-share { font-size: 12px; color: var(--fair); white-space: nowrap; }
 
 /* Export proof card */
 .de-export { height: 34px; }
