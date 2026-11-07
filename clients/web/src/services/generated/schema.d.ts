@@ -3453,6 +3453,68 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/detection-rules/rules/{rule_id}/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Release Rule
+         * @description Lifts a person's hold on a shadow rule; the normal rollout applies again.
+         */
+        post: operations["post_api_detection-rules_rules_rule_id_release"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/rules/{rule_id}/revert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revert Rule
+         * @description Moves a live rule back to shadow and holds it there: the rollout does
+         *     not promote it again until a person releases it.
+         */
+        post: operations["post_api_detection-rules_rules_rule_id_revert"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/rules/{rule_id}/stages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Rule Stages
+         * @description A rule's stage rows, newest first: version, from and to stage, actor,
+         *     reason and time. Read-only.
+         */
+        get: operations["get_api_detection-rules_rules_rule_id_stages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/detection-rules/sources": {
         parameters: {
             query?: never;
@@ -11383,6 +11445,14 @@ export interface components {
              */
             version: 1;
         };
+        /**
+         * StageChangeRequest
+         * @description Why a person reverts a rule, or releases it.
+         */
+        StageChangeRequest: {
+            /** Reason */
+            reason: string;
+        };
         /** StartRunRequest */
         StartRunRequest: {
             /**
@@ -18235,6 +18305,113 @@ export interface operations {
         };
     };
     "get_api_detection-rules_rules_rule_id_findings": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                rule_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_rules_rule_id_release": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                rule_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StageChangeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_rules_rule_id_revert": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                rule_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StageChangeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_detection-rules_rules_rule_id_stages": {
         parameters: {
             query?: never;
             header?: {
