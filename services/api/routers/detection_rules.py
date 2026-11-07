@@ -358,6 +358,15 @@ def read_health_inbox(
     return health_inbox.mark_read(user.user_id, None if body.all else body.change_ids)
 
 
+@router.get("/metrics")
+def get_metrics():
+    """The rollout's success metrics from stored data, each with where its
+    numbers come from and what that data cannot say. Read-only."""
+    from core.detections.inventory import metrics
+
+    return metrics.report()
+
+
 @router.get("/overlay-only")
 def get_overlay_only():
     """Live overlay copies no SIEM rule runs: only Vigil detects with these,
