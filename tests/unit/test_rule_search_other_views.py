@@ -35,12 +35,11 @@ def built(monkeypatch):
         "blind_spots": [],
     }
     copies["rule_of"] = {r.id: (r.id,) for r in copies["rows"]}
+    hit = {"finding_id": "f", "title": "t", "severity": "low", "timestamp": None}
     health = catalog._health_rows(
-        copies, fires={"Certutil downloading a remote file": 6}
+        copies, fires={"by_name": {"Certutil downloading a remote file": [hit] * 6}}
     )
-    monkeypatch.setattr(
-        catalog, "_listing_now", lambda: {**health, "blind_spots": []}
-    )
+    monkeypatch.setattr(catalog, "_listing_now", lambda: {**health, "blind_spots": []})
 
 
 def test_a_healthy_rule_searched_from_needs_attention_is_counted_elsewhere(built):
