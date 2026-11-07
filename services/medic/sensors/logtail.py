@@ -6,13 +6,13 @@ per pod. `sinceTime` is whole seconds; the cursor's hashes drop the replayed
 part of that second. A container restart is drained once with `previous=true`,
 then followed. Neither path sends `limitBytes`.
 
-Background tasks push admitted lines onto their own 15,000-line `Bus` (one 15 s
+Background tasks push admitted lines onto their own 3,000-line `Bus` (one 15 s
 tick at the admit rate). One `LogStream` sensor per service reports the streams'
 state each 30 s, so the scheduler gives it `sensor_health`, `blind` after 3
 failed cycles, and "a quiet stream is not an error".
 
 An admitted line takes this path and no other: cap 16 KiB, redact, fingerprint
-(fp1), draft. Over 1,000 lines/s on the shared tail, or 500 on one stream, the
+(fp1), draft. Over 200 lines/s on the shared tail, or 100 on one stream, the
 line is counted and never redacted or fingerprinted. A raw line is never logged,
 stored or put in a `ReadError`.
 
@@ -84,13 +84,14 @@ HELM_LOG_SERVICES = SERVICES[:5]  # backend … agent-serve; no bifrost, no back
 SIGNAL = {s: "log_" + s.replace("-", "_") for s in LOG_SERVICES}
 ERRORS_AS_SUCCESS = "llm_worker_errors_as_success"
 JOBS_LOGGER = "services.worker.jobs"
-LOG_CAPACITY = 15_000  # one 15 s tick of lines the rate rule admitted
-# Measured (#3970, nightly python_json flood, 3 x 5,000 lines/s, Medic already
-# following the streams), Medic CPU p95: 1,000/500 -> 1.01; 400/200 -> 1.03;
-# 200/100 -> 1.01; 0/0 (nothing admitted) -> 0.92. Reading the streams and counting
-# the overflow alone cost ~0.9 vCPU, so no admit rate meets the 0.5 bar; unchanged.
-ADMIT_PER_S = 1_000  # the shared tail; the rate rule, not the buffer, bounds load
-ADMIT_STREAM_PER_S = 500
+LOG_CAPACITY = 3_000  # one 15 s tick of lines the rate rule admitted
+# The highest rate at which Medic keeps up with the nightly python_json flood (3 x
+# 5,000 lines/s for 60 s, #4000): at 200/100 every line was admitted or counted and
+# the counts settled in ~40 s; at 300/150 they were still moving after the 120 s
+# settle window, ~4-6k lines per stream uncounted; at 1,000/500 only 75k-123k of 300k
+# (#3970). Under the flood Medic sits at its 1 vCPU quota at any rate (0/0 -> 0.92).
+ADMIT_PER_S = 200  # the shared tail; the rate rule, not the buffer, bounds load
+ADMIT_STREAM_PER_S = 100
 OVERFLOW_SIGNAL = "log_overflow"  # sample, not a log signal: counts, no line text
 OVERFLOW_EPOCH = "log-overflow"  # in-memory counters; a stable epoch across collects
 _WARNING_UP = frozenset({"WARNING", "ERROR", "CRITICAL"})
@@ -760,7 +761,7 @@ class LogTail:
         return True
 
     def _over_rate(self, stream: _Stream) -> bool:
-        """True when this line is past 1,000/s on the tail or 500/s on the stream."""
+        """True when this line is past ADMIT_PER_S on the tail or ADMIT_STREAM_PER_S on the stream."""
         assert self._clock is not None
         second = int(self._clock.monotonic())
         if second != self._rate_s:

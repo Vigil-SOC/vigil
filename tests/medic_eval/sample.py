@@ -3,8 +3,10 @@
 `stack.usage()` (`docker stats --no-stream` on Compose's medic, medic-gateway and
 medic-dockerproxy; `crictl stats` on kind's medic and medic-gateway), once an
 interval, for as long as the sampler runs; `du -sk` of the store at the start and
-the end. The advisory bars are constants the artifact carries; only the hard
-limits (HARD_*) turn a run red.
+the end. The advisory bars are constants the artifact carries, reported and never
+red; of the hard limits only memory (HARD_RSS_MIB) turns a run red. CPU is reported:
+the container's 1 vCPU quota enforces HARD_CPU_VCPU, so a reading over it is
+`docker stats` wobble.
 """
 
 from __future__ import annotations
@@ -23,12 +25,9 @@ ADVISORY = {
     "store_growth_mib_per_day": 5.0,
     "store_growth_mib_per_day_busy": 12.0,
 }
-# The only limits that fail the run.
+# The hard limits: the quota enforces CPU (reported only); memory over it fails the run.
 HARD_CPU_VCPU = 1.0
 HARD_RSS_MIB = 1024.0
-# Medic is one Python process, so a flood pins it at 1.00 vCPU; docker's own reading
-# wobbles by about a percent around that. Over by more than this is over.
-CPU_TOLERANCE = 0.02
 
 # `docker stats` mixes IEC (KiB/MiB/GiB) and SI (kB/MB/GB).
 _UNITS = {"b": 1, "kb": 1e3, "mb": 1e6, "gb": 1e9, "kib": 1024, "mib": 1024**2, "gib": 1024**3}
