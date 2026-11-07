@@ -25,6 +25,9 @@ interface JobBase {
   // The W3C traceparent of whoever enqueued it, so the run's spans continue that
   // request's trace. Optional: absent when tracing is off, and on any older job.
   traceparent?: string;
+  // The case the run was started on, when there is one. Put on the run's root span
+  // and journaled with the spec (sections.refs), so a resume carries it too.
+  case_id?: string;
 }
 
 // References rather than resolved content: the worker resolves them and journals

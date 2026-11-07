@@ -788,6 +788,7 @@ class WorkflowsService:
             principal=principal,
             actor=actor_principal,
             origin=resolved_origin,
+            case_id=context.get("case_id"),
         )
         try:
             job_id = await enqueue_run(job)

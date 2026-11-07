@@ -21,6 +21,11 @@ export function isReference(playbook: string): boolean {
   return playbook.startsWith(WORKFLOW_SCHEME);
 }
 
+// The workflow a playbook names, or undefined for a path or a bare reference.
+export function workflowIdOf(playbook: string): string | undefined {
+  return isReference(playbook) ? playbook.slice(WORKFLOW_SCHEME.length).trim() || undefined : undefined;
+}
+
 function idOf(reference: string): string {
   const id = reference.slice(WORKFLOW_SCHEME.length).trim();
   if (id === "") throw new SpecError(`${reference} names no workflow`);
