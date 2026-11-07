@@ -4,19 +4,23 @@ Throwaway containers carrying the eval project's own Compose labels for three Vi
 services log RATE lines/s each for `seconds`; the Docker proxy lists them like the
 real ones, so Medic's log tail reads them. Own phase: it overlaps no scored cell.
 
-Two hard floors: Medic's 1 vCPU / 1 GiB limit stays in force with no kill for memory
-or restart (sample.floor_failures), and Medic keeps writing (the heartbeat
-cycle advances and its store keeps recording; Medic writes decisions on events, not
-on a clock, so the seq is reported and fails only if it goes backwards); the flooded
-streams count dropped lines (`dropped_last_hour`, #3478). The API shows no per-sensor
+The floors: Medic's 1 vCPU / 1 GiB limit stays in force with no kill for memory or
+restart (sample.floor_failures); Medic keeps writing (the heartbeat cycle advances
+and its store keeps recording; Medic writes decisions on events, not on a clock, so
+the seq is reported and fails only if it goes backwards); and it keeps up: by the end
+of the settle window its counts have stopped moving, and every flooded line it could
+not admit is counted in `dropped_last_hour` (#3478). The API shows no per-sensor
 `degraded` (that is the sensor_health observation's state, which is not served), so
-`dropped_last_hour` is what it can read. Everything else is reported.
+`dropped_last_hour` is what it can read. CPU and memory usage are reported against
+the advisory bars, never red. Everything else is reported.
 """
 
 from __future__ import annotations
 
+import re
 import subprocess
 import time
+from pathlib import Path
 
 from tests.medic_eval import medic_api
 from tests.medic_eval.sample import Sampler, summarize
@@ -57,6 +61,12 @@ while time.monotonic() < end:
     time.sleep(max(0.0, tick - (time.monotonic() - t)))
 print(f"FLOOD-DONE {svc} {n}", flush=True)
 """
+LOGTAIL = Path(__file__).resolve().parents[2] / "services" / "medic" / "sensors" / "logtail.py"
+
+
+def admit_stream_per_s() -> int:
+    """logtail's per-stream admit rate, read from its source: the nightly's Python has no httpx."""
+    return int(re.search(r"^ADMIT_STREAM_PER_S = ([\d_]+)", LOGTAIL.read_text(), re.M)[1])
 
 
 def _run(*argv: str) -> subprocess.CompletedProcess:
@@ -95,7 +105,8 @@ def run_flood(stack, seconds: int = DURATION_S, rate: int = RATE) -> dict:
         # Medic's tail reads a stream at its own pace: settle until each flooded sensor
         # has counted and its count has stopped moving.
         flooded = {s: _sensor_ids(medic_api.sensors(stack), s) for s in SERVICES}
-        deadline, last, moved = time.monotonic() + SETTLE_S, None, time.monotonic()
+        settle_start = time.monotonic()
+        deadline, last, moved, settled = settle_start + SETTLE_S, None, settle_start, "deadline"
         while time.monotonic() < deadline:
             now = medic_api.sensors(stack)
             counts = [now.get(i, {}).get("dropped_last_hour") or 0 for ids in flooded.values() for i in ids]
@@ -103,8 +114,10 @@ def run_flood(stack, seconds: int = DURATION_S, rate: int = RATE) -> dict:
                 last, moved = counts, time.monotonic()
             elif all(any((now.get(i, {}).get("dropped_last_hour") or 0) > 0 for i in ids) for ids in flooded.values() if ids) \
                     and time.monotonic() - moved >= STABLE_S:
+                settled = "stable"
                 break
             time.sleep(5)
+        settle_s = round(time.monotonic() - settle_start)
         after, sensors_after = medic_api.status(stack), medic_api.sensors(stack)
         emitted = {
             s: _run("docker", "logs", "--tail", "1", n).stdout.strip() for s, n in names.items()
@@ -121,6 +134,17 @@ def run_flood(stack, seconds: int = DURATION_S, rate: int = RATE) -> dict:
             {"sensor": r["id"], "state": r["state"], "dropped_last_hour": r.get("dropped_last_hour")}
             for r in rows
         ]
+    # Keep-up: every line over the most the rate rule could admit in the flood's
+    # seconds is counted. The real service's container shares the sensor, so a count
+    # can only come out high.
+    allowance = admit_stream_per_s() * seconds
+    keepup = {}
+    for svc in SERVICES:
+        done = re.fullmatch(rf"FLOOD-DONE {re.escape(svc)} (\d+)", emitted.get(svc, ""))
+        sent = int(done[1]) if done else None
+        dropped = sum(r["dropped_last_hour"] or 0 for r in streams[svc])
+        short = None if sent is None else max(0, sent - allowance - dropped)
+        keepup[svc] = {"sent": sent, "admit_allowance": allowance, "dropped_last_hour": dropped, "shortfall": short}
     usage = summarize(sampler.samples)
     cycle = lambda st: st["cycle"] if st else None  # noqa: E731
     seq = lambda st: ((st or {}).get("chain_head") or {}).get("seq")  # noqa: E731
@@ -141,6 +165,16 @@ def run_flood(stack, seconds: int = DURATION_S, rate: int = RATE) -> dict:
             failures.append(f"no log sensor found for {svc}")
         elif not any((r["dropped_last_hour"] or 0) > 0 for r in rows):
             failures.append(f"{svc}: no dropped lines counted")
+        k = keepup[svc]
+        if k["sent"] is None:
+            failures.append(f"{svc}: no FLOOD-DONE line, so the lines sent are unknown ({emitted.get(svc)!r})")
+        elif k["shortfall"]:
+            failures.append(
+                f"{svc}: Medic fell behind, {k['shortfall']} lines neither admitted nor counted "
+                f"(sent {k['sent']}, admit allowance {allowance}, dropped_last_hour {k['dropped_last_hour']})"
+            )
+    if settled == "deadline":
+        failures.append(f"the dropped counts had not settled (still moving, or a stream never counted) in {SETTLE_S} s")
     return {
         "lines_per_s_per_stream": rate,
         "seconds": seconds,
@@ -153,5 +187,7 @@ def run_flood(stack, seconds: int = DURATION_S, rate: int = RATE) -> dict:
         "decision_seq": [seq(before), seq(after)],
         "medic_state": [(before or {}).get("state"), (after or {}).get("state")],
         "streams": streams,
+        "settle": {"exit": settled, "seconds": settle_s, "limit_s": SETTLE_S},
+        "keepup": keepup,
         "failures": failures,
     }

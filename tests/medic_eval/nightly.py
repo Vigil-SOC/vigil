@@ -17,8 +17,9 @@ already left up (KEEP=1) and leaves it up.
 
 Red (exit 1) only for: bring-up (on Helm, e2e.sh full), inject, verify or revert failing; harm to Vigil;
 Medic's 1 vCPU / 1 GiB limit not in force, or Medic killed for memory or restarted
-(sample.floor_failures); a survival check or a flood floor failing. Detection,
-time to detect, the lane matrix, false alarms and the advisory bars are reported with
+(sample.floor_failures); a survival check or a flood floor failing (Medic not keeping
+up with the flood among them). Detection, time to detect, the lane matrix, false
+alarms, CPU and memory usage and the advisory bars are reported with
 their n and never red. DIR/metrics.json and DIR/summary.md are written on red too.
 
 Verification knobs (the nightly uses none): --only, --hold-cap, --flood-seconds,
@@ -374,8 +375,23 @@ def summary(m: dict) -> str:
         lines.append(f"| {c['cause']} | {c['rule'] or '-'} | {c['hold_s']} | {c['status']} | {how} |")
     f = m["flood"]
     only = " (Compose only)" if m["shape"] == "helm" else ""
-    lines += ["", "Flood: " + ("not run" + only if not f else "; ".join(f["failures"]) or "floors held")
-              + (f" (Medic {_usage(f['usage'].get('medic'))})" if (f or {}).get("usage") else "")]
+    lines += ["", "Flood: " + ("not run" + only if not f else "; ".join(f["failures"]) or "floors held")]
+    if f and f.get("keepup"):
+        st = f["settle"]
+        lines += [
+            f"Settle: {st['exit']} after {st['seconds']} s (limit {st['limit_s']} s).",
+            "",
+            "| stream | sent | admit allowance | dropped_last_hour | shortfall |",
+            "|---|---|---|---|---|",
+            *(f"| {s} | {k['sent']} | {k['admit_allowance']} | {k['dropped_last_hour']} | {k['shortfall']} |"
+              for s, k in f["keepup"].items()),
+            "",
+            "| service | CPU p95 vCPU | max | peak MiB | n |",
+            "|---|---|---|---|---|",
+            *(f"| {s} | {u.get('cpu_p95_vcpu')} | {u.get('cpu_max_vcpu')} | {u.get('rss_peak_mib')} | {u['n']} |"
+              for s, u in f["usage"].items()),
+            f"Usage is reported against the {sample.ADVISORY['cpu_p95_vcpu']} vCPU advisory bar, never red.",
+        ]
     checks = (f"{s['check']} {s['status']}" + (f" (restored {', '.join(s['restored'])})" if s.get("restored") else "")
               for s in m["survival"])
     lines += ["", "Survival: " + (", ".join(checks) or "not run" + only)]
