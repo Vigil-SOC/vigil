@@ -21,7 +21,7 @@ One export is one zip, made from one set of data and one signature:
 checks a JSON file against its signature and a public key.
 
 The signing key is the instance's own: an Ed25519 key kept in Vigil's secrets
-store under ``KEY_SECRET``, made on first export. Where secrets can't be
+store under ``KEY_SECRET``, made on first use (an export, or a read of the key). Where secrets can't be
 written (an ephemeral State Directory), set it in the environment instead.
 """
 
@@ -62,6 +62,8 @@ DEFAULT_INSTANCE = "Vigil"
 # Trail actions: an export, and the signing key being made.
 EXPORTED = "detections.proof_card_exported"
 KEY_CREATED = "detections.proof_key_created"
+# What a request that made the key was: an export, or a read of the public key.
+MADE_BY = ("export", "key_read")
 # An ATT&CK technique or sub-technique id. A declared technique that isn't one (a
 # template a SIEM never filled, say) stays on its rule but out of the coverage table.
 ATTACK_ID = re.compile(r"^T\d{4}(\.\d{3})?$")
@@ -146,7 +148,8 @@ def coverage(rules: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def unmapped(rules: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Declared techniques that aren't ATT&CK ids, with how many live rules carry each."""
+    """Declared techniques that aren't ATT&CK technique ids (a tactic id, a
+    template), with how many live rules carry each."""
     counts: Dict[str, int] = {}
     for rule in rules:
         if rule["status"] != "active":
@@ -282,9 +285,12 @@ def canonical(card: Dict[str, Any]) -> bytes:
 # The key ---------------------------------------------------------------------
 
 
-def _private_key(actor: Optional[str] = None) -> Ed25519PrivateKey:
+def _private_key(
+    actor: Optional[str] = None, made_by: str = "export"
+) -> Ed25519PrivateKey:
     """The instance's key; made and stored on first use, which the trail records
-    as the system's act, triggered by ``actor`` (whoever's request needed it)."""
+    as the system's act, triggered by ``actor`` and ``made_by`` the request
+    that needed it (one of MADE_BY)."""
     with _key_lock:
         stored = get_secret(KEY_SECRET)
         if stored:
@@ -308,6 +314,7 @@ def _private_key(actor: Optional[str] = None) -> Ed25519PrivateKey:
             KEY_CREATED,
             actor="system",
             triggered_by=actor,
+            made_by=made_by,
             key_id=key_id(key.public_key()),
         )
         return key
@@ -328,7 +335,7 @@ def key_id(public: Ed25519PublicKey) -> str:
 
 
 def public_key(actor: Optional[str] = None) -> Dict[str, str]:
-    public = _private_key(actor).public_key()
+    public = _private_key(actor, "key_read").public_key()
     return {"key_id": key_id(public), "public_key_pem": public_pem(public)}
 
 
@@ -502,7 +509,7 @@ def _pdf_lines(
                 f"{u['technique']} ({u['rules']})" for u in card["unmapped"]
             )
             add(
-                "Declared techniques that aren't ATT&CK ids, left out of the table "
+                "Declared techniques that aren't ATT&CK technique ids, left out of the table "
                 f"(live rules carrying each): {odd}",
                 8,
             )
