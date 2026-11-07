@@ -18,7 +18,7 @@ from core.detections.gaps import (
     read_ledger,
     technique_check,
 )
-from core.detections.inventory import catalog
+from core.detections.inventory import catalog, metrics
 from core.detections.inventory.links import link_rule
 from core.detections.lint import lint_sigma
 from core.detections.overlay import save_rule
@@ -262,6 +262,10 @@ class SecurityDetectionsTools:
             "techniques_covered": len(catalog.rules_by_technique()),
             "by_source": by_source,
         }
+
+    async def detection_metrics(self, **_kwargs: object) -> Dict:
+        """The rollout's success metrics from stored data, each with its source."""
+        return await asyncio.to_thread(metrics.report)
 
     async def lint_detections(
         self,

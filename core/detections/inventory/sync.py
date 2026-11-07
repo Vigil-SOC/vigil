@@ -60,9 +60,10 @@ A source no longer configured has its rules marked removed.
 Vigil's overlay source alone has rollout stages, for its splunk and elastic
 copies (nothing runs a Sigma copy): a new rule or version, or a removed one
 back unchanged, appends 'shadow'; a removed one appends 'off'. Each such copy's
-query is linted (``lint.lint_record``) into checks['lint'] on a new version, and
-once on a version staged before lint ran: one that fails gets 'off' instead of
-'shadow', and a shadow or live one goes 'off', the findings in the proof.
+query is linted (``lint.lint_record``) into checks['lint'] on every sync, kept
+when the verdict is unchanged: a new version that fails gets 'off' instead of
+'shadow', and a shadow or live one whose verdict turns to fail goes 'off', the
+findings in the proof.
 
 Every repo and local rule (any ``repo:`` source) is linted the same way on a
 new version, and once on a version stored before lint ran: checks['lint'], a
@@ -414,13 +415,24 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
                 new.append((record, fp))
                 continue
             rule, latest_fp, stored = hit
-            # A new version is linted (before an overlay copy is staged); one
-            # stored before lint ran, once.
-            lint = (
-                _lint(record, now)
-                if not siem and (fp != latest_fp or "lint" not in (stored or {}))
-                else None
-            )
+            staged = overlay and record.language in STAGED_LANGUAGES
+            kept = (stored or {}).get("lint") or {}
+            if staged:
+                # Every staged copy is linted on each sync, so one passed by an
+                # older lint is re-judged; an unchanged verdict on the same
+                # version is kept.
+                lint = _lint(record, now)
+                if fp == latest_fp and (kept.get("result"), kept.get("findings")) == (
+                    lint["result"],
+                    lint["findings"],
+                ):
+                    lint = None
+            elif not siem and (fp != latest_fp or "lint" not in (stored or {})):
+                # Any other imported rule: a new version is linted, and one
+                # stored before lint ran, once.
+                lint = _lint(record, now)
+            else:
+                lint = None
             if fp != latest_fp:
                 rule.latest_version += 1
                 versions.append(_version_row(rule.id, rule.latest_version, record, fp))
