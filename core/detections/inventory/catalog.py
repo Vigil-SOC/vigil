@@ -488,13 +488,15 @@ def techniques_per_language() -> Dict[str, int]:
 
 
 def rules_for_technique(technique: str, top: int = 5) -> Dict[str, Any]:
-    """Active rules declaring ``technique``: the count by format and the first ``top``."""
+    """Active rules declaring ``technique``: the count by format (rules failing lint
+    left out, as they are no coverage) and the first ``top``."""
     declares = DetectionRule.techniques.contains([technique])
     with get_db_manager().session_scope() as session:
         by_source = dict(
             session.execute(
                 select(DetectionRule.language, func.count())
-                .where(ACTIVE, declares)
+                .join(DetectionRuleVersion, _latest_join())
+                .where(ACTIVE, declares, CREDITED)
                 .group_by(DetectionRule.language)
             ).all()
         )
