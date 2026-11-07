@@ -29,7 +29,17 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta, timezone
 from statistics import median
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 from sqlalchemy import func, select, text
 
@@ -52,12 +62,32 @@ SIEM_SOURCES = ("elastic", "splunk", "wazuh")
 BUDGETED = {"elastic-siem": 30, "splunk": splunk.DEFAULT_PER_HOUR}
 NEVER_FIRED_REASON = "no alerts in "
 # How a SIEM says it refused a search for load or rate.
+# Words inside a name (an index, sourcetype or field) are not the SIEM's words.
+_ALONE = r"(?<![\w.-]){}(?![\w.-])"
 THROTTLE = re.compile(
-    r"\b429\b|too many requests|rate[ _-]?limit|throttl|"
-    r"concurrent (historical )?searches|search quota|"
-    r"es_rejected_execution|circuit_breaking",
+    "|".join(
+        _ALONE.format(p)
+        for p in (
+            "429",
+            "too many requests",
+            r"rate[ -]limit(?:ed|s)?",
+            r"throttl(?:ed|ing)",
+            r"concurrent (?:historical )?searches",
+            "search quota",
+        )
+    )
+    + r"|es_rejected_execution_exception|circuit_breaking_exception",
     re.IGNORECASE,
 )
+# The data a check names (index=x, index x, sourcetype=y): never read as an error.
+_NAMES = re.compile(
+    r"\b(?:index|sourcetype|source|datamodel)\s*[=:]?\s*\S+", re.IGNORECASE
+)
+
+
+def throttle_error(reason: str) -> bool:
+    """Whether a check's reason is a SIEM refusing a search for load or rate."""
+    return bool(THROTTLE.search(_NAMES.sub(" ", reason)))
 
 
 def _hours(start: datetime, end: datetime) -> float:
@@ -81,7 +111,7 @@ def _median(values: List[float]) -> Optional[float]:
 
 def gap_to_shadow(
     gaps: Mapping[str, Mapping[str, Any]],
-    rules: List[Mapping[str, Any]],
+    rules: Sequence[Mapping[str, Any]],
     now: datetime,
 ) -> Dict[str, Any]:
     """Each gap technique and the first validated overlay rule in shadow after it.
@@ -199,20 +229,30 @@ def _overlay_rules(session: Any) -> List[Dict[str, Any]]:
 
 
 def shadow_to_live(
-    stages: Iterable[Tuple[int, str, int, str, str, Optional[str], datetime]],
+    stages: Iterable[Tuple[int, int, str, int, str, str, Optional[str], datetime]],
     now: datetime,
 ) -> Dict[str, Any]:
-    """``stages``: (rule_id, name, version, stage, actor, reason, at), oldest first."""
+    """``stages``: (id, rule_id, name, version, stage, actor, reason, at).
+
+    Paired in time order (at, then id); a rule's current stage is its last row by
+    id, as the inventory reads it. A live row before the version's shadow row is
+    no promotion.
+    """
+    rows = sorted(stages, key=lambda r: (_utc(r[7]), r[0]))
     first: Dict[Tuple[int, int], Dict[str, Any]] = {}
-    current: Dict[int, Tuple[int, str]] = {}
-    for rule_id, name, version, stage, actor, reason, at in stages:
+    current = {r[1]: (r[3], r[4]) for r in sorted(rows, key=lambda r: r[0])}
+    for _, rule_id, name, version, stage, actor, reason, at in rows:
         at = _utc(at)
-        current[rule_id] = (version, stage)
         key = (rule_id, version)
         if stage == "shadow" and key not in first:
             first[key] = {"rule_id": rule_id, "name": name, "version": version}
             first[key]["shadow_at"] = at
-        elif stage == "live" and key in first and "live_at" not in first[key]:
+        elif (
+            stage == "live"
+            and key in first
+            and "live_at" not in first[key]
+            and at >= first[key]["shadow_at"]
+        ):
             first[key].update(live_at=at, promoted_by=actor, reason=reason)
     promoted, waiting = [], []
     for (rule_id, version), row in first.items():
@@ -251,6 +291,7 @@ def shadow_to_live(
 def _stages(session: Any) -> List[Tuple]:
     return session.execute(
         select(
+            DetectionRuleStage.id,
             DetectionRuleStage.rule_id,
             DetectionRule.name,
             DetectionRuleStage.version,
@@ -260,7 +301,7 @@ def _stages(session: Any) -> List[Tuple]:
             DetectionRuleStage.at,
         )
         .join(DetectionRule, DetectionRule.id == DetectionRuleStage.rule_id)
-        .order_by(DetectionRuleStage.id)
+        .order_by(DetectionRuleStage.at, DetectionRuleStage.id)
     ).all()
 
 
@@ -268,7 +309,7 @@ def _stages(session: Any) -> List[Tuple]:
 
 
 def live_health(
-    copies: Iterable[Mapping[str, Any]], blind_spots: List[Mapping[str, Any]]
+    copies: Iterable[Mapping[str, Any]], blind_spots: Sequence[Mapping[str, Any]]
 ) -> Dict[str, Any]:
     """``copies``: each copy that runs, with its rule (the group it counts in),
     tool, runs and sees results."""
@@ -531,7 +572,7 @@ def _throttled(session: Any, since: datetime) -> List[Tuple]:
     return [
         (rule_id, catalog.tool_of(source), check, result, reason, at)
         for rule_id, source, check, result, reason, at in rows
-        if THROTTLE.search(reason)
+        if throttle_error(reason)
     ]
 
 

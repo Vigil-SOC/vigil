@@ -64,15 +64,15 @@ def test_a_gap_closed_after_a_day_is_not_within_target():
 
 def test_shadow_to_live_per_version_with_who_promoted_it():
     stages = [
-        (1, "A", 1, "shadow", "system", "new rule", _h(0)),
-        (1, "A", 1, "live", "system", "7 days in shadow, ...", _h(168)),
-        (1, "A", 2, "shadow", "system", "new version", _h(200)),
-        (2, "B", 1, "shadow", "system", "new rule", _h(10)),
-        (2, "B", 1, "live", "d.lee", "promoted by hand", _h(34)),
-        (3, "C", 1, "shadow", "system", "new rule", _h(0)),
-        (3, "C", 1, "off", "system", "3 failed runs in a row", _h(5)),
+        (1, 1, "A", 1, "shadow", "system", "new rule", _h(0)),
+        (2, 1, "A", 1, "live", "system", "7 days in shadow, ...", _h(168)),
+        (3, 1, "A", 2, "shadow", "system", "new version", _h(200)),
+        (4, 2, "B", 1, "shadow", "system", "new rule", _h(10)),
+        (5, 2, "B", 1, "live", "d.lee", "promoted by hand", _h(34)),
+        (6, 3, "C", 1, "shadow", "system", "new rule", _h(0)),
+        (7, 3, "C", 1, "off", "system", "3 failed runs in a row", _h(5)),
         # A live row with no shadow row before it is no promotion.
-        (4, "D", 1, "live", "system", "", _h(1)),
+        (8, 4, "D", 1, "live", "system", "", _h(1)),
     ]
     out = metrics.shadow_to_live(stages, NOW + timedelta(days=10))
     assert [(r["name"], r["version"], r["hours"]) for r in out["rows"]] == [
@@ -176,13 +176,46 @@ def test_throttle_errors_are_vigils_own_searches_one_per_minute():
 def test_throttle_pattern_reads_siem_refusals_and_not_ordinary_errors():
     for reason in (
         "HTTP 429",
+        "status=429 Too Many Requests",
         "The maximum number of concurrent historical searches on this instance has been reached",
         "circuit_breaking_exception: [parent] Data too large",
         "rate limit exceeded",
+        "search was throttled by the SIEM",
     ):
-        assert metrics.THROTTLE.search(reason), reason
+        assert metrics.throttle_error(reason), reason
     for reason in ("no events in 7 d", "lookup table missing", "version too new"):
-        assert not metrics.THROTTLE.search(reason), reason
+        assert not metrics.throttle_error(reason), reason
+
+
+def test_a_name_holding_a_throttle_word_is_no_throttle_error():
+    for reason in (
+        "fail: no events in index=waf_rate_limit in 7 d",
+        "index throttle_audit not found",
+        "no events in index=rate-limit-logs sourcetype=throttled:events in 7 d",
+        "index=api_429 has no events in 7 d",
+        "datamodel Throttling.Events not accelerated",
+    ):
+        assert not metrics.throttle_error(reason), reason
+    rows = [(1, "splunk", "sees", "unknown", "index throttle_audit not found", _h(1))]
+    reasons = [r for r in rows if metrics.throttle_error(r[4])]
+    assert metrics.search_budget({}, {}, reasons)["throttle_errors"] == 0
+
+
+def test_out_of_order_stage_rows_pair_by_time_and_never_go_negative():
+    stages = [
+        # Ids out of time order: the live row was written first.
+        (1, 7, "E", 1, "live", "system", "7 days in shadow, ...", _h(170)),
+        (2, 7, "E", 1, "shadow", "system", "new rule", _h(2)),
+        # A live row stamped before its version's shadow row is no promotion.
+        (3, 8, "F", 1, "shadow", "system", "new rule", _h(50)),
+        (4, 8, "F", 1, "live", "system", "", _h(40)),
+    ]
+    out = metrics.shadow_to_live(stages, NOW + timedelta(days=10))
+    assert [(r["name"], r["hours"]) for r in out["rows"]] == [("E", 168.0)]
+    assert out["median_hours"] == 168.0
+    assert all(r["hours"] >= 0 for r in out["rows"])
+    # F's current stage is its last row by id (live), so it is not waiting.
+    assert out["waiting"] == []
 
 
 # The agent tool and the API route
