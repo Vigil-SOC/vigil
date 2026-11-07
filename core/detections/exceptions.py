@@ -14,7 +14,7 @@ add and removal is written to the config audit log in the same transaction.
 from __future__ import annotations
 
 import ipaddress
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from sqlalchemy import select
@@ -189,7 +189,14 @@ def listed(session: Any, rule_id: int, removed: bool = False) -> List[Dict[str, 
     return [_row(r) for r in rows]
 
 
-def of_copy(rule_id: int) -> Dict[str, Any]:
+def _in_window(days: Any, since_day: str) -> int:
+    """Matches counted on UTC days from ``since_day`` on."""
+    if not isinstance(days, dict):
+        return 0
+    return sum(v for d, v in days.items() if d >= since_day and isinstance(v, int))
+
+
+def of_copy(rule_id: int, now: Optional[datetime] = None) -> Dict[str, Any]:
     """Every exception on an overlay copy, active and removed, with each one's
     per-day matches from the copy's latest version, what its last run with rows
     saw (``seen``: {rows, matched, missing, at}, or None), what the copy's
@@ -197,9 +204,20 @@ def of_copy(rule_id: int) -> Dict[str, Any]:
     at}, or None), and whether a SIEM copy runs
     it instead (``handed_off``: Vigil no longer applies them).
 
+    ``window`` puts the rule's own fires on the days the matches are counted
+    for (the runner keeps KEEP_DAYS): ``fired`` the findings Fires counts for this copy (traced to it, or naming it when no other copy shares its name),
+    ``silenced`` hits its current (not removed) exceptions dropped, ``hits``
+    the two together. Each exception's ``silenced``, removed ones too, is its
+    matches in that window.
+
     LookupError when there is no such rule, ValueError when it isn't an overlay copy.
     """
-    from core.detections.inventory.rollout import handed_off
+    from core.detections.inventory.catalog import fired_in_window
+    from core.detections.inventory.rollout import KEEP_DAYS, handed_off
+
+    today = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).date()
+    first = today - timedelta(days=KEEP_DAYS - 1)
+    since_day = first.isoformat()
 
     with get_db_manager().session_scope() as session:
         rule = session.get(DetectionRule, rule_id)
@@ -218,12 +236,31 @@ def of_copy(rule_id: int) -> Dict[str, Any]:
         rows = []
         for r in listed(session, rule_id, removed=True):
             mine = counts.get(str(r["exception_id"])) or {}
-            rows.append({**r, "days": mine.get("days") or {}, "seen": mine.get("seen")})
+            days = mine.get("days") or {}
+            rows.append(
+                {
+                    **r,
+                    "days": days,
+                    "seen": mine.get("seen"),
+                    "silenced": _in_window(days, since_day),
+                }
+            )
+    fired = fired_in_window(rule_id, since_day)
+    # The current exceptions only, as the row's pill counts them; a removed
+    # one keeps its own count in its row.
+    silenced = sum(r["silenced"] for r in rows if not r.get("removed_at"))
     return {
         "rule_id": rule_id,
         "handed_off": rule_id in handed_off([rule_id]),
         "seen": together,
         "exceptions": rows,
+        "window": {
+            "days": KEEP_DAYS,
+            "since": since_day,
+            "fired": fired,
+            "silenced": silenced,
+            "hits": fired + silenced,
+        },
     }
 
 

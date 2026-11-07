@@ -1069,6 +1069,9 @@ def _health_rows(
     excepted = copies.get("exceptions") or {}
     listed = []
     fired: Dict[int, List[Dict[str, Any]]] = {}
+    # Each copy's counted findings per UTC day, so a shorter window than Fires'
+    # (the exceptions panel's) counts the same findings the same way.
+    fired_days: Dict[int, Dict[str, int]] = {}
     # The rules (not copies) carrying each name: a SIEM copy and its linked
     # repo origin share one, and are one rule.
     names: Dict[str, set] = {}
@@ -1081,6 +1084,12 @@ def _health_rows(
             mapped.add(rule_of[rule.id])
         hits, unsure = _fired(fires, rule, len(names[rule.name]) > 1)
         fired[rule.id] = hits[:FIRES_LISTED]
+        days: Dict[str, int] = {}
+        for hit in hits:
+            if hit.get("timestamp"):
+                day = hit["timestamp"][:10]
+                days[day] = days.get(day, 0) + 1
+        fired_days[rule.id] = days
         count = len(hits)
         alerts, days_counted = _siem_alerts(checks)
         state, why, raw = _health(rule.status, checks, count)
@@ -1145,6 +1154,7 @@ def _health_rows(
             }
         ),
         "fired": fired,
+        "fired_days": fired_days,
         "rule_total": len({rule_of[row["rule_id"]] for row in listed}),
         "mapped": len(mapped),
         "by_siem": _by_siem(listed),
@@ -1287,6 +1297,14 @@ def health_listing(
             "for rules Vigil reads from Kibana, Wazuh and Splunk."
         ),
     }
+
+
+def fired_in_window(rule_id: int, since_day: str) -> int:
+    """A listed copy's Fires count from UTC day ``since_day`` on: the findings
+    traced to it (or, when no other listed copy shares its name, naming it), as
+    the Fires column counts them."""
+    days = _listing_now().get("fired_days", {}).get(rule_id, {})
+    return sum(n for day, n in days.items() if day >= since_day)
 
 
 def rule_findings(rule_id: int) -> Dict[str, Any]:
