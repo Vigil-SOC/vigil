@@ -8,6 +8,7 @@ import { Empty, Failure } from '../shared/x1'
 import RuleExceptions from './RuleExceptions'
 import RuleFindings from './RuleFindings'
 import FindingPopup from '../dashboard/FindingPopup'
+import ProofCardExport from './ProofCardExport'
 import './detections.css'
 
 type RuleHealth =
@@ -177,6 +178,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   const [open, setOpen] = useState<{ id: number; what: 'raw' | 'exceptions' | 'findings' } | null>(null)
   // A finding opened from a rule's fire count.
   const [finding, setFinding] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   // Bumped per view, so a page asked for under the last view is dropped.
   const generation = useRef(0)
@@ -264,6 +266,17 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   const elsewhereN = elsewhere.reduce((a, [, c]) => a + c, 0)
   const elsewhereText = elsewhere.map(([h, c]) => `${n(c)} in ${HEALTH[h].label}`).join(', ')
   const showAll = () => { setView('all'); setOpen(null) }
+  // The view's rule copies for a proof card: the pages listed so far, then the rest.
+  const viewIds = async () => {
+    const ids = rows.map((r) => r.rule_id)
+    while (ids.length < matched) {
+      const page = (await detectionRulesApi.rules({ ...params, offset: ids.length })).data as RulesReport
+      if (!page.rules.length) break
+      ids.push(...page.rules.map((r) => r.rule_id))
+    }
+    return ids
+  }
+  const exportName = [viewName, siem === 'all' ? null : SIEM_NAME[siem], q ? `“${q}”` : null].filter(Boolean).join(' · ')
   const order = sort === 'worst' ? 'worst first' : sort === 'name' ? 'by name' : sort === 'most_fires' ? 'most fires first' : 'fewest fires first'
   const note = flag && !q
     ? `${plural(report.matched, 'rule', 'rules')} · ${FLAG[flag].note}, ${order}`
@@ -391,6 +404,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
             <select aria-label="Sort rules" className="de-sort" value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
               {SORTS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
             </select>
+            <button type="button" className="btn ghost de-export" onClick={() => setExporting(true)}>Export proof card</button>
           </div>
         </div>
 
@@ -526,6 +540,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
 
       <p className="de-note">{report.limits}</p>
       <FindingPopup id={finding} onClose={() => setFinding(null)} onConfigureAi={() => goSettings('ai-config')} />
+      <ProofCardExport open={exporting} onClose={() => setExporting(false)} viewName={exportName} viewCount={matched} viewIds={viewIds} />
     </>
   )
 }

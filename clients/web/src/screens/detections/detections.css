@@ -200,3 +200,20 @@
   .de-inv-tools { flex: 1 1 100%; }
   .de-search { flex: 1 1 100%; width: auto; }
 }
+
+/* Export proof card */
+.de-export { height: 34px; }
+.de-pc { display: flex; flex-direction: column; gap: 16px; font-size: 13px; color: var(--tx1); }
+.de-pc h4 { margin: 0 0 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; color: var(--tx2); }
+.de-pc ul { margin: 0; padding-left: 18px; line-height: 1.6; }
+.de-pc code { font-size: 12px; }
+.de-pc-scope { margin: 0; padding: 0; border: 0; display: flex; flex-direction: column; gap: 8px; }
+.de-pc-scope legend { padding: 0; margin-bottom: 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; color: var(--tx2); }
+.de-pc-scope label { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--ln1); border-radius: 10px; cursor: pointer; }
+.de-pc-scope label:has(input:checked) { border-color: var(--ac-ln); background: var(--ac-bg); }
+.de-pc-scope label:has(input:disabled) { cursor: default; opacity: 0.6; }
+.de-pc-scope input { margin-top: 3px; accent-color: var(--ac); }
+.de-pc-scope label > span { display: flex; flex-direction: column; gap: 2px; }
+.de-pc-scope label > span > span { color: var(--tx2); font-size: 12.5px; }
+.de-pc-err { margin: 0; color: var(--poor); }
+.de-pc-actions { display: flex; justify-content: flex-end; gap: 10px; }
