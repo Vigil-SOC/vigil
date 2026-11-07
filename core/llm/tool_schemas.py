@@ -188,6 +188,11 @@ SECURITY_DETECTION_TOOLS = [
         },
     },
     {
+        "name": "detection_metrics",
+        "description": "Report the rollout's success metrics from what Vigil already stores; nothing is searched. gap_to_shadow: per technique an analyst-proven hunt or Case no rule alerted on (last 90 days), hours until the first overlay rule declaring it (parent level), whose Sigma form passed replay against proven events, entered shadow (target under 24 h; time waiting for a person is included). shadow_to_live: per overlay copy and version, hours from its first shadow row to its first live row, who promoted it (system is Vigil on the exit criteria) and why, plus the copies still in shadow. live_health: rules running in a SIEM or as a live overlay copy Vigil runs, counted once across their copies; passing when every copy passes Runs and Sees (target 90%), per tool, and the Blind spots (data sources an active rule fails Sees on). first_week: rules found silent, with no data or never firing in the 7 days after Vigil first read a SIEM rule, and the day each kind was first found (Silent waits until a rule is 7 days old). search_budget: each SIEM integration's searches in the last hour against max_searches_per_hour, and throttle errors Vigil's own searches met in 30 days (target zero). Each section carries source (where its numbers come from) and unknown (what the stored data cannot say).",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "get_detection_count",
         "description": "Get count of detection rules, optionally filtered by source format.",
         "input_schema": {
