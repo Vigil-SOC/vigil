@@ -10,9 +10,9 @@ import hashlib
 import json
 import logging
 import os
-import re
 import sys
 from contextlib import asynccontextmanager
+from html.parser import HTMLParser
 from pathlib import Path
 
 # Add the repo root to sys.path so `core.*` and `services.*` resolve whether
@@ -914,6 +914,28 @@ app.mount(
 )
 
 
+class _InlineScripts(HTMLParser):
+    """The text of each ``<script>`` with no ``src``, exactly as the page carries it."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.scripts: list[str] = []
+        self._open = False
+
+    def handle_starttag(self, tag, attrs) -> None:
+        if tag == "script" and not dict(attrs).get("src"):
+            self._open = True
+            self.scripts.append("")
+
+    def handle_endtag(self, tag) -> None:
+        if tag == "script":
+            self._open = False
+
+    def handle_data(self, data) -> None:
+        if self._open:
+            self.scripts[-1] += data
+
+
 def _docs_page(page: HTMLResponse) -> HTMLResponse:
     """Admit the page's own inline scripts by hash.
 
@@ -922,9 +944,11 @@ def _docs_page(page: HTMLResponse) -> HTMLResponse:
     """
     if not get_settings().vigil_csp_enabled:
         return page
+    parser = _InlineScripts()
+    parser.feed(page.body.decode())
     hashes = [
         "'sha256-%s'" % base64.b64encode(hashlib.sha256(js.encode()).digest()).decode()
-        for js in re.findall(r"<script>(.*?)</script>", page.body.decode(), re.S)
+        for js in parser.scripts
     ]
     policy = get_settings().vigil_csp_policy or DEFAULT_CSP
     policy, missing = _augment_csp_with_origins(policy, ("script-src",), hashes)
