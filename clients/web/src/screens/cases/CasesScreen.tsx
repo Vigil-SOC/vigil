@@ -21,6 +21,7 @@ import {
 import { ConfirmDialog, EmptyState, FilterButton, FilterGroup, Popup, Select, activateOnKey } from '../../shared/ui'
 import { FilterChip } from '../../shared/FilterChip'
 import { PageHead } from '../../shared/PageHead'
+import { StatCard, StatCards } from '../../shared/StatCard'
 import { StatePill, statePill, type PillTone } from '../../shared/StatePill'
 import { SeverityMark } from '../../shared/SeverityMark'
 import { LevelBadge, slaLevel } from '../../shared/LevelBadge'
@@ -71,6 +72,27 @@ const TIME_LEFT_TIP = {
   calculation: 'Resolution due minus now. Good while under 75% of the response or resolution window has passed, Fair from 75%, Poor from 90% or once past due.',
   limit: 'Paused while the case is on hold. Set per priority in Settings → SLA.',
 }
+// what the status cards count (strip in core/storage/case_repository.py, read by get_cases in cases_router.py)
+const NEEDS_YOU_TIP = {
+  source: 'Pending approvals and stopped hunts that wait on a person, matched to their cases.',
+  calculation: 'Open cases holding at least one of them.',
+  limit: 'Counts every open case; only the alerts-from filter narrows it.',
+}
+const WORKING_TIP = {
+  source: 'Open cases, by their state.',
+  calculation: 'Every open case minus the ones that need you.',
+  limit: 'Counts every open case; only the alerts-from filter narrows it.',
+}
+const NEAR_SLA_TIP = {
+  source: 'The latest SLA attached to each open case.',
+  calculation: 'Open cases past a due time, or with 75% or more of the response or resolution window used.',
+  limit: 'A paused SLA, or a case with no SLA, is not counted. Only the alerts-from filter narrows it.',
+}
+const CLOSED_TODAY_TIP = {
+  source: 'Case closure records.',
+  calculation: 'Closures since midnight UTC; "by an agent alone" is the share closed by an agent rather than from the console.',
+  limit: 'Today only, so it has no filter: State › Closed lists every closed case.',
+}
 const STATE_WORDS = STATE_OPTIONS.filter((o) => o.value && o.value !== 'closed')
 const TONE_DOT: Record<PillTone, string> = {
   needs: 'var(--poor)',
@@ -78,6 +100,13 @@ const TONE_DOT: Record<PillTone, string> = {
   idle: 'var(--tx2)',
   closed: 'var(--tx2)',
 }
+
+// State and Assigned option values that are not a case state or an assignee
+const NEEDS_YOU = ':needs-you'
+const WORKING = ':working'
+const MINE = ':mine'
+const NEAR_SLA = ':near-sla'
+const OTHER = ':other'
 
 const KIND_WORDS: Record<string, string> = {
   investigate: 'Investigation',
@@ -230,6 +259,60 @@ function CasesTable({
     ? `${Math.round(strip.agent_closure_share * 100)}%`
     : '—'
 
+  // the one reset, for the Filters panel's Clear all and the filter row's Clear; the search stays
+  const clearAll = () =>
+    setFilters({
+      state: '',
+      needsYou: false,
+      working: false,
+      closedBy: '',
+      alertsFrom: '',
+      kind: '',
+      priority: 'any',
+      sla: '',
+      assignee: '',
+      workflow: '',
+      dataSource: '',
+    })
+
+  // State: the needs-you and working flags read as their own options; each makes the call its chip did
+  const allOpen: Partial<CaseFilters> = { state: '', needsYou: false, working: false, closedBy: '' }
+  const stateValue = filters.needsYou ? NEEDS_YOU : filters.working ? WORKING : filters.state
+  const pickState = (v: string) =>
+    setFilters(
+      v === NEEDS_YOU ? { ...allOpen, needsYou: true }
+        : v === WORKING ? { ...allOpen, working: true }
+        : { ...allOpen, state: v },
+    )
+  const stateOptions = [
+    { value: '', label: 'All open', count: openCount },
+    { value: NEEDS_YOU, label: 'Needs you', count: strip.needs_you, dot: TONE_DOT.needs },
+    { value: WORKING, label: 'Still working', count: Math.max(0, openCount - strip.needs_you), dot: 'var(--ac)' },
+    ...stateKeys.map((key) => ({
+      value: key,
+      label: STATE_WORDS.find((o) => o.value === key)?.label ?? cap(key.replace(/_/g, ' ')),
+      count: strip.by_state[key] ?? 0,
+      dot: TONE_DOT[statePill(key).tone],
+    })),
+    { value: 'closed', label: 'Closed' },
+  ]
+
+  // Assigned: an assignee typed in the Filters panel shows as its own option, so it never hides
+  const assignee = filters.assignee.trim()
+  // the panel's assignee can sit alongside Near SLA; then one option names both
+  const other = assignee && assignee !== me ? assignee : ''
+  const assignedValue = other ? OTHER : filters.sla === 'risk' ? NEAR_SLA : assignee ? MINE : ''
+  const assignedOptions = [
+    { value: '', label: 'Everyone’s' },
+    ...(me ? [{ value: MINE, label: 'Assigned to me' }] : []),
+    { value: NEAR_SLA, label: 'Near SLA', count: strip.sla_at_risk },
+    ...(other ? [{ value: OTHER, label: filters.sla === 'risk' ? `${other} · Near SLA` : other }] : []),
+  ]
+  const pickAssigned = (v: string) => {
+    if (v === OTHER) return
+    setFilters(v === MINE ? { assignee: me, sla: '' } : v === NEAR_SLA ? { sla: 'risk', assignee: '' } : { assignee: '', sla: '' })
+  }
+
   const kindName = (c: CaseRow) => (c.workflowId && workflowNames[c.workflowId]) || c.workflowId || '—'
 
   return (
@@ -252,19 +335,7 @@ function CasesTable({
               </div>
               <FilterButton
                 activeCount={panelFilters}
-                onClearAll={() => setFilters({
-                  state: '',
-                  needsYou: false,
-                  working: false,
-                  closedBy: '',
-                  alertsFrom: '',
-                  kind: '',
-                  priority: 'any',
-                  sla: '',
-                  assignee: '',
-                  workflow: '',
-                  dataSource: '',
-                })}
+                onClearAll={clearAll}
               >
                 <FilterGroup
                   label="Priority"
@@ -293,29 +364,50 @@ function CasesTable({
             </>
           }
         />
-        <div className="cases-chips">
-          <div className="chip-group" role="group" aria-label="State">
-            <FilterChip list dot="var(--tx2)" label="All open" count={openCount} active={!filters.needsYou && !filters.working && !filters.state} onClick={() => setFilters({ state: '', needsYou: false, working: false, closedBy: '' })} />
-            <FilterChip list dot={TONE_DOT.needs} label="Needs you" count={strip.needs_you} active={filters.needsYou} onClick={() => setFilters({ needsYou: true, state: '', working: false, closedBy: '' })} />
-            <FilterChip list dot="var(--ac)" label="Still working" count={Math.max(0, openCount - strip.needs_you)} active={filters.working} onClick={() => setFilters({ working: true, needsYou: false, state: '', closedBy: '' })} />
-            {stateKeys.map((key) => (
-              <FilterChip
-                key={key}
-                list
-                dot={TONE_DOT[statePill(key).tone]}
-                label={STATE_WORDS.find((o) => o.value === key)?.label ?? cap(key.replace(/_/g, ' '))}
-                count={strip.by_state[key] ?? 0}
-                active={!filters.needsYou && !filters.working && filters.state === key}
-                onClick={() => setFilters({ state: key, needsYou: false, working: false, closedBy: '' })}
+        <StatCards label="Case status">
+          <StatCard
+            label="Needs you"
+            dot={TONE_DOT.needs}
+            tone="var(--poor)"
+            info={<InfoTip label="How needs you is counted" {...NEEDS_YOU_TIP} />}
+            value={strip.needs_you.toLocaleString()}
+            onClick={() => pickState(filters.needsYou ? '' : NEEDS_YOU)}
+            pressed={filters.needsYou}
+          />
+          <StatCard
+            label="Still working"
+            info={<InfoTip label="How still working is counted" {...WORKING_TIP} />}
+            value={Math.max(0, openCount - strip.needs_you).toLocaleString()}
+            onClick={() => pickState(filters.working ? '' : WORKING)}
+            pressed={filters.working}
+          />
+          <StatCard
+            label="Near SLA"
+            info={<InfoTip label="How near SLA is counted" {...NEAR_SLA_TIP} />}
+            value={strip.sla_at_risk.toLocaleString()}
+            onClick={() => setFilters({ sla: filters.sla === 'risk' ? '' : 'risk', assignee: '' })}
+            pressed={filters.sla === 'risk'}
+          />
+          {/* display-only: the closed filter lists every closed case, not today's */}
+          <StatCard
+            label="Closed today"
+            info={<InfoTip label="How closed today is counted" {...CLOSED_TODAY_TIP} />}
+            value={strip.closed_today.toLocaleString()}
+            sub={`${agentShare} by an agent alone`}
+          />
+        </StatCards>
+        <div className="filter-row" role="group" aria-label="Filters">
+          <div className="filter-row-picks">
+            <Select name="State" value={stateValue} options={stateOptions} onSelect={pickState} />
+            {kinds.length > 0 && (
+              <Select
+                name="Kind"
+                value={filters.kind}
+                options={[{ value: '', label: 'All kinds' }, ...kinds.map((kind) => ({ value: kind, label: kindWord(kind) }))]}
+                onSelect={(kind) => setFilters({ kind })}
               />
-            ))}
-            <FilterChip
-              list
-              label="Closed today"
-              count={`${strip.closed_today} · ${agentShare} by an agent alone`}
-              active={filters.state === 'closed'}
-              onClick={() => setFilters({ state: filters.state === 'closed' ? '' : 'closed', needsYou: false, working: false, closedBy: '' })}
-            />
+            )}
+            <Select name="Assigned" value={assignedValue} options={assignedOptions} onSelect={pickAssigned} />
             {/* set by an Overview link; shown, and removable, so the list never looks wrong for no reason */}
             {filters.closedBy && (
               <FilterChip
@@ -338,21 +430,14 @@ function CasesTable({
               />
             )}
           </div>
-          {kinds.length > 0 && (
-            <div className="chip-group" role="group" aria-label="Kind">
-              <FilterChip list label="All kinds" active={!filters.kind} onClick={() => setFilters({ kind: '' })} />
-              {kinds.map((kind) => (
-                <FilterChip key={kind} list label={kindWord(kind)} active={filters.kind === kind} onClick={() => setFilters({ kind })} />
-              ))}
-            </div>
+          {phase === 'ready' && (
+            <span className="filter-row-summary">
+              {activeFilters || filters.query
+                ? `Showing ${total.toLocaleString()} ${filters.state === 'closed' ? `closed case${total === 1 ? '' : 's'}` : `of ${openCount.toLocaleString()}`}`
+                : `${openCount.toLocaleString()} open case${openCount === 1 ? '' : 's'}`}
+              {activeFilters > 0 && <> · <button type="button" onClick={clearAll}>Clear</button></>}
+            </span>
           )}
-          <div className="chip-group" role="group" aria-label="Owner">
-            <FilterChip list label="Everyone’s" active={!filters.assignee.trim() && !filters.sla} onClick={() => setFilters({ assignee: '', sla: '' })} />
-            {me && (
-              <FilterChip list label="Assigned to me" active={filters.assignee.trim() === me} onClick={() => setFilters({ assignee: me, sla: '' })} />
-            )}
-            <FilterChip list label="Near SLA" count={strip.sla_at_risk} active={filters.sla === 'risk'} onClick={() => setFilters({ sla: filters.sla === 'risk' ? '' : 'risk', assignee: '' })} />
-          </div>
         </div>
       </div>
       {showAdvanced && <AdvancedSearchPanel onResults={setResults} rows={rows} />}

@@ -6464,48 +6464,11 @@
       color: var(--tx1);
    }
 
-   /* the filter row: Kind, Source and What happened dropdowns, then the summary at the table's right edge */
-   .tq-filter-row {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 8px 16px;
-   }
-
-   .tq-dropdowns {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 8px;
-      min-width: 0;
-   }
-
    .tq-source-pick {
       display: inline-flex;
       align-items: center;
       gap: 2px;
       min-width: 0;
-   }
-
-   .tq-summary {
-      margin-left: auto;
-      font-size: 13px;
-      font-weight: 650;
-      color: var(--ac);
-      white-space: nowrap;
-   }
-
-   .tq-summary button {
-      padding: 0;
-      background: none;
-      border: 0;
-      color: inherit;
-      font: inherit;
-      cursor: pointer;
-   }
-
-   .tq-summary button:hover {
-      text-decoration: underline;
    }
 
    .tq-card {
@@ -6895,12 +6858,6 @@
 
       .tq-head-r {
          flex-wrap: wrap;
-      }
-
-      /* the summary takes its own line */
-      .tq-summary {
-         flex-basis: 100%;
-         margin-left: 0;
       }
 
       /* the case page's tab body grows in its stage, which scrolls (cases.css) */

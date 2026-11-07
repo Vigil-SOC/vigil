@@ -553,6 +553,41 @@
   .stat-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+/* The filter row under the status cards (Triage, Cases): toolbar Selects, then the summary at the table's
+   right edge; on one line from the narrow tier up, the summary takes its own line at reflow */
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+.filter-row-picks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.filter-row-summary {
+  margin-left: auto;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ac);
+  white-space: nowrap;
+}
+.filter-row-summary button {
+  padding: 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.filter-row-summary button:hover { text-decoration: underline; }
+@container main (max-width: 699px) {
+  .filter-row-summary { flex-basis: 100%; margin-left: 0; }
+}
+
 .stat-card {
   position: relative;
   display: flex;
