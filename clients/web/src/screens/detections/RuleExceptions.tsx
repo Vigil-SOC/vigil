@@ -17,11 +17,23 @@ interface RuleException {
   days: Record<string, number>
   /** The runner's last run that fetched rows: how many, and which match fields none carried. */
   seen: { rows: number; missing: string[]; at: string } | null
+  /** Its matches on the window's days. */
+  silenced?: number
+}
+
+/** The rule's own fires over the days exception matches are counted for. */
+interface Window {
+  days: number
+  since: string
+  fired: number
+  silenced: number
+  hits: number
 }
 
 interface Listing {
   handed_off: boolean
   exceptions: RuleException[]
+  window?: Window
 }
 
 /** The days the runner keeps per-day counts for (rollout.KEEP_DAYS). */
@@ -46,6 +58,32 @@ function Missing({ seen }: { seen: RuleException['seen'] }) {
       {one
         ? `${verb} not in the 1 row this rule's last run fetched, so this exception can't match it.`
         : `${verb} in none of the ${seen.rows.toLocaleString()} rows this rule's last run fetched, so this exception can't match them.`}
+    </div>
+  )
+}
+
+/** A share of the window's hits, as a whole percent; "<1%" rather than a misleading 0. */
+function share(part: number, whole: number): string {
+  if (!whole || !part) return '0%'
+  const pct = (100 * part) / whole
+  return pct < 1 ? '<1%' : `${Math.round(pct)}%`
+}
+
+/** What the rule did over the exceptions' days: hits, fired and silenced, split in a bar. */
+function WindowStrip({ w }: { w: Window }) {
+  if (!w.hits) return <p className="de-x-win-none">No hits in the last {w.days} days: nothing fired and no exception matched.</p>
+  return (
+    <div className="de-x-win">
+      <div className="de-x-win-head">Last {w.days} days, the window exceptions are counted in</div>
+      <div className="de-x-win-nums">
+        <span><b>{w.hits.toLocaleString()}</b> hits</span>
+        <span><b>{w.fired.toLocaleString()}</b> fired</span>
+        <span><b className="de-x-win-sil">{w.silenced.toLocaleString()}</b> silenced by exceptions ({share(w.silenced, w.hits)})</span>
+      </div>
+      <div className="de-x-win-bar" aria-hidden="true">
+        <i className="fired" style={{ width: `${(100 * w.fired) / w.hits}%` }} />
+        <i className="sil" style={{ width: `${(100 * w.silenced) / w.hits}%` }} />
+      </div>
     </div>
   )
 }
@@ -87,6 +125,7 @@ export default function RuleExceptions({ ruleId }: { ruleId: number }) {
         {canWrite && !adding && <button type="button" className="x1-link de-x-add" onClick={() => setAdding(true)}>Add exception</button>}
       </div>
       {error && <span className="de-x-err" role="alert">{error}</span>}
+      {data.window && !data.handed_off && <WindowStrip w={data.window} />}
       {active.length === 0 && !adding && <p className="de-x-none">No active exceptions. Vigil counts every document this rule matches.</p>}
       {active.length > 0 && (
         <ul className={`de-x-list${data.handed_off ? ' off' : ''}`}>
@@ -101,7 +140,10 @@ export default function RuleExceptions({ ruleId }: { ruleId: number }) {
                   <Missing seen={x.seen} />
                 </div>
                 <div className="de-x-side">
-                  <span className="de-x-n" title={m.title}><b>{m.total.toLocaleString()}</b> {m.total === 1 ? 'hit' : 'hits'} silenced in {KEEP_DAYS}d</span>
+                  <span className="de-x-n" title={m.title}><b>{(x.silenced ?? m.total).toLocaleString()}</b> {(x.silenced ?? m.total) === 1 ? 'hit' : 'hits'} silenced in {data.window?.days ?? KEEP_DAYS}d</span>
+                  {data.window && data.window.hits > 0 && !data.handed_off && (
+                    <span className="de-x-share">{share(x.silenced ?? 0, data.window.hits)} of this rule’s hits</span>
+                  )}
                   {canWrite && removing !== x.exception_id && (
                     <button type="button" className="x1-link de-x-rm" onClick={() => setRemoving(x.exception_id)}>Remove</button>
                   )}
