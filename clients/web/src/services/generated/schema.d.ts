@@ -3304,7 +3304,8 @@ export interface paths {
          * Export Proof Card
          * @description A zip of the proof card: proof-card.json (proof-card/v1), its Ed25519
          *     signature, a PDF of the same data, and the public key. Read-only on the
-         *     inventory; makes the instance's signing key on first use.
+         *     inventory; makes the instance's signing key on first use. The trail records
+         *     each export, and the key's making, as this user.
          */
         post: operations["post_api_detection-rules_proof-card"];
         delete?: never;
@@ -3322,7 +3323,8 @@ export interface paths {
         };
         /**
          * Get Proof Card Key
-         * @description The public key proof cards are signed with, and its id.
+         * @description The public key proof cards are signed with, and its id; made on first
+         *     use, which the trail records as this user.
          */
         get: operations["get_api_detection-rules_proof-card_key"];
         put?: never;

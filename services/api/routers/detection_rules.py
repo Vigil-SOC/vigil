@@ -402,13 +402,15 @@ class ProofCardRequest(BaseModel):
 
 
 @router.post("/proof-card")
-def export_proof_card(body: ProofCardRequest):
+def export_proof_card(
+    body: ProofCardRequest, user: User = Depends(get_current_active_user)
+):
     """A zip of the proof card: proof-card.json (proof-card/v1), its Ed25519
     signature, a PDF of the same data, and the public key. Read-only on the
-    inventory; makes the instance's signing key on first use."""
+    inventory; makes the instance's signing key on first use. The trail records
+    each export, and the key's making, as this user."""
     try:
-        card = proof_card.build(body.rule_ids)
-        data = proof_card.bundle(card)
+        card, data = proof_card.export(body.rule_ids, actor=user.user_id)
     except proof_card.ProofKeyUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
     stamp = card["exported_at"][:19].replace(":", "").replace("-", "")
@@ -422,10 +424,11 @@ def export_proof_card(body: ProofCardRequest):
 
 
 @router.get("/proof-card/key")
-def get_proof_card_key():
-    """The public key proof cards are signed with, and its id."""
+def get_proof_card_key(user: User = Depends(get_current_active_user)):
+    """The public key proof cards are signed with, and its id; made on first
+    use, which the trail records as this user."""
     try:
-        return proof_card.public_key()
+        return proof_card.public_key(actor=user.user_id)
     except proof_card.ProofKeyUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
 

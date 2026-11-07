@@ -32,7 +32,7 @@ import hashlib
 import io
 import json
 import os
-import platform
+import re
 import threading
 import zipfile
 from datetime import datetime, timezone
@@ -46,14 +46,25 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 from sqlalchemy import select
 
+from core.auth import trail_events
 from core.detections import proof_pdf
 from core.detections.inventory.catalog import OVERLAY, tool_of
 from core.secrets_manager import get_secret, secret_writes_refused, set_secret
 from core.storage.connection import get_db_manager
 from core.storage.models import DetectionRule, DetectionRuleStage, DetectionRuleVersion
+from core.storage.unit_of_work import unit_of_work
 
 SCHEMA = "proof-card/v1"
 KEY_SECRET = "VIGIL_PROOF_SIGNING_KEY"
+# The card's exported_from when VIGIL_INSTANCE_NAME is unset: never the host name,
+# which would sign a machine's name into every card.
+DEFAULT_INSTANCE = "Vigil"
+# Trail actions: an export, and the signing key being made.
+EXPORTED = "detections.proof_card_exported"
+KEY_CREATED = "detections.proof_key_created"
+# An ATT&CK technique or sub-technique id. A declared technique that isn't one (a
+# template a SIEM never filled, say) stays on its rule but out of the coverage table.
+ATTACK_ID = re.compile(r"^T\d{4}(\.\d{3})?$")
 # The SIEMs whose live rules a coverage export covers, and Vigil's own overlay.
 COVERAGE_TOOLS = ("elastic", "splunk", "wazuh", OVERLAY)
 TOOL_NAMES = {
@@ -118,6 +129,8 @@ def coverage(rules: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
             continue
         state = _state(rule["checks"])
         for technique in rule["techniques"]:
+            if not ATTACK_ID.match(technique):
+                continue
             cells = table.setdefault(technique, {})
             held = cells.get(rule["siem"])
             if held is None or STATES.index(state) < STATES.index(held[0]):
@@ -130,6 +143,18 @@ def coverage(rules: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
         }
         for t in sorted(table)
     ]
+
+
+def unmapped(rules: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Declared techniques that aren't ATT&CK ids, with how many live rules carry each."""
+    counts: Dict[str, int] = {}
+    for rule in rules:
+        if rule["status"] != "active":
+            continue
+        for technique in set(rule["techniques"]):
+            if not ATTACK_ID.match(technique):
+                counts[technique] = counts.get(technique, 0) + 1
+    return [{"technique": t, "rules": counts[t]} for t in sorted(counts)]
 
 
 def _stage_row(stage: DetectionRuleStage, of: str) -> Dict[str, Any]:
@@ -149,6 +174,7 @@ def build(
     """The card: the listed rules (any status); or, when ``rule_ids`` is None,
     coverage over every live SIEM and overlay rule with the rules behind it."""
     table: Optional[List[Dict[str, Any]]] = None
+    odd: List[Dict[str, Any]] = []
     live = 0
     with get_db_manager().session_scope() as session:
         statement = (
@@ -168,7 +194,7 @@ def build(
         if rule_ids is None:
             found = [(r, v) for r, v in found if tool_of(r.source) in COVERAGE_TOOLS]
             live = len(found)
-            table = coverage(
+            light = [
                 {
                     "rule_id": r.id,
                     "status": r.status,
@@ -177,7 +203,9 @@ def build(
                     "checks": v.checks or {},
                 }
                 for r, v in found
-            )
+            ]
+            table = coverage(light)
+            odd = unmapped(light)
             behind = {i for row in table for i in row["rule_ids"].values()}
             found = [(r, v) for r, v in found if r.id in behind]
         wanted = {r.id for r, _ in found} | {
@@ -203,6 +231,7 @@ def build(
     if table is not None:
         card["coverage"] = table
         card["live_rules"] = live
+        card["unmapped"] = odd
     return card
 
 
@@ -239,8 +268,8 @@ def _rule(
 
 
 def instance_name() -> str:
-    """The Vigil the card came from: VIGIL_INSTANCE_NAME, else the host name."""
-    return os.environ.get("VIGIL_INSTANCE_NAME") or platform.node()  # noqa: ENV001
+    """The Vigil the card came from: VIGIL_INSTANCE_NAME, else DEFAULT_INSTANCE."""
+    return os.environ.get("VIGIL_INSTANCE_NAME") or DEFAULT_INSTANCE  # noqa: ENV001
 
 
 def canonical(card: Dict[str, Any]) -> bytes:
@@ -253,7 +282,9 @@ def canonical(card: Dict[str, Any]) -> bytes:
 # The key ---------------------------------------------------------------------
 
 
-def _private_key() -> Ed25519PrivateKey:
+def _private_key(actor: Optional[str] = None) -> Ed25519PrivateKey:
+    """The instance's key; made and stored on first use, which the trail records
+    with ``actor`` (whoever's request made it)."""
     with _key_lock:
         stored = get_secret(KEY_SECRET)
         if stored:
@@ -271,6 +302,10 @@ def _private_key() -> Ed25519PrivateKey:
         )
         if not set_secret(KEY_SECRET, base64.b64encode(raw).decode()):
             raise ProofKeyUnavailable("Could not store a new proof signing key.")
+        # The key exists now: recorded, or held to be recorded late.
+        trail_events.safety(
+            KEY_CREATED, actor=actor or "system", key_id=key_id(key.public_key())
+        )
         return key
 
 
@@ -288,8 +323,8 @@ def key_id(public: Ed25519PublicKey) -> str:
     return hashlib.sha256(raw).hexdigest()[:16]
 
 
-def public_key() -> Dict[str, str]:
-    public = _private_key().public_key()
+def public_key(actor: Optional[str] = None) -> Dict[str, str]:
+    public = _private_key(actor).public_key()
     return {"key_id": key_id(public), "public_key_pem": public_pem(public)}
 
 
@@ -308,17 +343,55 @@ def verify(data: bytes, signature_b64: str, pem: str) -> bool:
 # The export ------------------------------------------------------------------
 
 
-def sign(data: bytes, key: Optional[Ed25519PrivateKey] = None) -> Tuple[str, str, str]:
+def sign(
+    data: bytes, key: Optional[Ed25519PrivateKey] = None, actor: Optional[str] = None
+) -> Tuple[str, str, str]:
     """(signature base64, key id, public key PEM) for ``data``."""
-    key = key or _private_key()
+    key = key or _private_key(actor)
     public = key.public_key()
     return base64.b64encode(key.sign(data)).decode(), key_id(public), public_pem(public)
 
 
 def bundle(card: Dict[str, Any], key: Optional[Ed25519PrivateKey] = None) -> bytes:
     """The zip: the JSON, its signature, the PDF and the public key."""
+    return _bundle(card, key)[0]
+
+
+def export_kind(rule_ids: Optional[List[int]]) -> str:
+    """The trail's name for an export: coverage, one rule, or a listed set."""
+    if rule_ids is None:
+        return "coverage"
+    return "single" if len(set(rule_ids)) == 1 else "listed"
+
+
+def export(
+    rule_ids: Optional[List[int]], actor: str, now: Optional[datetime] = None
+) -> Tuple[Dict[str, Any], bytes]:
+    """(card, zip) for ``actor``, with its trail entry. The entry commits before
+    the zip is handed back; if it can't be written the export fails."""
+    card = build(rule_ids, now)
+    data, digest, kid = _bundle(card, None, actor)
+    with unit_of_work() as session:
+        trail_events.record(
+            session,
+            EXPORTED,
+            actor=actor,
+            kind=export_kind(rule_ids),
+            rule_count=card["rule_count"],
+            key_id=kid,
+            sha256=digest,
+        )
+    return card, data
+
+
+def _bundle(
+    card: Dict[str, Any],
+    key: Optional[Ed25519PrivateKey] = None,
+    actor: Optional[str] = None,
+) -> Tuple[bytes, str, str]:
+    """(zip, SHA-256 of the JSON, key id)."""
     data = canonical(card)
-    signature, kid, pem = sign(data, key)
+    signature, kid, pem = sign(data, key, actor)
     digest = hashlib.sha256(data).hexdigest()
     pdf = proof_pdf.render(
         _pdf_lines(card, digest, signature, kid), _footer(card, digest)
@@ -330,7 +403,7 @@ def bundle(card: Dict[str, Any], key: Optional[Ed25519PrivateKey] = None) -> byt
         zf.writestr("proof-card.pdf", pdf)
         zf.writestr("vigil-proof-key.pub", pem)
         zf.writestr("README.txt", _readme(digest, kid))
-    return out.getvalue()
+    return out.getvalue(), digest, kid
 
 
 def _footer(card: Dict[str, Any], digest: str) -> str:
@@ -346,6 +419,8 @@ def _readme(digest: str, kid: str) -> str:
         "vigil-proof-key.pub  the signing Vigil's public key (PEM)\n\n"
         f"SHA-256 of proof-card.json: {digest}\n"
         f"Signing key id: {kid}\n\n"
+        "exported_from names the Vigil that signed it: its VIGIL_INSTANCE_NAME, or\n"
+        f'"{DEFAULT_INSTANCE}" when that is unset (never the machine\'s host name).\n\n'
         "To check it wasn't changed:\n"
         "  python vigil_verify.py proof-card.zip --key <the key you got from Vigil>\n"
         "Get the key from the Vigil itself (GET /api/detection-rules/proof-card/key);\n"
@@ -418,6 +493,15 @@ def _pdf_lines(
             )
             technique = row["technique"][: width - 2]
             add(technique.ljust(width) + cells, 8, "mono")
+        if card.get("unmapped"):
+            odd = ", ".join(
+                f"{u['technique']} ({u['rules']})" for u in card["unmapped"]
+            )
+            add(
+                "Declared techniques that aren't ATT&CK ids, left out of the table "
+                f"(live rules carrying each): {odd}",
+                8,
+            )
     for rule in card["rules"]:
         add("")
         add(rule["name"], 10.5, "bold")

@@ -183,6 +183,9 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "role.updated": _role("Changed"),
     "role.deleted": _role("Deleted"),
     "roles.revised": "Revised the built-in roles",
+    "detections.proof_card_exported": lambda p: "Exported a proof card"
+    + (f" ({p['kind']}, {p['rule_count']} rules)" if p.get("kind") else ""),
+    "detections.proof_key_created": "Made the proof card signing key",
     "autonomy.tool_classified": lambda p: f"Classed {p.get('tool') or 'a tool'} as "
     f"{_word(p.get('class_after')) or 'unclassified'}",
     "tools.classified": "Classed outside tools on upgrade",

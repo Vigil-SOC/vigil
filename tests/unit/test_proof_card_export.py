@@ -91,8 +91,32 @@ def inventory(monkeypatch):
 @pytest.fixture
 def key(monkeypatch):
     k = Ed25519PrivateKey.generate()
-    monkeypatch.setattr(proof_card, "_private_key", lambda: k)
+    monkeypatch.setattr(proof_card, "_private_key", lambda actor=None: k)
     return k
+
+
+@pytest.fixture(autouse=True)
+def trail(monkeypatch):
+    """The audit trail, in memory: (action, fields, how) per entry."""
+    rows = []
+
+    @contextmanager
+    def uow():
+        yield "session"
+
+    monkeypatch.setattr(proof_card, "unit_of_work", uow, raising=False)
+    monkeypatch.setattr(
+        "core.auth.trail_events.record",
+        lambda session, action, beside=None, **f: rows.append((action, f, session)),
+    )
+    monkeypatch.setattr(
+        "core.auth.trail_events.safety",
+        lambda action, beside=None, **f: rows.append((action, f, "safety")),
+    )
+    return rows
+
+
+USER = SimpleNamespace(user_id="user-viewer1", username="viewer1")
 
 
 # The card
@@ -209,18 +233,22 @@ def _live(rule_id, siem, techniques, checks, status="active"):
 def test_coverage_takes_each_siems_best_live_rule():
     fail, caught = {"runs": {"result": "fail"}}, {"caught": {"result": "pass"}}
     rules = [
-        _live(1, "elastic", ["T1"], fail),
-        _live(2, "elastic", ["T1", "T2"], caught),
-        _live(3, "splunk", ["T1"], fail),
-        _live(4, "wazuh", ["T1"], caught, status="disabled"),
+        _live(1, "elastic", ["T1001"], fail),
+        _live(2, "elastic", ["T1001", "T1002"], caught),
+        _live(3, "splunk", ["T1001"], fail),
+        _live(4, "wazuh", ["T1001"], caught, status="disabled"),
     ]
     assert proof_card.coverage(rules) == [
         {
-            "technique": "T1",
+            "technique": "T1001",
             "siems": {"elastic": "proven", "splunk": "cant_fire"},
             "rule_ids": {"elastic": 2, "splunk": 3},
         },
-        {"technique": "T2", "siems": {"elastic": "proven"}, "rule_ids": {"elastic": 2}},
+        {
+            "technique": "T1002",
+            "siems": {"elastic": "proven"},
+            "rule_ids": {"elastic": 2},
+        },
     ]
 
 
@@ -374,7 +402,7 @@ def test_vigil_verify_rejects_another_key(tmp_path, inventory, key):
 
 def test_the_export_route_returns_the_zip(inventory, key):
     inventory["pairs"] = [(_rule(7), _version(7))]
-    response = routes.export_proof_card(routes.ProofCardRequest(rule_ids=[7]))
+    response = routes.export_proof_card(routes.ProofCardRequest(rule_ids=[7]), USER)
     assert response.media_type == "application/zip"
     assert (
         'filename="vigil-proof-card_rules_' in response.headers["content-disposition"]
@@ -383,13 +411,13 @@ def test_the_export_route_returns_the_zip(inventory, key):
 
 
 def test_the_routes_say_when_there_is_no_key(inventory, monkeypatch):
-    def refuse():
+    def refuse(actor=None):
         raise proof_card.ProofKeyUnavailable("no key")
 
     monkeypatch.setattr(proof_card, "_private_key", refuse)
     for call in (
-        lambda: routes.export_proof_card(routes.ProofCardRequest()),
-        routes.get_proof_card_key,
+        lambda: routes.export_proof_card(routes.ProofCardRequest(), USER),
+        lambda: routes.get_proof_card_key(USER),
     ):
         with pytest.raises(HTTPException) as err:
             call()
@@ -406,3 +434,98 @@ def test_the_pdf_coverage_table_lines_up_in_courier(inventory, key):
     assert b"/F3 8.0 Tf 1 0 0 1 48.0" in pdf
     assert b"(T1003.001  Fires        -            )" in pdf
     assert b"(T1059.001  -            Fires        )" in pdf
+
+
+# The trail
+
+
+@pytest.mark.parametrize(
+    "rule_ids, kind", [(None, "coverage"), ([7], "single"), ([7, 8], "listed")]
+)
+def test_each_export_is_on_the_trail(inventory, key, trail, rule_ids, kind):
+    inventory["pairs"] = [(_rule(7), _version(7)), (_rule(8), _version(8))]
+    response = routes.export_proof_card(
+        routes.ProofCardRequest(rule_ids=rule_ids), USER
+    )
+    data = _unzip(response.body)["proof-card.json"]
+    ((action, fields, how),) = trail
+    assert action == "detections.proof_card_exported"
+    assert how == "session"
+    assert fields == {
+        "actor": "user-viewer1",
+        "kind": kind,
+        "rule_count": json.loads(data)["rule_count"],
+        "key_id": proof_card.key_id(key.public_key()),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+
+
+def test_an_export_the_trail_cannot_record_fails(inventory, key, monkeypatch):
+    inventory["pairs"] = [(_rule(7), _version(7))]
+
+    def broken(*a, **kw):
+        raise RuntimeError("trail down")
+
+    monkeypatch.setattr("core.auth.trail_events.record", broken)
+    with pytest.raises(RuntimeError):
+        routes.export_proof_card(routes.ProofCardRequest(rule_ids=[7]), USER)
+
+
+def test_making_the_key_is_on_the_trail_with_who_asked(monkeypatch, trail):
+    store = {}
+    monkeypatch.setattr(proof_card, "get_secret", lambda k: store.get(k))
+    monkeypatch.setattr(
+        proof_card, "set_secret", lambda k, v: store.update({k: v}) or True
+    )
+    monkeypatch.setattr(proof_card, "secret_writes_refused", lambda: False)
+    made = routes.get_proof_card_key(USER)
+    routes.get_proof_card_key(USER)
+    assert trail == [
+        (
+            "detections.proof_key_created",
+            {"actor": "user-viewer1", "key_id": made["key_id"]},
+            "safety",
+        )
+    ]
+
+
+# Where it came from
+
+
+def test_exported_from_never_falls_back_to_the_host_name(monkeypatch):
+    monkeypatch.delenv("VIGIL_INSTANCE_NAME", raising=False)
+    assert proof_card.instance_name() == "Vigil"
+    monkeypatch.setenv("VIGIL_INSTANCE_NAME", "acme-soc")
+    assert proof_card.instance_name() == "acme-soc"
+
+
+def test_the_readme_says_where_exported_from_comes_from(inventory, key):
+    inventory["pairs"] = [(_rule(7), _version(7))]
+    readme = _unzip(proof_card.bundle(proof_card.build([7], now=NOW)))[
+        "README.txt"
+    ].decode()
+    assert "VIGIL_INSTANCE_NAME" in readme
+    assert '"Vigil" when that is unset' in readme
+
+
+# Techniques that aren't ATT&CK ids
+
+
+def test_coverage_leaves_out_what_isnt_an_attack_id_and_lists_it(inventory, key):
+    inventory["pairs"] = [
+        (
+            _rule(1, "wazuh", techniques=("$(THREAT.SOFTWARE.ID)", "T1059.001")),
+            _version(1),
+        ),
+        (_rule(2, "wazuh", techniques=("$(THREAT.SOFTWARE.ID)",)), _version(2)),
+        (_rule(3, "elastic", techniques=("t1003", "T1003")), _version(3)),
+    ]
+    card = proof_card.build(now=NOW)
+    assert [row["technique"] for row in card["coverage"]] == ["T1003", "T1059.001"]
+    assert card["unmapped"] == [
+        {"technique": "$(THREAT.SOFTWARE.ID)", "rules": 2},
+        {"technique": "t1003", "rules": 1},
+    ]
+    pdf = _unzip(proof_card.bundle(card))["proof-card.pdf"]
+    assert b"aren't ATT&CK ids" in pdf
+    assert b"($(THREAT.SOFTWARE.ID)  " not in pdf
