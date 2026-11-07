@@ -3248,6 +3248,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/detection-rules/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Metrics
+         * @description The rollout's success metrics from stored data, each with where its
+         *     numbers come from and what that data cannot say. Read-only.
+         */
+        get: operations["get_api_detection-rules_metrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/detection-rules/overlay-only": {
         parameters: {
             query?: never;
@@ -3464,7 +3485,8 @@ export interface paths {
         put?: never;
         /**
          * Release Rule
-         * @description Lifts a person's hold on a shadow rule; the normal rollout applies again.
+         * @description Lifts a person's hold, leaving the rule in its current stage; the normal
+         *     rollout applies again.
          */
         post: operations["post_api_detection-rules_rules_rule_id_release"];
         delete?: never;
@@ -3504,7 +3526,8 @@ export interface paths {
         /**
          * Get Rule Stages
          * @description A rule's stage rows, newest first: version, from and to stage, actor,
-         *     reason and time. Read-only.
+         *     reason and time; and ``held``, whether a person's Revert holds it in shadow.
+         *     Read-only.
          */
         get: operations["get_api_detection-rules_rules_rule_id_stages"];
         put?: never;
@@ -17965,6 +17988,37 @@ export interface operations {
         };
     };
     "get_api_detection-rules_mcp-env": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_detection-rules_metrics": {
         parameters: {
             query?: never;
             header?: {

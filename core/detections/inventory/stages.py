@@ -61,19 +61,32 @@ def _state(session: Any, rule_id: int) -> Tuple[Optional[Any], Optional[Any]]:
     return rule, rows[0] if rows else None
 
 
-def history(rule_id: int) -> List[Dict[str, Any]]:
+def history(rule_id: int) -> Dict[str, Any]:
+    """The rule's stage rows, newest first, and whether a person's Revert holds
+    it (the same hold rollout reads)."""
     with get_db_manager().session_scope() as session:
         rule = session.get(DetectionRule, rule_id)
         if rule is None:
             raise LookupError(f"No detection rule {rule_id}")
-        return [_row(r) for r in _rows(session, rule_id)]
+        return {
+            "stages": [_row(r) for r in _rows(session, rule_id)],
+            "held": _held(session, rule_id),
+        }
 
 
 def _write(
-    session: Any, rule: Any, latest: Any, stage: str, hold: bool, who: Tuple[str, str],
-    reason: str, action: str,
+    session: Any,
+    rule: Any,
+    latest: Any,
+    stage: str,
+    hold: bool,
+    who: Tuple[str, str],
+    reason: str,
+    action: str,
 ) -> Dict[str, Any]:
     username, principal = who
+    # Read before the add: a query after it would autoflush the new row.
+    was_held = _held(session, rule.id)
     session.add(
         DetectionRuleStage(
             rule_id=rule.id,
@@ -89,7 +102,11 @@ def _write(
         config_type=AUDIT_TYPE,
         config_key=f"detection_rule:{rule.id}",
         action="update",
-        old_value={"rule_id": rule.id, "stage": latest.stage, "hold": _held(session, rule.id)},
+        old_value={
+            "rule_id": rule.id,
+            "stage": latest.stage,
+            "hold": was_held,
+        },
         new_value={"rule_id": rule.id, "stage": stage, "hold": hold, "event": action},
         change_reason=reason,
     )
@@ -133,9 +150,12 @@ def revert(rule_id: int, who: Tuple[str, str], reason: str) -> Dict[str, Any]:
 
 
 def release(rule_id: int, who: Tuple[str, str], reason: str) -> Dict[str, Any]:
-    """Lifts a person's hold: the rollout rules apply to the rule again."""
+    """Lifts a person's hold, leaving the rule in the stage it is in (a held rule
+    that is now off stays off); the rollout rules apply to it again."""
     with get_db_manager().session_scope() as session:
         rule, latest = _context(rule_id, session)
         if not _held(session, rule.id):
             raise ValueError(f"Rule {rule_id} is not held by a person")
-        return _write(session, rule, latest, "shadow", False, who, reason, "release")
+        return _write(
+            session, rule, latest, latest.stage, False, who, reason, "release"
+        )

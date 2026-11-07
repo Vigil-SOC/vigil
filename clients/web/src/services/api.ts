@@ -969,6 +969,8 @@ export interface RuleStages {
   held?: boolean
   /** Newest first. */
   stages: RuleStageRow[]
+  /** A person's Revert holds it in shadow until a person releases it. */
+  held: boolean
 }
 
 /** What a person's Revert or release wrote. `hold` is true while the rule is held in shadow. */
