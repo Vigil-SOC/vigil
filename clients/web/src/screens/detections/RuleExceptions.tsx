@@ -18,7 +18,7 @@ interface RuleException {
   /** The runner's last run that fetched rows: how many, how many this dropped, and which match fields none carried. */
   seen: { rows: number; matched?: number; missing: string[]; at: string } | null
   /** Its matches on the window's days. */
-  silenced?: number
+  silenced: number
 }
 
 /** The rule's own fires over the days exception matches are counted for. */
@@ -35,11 +35,11 @@ interface Listing {
   /** What the copy's exceptions dropped together from its last run with rows. */
   seen: { rows: number; matched: number; ids: number[]; at: string } | null
   exceptions: RuleException[]
-  window?: Window
+  window: Window
 }
 
 /** The days the runner keeps per-day counts for (rollout.KEEP_DAYS). */
-const KEEP_DAYS = 14
+export const KEEP_DAYS = 14
 
 function Match({ match }: { match: Record<string, unknown> }) {
   return (
@@ -104,14 +104,15 @@ function Silenced({ seen, who }: { seen: { rows: number; at: string }; who: stri
   )
 }
 
-function matched(days: Record<string, number>): { total: number; title: string } {
-  const entries = Object.entries(days).sort(([a], [b]) => a.localeCompare(b))
-  return {
-    total: entries.reduce((a, [, v]) => a + (Number(v) || 0), 0),
-    title:
-      'Hits this exception dropped before they became findings, so none of them count as fires.\n\n' +
-      (entries.length ? entries.map(([d, v]) => `${d}: ${v}`).join('\n') : 'None counted yet'),
-  }
+/** The hover for an exception's count: its matches on the window's days only. */
+function matchedTitle(days: Record<string, number>, since: string): string {
+  const entries = Object.entries(days)
+    .filter(([d]) => d >= since)
+    .sort(([a], [b]) => a.localeCompare(b))
+  return (
+    'Hits this exception dropped before they became findings, so none of them count as fires.\n\n' +
+    (entries.length ? entries.map(([d, v]) => `${d}: ${v}`).join('\n') : 'None counted yet')
+  )
 }
 
 /** An overlay copy's exceptions: Vigil's runner drops what they match before counting or alerting. */
@@ -145,12 +146,11 @@ export default function RuleExceptions({ ruleId }: { ruleId: number }) {
         {canWrite && !adding && <button type="button" className="x1-link de-x-add" onClick={() => setAdding(true)}>Add exception</button>}
       </div>
       {error && <span className="de-x-err" role="alert">{error}</span>}
-      {data.window && !data.handed_off && <WindowStrip w={data.window} />}
+      {!data.handed_off && <WindowStrip w={data.window} />}
       {active.length === 0 && !adding && <p className="de-x-none">No active exceptions. Vigil counts every document this rule matches.</p>}
       {active.length > 0 && (
         <ul className={`de-x-list${data.handed_off ? ' off' : ''}`}>
           {active.map((x) => {
-            const m = matched(x.days)
             return (
               <li key={x.exception_id}>
                 <div className="de-x-body">
@@ -161,9 +161,9 @@ export default function RuleExceptions({ ruleId }: { ruleId: number }) {
                   {droppedAll(x.seen) && <Silenced seen={x.seen!} who="Dropped" />}
                 </div>
                 <div className="de-x-side">
-                  <span className="de-x-n" title={m.title}><b>{(x.silenced ?? m.total).toLocaleString()}</b> {(x.silenced ?? m.total) === 1 ? 'hit' : 'hits'} silenced in {data.window?.days ?? KEEP_DAYS}d</span>
-                  {data.window && data.window.hits > 0 && !data.handed_off && (
-                    <span className="de-x-share">{share(x.silenced ?? 0, data.window.hits)} of this rule’s hits</span>
+                  <span className="de-x-n" title={matchedTitle(x.days, data.window.since)}><b>{x.silenced.toLocaleString()}</b> {x.silenced === 1 ? 'hit' : 'hits'} silenced in {data.window.days}d</span>
+                  {data.window.hits > 0 && !data.handed_off && (
+                    <span className="de-x-share">{share(x.silenced, data.window.hits)} of this rule’s hits</span>
                   )}
                   {canWrite && removing !== x.exception_id && (
                     <button type="button" className="x1-link de-x-rm" onClick={() => setRemoving(x.exception_id)}>Remove</button>

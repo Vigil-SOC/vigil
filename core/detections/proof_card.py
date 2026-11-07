@@ -62,6 +62,8 @@ DEFAULT_INSTANCE = "Vigil"
 # Trail actions: an export, and the signing key being made.
 EXPORTED = "detections.proof_card_exported"
 KEY_CREATED = "detections.proof_key_created"
+# What a request that made the key was: an export, or a read of the public key.
+MADE_BY = ("export", "key_read")
 # An ATT&CK technique or sub-technique id. A declared technique that isn't one (a
 # template a SIEM never filled, say) stays on its rule but out of the coverage table.
 ATTACK_ID = re.compile(r"^T\d{4}(\.\d{3})?$")
@@ -283,9 +285,14 @@ def canonical(card: Dict[str, Any]) -> bytes:
 # The key ---------------------------------------------------------------------
 
 
-def _private_key(actor: Optional[str] = None) -> Ed25519PrivateKey:
+def _private_key(
+    actor: Optional[str] = None, made_by: str = "export"
+) -> Ed25519PrivateKey:
     """The instance's key; made and stored on first use, which the trail records
-    as the system's act, triggered by ``actor`` (whoever's request needed it)."""
+    as the system's act on behalf of ``actor``, whose request needed it, and
+    ``made_by`` that request (one of MADE_BY). The person is named by id in
+    ``on_behalf_of``, which the trail resolves to their name when it is read
+    (and blanks if they are erased); no name is written into the entry."""
     with _key_lock:
         stored = get_secret(KEY_SECRET)
         if stored:
@@ -308,7 +315,9 @@ def _private_key(actor: Optional[str] = None) -> Ed25519PrivateKey:
         trail_events.safety(
             KEY_CREATED,
             actor="system",
+            on_behalf_of=actor,
             triggered_by=actor,
+            made_by=made_by,
             key_id=key_id(key.public_key()),
         )
         return key
@@ -329,7 +338,7 @@ def key_id(public: Ed25519PublicKey) -> str:
 
 
 def public_key(actor: Optional[str] = None) -> Dict[str, str]:
-    public = _private_key(actor).public_key()
+    public = _private_key(actor, "key_read").public_key()
     return {"key_id": key_id(public), "public_key_pem": public_pem(public)}
 
 

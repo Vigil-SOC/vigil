@@ -5,7 +5,7 @@ import type { ConsoleScreenProps } from '../../shared/types'
 import { errorText } from '../../shared/errorText'
 import { detectionRulesApi } from '../../services/api'
 import { Empty, Failure } from '../shared/x1'
-import RuleExceptions from './RuleExceptions'
+import RuleExceptions, { KEEP_DAYS } from './RuleExceptions'
 import RuleFindings from './RuleFindings'
 import FindingPopup from '../dashboard/FindingPopup'
 import ProofCardExport from './ProofCardExport'
@@ -58,6 +58,9 @@ interface RuleRow {
   siem_days: number | null
   checks_passing: number
   checks_run: number
+  /** Its active exceptions, and the hits they silenced in the days the runner keeps. */
+  exceptions?: number
+  silenced?: number
 }
 
 interface SiemTally {
@@ -81,6 +84,10 @@ interface RulesReport {
   matched: number
   /** With a search: how many it matches in each view outside this one. */
   matched_elsewhere: Partial<Record<RuleHealth, number>>
+  /** Copies with an active exception, whatever their health. */
+  with_exceptions?: number
+  /** Of those, the ones this view and search leave out. */
+  exceptions_elsewhere?: number
   offset: number
   rules: RuleRow[]
   by_siem: Partial<Record<Siem, SiemTally>>
@@ -167,8 +174,11 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   const [sort, setSort] = useState<Sort>('worst')
   // A flag chip filters on top of All rules; a health chip clears it.
   const [flag, setFlag] = useState<FlagView | null>(null)
-  const pickView = (v: View) => { setFlag(null); setView(v) }
-  const pickFlag = (f: FlagView) => { setView('all'); setFlag(flag === f ? null : f) }
+  // Has exceptions: every rule with an active exception, whatever its health.
+  const [excepted, setExcepted] = useState(false)
+  const pickView = (v: View) => { setFlag(null); setExcepted(false); setView(v) }
+  const pickFlag = (f: FlagView) => { setView('all'); setExcepted(false); setFlag(flag === f ? null : f) }
+  const pickExcepted = () => { setFlag(null); setView('all'); setExcepted(!excepted) }
   const [report, setReport] = useState<RulesReport | null>(null)
   const [rows, setRows] = useState<RuleRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -194,7 +204,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
     return () => window.clearTimeout(t)
   }, [typed])
 
-  const params = { health: view === 'all' ? undefined : view, tool: siem === 'all' ? undefined : siem, q: q || undefined, sort: sort === 'worst' ? undefined : sort, flag: flag ?? undefined, rules: picked || undefined }
+  const params = { health: view === 'all' ? undefined : view, tool: siem === 'all' ? undefined : siem, q: q || undefined, sort: sort === 'worst' ? undefined : sort, flag: flag ?? undefined, rules: picked || undefined, has_exceptions: excepted || undefined }
 
   // Each view, SIEM and search asks the server: the listing is capped, so narrowing capped rows here would miss rules.
   useEffect(() => {
@@ -215,9 +225,9 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
       .catch((e) => { if (live) setError(errorText(e, 'Rule health did not load.')) })
       .finally(() => { if (live) setLoading(false) })
     return () => { live = false }
-    // params follows view, siem, q, sort, flag and picked
+    // params follows view, siem, q, sort, flag, picked and excepted
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, siem, q, sort, flag, picked])
+  }, [view, siem, q, sort, flag, picked, excepted])
 
   const matched = report?.matched ?? 0
   const hasMore = !loading && rows.length < matched
@@ -259,7 +269,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   const siems = SIEMS.filter((s) => report.by_siem[s])
   const cantFire = siems.reduce((a, s) => a + (report.by_siem[s]?.cant_fire ?? 0), 0)
   const of = viewCount(report, view)
-  const viewName = flag ? FLAG[flag].label : view === 'attention' ? 'Needs attention' : view === 'all' ? 'All rules' : HEALTH[view].label
+  const viewName = excepted ? 'Has exceptions' : flag ? FLAG[flag].label : view === 'attention' ? 'Needs attention' : view === 'all' ? 'All rules' : HEALTH[view].label
   // A search that misses here may hit in a view the chips leave out (a healthy rule
   // under Needs attention): say how many and where, one click from all of them.
   const elsewhere = Object.entries(report.matched_elsewhere ?? {}) as [RuleHealth, number][]
@@ -278,7 +288,12 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   }
   const exportName = [viewName, siem === 'all' ? null : SIEM_NAME[siem], q ? `“${q}”` : null].filter(Boolean).join(' · ')
   const order = sort === 'worst' ? 'worst first' : sort === 'name' ? 'by name' : sort === 'most_fires' ? 'most fires first' : 'fewest fires first'
-  const note = flag && !q
+  // Rules with active exceptions this view leaves out (a healthy one under Needs
+  // attention): say so, one click from all of them, so what's silenced stays in sight.
+  const excElsewhere = excepted ? 0 : report.exceptions_elsewhere ?? 0
+  const note = excepted && !q
+    ? `${plural(report.matched, 'rule has', 'rules have')} active exceptions, whatever ${report.matched === 1 ? 'its' : 'their'} health, ${order}`
+    : flag && !q
     ? `${plural(report.matched, 'rule', 'rules')} · ${FLAG[flag].note}, ${order}`
     : q
     ? `${plural(report.matched, 'rule matches', 'rules match')} “${q}” in ${viewName}${elsewhereN ? ` · ${n(elsewhereN)} more in other views` : ''}`
@@ -433,8 +448,10 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
             {FLAGS.map((f) => (
               <Chip key={f} on={flag === f} tone={FLAG[f].tone} onClick={() => pickFlag(f)} label={FLAG[f].label} count={report.flag_counts?.[f] ?? 0} />
             ))}
+            <span className="de-div" aria-hidden="true" />
+            <Chip on={excepted} tone="fair" onClick={pickExcepted} label="Has exceptions" count={report.with_exceptions ?? 0} />
           </div>
-          <select aria-label="Other views" className={`de-more${!flag && MORE.includes(view) ? ' on' : ''}`} value={!flag && MORE.includes(view) ? view : ''} onChange={(e) => pickView((e.target.value || 'attention') as View)}>
+          <select aria-label="Other views" className={`de-more${!flag && !excepted && MORE.includes(view) ? ' on' : ''}`} value={!flag && !excepted && MORE.includes(view) ? view : ''} onChange={(e) => pickView((e.target.value || 'attention') as View)}>
             <option value="">More views</option>
             <option value="disabled">Disabled · {n(report.counts.disabled)}</option>
             <option value="no_fire_data">No fire data · {n(report.counts.no_fire_data)}</option>
@@ -480,7 +497,12 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                         <svg viewBox="0 0 24 24" aria-hidden="true" className={isOpen ? 'up' : ''}><path d="m6 9 6 6 6-6" /></svg>
                       </button>
                     )}
-                    {r.tool === 'overlay' && (
+                    {(r.exceptions ?? 0) > 0 ? (
+                      <button type="button" className="de-flag fair de-exc-pill" aria-expanded={excOpen} onClick={() => setOpen(excOpen ? null : { id: r.rule_id, what: 'exceptions' })}>
+                        {plural(r.exceptions ?? 0, 'exception', 'exceptions')} · {n(r.silenced ?? 0)} silenced in {KEEP_DAYS}d
+                        <svg viewBox="0 0 24 24" aria-hidden="true" className={excOpen ? 'up' : ''}><path d="m6 9 6 6 6-6" /></svg>
+                      </button>
+                    ) : r.tool === 'overlay' && (
                       <button type="button" className="de-raw-toggle" aria-expanded={excOpen} onClick={() => setOpen(excOpen ? null : { id: r.rule_id, what: 'exceptions' })}>
                         {excOpen ? 'Hide exceptions' : 'Exceptions'}
                         <svg viewBox="0 0 24 24" aria-hidden="true" className={excOpen ? 'up' : ''}><path d="m6 9 6 6 6-6" /></svg>
@@ -529,6 +551,12 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
         </div>
         <div className="de-foot">
           <span aria-live="polite">Showing {n(rows.length)} of {n(report.matched)}{more ? ' · loading more…' : ''}</span>
+          {excElsewhere > 0 && (
+            <span>
+              {plural(excElsewhere, 'rule with active exceptions isn’t', 'rules with active exceptions aren’t')} in this view.{' '}
+              <button type="button" className="de-link" onClick={pickExcepted}>Show rules with exceptions</button>
+            </span>
+          )}
           {elsewhereN > 0 && rows.length > 0 && (
             <span>
               {plural(elsewhereN, 'more rule matches', 'more rules match')} in other views ({elsewhereText}).{' '}
