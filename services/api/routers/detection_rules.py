@@ -406,6 +406,13 @@ def _edited(result: Dict[str, Any]) -> Dict[str, Any]:
     raise HTTPException(status_code=status, detail=error)
 
 
+@router.get("/rules/{rule_id}/findings")
+def get_rule_findings(rule_id: int):
+    """The findings a rule copy fired in the fires window, newest first, as the
+    rules list counts them. Read-only."""
+    return catalog.rule_findings(rule_id)
+
+
 class ProofCardRequest(BaseModel):
     """What to export: these rules, or (none) every live rule with coverage."""
 

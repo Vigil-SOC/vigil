@@ -50,6 +50,12 @@ def checked(match: Any, note: Any) -> Tuple[Dict[str, Any], str]:
             raise ValueError("every match field needs a name")
         if value is None or isinstance(value, (dict, list)):
             raise ValueError(f"match value for {field!r} must be a single value")
+        network = _network(value)
+        if network is not None and network.prefixlen == 0:
+            raise ValueError(
+                f"{field} = {value} is a /0 network: it would match every event "
+                f"that has {field}, so the rule could never raise anything"
+            )
     note = str(note or "").strip()
     if not note:
         raise ValueError("a note saying why this is expected is required")
@@ -186,7 +192,9 @@ def listed(session: Any, rule_id: int, removed: bool = False) -> List[Dict[str, 
 def of_copy(rule_id: int) -> Dict[str, Any]:
     """Every exception on an overlay copy, active and removed, with each one's
     per-day matches from the copy's latest version, what its last run with rows
-    saw (``seen``: {rows, missing, at}, or None), and whether a SIEM copy runs
+    saw (``seen``: {rows, matched, missing, at}, or None), what the copy's
+    exceptions together dropped from that run (``seen``: {rows, matched, ids,
+    at}, or None), and whether a SIEM copy runs
     it instead (``handed_off``: Vigil no longer applies them).
 
     LookupError when there is no such rule, ValueError when it isn't an overlay copy.
@@ -206,6 +214,7 @@ def of_copy(rule_id: int) -> Dict[str, Any]:
             )
         )
         counts = (checks or {}).get("exceptions") or {}
+        together = (checks or {}).get("exceptions_seen")
         rows = []
         for r in listed(session, rule_id, removed=True):
             mine = counts.get(str(r["exception_id"])) or {}
@@ -213,6 +222,7 @@ def of_copy(rule_id: int) -> Dict[str, Any]:
     return {
         "rule_id": rule_id,
         "handed_off": rule_id in handed_off([rule_id]),
+        "seen": together,
         "exceptions": rows,
     }
 

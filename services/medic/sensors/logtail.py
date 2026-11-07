@@ -6,13 +6,13 @@ per pod. `sinceTime` is whole seconds; the cursor's hashes drop the replayed
 part of that second. A container restart is drained once with `previous=true`,
 then followed. Neither path sends `limitBytes`.
 
-Background tasks push admitted lines onto their own 15,000-line `Bus` (one 15 s
+Background tasks push admitted lines onto their own 3,000-line `Bus` (one 15 s
 tick at the admit rate). One `LogStream` sensor per service reports the streams'
 state each 30 s, so the scheduler gives it `sensor_health`, `blind` after 3
 failed cycles, and "a quiet stream is not an error".
 
 An admitted line takes this path and no other: cap 16 KiB, redact, fingerprint
-(fp1), draft. Over 1,000 lines/s on the shared tail, or 500 on one stream, the
+(fp1), draft. Over 200 lines/s on the shared tail, or 100 on one stream, the
 line is counted and never redacted or fingerprinted. A raw line is never logged,
 stored or put in a `ReadError`.
 
@@ -84,9 +84,14 @@ HELM_LOG_SERVICES = SERVICES[:5]  # backend … agent-serve; no bifrost, no back
 SIGNAL = {s: "log_" + s.replace("-", "_") for s in LOG_SERVICES}
 ERRORS_AS_SUCCESS = "llm_worker_errors_as_success"
 JOBS_LOGGER = "services.worker.jobs"
-LOG_CAPACITY = 15_000  # one 15 s tick of lines the rate rule admitted
-ADMIT_PER_S = 1_000  # the shared tail; the rate rule, not the buffer, bounds load
-ADMIT_STREAM_PER_S = 500
+LOG_CAPACITY = 3_000  # one 15 s tick of lines the rate rule admitted
+# The highest rate at which Medic keeps up with the nightly python_json flood (3 x
+# 5,000 lines/s for 60 s, #4000): at 200/100 every line was admitted or counted and
+# the counts settled in ~40 s; at 300/150 they were still moving after the 120 s
+# settle window, ~4-6k lines per stream uncounted; at 1,000/500 only 75k-123k of 300k
+# (#3970). Under the flood Medic sits at its 1 vCPU quota at any rate (0/0 -> 0.92).
+ADMIT_PER_S = 200  # the shared tail; the rate rule, not the buffer, bounds load
+ADMIT_STREAM_PER_S = 100
 OVERFLOW_SIGNAL = "log_overflow"  # sample, not a log signal: counts, no line text
 OVERFLOW_EPOCH = "log-overflow"  # in-memory counters; a stable epoch across collects
 _WARNING_UP = frozenset({"WARNING", "ERROR", "CRITICAL"})
@@ -136,22 +141,27 @@ def _json_kind(text: str) -> tuple[str, dict[str, Any] | None]:
 
 def _parse(
     service: str, text: str, redacted: str, redactor: Redactor
-) -> tuple[LogLine, str | None]:
-    """The format by shape: Python JSON, agent JSON, else plain text. Also trace_id.
-    A JSON line is redacted field by field, on the decoded strings: redacting the
-    encoded line misses a secret after an escaped newline."""
+) -> tuple[LogLine, str | None, int]:
+    """The format by shape: Python JSON, agent JSON, else plain text. Also trace_id
+    and the fields' redaction hits. A JSON line is redacted field by field, on the
+    decoded strings: redacting the encoded line misses a secret after an escaped
+    newline."""
+    hits = 0
 
     def field(doc: dict[str, Any], key: str) -> str | None:
+        nonlocal hits
         value = doc.get(key)
         if not isinstance(value, str):
             return None
         # JSON can carry a lone surrogate (\ud83d); fp1 couldn't hash it.
-        return redactor.redact(value.encode("utf-8", "replace").decode())[0]
+        red, n = redactor.redact(value.encode("utf-8", "replace").decode())
+        hits += n
+        return red
 
     kind, doc = _json_kind(text)
     if kind == "python_json" and doc is not None:
         trace = doc.get("trace_id")
-        return (
+        line = (
             LogLine(
                 service,
                 "python_json",
@@ -164,6 +174,7 @@ def _parse(
             ),
             trace if isinstance(trace, str) and _TRACE.fullmatch(trace) else None,
         )
+        return (*line, hits)
     if kind == "agent_json" and doc is not None:
         msg = field(doc, "msg")
         return (
@@ -177,8 +188,9 @@ def _parse(
                 field(doc, "error_type"),
             ),
             None,
+            hits,
         )
-    return LogLine(service, "text", raw=redacted), None
+    return LogLine(service, "text", raw=redacted), None, 0
 
 
 def _template_hash(logger: str, template: str) -> str:
@@ -247,13 +259,14 @@ def line_drafts(
     """The drafts for one line (two for an llm-worker jobs ERROR) and its `line_hash`."""
     sensor = sensor_id or f"docker.logs.{service}"
     text = line.raw[:MAX_LINE].decode("utf-8", "replace")
-    redacted = redactor.redact(text)[0]  # what `line_hash` covers; text lines parse it
+    # What `line_hash` covers; text lines parse it.
+    redacted, hits = redactor.redact(text)
     source_ts = iso(line.ts_ns / 1e9) if line.ts_ns is not None else None
     line_hash = hashlib.sha256(
         f"{service}|{instance or ''}|{source_ts or ''}|{redacted}".encode()
     ).hexdigest()[:16]
 
-    parsed, trace_id = _parse(service, text, redacted, redactor)
+    parsed, trace_id, field_hits = _parse(service, text, redacted, redactor)
     # Only a Python JSON line can be trusted by catalogue; fingerprint.md §2.
     trusted = catalog if parsed.format == "python_json" else ()
     if parsed.logger is not None and not _LOGGER.fullmatch(parsed.logger):
@@ -284,6 +297,9 @@ def line_drafts(
     draft: dict[str, Any] = {
         "_emitter": sensor,
         "_subject": sensor,
+        # template/message/args come out of this redactor: the choke caps them and
+        # adds these hits instead of redacting them again. Never stored.
+        "_log_redacted": hits + field_hits,
         "kind": "log",
         "target": {"service": service, "shape": shape},
         "t": now,
@@ -745,7 +761,7 @@ class LogTail:
         return True
 
     def _over_rate(self, stream: _Stream) -> bool:
-        """True when this line is past 1,000/s on the tail or 500/s on the stream."""
+        """True when this line is past ADMIT_PER_S on the tail or ADMIT_STREAM_PER_S on the stream."""
         assert self._clock is not None
         second = int(self._clock.monotonic())
         if second != self._rate_s:

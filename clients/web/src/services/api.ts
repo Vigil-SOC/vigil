@@ -956,6 +956,9 @@ export const detectionRulesApi = {
   rules: (params: { health?: string; tool?: string; q?: string; offset?: number; sort?: string; flag?: string; rules?: string; has_exceptions?: boolean } = {}) =>
     api.get('/detection-rules/rules', { params }),
 
+  /** The findings a rule copy raised in the fires window, newest first, as the rules list counts them. */
+  ruleFindings: (ruleId: number) => api.get(`/detection-rules/rules/${ruleId}/findings`),
+
   /** The open rule-health flags, newest first, read or unread for the signed-in person. */
   healthInbox: () => api.get<HealthInbox>('/detection-rules/health-inbox'),
 

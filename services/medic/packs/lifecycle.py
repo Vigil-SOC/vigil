@@ -41,7 +41,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from services.medic.contracts.pack_check import Lineage, check_pack
+from services.medic.contracts.pack_check import Lineage, _ts, check_pack
 from services.medic.packs import loader
 from services.medic.packs.loader import (
     ACTIVE,
@@ -423,21 +423,50 @@ def _switched(res, data: bytes, outgoing: loader.StoredPack, by: str) -> Outcome
 # ---- PackState -------------------------------------------------------------------
 
 
-def _facts(data: bytes, prov: dict, vigil_version: str, now: datetime) -> dict | None:
-    """PackFacts from a stored file; stale / in_vigil_range / rules_skipped are derived now."""
-    try:
+# Reached the identity checks; anything stopping earlier never decides P-EXPIRED.
+_PRE_IDENTITY = frozenset({"P-SIZE", "P-JSON", "P-SCHEMA", "P-FILES", "P-HASH"})
+_CHECKED_CAP = 3  # active, previous, bundled
+# (sha256, vigil_version) -> the facts check_pack decides without the clock.
+_checked: dict[tuple[str, str], tuple[dict, datetime | None]] = {}
+
+
+def _checked_facts(data: bytes, sha: str, vigil_version: str, now: datetime):
+    """check_pack once per pack's bytes: keyed on content, so import, activate,
+    rollback and withdraw need no clearing. `expires` stays a time, not a code."""
+    key = (sha, vigil_version)
+    hit = _checked.get(key)
+    if hit is None:
         m = json.loads(data)["manifest"]
         res = check_pack(data, vigil_version=vigil_version, now=now)
-        return {
+        reached = not _PRE_IDENTITY.intersection(res.codes)
+        base = {
             "pack": m["pack"],
-            "sha256": _sha(data),
             "vigil": m["vigil"],
+            "in_vigil_range": "P-VIGIL" not in res.codes,
+            "rules_skipped": len(res.skipped_rules),
+        }
+        hit = (base, _ts(m["pack"]["expires_at"]) if reached else None)
+        while len(_checked) >= _CHECKED_CAP:
+            _checked.pop(next(iter(_checked)))
+        _checked[key] = hit
+    return hit
+
+
+def _facts(data: bytes, prov: dict, vigil_version: str, now: datetime) -> dict | None:
+    """PackFacts from a stored file; stale is derived now (check_pack's P-EXPIRED)."""
+    try:
+        sha = _sha(data)
+        base, expires = _checked_facts(data, sha, vigil_version, now)
+        return {
+            "pack": {**base["pack"]},
+            "sha256": sha,
+            "vigil": {**base["vigil"]},
             "source": prov["source"],
             "imported_by": prov["imported_by"],
             "activated_at": prov["activated_at"],
-            "stale": "P-EXPIRED" in res.codes,
-            "in_vigil_range": "P-VIGIL" not in res.codes,
-            "rules_skipped": len(res.skipped_rules),
+            "stale": expires is not None and expires <= now,
+            "in_vigil_range": base["in_vigil_range"],
+            "rules_skipped": base["rules_skipped"],
         }
     except (ValueError, KeyError, TypeError, AttributeError, RecursionError):
         log.error("stored pack file has no readable manifest")

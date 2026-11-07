@@ -54,8 +54,9 @@ def built(monkeypatch):
         "blind_spots": [],
     }
     copies["rule_of"] = {r.id: (r.id,) for r in copies["rows"]}
+    hit = {"finding_id": "f1", "title": "t", "severity": "high", "timestamp": None}
     health = catalog._health_rows(
-        copies, fires={"Scheduled task from a temp folder": 4}
+        copies, fires={"by_rule": {2: [hit] * 4}, "by_name": {}}
     )
     monkeypatch.setattr(catalog, "_listing_now", lambda: {**health, "blind_spots": []})
     return health
@@ -137,7 +138,9 @@ def test_silenced_counts_only_the_runners_14_days():
         "blind_spots": [],
         "rule_of": {9: (9,)},
     }
-    health = catalog._health_rows(copies, fires={}, today=date(2026, 11, 7))
+    health = catalog._health_rows(
+        copies, fires={"by_rule": {}, "by_name": {}}, today=date(2026, 11, 7)
+    )
     (row,) = [
         r for state in catalog.HEALTH_ORDER for _t, _h, r in health["by_state"][state]
     ]
