@@ -52,6 +52,17 @@ spec:
 """
 
 
+_SUFFIX = {"m": 1e-3, "k": 1e3, "M": 1e6, "G": 1e9, "T": 1e12, "Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40}
+
+
+def quantity(text: str) -> float:
+    """A Kubernetes quantity ("1000m", "1", "1Gi", "1073741824") as a number."""
+    for suffix in sorted(_SUFFIX, key=len, reverse=True):
+        if text.endswith(suffix):
+            return float(text[: -len(suffix)]) * _SUFFIX[suffix]
+    return float(text)
+
+
 class KubectlFailed(ComposeFailed):
     pass
 
@@ -167,6 +178,23 @@ class HelmStack(Stack):
         return {
             n: (max(c1 - first[n][0], 0) / 1e9 / dt, mem / 1024**2)
             for n, (c1, mem) in second.items() if n in first
+        }
+
+    def medic_limits(self) -> dict:
+        """The medic container's limits (None: unset), restarts and OOMKilled, from its pod."""
+        sel = json.loads(self.kubectl("get", self.medic_workload, "-o", "jsonpath={.spec.selector.matchLabels}").stdout)
+        pods = json.loads(self.kubectl(
+            "get", "pods", "-o", "json", "-l", ",".join(f"{k}={v}" for k, v in sel.items()),
+        ).stdout)["items"]
+        pod = max(pods, key=lambda p: p["metadata"]["creationTimestamp"])  # the newest, if a rollout overlaps
+        limits = next(c for c in pod["spec"]["containers"] if c["name"] == "medic").get("resources", {}).get("limits", {})
+        status = next(c for c in pod["status"].get("containerStatuses", []) if c["name"] == "medic")
+        reasons = [(status.get(k) or {}).get("terminated", {}).get("reason") for k in ("state", "lastState")]
+        return {
+            "cpu_vcpu": quantity(limits["cpu"]) if "cpu" in limits else None,
+            "memory_mib": quantity(limits["memory"]) / 1024**2 if "memory" in limits else None,
+            "restarts": status["restartCount"],
+            "oom_killed": "OOMKilled" in reasons,
         }
 
     def not_running(self) -> list[str]:

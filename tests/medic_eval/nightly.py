@@ -7,7 +7,7 @@ Compose: one stack (compose.eval.yml, project medic-eval, Medic on with auth on)
 cell held for its detect_within_s, scored against Medic's own decision log by
 services.medic.eval.score; then the flood, then the survival checks, each in its own
 phase so none overlaps a scored cell's window. Medic's containers are sampled
-(`docker stats`, once a minute) for the whole run.
+(their CPU counters and memory, once a minute) for the whole run.
 
 Helm: `e2e.sh full` on kind with the CNI (its checks are the privilege checks; its
 failure is a failed bring-up), then helm_cells.CELLS on a HelmStack through the same
@@ -16,7 +16,8 @@ survival checks: those stay Compose-only. `--cluster NAME` uses a cluster e2e.sh
 already left up (KEEP=1) and leaves it up.
 
 Red (exit 1) only for: bring-up (on Helm, e2e.sh full), inject, verify or revert failing; harm to Vigil;
-Medic over 1 vCPU / 1 GiB; a survival check or a flood floor failing. Detection,
+Medic's 1 vCPU / 1 GiB limit not in force, or Medic killed for memory or restarted
+(sample.floor_failures); a survival check or a flood floor failing. Detection,
 time to detect, the lane matrix, false alarms and the advisory bars are reported with
 their n and never red. DIR/metrics.json and DIR/summary.md are written on red too.
 
@@ -373,11 +374,22 @@ def summary(m: dict) -> str:
         lines.append(f"| {c['cause']} | {c['rule'] or '-'} | {c['hold_s']} | {c['status']} | {how} |")
     f = m["flood"]
     only = " (Compose only)" if m["shape"] == "helm" else ""
-    lines += ["", "Flood: " + ("not run" + only if not f else "; ".join(f["failures"]) or "floors held")]
+    lines += ["", "Flood: " + ("not run" + only if not f else "; ".join(f["failures"]) or "floors held")
+              + (f" (Medic {_usage(f['usage'].get('medic'))})" if (f or {}).get("usage") else "")]
     checks = (f"{s['check']} {s['status']}" + (f" (restored {', '.join(s['restored'])})" if s.get("restored") else "")
               for s in m["survival"])
     lines += ["", "Survival: " + (", ".join(checks) or "not run" + only)]
+    r = m["resources"]
+    end = (r.get("hard_limits") or {}).get("end") or {}
+    lines += ["", f"Medic's limit (read at the end): {end.get('cpu_vcpu')} vCPU / {end.get('memory_mib')} MiB, "
+              f"restarts {end.get('restarts')}, OOMKilled {end.get('oom_killed')}. "
+              f"Whole run: Medic {_usage(r['usage'].get('medic'))}; advisory bars, never red."]
     return "\n".join(lines) + "\n"
+
+
+def _usage(u: dict | None) -> str:
+    u = u or {}
+    return f"CPU p95 {u.get('cpu_p95_vcpu')} / max {u.get('cpu_max_vcpu')} vCPU, peak {u.get('rss_peak_mib')} MiB, n={u.get('n', 0)}"
 
 
 def resources(sampler: sample.Sampler, store: list, started: float) -> dict:
@@ -394,7 +406,8 @@ def resources(sampler: sample.Sampler, store: list, started: float) -> dict:
         "store_elapsed_s": round(elapsed),
         "store_growth_mib_per_day": None if growth is None else round(growth, 2),
         "advisory_bars": sample.ADVISORY,
-        "hard_limits": {"cpu_vcpu": sample.HARD_CPU_VCPU, "rss_mib": sample.HARD_RSS_MIB},
+        "hard_limits": {"expected": {"cpu_vcpu": sample.HARD_CPU_VCPU, "memory_mib": sample.HARD_RSS_MIB}, **sampler.limits},
+        "floor": sampler.floor(),
     }
 
 
@@ -406,11 +419,7 @@ def verdict(m: dict) -> dict:
     if m["bringup_error"]:
         reasons.append(f"run stopped early: {m['bringup_error']}")
     reasons += [f"harm to Vigil: {p}" for p in m["vigil_harm"]]
-    for svc, u in m["resources"]["usage"].items():
-        if u["n"] and u["cpu_p95_vcpu"] > sample.HARD_CPU_VCPU + sample.CPU_TOLERANCE:
-            reasons.append(f"{svc} p95 CPU {u['cpu_p95_vcpu']} vCPU over {sample.HARD_CPU_VCPU} (n={u['n']})")
-        if u["n"] and u["rss_peak_mib"] > sample.HARD_RSS_MIB:
-            reasons.append(f"{svc} peak memory {u['rss_peak_mib']} MiB over {sample.HARD_RSS_MIB:.0f} (n={u['n']})")
+    reasons += [f"hard floor: {f}" for f in m["resources"].get("floor", [])]
     reasons += [f"flood: {f}" for f in (m["flood"] or {}).get("failures", [])]
     reasons += [f"survival {s['check']}: {s['error']}" for s in m["survival"] if s["status"] == "failed"]
     return {"red": bool(reasons), "reasons": reasons}

@@ -4,7 +4,8 @@ Throwaway containers carrying the eval project's own Compose labels for three Vi
 services log RATE lines/s each for `seconds`; the Docker proxy lists them like the
 real ones, so Medic's log tail reads them. Own phase: it overlaps no scored cell.
 
-Two hard floors: Medic stays under 1 vCPU / 1 GiB and keeps writing (the heartbeat
+Two hard floors: Medic's 1 vCPU / 1 GiB limit stays in force with no kill for memory
+or restart (sample.floor_failures), and Medic keeps writing (the heartbeat
 cycle advances and its store keeps recording; Medic writes decisions on events, not
 on a clock, so the seq is reported and fails only if it goes backwards); the flooded
 streams count dropped lines (`dropped_last_hour`, #3478). The API shows no per-sensor
@@ -18,7 +19,7 @@ import subprocess
 import time
 
 from tests.medic_eval import medic_api
-from tests.medic_eval.sample import CPU_TOLERANCE, HARD_CPU_VCPU, HARD_RSS_MIB, Sampler, summarize
+from tests.medic_eval.sample import Sampler, summarize
 
 SERVICES = ("backend", "soc-daemon", "llm-worker")  # three of the seven log streams
 RATE = 5000  # lines/s per stream
@@ -123,14 +124,9 @@ def run_flood(stack, seconds: int = DURATION_S, rate: int = RATE) -> dict:
     usage = summarize(sampler.samples)
     cycle = lambda st: st["cycle"] if st else None  # noqa: E731
     seq = lambda st: ((st or {}).get("chain_head") or {}).get("seq")  # noqa: E731
-    failures = []
-    for svc, u in usage.items():
-        if u["n"] and u["cpu_p95_vcpu"] > HARD_CPU_VCPU + CPU_TOLERANCE:
-            failures.append(f"{svc} p95 CPU {u['cpu_p95_vcpu']} vCPU over {HARD_CPU_VCPU}")
-        if u["n"] and u["rss_peak_mib"] > HARD_RSS_MIB:
-            failures.append(f"{svc} peak memory {u['rss_peak_mib']} MiB over {HARD_RSS_MIB:.0f}")
+    failures = sampler.floor()
     if not usage["medic"]["n"]:
-        failures.append("no docker stats samples of Medic during the flood")
+        failures.append("no CPU and memory samples of Medic during the flood")
     if not (before and after):
         failures.append("Medic's status could not be read around the flood")
     else:
@@ -151,6 +147,7 @@ def run_flood(stack, seconds: int = DURATION_S, rate: int = RATE) -> dict:
         "emitted": emitted,
         "started_at": started,
         "usage": usage,
+        "limits": sampler.limits,
         "stats_samples": len(sampler.samples),
         "cycle": [cycle(before), cycle(after)],
         "decision_seq": [seq(before), seq(after)],
