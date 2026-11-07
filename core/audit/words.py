@@ -155,6 +155,23 @@ def _role(verb: str) -> Callable[[Mapping[str, Any]], str]:
     )
 
 
+def _proof_export(p: Mapping[str, Any]) -> str:
+    n = p.get("rule_count")
+    if not p.get("kind"):
+        return "Exported a proof card"
+    return f"Exported a proof card ({p['kind']}, {n} {'rule' if n == 1 else 'rules'})"
+
+
+# Who needed the key is the entry's on_behalf_of, which the trail names when it is
+# read; the sentence says what needed it and never prints an id.
+def _proof_key(p: Mapping[str, Any]) -> str:
+    made = {
+        "export": " on a first export",
+        "key_read": " when its public key was first read",
+    }
+    return "Made the proof card signing key" + made.get(p.get("made_by"), "")
+
+
 _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     # Sign-in, account and credential (core/auth/trail_events.py and its callers)
     "auth.sign_in": "Signed in",
@@ -183,18 +200,8 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "role.updated": _role("Changed"),
     "role.deleted": _role("Deleted"),
     "roles.revised": "Revised the built-in roles",
-    "detections.proof_card_exported": lambda p: "Exported a proof card"
-    + (f" ({p['kind']}, {p['rule_count']} rules)" if p.get("kind") else ""),
-    "detections.proof_key_created": lambda p: "Made the proof card signing key"
-    + (
-        ""
-        if not p.get("triggered_by")
-        else (
-            f" when {p['triggered_by']} read its public key"
-            if p.get("made_by") == "key_read"
-            else f" on {p['triggered_by']}'s first export"
-        )
-    ),
+    "detections.proof_card_exported": _proof_export,
+    "detections.proof_key_created": _proof_key,
     "autonomy.tool_classified": lambda p: f"Classed {p.get('tool') or 'a tool'} as "
     f"{_word(p.get('class_after')) or 'unclassified'}",
     "tools.classified": "Classed outside tools on upgrade",

@@ -58,7 +58,10 @@ A source no longer configured has its rules marked removed.
 
 Vigil's overlay source alone has rollout stages, for its splunk and elastic
 copies (nothing runs a Sigma copy): a new rule or version, or a removed one
-back unchanged, appends 'shadow'; a removed one appends 'off'.
+back unchanged, appends 'shadow'; a removed one appends 'off'. Each such copy's
+query is linted (``lint.lint_record``) into checks['lint'] on a new version, and
+once on a version staged before lint ran: one that fails gets 'off' instead of
+'shadow', and a shadow or live one goes 'off', the findings in the proof.
 
 Nothing is ever written to a SIEM.
 """
@@ -88,6 +91,7 @@ from core.detections.inventory import (
     wazuh_sees,
 )
 from core.detections.inventory.record import RuleRecord, fingerprint
+from core.detections.lint import lint_record
 from core.storage.connection import get_db_manager
 from core.storage.models import (
     DetectionRule,
@@ -153,14 +157,35 @@ def _version_row(rule_id: int, version: int, record: RuleRecord, fp: str) -> dic
     }
 
 
-def _stage_row(rule_id: int, version: int, stage: str, reason: str) -> dict:
+def _stage_row(
+    rule_id: int, version: int, stage: str, reason: str, proof: Optional[dict] = None
+) -> dict:
     return {
         "rule_id": rule_id,
         "version": version,
         "stage": stage,
         "actor": "system",
         "reason": reason,
+        "proof": proof or {},
     }
+
+
+def _lint(record: RuleRecord, now: str) -> Optional[Dict[str, Any]]:
+    """checks['lint'] for a staged overlay copy: its query, linted as a save lints it."""
+    report = lint_record(record)
+    if report is None:
+        return None  # not a language Vigil runs
+    return {
+        "result": "pass" if report["passed"] else "fail",
+        "findings": report["findings"],
+        "checked_at": now,
+    }
+
+
+def _lint_off(lint: Dict[str, Any]) -> tuple:
+    """(reason, proof) of the 'off' a copy failing lint gets."""
+    literals = ", ".join(f"{f['kind']} {f['value']}" for f in lint["findings"])
+    return f"fails lint: keyed to {literals}", {"lint": lint}
 
 
 def _rule_fields(record: RuleRecord) -> Dict[str, Any]:
@@ -301,6 +326,20 @@ def _drop_all(
     _record_changes(session, changes, now)
 
 
+def _current_stages(session: Any) -> Dict[int, str]:
+    """rule id -> current stage, for the overlay's staged copies."""
+    s = DetectionRuleStage
+    return dict(
+        session.execute(
+            select(s.rule_id, s.stage)
+            .join(DetectionRule, DetectionRule.id == s.rule_id)
+            .where(DetectionRule.source == readers.OVERLAY_SOURCE)
+            .distinct(s.rule_id)
+            .order_by(s.rule_id, s.at.desc(), s.id.desc())
+        ).all()
+    )
+
+
 def _record_changes(session: Any, rows: List[dict], now: str) -> None:
     """Append check result changes, in the caller's transaction. Every writer uses it."""
     if rows:
@@ -317,9 +356,20 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
     siem = not source.startswith(REPO_PREFIX)
     stages: List[dict] = []
 
-    def stage(rule_id: int, version: int, language: str, to: str, reason: str):
+    def stage(
+        rule_id: int,
+        version: int,
+        language: str,
+        to: str,
+        reason: str,
+        lint: Optional[Dict[str, Any]] = None,
+    ):
         if source == readers.OVERLAY_SOURCE and language in STAGED_LANGUAGES:
-            stages.append(_stage_row(rule_id, version, to, reason))
+            if lint and lint["result"] == "fail":
+                # Failing lint: 'off' in place of 'shadow', or out of shadow/live.
+                stages.append(_stage_row(rule_id, version, "off", *_lint_off(lint)))
+            else:
+                stages.append(_stage_row(rule_id, version, to, reason))
 
     with get_db_manager().session_scope() as session:
         latest = (
@@ -343,6 +393,7 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
         }
         overlay = source == readers.OVERLAY_SOURCE
         last = _last_results(session, source) if siem or overlay else {}
+        current = _current_stages(session) if overlay else {}
         changes: List[dict] = []
 
         new: List[tuple] = []
@@ -356,6 +407,13 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
                 new.append((record, fp))
                 continue
             rule, latest_fp, stored = hit
+            staged = overlay and record.language in STAGED_LANGUAGES
+            # A new version is linted before it is staged; one staged before lint, once.
+            lint = (
+                _lint(record, now)
+                if staged and (fp != latest_fp or "lint" not in (stored or {}))
+                else None
+            )
             if fp != latest_fp:
                 rule.latest_version += 1
                 versions.append(_version_row(rule.id, rule.latest_version, record, fp))
@@ -367,7 +425,13 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
                     record.language,
                     "shadow",
                     "new version",
+                    lint,
                 )
+            elif lint and lint["result"] == "fail" and rule.status != "removed":
+                if current.get(rule.id) in ("shadow", "live"):
+                    stage(
+                        rule.id, rule.latest_version, record.language, "off", "", lint
+                    )
             changed = {
                 k: v for k, v in _rule_fields(record).items() if getattr(rule, k) != v
             }
@@ -392,6 +456,7 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
                             record.language,
                             "shadow",
                             "restored",
+                            lint or (stored or {}).get("lint"),
                         )
                 else:
                     changed["status"] = record.status
@@ -401,6 +466,8 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
             if changed and fp == latest_fp:
                 report.updated += 1
             checks = _checks(stored, record, now)
+            if lint:
+                checks = {**checks, "lint": lint}
             if siem and record.status == "disabled":
                 dropped, checks = _dropped(
                     rule.id,
@@ -469,8 +536,15 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
             ).all()
             for rule_id, (r, fp) in zip(ids, new):
                 versions.append(_version_row(rule_id, 1, r, fp))
-                stage(rule_id, 1, r.language, "shadow", "new rule")
+                lint = (
+                    _lint(r, now)
+                    if overlay and r.language in STAGED_LANGUAGES
+                    else None
+                )
+                stage(rule_id, 1, r.language, "shadow", "new rule", lint)
                 checks = _checks({}, r, now)
+                if lint:
+                    checks = {**checks, "lint": lint}
                 if checks:
                     checked.append((rule_id, 1, checks))
                 if siem:

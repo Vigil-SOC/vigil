@@ -34,7 +34,9 @@ documents they match before any of that: a dropped document is not in the
 day's hit count and becomes no finding, and checks['exceptions'] counts each
 exception's matches per day, and after a run that fetched rows, its fields
 none of them carried (``seen``: a transforming search's rows lack its input
-fields, so an exception on one cannot match them, #3907). A handed-off copy is not run, so its exceptions
+fields, so an exception on one cannot match them, #3907) and how many it
+dropped; checks['exceptions_seen'] keeps what they dropped together, so a copy
+whose exceptions drop every row it fetches shows as silenced (#3994). A handed-off copy is not run, so its exceptions
 are not applied; alerts the SIEM itself raises are never filtered.
 
 The sweep (after ``sync_repos``) then writes a stage row (actor 'system', proof
@@ -409,8 +411,10 @@ def _ran(
     excepted: Optional[Tuple[Dict[str, int], Dict[str, List[str]], int]] = None,
 ) -> Dict[str, Any]:
     """``checks`` after one run: Runs, and on a pass the stage's per-day hits,
-    each exception's per-day matches and, when the run fetched rows, which of
-    its fields none of them carried (``seen``)."""
+    each exception's per-day matches and, when the run fetched rows, how many
+    it dropped and which of its fields none of them carried (``seen``), and
+    what they dropped together (``exceptions_seen``): all of a run's rows
+    dropped means the copy raised nothing (#3994)."""
     total, docs, error = outcome
     day = end.date().isoformat()
     runs = dict(checks.get("runs") or {})
@@ -447,11 +451,19 @@ def _ran(
                 if rows:  # a run with no rows teaches nothing: keep the last one's
                     entry["seen"] = {
                         "rows": rows,
+                        "matched": n,
                         "missing": absent.get(eid) or [],
                         "at": end.isoformat(),
                     }
                 counts[eid] = entry
             out["exceptions"] = counts
+            if rows:
+                out["exceptions_seen"] = {
+                    "rows": rows,
+                    "matched": sum(matched.values()),
+                    "ids": [int(e) for e in matched],
+                    "at": end.isoformat(),
+                }
     return out
 
 

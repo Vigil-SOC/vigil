@@ -494,6 +494,7 @@ def test_making_the_key_is_on_the_trail_with_who_asked(
             "detections.proof_key_created",
             {
                 "actor": "system",
+                "on_behalf_of": "user-viewer1",
                 "triggered_by": "user-viewer1",
                 "made_by": first,
                 "key_id": made["key_id"],
@@ -548,20 +549,53 @@ def test_coverage_leaves_out_what_isnt_an_attack_id_and_lists_it(inventory, key)
 @pytest.mark.parametrize(
     "made_by, words",
     [
-        ("export", "Made the proof card signing key on user-viewer1's first export"),
+        ("export", "Made the proof card signing key on a first export"),
         (
             "key_read",
-            "Made the proof card signing key when user-viewer1 read its public key",
+            "Made the proof card signing key when its public key was first read",
         ),
+        # A row from before made_by existed.
+        (None, "Made the proof card signing key"),
     ],
 )
-def test_the_trail_says_what_made_the_key(made_by, words):
+def test_the_trail_says_what_made_the_key_and_prints_no_id(made_by, words):
     from core.audit.words import sentence
 
     payload = {
         "action": "detections.proof_key_created",
         "actor": "system",
-        "triggered_by": "user-viewer1",
+        "on_behalf_of": "user-655f08c71938",
+        "triggered_by": "user-655f08c71938",
         "made_by": made_by,
+    }
+    said = sentence({k: v for k, v in payload.items() if v is not None})
+    assert said == words
+    assert "user-655f08c71938" not in said
+
+
+def test_the_person_who_needed_the_key_is_named_where_the_trail_names_people():
+    # on_behalf_of is the trail's own field: read back with the person's label,
+    # and the erasure of that person finds and blanks it.
+    from core.audit import retention, trail
+
+    assert trail.ON_BEHALF_OF == "on_behalf_of"
+    assert "payload->>'on_behalf_of'" in retention._NAMES
+
+
+@pytest.mark.parametrize(
+    "count, words",
+    [
+        (1, "Exported a proof card (single, 1 rule)"),
+        (162, "Exported a proof card (coverage, 162 rules)"),
+    ],
+)
+def test_the_export_sentence_counts_rules_in_words(count, words):
+    from core.audit.words import sentence
+
+    kind = "single" if count == 1 else "coverage"
+    payload = {
+        "action": "detections.proof_card_exported",
+        "kind": kind,
+        "rule_count": count,
     }
     assert sentence(payload) == words

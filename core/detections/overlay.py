@@ -3,8 +3,8 @@
 The overlay is a plain directory under the State Directory, read like any
 local source in format 'auto': one file per copy, ``splunk/<id>.yml`` (ESCU
 YAML), ``elastic/<id>.toml`` (detection-rules TOML), ``sigma/<id>.yml``. Every
-copy is parsed with the inventory readers, and the Sigma form linted, before
-any file is written; one bad part writes nothing. A copy keeps the id it
+copy is parsed with the inventory readers, and the Sigma form and each Splunk
+and Elastic query linted, before any file is written; one bad part writes nothing. A copy keeps the id it
 carries, so a change to a rule lands on that rule as a new version; a copy
 without one gets a fresh uuid. The sync appends the 'shadow' stage rows.
 
@@ -34,7 +34,7 @@ from core.detections import exceptions as excepts
 from core.detections.detection_rules_service import DetectionRulesService
 from core.detections.inventory import readers, rollout, sync
 from core.detections.inventory.record import RuleRecord
-from core.detections.lint import lint_sigma
+from core.detections.lint import lint_record, lint_sigma
 from core.detections.replay import replay_sigma
 from core.storage.connection import get_db_manager
 from core.storage.models import (
@@ -234,7 +234,15 @@ def _prepare(copies: Dict[str, str]) -> List[Tuple[str, str, RuleRecord]]:
             why = rollout.runnable(tomllib.loads(text).get("rule") or {})
             if why:
                 raise Refused(f"elastic copy is refused: {why}")
-        prepared.append((language, text, _parse(language, text)))
+        record = _parse(language, text)
+        if language in sync.STAGED_LANGUAGES:
+            lint = lint_record(record)
+            if lint and not lint["passed"]:
+                raise Refused(
+                    f"{language} copy fails lint: {lint.get('rewrite_guidance')}",
+                    lint=lint,
+                )
+        prepared.append((language, text, record))
     if "sigma" in copies:
         lint = lint_sigma(rule_yaml=copies["sigma"])
         if not lint.get("passed"):

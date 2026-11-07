@@ -21,7 +21,7 @@ One export is one zip, made from one set of data and one signature:
 checks a JSON file against its signature and a public key.
 
 The signing key is the instance's own: an Ed25519 key kept in Vigil's secrets
-store under ``KEY_SECRET``, made on first use (an export, or a read of the key). Where secrets can't be
+store under ``KEY_SECRET``, made on first use. Where secrets can't be
 written (an ephemeral State Directory), set it in the environment instead.
 """
 
@@ -148,8 +148,8 @@ def coverage(rules: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def unmapped(rules: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Declared techniques that aren't ATT&CK technique ids (a tactic id, a
-    template), with how many live rules carry each."""
+    """Declared techniques that aren't ATT&CK technique ids (tactic ids, free text),
+    with how many live rules carry each."""
     counts: Dict[str, int] = {}
     for rule in rules:
         if rule["status"] != "active":
@@ -289,8 +289,10 @@ def _private_key(
     actor: Optional[str] = None, made_by: str = "export"
 ) -> Ed25519PrivateKey:
     """The instance's key; made and stored on first use, which the trail records
-    as the system's act, triggered by ``actor`` and ``made_by`` the request
-    that needed it (one of MADE_BY)."""
+    as the system's act on behalf of ``actor``, whose request needed it, and
+    ``made_by`` that request (one of MADE_BY). The person is named by id in
+    ``on_behalf_of``, which the trail resolves to their name when it is read
+    (and blanks if they are erased); no name is written into the entry."""
     with _key_lock:
         stored = get_secret(KEY_SECRET)
         if stored:
@@ -313,6 +315,7 @@ def _private_key(
         trail_events.safety(
             KEY_CREATED,
             actor="system",
+            on_behalf_of=actor,
             triggered_by=actor,
             made_by=made_by,
             key_id=key_id(key.public_key()),
@@ -509,7 +512,8 @@ def _pdf_lines(
                 f"{u['technique']} ({u['rules']})" for u in card["unmapped"]
             )
             add(
-                "Declared techniques that aren't ATT&CK technique ids, left out of the table "
+                "Declared techniques that aren't ATT&CK technique ids (tactic ids, free text), "
+                "left out of the table "
                 f"(live rules carrying each): {odd}",
                 8,
             )
