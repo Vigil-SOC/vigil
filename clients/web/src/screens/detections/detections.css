@@ -189,6 +189,11 @@
   .de-inv-tools { flex: 1 1 100%; }
   .de-search { flex: 1 1 100%; width: auto; }
 }
+/* A row's active exceptions: opens them under the row */
+.de-exc-pill { gap: 5px; margin-top: 2px; cursor: pointer; font-family: inherit; }
+.de-exc-pill svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.de-exc-pill svg.up { transform: rotate(180deg); }
+.de-exc-pill:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
 
 /* Export proof card */
 .de-export { height: 34px; }

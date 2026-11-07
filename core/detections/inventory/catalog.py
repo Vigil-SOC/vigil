@@ -36,7 +36,7 @@ import binascii
 import logging
 import re
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
 from sqlalchemy import Text, and_, case, cast, func, select, text, tuple_
@@ -47,6 +47,7 @@ from core.storage.connection import get_db_manager
 from core.storage.models import (
     DetectionRule,
     DetectionRuleCheckChange,
+    DetectionRuleException,
     DetectionRuleStage,
     DetectionRuleVersion,
     Finding,
@@ -892,6 +893,7 @@ _LISTING_TABLES = (
     "detection_rules",
     "detection_rule_versions",
     "detection_rule_check_changes",
+    "detection_rule_exceptions",
 )
 _FIRES_TABLES = ("findings",)
 _listing_lock = threading.Lock()
@@ -927,8 +929,16 @@ def _copies_listed(session: Any) -> Dict[str, Any]:
         .where(LISTED)
         .order_by(DetectionRule.id)
     ).all()
+    active: Dict[int, List[int]] = {}
+    for rid, eid in session.execute(
+        select(DetectionRuleException.rule_id, DetectionRuleException.id)
+        .where(DetectionRuleException.removed_at.is_(None))
+        .order_by(DetectionRuleException.id)
+    ):
+        active.setdefault(rid, []).append(eid)
     return {
         "rows": rows,
+        "exceptions": active,
         "rule_of": _rule_of_copy(session),
         "blind_spots": [
             {
@@ -942,9 +952,36 @@ def _copies_listed(session: Any) -> Dict[str, Any]:
     }
 
 
-def _health_rows(copies: Dict[str, Any], fires: Dict[str, int]) -> Dict[str, Any]:
+def _window_start(today: Optional[date] = None) -> str:
+    """The first UTC day of the window the runner keeps exception matches for."""
+    from core.detections.inventory.rollout import KEEP_DAYS
+
+    today = today or datetime.now(timezone.utc).date()
+    return (today - timedelta(days=KEEP_DAYS - 1)).isoformat()
+
+
+def _silenced(checks: Dict[str, Any], exception_ids: List[int], since_day: str) -> int:
+    """Hits these active exceptions dropped on UTC days from ``since_day`` on. A
+    day the runner has not trimmed yet is outside the window and not counted."""
+    counts = checks.get("exceptions") or {}
+    total = 0
+    for eid in exception_ids:
+        mine = counts.get(str(eid))
+        days = mine.get("days") if isinstance(mine, dict) else None
+        if isinstance(days, dict):
+            total += sum(
+                v for d, v in days.items() if d >= since_day and isinstance(v, int)
+            )
+    return total
+
+
+def _health_rows(
+    copies: Dict[str, Any], fires: Dict[str, int], today: Optional[date] = None
+) -> Dict[str, Any]:
     """Each copy's health row, worst first, and the totals that don't depend on a filter."""
     rule_of = copies["rule_of"]
+    since_day = _window_start(today)
+    excepted = copies.get("exceptions") or {}
     listed = []
     mapped = set()
     for rule in copies["rows"]:
@@ -976,6 +1013,9 @@ def _health_rows(copies: Dict[str, Any], fires: Dict[str, int]) -> Dict[str, Any
                 "checks_run": len(results),
                 "runs": checks.get("runs"),
                 "sees": checks.get("sees"),
+                # Its active exceptions, and the hits they silenced (#3794).
+                "exceptions": len(excepted.get(rule.id, [])),
+                "silenced": _silenced(checks, excepted.get(rule.id, []), since_day),
             }
         )
     listed.sort(key=lambda row: (HEALTH_ORDER.index(row["health"]), row["rule_id"]))
@@ -1039,6 +1079,7 @@ def health_listing(
     sort: str = "worst",
     flag: Optional[str] = None,
     rule_ids: Optional[Iterable[int]] = None,
+    has_exceptions: bool = False,
 ) -> Dict[str, Any]:
     """Every listed copy's health, ``RULE_ROWS`` from ``offset``, narrowed to one
     ``health`` (or "attention", the states to act on), one ``tool``, one ``flag``
@@ -1046,15 +1087,25 @@ def health_listing(
     Caught), a ``q`` over name, technique, reason and data source, and
     ``rule_ids`` (the copies a rule-health entry names) before the cap. ``sort``
     is one of SORTS: worst first across every check (the default), most or
-    fewest fires, or by name.
+    fewest fires, or by name. ``has_exceptions`` lists every copy with an active
+    exception, whatever its health.
 
     The counts cover every copy of ``tool`` (every copy when none); rule_total
     and mapped count each rule once, across every tool. With ``q``,
     ``matched_elsewhere`` counts its matches per health state outside this view.
+    ``with_exceptions`` counts the copies of ``tool`` with an active exception;
+    ``exceptions_elsewhere`` the ones the search keeps that this view leaves out,
+    so a healthy rule's exceptions are never out of sight.
     """
     built = _listing_now()
     states = (
-        ATTENTION if health == "attention" else (health,) if health else HEALTH_ORDER
+        HEALTH_ORDER
+        if has_exceptions
+        else (
+            ATTENTION
+            if health == "attention"
+            else (health,) if health else HEALTH_ORDER
+        )
     )
     needle = (q or "").strip().lower()
     ids = None if rule_ids is None else set(rule_ids)
@@ -1072,7 +1123,16 @@ def health_listing(
         for state in HEALTH_ORDER
         if state in states
         for row_tool, hay, row in built["by_state"][state]
-        if kept(row_tool, hay, row) and (flag is None or flag in _row_flags(row))
+        if kept(row_tool, hay, row)
+        and (flag is None or flag in _row_flags(row))
+        and (not has_exceptions or row.get("exceptions"))
+    ]
+    shown_ids = {row["rule_id"] for row in shown}
+    excepted = [
+        (row_tool, hay, row)
+        for state in HEALTH_ORDER
+        for row_tool, hay, row in built["by_state"][state]
+        if row.get("exceptions")
     ]
     # A search that misses here may hit in a view the chips leave out: say where,
     # so a healthy rule's name never reads as "no such rule".
@@ -1097,6 +1157,14 @@ def health_listing(
         "flag_counts": built["flag_counts"].get(tool, dict.fromkeys(FLAGS, 0)),
         "matched": len(shown),
         "matched_elsewhere": elsewhere,
+        "with_exceptions": sum(
+            1 for t, _h, _r in excepted if tool is None or t == tool
+        ),
+        "exceptions_elsewhere": sum(
+            1
+            for t, hay, row in excepted
+            if kept(t, hay, row) and row["rule_id"] not in shown_ids
+        ),
         "offset": offset,
         "rules": shown[offset : offset + RULE_ROWS],
         "by_siem": built["by_siem"],

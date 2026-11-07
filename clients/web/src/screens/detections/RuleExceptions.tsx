@@ -25,7 +25,7 @@ interface Listing {
 }
 
 /** The days the runner keeps per-day counts for (rollout.KEEP_DAYS). */
-const KEEP_DAYS = 14
+export const KEEP_DAYS = 14
 
 function Match({ match }: { match: Record<string, unknown> }) {
   return (
