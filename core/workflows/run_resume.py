@@ -61,4 +61,37 @@ async def resume_run(run_id: str, action_id: str, decided_by: str) -> Dict[str, 
         )
         return {"success": False, "run_id": run_id, "error": "run queue unavailable"}
 
+    _trail_resume(run_id, action_id, decided_by)
     return {"success": True, "status": "resuming", "run_id": run_id, "job_id": job_id}
+
+
+# After the enqueue: the job is already queued, so a trail failure is only logged.
+def _trail_resume(run_id: str, action_id: str, decided_by: str) -> None:
+    from core.audit import trail
+
+    payload = {
+        trail.ACTION: "agent.run.resume",
+        trail.ACTOR: trail.SYSTEM,
+        trail.OBJECT: run_id,
+        "run_id": run_id,
+        "action_id": action_id,
+    }
+    try:
+        with get_db_session() as session, session.begin():
+            if not trail.in_use(session):
+                return
+            # The decider's principal names the entry for erasure; their name
+            # sits beside the hash, where erasure blanks it.
+            principal = session.execute(
+                text(
+                    "SELECT approved_by_principal_id FROM approval_actions "
+                    "WHERE action_id = :id"
+                ),
+                {"id": action_id},
+            ).scalar()
+            if principal:
+                payload["principal"] = principal
+            personal = {"decided_by": decided_by} if decided_by else None
+            trail.append(session, payload, personal=personal)
+    except Exception:  # noqa: BLE001
+        logger.exception("audit trail did not record run %s resuming", run_id)
