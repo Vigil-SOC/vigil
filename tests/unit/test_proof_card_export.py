@@ -531,5 +531,5 @@ def test_coverage_leaves_out_what_isnt_an_attack_id_and_lists_it(inventory, key)
         {"technique": "t1003", "rules": 1},
     ]
     pdf = _unzip(proof_card.bundle(card))["proof-card.pdf"]
-    assert b"aren't ATT&CK ids" in pdf
+    assert b"aren't ATT&CK technique ids" in pdf
     assert b"($(THREAT.SOFTWARE.ID)  " not in pdf
