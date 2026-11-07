@@ -10,10 +10,12 @@ container, port or volume. Secrets are minted per run.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
 import secrets
+import socket
 import subprocess
 import time
 from pathlib import Path
@@ -26,7 +28,7 @@ from tests.medic_compose.compose import (
     compose_project,
     require_compose_project,
 )
-from tests.medic_eval.sample import FORMAT as STATS_FORMAT, SERVICES as SAMPLED, parse_stats
+from tests.medic_eval.sample import SERVICES as SAMPLED
 
 HERE = Path(__file__).resolve().parent
 OVERRIDE = HERE / "compose.eval.yml"
@@ -94,6 +96,26 @@ def _tail(text: str, limit: int) -> str:
             break
         out.append(ln)
     return "\n".join(reversed(out))
+
+
+def docker_api(path: str) -> dict:
+    """GET on the Docker Engine API over its Unix socket (DOCKER_HOST, else the default)."""
+    host = os.environ.get("DOCKER_HOST", "unix:///var/run/docker.sock")
+    if not host.startswith("unix://"):
+        raise RuntimeError(f"the Docker API is read over a Unix socket, not {host}")
+    conn = http.client.HTTPConnection("docker", timeout=30)
+    conn.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    conn.sock.settimeout(30)
+    try:
+        conn.sock.connect(host[len("unix://"):])
+        conn.request("GET", path)
+        resp = conn.getresponse()
+        body = resp.read()
+    finally:
+        conn.close()
+    if resp.status != 200:
+        raise RuntimeError(f"docker API {path}: {resp.status} {body[:300]!r}")
+    return json.loads(body)
 
 
 class ComposeFailed(AssertionError):
@@ -274,23 +296,45 @@ class Stack:
         """stdout of a command run in the Medic container ('' if it fails)."""
         return self.compose("exec", "-T", "medic", *argv, check=False).stdout
 
-    def usage(self) -> dict[str, tuple[float, float]]:
-        """{Medic service: (vCPU, MiB)} now, from `docker stats` of its containers."""
-        by_id = {}
-        for cid in self.compose("ps", "-q", *SAMPLED, check=False).stdout.split():
-            svc = subprocess.run(
-                ["docker", "inspect", "-f", '{{index .Config.Labels "com.docker.compose.service"}}', cid],
-                capture_output=True, text=True, check=False,
-            ).stdout.strip()
-            if svc in SAMPLED:
-                by_id[cid[:12]] = svc
-        if not by_id:
-            return {}
-        done = subprocess.run(
-            ["docker", "stats", "--no-stream", "--format", STATS_FORMAT, *by_id],
+    def _counters(self) -> dict[str, tuple[int, int, float]]:
+        """{Medic service: (cumulative CPU ns, bytes in use, monotonic s when read)}: the Docker API's one-shot stats."""
+        ps = subprocess.run(
+            ["docker", "ps", "--filter", f"label=com.docker.compose.project={self.project}",
+             "--format", '{{.ID}} {{.Label "com.docker.compose.service"}}'],
             capture_output=True, text=True, check=False,
-        )
-        return {by_id[c[:12]]: r for c, r in parse_stats(done.stdout).items() if c[:12] in by_id}
+        ).stdout
+        rows = {}
+        for cid, _, svc in (line.partition(" ") for line in ps.splitlines()):
+            if svc in SAMPLED:
+                at = time.monotonic()
+                st = docker_api(f"/containers/{cid}/stats?stream=false&one-shot=true")
+                at = (at + time.monotonic()) / 2  # each container on its own clock: the reads are sequential
+                mem = st["memory_stats"]
+                inactive = mem.get("stats", {}).get("inactive_file", mem.get("stats", {}).get("total_inactive_file", 0))
+                rows[svc] = (st["cpu_stats"]["cpu_usage"]["total_usage"], mem["usage"] - inactive, at)  # docker stats' MEM USAGE
+        return rows
+
+    def usage(self) -> dict[str, tuple[float, float]]:
+        """{Medic service: (vCPU, MiB)}: the CPU counter read twice a couple of seconds apart, as HelmStack does."""
+        first = self._counters()
+        time.sleep(2)
+        second = self._counters()
+        return {
+            n: (max(c1 - first[n][0], 0) / 1e9 / (at - first[n][2]), mem / 1024**2)
+            for n, (c1, mem, at) in second.items() if n in first
+        }
+
+    def medic_limits(self) -> dict:
+        """The medic container's limits (None: unset) and whether it was killed for memory or restarted."""
+        cid = self.compose("ps", "-aq", "medic").stdout.split()[0]
+        info = docker_api(f"/containers/{cid}/json")
+        host = info["HostConfig"]
+        return {
+            "cpu_vcpu": host["NanoCpus"] / 1e9 or None,
+            "memory_mib": host["Memory"] / 1024**2 or None,
+            "restarts": info["RestartCount"],
+            "oom_killed": info["State"]["OOMKilled"],
+        }
 
     def not_running(self) -> list[str]:
         """Vigil's services that are not running."""

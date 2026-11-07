@@ -1,18 +1,20 @@
-"""Sample Medic's containers from outside the process.
+"""Sample Medic's containers from outside the process, and check its hard floor.
 
-`stack.usage()` (`docker stats --no-stream` on Compose's medic, medic-gateway and
-medic-dockerproxy; `crictl stats` on kind's medic and medic-gateway), once an
-interval, for as long as the sampler runs; `du -sk` of the store at the start and
-the end. The advisory bars are constants the artifact carries, reported and never
-red; of the hard limits only memory (HARD_RSS_MIB) turns a run red. CPU is reported:
-the container's 1 vCPU quota enforces HARD_CPU_VCPU, so a reading over it is
-`docker stats` wobble.
+`stack.usage()` (each container's cumulative CPU counter, read twice a couple of
+seconds apart, and its memory in use: the Docker API on Compose's medic, medic-gateway
+and medic-dockerproxy, `crictl stats` on kind's medic and medic-gateway), once an
+interval, for as long as the sampler runs; `du -sk` of the store at the start and the
+end. Usage is reported against the advisory bars and never turns a run red.
+
+The hard floor is `stack.medic_limits()` on the medic container alone: red when its
+limit is not 1 vCPU / 1 GiB at the end (missing, raised or lowered), or when it was
+killed for memory or restarted while sampled. Under the limit Medic can't go over it,
+so sampled usage is not compared with it.
 """
 
 from __future__ import annotations
 
 import math
-import re
 import threading
 import time
 
@@ -25,32 +27,27 @@ ADVISORY = {
     "store_growth_mib_per_day": 5.0,
     "store_growth_mib_per_day_busy": 12.0,
 }
-# The hard limits: the quota enforces CPU (reported only); memory over it fails the run.
+# The limit the medic container must run under (Compose cpus / mem_limit, the chart's limits).
 HARD_CPU_VCPU = 1.0
 HARD_RSS_MIB = 1024.0
 
-# `docker stats` mixes IEC (KiB/MiB/GiB) and SI (kB/MB/GB).
-_UNITS = {"b": 1, "kb": 1e3, "mb": 1e6, "gb": 1e9, "kib": 1024, "mib": 1024**2, "gib": 1024**3}
-_SIZE = re.compile(r"^\s*([0-9]*\.?[0-9]+)\s*([A-Za-z]*)\s*$")
-FORMAT = "{{.ID}}\t{{.CPUPerc}}\t{{.MemUsage}}"  # id first: the name carries the project
 
-
-def parse_bytes(text: str) -> float:
-    m = _SIZE.match(text)
-    if not m:
-        raise ValueError(f"unparsed size {text!r}")
-    return float(m[1]) * _UNITS[(m[2] or "b").lower()]
-
-
-def parse_stats(text: str) -> dict[str, tuple[float, float]]:
-    """{container id prefix: (vCPU, MiB)} from `docker stats --format FORMAT`."""
-    rows = {}
-    for line in text.splitlines():
-        if not line.strip():
-            continue
-        cid, cpu, mem = line.split("\t")[:3]
-        rows[cid] = (float(cpu.strip().rstrip("%")) / 100, parse_bytes(mem.split("/")[0]) / 1024**2)
-    return rows
+def floor_failures(start: dict | None, end: dict | None) -> list[str]:
+    """The hard floor, from `stack.medic_limits()` when sampling started and when it stopped."""
+    if not (start and end):
+        return [f"Medic's limits could not be read at the {'end' if start else 'start'} of the run"]
+    out = []
+    for key, what, want, unit in (("cpu_vcpu", "CPU", HARD_CPU_VCPU, "vCPU"), ("memory_mib", "memory", HARD_RSS_MIB, "MiB")):
+        got = end[key]
+        if got is None:
+            out.append(f"Medic runs with no {what} limit (want {want:g} {unit})")
+        elif not math.isclose(got, want):
+            out.append(f"Medic's {what} limit is {got:g} {unit}, not {want:g} {unit}")
+    if end["oom_killed"]:
+        out.append("Medic was killed for memory (OOMKilled)")
+    if end["restarts"] > start["restarts"]:
+        out.append(f"Medic restarted {end['restarts'] - start['restarts']} time(s) during the run")
+    return out
 
 
 def percentile(values: list[float], pct: float = 0.95) -> float:
@@ -92,6 +89,7 @@ class Sampler:
         self.stack, self.interval_s = stack, interval_s
         self.samples: list[dict] = []  # {"at": epoch, <service>: (vCPU, MiB)}
         self.failures = 0
+        self.limits: dict = {"start": None, "end": None}  # stack.medic_limits()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
@@ -112,10 +110,23 @@ class Sampler:
                 self.failures += 1
             self._stop.wait(max(self.interval_s - (time.monotonic() - started), 0.5))
 
+    def _limits(self, at: str) -> None:
+        try:
+            self.limits[at] = self.stack.medic_limits()
+        except Exception:  # noqa: BLE001 - an unread limit is a floor missed, not a crash
+            self.limits[at] = None
+
+    def floor(self) -> list[str]:
+        return floor_failures(self.limits["start"], self.limits["end"])
+
     def start(self) -> None:
+        self._limits("start")  # the restart baseline
         self._thread.start()
 
     def stop(self) -> None:
+        if self._stop.is_set():
+            return
         self._stop.set()
         if self._thread.is_alive():
             self._thread.join(timeout=60)
+        self._limits("end")  # at the end, so a limit changed mid-run is caught
