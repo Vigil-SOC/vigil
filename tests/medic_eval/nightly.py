@@ -16,8 +16,9 @@ survival checks: those stay Compose-only. `--cluster NAME` uses a cluster e2e.sh
 already left up (KEEP=1) and leaves it up.
 
 Red (exit 1) only for: bring-up (on Helm, e2e.sh full), inject, verify or revert failing; harm to Vigil;
-Medic over 1 vCPU / 1 GiB; a survival check or a flood floor failing. Detection,
-time to detect, the lane matrix, false alarms and the advisory bars are reported with
+Medic over 1 GiB; a survival check or a flood floor failing (Medic not keeping up
+with the flood among them). Detection, time to detect, the lane matrix, false alarms,
+CPU (the 1 vCPU quota enforces that limit) and the advisory bars are reported with
 their n and never red. DIR/metrics.json and DIR/summary.md are written on red too.
 
 Verification knobs (the nightly uses none): --only, --hold-cap, --flood-seconds,
@@ -374,6 +375,22 @@ def summary(m: dict) -> str:
     f = m["flood"]
     only = " (Compose only)" if m["shape"] == "helm" else ""
     lines += ["", "Flood: " + ("not run" + only if not f else "; ".join(f["failures"]) or "floors held")]
+    if f and f.get("keepup"):
+        st = f["settle"]
+        lines += [
+            f"Settle: {st['exit']} after {st['seconds']} s (limit {st['limit_s']} s).",
+            "",
+            "| stream | sent | admit allowance | dropped_last_hour | shortfall |",
+            "|---|---|---|---|---|",
+            *(f"| {s} | {k['sent']} | {k['admit_allowance']} | {k['dropped_last_hour']} | {k['shortfall']} |"
+              for s, k in f["keepup"].items()),
+            "",
+            "| service | CPU p95 vCPU | max | peak MiB | n |",
+            "|---|---|---|---|---|",
+            *(f"| {s} | {u.get('cpu_p95_vcpu')} | {u.get('cpu_max_vcpu')} | {u.get('rss_peak_mib')} | {u['n']} |"
+              for s, u in f["usage"].items()),
+            f"CPU is reported against the {sample.ADVISORY['cpu_p95_vcpu']} vCPU advisory bar, never red.",
+        ]
     checks = (f"{s['check']} {s['status']}" + (f" (restored {', '.join(s['restored'])})" if s.get("restored") else "")
               for s in m["survival"])
     lines += ["", "Survival: " + (", ".join(checks) or "not run" + only)]
@@ -407,8 +424,6 @@ def verdict(m: dict) -> dict:
         reasons.append(f"run stopped early: {m['bringup_error']}")
     reasons += [f"harm to Vigil: {p}" for p in m["vigil_harm"]]
     for svc, u in m["resources"]["usage"].items():
-        if u["n"] and u["cpu_p95_vcpu"] > sample.HARD_CPU_VCPU + sample.CPU_TOLERANCE:
-            reasons.append(f"{svc} p95 CPU {u['cpu_p95_vcpu']} vCPU over {sample.HARD_CPU_VCPU} (n={u['n']})")
         if u["n"] and u["rss_peak_mib"] > sample.HARD_RSS_MIB:
             reasons.append(f"{svc} peak memory {u['rss_peak_mib']} MiB over {sample.HARD_RSS_MIB:.0f} (n={u['n']})")
     reasons += [f"flood: {f}" for f in (m["flood"] or {}).get("failures", [])]
