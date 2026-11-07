@@ -3485,7 +3485,8 @@ export interface paths {
         put?: never;
         /**
          * Release Rule
-         * @description Lifts a person's hold on a shadow rule; the normal rollout applies again.
+         * @description Lifts a person's hold, leaving the rule in its current stage; the normal
+         *     rollout applies again.
          */
         post: operations["post_api_detection-rules_rules_rule_id_release"];
         delete?: never;
