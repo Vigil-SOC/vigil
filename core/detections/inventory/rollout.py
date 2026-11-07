@@ -146,6 +146,7 @@ class Copy:
     key: str = ""  # its rule_id, the overlay rule's native_key
     toml: str = ""  # the overlay file exactly as stored
     path: Optional[str] = None
+    held: bool = False  # a person reverted it: shadow until a person releases it
 
 
 @dataclass
@@ -186,6 +187,14 @@ def _copies() -> List[Copy]:
         .order_by(s.rule_id, s.at.desc(), s.id.desc())
         .subquery()
     )
+    # A person's hold: the latest row with a 'hold' key, whatever rows follow it.
+    hold = (
+        select(s.rule_id, s.proof["hold"].astext.label("hold"))
+        .where(s.proof.has_key("hold"))
+        .distinct(s.rule_id)
+        .order_by(s.rule_id, s.id.desc())
+        .subquery()
+    )
     with get_db_manager().session_scope() as session:
         rows = session.execute(
             select(
@@ -195,6 +204,7 @@ def _copies() -> List[Copy]:
                 DetectionRule.language,
                 current.c.stage,
                 current.c.at,
+                hold.c.hold,
                 DetectionRuleVersion.checks,
                 DetectionRuleVersion.content,
                 DetectionRule.native_key,
@@ -208,6 +218,7 @@ def _copies() -> List[Copy]:
                 ),
             )
             .join(current, current.c.rule_id == DetectionRule.id)
+            .outerjoin(hold, hold.c.rule_id == DetectionRule.id)
             .where(
                 DetectionRule.source == readers.OVERLAY_SOURCE,
                 DetectionRule.language.in_(("elastic", "splunk")),
@@ -228,8 +239,9 @@ def _copies() -> List[Copy]:
             key,
             str((content or {}).get("_content") or ""),
             path,
+            hold == "true",
         )
-        for rid, ver, name, lang, stage, at, checks, content, key, path in rows
+        for rid, ver, name, lang, stage, at, hold, checks, content, key, path in rows
     ]
 
 
@@ -732,6 +744,8 @@ def _due(
                 f"{failures} failed runs in a row",
                 {"failures": failures, "last_reason": runs.get("reason")},
             )
+        if copy.held:  # a person's Revert stands until a person releases it
+            return None
         if now - copy.stage_at < timedelta(days=SHADOW_DAYS):
             return None
         week = _week(now)

@@ -931,6 +931,7 @@ export interface HealthEntry {
   name: string
   tool: string
   status: string
+  /** A check key, or 'revert' for Vigil's own live -> shadow move (its change_id is negative). */
   check: string
   reason: string | null
   since: string
@@ -949,6 +950,33 @@ export interface HealthInbox {
   summary: { count: number; by_check: Record<string, number>; rules: number; rule_ids: number[]; since: string } | null
 }
 
+/** One stage row of an overlay rule: a move between stages, by Vigil or a person. */
+export interface RuleStageRow {
+  stage_id: number
+  version: number
+  /** null on the rule's first row. */
+  from_stage: 'shadow' | 'live' | 'off' | null
+  to_stage: 'shadow' | 'live' | 'off'
+  /** 'system' for Vigil's own moves, else the person's username. */
+  actor: string
+  reason: string
+  at: string
+}
+
+export interface RuleStages {
+  rule_id: number
+  /** Newest first. */
+  stages: RuleStageRow[]
+}
+
+/** What a person's Revert or release wrote. `hold` is true while the rule is held in shadow. */
+export interface RuleStageChange {
+  success: boolean
+  rule_id: number
+  stage: 'shadow' | 'live' | 'off'
+  hold: boolean
+}
+
 export const detectionRulesApi = {
   listSources: () => api.get('/detection-rules/sources'),
 
@@ -958,6 +986,17 @@ export const detectionRulesApi = {
 
   /** The findings a rule copy raised in the fires window, newest first, as the rules list counts them. */
   ruleFindings: (ruleId: number) => api.get(`/detection-rules/rules/${ruleId}/findings`),
+
+  /** A rule's stage history, newest first. */
+  ruleStages: (ruleId: number) => api.get<RuleStages>(`/detection-rules/rules/${ruleId}/stages`),
+
+  /** Moves a live rule to shadow and holds it there until a person releases it. */
+  revertRule: (ruleId: number, reason: string) =>
+    api.post<RuleStageChange>(`/detection-rules/rules/${ruleId}/revert`, { reason }),
+
+  /** Lifts a person's hold: the normal rollout applies to the rule again. */
+  releaseRule: (ruleId: number, reason: string) =>
+    api.post<RuleStageChange>(`/detection-rules/rules/${ruleId}/release`, { reason }),
 
   /** The open rule-health flags, newest first, read or unread for the signed-in person. */
   healthInbox: () => api.get<HealthInbox>('/detection-rules/health-inbox'),
