@@ -78,7 +78,7 @@ TALLIED = (TOOL, RUNS, SEES, QUIET, ACCURATE, NOISY, SILENT, CAUGHT, NEVER_FIRED
 RUNS_RESULTS = ("pass", "fail", "unknown")
 # Each rule's current stage: its latest stage row.
 CURRENT_STAGE = (
-    select(DetectionRuleStage.rule_id, DetectionRuleStage.stage)
+    select(DetectionRuleStage.rule_id, DetectionRuleStage.stage, DetectionRuleStage.at)
     .distinct(DetectionRuleStage.rule_id)
     .order_by(DetectionRuleStage.rule_id, DetectionRuleStage.id.desc())
     .subquery("current_stage")
@@ -979,6 +979,7 @@ _LISTING_TABLES = (
     "detection_rule_versions",
     "detection_rule_check_changes",
     "detection_rule_exceptions",
+    "detection_rule_stages",
 )
 _FIRES_TABLES = ("findings",)
 _listing_lock = threading.Lock()
@@ -1024,6 +1025,10 @@ def _copies_listed(session: Any) -> Dict[str, Any]:
     return {
         "rows": rows,
         "exceptions": active,
+        "stages": {
+            rid: (stage, at)
+            for rid, stage, at in session.execute(select(CURRENT_STAGE))
+        },
         "rule_of": _rule_of_copy(session),
         "blind_spots": [
             {
@@ -1067,6 +1072,8 @@ def _health_rows(
     rule_of = copies["rule_of"]
     since_day = _window_start(today)
     excepted = copies.get("exceptions") or {}
+    stages = copies.get("stages") or {}
+    today = today or datetime.now(timezone.utc).date()
     listed = []
     fired: Dict[int, List[Dict[str, Any]]] = {}
     # Each copy's counted findings per UTC day, so a shorter window than Fires'
@@ -1095,6 +1102,7 @@ def _health_rows(
         state, why, raw = _health(rule.status, checks, count)
         flags, caught = _check_flags(checks)
         results = _results(checks)
+        stage, entered = stages.get(rule.id, (None, None))
         listed.append(
             {
                 "rule_id": rule.id,
@@ -1123,6 +1131,14 @@ def _health_rows(
                 # Its active exceptions, and the hits they silenced (#3794).
                 "exceptions": len(excepted.get(rule.id, [])),
                 "silenced": _silenced(checks, excepted.get(rule.id, []), since_day),
+                # Its overlay copy's rollout stage, and the whole UTC days since a
+                # shadow stage began (#3995).
+                "stage": stage,
+                "days_in_shadow": (
+                    (today - entered.astimezone(timezone.utc).date()).days
+                    if stage == "shadow"
+                    else None
+                ),
             }
         )
     listed.sort(key=lambda row: (HEALTH_ORDER.index(row["health"]), row["rule_id"]))
@@ -1196,9 +1212,11 @@ def health_listing(
     flag: Optional[str] = None,
     rule_ids: Optional[Iterable[int]] = None,
     has_exceptions: bool = False,
+    stage: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Every listed copy's health, ``RULE_ROWS`` from ``offset``, narrowed to one
-    ``health`` (or "attention", the states to act on), one ``tool``, one ``flag``
+    ``health`` (or "attention", the states to act on), one ``tool``, one ``stage``
+    (shadow, live or off: the copy's current rollout stage), one ``flag``
     (a failing Noisy, Quiet, Accurate, Silent or drift check, or a passing
     Caught), a ``q`` over name, technique, reason and data source, and
     ``rule_ids`` (the copies a rule-health entry names) before the cap. ``sort``
@@ -1240,6 +1258,7 @@ def health_listing(
         if state in states
         for row_tool, hay, row in built["by_state"][state]
         if kept(row_tool, hay, row)
+        and (stage is None or row["stage"] == stage)
         and (flag is None or flag in _row_flags(row))
         and (not has_exceptions or row.get("exceptions"))
     ]
