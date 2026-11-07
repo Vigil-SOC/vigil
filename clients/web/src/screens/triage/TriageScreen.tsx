@@ -189,8 +189,8 @@ function Filters({
   const states = autoOpsOff ? STATES.map((s) => (s.value === QUEUED ? { ...s, label: `Waiting for triage: ${QUEUED_OFF}` } : s)) : STATES
 
   return (
-    <div className="tq-filter-row" role="group" aria-label="Filters">
-      <div className="tq-dropdowns">
+    <div className="filter-row" role="group" aria-label="Filters">
+      <div className="filter-row-picks">
         <Select name="Kind" value={kind} options={menu('kind', KINDS)} onSelect={(v) => setFilter('kind', v)} />
         <span className="tq-source-pick">
           <Select name="Source" value={source} options={menu('source', sources)} onSelect={(v) => setFilter('source', v)} />
@@ -199,12 +199,12 @@ function Filters({
         <Select name="What happened" value={state} options={menu('state', states)} onSelect={(v) => setFilter('state', v)} />
       </div>
       {filtered ? (
-        <span className="tq-summary">
+        <span className="filter-row-summary">
           Showing {data.rows.length.toLocaleString()} of {data.matched.toLocaleString()} ·{' '}
           <button type="button" onClick={clear}>Clear</button>
         </span>
       ) : data.matched > ROW_CAP ? (
-        <span className="tq-summary">Showing {ROW_CAP} of {data.matched.toLocaleString()}</span>
+        <span className="filter-row-summary">Showing {ROW_CAP} of {data.matched.toLocaleString()}</span>
       ) : null}
     </div>
   )
