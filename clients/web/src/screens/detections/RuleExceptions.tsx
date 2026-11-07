@@ -80,7 +80,7 @@ function WindowStrip({ w }: { w: Window }) {
       <div className="de-x-win-nums">
         <span><b>{w.hits.toLocaleString()}</b> hits</span>
         <span><b>{w.fired.toLocaleString()}</b> fired</span>
-        <span><b className="de-x-win-sil">{w.silenced.toLocaleString()}</b> silenced by exceptions ({share(w.silenced, w.hits)})</span>
+        <span><b className="de-x-win-sil">{w.silenced.toLocaleString()}</b> silenced by its current exceptions ({share(w.silenced, w.hits)})</span>
       </div>
       <div className="de-x-win-bar" aria-hidden="true">
         <i className="fired" style={{ width: `${(100 * w.fired) / w.hits}%` }} />
@@ -190,6 +190,9 @@ export default function RuleExceptions({ ruleId }: { ruleId: number }) {
                   <div className="de-x-note" title={x.note}>{x.note}</div>
                   <div className="de-x-by">Added by {x.created_by ?? 'unknown'}{x.created_at && ` · ${utcDayClock(x.created_at)}`}</div>
                   <div className="de-x-by" title={x.removal_reason ?? ''}>Removed by {x.removed_by ?? 'unknown'} · {utcDayClock(x.removed_at)} · {x.removal_reason}</div>
+                </div>
+                <div className="de-x-side">
+                  <span className="de-x-n" title={matchedTitle(x.days, data.window.since)}><b>{x.silenced.toLocaleString()}</b> {x.silenced === 1 ? 'hit' : 'hits'} silenced in {data.window.days}d</span>
                 </div>
               </li>
             ))}

@@ -206,8 +206,9 @@ def of_copy(rule_id: int, now: Optional[datetime] = None) -> Dict[str, Any]:
 
     ``window`` puts the rule's own fires on the days the matches are counted
     for (the runner keeps KEEP_DAYS): ``fired`` the findings Fires counts for this copy (traced to it, or naming it when no other copy shares its name),
-    ``silenced`` hits exceptions dropped, ``hits`` the two together. Each
-    exception's ``silenced`` is its matches in that window.
+    ``silenced`` hits its current (not removed) exceptions dropped, ``hits``
+    the two together. Each exception's ``silenced``, removed ones too, is its
+    matches in that window.
 
     LookupError when there is no such rule, ValueError when it isn't an overlay copy.
     """
@@ -245,7 +246,9 @@ def of_copy(rule_id: int, now: Optional[datetime] = None) -> Dict[str, Any]:
                 }
             )
     fired = fired_in_window(rule_id, since_day)
-    silenced = sum(r["silenced"] for r in rows)
+    # The current exceptions only, as the row's pill counts them; a removed
+    # one keeps its own count in its row.
+    silenced = sum(r["silenced"] for r in rows if not r.get("removed_at"))
     return {
         "rule_id": rule_id,
         "handed_off": rule_id in handed_off([rule_id]),

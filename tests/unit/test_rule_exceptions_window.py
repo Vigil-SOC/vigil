@@ -91,8 +91,9 @@ def copy(monkeypatch, listing):
             # The window is the 14 UTC days 2026-10-25..11-07, so 10-24 falls outside it.
             "11": {"days": {"2026-10-24": 10, "2026-11-01": 150, "2026-11-07": 50}},
             "12": {"days": {"2026-11-02": 130}},
-            # Counted before the window: outside it, not silenced in it.
-            "13": {"days": {"2026-10-23": 900, "2026-11-03": 0}},
+            # Removed: 900 before the window, 25 in it. Its own row keeps the
+            # 25; the rule's strip counts the current exceptions only.
+            "13": {"days": {"2026-10-23": 900, "2026-11-03": 25}},
         }
     }
 
@@ -147,10 +148,17 @@ def test_each_exception_says_what_it_silenced_in_that_window(copy):
     assert {x["exception_id"]: x["silenced"] for x in out["exceptions"]} == {
         11: 200,
         12: 130,
-        13: 0,
+        13: 25,
     }
     # The per-day counts are still all there for the hover.
     assert out["exceptions"][0]["days"]["2026-10-24"] == 10
+
+
+def test_a_removed_exceptions_matches_are_left_out_of_the_strip(copy):
+    # 13 was removed with 25 in-window matches: the strip, its hits and every
+    # share count 11 and 12 only, as the row's pill does.
+    window = exceptions.of_copy(5, now=NOW)["window"]
+    assert (window["silenced"], window["hits"]) == (330, 333)
 
 
 def test_the_window_follows_the_runners_keep_days(copy, monkeypatch):
