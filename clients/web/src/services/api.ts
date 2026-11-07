@@ -972,6 +972,11 @@ export const detectionRulesApi = {
   
   
   reload: () => api.post('/detection-rules/reload'),
+
+  /** The proof card zip (signed proof-card/v1 JSON, its .sig, a PDF, the public key):
+   * these rule copies, or every SIEM and Vigil rule with coverage when none given. */
+  proofCard: (ruleIds?: number[]) =>
+    api.post<Blob>('/detection-rules/proof-card', { rule_ids: ruleIds ?? null }, { responseType: 'blob', timeout: 0 }),
 }
 
 export const localServicesApi = {

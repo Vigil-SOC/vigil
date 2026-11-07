@@ -5,12 +5,12 @@ import logging
 from dataclasses import asdict
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
+from pydantic import BaseModel, Field
 
 from core.auth.permissions import permission_gate
 from core.deps import provide_detection_rules, provide_mcp_client, provide_mcp_registry
-from core.detections import exceptions
+from core.detections import exceptions, proof_card
 from core.detections.detection_rules_service import (
     DEPLOY_FORMATS,
     DetectionRulesService,
@@ -360,6 +360,43 @@ def _edited(result: Dict[str, Any]) -> Dict[str, Any]:
     else:
         status = 400
     raise HTTPException(status_code=status, detail=error)
+
+
+class ProofCardRequest(BaseModel):
+    """What to export: these rules, or (none) every live rule with coverage."""
+
+    rule_ids: Optional[List[int]] = Field(
+        default=None, min_length=1, max_length=proof_card.MAX_RULES
+    )
+
+
+@router.post("/proof-card")
+def export_proof_card(body: ProofCardRequest):
+    """A zip of the proof card: proof-card.json (proof-card/v1), its Ed25519
+    signature, a PDF of the same data, and the public key. Read-only on the
+    inventory; makes the instance's signing key on first use."""
+    try:
+        card = proof_card.build(body.rule_ids)
+        data = proof_card.bundle(card)
+    except proof_card.ProofKeyUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    stamp = card["exported_at"][:19].replace(":", "").replace("-", "")
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="vigil-proof-card_{card["kind"]}_{stamp}.zip"'
+        },
+    )
+
+
+@router.get("/proof-card/key")
+def get_proof_card_key():
+    """The public key proof cards are signed with, and its id."""
+    try:
+        return proof_card.public_key()
+    except proof_card.ProofKeyUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 @router.get("/rules/{rule_id}/exceptions")
