@@ -23,16 +23,34 @@ from tests.medic_eval.sample import CPU_TOLERANCE, HARD_CPU_VCPU, HARD_RSS_MIB, 
 SERVICES = ("backend", "soc-daemon", "llm-worker")  # three of the seven log streams
 RATE = 5000  # lines/s per stream
 DURATION_S = 60
-SETTLE_S = 90  # for Medic's tail to catch up and its sensors to report
+SETTLE_S = 120  # for Medic's tail to catch up and its sensors to report
+# Quiet before the flood: LogStream lists containers each 30 s (logtail REDISCOVER_S
+# caps it at one list per 10 s), so by then Medic follows the flood containers. Without
+# it the first ~30 s of the flood is a backlog Medic reads flat out on attach, and the
+# phase measures that catch-up rather than a flood on a stream it already follows.
+LEAD_S = 40
+STABLE_S = 35  # dropped counts unchanged this long (past one 30 s report): settled
 
+# Lines in core/telemetry.py's JSON shape (logtail reads them as python_json): of each
+# ten, one is a catalogue template (counted by template over the rate), two are WARNING
+# and seven are INFO under a template the pack doesn't know (by level / dropped).
 SCRIPT = r"""
 import sys, time
-svc, seconds, rate = sys.argv[1], float(sys.argv[2]), int(sys.argv[3])
+svc, seconds, rate, lead = sys.argv[1], float(sys.argv[2]), int(sys.argv[3]), float(sys.argv[4])
+print(f"FLOOD-READY {svc}", flush=True)
+time.sleep(lead)
+ts, tr = "2026-01-01T00:00:00.000000+00:00", "0" * 32
+CAT = '{"ts": "%s", "level": "INFO", "logger": "services.daemon.processor", "message": "Database service initialized", "msg_template": "Database service initialized", "trace_id": "%s", "span_id": ""}\n' % (ts, tr)
+OWN = '{"ts": "%s", "level": "%s", "logger": "flood.%s", "message": "flood %s line %d padding padding", "msg_template": "flood %%s line %%d padding padding", "trace_id": "%s", "span_id": ""}\n'
+def line(k):
+    if k % 10 == 0:
+        return CAT
+    return OWN % (ts, "WARNING" if k % 10 < 3 else "INFO", svc, svc, k, tr)
 per, tick, n = rate // 10, 0.1, 0
 end = time.monotonic() + seconds
 while time.monotonic() < end:
     t = time.monotonic()
-    sys.stdout.write("".join(f"flood {svc} line {n + i} padding padding padding\n" for i in range(per)))
+    sys.stdout.write("".join(line(n + i) for i in range(per)))
     sys.stdout.flush()
     n += per
     time.sleep(max(0.0, tick - (time.monotonic() - t)))
@@ -57,6 +75,7 @@ def run_flood(stack, seconds: int = DURATION_S, rate: int = RATE) -> dict:
     image = f"{stack.project}-backend:local"
     sampler = Sampler(stack, interval_s=5)
     started = time.time()
+    lead_end = time.monotonic() + LEAD_S  # from the first container's start
     try:
         for svc, name in names.items():
             _run("docker", "rm", "-f", name)
@@ -64,21 +83,27 @@ def run_flood(stack, seconds: int = DURATION_S, rate: int = RATE) -> dict:
                 "docker", "run", "-d", "--name", name, "--network", "none",
                 "--label", f"com.docker.compose.project={stack.project}",
                 "--label", f"com.docker.compose.service={svc}",
-                "--entrypoint", "python", image, "-c", SCRIPT, svc, str(seconds), str(rate),
+                "--entrypoint", "python", image, "-c", SCRIPT, svc, str(seconds), str(rate), str(LEAD_S),
             )
             if done.returncode:
                 raise AssertionError(f"flood container {name}: {done.stderr[-500:]}")
-        sampler.start()
+        time.sleep(max(0.0, lead_end - time.monotonic()))
+        sampler.start()  # the flood and 5 s past it: Medic is behind only if pinned in it
         time.sleep(seconds + 5)
-        # Medic's tail reads a stream at its own pace: settle until each flooded sensor has counted.
+        sampler.stop()
+        # Medic's tail reads a stream at its own pace: settle until each flooded sensor
+        # has counted and its count has stopped moving.
         flooded = {s: _sensor_ids(medic_api.sensors(stack), s) for s in SERVICES}
-        deadline = time.monotonic() + SETTLE_S
+        deadline, last, moved = time.monotonic() + SETTLE_S, None, time.monotonic()
         while time.monotonic() < deadline:
             now = medic_api.sensors(stack)
-            if all(any((now.get(i, {}).get("dropped_last_hour") or 0) > 0 for i in ids) for ids in flooded.values() if ids):
+            counts = [now.get(i, {}).get("dropped_last_hour") or 0 for ids in flooded.values() for i in ids]
+            if counts != last:
+                last, moved = counts, time.monotonic()
+            elif all(any((now.get(i, {}).get("dropped_last_hour") or 0) > 0 for i in ids) for ids in flooded.values() if ids) \
+                    and time.monotonic() - moved >= STABLE_S:
                 break
             time.sleep(5)
-        sampler.stop()
         after, sensors_after = medic_api.status(stack), medic_api.sensors(stack)
         emitted = {
             s: _run("docker", "logs", "--tail", "1", n).stdout.strip() for s, n in names.items()

@@ -59,7 +59,7 @@ JOB_BUDGET_S = 5.5 * 3600  # the job's 6 h, less the report and teardown
 BRINGUP_S = 20 * 60  # enable-compose.sh builds three images
 HELM_BRINGUP_S = 30 * 60  # e2e.sh full on kind: images loaded, 177 s to Ready in #3900, then its checks
 STEP_S = 3 * 60  # a cell's inject, verify and revert around its hold (a daemon recreate each)
-FLOOD_PHASE_S = flood.DURATION_S + flood.SETTLE_S + 120
+FLOOD_PHASE_S = flood.LEAD_S + flood.DURATION_S + flood.SETTLE_S + 120
 SURVIVAL_PHASE_S = 30 * 60  # measured ~29 min in #3893
 SURVIVAL = ("postgres", "redis", "bifrost", "viewer")
 

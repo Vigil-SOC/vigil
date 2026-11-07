@@ -36,14 +36,17 @@ VALIDATOR = Draft202012Validator(
 RUNTIME_VALIDATED = frozenset({"sample", "sensor_health"})
 
 
-# Takes a draft (no id yet), returns it redacted with `redaction` stamped.
-Choke = Callable[[dict[str, Any]], dict[str, Any]]
+# Takes a draft (no id yet) and the log tail's hits if its log text is already
+# redacted (else None); returns it redacted with `redaction` stamped.
+Choke = Callable[[dict[str, Any], int | None], dict[str, Any]]
 
 
 def redaction_choke(redactor: Redactor | None = None) -> Choke:
     """K2's choke point: every free-text field redacted, labels made label-safe."""
     redactor = redactor or Redactor()
-    return lambda draft: redact_observation(draft, redactor)
+    return lambda draft, log_redacted=None: redact_observation(
+        draft, redactor, log_redacted
+    )
 
 
 def new_run_id() -> str:
@@ -88,9 +91,10 @@ class Pipeline:
 
     def _emit(self, draft: dict[str, Any]) -> int:
         emitter, subject = draft.pop("_emitter"), draft.pop("_subject")
+        log_redacted = draft.pop("_log_redacted", None)  # set by the log tail only
         stats = self.bus.stats[subject]
         try:
-            body = self.choke(draft)
+            body = self.choke(draft, log_redacted)
         # Fail closed: whatever goes wrong, drop and count, never write raw.
         except Exception as exc:  # noqa: BLE001
             stats.redactor_failures += 1

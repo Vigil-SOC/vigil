@@ -30,13 +30,21 @@ INPUT_MAX = 65_536
 _USERINFO = re2.compile(r"[^@/\s]*:[^@/\s]*@")
 
 
-def redact_observation(obs: dict[str, Any], redactor: Redactor) -> dict[str, Any]:
+def redact_observation(
+    obs: dict[str, Any], redactor: Redactor, log_redacted: int | None = None
+) -> dict[str, Any]:
     """Return a redacted copy with `redaction` stamped. Every free-text field is
     redacted in full and then capped. Labels, enum values and `target.instance`
     are redacted and then made label-safe (sensors pass them raw). A log's
-    `exc_type`, `logger` or frame that held a secret is removed."""
+    `exc_type`, `logger` or frame that held a secret is removed.
+
+    `log_redacted` is set only by the log tail, whose `log.template`/`message`
+    already came out of this redactor: they are capped, not redacted again, and
+    its hits are added. `args` are still redacted (a slice of redacted text is not
+    the same as a redacted slice, and they reach past the message's cap). None
+    (every other draft) is the full path."""
     out = copy.deepcopy(obs)
-    hits = 0
+    hits = log_redacted or 0
 
     def text(value: str | None, cap: int = TEXT_MAX) -> str | None:
         nonlocal hits
@@ -72,9 +80,11 @@ def redact_observation(obs: dict[str, Any], redactor: Redactor) -> dict[str, Any
             err["detail"] = text(err["detail"])
     log = out.get("log")
     if log:
+        # Already redacted by the log tail: cap only.
+        once = text if log_redacted is None else lambda v, cap=TEXT_MAX: v and v[:cap]
         for key in ("template", "message"):
             if key in log:
-                log[key] = text(log[key])
+                log[key] = once(log[key])
         if "args" in log:
             log["args"] = [text(a, ARG_MAX) for a in log["args"]]
         for key in ("logger", "exc_type"):
