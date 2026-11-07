@@ -2,6 +2,7 @@
 // and the Python backend, which enqueues plain JSON and writes no ledger.
 
 import type { RunKind, RunPayload } from "./events.js";
+import type { SkillSpec } from "./plugin.js";
 
 export const JOB_SCHEMA_VERSION = 1;
 
@@ -51,6 +52,11 @@ export interface StartRequest {
   // Whether a person approves the hypotheses before the hunt spends anything. The policy
   // defaults to auto, so a headless run advances with nobody to ask.
   approve_hypotheses?: boolean;
+  // An operator's plugin manifest (YAML) for an investigate run, in place of
+  // plugins/investigate, and the skills it names that the bundled library lacks,
+  // resolved Python-side. Journaled on the spec, so a resume needs no request.
+  manifest?: string;
+  manifest_skills?: SkillSpec[];
 }
 
 // A resume carries no request, so a resume path that read one would not compile.
