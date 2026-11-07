@@ -282,8 +282,16 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
         else "Set the retention period"
     ),
     trail.ACTION_ERASURE: "Erased a principal's details",
-    "audit.feed.failed": "The audit feed failed",
-    "audit.feed.recovered": "The audit feed recovered",
+    "audit.feed.failed": lambda p: (
+        "The audit webhook failed"
+        if p.get("destination") == "webhook"
+        else "The audit feed failed"
+    ),
+    "audit.feed.recovered": lambda p: (
+        "The audit webhook recovered"
+        if p.get("destination") == "webhook"
+        else "The audit feed recovered"
+    ),
     "upgrade.run": _upgrade,
 }
 
