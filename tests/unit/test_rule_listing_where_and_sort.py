@@ -98,7 +98,15 @@ def listing(monkeypatch):
         return (
             "elastic",
             name.lower(),
-            {"rule_id": rule_id, "name": name, "fires": fires, "health": health},
+            {
+                "rule_id": rule_id,
+                "name": name,
+                "fires": fires,
+                "health": health,
+                "worst": health,
+                "flags": [],
+                "caught": False,
+            },
         )
 
     built = {
@@ -106,6 +114,7 @@ def listing(monkeypatch):
         "rule_total": 5,
         "mapped": 0,
         "counts": {None: dict.fromkeys(catalog.HEALTH_ORDER, 0)},
+        "flag_counts": {None: dict.fromkeys(catalog.FLAGS, 0)},
         "by_state": {state: [] for state in catalog.HEALTH_ORDER},
         "by_siem": {},
         "blind_spots": [],

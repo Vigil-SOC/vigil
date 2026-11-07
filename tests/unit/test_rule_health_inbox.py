@@ -221,6 +221,9 @@ def _row(rule_id, health="fires", tool="elastic", name=None):
         "name": name or f"Rule {rule_id}",
         "tool": tool,
         "health": health,
+        "worst": health,
+        "flags": [],
+        "caught": False,
     }
     return (tool, (name or f"rule {rule_id}").lower(), row)
 
@@ -232,6 +235,7 @@ def listing(monkeypatch):
         "rule_total": 4,
         "mapped": 0,
         "counts": {None: dict.fromkeys(catalog.HEALTH_ORDER, 0)},
+        "flag_counts": {None: dict.fromkeys(catalog.FLAGS, 0)},
         "by_state": {state: [] for state in catalog.HEALTH_ORDER},
         "by_siem": {},
         "blind_spots": [],
@@ -266,8 +270,16 @@ def test_the_rules_route_parses_the_ids(monkeypatch):
         catalog, "health_listing", lambda *a, **kw: seen.update(kw) or {"rules": []}
     )
     routes.get_rules(
-        health=None, tool=None, q=None, offset=0, sort="worst", rules="7,12,7"
+        health=None,
+        tool=None,
+        q=None,
+        offset=0,
+        sort="worst",
+        flag=None,
+        rules="7,12,7",
     )
     assert seen["rule_ids"] == [7, 12, 7]
-    routes.get_rules(health=None, tool=None, q=None, offset=0, sort="worst", rules=None)
+    routes.get_rules(
+        health=None, tool=None, q=None, offset=0, sort="worst", flag=None, rules=None
+    )
     assert seen["rule_ids"] is None

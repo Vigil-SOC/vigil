@@ -17,6 +17,8 @@ type RuleHealth =
   | 'disabled'
   | 'no_fire_data'
 type View = RuleHealth | 'attention' | 'all'
+type Flag = 'noisy' | 'quiet' | 'accurate' | 'silent' | 'drift'
+type FlagView = Flag | 'caught'
 type Sort = 'worst' | 'most_fires' | 'fewest_fires' | 'name'
 const SORTS: { key: Sort; label: string }[] = [
   { key: 'worst', label: 'Worst first' },
@@ -35,6 +37,12 @@ interface RuleRow {
   /** The data source its Sees check reads: an index pattern, decoder or index/sourcetype. */
   where: string | null
   health: RuleHealth
+  /** Failing checks past Runs and Sees, worst first. */
+  flags: Flag[]
+  /** Its Caught check passed: it alerted on a real or replayed attack. */
+  caught: boolean
+  /** Its worst problem across every check: a health state, a flag, or caught. */
+  worst: RuleHealth | Flag | 'caught'
   why: string
   /** The failing check's reason as stored, when it says more than ``why``. */
   raw: string | null
@@ -57,6 +65,8 @@ interface RulesReport {
   rule_total: number
   mapped: number
   counts: Record<RuleHealth, number>
+  /** Rules with each flag failing, and with Caught passing. */
+  flag_counts: Record<FlagView, number>
   matched: number
   /** With a search: how many it matches in each view outside this one. */
   matched_elsewhere: Partial<Record<RuleHealth, number>>
@@ -77,6 +87,18 @@ const HEALTH: Record<RuleHealth, { label: string; tone: string; note: string; ac
   disabled: { label: 'Disabled', tone: 'idle', note: 'turned off in the SIEM', action: 'Open rule' },
   no_fire_data: { label: 'No fire data', tone: 'none', note: 'the SIEM doesn’t report fire counts for these', action: 'Open rule' },
 }
+/** The checks past Runs and Sees: each a chip, a filter, and the row's label when it's the worst. */
+const FLAG: Record<FlagView, { label: string; tone: string; note: string; action: string }> = {
+  noisy: { label: 'Went noisy', tone: 'high', note: 'far more alerts today than its usual', action: 'Tune with Vigil' },
+  quiet: { label: 'Too loud', tone: 'high', note: 'over its alerts-per-day limit', action: 'Tune with Vigil' },
+  accurate: { label: 'False positives', tone: 'fair', note: 'most of its judged alerts were not real', action: 'Tune with Vigil' },
+  silent: { label: 'Went silent', tone: 'ac', note: 'fired regularly, then stopped', action: 'Check source' },
+  drift: { label: 'Drifted', tone: 'ac', note: 'changed in the SIEM, not in its repo', action: 'Compare with repo' },
+  caught: { label: 'Caught an attack', tone: 'good', note: 'alerted on a real or replayed attack', action: 'View proof' },
+}
+const FLAGS: FlagView[] = ['noisy', 'quiet', 'accurate', 'silent', 'drift', 'caught']
+const isFlag = (k: string): k is FlagView => k in FLAG
+const labelOf = (k: RuleRow['worst']) => (isFlag(k) ? FLAG[k] : HEALTH[k])
 const ATTENTION: RuleHealth[] = ['fails_to_run', 'data_silent', 'missing_field', 'never_fired']
 const MORE: View[] = ['disabled', 'no_fire_data', 'all']
 const SIEMS: Siem[] = ['elastic', 'splunk', 'wazuh']
@@ -95,6 +117,14 @@ function viewCount(report: RulesReport, view: View): number {
 
 function prompt(r: RuleRow, days: number): string {
   const rule = `rule "${r.name}" (${SIEM_NAME[r.tool] ?? r.tool})`
+  switch (r.worst) {
+    case 'noisy': return `The ${rule} went noisy: far more alerts than its usual. Find what changed and suggest tuning.`
+    case 'quiet': return `The ${rule} is over its alerts-per-day limit. Show what it alerts on and suggest tuning.`
+    case 'accurate': return `Most of the ${rule}'s judged alerts were false positives. Find the pattern and suggest an exception or a fix.`
+    case 'silent': return `The ${rule} used to fire regularly and has gone silent. Check whether its data still arrives, and why it stopped.`
+    case 'drift': return `The ${rule} was changed in the SIEM but not in its repo. Show the difference and which copy should win.`
+    case 'caught': return `Show me the proof that the ${rule} caught an attack: the case, the alert and its checks.`
+  }
   switch (r.health) {
     case 'fails_to_run': return `The ${rule} fails to run: ${r.why}. Find why and draft a fix.`
     case 'missing_field': return `The ${rule} references a field its index doesn't have: ${r.why}. Draft a fix.`
@@ -124,6 +154,10 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   const [typed, setTyped] = useState('')
   const [q, setQ] = useState('')
   const [sort, setSort] = useState<Sort>('worst')
+  // A flag chip filters on top of All rules; a health chip clears it.
+  const [flag, setFlag] = useState<FlagView | null>(null)
+  const pickView = (v: View) => { setFlag(null); setView(v) }
+  const pickFlag = (f: FlagView) => { setView('all'); setFlag(flag === f ? null : f) }
   const [report, setReport] = useState<RulesReport | null>(null)
   const [rows, setRows] = useState<RuleRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -146,7 +180,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
     return () => window.clearTimeout(t)
   }, [typed])
 
-  const params = { health: view === 'all' ? undefined : view, tool: siem === 'all' ? undefined : siem, q: q || undefined, sort: sort === 'worst' ? undefined : sort, rules: picked || undefined }
+  const params = { health: view === 'all' ? undefined : view, tool: siem === 'all' ? undefined : siem, q: q || undefined, sort: sort === 'worst' ? undefined : sort, flag: flag ?? undefined, rules: picked || undefined }
 
   // Each view, SIEM and search asks the server: the listing is capped, so narrowing capped rows here would miss rules.
   useEffect(() => {
@@ -167,9 +201,9 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
       .catch((e) => { if (live) setError(errorText(e, 'Rule health did not load.')) })
       .finally(() => { if (live) setLoading(false) })
     return () => { live = false }
-    // params follows view, siem, q, sort and picked
+    // params follows view, siem, q, sort, flag and picked
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, siem, q, sort, picked])
+  }, [view, siem, q, sort, flag, picked])
 
   const matched = report?.matched ?? 0
   const hasMore = !loading && rows.length < matched
@@ -211,7 +245,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   const siems = SIEMS.filter((s) => report.by_siem[s])
   const cantFire = siems.reduce((a, s) => a + (report.by_siem[s]?.cant_fire ?? 0), 0)
   const of = viewCount(report, view)
-  const viewName = view === 'attention' ? 'Needs attention' : view === 'all' ? 'All rules' : HEALTH[view].label
+  const viewName = flag ? FLAG[flag].label : view === 'attention' ? 'Needs attention' : view === 'all' ? 'All rules' : HEALTH[view].label
   // A search that misses here may hit in a view the chips leave out (a healthy rule
   // under Needs attention): say how many and where, one click from all of them.
   const elsewhere = Object.entries(report.matched_elsewhere ?? {}) as [RuleHealth, number][]
@@ -219,7 +253,9 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   const elsewhereText = elsewhere.map(([h, c]) => `${n(c)} in ${HEALTH[h].label}`).join(', ')
   const showAll = () => { setView('all'); setOpen(null) }
   const order = sort === 'worst' ? 'worst first' : sort === 'name' ? 'by name' : sort === 'most_fires' ? 'most fires first' : 'fewest fires first'
-  const note = q
+  const note = flag && !q
+    ? `${plural(report.matched, 'rule', 'rules')} · ${FLAG[flag].note}, ${order}`
+    : q
     ? `${plural(report.matched, 'rule matches', 'rules match')} “${q}” in ${viewName}${elsewhereN ? ` · ${n(elsewhereN)} more in other views` : ''}`
     : picked
       ? `${plural(report.matched, 'rule', 'rules')} in ${viewName}, ${order}`
@@ -359,15 +395,20 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
 
         <div className="de-chips-row">
           <div className="de-chips" role="group" aria-label="Health">
-            <Chip on={view === 'attention'} onClick={() => setView('attention')} label="Needs attention" count={viewCount(report, 'attention')} />
+            <Chip on={!flag && view === 'attention'} onClick={() => pickView('attention')} label="Needs attention" count={viewCount(report, 'attention')} />
             <span className="de-div" aria-hidden="true" />
             {ATTENTION.map((h) => (
-              <Chip key={h} on={view === h} tone={HEALTH[h].tone} onClick={() => setView(h)} label={HEALTH[h].label} count={report.counts[h]} />
+              <Chip key={h} on={!flag && view === h} tone={HEALTH[h].tone} onClick={() => pickView(h)} label={HEALTH[h].label} count={report.counts[h]} />
             ))}
             <span className="de-div" aria-hidden="true" />
-            <Chip on={view === 'fires'} tone="good" onClick={() => setView('fires')} label="Fires" count={report.counts.fires} />
+            <Chip on={!flag && view === 'fires'} tone="good" onClick={() => pickView('fires')} label="Fires" count={report.counts.fires} />
           </div>
-          <select aria-label="Other views" className={`de-more${MORE.includes(view) ? ' on' : ''}`} value={MORE.includes(view) ? view : ''} onChange={(e) => setView((e.target.value || 'attention') as View)}>
+          <div className="de-chips" role="group" aria-label="Other checks">
+            {FLAGS.map((f) => (
+              <Chip key={f} on={flag === f} tone={FLAG[f].tone} onClick={() => pickFlag(f)} label={FLAG[f].label} count={report.flag_counts?.[f] ?? 0} />
+            ))}
+          </div>
+          <select aria-label="Other views" className={`de-more${!flag && MORE.includes(view) ? ' on' : ''}`} value={!flag && MORE.includes(view) ? view : ''} onChange={(e) => pickView((e.target.value || 'attention') as View)}>
             <option value="">More views</option>
             <option value="disabled">Disabled · {n(report.counts.disabled)}</option>
             <option value="no_fire_data">No fire data · {n(report.counts.no_fire_data)}</option>
@@ -386,7 +427,8 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
           <div className="de-rows" style={{ height: virtual.getTotalSize() }}>
           {shown.map((item) => {
             const r = rows[item.index]
-            const h = HEALTH[r.health]
+            const h = labelOf(r.worst ?? r.health)
+            const others = [...(r.flags ?? []).filter((f) => f !== r.worst), ...(r.caught && r.worst !== 'caught' ? ['caught' as const] : [])]
             const isOpen = open?.id === r.rule_id && open.what === 'raw'
             const excOpen = open?.id === r.rule_id && open.what === 'exceptions'
             const fired = r.fires > 0 ? n(r.fires) : r.health === 'no_fire_data' ? 'No data' : 'None'
@@ -395,6 +437,11 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                 <div className="de-rule">
                   <div className="de-name" title={r.name}>{r.name}</div>
                   <div className="de-why-text" title={r.why}>{r.why}</div>
+                  {others.length > 0 && (
+                    <div className="de-flags">
+                      {others.map((f) => <span key={f} className={`de-flag ${FLAG[f].tone}`} title={FLAG[f].note}>{FLAG[f].label}</span>)}
+                    </div>
+                  )}
                   <div className="de-meta">
                     <span>{!r.checks_run ? 'Not checked' : r.checks_passing ? plural(r.checks_passing, 'check passes', 'checks pass') : 'No check passes'}</span>
                   </div>

@@ -109,12 +109,31 @@ HEALTH_ORDER = (
 ATTENTION = ("fails_to_run", "data_silent", "missing_field", "never_fired")
 CANT_FIRE = ("fails_to_run", "data_silent", "missing_field")
 LISTING_SIEMS = ("elastic", "splunk", "wazuh")
+# The checks past Runs and Sees, as a rule's flags on the listing: a fail on
+# any of them, worst first. Caught is the one a pass is worth showing.
+FLAG_CHECKS = ("noisy", "quiet", "accurate", "silent", "drift")
+CAUGHT_CHECK = "caught"
+FLAGS = FLAG_CHECKS + (CAUGHT_CHECK,)
+# A row's worst problem across every check, worst first: a rule that can't
+# fire, then a failing flag, then whether it fires; caught ranks as the best.
+WORST_ORDER = (
+    "fails_to_run",
+    "data_silent",
+    "missing_field",
+    *FLAG_CHECKS,
+    "never_fired",
+    "fires",
+    CAUGHT_CHECK,
+    "disabled",
+    "no_fire_data",
+)
 # The listing's orders besides worst first (HEALTH_ORDER, then rule id). Each
 # ties on rule id, so a page boundary never moves between requests.
 SORTS = {
     "most_fires": lambda row: (-row["fires"], row["rule_id"]),
     "fewest_fires": lambda row: (row["fires"], row["rule_id"]),
     "name": lambda row: (row["name"].strip().casefold(), row["rule_id"]),
+    "worst": lambda row: (WORST_ORDER.index(row["worst"]), row["rule_id"]),
 }
 FIRES_WINDOW_DAYS = 90
 RULE_ROWS = 300
@@ -772,6 +791,30 @@ def _health(
     )
 
 
+def _check_flags(checks: Dict[str, Any]) -> Tuple[List[str], bool]:
+    """The rule's failing flag checks, worst first, and whether Caught passed."""
+
+    def result(key: str) -> Any:
+        check = checks.get(key)
+        return check.get("result") if isinstance(check, dict) else None
+
+    return [k for k in FLAG_CHECKS if result(k) == "fail"], result(
+        CAUGHT_CHECK
+    ) == "pass"
+
+
+def _worst(health: str, flags: List[str], caught: bool) -> str:
+    """The row's worst problem: a rule that can't fire, or is off, stays so; else
+    its worst failing flag; else Caught over Fires; else its health."""
+    if health in CANT_FIRE or health == "disabled":
+        return health
+    if flags:
+        return flags[0]
+    if caught and health in ("fires", "no_fire_data", "never_fired"):
+        return CAUGHT_CHECK
+    return health
+
+
 def _first_line(reason: str) -> str:
     """The reason's first line without its status prefix; a bare error code
     takes the next line too, so the line says what went wrong."""
@@ -910,6 +953,7 @@ def _health_rows(copies: Dict[str, Any], fires: Dict[str, int]) -> Dict[str, Any
             mapped.add(rule_of[rule.id])
         count = fires.get(rule.name, 0)
         state, why, raw = _health(rule.status, checks, count)
+        flags, caught = _check_flags(checks)
         results = _results(checks)
         listed.append(
             {
@@ -922,6 +966,9 @@ def _health_rows(copies: Dict[str, Any], fires: Dict[str, int]) -> Dict[str, Any
                 "techniques": list(rule.techniques or []),
                 "where": _where(checks, tool_of(rule.source)),
                 "health": state,
+                "flags": flags,
+                "caught": caught,
+                "worst": _worst(state, flags, caught),
                 "why": why,
                 "raw": raw,
                 "fires": count,
@@ -936,7 +983,11 @@ def _health_rows(copies: Dict[str, Any], fires: Dict[str, int]) -> Dict[str, Any
         state: [] for state in HEALTH_ORDER
     }
     counts: Dict[Optional[str], Dict[str, int]] = {None: dict.fromkeys(HEALTH_ORDER, 0)}
+    flag_counts: Dict[Optional[str], Dict[str, int]] = {None: dict.fromkeys(FLAGS, 0)}
     for row in listed:
+        for key in _row_flags(row):
+            flag_counts[None][key] += 1
+            flag_counts.setdefault(row["tool"], dict.fromkeys(FLAGS, 0))[key] += 1
         page_row = {k: v for k, v in row.items() if k not in ("runs", "sees")}
         by_state[row["health"]].append((row["tool"], _haystack(row), page_row))
         counts[None][row["health"]] += 1
@@ -947,10 +998,16 @@ def _health_rows(copies: Dict[str, Any], fires: Dict[str, int]) -> Dict[str, Any
         "total": len(listed),
         "by_state": by_state,
         "counts": counts,
+        "flag_counts": flag_counts,
         "rule_total": len({rule_of[row["rule_id"]] for row in listed}),
         "mapped": len(mapped),
         "by_siem": _by_siem(listed),
     }
+
+
+def _row_flags(row: Dict[str, Any]) -> List[str]:
+    """The flag filters a row matches: its failing flags, and Caught if it passed."""
+    return row["flags"] + ([CAUGHT_CHECK] if row["caught"] else [])
 
 
 def _listing_now() -> Dict[str, Any]:
@@ -980,13 +1037,16 @@ def health_listing(
     q: Optional[str] = None,
     offset: int = 0,
     sort: str = "worst",
+    flag: Optional[str] = None,
     rule_ids: Optional[Iterable[int]] = None,
 ) -> Dict[str, Any]:
     """Every listed copy's health, ``RULE_ROWS`` from ``offset``, narrowed to one
-    ``health`` (or "attention", the states to act on), one ``tool``, a ``q`` over
-    name, technique, reason and data source, and ``rule_ids`` (the copies a
-    rule-health entry names) before the cap. ``sort`` is one of SORTS: worst
-    first (the default), most or fewest fires, or by name.
+    ``health`` (or "attention", the states to act on), one ``tool``, one ``flag``
+    (a failing Noisy, Quiet, Accurate, Silent or drift check, or a passing
+    Caught), a ``q`` over name, technique, reason and data source, and
+    ``rule_ids`` (the copies a rule-health entry names) before the cap. ``sort``
+    is one of SORTS: worst first across every check (the default), most or
+    fewest fires, or by name.
 
     The counts cover every copy of ``tool`` (every copy when none); rule_total
     and mapped count each rule once, across every tool. With ``q``,
@@ -1012,7 +1072,7 @@ def health_listing(
         for state in HEALTH_ORDER
         if state in states
         for row_tool, hay, row in built["by_state"][state]
-        if kept(row_tool, hay, row)
+        if kept(row_tool, hay, row) and (flag is None or flag in _row_flags(row))
     ]
     # A search that misses here may hit in a view the chips leave out: say where,
     # so a healthy rule's name never reads as "no such rule".
@@ -1028,13 +1088,13 @@ def health_listing(
             )
         )
     }
-    if sort != "worst":
-        shown = sorted(shown, key=SORTS[sort])
+    shown = sorted(shown, key=SORTS[sort])
     return {
         "total": built["total"],
         "rule_total": built["rule_total"],
         "mapped": built["mapped"],
         "counts": built["counts"].get(tool, dict.fromkeys(HEALTH_ORDER, 0)),
+        "flag_counts": built["flag_counts"].get(tool, dict.fromkeys(FLAGS, 0)),
         "matched": len(shown),
         "matched_elsewhere": elsewhere,
         "offset": offset,

@@ -113,6 +113,8 @@
 .de-source { min-width: 0; font-family: var(--font-mono); font-size: 11.5px; color: var(--tx2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .de-tech { font-family: var(--font-mono); font-size: 12px; line-height: 20px; color: var(--tx1); white-space: nowrap; }
 .de-tech-more, .de-none { color: var(--tx3); }
+.de-flags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.de-flag { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 6px; font-size: 11.5px; font-weight: 600; color: var(--t); border: 1px solid color-mix(in srgb, var(--t) 40%, transparent); background: color-mix(in srgb, var(--t) 10%, transparent); }
 .de-fires { font-size: 13px; line-height: 20px; color: var(--tx3); font-variant-numeric: tabular-nums; }
 .de-sort { height: 36px; padding: 0 10px; border-radius: 9px; background: var(--bg0); border: 1px solid var(--ln1); color: var(--tx0); font: inherit; font-size: 12.5px; }
 .de-sort:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
