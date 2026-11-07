@@ -1153,7 +1153,9 @@ def _health_rows(
     for row in listed:
         if row["stage"] in STAGES:
             stage_counts[None][row["stage"]] += 1
-            stage_counts.setdefault(row["tool"], dict.fromkeys(STAGES, 0))[row["stage"]] += 1
+            stage_counts.setdefault(row["tool"], dict.fromkeys(STAGES, 0))[
+                row["stage"]
+            ] += 1
         for key in _row_flags(row):
             flag_counts[None][key] += 1
             flag_counts.setdefault(row["tool"], dict.fromkeys(FLAGS, 0))[key] += 1
@@ -1307,7 +1309,9 @@ def health_listing(
         "mapped": built["mapped"],
         "counts": built["counts"].get(tool, dict.fromkeys(HEALTH_ORDER, 0)),
         "flag_counts": built["flag_counts"].get(tool, dict.fromkeys(FLAGS, 0)),
-        "stage_counts": built.get("stage_counts", {}).get(tool, dict.fromkeys(STAGES, 0)),
+        "stage_counts": built.get("stage_counts", {}).get(
+            tool, dict.fromkeys(STAGES, 0)
+        ),
         "never_fired_rules": built.get("never_fired_rules", 0),
         "matched": len(shown),
         "matched_elsewhere": elsewhere,
