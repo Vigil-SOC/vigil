@@ -5,7 +5,7 @@ one environment and generalises to nothing. Address/IOC matching belongs to
 threat intel; this check stays on the rule's ``detection`` and ``logsource``
 values so title/description/falsepositives cannot false-hit. A native query
 (``lint_query``: SPL, EQL, ES|QL, Lucene) is scanned whole for addresses and
-hosts, and its ``field <op> value`` pairs for accounts.
+hosts, and its ``field <op> value`` pairs for accounts and bare hostnames.
 
 A whole IANA special-purpose block (10.0.0.0/8, 192.168.0.0/16, ...) is not
 one environment: rules name it to mean "internal" or "external".
@@ -165,6 +165,29 @@ _USER_FIELDS = frozenset(
         "logonuser",
     }
 )
+# Fields that name the machine an event is on. Not DestinationHostname,
+# *.domain, dns.question.name or url.*: those hold internet names (IOCs).
+_HOST_FIELDS = frozenset(
+    {
+        "host",
+        "hostname",
+        "dest",
+        "src",
+        "dvc",
+        "desthost",
+        "srchost",
+        "destnthost",
+        "srcnthost",
+        "computername",
+        "computer",
+        "workstation",
+        "workstationname",
+    }
+)
+_HOST_PLACEHOLDERS = frozenset({"localhost", "unknown", "-", "null", "none", "n/a"})
+_HOST_VALUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+# Sigma modifiers whose value is a fragment or pattern, not one host.
+_PARTIAL_MODIFIERS = frozenset({"contains", "startswith", "endswith", "re"})
 _ENV_TLDS = frozenset({"corp", "local", "internal", "lan"})
 _TOKEN = re.compile(r"[^\s,;'\"=]+")
 
@@ -293,7 +316,13 @@ def lint_query(query: str, language: str) -> dict[str, Any]:
     # Addresses and hosts anywhere in the query, whatever field holds them.
     add(_findings_for("query", text))
     for field, value in _query_pairs(text, language):
-        add([f for f in _findings_for(field, value) if f["kind"] == "user"])
+        add(
+            [
+                f
+                for f in _findings_for(field, value)
+                if f["kind"] in ("user", "hostname")
+            ]
+        )
     return {
         "passed": not findings,
         "language": language,
@@ -390,6 +419,11 @@ def _findings_for(field: Optional[str], value: str) -> list[dict[str, str]]:
         if person is not None:
             findings.append(_finding("user", person, field_name))
 
+    if _is_host_field(field_name):
+        host = _single_host(value)
+        if host is not None and host.lower() not in {h.lower() for h in hosts}:
+            findings.append(_finding("hostname", host, field_name))
+
     return findings
 
 
@@ -440,6 +474,31 @@ def _is_user_field(field: str) -> bool:
     if stem in _USER_FIELDS:
         return True
     return stem.endswith("username") or stem.endswith("accountname")
+
+
+def _is_host_field(field: str) -> bool:
+    base, _, mods = field.partition("|")
+    if _PARTIAL_MODIFIERS & set(mods.lower().split("|")):
+        return False
+    parts = base.lower().split(".")
+    # ECS host.name / host.hostname, and *.host.name under another object.
+    if len(parts) > 1 and parts[-2] == "host" and parts[-1] in ("name", "hostname"):
+        return True
+    return _field_stem(base) in _HOST_FIELDS
+
+
+def _single_host(value: str) -> Optional[str]:
+    """A literal single host name: not a pattern, placeholder or IP address."""
+    raw = value.strip().strip("'\"")
+    if raw.lower() in _HOST_PLACEHOLDERS or not _HOST_VALUE.match(raw):
+        return None
+    if not any(c.isalpha() for c in raw):
+        return None  # a number or IP: the address checks own those
+    try:
+        ipaddress.ip_address(raw)
+        return None
+    except ValueError:
+        return raw
 
 
 def _field_stem(field: str) -> str:
