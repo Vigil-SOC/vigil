@@ -3392,7 +3392,7 @@ export interface paths {
          * Get Rules
          * @description Every listed rule copy's health with its reason and data source, capped at
          *     catalog.RULE_ROWS rows from ``offset``, narrowed by ``health`` ("attention"
-         *     is every state to act on), ``tool``, ``flag`` (a failing Noisy, Quiet,
+         *     is every state to act on), ``tool``, ``stage`` (the copy's rollout stage), ``flag`` (a failing Noisy, Quiet,
          *     Accurate, Silent or drift check, or a passing Caught), the search ``q`` and
          *     ``rules`` (comma-separated rule ids, as a rule-health entry links them), in
          *     ``sort`` order (worst first by default); with ``has_exceptions``, every copy
@@ -18223,6 +18223,7 @@ export interface operations {
                 flag?: ("noisy" | "quiet" | "accurate" | "silent" | "drift" | "caught") | null;
                 rules?: string | null;
                 has_exceptions?: boolean;
+                stage?: ("shadow" | "live" | "off") | null;
             };
             header?: {
                 authorization?: string | null;
