@@ -66,6 +66,134 @@
 * **desktop:** Bifrost's runtime settings (provider keys, virtual keys, budgets, rate limits) now persist in a `bifrost_data` named volume, so they survive quitting the app ([#1452](https://github.com/Vigil-SOC/vigil/issues/1452)). Earlier versions kept them in an anonymous volume that every quit orphaned; those are not migrated, so re-enter any Bifrost settings made in its UI once. Providers seeded from environment variables come back on their own. Reclaim the orphaned volumes with `docker volume prune`.
 * **compose:** Bifrost's request log (`logs.db`) now lives in the `bifrost_data` volume, so gateway log history, cost time series and `recalculate-cost` survive a container recreate ([#1454](https://github.com/Vigil-SOC/vigil/issues/1454)). It was written to `/app/logs.db` in the container's writable layer. Applies to the server and desktop standalone stacks. The config store is untouched, so no volume reset is needed. History already in `/app/logs.db` is not migrated: the first recreate drops it, as every recreate did before. Snapshots still leave `logs.db` out, and a restore moves the live one aside into `.pre-restore-<stamp>` in the Bifrost data directory rather than restoring it.
 
+## 1.0.2 (2026-11-07)
+
+## What's Changed
+* feat(#3707): a finding names the Kibana rule version and query that fired it by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3745
+* ci: a macOS runner that never arrives does not fail the run by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3763
+* chore: ignore runtime case evidence by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3764
+* feat(#3756): OpenCTI integration: read-only threat-intel lookups, Settings card, MCP server by @johnvanlowe in https://github.com/Vigil-SOC/vigil/pull/3757
+* feat(#3717): Splunk saved searches join the rule inventory, each with a Runs result by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3752
+* fix(#3748): the autonomy chip and Setup read both act flags by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3771
+* feat(#3750): Dashboard › Rules: per-SIEM Runs and Sees, Blind spots first, and the rules that can't fire by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3772
+* feat(#3751): Sees for Wazuh rules: each rule's decoder, read from the Wazuh indexer under the elastic-siem budget by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3773
+* feat(#2038): pipeline fault injectors I-3.a, I-3.b, P-2.c, P-3.a by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3743
+* feat(#3749): Quiet for Kibana rules: alert volume per rule against a per-SIEM threshold by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3774
+* fix(#3741): one SIEM search budget per integration, shared by every Vigil process by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3780
+* feat(#2028): medic-core release workflow and bundled-file check by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3781
+* feat(#2029): ratchet and scheduled refresh for the bundled medic-core pack by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3784
+* feat(#3765): drift: a Kibana or Splunk copy changed outside its linked repo rule reads checks.drift fail and shows as a rule_health flag by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3779
+* feat(#3766): Medic checks an imported pack by its expected SHA-256; trust root, revocation and acknowledge go by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3783
+* chore(medic): bundle medic-core 0.4.0 by @vigil-release-please[bot] in https://github.com/Vigil-SOC/vigil/pull/3782
+* feat(#3785): Quiet for Wazuh rules from one wazuh-alerts-* search per sync by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3804
+* feat(#3755): save_detection_rule replays the Sigma form on evidence; mitre_analyst turns gaps into Cases; a daily run queues it by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3776
+* fix(#3787): the Helm chart deploys the Bifrost gateway it points every LLM call at by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3806
+* feat(#3767): a Medic pack's line includes its channel; a line change needs override; pack events record sha256 and publisher by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3811
+* feat(#3788): Noisy and Silent for Kibana rules from Quiet's search, and a never-firing count per SIEM by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3805
+* feat(#3775): compose fault injectors for L-2.a, L-5.a and I-1.g at the stubs by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3812
+* feat(#3778): agents read and search a case's attached evidence; investigate holds recall_entity by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3820
+* feat(#3768): Sees for Splunk saved searches, on a splunk query budget the Runs search also spends by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3821
+* fix(#3799): release images carry the stripped version so Helm and the image agree on acknowledgeVersion by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3823
+* fix(#3786): the Helm chart can be installed from source by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3822
+* feat(#3760): Vigil runs its Elastic overlay rules: shadow counts hits, live hits become findings, stages move on their own by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3798
+* feat(#3790): Splunk saved searches get a Quiet check by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3830
+* feat(#3762): a live overlay rule queues a PR run to the deploy target; Kibana's copy takes over from Vigil's by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3831
+* fix(#3797): Sigma replay reads nested Elasticsearch fields and ECS arrays by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3834
+* feat(#3759): Accurate for Kibana and Wazuh rules; Wazuh findings name their rule version by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3777
+* fix(#3802): Wazuh Sees keys each search so restarts don't re-spend the shared budget by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3835
+* fix(#3801): Wazuh Sees and Quiet find indices with _field_caps, so a read-only indexer user gets real verdicts by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3836
+* fix(#3796): Accurate names the Wazuh ingestion floor instead of "not enough data" by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3843
+* fix(#3808, #3809): drift counts only what moved after the link by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3848
+* fix(#3810): A rule that stops carrying a check gets a NULL row, so its flags close by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3852
+* feat(#3791): Splunk findings name their saved search and version; Accurate covers Splunk by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3853
+* fix(#3819): Sigma lint allows environment literals in selections the condition only negates by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3850
+* fix(#3827): overlay runs search a window LAG behind now, so late-indexed events are counted once by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3841
+* fix(#3837): one mis-mapped index under wazuh-alerts-* no longer blanks Wazuh Sees and Quiet by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3842
+* fix(#3839): a shipped vendor repo can't be the deploy target; setting one is audited by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3846
+* feat(#3803): Caught — each Kibana and Wazuh rule version records whether it alerted on a real attack step by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3851
+* feat(#3817): Noisy and Silent for Wazuh rules, from Wazuh Quiet's one search; level < 3 rules not never-firing by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3854
+* fix(#3833): Dashboard › Rules splits broken from starved instead of counting every fail as "can't fire" by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3862
+* fix(#3856): pre-#3853 Splunk findings resolve to their saved search from _raw by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3863
+* fix(#3840): overlay copies get Sees; a copy whose data isn't arriving neither promotes nor stays live by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3864
+* feat(#3832): Noisy and Silent for Splunk saved searches, from Splunk Quiet's one search by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3855
+* feat(#3761): Splunk overlay rules join the runner; their SPL runs within the splunk budget, before Sees by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3829
+* fix(#3807): first-run setup code is logged once the database is ready, not only at startup by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3824
+* fix(#3800): failed-install upgrade Jobs no longer hold the vigil-upgrade PVC through uninstall by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3825
+* fix(#3838): Stop halts Vigil's own overlay detection; list overlay-only rules by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3849
+* feat(#2109): Content pack tab on /medic: import, revert, switch to bundled by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3878
+* fix(#3861): Wazuh Noisy/Silent judge level-1/2 rules on their alerts by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3871
+* fix(#3865): Splunk Quiet, Noisy and Silent count untracked alerts from the scheduler log by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3872
+* fix(#3869): Elastic Sees reads unknown, naming the permission, on an unreadable index by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3873
+* fix(#3761): Revert reads Accurate's per-finding verdict; drop the runner's Splunk index probe by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3874
+* fix(#3868): Sees closes on overlay copies the sweep stops checking by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3875
+* feat(#3813): bind OpenCTI to hunts through per-workflow capabilities by @johnvanlowe in https://github.com/Vigil-SOC/vigil/pull/3816
+* feat(#3828): Detections page lists rule health worst first; Findings loses its Rules tab by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3867
+* fix(#3866, #3865): Splunk data-output searches are reports; untracked alerts counted from the scheduler by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3876
+* feat(#3870): Splunk overlay promotions queue a deploy PR when a splunk target is set by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3877
+* fix(#3880): hold an overlay copy's runs while Sees says Vigil can't read its index by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3882
+* feat(#3740): Medic in the compose injector stack; survival checks for outages and Viewer revocation by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3893
+* fix(#3887): OpenCTI tools return attack patterns' x_mitre_id by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3895
+* feat(#2041): host-native fault injectors for P-1.b and P-3.c by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3896
+* fix(#2081): rebuild Medic's open incidents from the store after a crash by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3898
+* List Vigil's own tools in the catalog on a new install by @ShmalexM in https://github.com/Vigil-SOC/vigil/pull/3891
+* Read a rejected run as rejected, not failed, on every screen by @ShmalexM in https://github.com/Vigil-SOC/vigil/pull/3892
+* feat(#3794): customer-specific exceptions live apart from the rule, applied by Vigil's runner by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3883
+* feat(#3858): Detections rules page follows the mockup: health by SIEM, blind spots, search, in-frame virtual list (part of #3857, #3859, #3860; builds on #3828) by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3886
+* feat(#2040): Helm fault injectors on kind, and whether a full Vigil fits a runner by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3900
+* feat(#3888): OpenCTI tools find reports and list the objects a report names by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3894
+* feat(#2079): Medic store retention: anchored purge, streaming verify, hourly head line by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3901
+* fix(#3884): Splunk overlay runs fetch every field, so an exception on a _raw field matches by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3903
+* feat(#2080): Medic resets a corrupt or broken-chain store at start by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3902
+* See, add and remove an overlay rule's exceptions from the Detections page (#3899) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3904
+* fix(#3905): start.sh reinstalls web deps when the lockfile is newer than the install by @johnvanlowe in https://github.com/Vigil-SOC/vigil/pull/3906
+* feat(#3793): threat-intel techniques checked against proven rules; daily gaps run reads recent OpenCTI intel by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3910
+* feat(#2043): nightly Medic evaluation on Compose with a metrics artifact by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3912
+* fix(#3905): start.sh reinstalls frontend deps when package-lock.json changes by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3908
+* fix(#3909): rule exception add/remove writes an audit trail entry by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3914
+* fix(#3907): record and show when an exception's fields are in none of a run's rows by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3915
+* fix(#3917): Medic decision records come back as stored; log size refusals by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3918
+* perf(#3916): cut the Medic log tail's per-line cost under a flood (floor measured; still pinned) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3925
+* fix(#3911): triage no longer offers a confident dismissal and retries an unreadable reply by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/3913
+* feat(#3813): threat-hunt binds OpenCTI through the shared hunt set; drop intel-led-hunt by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3926
+* fix(#3931): header, nav and overlays fit small and short windows by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3933
+* feat(#3927): Triage fits a 13" laptop; .main becomes a width container by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3934
+* feat(#3839): console confirm and Vendor repo label for deploy targets (UX, draft) by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3844
+* fix(#3936): a rule search says where else it matches; exception hits read as silenced; a firing rule's count shows once by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3938
+* feat(#3935): deploy a promoted rule's PR with fixed GitHub REST calls, not an LLM run by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3937
+* feat(#3838): Stop confirmation names overlay-only rules (UX, draft) by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3847
+* feat(#3928): Cases, Agents, Detections and Medic tables fit the space they get by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3944
+* feat(#3930): reading pages cap at --page-max; data-page prose at --text-max by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3948
+* fix(#3947): a headless run's noise mark and close record its agent and run by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3952
+* fix(#3897): every OpenCTI get_related target carries one name by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3953
+* feat(#3929): Settings fits every width — tables keep names and actions, pages cap at --page-max by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3940
+* fix(#3945): a rule deploy's audit row commits with checks['deploy']; a SHA no longer blanks a git error by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3951
+* Medic contracts: retire adjudication and replay feedback; drop pilot-gate and export leftovers (#3921) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3924
+* fix(#3946): Add to SIEM rows say a target isn't GitHub, give plain reasons, and a raced click finds the open PR by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3955
+* feat(#3932): pages reflow to one column below 700px; clipped text reads from the keyboard by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3954
+* fix(#3922): Medic gateway holds relayed responses to the backend's 4 MiB limit by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3956
+* fix(#3920): Medic advice no longer sends operators to the vendor or an evidence report (medic-core 0.4.1) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3923
+* feat(#2044): Helm on kind with Calico and kindnet in Medic's nightly evaluation by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3959
+* feat(#2089): Medic gateway and Docker-proxy limits set from measured load by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/3967
+* fix(#3942): a rule's new deploy PR closes the PR Vigil opened for its older version by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3943
+* fix(#3949): an agent's rule exception waits for Act under Assist by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3950
+* feat(#3860): rules list gets Where, Technique and Fires columns, and a sort by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3968
+* fix(#3964): Medic survival checks restart the Vigil services an outage stopped and report them by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3973
+* feat(#3795): a bell in the top bar tells each person when a live rule breaks by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3969
+* feat(#3965): closed tickets and alerts from an uploaded file become imported Verdicts and Sightings by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3974
+* fix(#3963): Medic's live Compose suites pass on a runner; Medic's bridges leave the host no address by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3975
+* fix(#3976): a failed Medic bring-up reports why the build failed by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3978
+* fix(#3977): agent tool descriptions say what rule health checks today; drop not_read by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3979
+* feat(#3966): Settings › Data uploads lists history imports, and Home's setup list offers one by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3980
+* feat(#3981): closed Defender alerts and Sentinel incidents become imported history from the history card by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3982
+* feat(#3984): Triage on the shared layout: toolbar Select, shared status card, three filter dropdowns by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3986
+* feat(#3985): Cases on the shared layout: four status cards and State / Kind / Assigned dropdowns replace the chip rows by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3987
+* feat(#3857): rules list shows every check: worst problem first, the rest as chips by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3971
+* feat(#3792): export a proof card: a signed PDF for people, signed proof-card/v1 JSON for machines by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/3988
+* perf(#3970): Medic redacts an admitted log line once and checks a stored pack once; nightly flood is python_json (0.5 bar not reachable by admit rate) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/3998
+
+
+**Full Changelog**: https://github.com/Vigil-SOC/vigil/compare/v1.0.1...v1.0.2
+
 ## 1.0.1 (2026-11-04)
 
 ## What's Changed
