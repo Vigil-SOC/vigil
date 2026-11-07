@@ -337,6 +337,10 @@ export const casesApi = {
   getSLA: (id: string) =>
     api.get<Schema<'CaseSLAStatusSchema'>>(`/cases/${id}/sla`),
 
+  /** The proof card of each rule version that raised the case's alerts, worst first. */
+  getRules: (id: string) =>
+    api.get<Schema<'CaseRulesResponse'>>(`/cases/${id}/rules`),
+
   closeCase: (id: string, data: Schema<'ClosureInfo'>) =>
     api.post<Schema<'CaseCloseResponse'>>(`/cases/${id}/close`, data),
 

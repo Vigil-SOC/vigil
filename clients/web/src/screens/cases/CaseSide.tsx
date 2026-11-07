@@ -9,6 +9,7 @@ import { utcDay } from '../../shared/utc'
 import { commentCount, CommentsView, inputCls, SectionCard, TasksView, useComments, useResource, useTasks, type Resource } from './CaseSections'
 import { errorDetail, timeLeft, when } from './caseFormat'
 import { entityShown, type RunFold } from './caseFold'
+import { cardsByFinding, ruleLine, type CaseRuleCard } from './caseRuleLine'
 import type { CaseInvestigationRef, CaseLinkedFinding } from './useCases'
 
 type Sla = { due: string; health: string } | null
@@ -125,9 +126,25 @@ function Entities({ values }: { values: string[] }) {
 
 const ALERTS_SHOWN = 3
 
-/** The alerts combined into this case; the first few, then "+N". */
-function Alerts({ items }: { items: CaseLinkedFinding[] }) {
+/** The line under an alert about the rule that raised it, linking to that rule. */
+function RuleLineView({ card }: { card: CaseRuleCard }) {
+  const line = ruleLine(card)
+  return (
+    <span className={`case-rule-line${line.ok ? ' ok' : ' warn'}`} title={line.title}>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d={line.ok ? 'M5 12.5l4.5 4.5L19 7.5' : 'M12 7v6M12 17h.01'} /></svg>
+      <span>
+        {line.text} · <Link to={{ pathname: '/detections', search: `?rules=${card.rule_id}` }}>Rule</Link>
+      </span>
+    </span>
+  )
+}
+
+/** The alerts combined into this case; the first few, then "+N". Each says how far
+ * to trust the rule that raised it. */
+function Alerts({ caseId, items }: { caseId: string; items: CaseLinkedFinding[] }) {
   const [all, setAll] = useState(false)
+  // A failed read leaves the alerts as they were, with no rule lines.
+  const { data } = useResource(caseId, () => casesApi.getRules(caseId).then((res) => cardsByFinding(res.data.rules ?? [])))
   if (items.length === 0) return null
   const shown = all ? items : items.slice(0, ALERTS_SHOWN)
   return (
@@ -138,6 +155,7 @@ function Alerts({ items }: { items: CaseLinkedFinding[] }) {
           return (
             <li key={item.finding_id}>
               <span className="side-clamp" title={text}>{text}</span>
+              {data?.[item.finding_id] && <RuleLineView card={data[item.finding_id]} />}
               {item.source_link && <a href={item.source_link} target="_blank" rel="noreferrer">Open in source</a>}
             </li>
           )
@@ -440,7 +458,7 @@ export function CaseSide({ caseId, linked, owner, latest, workflowNames, sla, cl
   return (
     <>
       <Details anchor={anchor} linked={linked} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} />
-      <Alerts items={linked} />
+      <Alerts caseId={caseId} items={linked} />
       <RelatedCases caseId={caseId} />
       <Known fold={fold} hasRun={latest !== null} keys={keys} onWritten={onWritten} />
       <People caseId={caseId} owner={owner} onWritten={onWritten} />
