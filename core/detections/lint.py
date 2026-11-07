@@ -236,6 +236,11 @@ def _lint_yaml(text: str) -> dict[str, Any]:
 
     if parsed is None:
         return {"passed": True, "findings": [], "rewrite_guidance": None}
+    return _lint_doc(parsed)
+
+
+def _lint_doc(parsed: Any) -> dict[str, Any]:
+    """A parsed Sigma rule's ``detection`` and ``logsource`` values, linted."""
     if not isinstance(parsed, dict):
         return {"passed": False, "error": "Sigma rule YAML must be a mapping"}
 
@@ -306,8 +311,11 @@ _NATIVE = ("splunk", "eql", "esql", "lucene")
 
 
 def lint_record(record: Any) -> Optional[dict[str, Any]]:
-    """``lint_query`` on a staged overlay copy's RuleRecord, or None for a
-    language Vigil does not run (an Elastic kuery copy)."""
+    """A repo or overlay RuleRecord linted: Sigma as ``lint_sigma`` lints its
+    YAML, SPL/EQL/ES|QL/Lucene through ``lint_query``; None for any other
+    language (KQL, kuery), which gets no lint check."""
+    if record.language == "sigma":
+        return _lint_doc(record.content)
     if record.language == "splunk":
         return lint_query(record.query, "splunk")
     language = record.logic.get("language")

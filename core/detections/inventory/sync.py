@@ -41,8 +41,9 @@ made is never touched.
 Every change of a check result is also appended to detection_rule_check_changes
 (``_record_changes``): a Runs result that differs from the rule's last recorded
 one, across versions, and a SIEM rule's status moving between active, disabled
-and removed. Repo rules have no checks and get no rows here; Vigil's Elastic
-overlay copies get their Runs from ``rollout``, which records them the same way.
+and removed. Repo rules get no rows here (their lint is no check that runs);
+Vigil's Elastic overlay copies get their Runs from ``rollout``, which records
+them the same way.
 
 After Kibana and Splunk link, ``_drift`` checks each linked copy against its
 repo rule and writes checks['drift'] the same way: fail when the copy is disabled
@@ -62,6 +63,12 @@ back unchanged, appends 'shadow'; a removed one appends 'off'. Each such copy's
 query is linted (``lint.lint_record``) into checks['lint'] on a new version, and
 once on a version staged before lint ran: one that fails gets 'off' instead of
 'shadow', and a shadow or live one goes 'off', the findings in the proof.
+
+Every repo and local rule (any ``repo:`` source) is linted the same way on a
+new version, and once on a version stored before lint ran: checks['lint'], a
+Sigma rule's detection and logsource, a Splunk, EQL, ES|QL or Lucene query
+whole. It never blocks, stages or disables the rule; the catalog stops counting
+a failing one as coverage.
 
 Nothing is ever written to a SIEM.
 """
@@ -171,10 +178,10 @@ def _stage_row(
 
 
 def _lint(record: RuleRecord, now: str) -> Optional[Dict[str, Any]]:
-    """checks['lint'] for a staged overlay copy: its query, linted as a save lints it."""
+    """checks['lint'] for a repo or overlay rule, linted as a save lints it."""
     report = lint_record(record)
     if report is None:
-        return None  # not a language Vigil runs
+        return None  # a language with no lint (KQL, kuery)
     return {
         "result": "pass" if report["passed"] else "fail",
         "findings": report["findings"],
@@ -407,11 +414,11 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
                 new.append((record, fp))
                 continue
             rule, latest_fp, stored = hit
-            staged = overlay and record.language in STAGED_LANGUAGES
-            # A new version is linted before it is staged; one staged before lint, once.
+            # A new version is linted (before an overlay copy is staged); one
+            # stored before lint ran, once.
             lint = (
                 _lint(record, now)
-                if staged and (fp != latest_fp or "lint" not in (stored or {}))
+                if not siem and (fp != latest_fp or "lint" not in (stored or {}))
                 else None
             )
             if fp != latest_fp:
@@ -536,11 +543,7 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
             ).all()
             for rule_id, (r, fp) in zip(ids, new):
                 versions.append(_version_row(rule_id, 1, r, fp))
-                lint = (
-                    _lint(r, now)
-                    if overlay and r.language in STAGED_LANGUAGES
-                    else None
-                )
+                lint = None if siem else _lint(r, now)
                 stage(rule_id, 1, r.language, "shadow", "new rule", lint)
                 checks = _checks({}, r, now)
                 if lint:
