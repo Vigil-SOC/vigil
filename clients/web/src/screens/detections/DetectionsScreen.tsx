@@ -261,13 +261,8 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   const shown = virtual.getVirtualItems()
   const last = shown.length ? shown[shown.length - 1].index : -1
   // After a Revert or Release: the view's counts and that rule's row are read again;
-  // the list, its scroll and the open panel stay. The listing's cache sees a stage
-  // write only after Postgres's stats flush (a few seconds), so it reads twice.
+  // the list, its scroll and the open panel stay.
   const refreshRule = (id: number) => {
-    readRule(id)
-    window.setTimeout(() => readRule(id), 4000)
-  }
-  const readRule = (id: number) => {
     detectionRulesApi.rules(params)
       .then((res) => { const d = res.data as RulesReport; setReport((r) => ({ ...d, rules: r?.rules ?? d.rules })) })
       .catch(() => {})
