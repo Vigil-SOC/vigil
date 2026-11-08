@@ -636,7 +636,7 @@ def test_an_exceptions_fault_leaves_no_copy_active_without_them(vigil, monkeypat
     out = _import(v, data)
     _refused(v, out)
     assert "RuntimeError" in out["error"]
-    assert "none is active" in out["error"] and "already held" in out["error"]
+    assert "none is active" in out["error"] and "import the skill again" in out["error"]
     assert _files() == before
     # The sync had committed: its copies are marked removed again, none active.
     assert {status for _, status in _rows(v, keys)} <= {"removed"}
@@ -724,7 +724,7 @@ def test_a_failed_undo_says_so(vigil, monkeypatch):
         raise RuntimeError("database went away")
 
     monkeypatch.setattr(overlay, "_add_exceptions", broken)
-    monkeypatch.setattr(overlay, "_undo", lambda *a: False)
+    monkeypatch.setattr(overlay, "_undo", lambda *a: (False, False))
     out = _import(v, data)
     _refused(v, out)
     assert "undoing it failed" in out["error"]
@@ -740,3 +740,184 @@ def test_a_save_outside_an_import_still_keeps_its_files_on_a_sync_failure():
         inspect.signature(overlay.save_rule).parameters["all_or_nothing"].default
         is False
     )
+
+
+# --- an import that failed can be tried again (#4119) ----------------------------
+
+
+def _late_fault(monkeypatch, times=1):
+    """_add_exceptions fails the first ``times`` calls, after the sync committed."""
+    real = overlay._add_exceptions
+    calls = []
+
+    def flaky(*a, **k):
+        calls.append(1)
+        if len(calls) <= times:
+            raise RuntimeError("database went away")
+        return real(*a, **k)
+
+    monkeypatch.setattr(overlay, "_add_exceptions", flaky)
+
+
+def _actions(v):
+    return [a for a, _ in v.trail]
+
+
+def _active_exceptions(v, keys):
+    with v.db.session_scope() as session:
+        return session.scalar(
+            text(
+                "SELECT count(*) FROM detection_rule_exceptions e"
+                " JOIN detection_rules r ON r.id = e.rule_id"
+                " WHERE r.native_key = ANY(:k) AND e.removed_at IS NULL"
+            ),
+            {"k": keys},
+        )
+
+
+@pg
+def test_after_a_late_failure_the_same_skill_imports_again(vigil, monkeypatch):
+    v = vigil
+    data, keys = _exported(v)
+    before = _files()
+    _late_fault(monkeypatch)
+    out = _import(v, data)
+    _refused(v, out)
+    assert "import the skill again" in out["error"]
+    assert _files() == before
+    assert {st for _, st in _rows(v, keys)} == {"removed"}
+    assert _active_exceptions(v, keys) == 0
+
+    out = _import(v, data)
+    assert not out.get("error"), out
+    # The copies it saved are the ones the failed attempt left, active again, one
+    # row per key (none duplicated), each in shadow, with its exceptions.
+    rows = _rows(v, keys)
+    assert len(rows) == len(keys) == len({k for k, _ in rows})
+    assert {st for _, st in rows} == {"active"}
+    assert len(_files()) == len(before) + len(keys)
+    assert _active_exceptions(v, keys) == 1
+    assert {s["stage"] for s in out["saved"] if s["source"] != "sigma"} == {"shadow"}
+    # The trail has the failed attempt, then the import that worked.
+    assert _actions(v)[-2:] == [
+        detection_skill.IMPORT_REFUSED,
+        detection_skill.IMPORTED,
+    ]
+
+
+@pg
+def test_a_retry_that_fails_again_can_be_retried_once_more(vigil, monkeypatch):
+    v = vigil
+    data, keys = _exported(v)
+    _late_fault(monkeypatch, times=2)
+    _refused(v, _import(v, data))
+    _refused(v, _import(v, data))
+    assert {st for _, st in _rows(v, keys)} == {"removed"}
+    out = _import(v, data)
+    assert not out.get("error"), out
+    assert {st for _, st in _rows(v, keys)} == {"active"}
+
+
+@pg
+def test_a_copy_a_person_removed_is_still_refused_on_import(vigil):
+    v = vigil
+    data, keys = _exported(v)
+    assert not _import(v, data).get("error")
+    # A person deletes the files; the next sync marks the copies removed.
+    root = Path(DetectionRulesService().overlay_source()["local_path"])
+    for f in _files():
+        (root / f).unlink()
+    service = DetectionRulesService()
+    assert not sync._sync_one(service, service.overlay_source()).error
+    assert {st for _, st in _rows(v, keys)} == {"removed"}
+    out = _import(v, data)
+    assert "already holds" in out["error"], out
+    assert v.trail[-1][0] == detection_skill.IMPORT_REFUSED
+
+
+@pg
+def test_a_copy_that_is_active_is_still_refused_on_import(vigil):
+    v = vigil
+    data, keys = _exported(v)
+    assert not _import(v, data).get("error")
+    out = _import(v, data)
+    assert "already holds" in out["error"], out
+    assert v.trail[-1][0] == detection_skill.IMPORT_REFUSED
+
+
+@pg
+def test_a_copy_kept_after_a_failed_import_is_then_held_if_a_person_removes_it(
+    vigil, monkeypatch
+):
+    v = vigil
+    data, keys = _exported(v)
+    _late_fault(monkeypatch)
+    _refused(v, _import(v, data))
+    assert not _import(v, data).get("error")
+    root = Path(DetectionRulesService().overlay_source()["local_path"])
+    for f in _files():
+        (root / f).unlink()
+    service = DetectionRulesService()
+    assert not sync._sync_one(service, service.overlay_source()).error
+    assert "already holds" in _import(v, data)["error"]
+
+
+@pg
+def test_a_sync_between_the_write_and_the_fault_leaves_those_copies_removed(
+    vigil, monkeypatch
+):
+    """Another run (the daemon's) takes the files in before the import's own sync
+    faults: its copies are removed too, and the refusal is true."""
+    v = vigil
+    data, keys = _exported(v)
+    before = _files()
+    real = sync.sync_source
+
+    calls = []
+
+    def daemon_then_fault(name, records, saves=None, failed_import=None):
+        calls.append(1)
+        if len(calls) > 1:  # the undo's own sync
+            return real(name, records, saves, failed_import)
+        real(name, records)  # the daemon's run: no saves, no failed import
+        assert {st for _, st in _rows(v, keys)} == {"active"}
+        raise RuntimeError("database went away")
+
+    monkeypatch.setattr(sync, "sync_source", daemon_then_fault)
+    out = _import(v, data)
+    print("\n   refusal:", out["error"])
+    monkeypatch.setattr(sync, "sync_source", real)
+    assert "none is active" in out["error"]
+    assert "nothing was changed" not in out["error"]
+    assert _files() == before
+    assert {st for _, st in _rows(v, keys)} == {"removed"}
+    # Marked as the failed import's, so the skill can be imported again.
+    out = _import(v, data)
+    assert not out.get("error"), out
+    assert {st for _, st in _rows(v, keys)} == {"active"}
+
+
+@pg
+def test_a_sync_between_the_undo_restoring_files_and_its_sync_still_allows_retry(
+    vigil, monkeypatch
+):
+    """A run without the failed-import keys removes the copies first, unmarked: the
+    undo marks them anyway, so the refusal's promise (import again) holds."""
+    v = vigil
+    data, keys = _exported(v)
+    _late_fault(monkeypatch)
+    real = sync._sync_one
+
+    def hooked(service, source, saves=None, failed_import=None):
+        if failed_import:  # the undo's call: another run got in first
+            real(service, source)
+        return real(service, source, saves, failed_import)
+
+    monkeypatch.setattr(sync, "_sync_one", hooked)
+    out = _import(v, data)
+    monkeypatch.setattr(sync, "_sync_one", real)
+    assert "import the skill again to retry" in out["error"], out
+    assert {st for _, st in _rows(v, keys)} == {"removed"}
+    out = _import(v, data)
+    assert not out.get("error"), out
+    assert {st for _, st in _rows(v, keys)} == {"active"}

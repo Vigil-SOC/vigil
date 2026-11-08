@@ -38,16 +38,16 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from sqlalchemy import select
+from sqlalchemy import and_, select
 
 from core.auth import trail_events
 from core.detections import exceptions as excepts
 from core.detections import overlay, proof_card
 from core.detections.detection_rules_service import DetectionRulesService
-from core.detections.inventory import readers
+from core.detections.inventory import readers, sync
 from core.integrations.mcp.surface import acting_as
 from core.storage.connection import get_db_manager
-from core.storage.models import DetectionRule
+from core.storage.models import DetectionRule, DetectionRuleVersion
 from core.storage.unit_of_work import unit_of_work
 
 logger = logging.getLogger(__name__)
@@ -383,15 +383,32 @@ def read(data: bytes, public_key_pem: str) -> Dict[str, Any]:
 
 
 def _held(keys: List[str]) -> List[str]:
+    """The keys this Vigil holds: any copy but one a failed import removed, which
+    it only keeps the record of (a new import brings it back)."""
     with get_db_manager().session_scope() as session:
-        return list(
-            session.scalars(
-                select(DetectionRule.native_key).where(
-                    DetectionRule.source == readers.OVERLAY_SOURCE,
-                    DetectionRule.native_key.in_(keys),
-                )
+        rows = session.execute(
+            select(
+                DetectionRule.native_key,
+                DetectionRule.status,
+                DetectionRuleVersion.checks,
             )
-        )
+            .join(
+                DetectionRuleVersion,
+                and_(
+                    DetectionRuleVersion.rule_id == DetectionRule.id,
+                    DetectionRuleVersion.version == DetectionRule.latest_version,
+                ),
+            )
+            .where(
+                DetectionRule.source == readers.OVERLAY_SOURCE,
+                DetectionRule.native_key.in_(keys),
+            )
+        ).all()
+    return [
+        key
+        for key, status, checks in rows
+        if not (status == "removed" and sync.IMPORT_FAILED in (checks or {}))
+    ]
 
 
 def _save(
@@ -460,8 +477,7 @@ def import_skill(
             elif exc.removed:
                 why = (
                     "its copies were saved and then removed, so none is active; "
-                    "this Vigil now holds their ids, so importing the skill again "
-                    "is refused as already held"
+                    "import the skill again to retry"
                 )
             else:
                 why = "nothing was changed"
