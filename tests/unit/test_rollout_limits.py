@@ -367,12 +367,20 @@ def db(monkeypatch):
     manager.create_tables()
     from sqlalchemy import text
 
-    with manager.session_scope() as session:
-        session.execute(text("DELETE FROM system_config WHERE key = 'rollout.limits'"))
-        session.execute(
-            text("DELETE FROM config_audit_log WHERE config_key = 'rollout.limits'")
-        )
+    def forget():
+        # The stored limits a test changes, gone before and after it: a later
+        # test's sweep must read the shipped defaults, not this test's.
+        with manager.session_scope() as session:
+            session.execute(
+                text("DELETE FROM system_config WHERE key = 'rollout.limits'")
+            )
+            session.execute(
+                text("DELETE FROM config_audit_log WHERE config_key = 'rollout.limits'")
+            )
+
+    forget()
     yield manager
+    forget()
     manager._engine.dispose()
     connection.DatabaseManager._instance = None
 

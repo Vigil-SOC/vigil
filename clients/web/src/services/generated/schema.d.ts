@@ -3240,6 +3240,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/detection-rules/coverage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Coverage
+         * @description ATT&CK coverage by technique and SIEM: each technique an active rule
+         *     declares or an alert shows, proven (an active SIEM copy passes Runs and
+         *     Sees), unproven or with no rule, split by SIEM. Read-only.
+         */
+        get: operations["get_api_detection-rules_coverage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/detection-skill/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Detection Skill
+         * @description Import a Detection Skill zip as a new rule, in shadow. ``public_key_pem``
+         *     is the exporting Vigil's key (its GET /proof-card/key); the events, JSON
+         *     lists, are replayed on the Sigma form as a new rule's are. Refused, with
+         *     the reason, on a failed signature, hash, lint or replay. The trail records
+         *     the import, or its refusal, as this user.
+         */
+        post: operations["post_api_detection-rules_detection-skill_import"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/detection-rules/health-inbox": {
         parameters: {
             query?: never;
@@ -3458,6 +3504,29 @@ export interface paths {
         get: operations["get_api_detection-rules_rules"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/rules/{rule_id}/detection-skill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Export Detection Skill
+         * @description A zip of the rule as a Detection Skill: each copy's file, its exceptions
+         *     and its signed proof card, signed together. ``rule_id`` is any of the rule's
+         *     overlay copies, or a SIEM copy linked to one. The trail records the export
+         *     as this user.
+         */
+        post: operations["post_api_detection-rules_rules_rule_id_detection-skill"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8228,6 +8297,20 @@ export interface components {
              * @default 1
              */
             pages: number;
+        };
+        /** Body_import_detection_skill_api_detection_rules_detection_skill_import_post */
+        Body_import_detection_skill_api_detection_rules_detection_skill_import_post: {
+            /** File */
+            file: string;
+            /** Proven Events */
+            proven_events?: string | null;
+            /**
+             * Public Key Pem
+             * @default
+             */
+            public_key_pem: string;
+            /** Ruled Out Events */
+            ruled_out_events?: string | null;
         };
         /** Body_ingest_from_string_api_ingest_ingest_string_post */
         Body_ingest_from_string_api_ingest_ingest_string_post: {
@@ -18395,6 +18478,72 @@ export interface operations {
             };
         };
     };
+    "get_api_detection-rules_coverage": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_detection-skill_import": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_import_detection_skill_api_detection_rules_detection_skill_import_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "get_api_detection-rules_health-inbox": {
         parameters: {
             query?: never;
@@ -18703,6 +18852,39 @@ export interface operations {
                 authorization?: string | null;
             };
             path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_rules_rule_id_detection-skill": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                rule_id: number;
+            };
             cookie?: never;
         };
         requestBody?: never;

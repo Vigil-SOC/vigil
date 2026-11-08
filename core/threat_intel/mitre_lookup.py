@@ -73,6 +73,12 @@ def attack_techniques() -> dict[str, dict]:
     return _attack_data()["techniques"]
 
 
+def attack_tactics() -> list[str]:
+    """The pinned release's Enterprise tactics as labels, in the matrix's kill-chain
+    order (Reconnaissance ... Impact)."""
+    return [_tactic_title(phase) for phase in _attack_data()["tactics"]]
+
+
 def _tactic_title(phase: str) -> str:
     """ATT&CK's kill-chain phase name as a label: command-and-control -> Command and Control."""
     return " ".join(w if w == "and" else w.capitalize() for w in phase.split("-") if w)
