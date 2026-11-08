@@ -273,3 +273,29 @@ class OpenCTIService:
             out["object_count"] = total if isinstance(total, int) else len(objects)
             out["objects"] = objects
         return out
+
+
+def configured_service(
+    timeout: float = 30.0,
+) -> Tuple[Optional["OpenCTIService"], tuple]:
+    """A service on the stored OpenCTI settings, or the names of the fields still
+    missing."""
+    from core.integrations._base.config import missing, resolve
+    from core.integrations.opencti.descriptor import OPENCTI, OPENCTI_REQUIRED
+
+    config = resolve(OPENCTI)
+    absent = missing(config, *OPENCTI_REQUIRED)
+    if absent:
+        return None, absent
+    # resolve() returns every declared field; an unset verify_ssl means verify.
+    verify = True if config.get("verify_ssl") is None else config["verify_ssl"]
+    return (
+        OpenCTIService(
+            url=str(config["url"]),
+            api_token=str(config["api_token"]),
+            verify_ssl=bool(verify),
+            ca_cert_path=config.get("ca_cert_path"),
+            timeout=timeout,
+        ),
+        (),
+    )

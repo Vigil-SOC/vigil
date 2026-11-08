@@ -258,11 +258,13 @@ class TaskScheduler:
         """Queue a mitre_analyst run on the gaps identify_gaps lists over the last
         WINDOW_DAYS, counting only evidence no earlier run raised, at or above the
         floor and not already carried by an open Case, biggest first; none when there
-        are none, unless OpenCTI is configured: then recent intel is checked every day.
+        are none. With OpenCTI configured, the techniques its newest intrusion sets
+        and reports name are checked here too, in code, and each one with no proven
+        rule is a gap raised once.
 
-        A schedule intake with no case_id mints a Case, so an empty report with no
-        intel to read queues nothing. What was raised is remembered only once the
-        run has queued, or found nothing to queue.
+        A schedule intake with no case_id mints a Case, so a day with no new gaps
+        queues nothing. What was raised is remembered only once the run has queued,
+        or found nothing to queue.
         """
         if not is_enabled(DETECTION_GAPS_WORKFLOW):
             logger.info(
@@ -276,31 +278,23 @@ class TaskScheduler:
         started = datetime.now(timezone.utc)
         window_start = started - timedelta(days=gap_run.WINDOW_DAYS)
         before = gap_run.read_raised()
+        intel = await gap_run.recent_intel()
         # Off the loop: the report reads the ledger and Findings synchronously.
         report = await asyncio.to_thread(
             asyncio.run,
             get_security_detection_tools().identify_gaps(
-                since_days=gap_run.WINDOW_DAYS, since=window_start
+                since_days=gap_run.WINDOW_DAYS,
+                since=window_start,
+                techniques=sorted(intel) or None,
             ),
         )
         alerts = await asyncio.to_thread(gap_run.alert_ids, window_start)
-        gaps = gap_run.gaps_in(report, alerts, before)
-        raised, held = gap_run.to_raise(gaps, before, gap_run.open_case_techniques())
+        gaps = gap_run.gaps_in(report, alerts, before, intel)
+        raised, held = gap_run.to_raise(
+            gaps, before, gap_run.open_case_techniques(), window_start=window_start
+        )
         after = gap_run.after_run(before, started, window_start, gaps, raised, held)
-        from core.integrations.mcp.client import process_mcp_client
-
-        # Connecting is the configured check (enabled, set up, credentials), and
-        # binds OpenCTI's tools to the run queued below: the daemon dials nothing else.
-        client = process_mcp_client()
-        try:
-            # Bounded: a wedged server must not hold up every other scheduled task.
-            intel = bool(client) and await asyncio.wait_for(
-                client.connect_to_server("opencti"), timeout=30
-            )
-        except asyncio.TimeoutError:
-            logger.warning("OpenCTI did not answer; the gaps run skips threat intel")
-            intel = False
-        if not (raised or intel):
+        if not raised:
             logger.info(
                 "Daily detection gaps run: no new gaps at or above %d, nothing queued",
                 gap_run.GAP_FLOOR,
@@ -312,19 +306,7 @@ class TaskScheduler:
             "Turn the detection gaps identify_gaps lists into Cases with checked "
             "rule drafts, so each real gap is tracked and has a rule in shadow."
         )
-        if raised:
-            hypothesis += " New gaps, biggest first: " + "; ".join(
-                g.line() for g in raised
-            )
-        if intel:
-            hypothesis += (
-                " Threat intel: with opencti_opencti_search_entities (empty query, newest "
-                "first) read the intrusion sets and reports OpenCTI updated most "
-                "recently, pass the techniques they use or name to "
-                "identify_gaps(techniques=...), and treat each id in "
-                "techniques_checked.gaps as a gap; techniques_checked.unknown lists ids "
-                "that are not active ATT&CK techniques: never a gap, never a Case."
-            )
+        hypothesis += " New gaps, biggest first: " + "; ".join(g.line() for g in raised)
         from services.daemon.orchestrator import insert_intake_trigger
 
         queued = insert_intake_trigger(
