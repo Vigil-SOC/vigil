@@ -6,6 +6,7 @@ manager run, as core/detections/inventory syncs them into Postgres.
 """
 
 import asyncio
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from core.agents.projections import read_projection
@@ -180,6 +181,7 @@ class SecurityDetectionsTools:
         context: str = "",
         since_days: int = 30,
         techniques: Any = None,
+        since: Optional[datetime] = None,
         **_kwargs: object,
     ) -> Dict:
         """Techniques seen on stored alerts that no active rule declares, with what it cannot say,
@@ -191,11 +193,17 @@ class SecurityDetectionsTools:
             context: A case id, an ATT&CK label to match, or empty for every stored alert.
             since_days: How far back Verdicts are read for runs_rules_missed.
             techniques: ATT&CK ids from any source (e.g. what threat intel names);
-                each is bucketed in ``techniques_checked``.
+                each is bucketed in ``techniques_checked``. An id that is not an
+                active ATT&CK technique (made up, revoked or deprecated) is listed in
+                ``techniques_checked.unknown`` with its reason, never as a gap.
+            since: The daily gaps run's marker: only alerts stored, and proven
+                Verdicts concluded, at or after it are counted. Not offered to the model.
         """
         # A model may send "30"; keep the window within what timedelta can hold.
         since_days = min(max(int(since_days), 0), 3650)
-        alerts = read_alert_labels(context)
+        if not isinstance(since, datetime):
+            since = None
+        alerts = read_alert_labels(context, since)
         rules_by_technique = catalog.rules_by_technique()
         siem_checks = catalog.siem_checks_by_technique()
         report = gap_report(
@@ -217,6 +225,13 @@ class SecurityDetectionsTools:
                     "Not ATT&CK technique ids, so not checked: "
                     + ", ".join(checked["rejected"])
                 )
+            if checked["unknown"]:
+                report["unknown"].append(
+                    "Not active ATT&CK techniques, so not checked: "
+                    + ", ".join(
+                        f"{u['technique']} ({u['reason']})" for u in checked["unknown"]
+                    )
+                )
             if report["rules_loaded"] and checked["gaps"]:
                 report["answer"] = "gaps_found"
             elif (
@@ -235,6 +250,7 @@ class SecurityDetectionsTools:
             ),
             rules_by_technique,
             since_days,
+            since,
         )
         report["rule_health"] = catalog.rule_health()
         return report
@@ -274,8 +290,9 @@ class SecurityDetectionsTools:
     ) -> Dict:
         """Reject Sigma rules keyed to a specific IP, host, user, or subnet.
 
-        Pass a rule YAML string or a directory of ``.yml`` files. Does not
-        run on ``add_source`` / clone; community corpora stay importable.
+        Pass a rule YAML string or a directory of ``.yml`` files. Sync lints
+        every imported repo and local rule the same way (checks.lint) without
+        blocking it, and a failing one is left out of coverage counts.
         """
         return lint_sigma(rule_yaml=rule_yaml, source_path=source_path)
 

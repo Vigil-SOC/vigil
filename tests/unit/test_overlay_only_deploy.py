@@ -70,7 +70,7 @@ def estate(monkeypatch):
         def session_scope(self):
             yield object()
 
-    def open_pr(copy, target, body, token):
+    def open_pr(copy, target, body, token, reopen=False):
         state["opened"].append((copy.rule_id, target["git_url"], token))
         if copy.rule_id in state["fail"]:
             raise RuntimeError("POST /repos/acme/detections/pulls: 502 bad gateway")
@@ -81,6 +81,7 @@ def estate(monkeypatch):
     monkeypatch.setattr(rollout, "handed_off", lambda ids: state["gone"] & set(ids))
     monkeypatch.setattr(rollout, "_deploy_targets", lambda: state["targets"])
     monkeypatch.setattr(rollout, "_stopped", lambda: state["stopped"])
+    monkeypatch.setattr(rollout, "_asks_first", lambda: False)  # Act
     monkeypatch.setattr(rollout, "_open_pr", open_pr)
 
     def record(copy, out, actor="system"):

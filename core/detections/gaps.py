@@ -31,6 +31,7 @@ from core.storage.models import (
     FindingMitrePrediction,
     case_findings,
 )
+from core.threat_intel.mitre_lookup import attack_techniques, attack_techniques_version
 
 RULE_SOURCES = ("sigma", "splunk", "elastic", "kql", "wazuh")
 # The rule formats that declare a tactic; Splunk, KQL and Wazuh rules name techniques only.
@@ -81,14 +82,25 @@ class AlertLabels:
     by_alert: Mapping[str, Collection[str]] = field(default_factory=dict)
 
 
-def read_alert_labels(context: str = "") -> AlertLabels:
-    """Scope by ``context``: empty is every alert, a case id is that case, else a label match."""
+def read_alert_labels(
+    context: str = "", since: Optional[datetime] = None
+) -> AlertLabels:
+    """Scope by ``context``: empty is every alert, a case id is that case, else a label
+    match; with ``since``, only alerts stored at or after it."""
     with get_db_manager().session_scope() as session:
         is_case = bool(context) and session.get(Case, context) is not None
         rows = session.query(
             FindingMitrePrediction.finding_id, FindingMitrePrediction.technique_id
         )
         total = session.query(Finding.finding_id)
+        if since is not None:
+            stored_since = session.query(Finding.finding_id).filter(
+                Finding.created_at >= _naive_utc(since)
+            )
+            rows = rows.filter(
+                FindingMitrePrediction.finding_id.in_(stored_since.subquery().select())
+            )
+            total = total.filter(Finding.created_at >= _naive_utc(since))
         if is_case:
             in_case = (
                 session.query(case_findings.c.finding_id)
@@ -280,15 +292,26 @@ def technique_check(
 ) -> Dict[str, Any]:
     """Each named technique in one bucket: proven (a SIEM rule passes Runs and Sees),
     siem_unproven (SIEM rules, none passing both), repo_only (only repo or overlay
-    rules) or none. Every row that is not proven is a gap."""
+    rules) or none. Every row that is not proven is a gap. A well-formed id that is not
+    an active technique in the pinned ATT&CK release is listed in ``unknown`` with its
+    reason (revoked ids name their replacement; deprecated ids say so): it is never a
+    row, a gap or a count."""
     rows: List[Dict[str, Any]] = []
     rejected: List[str] = []
+    unknown: List[Dict[str, str]] = []
+    catalog_ids = attack_techniques()
     for raw in dict.fromkeys(str(t).strip() for t in techniques if str(t).strip()):
         if not TECHNIQUE_ID.match(raw):
             rejected.append(raw)
             continue
         technique = raw.upper()
-        if any(row["technique"] == technique for row in rows):
+        if any(row["technique"] == technique for row in rows) or any(
+            u["technique"] == technique for u in unknown
+        ):
+            continue
+        reason = _not_active_reason(catalog_ids.get(technique))
+        if reason:
+            unknown.append({"technique": technique, "reason": reason})
             continue
         checks = siem_checks.get(technique, {})
         rules = len(set(rules_by_technique.get(technique, ())))
@@ -319,7 +342,27 @@ def technique_check(
         "gaps": [r["technique"] for r in rows if r["bucket"] != "proven"],
         "rows": rows,
         "rejected": rejected,
+        "unknown": unknown,
     }
+
+
+def _is_listable(technique: str) -> bool:
+    """False for a well-formed id that is not an active ATT&CK technique."""
+    if not TECHNIQUE_ID.match(technique):
+        return True
+    return not _not_active_reason(attack_techniques().get(technique.upper()))
+
+
+def _not_active_reason(entry: Optional[Mapping[str, Any]]) -> str:
+    """Why an id is not an active ATT&CK technique; empty when it is."""
+    if entry is None:
+        return f"not an ATT&CK technique (release {attack_techniques_version()})"
+    if entry["status"] == "revoked":
+        replacement = entry.get("replaced_by")
+        return f"revoked; replaced by {replacement}" if replacement else "revoked"
+    if entry["status"] == "deprecated":
+        return "deprecated"
+    return ""
 
 
 # --- Runs rules missed -------------------------------------------------------
@@ -452,13 +495,22 @@ def missed_runs_report(
     read_findings: FindingsReader,
     rules_by_technique: Mapping[str, Collection[int]],
     since_days: int,
+    since: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """Proven runs no rule alerted on, grouped by technique.
 
     A run is listed in a group when one of its proven Verdicts on that technique
     reconstructs as ``missed`` or ``loglm``. A Verdict that cannot be correlated
     (no host/IP/user, or a Findings read that was cut off) is unknown, never missed.
+    With ``since``, only proven Verdicts concluded at or after it are reconstructed;
+    ruled-out runs are still read across the whole window.
     """
+    # Hunt Verdicts store techniques unchecked: an id that is not an active ATT&CK
+    # technique never reaches a group, so a made-up one cannot become a Case.
+    verdicts = [
+        {**v, "techniques": {t for t in v["techniques"] if _is_listable(t)}}
+        for v in verdicts
+    ]
     # A case id scopes to that Case's Verdict, any other context to matching
     # techniques. Ruled-out runs are read across the whole window either way.
     wanted = normalize_label(context) if context and not is_case else ""
@@ -470,6 +522,7 @@ def missed_runs_report(
         v
         for v in verdicts
         if v["outcome"] == "proven"
+        and (since is None or _naive_utc(v["concluded_at"]) >= _naive_utc(since))
         and (not is_case or _run(v) == ("case", context))
         and (not wanted or any(in_scope(t) for t in v["techniques"]))
     ]
@@ -522,6 +575,8 @@ def missed_runs_report(
             "technique": technique,
             "runs": [_run_row(run) for run in sorted(group["runs"])],
             "confirmed": len(group["confirmed"]),
+            # Which of ``runs`` a person confirmed (a Verdict with analyst trust).
+            "confirmed_runs": [_run_row(run) for run in sorted(group["confirmed"])],
             "rules": len(set(rules_by_technique.get(technique, ()))),
             "ruled_out": [
                 {**_run_row((kind, run_id)), "outcome": outcome}

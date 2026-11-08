@@ -1218,6 +1218,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/autonomy/rollout-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Rollout Limits */
+        get: operations["get_api_autonomy_rollout-limits"];
+        /**
+         * Put Rollout Limits
+         * @description Change the promotion cap, the days in shadow or the daily hit ceiling.
+         *
+         *     ``ai_autonomy.write``, as raising the ceiling is: these decide how fast a
+         *     rule reaches live. A service account may only tighten (a lower cap, more
+         *     days, a lower hit ceiling). The change and who made it go on the audit trail.
+         */
+        put: operations["put_api_autonomy_rollout-limits"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/autonomy/tools": {
         parameters: {
             query?: never;
@@ -2322,6 +2347,31 @@ export interface paths {
          *         Updated case
          */
         post: operations["post_api_cases_case_id_resolution-steps"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cases/{case_id}/rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Case Rules
+         * @description The proof card of each rule version that raised the case's alerts.
+         *
+         *     Each linked finding is traced to the rule version that fired it as the
+         *     Detections page traces it; one version is one card, with its stored checks,
+         *     worst problem and (overlay) stage, worst first. Alerts traced to no rule are
+         *     counted in ``unresolved``, each with why.
+         */
+        get: operations["get_api_cases_case_id_rules"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -7087,6 +7137,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cases/{case_id}/rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Case Rules
+         * @description The proof card of each rule version that raised the case's alerts.
+         *
+         *     Each linked finding is traced to the rule version that fired it as the
+         *     Detections page traces it; one version is one card, with its stored checks,
+         *     worst problem and (overlay) stage, worst first. Alerts traced to no rule are
+         *     counted in ``unresolved``, each with why.
+         */
+        get: operations["get_api_v1_cases_case_id_rules"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/findings": {
         parameters: {
             query?: never;
@@ -8941,6 +9016,84 @@ export interface components {
             relationships: components["schemas"]["CaseRelatedSchema"][];
         };
         /**
+         * CaseRuleCard
+         * @description One rule version behind a case's alerts, and its stored checks.
+         */
+        CaseRuleCard: {
+            /**
+             * By Name
+             * @default 0
+             */
+            by_name: number;
+            /**
+             * Caught
+             * @default false
+             */
+            caught: boolean;
+            /**
+             * Checks
+             * @default {}
+             */
+            checks: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
+            /**
+             * Findings
+             * @default []
+             */
+            findings: string[];
+            /**
+             * Flags
+             * @default []
+             */
+            flags: string[];
+            /** Health */
+            health: string;
+            /** Latest Version */
+            latest_version?: number | null;
+            /** Name */
+            name: string;
+            /** Native Key */
+            native_key: string;
+            /** Rule Id */
+            rule_id: number;
+            /** Source */
+            source: string;
+            /** Stage */
+            stage?: string | null;
+            /** Status */
+            status: string;
+            /** Tool */
+            tool: string;
+            /** Version */
+            version: number;
+            /** Worst */
+            worst: string;
+        };
+        /**
+         * CaseRulesResponse
+         * @description ``GET /cases/{id}/rules`` — worst first; alerts traced to no rule apart.
+         */
+        CaseRulesResponse: {
+            /**
+             * Rules
+             * @default []
+             */
+            rules: components["schemas"]["CaseRuleCard"][];
+            /**
+             * Unresolved
+             * @default 0
+             */
+            unresolved: number;
+            /**
+             * Unresolved Findings
+             * @default []
+             */
+            unresolved_findings: components["schemas"]["CaseUnresolvedFinding"][];
+        };
+        /**
          * CaseSLASchema
          * @description CaseSLA.
          */
@@ -9160,6 +9313,13 @@ export interface components {
         CaseTasksResponse: {
             /** Tasks */
             tasks: components["schemas"]["CaseTaskSchema"][];
+        };
+        /** CaseUnresolvedFinding */
+        CaseUnresolvedFinding: {
+            /** Finding Id */
+            finding_id: string;
+            /** Reason */
+            reason: string;
         };
         /**
          * CaseUpdate
@@ -11190,6 +11350,49 @@ export interface components {
             config: string;
             /** Playbook */
             playbook: string;
+        };
+        /**
+         * RolloutLimitsBody
+         * @description A partial edit of the rollout limits. Omitted fields stay as they are.
+         *
+         *     Whole numbers only; an unknown key is a 422. ``reason`` goes on the audit entry.
+         */
+        RolloutLimitsBody: {
+            /** Live Per Day */
+            live_per_day?: number | null;
+            /** Max Hits Per Day */
+            max_hits_per_day?: number | null;
+            /** Reason */
+            reason?: string | null;
+            /** Shadow Days */
+            shadow_days?: number | null;
+        };
+        /**
+         * RolloutLimitsResponse
+         * @description The limits in force, the defaults and bounds, and (read only) each SIEM
+         *     integration's Quiet, Noisy and Silent thresholds, which are edited on it.
+         */
+        RolloutLimitsResponse: {
+            /** Bounds */
+            bounds: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
+            /** Defaults */
+            defaults: {
+                [key: string]: number;
+            };
+            /** Limits */
+            limits: {
+                [key: string]: number;
+            };
+            /** Siem Thresholds */
+            siem_thresholds: {
+                [key: string]: {
+                    [key: string]: number;
+                } | null;
+            };
         };
         /**
          * Routability
@@ -14436,6 +14639,72 @@ export interface operations {
             };
         };
     };
+    "get_api_autonomy_rollout-limits": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RolloutLimitsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "put_api_autonomy_rollout-limits": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RolloutLimitsBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RolloutLimitsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_autonomy_tools: {
         parameters: {
             query?: never;
@@ -16399,6 +16668,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseSchema"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_cases_case_id_rules: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseRulesResponse"];
                 };
             };
             /** @description Validation Error */
@@ -24963,6 +25265,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseMergeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_v1_cases_case_id_rules: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseRulesResponse"];
                 };
             };
             /** @description Validation Error */

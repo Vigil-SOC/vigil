@@ -83,6 +83,7 @@ def test_the_sweep_opens_no_pr_for_a_live_copy_without_a_lint_pass(monkeypatch):
     monkeypatch.setattr(rollout, "_copies", lambda: copies)
     monkeypatch.setattr(rollout, "handed_off", lambda ids: set())
     monkeypatch.setattr(rollout, "_stopped", lambda: False)
+    monkeypatch.setattr(rollout, "_asks_first", lambda: False)  # Act
     monkeypatch.setattr(rollout, "_deploy_targets", lambda: {"elastic": {}})
     monkeypatch.setattr(rollout, "get_db_manager", lambda: _Db())
     monkeypatch.setattr(rollout, "_due", lambda *_a: None)
