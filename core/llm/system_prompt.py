@@ -1,8 +1,7 @@
 """Shared validator for user-supplied ``system_prompt`` fields (issue #87).
 
-Used by:
-* ``services/api/routers/custom_agents.py`` — ``CustomAgentCreate.system_prompt_override``,
-  ``CustomAgentUpdate.system_prompt_override``
+Used by: nothing since the Agent Builder's persona prompt fields went (#4024);
+an operator manifest's ``system`` is checked by agent-serve instead.
 
 Behaviour is **validate + audit, allow** in v1: shape checks reject
 oversized or control-char-laced input with 422; injection-pattern hits
@@ -56,7 +55,7 @@ def validate_system_prompt(value: Optional[str], *, source: str) -> Optional[str
     * Otherwise → emit audit log entry and return value unchanged.
 
     ``source`` is a stable tag identifying the call site (``chat``,
-    ``agent_task``, ``custom_agent_create``, ``custom_agent_update``).
+    ``agent_task``).
     """
     if value is None:
         return None

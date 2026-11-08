@@ -1,8 +1,8 @@
 """Agent record type and built-in SOC agent definitions (Reorg R1 / #482).
 
-Each built-in is a plain record shaped like a ``custom_agents`` row so
-built-ins and customs build through the same path
-(``core.agents.manager.SOCAgentLibrary.build_profile``). The decision-log
+Each built-in is a plain persona record, built into a profile by
+``core.agents.manager.SOCAgentLibrary.build_profile``; forking one converts it
+to an operator manifest (``manifest_from_row``). The decision-log
 action id (GH #476) is folded in as ``decision_id``.
 
 Confidence bands are never typed here as numbers. The ``$auto_approve``,
@@ -76,14 +76,14 @@ class AgentProfile:
     # served. Built-ins leave it unset.
     fallback_model: Optional[str] = None
     # GH #89 — which ai_model_configs row to consult when `model` is None.
-    # One of: 'triage', 'investigation', 'reporting'. Custom agents default
-    # to 'investigation' unless the user picks otherwise in the builder.
+    # One of: 'triage', 'investigation', 'reporting'. Custom agents are always
+    # 'investigation'.
     component_category: str = "investigation"
     # GH #476 — action id stamped on this agent's ai_decision_logs rows.
     # Deliberately a different vocabulary from the AgentId in ``created_by``:
     # decisions are grouped by the work they represent, not by who did it.
     # Custom agents have no action of their own, so they log under their
-    # agent id (build_profile falls back to the row id).
+    # agent id.
     decision_id: str = ""
     # Custom agents only: the operator manifest a run of this agent loads, whose
     # system and needs are this profile's prompt and recommended_tools (#4023).

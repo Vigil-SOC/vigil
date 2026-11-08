@@ -121,24 +121,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/agents/custom": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Custom Agents */
-        get: operations["get_api_agents_custom"];
-        put?: never;
-        /** Create Custom Agent */
-        post: operations["post_api_agents_custom"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/agents/custom/_meta/tools": {
         parameters: {
             query?: never;
@@ -154,7 +136,8 @@ export interface paths {
          *     ("vigil" for Vigil's own) and the first sentence of its description.
          *     ``changes`` marks each of them read_only or asks_first from its stored
          *     effect class; a name missing there is not connected. ``tools`` lists the
-         *     connected MCP tool names.
+         *     connected MCP tool names. ``capabilities`` are the other names a manifest's
+         *     needs may hold, each with the tools that can answer it.
          *
          *     Sources, in order of preference:
          *       1. Live MCP registry (populated when MCP servers connect at startup).
@@ -182,36 +165,16 @@ export interface paths {
         put?: never;
         /**
          * Generate Custom Agent
-         * @description AI-assisted agent generation / refinement (issue #80 Phase 2).
+         * @description Draft (or refine) an operator manifest. Does not save.
          *
-         *     Does NOT save. Frontend takes the returned draft, lets the user tweak it,
-         *     and POSTs to /agents/custom to create. Pass ``current_draft`` + ``feedback``
-         *     to iteratively refine a prior draft.
+         *     ``{"manifest": <yaml>}``, checked as a PUT /api/v1/agents/{id} would be. A
+         *     draft the check refuses is a 422 carrying the reason; it is not returned.
          */
         post: operations["post_api_agents_custom_generate"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
-        trace?: never;
-    };
-    "/api/agents/custom/{agent_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Custom Agent */
-        get: operations["get_api_agents_custom_agent_id"];
-        put?: never;
-        post?: never;
-        /** Delete Custom Agent */
-        delete: operations["delete_api_agents_custom_agent_id"];
-        options?: never;
-        head?: never;
-        /** Update Custom Agent */
-        patch: operations["patch_api_agents_custom_agent_id"];
         trace?: never;
     };
     "/api/agents/{source_agent_id}/fork": {
@@ -225,11 +188,10 @@ export interface paths {
         put?: never;
         /**
          * Fork Agent
-         * @description Fork any agent (built-in or custom) into a new editable custom copy.
+         * @description Fork a built-in into an operator manifest under ``custom-<id>``.
          *
-         *     Built-ins remain static templates — the source is never modified. The
-         *     new row is a standalone custom agent that can be edited or deleted
-         *     without affecting the source.
+         *     The built-in, with its confidence bands filled, converts the way the
+         *     migration converts a row. The built-in itself never changes.
          */
         post: operations["post_api_agents_source_agent_id_fork"];
         delete?: never;
@@ -9493,86 +9455,6 @@ export interface components {
             label: string;
         };
         /**
-         * CustomAgentCreate
-         * @description Request body for creating a custom agent.
-         */
-        CustomAgentCreate: {
-            /** Color */
-            color?: string | null;
-            /** Description */
-            description?: string | null;
-            /**
-             * Enable Thinking
-             * @default false
-             */
-            enable_thinking: boolean;
-            /**
-             * Extra Principles
-             * @default
-             */
-            extra_principles: string | null;
-            /** Fallback Model */
-            fallback_model?: string | null;
-            /** Icon */
-            icon?: string | null;
-            /**
-             * Max Tokens
-             * @default 4096
-             */
-            max_tokens: number;
-            /**
-             * Methodology
-             * @default
-             */
-            methodology: string | null;
-            /** Model */
-            model?: string | null;
-            /** Name */
-            name: string;
-            /** Recommended Tools */
-            recommended_tools?: string[];
-            /** Role */
-            role: string;
-            /** Specialization */
-            specialization?: string | null;
-            /** System Prompt Override */
-            system_prompt_override?: string | null;
-        };
-        /**
-         * CustomAgentUpdate
-         * @description Partial update for an existing custom agent. All fields optional.
-         */
-        CustomAgentUpdate: {
-            /** Color */
-            color?: string | null;
-            /** Description */
-            description?: string | null;
-            /** Enable Thinking */
-            enable_thinking?: boolean | null;
-            /** Extra Principles */
-            extra_principles?: string | null;
-            /** Fallback Model */
-            fallback_model?: string | null;
-            /** Icon */
-            icon?: string | null;
-            /** Max Tokens */
-            max_tokens?: number | null;
-            /** Methodology */
-            methodology?: string | null;
-            /** Model */
-            model?: string | null;
-            /** Name */
-            name?: string | null;
-            /** Recommended Tools */
-            recommended_tools?: string[] | null;
-            /** Role */
-            role?: string | null;
-            /** Specialization */
-            specialization?: string | null;
-            /** System Prompt Override */
-            system_prompt_override?: string | null;
-        };
-        /**
          * CustomIntegrationRequest
          * @description Request to generate a custom integration from documentation.
          */
@@ -10042,45 +9924,6 @@ export interface components {
             total: number;
         };
         /**
-         * ForkAgentRequest
-         * @description Optional payload when forking. `new_name` lets the UI set the copy's
-         *     name up front instead of taking the default "<source> (copy)". Any
-         *     editable field that is sent (even as null) replaces the source's value
-         *     in the same insert.
-         */
-        ForkAgentRequest: {
-            /** Color */
-            color?: string | null;
-            /** Description */
-            description?: string | null;
-            /** Enable Thinking */
-            enable_thinking?: boolean | null;
-            /** Extra Principles */
-            extra_principles?: string | null;
-            /** Fallback Model */
-            fallback_model?: string | null;
-            /** Icon */
-            icon?: string | null;
-            /** Max Tokens */
-            max_tokens?: number | null;
-            /** Methodology */
-            methodology?: string | null;
-            /** Model */
-            model?: string | null;
-            /** Name */
-            name?: string | null;
-            /** New Name */
-            new_name?: string | null;
-            /** Recommended Tools */
-            recommended_tools?: string[] | null;
-            /** Role */
-            role?: string | null;
-            /** Specialization */
-            specialization?: string | null;
-            /** System Prompt Override */
-            system_prompt_override?: string | null;
-        };
-        /**
          * GeneralConfig
          * @description General application settings.
          */
@@ -10098,16 +9941,12 @@ export interface components {
         };
         /**
          * GenerateAgentRequest
-         * @description Request body for AI-assisted agent generation (issue #80 Phase 2).
-         *
-         *     First call: pass ``description`` only.
-         *     Refinement: also pass ``current_draft`` and ``feedback``.
+         * @description First call: ``description`` only. Refinement: also the ``current_draft``
+         *     manifest and ``feedback``.
          */
         GenerateAgentRequest: {
             /** Current Draft */
-            current_draft?: {
-                [key: string]: unknown;
-            } | null;
+            current_draft?: string | null;
             /** Description */
             description: string;
             /** Feedback */
@@ -12756,76 +12595,6 @@ export interface operations {
             };
         };
     };
-    get_api_agents_custom: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_agents_custom: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CustomAgentCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_agents_custom__meta_tools: {
         parameters: {
             query?: never;
@@ -12896,111 +12665,6 @@ export interface operations {
             };
         };
     };
-    get_api_agents_custom_agent_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                agent_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_api_agents_custom_agent_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                agent_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    patch_api_agents_custom_agent_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                agent_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CustomAgentUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     post_api_agents_source_agent_id_fork: {
         parameters: {
             query?: never;
@@ -13012,11 +12676,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["ForkAgentRequest"] | null;
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             201: {

@@ -83,23 +83,8 @@ class CustomAgentSchema(ORMSchema):
     """CustomAgent."""
 
     id: Optional[str] = None
-    name: Optional[str] = None
-    description: Optional[str] = None
-    icon: Optional[str] = None
-    color: Optional[str] = None
-    specialization: Optional[str] = None
-    role: Optional[str] = None
-    extra_principles: Optional[str] = None
-    methodology: Optional[str] = None
-    system_prompt_override: Optional[str] = None
-    recommended_tools: JsonList = Field(default_factory=list)
-    max_tokens: Optional[int] = None
-    enable_thinking: Optional[bool] = None
-    model: Optional[str] = None
-    fallback_model: Optional[str] = None
-    component_category: Optional[str] = None
-    forked_from: Optional[str] = None
     manifest: Optional[str] = None
+    forked_from: Optional[str] = None
     created_by: Optional[str] = None
     created_at: OptDateTime = None
     updated_at: OptDateTime = None
