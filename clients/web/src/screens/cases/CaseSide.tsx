@@ -126,14 +126,15 @@ function Entities({ values }: { values: string[] }) {
 
 const ALERTS_SHOWN = 3
 
-/** The line under an alert about the rule that raised it, linking to that rule. */
+/** The line under an alert about the rule that raised it, linking to that rule unless it was removed. */
 function RuleLineView({ card }: { card: CaseRuleCard }) {
   const line = ruleLine(card)
   return (
     <span className={`case-rule-line${line.ok ? ' ok' : ' warn'}`} title={line.title}>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d={line.ok ? 'M5 12.5l4.5 4.5L19 7.5' : 'M12 7v6M12 17h.01'} /></svg>
       <span>
-        {line.text} · <Link to={{ pathname: '/detections', search: `?rules=${card.rule_id}` }}>Rule</Link>
+        {line.text}
+        {line.link && <> · <Link to={{ pathname: '/detections', search: `?rules=${card.rule_id}` }}>Rule</Link></>}
       </span>
     </span>
   )
