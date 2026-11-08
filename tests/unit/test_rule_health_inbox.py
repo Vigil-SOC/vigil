@@ -32,7 +32,7 @@ def store(monkeypatch):
     """Open flags and the preferences table, in memory."""
     state = {"flags": [], "prefs": {}}
     monkeypatch.setattr(catalog, "open_flags", lambda: list(state["flags"]))
-    monkeypatch.setattr(catalog, "open_reverts", lambda: list(state.get("reverts", [])))
+    monkeypatch.setattr(catalog, "open_vigil_moves", lambda: list(state.get("reverts", [])))
 
     def read_ids(user_id):
         return health_inbox._ids(state["prefs"].get(user_id, {}))

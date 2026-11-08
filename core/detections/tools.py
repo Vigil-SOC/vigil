@@ -191,7 +191,9 @@ class SecurityDetectionsTools:
             context: A case id, an ATT&CK label to match, or empty for every stored alert.
             since_days: How far back Verdicts are read for runs_rules_missed.
             techniques: ATT&CK ids from any source (e.g. what threat intel names);
-                each is bucketed in ``techniques_checked``.
+                each is bucketed in ``techniques_checked``. An id that is not an
+                active ATT&CK technique (made up, revoked or deprecated) is listed in
+                ``techniques_checked.unknown`` with its reason, never as a gap.
         """
         # A model may send "30"; keep the window within what timedelta can hold.
         since_days = min(max(int(since_days), 0), 3650)
@@ -216,6 +218,13 @@ class SecurityDetectionsTools:
                 report["unknown"].append(
                     "Not ATT&CK technique ids, so not checked: "
                     + ", ".join(checked["rejected"])
+                )
+            if checked["unknown"]:
+                report["unknown"].append(
+                    "Not active ATT&CK techniques, so not checked: "
+                    + ", ".join(
+                        f"{u['technique']} ({u['reason']})" for u in checked["unknown"]
+                    )
                 )
             if report["rules_loaded"] and checked["gaps"]:
                 report["answer"] = "gaps_found"
@@ -274,8 +283,9 @@ class SecurityDetectionsTools:
     ) -> Dict:
         """Reject Sigma rules keyed to a specific IP, host, user, or subnet.
 
-        Pass a rule YAML string or a directory of ``.yml`` files. Does not
-        run on ``add_source`` / clone; community corpora stay importable.
+        Pass a rule YAML string or a directory of ``.yml`` files. Sync lints
+        every imported repo and local rule the same way (checks.lint) without
+        blocking it, and a failing one is left out of coverage counts.
         """
         return lint_sigma(rule_yaml=rule_yaml, source_path=source_path)
 

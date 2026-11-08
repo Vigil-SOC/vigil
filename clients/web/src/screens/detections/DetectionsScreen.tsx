@@ -67,6 +67,13 @@ interface RuleRow {
   /** When its current stage row was written (ISO), null without one. */
   stage_since?: string | null
   days_in_shadow?: number | null
+  /** Vigil rules only (absent on SIEM rows), as GET /rules/{id}/stages reads them:
+   *  its stage moves, the last move's from-stage and actor, and who holds it. */
+  stage_moves?: number
+  stage_from?: 'shadow' | 'live' | 'off' | null
+  stage_actor?: string
+  held?: boolean
+  held_by?: string | null
   silenced?: number
 }
 

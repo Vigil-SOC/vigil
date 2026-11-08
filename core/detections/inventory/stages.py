@@ -1,4 +1,4 @@
-"""A rule's stage history, and a person's Revert and release of it (#3996).
+"""A rule's stage history, and a person's Revert and release of it.
 
 The history is the rule's ``detection_rule_stages`` rows, newest first. A
 person's Revert (live -> shadow) is a stage row with the person as actor and
@@ -6,7 +6,9 @@ person's Revert (live -> shadow) is a stage row with the person as actor and
 row says so. A release is a later shadow row with ``hold`` false (the latest row with a ``hold`` key
 decides, so a new version's row does not lift it), so the normal
 rollout rules apply again, their shadow days counted from the release. Each
-write also lands in the config audit log, in the same transaction.
+write is audited in the same transaction as the same ``detections.rule_staged``
+entry Vigil's own moves write, the person as actor (the config audit log where
+the trail is not in use).
 """
 
 from __future__ import annotations
@@ -15,7 +17,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import select
 
+from core.audit import trail
 from core.detections.inventory import readers
+from core.detections.inventory.sync import staged_entry
 from core.storage.config_service import ConfigService
 from core.storage.connection import get_db_manager
 from core.storage.models import DetectionRule, DetectionRuleStage
@@ -36,11 +40,12 @@ def _row(r: Any) -> Dict[str, Any]:
 
 
 def _rows(session: Any, rule_id: int) -> List[Any]:
-    """The rule's stage rows, newest first, each with ``from_stage`` set."""
+    """The rule's stage rows, newest first (by time, then id, as rollout and the
+    listing order them), each with ``from_stage`` set."""
     rows = session.scalars(
         select(DetectionRuleStage)
         .where(DetectionRuleStage.rule_id == rule_id)
-        .order_by(DetectionRuleStage.id.desc())
+        .order_by(DetectionRuleStage.at.desc(), DetectionRuleStage.id.desc())
     ).all()
     for i, row in enumerate(rows):
         row.from_stage = rows[i + 1].stage if i + 1 < len(rows) else None
@@ -55,7 +60,7 @@ def _state(session: Any, rule_id: int) -> Tuple[Optional[Any], Optional[Any]]:
     rows = session.scalars(
         select(DetectionRuleStage)
         .where(DetectionRuleStage.rule_id == rule_id)
-        .order_by(DetectionRuleStage.id.desc())
+        .order_by(DetectionRuleStage.at.desc(), DetectionRuleStage.id.desc())
         .limit(1)
     ).all()
     return rule, rows[0] if rows else None
@@ -97,6 +102,23 @@ def _write(
             proof={"hold": hold},
         )
     )
+    if trail.in_use(session):
+        trail.append(
+            session,
+            staged_entry(
+                principal,
+                rule.id,
+                rule.latest_version,
+                latest.stage,
+                stage,
+                reason,
+                hold,
+                event=action,
+                held_before=was_held,
+                username=username,
+            ),
+        )
+        return {"success": True, "rule_id": rule.id, "stage": stage, "hold": hold}
     ConfigService(user_id=principal)._create_audit_log(
         session,
         config_type=AUDIT_TYPE,
@@ -121,7 +143,7 @@ def _hold_row(session: Any, rule_id: int) -> Optional[Any]:
             DetectionRuleStage.rule_id == rule_id,
             DetectionRuleStage.proof.has_key("hold"),
         )
-        .order_by(DetectionRuleStage.id.desc())
+        .order_by(DetectionRuleStage.at.desc(), DetectionRuleStage.id.desc())
         .limit(1)
     ).first()
 

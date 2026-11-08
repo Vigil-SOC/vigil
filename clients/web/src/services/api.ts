@@ -890,7 +890,7 @@ export interface HealthEntry {
   name: string
   tool: string
   status: string
-  /** A check key, or 'revert' for Vigil's own live -> shadow move (its change_id is negative). */
+  /** A check key; or Vigil's own move, its change_id negative: 'revert' (live -> shadow) or 'off' (turned off from live or shadow). */
   check: string
   reason: string | null
   since: string

@@ -41,8 +41,9 @@ made is never touched.
 Every change of a check result is also appended to detection_rule_check_changes
 (``_record_changes``): a Runs result that differs from the rule's last recorded
 one, across versions, and a SIEM rule's status moving between active, disabled
-and removed. Repo rules have no checks and get no rows here; Vigil's Elastic
-overlay copies get their Runs from ``rollout``, which records them the same way.
+and removed. Repo rules get no rows here (their lint is no check that runs);
+Vigil's Elastic overlay copies get their Runs from ``rollout``, which records
+them the same way.
 
 After Kibana and Splunk link, ``_drift`` checks each linked copy against its
 repo rule and writes checks['drift'] the same way: fail when the copy is disabled
@@ -63,6 +64,12 @@ query is linted (``lint.lint_record``) into checks['lint'] on every sync, kept
 when the verdict is unchanged: a new version that fails gets 'off' instead of
 'shadow', and a shadow or live one whose verdict turns to fail goes 'off', the
 findings in the proof.
+
+Every repo and local rule (any ``repo:`` source) is linted the same way on a
+new version, and once on a version stored before lint ran: checks['lint'], a
+Sigma rule's detection and logsource, a Splunk, EQL, ES|QL or Lucene query
+whole. It never blocks, stages or disables the rule; the catalog stops counting
+a failing one as coverage.
 
 Nothing is ever written to a SIEM.
 """
@@ -184,31 +191,68 @@ def _insert_stages(
     if not trail.in_use(session):
         return
     for row in rows:
+        proof = row.get("proof")
+        hold = proof.get("hold") if isinstance(proof, dict) else None
         # A system write: a restore's pause must not roll back the stage rows.
         trail.append(
             session,
-            {
-                trail.ACTION: "detections.rule_staged",
-                trail.ACTOR: row["actor"],
-                trail.OBJECT: str(row["rule_id"]),
-                "rule_id": row["rule_id"],
-                "version": row["version"],
-                "from_stage": before.get(row["rule_id"]),
-                "to_stage": row["stage"],
-                "reason": row["reason"],
-            },
+            staged_entry(
+                row["actor"],
+                row["rule_id"],
+                row["version"],
+                before.get(row["rule_id"]),
+                row["stage"],
+                row["reason"],
+                hold,
+            ),
             gated=False,
         )
 
 
+STAGED = "detections.rule_staged"
+
+
+def staged_entry(
+    actor: str,
+    rule_id: int,
+    version: int,
+    from_stage: Optional[str],
+    to_stage: str,
+    reason: str,
+    hold: Optional[bool],
+    **more: Any,
+) -> Dict[str, Any]:
+    """The one trail entry every stage move writes, Vigil's or a person's.
+
+    ``hold`` is what the move did to a person's hold: True a Revert set it,
+    False a release lifted it, None it left it as it was (every move Vigil makes).
+    """
+    from core.audit import trail
+
+    return {
+        trail.ACTION: STAGED,
+        trail.ACTOR: actor,
+        trail.OBJECT: str(rule_id),
+        "rule_id": rule_id,
+        "version": version,
+        "from_stage": from_stage,
+        "to_stage": to_stage,
+        "reason": reason,
+        "hold": hold,
+        **more,
+    }
+
+
 def _lint(record: RuleRecord, now: str) -> Optional[Dict[str, Any]]:
-    """checks['lint'] for a staged overlay copy: its query, linted as a save lints it."""
+    """checks['lint'] for a repo or overlay rule, linted as a save lints it."""
     report = lint_record(record)
     if report is None:
-        return None  # not a language Vigil runs
+        return None  # a language with no lint (KQL)
     return {
         "result": "pass" if report["passed"] else "fail",
         "findings": report["findings"],
+        # One host left out by name: the rule still passes; move it to an exception.
+        "warnings": report.get("warnings") or [],
         "checked_at": now,
     }
 
@@ -439,16 +483,23 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
                 continue
             rule, latest_fp, stored = hit
             staged = overlay and record.language in STAGED_LANGUAGES
-            # Every staged copy is linted on each sync, so one passed by an older
-            # lint is re-judged; an unchanged verdict on the same version is kept.
-            lint = _lint(record, now) if staged else None
             kept = (stored or {}).get("lint") or {}
-            if (
-                lint
-                and fp == latest_fp
-                and (kept.get("result"), kept.get("findings"))
-                == (lint["result"], lint["findings"])
-            ):
+            if staged:
+                # Every staged copy is linted on each sync, so one passed by an
+                # older lint is re-judged; an unchanged verdict on the same
+                # version is kept.
+                lint = _lint(record, now)
+                if fp == latest_fp and (
+                    kept.get("result"),
+                    kept.get("findings"),
+                    kept.get("warnings"),
+                ) == (lint["result"], lint["findings"], lint["warnings"]):
+                    lint = None
+            elif not siem and (fp != latest_fp or "lint" not in (stored or {})):
+                # Any other imported rule: a new version is linted, and one
+                # stored before lint ran, once.
+                lint = _lint(record, now)
+            else:
                 lint = None
             if fp != latest_fp:
                 rule.latest_version += 1
@@ -572,11 +623,7 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
             ).all()
             for rule_id, (r, fp) in zip(ids, new):
                 versions.append(_version_row(rule_id, 1, r, fp))
-                lint = (
-                    _lint(r, now)
-                    if overlay and r.language in STAGED_LANGUAGES
-                    else None
-                )
+                lint = None if siem else _lint(r, now)
                 stage(rule_id, 1, r.language, "shadow", "new rule", lint)
                 checks = _checks({}, r, now)
                 if lint:
