@@ -191,21 +191,56 @@ def _insert_stages(
     if not trail.in_use(session):
         return
     for row in rows:
+        proof = row.get("proof")
+        hold = proof.get("hold") if isinstance(proof, dict) else None
         # A system write: a restore's pause must not roll back the stage rows.
         trail.append(
             session,
-            {
-                trail.ACTION: "detections.rule_staged",
-                trail.ACTOR: row["actor"],
-                trail.OBJECT: str(row["rule_id"]),
-                "rule_id": row["rule_id"],
-                "version": row["version"],
-                "from_stage": before.get(row["rule_id"]),
-                "to_stage": row["stage"],
-                "reason": row["reason"],
-            },
+            staged_entry(
+                row["actor"],
+                row["rule_id"],
+                row["version"],
+                before.get(row["rule_id"]),
+                row["stage"],
+                row["reason"],
+                hold,
+            ),
             gated=False,
         )
+
+
+STAGED = "detections.rule_staged"
+
+
+def staged_entry(
+    actor: str,
+    rule_id: int,
+    version: int,
+    from_stage: Optional[str],
+    to_stage: str,
+    reason: str,
+    hold: Optional[bool],
+    **more: Any,
+) -> Dict[str, Any]:
+    """The one trail entry every stage move writes, Vigil's or a person's.
+
+    ``hold`` is what the move did to a person's hold: True a Revert set it,
+    False a release lifted it, None it left it as it was (every move Vigil makes).
+    """
+    from core.audit import trail
+
+    return {
+        trail.ACTION: STAGED,
+        trail.ACTOR: actor,
+        trail.OBJECT: str(rule_id),
+        "rule_id": rule_id,
+        "version": version,
+        "from_stage": from_stage,
+        "to_stage": to_stage,
+        "reason": reason,
+        "hold": hold,
+        **more,
+    }
 
 
 def _lint(record: RuleRecord, now: str) -> Optional[Dict[str, Any]]:
