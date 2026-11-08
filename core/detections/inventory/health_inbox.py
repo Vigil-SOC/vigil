@@ -1,7 +1,8 @@
 """The rule-health flags as each person's inbox, behind the console's bell.
 
-Vigil's own Revert of a live rule (the sweep's live -> shadow) is an entry too,
-check "revert", until the rule's stage moves again; its id is negative.
+Vigil's own moves are entries too, until the rule's stage moves again: a Revert
+of a live rule (live -> shadow, check "revert") and turning a live or shadow rule
+off (check "off", e.g. its new version failed lint). Their ids are negative.
 
 An entry is one open flag (``catalog.open_flags``): a rule whose latest Runs,
 Sees, Quiet, Accurate, Noisy, Silent or drift change went pass -> fail. It is
@@ -56,7 +57,7 @@ def mark_read(
 
 
 def _open() -> List[Dict[str, Any]]:
-    flags = catalog.open_flags() + catalog.open_reverts()
+    flags = catalog.open_flags() + catalog.open_vigil_moves()
     return sorted(flags, key=lambda f: f["since"], reverse=True)
 
 
