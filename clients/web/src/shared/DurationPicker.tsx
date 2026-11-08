@@ -22,6 +22,8 @@ interface DurationPickerProps {
   /** Tighter limits than the default (1 min to 999 h 59 min), in minutes. */
   minMinutes?: number
   maxMinutes?: number
+  /** Show the duration only, for someone who may not change it. */
+  readOnly?: boolean
 }
 
 export function DurationPicker({
@@ -30,6 +32,7 @@ export function DurationPicker({
   label,
   minMinutes = MIN_TOTAL,
   maxMinutes = MAX_TOTAL,
+  readOnly = false,
 }: DurationPickerProps) {
   const total = Math.min(Math.max(toMinutes(value), 0), maxMinutes)
   const h = Math.floor(total / 60)
@@ -109,6 +112,14 @@ export function DurationPicker({
       <span>{unit}</span>
     </label>
   )
+
+  if (readOnly) {
+    return (
+      <span className="dp-pill dp-static" aria-label={`${label}: ${formatDuration(total / 60)}`}>
+        <b>{h}</b> h <b>{String(m).padStart(2, '0')}</b> min
+      </span>
+    )
+  }
 
   return (
     <span
