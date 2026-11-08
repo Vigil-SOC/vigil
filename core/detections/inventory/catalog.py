@@ -256,49 +256,72 @@ def open_flags() -> List[Dict[str, Any]]:
     return flags
 
 
-def open_reverts() -> List[Dict[str, Any]]:
-    """Each rule Vigil's sweep last moved live -> shadow and no one has moved
-    since, newest first, shaped like a flag. ``change_id`` is the stage row's
-    id negated, so it never meets a check change's id."""
+def open_vigil_moves() -> List[Dict[str, Any]]:
+    """Each rule Vigil itself last moved live -> shadow (a Revert) or turned off from
+    live or shadow, and no one has moved since, newest first, shaped like a flag.
+    ``change_id`` is the stage row's id negated, so it never meets a check change's id.
+    """
     s = DetectionRuleStage
-    ranked = select(
-        s,
-        func.lag(s.stage).over(partition_by=s.rule_id, order_by=s.id).label("prev"),
-        func.row_number()
-        .over(partition_by=s.rule_id, order_by=s.id.desc())
-        .label("rn"),
-    ).subquery()
     with get_db_manager().session_scope() as session:
         rows = session.execute(
-            select(ranked, DetectionRule)
-            .join(DetectionRule, DetectionRule.id == ranked.c.rule_id)
-            .where(
-                ranked.c.rn == 1,
-                ranked.c.stage == "shadow",
-                ranked.c.prev == "live",
-                ranked.c.actor == "system",
+            select(
+                s.id,
+                s.rule_id,
+                s.version,
+                s.stage,
+                s.actor,
+                s.reason,
+                s.at,
+                DetectionRule.name,
+                DetectionRule.source,
+                DetectionRule.status,
             )
+            .join(DetectionRule, DetectionRule.id == s.rule_id)
+            .where(s.rule_id.in_(select(s.rule_id).where(s.actor == "system")))
+            .order_by(s.rule_id, s.at, s.id)
         ).all()
-        return sorted(
-            (
-                {
-                    "change_id": -row.id,
-                    "rule_id": row.rule_id,
-                    "name": row.DetectionRule.name,
-                    "tool": tool_of(row.DetectionRule.source),
-                    "status": row.DetectionRule.status,
-                    "check": "revert",
-                    "old": "live",
-                    "new": "shadow",
-                    "version": row.version,
-                    "reason": row.reason,
-                    "since": row.at.isoformat(),
-                }
-                for row in rows
-            ),
-            key=lambda f: f["since"],
-            reverse=True,
+    return vigil_moves(rows)
+
+
+def vigil_moves(rows: Iterable[Any]) -> List[Dict[str, Any]]:
+    """The bell entries in stage ``rows``: per rule, its last row in time order (at,
+    then id, as CURRENT_STAGE and rollout read them) when Vigil wrote it as a Revert
+    (live -> shadow) or as an off from live or shadow. A rule that started off, or
+    was removed, has none."""
+    last: Dict[int, Tuple[Any, Optional[str]]] = {}
+    for row in sorted(rows, key=lambda r: (r.rule_id, r.at, r.id)):
+        prev = last.get(row.rule_id)
+        last[row.rule_id] = (row, prev[0].stage if prev else None)
+    out = []
+    for row, prev in last.values():
+        if row.actor != "system":
+            continue
+        if row.stage == "shadow" and prev == "live":
+            check = "revert"
+        elif (
+            row.stage == "off"
+            and prev in ("live", "shadow")
+            and row.status != "removed"
+        ):
+            check = "off"
+        else:
+            continue
+        out.append(
+            {
+                "change_id": -row.id,
+                "rule_id": row.rule_id,
+                "name": row.name,
+                "tool": tool_of(row.source),
+                "status": row.status,
+                "check": check,
+                "old": prev,
+                "new": row.stage,
+                "version": row.version,
+                "reason": row.reason,
+                "since": row.at.isoformat(),
+            }
         )
+    return sorted(out, key=lambda f: f["since"], reverse=True)
 
 
 def rule_health(days: int = 7) -> Dict[str, Any]:

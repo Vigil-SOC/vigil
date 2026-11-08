@@ -286,7 +286,7 @@ def test_vigils_revert_is_a_bell_entry_for_everyone(monkeypatch):
         "since": "2026-11-07T09:00:00+00:00",
     }
     monkeypatch.setattr(catalog, "open_flags", lambda: [])
-    monkeypatch.setattr(catalog, "open_reverts", lambda: [revert])
+    monkeypatch.setattr(catalog, "open_vigil_moves", lambda: [revert])
     reads = {}
     monkeypatch.setattr(health_inbox, "_read_ids", lambda u: reads.get(u, set()))
 

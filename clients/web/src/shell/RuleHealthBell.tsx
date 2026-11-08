@@ -16,6 +16,7 @@ const KIND: Record<string, { label: string; plural: string; why: string; tone: s
   noisy: { label: 'Went noisy', plural: 'went noisy', why: 'Far more alerts today than its usual.', tone: 'high' },
   silent: { label: 'Went silent', plural: 'went silent', why: 'It fired regularly, then stopped.', tone: 'ac' },
   drift: { label: 'Changed outside the repo', plural: 'changed outside the repo', why: 'Edited, disabled or removed in the SIEM, not in its repo.', tone: 'ac' },
+  off: { label: 'Turned off', plural: 'turned off', why: 'Vigil turned it off. It no longer runs anywhere.', tone: 'poor' },
 }
 const kindOf = (check: string) => KIND[check] ?? { label: `${check} failing`, plural: `${check} failing`, why: 'A check that passed now fails.', tone: 'poor' }
 const SIEM_NAME: Record<string, string> = { elastic: 'Elastic', splunk: 'Splunk', wazuh: 'Wazuh', overlay: 'Vigil', repo: 'Repo' }
@@ -116,7 +117,7 @@ export default function RuleHealthBell({ go }: { go: (screen: string, options?: 
         <div className="rh-body">
           <div className={`rh-kind ${k.tone}`}>{k.label}{e.read ? '' : <span className="rh-sr"> (unread)</span>}</div>
           <button type="button" className="rh-rule" title={e.name} onClick={() => openEntry(e)}>{e.name}</button>
-          <div className="rh-why">{k.why}</div>
+          <div className="rh-why">{e.check === 'off' && e.reason ? `Vigil turned it off: ${e.reason}. It no longer runs anywhere.` : k.why}</div>
           <div className="rh-meta">
             <span className="rh-siem">{SIEM_NAME[e.tool] ?? e.tool}</span>
             <span>{relativeTime(e.since)}</span>
