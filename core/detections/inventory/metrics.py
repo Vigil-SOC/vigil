@@ -68,7 +68,9 @@ THROTTLE = re.compile(
     "|".join(
         _ALONE.format(p)
         for p in (
-            "429",
+            # A 429 in a status, never a bare number ("repo rule 429").
+            r"(?:http(?:/\d(?:\.\d)?)?|status(?:[ _]?code)?|code|error)\s*[=:]?\s*429",
+            r"429 too many",
             "too many requests",
             r"rate[ -]limit(?:ed|s)?",
             r"throttl(?:ed|ing)",
@@ -79,9 +81,11 @@ THROTTLE = re.compile(
     + r"|es_rejected_execution_exception|circuit_breaking_exception",
     re.IGNORECASE,
 )
-# The data a check names (index=x, index x, sourcetype=y): never read as an error.
+# The data a check names (index=x, index x, sourcetype=y, source=z): never read
+# as an error. "source" only with = or :, as plain English uses the word too.
 _NAMES = re.compile(
-    r"\b(?:index|sourcetype|source|datamodel)\s*[=:]?\s*\S+", re.IGNORECASE
+    r"\b(?:(?:index|sourcetype|datamodel)\s*[=:]?|source\s*[=:])\s*\S+",
+    re.IGNORECASE,
 )
 
 
@@ -234,13 +238,13 @@ def shadow_to_live(
 ) -> Dict[str, Any]:
     """``stages``: (id, rule_id, name, version, stage, actor, reason, at).
 
-    Paired in time order (at, then id); a rule's current stage is its last row by
-    id, as the inventory reads it. A live row before the version's shadow row is
-    no promotion.
+    Paired in time order (at, then id); a rule's current stage is its last row in
+    that order, as the inventory reads it (CURRENT_STAGE). A live row before the
+    version's shadow row is no promotion.
     """
     rows = sorted(stages, key=lambda r: (_utc(r[7]), r[0]))
     first: Dict[Tuple[int, int], Dict[str, Any]] = {}
-    current = {r[1]: (r[3], r[4]) for r in sorted(rows, key=lambda r: r[0])}
+    current = {r[1]: (r[3], r[4]) for r in rows}
     for _, rule_id, name, version, stage, actor, reason, at in rows:
         at = _utc(at)
         key = (rule_id, version)
