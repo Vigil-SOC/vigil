@@ -334,11 +334,11 @@ def handed_off(rule_ids: List[int]) -> Set[int]:
         s.status == "active",
         s.link_kind.in_(HANDOFF_LINKS),
         or_(s.origin_rule_id == o.id, s.origin_rule_id.in_(same_rule)),
-        # Vigil's own file, alone or after a directory (sync.vigil_wazuh_file).
+        # Vigil's own file by its exact name, alone or after a directory, as
+        # sync.vigil_wazuh_file reads it (no LIKE: "_" would match any one char).
         or_(
             o.language != WAZUH,
-            s.path == vigil_file,
-            s.path.like(func.concat("%/", vigil_file)),
+            func.regexp_replace(s.path, "^.*/", "") == vigil_file,
         ),
     )
     with get_db_manager().session_scope() as session:

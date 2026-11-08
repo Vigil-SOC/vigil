@@ -198,9 +198,20 @@ def test_a_disabled_manager_rule_takes_nothing_over(pg):
         "etc/rules/local_rules.xml",
         "etc/rules/xvigil_{key}.xml",
         "etc/rules/vigil_{key}0.xml",
+        "etc/rules/vigil-{key}.xml",
+        "etc/rules/vigilX{key}.xml",
+        "vigil-{key}.xml",
         None,
     ],
-    ids=["local-rules", "prefixed", "other-id", "no-path"],
+    ids=[
+        "local-rules",
+        "prefixed",
+        "other-id",
+        "dash",
+        "any-char",
+        "dash-alone",
+        "no-path",
+    ],
 )
 def test_a_customer_file_loading_the_id_takes_nothing_over(pg, path):
     overlay = pg.rule("repo:overlay")
@@ -209,6 +220,22 @@ def test_a_customer_file_loading_the_id_takes_nothing_over(pg, path):
     assert tuple(pg.origin_of(loaded)) == (None, None)
     assert rollout.handed_off([overlay]) == set()
     assert pg.audited(loaded) == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["etc/rules/vigil-{key}.xml", "etc/rules/vigilX{key}.xml", "vigil-{key}.xml"],
+    ids=["dash", "any-char", "dash-alone"],
+)
+def test_a_near_named_customer_file_never_hands_the_vigil_copy_off(pg, path):
+    # The customer's repo rule carries the id, so the manager rule links to it;
+    # its file is not Vigil's, whatever "_" a LIKE would have matched.
+    overlay = pg.rule("repo:overlay")
+    repo = pg.rule("repo:customer-wazuh")
+    loaded = pg.rule("wazuh", path=path.format(key=pg.key))
+    sync._link_wazuh_id()
+    assert tuple(pg.origin_of(loaded)) == (repo, "same_id")
+    assert rollout.handed_off([overlay]) == set()
 
 
 def test_a_customers_own_rule_links_to_its_repo_rule_but_takes_no_vigil_copy(pg):
