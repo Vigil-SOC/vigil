@@ -214,8 +214,48 @@ def test_out_of_order_stage_rows_pair_by_time_and_never_go_negative():
     assert [(r["name"], r["hours"]) for r in out["rows"]] == [("E", 168.0)]
     assert out["median_hours"] == 168.0
     assert all(r["hours"] >= 0 for r in out["rows"])
-    # F's current stage is its last row by id (live), so it is not waiting.
-    assert out["waiting"] == []
+    # F's current stage is its last row by (at, id): the shadow row at 50 h.
+    assert [(w["name"], w["in_shadow_hours"]) for w in out["waiting"]] == [("F", 334.0)]
+
+
+def test_the_current_stage_is_the_last_row_in_time_order_not_by_id():
+    stages = [
+        # v2's shadow row was written first but stamped last.
+        (5, 9, "H", 2, "shadow", "system", "new version", _h(300)),
+        (6, 9, "H", 1, "shadow", "system", "new rule", _h(0)),
+        (7, 9, "H", 1, "live", "system", "7 days in shadow, ...", _h(100)),
+    ]
+    out = metrics.shadow_to_live(stages, NOW + timedelta(days=20))
+    assert [(r["name"], r["version"]) for r in out["rows"]] == [("H", 1)]
+    assert [(w["name"], w["version"]) for w in out["waiting"]] == [("H", 2)]
+
+
+def test_a_429_counts_only_as_a_status():
+    for reason in (
+        "status=429",
+        "HTTP 429",
+        "HTTP/1.1 429",
+        "429 Too Many Requests",
+        "search failed: error code: 429",
+        "Status code 429 from the SIEM",
+    ):
+        assert metrics.throttle_error(reason), reason
+    for reason in (
+        "repo rule 429 not found",
+        "429 alerts in 30 d (14/day), over 10/day",
+        "rule 429 v2 is not in the inventory",
+    ):
+        assert not metrics.throttle_error(reason), reason
+
+
+def test_source_is_a_name_only_with_equals_or_colon():
+    assert metrics.throttle_error("upstream source rate limited the search")
+    assert metrics.throttle_error("the source throttled the search")
+    for reason in (
+        "no events in source=rate_limit.log in 7 d",
+        "source: throttle_feed has no events",
+    ):
+        assert not metrics.throttle_error(reason), reason
 
 
 # The agent tool and the API route
