@@ -67,7 +67,7 @@ function rows(m: DetectionMetrics): Row[] {
 /** The rollout's five success metrics, a card under the stats strip: each a cell with
  * its number, a line in words and its target; "What these can't say" adds each one's
  * caveats, from the API's own unknown list. */
-export default function RolloutMetrics({ data, error }: { data: DetectionMetrics | null; error: string | null }) {
+export default function RolloutMetrics({ data, error, onRetry }: { data: DetectionMetrics | null; error: string | null; onRetry: () => void }) {
   const [caveats, setCaveats] = useState(false)
   return (
     <section className="x1-card de-card de-rollout" aria-labelledby="de-rollout-title">
@@ -82,7 +82,12 @@ export default function RolloutMetrics({ data, error }: { data: DetectionMetrics
           </button>
         )}
       </div>
-      {error && <p className="de-x-err" role="alert">{error}</p>}
+      {error && (
+        <p className="de-rollout-err" role="alert">
+          <span title={error}>The rollout metrics didn’t load.</span>
+          <button type="button" className="x1-link" onClick={onRetry}>Retry</button>
+        </p>
+      )}
       {!data && !error && <p className="x1-muted de-card-sub">Reading the rollout metrics…</p>}
       {data && (
         <ul className="de-rollout-cells">
@@ -92,7 +97,12 @@ export default function RolloutMetrics({ data, error }: { data: DetectionMetrics
               <b className={r.tone ?? ''}>{r.value}</b>
               <span className="de-rollout-line">{r.line}</span>
               <span className="de-rollout-target">{r.target}</span>
-              {caveats && r.unknown.length > 0 && <span className="de-rollout-cant">Can’t say: {r.unknown.join(' ')}</span>}
+              {caveats && r.unknown.length > 0 && (
+                <div className="de-rollout-cant">
+                  <span>Can’t say:</span>
+                  <ul>{r.unknown.map((u) => <li key={u}>{u}</li>)}</ul>
+                </div>
+              )}
             </li>
           ))}
         </ul>

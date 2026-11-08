@@ -341,7 +341,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
         </div>
       </div>
 
-      <RolloutMetrics data={rollout.data} error={rollout.error} />
+      <RolloutMetrics data={rollout.data} error={rollout.error} onRetry={rollout.retry} />
 
       <div className="de-pair">
         <section className="x1-card de-card de-siems">
