@@ -14,12 +14,15 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Request,
     Response,
     UploadFile,
 )
 from pydantic import BaseModel, Field, field_validator
 
-from core.auth.permissions import permission_gate
+from core.auth import trail_events
+from core.auth.current_user import get_current_user
+from core.auth.permissions import permission_gate, require_permission
 from core.deps import provide_detection_rules, provide_mcp_client, provide_mcp_registry
 from core.detections import detection_skill, exceptions, proof_card
 from core.detections.detection_rules_service import (
@@ -539,7 +542,30 @@ def get_proof_card_key(user: User = Depends(get_current_active_user)):
         raise HTTPException(status_code=503, detail=str(e))
 
 
-@router.post("/rules/{rule_id}/detection-skill")
+def _audited_write_gate(attempted: str):
+    """The detections.write gate, with a refusal on the audit trail: a skill
+    carries a rule's queries, exceptions and proof out of this Vigil."""
+    inner = require_permission("detections.write")
+
+    def _check(request: Request, user: User = Depends(get_current_user)) -> User:
+        try:
+            return inner(request, user)
+        except HTTPException as exc:
+            if exc.status_code == 403:
+                trail_events.refused(
+                    "auth.denied", actor=user.principal_id, attempted=attempted
+                )
+            raise
+
+    # Introspectable by the role x route matrix test, as require_permission's is.
+    _check.permission, _check.unsafe_only = "detections.write", False  # type: ignore[attr-defined]
+    return Depends(_check)
+
+
+@router.post(
+    "/rules/{rule_id}/detection-skill",
+    dependencies=[_audited_write_gate("detection_skill.export")],
+)
 def export_detection_skill(rule_id: int, user: User = Depends(get_current_active_user)):
     """A zip of the rule as a Detection Skill: each copy's file, its exceptions
     and its signed proof card, signed together. ``rule_id`` is any of the rule's

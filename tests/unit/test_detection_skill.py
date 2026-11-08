@@ -472,3 +472,113 @@ def test_only_vigils_own_rules_export(vigil):
 
 def _key_of(v):
     return v.key_a
+
+
+def _bad_crc(data):
+    """``data`` with one byte of the first entry's stored bytes flipped: the zip
+    still opens, the entry's CRC no longer matches."""
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        info = zf.infolist()[0]
+    start = info.header_offset + 30 + len(info.filename.encode()) + len(info.extra)
+    raw = bytearray(data)
+    raw[start + 2] ^= 0xFF
+    return bytes(raw)
+
+
+@pg
+def test_a_damaged_zip_is_refused_with_its_reason_and_audited(vigil):
+    v = vigil
+    _save(v, exceptions=False)
+    _, data = detection_skill.export(v.saved[0]["rule_id"], actor="user-ana")
+    v.become_b()
+    out = _import(v, _bad_crc(data))
+    assert "is damaged" in out["error"]
+    assert v.trail[-1][0] == detection_skill.IMPORT_REFUSED
+
+
+@pg
+@pytest.mark.parametrize(
+    "change, why",
+    [
+        (lambda m, c, f: m.update(copies=["x"]), "not an object"),
+        (lambda m, c, f: f.update({"rules/extra.yml": b"title: x"}), "does not list"),
+        (lambda m, c, f: c.update(rules="x"), "can't be read"),
+    ],
+    ids=["copy-not-object", "unlisted-file", "card-rules-not-list"],
+)
+def test_a_signed_skill_of_the_wrong_shape_is_refused_and_audited(vigil, change, why):
+    v = vigil
+    _save(v, exceptions=False)
+    _, data = detection_skill.export(v.saved[0]["rule_id"], actor="user-ana")
+    v.become_b()
+
+    def apply(manifest, card, files):
+        change(manifest, card, files)
+
+    members = _members(data)
+    out = _import(v, _resigned_loose(members, _key_of(v), apply))
+    assert why in out["error"]
+    assert v.trail[-1][0] == detection_skill.IMPORT_REFUSED
+
+
+def _resigned_loose(members, key, change):
+    """As ``_resigned``, for a manifest whose copies may not be objects."""
+    manifest = json.loads(members["detection-skill.json"])
+    card = json.loads(members["proof-card.json"])
+    out = dict(members)
+    change(manifest, card, out)
+    card_bytes = proof_card.canonical(card)
+    manifest["proof_card_sha256"] = hashlib.sha256(card_bytes).hexdigest()
+    manifest_bytes = proof_card.canonical(manifest)
+    out["proof-card.json"] = card_bytes
+    out["proof-card.json.sig"] = base64.b64encode(key.sign(card_bytes)) + b"\n"
+    out["detection-skill.json"] = manifest_bytes
+    out["detection-skill.json.sig"] = base64.b64encode(key.sign(manifest_bytes)) + b"\n"
+    return _zip(out)
+
+
+def _route(path):
+    from services.api.routers import detection_rules as routes
+
+    return next(
+        r for r in routes.router.routes if r.path == path and "POST" in r.methods
+    )
+
+
+def test_export_and_import_need_edit_rights_on_detections():
+    for path in ("/rules/{rule_id}/detection-skill", "/detection-skill/import"):
+        gates = {d.dependency.permission for d in _route(path).dependencies}
+        assert gates == {"detections.read", "detections.write"}, path
+
+
+@pytest.mark.parametrize(
+    "missing, refused", [("detections.write", True), (None, False)]
+)
+def test_a_viewers_export_is_refused_403_and_audited(
+    monkeypatch, trail, missing, refused
+):
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(
+        "core.auth.permissions.missing_permission",
+        lambda user_id, permission, session=None: missing,
+    )
+    (gate,) = [
+        d.dependency
+        for d in _route("/rules/{rule_id}/detection-skill").dependencies
+        if d.dependency.permission == "detections.write"
+    ]
+    viewer = SimpleNamespace(user_id="user-viewer1", principal_id="user-viewer1")
+    if refused:
+        with pytest.raises(HTTPException) as exc:
+            gate(None, viewer)
+        assert exc.value.status_code == 403
+        assert trail[-1] == (
+            "auth.denied",
+            {"actor": "user-viewer1", "attempted": "detection_skill.export"},
+        )
+    else:
+        assert gate(None, viewer) is viewer
+        assert trail == []

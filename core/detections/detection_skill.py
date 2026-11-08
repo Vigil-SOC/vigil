@@ -30,7 +30,9 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import zipfile
+import zlib
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -47,6 +49,8 @@ from core.integrations.mcp.surface import acting_as
 from core.storage.connection import get_db_manager
 from core.storage.models import DetectionRule
 from core.storage.unit_of_work import unit_of_work
+
+logger = logging.getLogger(__name__)
 
 SCHEMA = "detection-skill/v1"
 MANIFEST = "detection-skill.json"
@@ -239,8 +243,18 @@ def _entries(data: bytes) -> Dict[str, bytes]:
         for info in infos:
             if info.file_size > MAX_ENTRY_BYTES:
                 raise Refused(f"{info.filename} is too large")
-            with zf.open(info) as f:
-                body = f.read(MAX_ENTRY_BYTES + 1)
+            try:
+                with zf.open(info) as f:
+                    body = f.read(MAX_ENTRY_BYTES + 1)
+            # A damaged entry (bad CRC, a size that lies, a broken stream) or one
+            # this Python can't decompress.
+            except (
+                zipfile.BadZipFile,
+                zlib.error,
+                EOFError,
+                NotImplementedError,
+            ) as exc:
+                raise Refused(f"{info.filename} in the zip is damaged: {exc}") from exc
             if len(body) > MAX_ENTRY_BYTES:
                 raise Refused(f"{info.filename} is too large")
             out[info.filename] = body
@@ -302,10 +316,30 @@ def read(data: bytes, public_key_pem: str) -> Dict[str, Any]:
     if _sha(card_bytes) != manifest.get("proof_card_sha256"):
         raise Refused("The proof card is not the one the skill was exported with")
     card = _load(card_bytes, "proof-card.json")
-    proven = {r.get("rule_id"): r for r in card.get("rules") or []}
     listed = manifest.get("copies")
     if not isinstance(listed, list) or not listed:
         raise Refused(f"{MANIFEST} lists no copies")
+    if not all(isinstance(item, dict) for item in listed):
+        raise Refused(f"{MANIFEST} lists a copy that is not an object")
+    known = {
+        MANIFEST,
+        f"{MANIFEST}.sig",
+        "proof-card.json",
+        "proof-card.json.sig",
+        "proof-card.pdf",
+        "vigil-proof-key.pub",
+        "README.txt",
+    } | {str(item.get("file")) for item in listed}
+    extra = sorted(set(entries) - known)
+    if extra:
+        raise Refused(
+            f"The zip holds files the skill does not list: {', '.join(extra[:5])}"
+        )
+    if not isinstance(card.get("rules"), list) or not all(
+        isinstance(r, dict) for r in card["rules"]
+    ):
+        raise Refused("proof-card.json lists its rules in a shape it can't be read in")
+    proven = {r.get("rule_id"): r for r in card["rules"]}
     copies: List[Dict[str, Any]] = []
     for item in listed:
         language = item.get("language")
@@ -316,7 +350,10 @@ def read(data: bytes, public_key_pem: str) -> Dict[str, Any]:
         body = entries.get(str(item.get("file")))
         if body is None or _sha(body) != item.get("sha256"):
             raise Refused(f"{item.get('file')} is missing or not the file signed")
-        text = body.decode("utf-8")
+        try:
+            text = body.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise Refused(f"{item.get('file')} is not UTF-8 text") from exc
         entry = proven.get(item.get("rule_id"))
         if entry is None:
             raise Refused(f"The proof card has no entry for {item.get('file')}")
@@ -371,7 +408,17 @@ def import_skill(
     kid = None
     try:
         kid = _key_id(public_key_pem) if (public_key_pem or "").strip() else None
-        skill = read(data, public_key_pem)
+        try:
+            skill = read(data, public_key_pem)
+        except Refused:
+            raise
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 -- every import is refused or saved, and audited
+            logger.exception("Detection Skill import: the skill could not be read")
+            raise Refused(
+                f"The skill could not be read ({type(exc).__name__})"
+            ) from exc
         keys = [c["native_key"] for c in skill["copies"]]
         held = _held(keys)
         if held:
