@@ -2328,6 +2328,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cases/{case_id}/rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Case Rules
+         * @description The proof card of each rule version that raised the case's alerts.
+         *
+         *     Each linked finding is traced to the rule version that fired it as the
+         *     Detections page traces it; one version is one card, with its stored checks,
+         *     worst problem and (overlay) stage, worst first. Alerts traced to no rule are
+         *     counted in ``unresolved``, each with why.
+         */
+        get: operations["get_api_cases_case_id_rules"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cases/{case_id}/sla": {
         parameters: {
             query?: never;
@@ -7087,6 +7112,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cases/{case_id}/rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Case Rules
+         * @description The proof card of each rule version that raised the case's alerts.
+         *
+         *     Each linked finding is traced to the rule version that fired it as the
+         *     Detections page traces it; one version is one card, with its stored checks,
+         *     worst problem and (overlay) stage, worst first. Alerts traced to no rule are
+         *     counted in ``unresolved``, each with why.
+         */
+        get: operations["get_api_v1_cases_case_id_rules"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/findings": {
         parameters: {
             query?: never;
@@ -8941,6 +8991,84 @@ export interface components {
             relationships: components["schemas"]["CaseRelatedSchema"][];
         };
         /**
+         * CaseRuleCard
+         * @description One rule version behind a case's alerts, and its stored checks.
+         */
+        CaseRuleCard: {
+            /**
+             * By Name
+             * @default 0
+             */
+            by_name: number;
+            /**
+             * Caught
+             * @default false
+             */
+            caught: boolean;
+            /**
+             * Checks
+             * @default {}
+             */
+            checks: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
+            /**
+             * Findings
+             * @default []
+             */
+            findings: string[];
+            /**
+             * Flags
+             * @default []
+             */
+            flags: string[];
+            /** Health */
+            health: string;
+            /** Latest Version */
+            latest_version?: number | null;
+            /** Name */
+            name: string;
+            /** Native Key */
+            native_key: string;
+            /** Rule Id */
+            rule_id: number;
+            /** Source */
+            source: string;
+            /** Stage */
+            stage?: string | null;
+            /** Status */
+            status: string;
+            /** Tool */
+            tool: string;
+            /** Version */
+            version: number;
+            /** Worst */
+            worst: string;
+        };
+        /**
+         * CaseRulesResponse
+         * @description ``GET /cases/{id}/rules`` — worst first; alerts traced to no rule apart.
+         */
+        CaseRulesResponse: {
+            /**
+             * Rules
+             * @default []
+             */
+            rules: components["schemas"]["CaseRuleCard"][];
+            /**
+             * Unresolved
+             * @default 0
+             */
+            unresolved: number;
+            /**
+             * Unresolved Findings
+             * @default []
+             */
+            unresolved_findings: components["schemas"]["CaseUnresolvedFinding"][];
+        };
+        /**
          * CaseSLASchema
          * @description CaseSLA.
          */
@@ -9160,6 +9288,13 @@ export interface components {
         CaseTasksResponse: {
             /** Tasks */
             tasks: components["schemas"]["CaseTaskSchema"][];
+        };
+        /** CaseUnresolvedFinding */
+        CaseUnresolvedFinding: {
+            /** Finding Id */
+            finding_id: string;
+            /** Reason */
+            reason: string;
         };
         /**
          * CaseUpdate
@@ -16399,6 +16534,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseSchema"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_cases_case_id_rules: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseRulesResponse"];
                 };
             };
             /** @description Validation Error */
@@ -24963,6 +25131,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseMergeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_v1_cases_case_id_rules: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseRulesResponse"];
                 };
             };
             /** @description Validation Error */

@@ -14,7 +14,19 @@ from core.detections.inventory import rollout
 TARGET = {"git_url": "https://github.com/acme/detections.git", "subdirectory": "rules"}
 
 
-def _copy(rule_id, language="elastic", stage="live", toml="[rule]\n", deploy=None):
+def _copy(
+    rule_id,
+    language="elastic",
+    stage="live",
+    toml="[rule]\n",
+    deploy=None,
+    lint=None,
+):
+    # A lint pass unless the test says otherwise; {} is a version with no lint result.
+    lint = {"result": "pass"} if lint is None else lint
+    checks = {"lint": lint} if lint else {}
+    if deploy:
+        checks["deploy"] = deploy
     return rollout.Copy(
         rule_id=rule_id,
         version=2,
@@ -22,7 +34,7 @@ def _copy(rule_id, language="elastic", stage="live", toml="[rule]\n", deploy=Non
         language=language,
         stage=stage,
         stage_at=datetime.now(timezone.utc),
-        checks={"deploy": deploy} if deploy else {},
+        checks=checks,
         rule={},
         key=f"key-{rule_id}",
         toml=toml,
@@ -283,3 +295,21 @@ def test_a_real_failure_still_fails_after_looking_again(raced):
     raced(99)  # no other PR ever shows up
     with pytest.raises(RuntimeError, match="409"):
         rollout._open_pr(_copy(1), TARGET, "body", "ghp_x")
+
+
+@pytest.mark.parametrize(
+    "lint, reason",
+    [
+        ({}, "its current version has not passed lint"),
+        (
+            {"result": "fail", "findings": [{"kind": "host", "value": "dc01"}]},
+            "its current version has not passed lint",
+        ),
+    ],
+)
+def test_add_to_siem_skips_a_version_without_a_lint_pass(estate, lint, reason):
+    estate["copies"] = [_copy(1, lint=lint), _copy(9)]
+    out = rollout.deploy_overlay_only([1, 9])
+    assert [o["rule_id"] for o in out["opened"]] == [9]
+    assert {s["rule_id"]: s["reason"] for s in out["skipped"]} == {1: reason}
+    assert [o[0] for o in estate["opened"]] == [9]

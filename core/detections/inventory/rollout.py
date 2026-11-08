@@ -204,7 +204,7 @@ def _copies() -> List[Copy]:
         select(s.rule_id, s.proof["hold"].astext.label("hold"))
         .where(s.proof.has_key("hold"))
         .distinct(s.rule_id)
-        .order_by(s.rule_id, s.id.desc())
+        .order_by(s.rule_id, s.at.desc(), s.id.desc())
         .subquery()
     )
     with get_db_manager().session_scope() as session:
