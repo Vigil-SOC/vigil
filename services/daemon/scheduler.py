@@ -255,14 +255,14 @@ class TaskScheduler:
         )
 
     async def _run_detection_gaps(self):
-        """Queue a mitre_analyst run on the gaps identify_gaps lists since the stored
-        marker, at or above the floor and not already carried by an open Case, biggest
-        first; none when there are none, unless OpenCTI is configured: then recent
-        intel is checked every day.
+        """Queue a mitre_analyst run on the gaps identify_gaps lists over the last
+        WINDOW_DAYS, counting only evidence no earlier run raised, at or above the
+        floor and not already carried by an open Case, biggest first; none when there
+        are none, unless OpenCTI is configured: then recent intel is checked every day.
 
         A schedule intake with no case_id mints a Case, so an empty report with no
-        intel to read queues nothing. The marker moves to this run's start only once
-        the run has queued, or found nothing to queue.
+        intel to read queues nothing. What was raised is remembered only once the
+        run has queued, or found nothing to queue.
         """
         if not is_enabled(DETECTION_GAPS_WORKFLOW):
             logger.info(
@@ -274,19 +274,19 @@ class TaskScheduler:
         from core.detections.tools import get_security_detection_tools
 
         started = datetime.now(timezone.utc)
-        marker = gap_run.read_marker(started)
-        # The ledger window reaches back to the marker, however long ago it was.
-        since_days = max(gap_run.FIRST_RUN_DAYS, (started - marker.since).days + 1)
+        window_start = started - timedelta(days=gap_run.WINDOW_DAYS)
+        before = gap_run.read_raised()
         # Off the loop: the report reads the ledger and Findings synchronously.
         report = await asyncio.to_thread(
             asyncio.run,
             get_security_detection_tools().identify_gaps(
-                since_days=since_days, since=marker.since
+                since_days=gap_run.WINDOW_DAYS, since=window_start
             ),
         )
-        gaps = gap_run.gaps_in(report)
-        raised = gap_run.to_raise(gaps, marker, gap_run.open_case_techniques())
-        after = gap_run.next_marker(started, marker, gaps, raised)
+        alerts = await asyncio.to_thread(gap_run.alert_ids, window_start)
+        gaps = gap_run.gaps_in(report, alerts, before)
+        raised, held = gap_run.to_raise(gaps, before, gap_run.open_case_techniques())
+        after = gap_run.after_run(before, started, window_start, gaps, raised, held)
         from core.integrations.mcp.client import process_mcp_client
 
         # Connecting is the configured check (enabled, set up, credentials), and
@@ -305,7 +305,7 @@ class TaskScheduler:
                 "Daily detection gaps run: no new gaps at or above %d, nothing queued",
                 gap_run.GAP_FLOOR,
             )
-            gap_run.write_marker(after)
+            gap_run.write_raised(after)
             return
 
         hypothesis = (
@@ -327,7 +327,7 @@ class TaskScheduler:
             )
         from services.daemon.orchestrator import insert_intake_trigger
 
-        insert_intake_trigger(
+        queued = insert_intake_trigger(
             kind="schedule",
             priority="low",
             payload={
@@ -339,7 +339,11 @@ class TaskScheduler:
                 "case_techniques": gap_run.case_techniques(raised),
             },
         )
-        gap_run.write_marker(after)
+        if queued is None:
+            # Nothing was queued: remember nothing, so the next run raises it again.
+            logger.error("Daily detection gaps run: the intake row was not queued")
+            return
+        gap_run.write_raised(after)
         logger.info("Queued the daily detection gaps run: %s", hypothesis)
 
     # What this hunt is out to test, read off the techniques the estate is showing, so

@@ -575,6 +575,8 @@ def missed_runs_report(
             "technique": technique,
             "runs": [_run_row(run) for run in sorted(group["runs"])],
             "confirmed": len(group["confirmed"]),
+            # Which of ``runs`` a person confirmed (a Verdict with analyst trust).
+            "confirmed_runs": [_run_row(run) for run in sorted(group["confirmed"])],
             "rules": len(set(rules_by_technique.get(technique, ()))),
             "ruled_out": [
                 {**_run_row((kind, run_id)), "outcome": outcome}
