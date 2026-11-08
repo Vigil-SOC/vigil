@@ -4,10 +4,11 @@ Database service layer for Vigil SOC.
 Provides high-level database operations for cases, findings, and related entities.
 """
 
+import json
 import logging
 import re
 from contextlib import nullcontext
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import String, Text, and_
@@ -391,6 +392,49 @@ def _top_ips(session, criteria: list, keys, limit: int):
     return {row[0]: int(row[1]) for row in rows}, int(rows[0][2]) if rows else 0
 
 
+def _trail_ingested(session, inserted: Dict[str, int]) -> None:
+    """One collapsed trail entry per source for the rows just inserted.
+
+    The last thing in the transaction: ``collapse`` holds the trail lock to
+    commit. A trail failure is logged, never the ingest's; the entry is then
+    held to be recorded late, if that works.
+    """
+    from core.audit import trail
+
+    if not inserted:
+        return
+    try:
+        # In a savepoint: a failed check must not abort the ingest's transaction.
+        with session.begin_nested():
+            if not trail.in_use(session):
+                return
+    except Exception:  # noqa: BLE001 - the findings stand without the trail
+        logger.exception("audit trail check failed; findings ingested unrecorded")
+        return
+    for source, count in inserted.items():
+        payload = {
+            trail.ACTION: "findings.ingested",
+            trail.ACTOR: trail.SYSTEM,
+            "data_source": source,
+            "count": count,
+        }
+        try:
+            with session.begin_nested():
+                trail.collapse(
+                    session,
+                    json.dumps(["findings_ingested", source]),
+                    payload,
+                    amount=count,
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception("audit trail did not record findings from %s", source)
+            try:
+                with session.begin_nested():
+                    trail.hold(session, payload, datetime.now(timezone.utc))
+            except Exception:  # noqa: BLE001
+                logger.exception("audit entry for findings from %s not held", source)
+
+
 class DatabaseService:
     """Service layer for database operations."""
 
@@ -443,6 +487,7 @@ class DatabaseService:
             session.flush()
             session.refresh(finding)
             _ = finding.mitre_prediction_rows
+            _trail_ingested(session, {data_source: 1})
             logger.info(f"Created finding: {finding_id}")
             return finding
 
@@ -584,6 +629,11 @@ class DatabaseService:
                 _set_mitre_prediction_rows(finding, r.get("mitre_predictions") or {})
                 session.add(finding)
             session.flush()
+            inserted: Dict[str, int] = {}
+            for r in new_rows:
+                source = r.get("data_source", "imported")
+                inserted[source] = inserted.get(source, 0) + 1
+            _trail_ingested(session, inserted)
             return len(new_rows)
 
     def get_finding(self, finding_id: str) -> Optional[Finding]:

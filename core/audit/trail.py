@@ -369,6 +369,7 @@ def collapse(
     payload: dict[str, Any],
     *,
     now: Optional[datetime] = None,
+    amount: int = 1,
     **beside: Any,
 ) -> Optional[Entry]:
     """Append the first occurrence in a window at once; only count the rest.
@@ -376,8 +377,11 @@ def collapse(
     ``key`` is ``failure_key`` or ``refusal_key``; it is stored hashed, since
     it holds an attacker-chosen name. Returns the entry, or None when counted.
     Holds the trail lock to the end of the transaction, counted or not.
+    ``amount`` is how many occurrences this call stands for (a batch's size).
     """
     _check(payload, beside)
+    if amount < 1:
+        raise ValueError("amount is at least 1")
     _lock(session)
     now = now or _now(session)
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
@@ -386,6 +390,7 @@ def collapse(
         "now": now,
         "payload": json.dumps(payload),
         "beside": json.dumps({k: v for k, v in beside.items() if v is not None}),
+        "amount": amount,
     }
     window = None
     while window is None:  # close_windows may delete it between the two
@@ -410,10 +415,10 @@ def collapse(
     if window.count and window.occurred_at + WINDOW > now:
         session.execute(
             text(
-                "UPDATE public.audit_trail_held SET count = count + 1, last_at = :now "
-                "WHERE id = :id"
+                "UPDATE public.audit_trail_held SET count = count + :amount, "
+                "last_at = :now WHERE id = :id"
             ),
-            {"now": now, "id": window.id},
+            {"now": now, "id": window.id, "amount": amount},
         )
         return None
     if window.count:
@@ -422,7 +427,7 @@ def collapse(
     session.execute(
         text("""
             UPDATE public.audit_trail_held
-            SET occurred_at = :now, last_at = :now, count = 1, first_seq = :seq,
+            SET occurred_at = :now, last_at = :now, count = :amount, first_seq = :seq,
                 payload = CAST(:payload AS jsonb), beside = CAST(:beside AS jsonb)
             WHERE id = :id
         """),

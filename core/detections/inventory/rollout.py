@@ -89,7 +89,6 @@ from sqlalchemy import (
     case,
     exists,
     func,
-    insert,
     or_,
     select,
     update,
@@ -815,7 +814,7 @@ def _stopped() -> bool:
 
 def sweep(now: datetime, report: RolloutReport) -> None:
     """Write a stage row for each move due, unless Stop is set."""
-    from core.detections.inventory.sync import _stage_row
+    from core.detections.inventory.sync import _insert_stages, _stage_row
 
     copies = [c for c in _copies() if c.stage in ("shadow", "live")]
     # A handed-off copy keeps its stage: Vigil no longer runs it.
@@ -859,7 +858,7 @@ def sweep(now: datetime, report: RolloutReport) -> None:
             elif copy.stage == "live":
                 live.remove(copy)
         if rows:
-            session.execute(insert(DetectionRuleStage), rows)
+            _insert_stages(session, rows, {c.rule_id: c.stage for c in copies})
     # After the stage rows commit: a PR that fails leaves the promotion standing,
     # and the next sweep is its retry.
     if not stopped:
