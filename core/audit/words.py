@@ -187,6 +187,13 @@ def _staged(p: Mapping[str, Any]) -> str:
     return f"Put {rule}{version} in {to}{hold}"
 
 
+def _saved(p: Mapping[str, Any]) -> str:
+    rule = f"rule {p['rule_id']}" if p.get("rule_id") is not None else "a rule"
+    version = f" v{p['version']}" if p.get("version") is not None else ""
+    language = f" ({_word(p['language'])} copy)" if p.get("language") else ""
+    return f"Saved {rule}{version}{language}"
+
+
 def _ingested(p: Mapping[str, Any]) -> str:
     collapsed = p.get("collapsed")
     total = collapsed.get("count") if isinstance(collapsed, Mapping) else None
@@ -233,6 +240,7 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     f"{_word(p.get('class_after')) or 'unclassified'}",
     "tools.classified": "Classed outside tools on upgrade",
     "detections.rule_staged": _staged,
+    "detections.rule_saved": _saved,
     "findings.ingested": _ingested,
     "findings.technique_confidence_cleared": lambda p: "Cleared technique confidence"
     + (f" on {p['rows_cleared']} findings" if p.get("rows_cleared") else ""),

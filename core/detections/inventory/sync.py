@@ -136,6 +136,21 @@ class SourceReport:
     skipped: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class Saves:
+    """What ``save_rule`` just wrote into the overlay, for the sync reading it (#4097).
+
+    ``author`` is who saved (see ``saved_entry``); ``fingerprints`` is each
+    saved copy's native key and the fingerprint of the content written. A
+    version the sync creates whose fingerprint matches gets one SAVED trail
+    entry in the sync's own transaction. A version created with none was
+    first seen by the sync alone: a file put in the folder by hand.
+    """
+
+    author: Dict[str, Any]
+    fingerprints: Dict[str, str]
+
+
 @contextmanager
 def _sync_lock() -> Iterator[None]:
     """Session advisory lock held for a whole run, sources read inside it.
@@ -258,6 +273,67 @@ def staged_entry(
         "hold": hold,
         **more,
     }
+
+
+SAVED = "detections.rule_saved"
+SAVE_AUDIT_TYPE = "detection_rule_save"
+
+
+def saved_entry(
+    author: Dict[str, Any],
+    rule_id: int,
+    version: int,
+    record: RuleRecord,
+    fp: str,
+) -> Dict[str, Any]:
+    """The one trail entry a rule saved through Vigil leaves, per copy and version.
+
+    ``author`` is ``{actor, by, agent_id?, run_id?}``: ``actor`` the principal id
+    the trail names (the person; for a run no person started, its agent) and
+    ``by`` "agent" for a run's tool call, "person" for a signed-in caller
+    outside one, "unknown" for neither. ``agent_id`` and ``run_id`` are the
+    run's signed claims, never arguments the model gave.
+    """
+    from core.audit import trail
+
+    return {
+        trail.ACTION: SAVED,
+        trail.ACTOR: author["actor"],
+        trail.OBJECT: str(rule_id),
+        "by": author["by"],
+        **{k: author[k] for k in ("agent_id", "run_id") if author.get(k)},
+        "rule_id": rule_id,
+        "native_key": record.native_key,
+        "version": version,
+        "language": record.language,
+        "fingerprint": fp,
+    }
+
+
+def _record_saves(session: Any, author: Dict[str, Any], saved: List[tuple]) -> None:
+    """One entry per saved copy's new version, in the transaction that wrote the version.
+
+    Not gated, like the stage rows beside it: a restore's pause must not roll
+    back the versions. A refused append fails the sync and writes none of them.
+    """
+    from core.audit import trail
+    from core.storage.config_service import ConfigService
+
+    use_trail = trail.in_use(session)
+    for rule_id, version, record, fp in saved:
+        entry = saved_entry(author, rule_id, version, record, fp)
+        if use_trail:
+            trail.append(session, entry, gated=False)
+            continue
+        value = {k: v for k, v in entry.items() if k not in (trail.ACTION, trail.ACTOR)}
+        ConfigService(user_id=author["actor"])._create_audit_log(
+            session,
+            config_type=SAVE_AUDIT_TYPE,
+            config_key=f"detection_rule:{rule_id}",
+            action="save",
+            old_value=None,
+            new_value=value,
+        )
 
 
 def _lint(record: RuleRecord, now: str) -> Dict[str, Any]:
@@ -452,8 +528,13 @@ def _record_changes(session: Any, rows: List[dict], now: str) -> None:
         )
 
 
-def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
-    """Write the differences between ``records`` (all of ``source``) and the tables."""
+def sync_source(
+    source: str, records: List[RuleRecord], saves: Optional[Saves] = None
+) -> SourceReport:
+    """Write the differences between ``records`` (all of ``source``) and the tables.
+
+    ``saves`` is only ever given for the overlay, by the save that wrote it.
+    """
     report = SourceReport(source=source, read=len(records))
     now = datetime.now(timezone.utc).isoformat()
     siem = not source.startswith(REPO_PREFIX)
@@ -501,6 +582,9 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
 
         new: List[tuple] = []
         versions: List[dict] = []
+        # (rule id, version, record, fingerprint) of each version a save made.
+        saved: List[tuple] = []
+        saved_keys = saves.fingerprints if saves and overlay else {}
         # (rule id, version, checks) to write once the versions exist.
         checked: List[tuple] = []
         for record in records:
@@ -532,6 +616,8 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
             if fp != latest_fp:
                 rule.latest_version += 1
                 versions.append(_version_row(rule.id, rule.latest_version, record, fp))
+                if saved_keys.get(record.native_key) == fp:
+                    saved.append((rule.id, rule.latest_version, record, fp))
                 report.versioned += 1
                 stored = {}
                 stage(
@@ -651,6 +737,8 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
             ).all()
             for rule_id, (r, fp) in zip(ids, new):
                 versions.append(_version_row(rule_id, 1, r, fp))
+                if saved_keys.get(r.native_key) == fp:
+                    saved.append((rule_id, 1, r, fp))
                 lint = None if siem else _lint(r, now)
                 stage(rule_id, 1, r.language, "shadow", "new rule", lint)
                 checks = _checks({}, r, now)
@@ -671,6 +759,8 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
         report.checked = len(checked)
         _record_changes(session, changes, now)
         # Last: the trail lock its entries take is held until commit.
+        if saved:
+            _record_saves(session, saves.author, saved)
         if stages:
             _insert_stages(session, stages, current)
     return report
@@ -800,7 +890,9 @@ def _drifted(report: SourceReport) -> SourceReport:
     return report
 
 
-def _sync_one(service: Any, source: Dict[str, Any]) -> SourceReport:
+def _sync_one(
+    service: Any, source: Dict[str, Any], saves: Optional[Saves] = None
+) -> SourceReport:
     name = readers.source_name(source)
     if source.get("status") != "ready":
         return SourceReport(source=name, skipped=source.get("status"))
@@ -808,7 +900,7 @@ def _sync_one(service: Any, source: Dict[str, Any]) -> SourceReport:
         root = Path(
             service._under(source["local_path"], source.get("subdirectory", ""))
         )
-        report = sync_source(name, readers.read_source(source, root))
+        report = sync_source(name, readers.read_source(source, root), saves)
     except Exception as exc:  # noqa: BLE001 -- the other sources still sync
         logger.warning("detection rules: syncing %s failed: %s", name, exc)
         return SourceReport(source=name, error=f"{type(exc).__name__}: {exc}")

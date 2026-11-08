@@ -6,7 +6,10 @@ YAML), ``elastic/<id>.toml`` (detection-rules TOML), ``sigma/<id>.yml``. Every
 copy is parsed with the inventory readers, and the Sigma form and each Splunk
 and Elastic query linted, before any file is written; one bad part writes nothing. A copy keeps the id it
 carries, so a change to a rule lands on that rule as a new version; a copy
-without one gets a fresh uuid. The sync appends the 'shadow' stage rows.
+without one gets a fresh uuid. The sync appends the 'shadow' stage rows, and for each copy's new version one
+``detections.rule_saved`` trail entry naming who saved it (#4097), in the same
+transaction. A copy saved unchanged makes no version and no entry. A version
+with no such entry was first seen by the sync alone: a file put in the folder.
 
 Evidence passed with the save is replayed on the Sigma form before anything is
 written (#3755); the result lands as ``checks.replay`` on the Sigma version.
@@ -33,7 +36,7 @@ from sqlalchemy import select, update
 from core.detections import exceptions as excepts
 from core.detections.detection_rules_service import DetectionRulesService
 from core.detections.inventory import readers, rollout, sync
-from core.detections.inventory.record import RuleRecord
+from core.detections.inventory.record import RuleRecord, fingerprint
 from core.detections.lint import lint_record, lint_sigma
 from core.detections.replay import replay_sigma
 from core.storage.connection import get_db_manager
@@ -356,6 +359,26 @@ def _add_exceptions(
     return added
 
 
+def _author() -> Dict[str, Any]:
+    """Who is saving, from the call's signed claims, never an argument the model gave."""
+    from core.cases.agent_closure import CALLER_UNAUTHENTICATED, actor, run_agent
+
+    who = actor()
+    agent_id, run_id = run_agent()
+    if agent_id or run_id:
+        by = "agent"  # a run's tool call, headless or in a person's chat
+    elif who != CALLER_UNAUTHENTICATED:
+        by = "person"  # a signed-in caller outside any run
+    else:
+        by = "unknown"
+    return {
+        "actor": sync.trail_actor(who),
+        "by": by,
+        "agent_id": agent_id,
+        "run_id": run_id,
+    }
+
+
 def save_rule(
     splunk_yaml: Optional[str] = None,
     elastic_toml: Optional[str] = None,
@@ -400,7 +423,11 @@ def save_rule(
         for rel, text in targets:
             _write(source["local_path"], rel, text)
         source = service.overlay_source()  # recounted with the new files
-        report = sync._sync_one(service, source)
+        saves = sync.Saves(
+            _author(),
+            {record.native_key: fingerprint(record) for _, _, record in prepared},
+        )
+        report = sync._sync_one(service, source, saves)
         if sigma_key and not report.error:
             _record_replay(sigma_key, replay)
         added = [] if report.error else _add_exceptions(prepared, wanted)
