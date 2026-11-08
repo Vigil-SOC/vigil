@@ -63,6 +63,16 @@ version. The outcome (PR url, the file already on the default branch, or an
 error) lands in checks['deploy']; a failed one is retried next sweep. None is
 opened while Stop is set.
 
+A rule that leaves live (a person's Revert, Vigil's own move back to shadow, or
+Vigil turning it off) takes its deploy PR with it: the sweep closes each PR
+recorded open on any of its versions, with a comment naming where the rule went,
+who moved it and why (its current stage row), and records that on the version as
+``withdrawn``. A merged PR, or one already closed (a person's answer), is left
+as it is and recorded so. When that version goes live again its PR is reopened,
+not replaced: same branch, same file, and the review thread with Vigil's close
+comment stays in one place. A failed close is retried next sweep; none is closed
+while Stop is set.
+
 While Stop is set (or the ceiling cannot be read) no copy is run: no search,
 no checks written, no findings. Its last successful run stays put, so the stopped
 period is searched on the first run after Stop lifts.
@@ -878,6 +888,13 @@ def sweep(now: datetime, report: RolloutReport) -> None:
     if not stopped:
         # A live copy promoted before lint gated it waits for a lint pass.
         _deploy([c for c in live if _linted(c)], targets, now, report)
+        try:  # its own step: a failure here leaves the promotions and deploys
+            _withdraw(_left_live(), targets, now, report)
+        except Exception as exc:  # noqa: BLE001 -- retried next sweep
+            logger.warning(
+                "detection rules: closing left-live deploy PRs failed: %s", exc
+            )
+            report.deploys.append(f"closing deploy PRs failed: {exc}")
 
 
 def _linted(copy: Copy) -> bool:
@@ -1016,7 +1033,13 @@ def _deploy(
                 raise RuntimeError(
                     "no GitHub token: set the github integration's token"
                 )
-            done = _open_pr(copy, target, _pr_body(copy, excepted[copy.rule_id]), token)
+            done = _open_pr(
+                copy,
+                target,
+                _pr_body(copy, excepted[copy.rule_id]),
+                token,
+                reopen=_withdrawn_by_vigil(_deployed(copy)),
+            )
             superseded = done.pop("superseded", [])
             outcome.update(done)
             landed = done.get("pr_url") or done.get("in_repo")
@@ -1062,9 +1085,20 @@ def _deploy(
 def _deploy_due(copy: Copy) -> bool:
     """Whether the sweep still has work for this copy's current version: no PR
     or in_repo recorded yet (one recorded for an earlier version doesn't count;
-    the new one gets its own), or closing an older version's PR failed."""
+    the new one gets its own), closing an older version's PR failed, or Vigil
+    closed this version's PR when it left live and it is live again."""
     done = _deployed(copy) or {}
-    return not {"pr_url", "in_repo"} & set(done) or bool(done.get("supersede_error"))
+    return (
+        not {"pr_url", "in_repo"} & set(done)
+        or bool(done.get("supersede_error"))
+        or _withdrawn_by_vigil(done)
+    )
+
+
+def _withdrawn_by_vigil(deploy: Optional[Mapping[str, Any]]) -> bool:
+    """Whether Vigil itself closed this deploy record's PR when the rule left live."""
+    withdrawn = (deploy or {}).get("withdrawn")
+    return isinstance(withdrawn, dict) and withdrawn.get("closed") is True
 
 
 def _api_of(git_url: str) -> Tuple[str, str]:
@@ -1125,13 +1159,20 @@ def _pr_body(copy: Copy, excepted: List[Dict[str, Any]]) -> str:
 
 
 def _open_pr(
-    copy: Copy, target: Mapping[str, Any], body: str, token: str
+    copy: Copy,
+    target: Mapping[str, Any],
+    body: str,
+    token: str,
+    reopen: bool = False,
 ) -> Dict[str, Any]:
     """{"pr_url"} of the pull request adding ``copy``'s file to ``target``, or
     {"in_repo"} when the default branch already holds it byte for byte. Reuses
     the branch or PR an earlier attempt left, so a crash between calls opens no
     duplicate. Either way older versions' open PRs are closed (``superseded``);
-    a failure there is ``supersede_error`` beside the result, not instead of it."""
+    a failure there is ``supersede_error`` beside the result, not instead of it.
+    ``reopen``: Vigil closed this version's PR when the rule left live, so a
+    closed, unmerged one is reopened ({"reopened": True}) rather than left as a
+    person's answer."""
     import base64
     import posixpath
     from urllib.parse import quote
@@ -1167,6 +1208,19 @@ def _open_pr(
         ).json()
         if pulls:
             pr = pulls[0]
+            if pr.get("state") != "open" and reopen and not pr.get("merged_at"):
+                note = f"Reopened by Vigil: rule {copy.name} v{copy.version} is live again."
+                comments = f"{r}/issues/{pr['number']}/comments"
+                said = _ok(http.get(comments, params={"per_page": 100})).json()
+                # Once per reopening: a retry finds it already the latest comment.
+                if not said or said[-1].get("body") != note:
+                    _ok(http.post(comments, json={"body": note}))
+                _ok(http.patch(f"{r}/pulls/{pr['number']}", json={"state": "open"}))
+                return {
+                    "pr_url": pr["html_url"],
+                    "reopened": True,
+                    **_supersede(http, r, owner, copy, _by_pr(copy, pr)),
+                }
             # A PR a person closed stays their answer: nothing older is closed for it.
             if pr.get("state") != "open":
                 return {"pr_url": pr["html_url"]}
@@ -1365,6 +1419,208 @@ def _record_superseded(
         _write_checks(
             session, [(copy.rule_id, old["version"], {**checks, "deploy": deploy})]
         )
+
+
+@dataclass
+class Withdrawal:
+    """A version's deploy PR, recorded open, of a rule that is no longer live."""
+
+    rule_id: int
+    version: int
+    name: str
+    language: str
+    deploy: Dict[str, Any]  # the version's checks['deploy'] as recorded
+    stage: str  # where the rule is now
+    actor: str  # who moved it there: 'system' is Vigil
+    reason: str
+
+
+def _left_live() -> List[Withdrawal]:
+    """Each overlay copy version whose deploy PR is recorded open (not
+    superseded, not withdrawn) while the copy's current stage is not live,
+    with the current stage row's stage, actor and reason."""
+    s = DetectionRuleStage
+    current = (
+        select(s.rule_id, s.stage, s.actor, s.reason)
+        .distinct(s.rule_id)
+        .order_by(s.rule_id, s.at.desc(), s.id.desc())
+        .subquery()
+    )
+    with get_db_manager().session_scope() as session:
+        rows = session.execute(
+            select(
+                DetectionRule.id,
+                DetectionRule.name,
+                DetectionRule.language,
+                DetectionRuleVersion.version,
+                DetectionRuleVersion.checks["deploy"],
+                current.c.stage,
+                current.c.actor,
+                current.c.reason,
+            )
+            .join(
+                DetectionRuleVersion, DetectionRuleVersion.rule_id == DetectionRule.id
+            )
+            .join(current, current.c.rule_id == DetectionRule.id)
+            .where(
+                DetectionRule.source == readers.OVERLAY_SOURCE,
+                DetectionRule.language.in_(("elastic", "splunk")),
+                current.c.stage != "live",
+                DetectionRuleVersion.checks.has_key("deploy"),
+            )
+            .order_by(DetectionRule.id, DetectionRuleVersion.version)
+        ).all()
+    return [
+        Withdrawal(rid, version, name, lang, deploy, stage, actor, reason or "")
+        for rid, name, lang, version, deploy, stage, actor, reason in rows
+        if isinstance(deploy, dict)
+        and deploy.get("version") == version
+        and deploy.get("pr_url")
+        and not {"superseded_by", "withdrawn"} & set(deploy)
+    ]
+
+
+def _withdraw_note(w: Withdrawal) -> str:
+    who = "Vigil" if w.actor == "system" else w.actor
+    return (
+        f"Closed by Vigil: rule {w.name} v{w.version} is no longer live. "
+        f"{who} moved it to {w.stage}: {w.reason or 'no reason given'}"
+    )
+
+
+def _withdraw(
+    items: List[Withdrawal],
+    targets: Mapping[str, Dict[str, Any]],
+    now: datetime,
+    report: RolloutReport,
+) -> None:
+    """Close each left-live version's deploy PR, and record what came of it."""
+    pending = [w for w in items if targets.get(w.language)]
+    if not pending:
+        return
+    from core.detections.detection_rules_service import deploy_host_refused
+    from core.secrets import get_secret
+
+    token = get_secret("GITHUB_TOKEN")
+    for w in pending:
+        if _stopped():  # Stop set mid-pass: the rest wait for the sweep after it lifts
+            return
+        target = targets[w.language]
+        url = w.deploy["pr_url"]
+        try:
+            refused = deploy_host_refused(target)
+            if refused:
+                raise RuntimeError(f"{target.get('git_url')}: {refused}")
+            if not token:
+                raise RuntimeError(
+                    "no GitHub token: set the github integration's token"
+                )
+            closed, note = _close_pr(w, target, token)
+        except Exception as exc:  # noqa: BLE001 -- retried next sweep
+            error = (str(exc) or type(exc).__name__)[:500]
+            report.deploys.append(
+                f"{w.rule_id} v{w.version}: closing {url} failed: {error}"
+            )
+            logger.warning(
+                "detection rules: closing rule %s v%s's deploy PR %s failed: %s",
+                w.rule_id,
+                w.version,
+                url,
+                error,
+            )
+            _record_withdrawn(w, {"withdraw_error": error})
+            continue
+        withdrawn = {
+            "at": now.isoformat(),
+            "stage": w.stage,
+            "actor": w.actor,
+            "reason": w.reason,
+            "closed": closed,
+        }
+        if note:
+            withdrawn["note"] = note
+        report.deploys.append(
+            f"{w.rule_id} v{w.version}: "
+            + (f"closed {url}" if closed else f"{url} not closed: {note}")
+        )
+        _record_withdrawn(w, {"withdrawn": withdrawn})
+
+
+def _close_pr(w: Withdrawal, target: Mapping[str, Any], token: str) -> Tuple[bool, str]:
+    """(True, "") once the PR is closed with the note; (False, why) for a PR
+    left as it is: merged, already closed, or not in the target's repo."""
+    import httpx
+
+    from core.detections.detection_rules_service import _repo_key
+
+    url = str(w.deploy["pr_url"])
+    m = re.fullmatch(r"(.+)/pull/(\d+)/?", url)
+    api, repo = _api_of(str(target.get("git_url") or ""))
+    if not m or _repo_key(m[1]) != _repo_key(str(target.get("git_url") or "")):
+        # The token goes only to the target's repo, never wherever a URL points.
+        return False, "not in the deploy target's repo"
+    r, number = f"/repos/{repo}", int(m[2])
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    with httpx.Client(
+        base_url=api, headers=headers, timeout=DEPLOY_TIMEOUT, follow_redirects=True
+    ) as http:
+        pr = _ok(http.get(f"{r}/pulls/{number}")).json()
+        if pr.get("merged_at"):
+            return False, "merged before the rule left live"
+        if pr.get("state") != "open":
+            return False, "already closed"  # a person's answer: never reopened
+        note = _withdraw_note(w)
+        comments = f"{r}/issues/{number}/comments"
+        said = _ok(http.get(comments, params={"per_page": 100})).json()
+        if not any(c.get("body") == note for c in said):  # once, across retries
+            _ok(http.post(comments, json={"body": note}))
+        _ok(http.patch(f"{r}/pulls/{number}", json={"state": "closed"}))
+    return True, ""
+
+
+def _record_withdrawn(w: Withdrawal, change: Dict[str, Any]) -> None:
+    """``change`` (withdrawn, or withdraw_error) merged into the version's
+    checks['deploy'] as it is now, with a config-trail row for a close."""
+    from core.detections.inventory.sync import _write_checks
+    from core.storage.config_service import write_config_audit
+
+    with get_db_manager().session_scope() as session:
+        checks = session.scalar(
+            select(DetectionRuleVersion.checks)
+            .where(
+                DetectionRuleVersion.rule_id == w.rule_id,
+                DetectionRuleVersion.version == w.version,
+            )
+            .with_for_update()
+        )
+        checks = checks or {}
+        deploy = checks.get("deploy")
+        if not isinstance(deploy, dict) or deploy.get("pr_url") != w.deploy["pr_url"]:
+            return  # replaced since it was read: the next sweep reads it afresh
+        deploy = {k: v for k, v in deploy.items() if k != "withdraw_error"}
+        _write_checks(
+            session,
+            [(w.rule_id, w.version, {**checks, "deploy": {**deploy, **change}})],
+        )
+        if "withdrawn" in change:
+            write_config_audit(
+                session,
+                config_type="detection_rules",
+                config_key="overlay_deploy",
+                action="update",
+                old_value=None,
+                new_value={
+                    "rule_id": w.rule_id,
+                    "version": w.version,
+                    "pr_url": w.deploy["pr_url"],
+                    "withdrawn": change["withdrawn"],
+                },
+                changed_by="system",
+            )
 
 
 def _deployed(copy: Copy) -> Optional[Dict[str, Any]]:

@@ -273,7 +273,7 @@ def shadow_to_live(
         "in_shadow": len(waiting),
         "exit_criteria": (
             f"{rollout.SHADOW_DAYS} days in shadow, every day's runs passed, no day "
-            f"above {rollout.MAX_HITS_PER_DAY} hits, Sees passed"
+            f"above {rollout.MAX_HITS_PER_DAY} hits, Sees and lint passed"
         ),
         "rows": promoted,
         "waiting": waiting,
