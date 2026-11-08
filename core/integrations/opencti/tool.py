@@ -23,14 +23,12 @@ import mcp.types as types
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
-from core.integrations._base.config import missing, resolve
 from core.integrations._base.tool_result import run_tool
 from core.integrations.opencti.client import (
     ENTITY_QUERIES,
     OpenCTIError,
-    OpenCTIService,
+    configured_service,
 )
-from core.integrations.opencti.descriptor import OPENCTI, OPENCTI_REQUIRED
 
 logger = logging.getLogger(__name__)
 _service = None
@@ -45,19 +43,8 @@ def get_service():
     global _service
     if _service is not None:
         return _service, ()
-    config = resolve(OPENCTI)
-    absent = missing(config, *OPENCTI_REQUIRED)
-    if absent:
-        return None, absent
-    # resolve() returns every declared field; an unset verify_ssl means verify.
-    verify = True if config.get("verify_ssl") is None else config["verify_ssl"]
-    _service = OpenCTIService(
-        url=config["url"],
-        api_token=config["api_token"],
-        verify_ssl=verify,
-        ca_cert_path=config.get("ca_cert_path"),
-    )
-    return _service, ()
+    _service, absent = configured_service()
+    return _service, absent
 
 
 def _limit_schema(default):
