@@ -1149,6 +1149,8 @@ def _wazuh_refused(session: Any, copy: Copy) -> Optional[str]:
     loaded since it was saved, and it must not set ``overwrite``: a Vigil rule
     only adds a rule, never replaces one of the customer's.
     """
+    import posixpath
+
     from core.detections import wazuh_xml
 
     try:
@@ -1160,7 +1162,8 @@ def _wazuh_refused(session: Any, copy: Copy) -> Optional[str]:
             'it sets overwrite="yes", which would replace a rule of the customer\'s: '
             "a Vigil rule only adds one, under its own custom id"
         )
-    if wazuh_xml.custom_id(copy.key) is None:
+    # The key names the file, so it must be the id exactly as written.
+    if str(wazuh_xml.custom_id(copy.key)) != copy.key:
         return f"its id {copy.key} is outside Wazuh's range for custom rules"
     own = f"vigil_{copy.key}.xml"
     for path in session.scalars(
@@ -1170,7 +1173,7 @@ def _wazuh_refused(session: Any, copy: Copy) -> Optional[str]:
             DetectionRule.status != "removed",
         )
     ):
-        if not str(path or "").endswith(own):
+        if posixpath.basename(str(path or "")) != own:
             return f"the Wazuh manager now loads another rule as id {copy.key} ({path})"
     return None
 
@@ -1516,7 +1519,8 @@ def deploy_overlay_only(
 ) -> Dict[str, Any]:
     """Open the deploy PR now, as the sweep would, for live overlay-only copies
     (these ``rule_ids``, or all) whose format has a GitHub deploy target and
-    with no PR opened yet; one that failed is tried again. Says what each came
+    with no PR opened yet; one that failed, or could not close an older
+    version's PR, is tried again. Says what each came
     to (``opened``: pr_url or in_repo; ``failed``: error) and why each other one
     was skipped. Nothing is opened while Stop is set. Each outcome's
     config-trail row names ``actor``. A Wazuh copy may be deployed whatever its
@@ -1551,11 +1555,11 @@ def deploy_overlay_only(
             skipped[copy.rule_id] = f"no {copy.language} deploy target is set"
         elif deploy_host_refused(target):
             skipped[copy.rule_id] = deploy_host_refused(target)
-        elif done.get("pr_url"):
+        elif done.get("pr_url") and not done.get("supersede_error"):
             skipped[copy.rule_id] = (
                 f"its pull request is already open: {done['pr_url']}"
             )
-        elif done.get("in_repo"):
+        elif done.get("in_repo") and not done.get("supersede_error"):
             skipped[copy.rule_id] = f"it is already in the repo: {done['in_repo']}"
         elif not copy.toml:
             skipped[copy.rule_id] = "its overlay file could not be read"

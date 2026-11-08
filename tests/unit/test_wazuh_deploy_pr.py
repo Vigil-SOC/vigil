@@ -285,3 +285,33 @@ def test_a_key_with_a_leading_zero_is_refused(github, deploy):
 
 def test_the_untested_note_names_the_issue_that_lifts_it():
     assert rollout.UNTESTED.endswith("(#4061)")
+
+
+def test_a_customer_file_whose_name_only_ends_like_vigils_is_refused(github, deploy):
+    deploy.box["loaded"] = ["etc/rules/xvigil_100100.xml"]
+    out = deploy(_copy())
+    assert "now loads another rule as id 100100" in out["error"]
+    assert github.calls == []
+
+
+def test_a_key_not_written_exactly_as_the_id_is_refused(github, deploy):
+    out = deploy(_copy(key=" 100100"))
+    assert "outside Wazuh's range" in out["error"] and github.calls == []
+
+
+def test_a_person_retries_a_wazuh_deploy_whose_supersede_failed(overlay, monkeypatch):
+    overlay[0].checks["deploy"] = {
+        "version": 1,
+        "pr_url": "https://github.com/acme/wazuh/pull/2",
+        "supersede_error": "closing PR #1 failed: 502",
+    }
+    sent = []
+    monkeypatch.setattr(
+        rollout,
+        "_deploy",
+        lambda todo, *a, **k: sent.extend(todo)
+        or {c.rule_id: {"pr_url": "u"} for c in todo},
+    )
+    out = rollout.deploy_overlay_only([16735], actor="ana")
+    assert [c.rule_id for c in sent] == [16735]
+    assert out["opened"] == [{"rule_id": 16735, "pr_url": "u"}]
