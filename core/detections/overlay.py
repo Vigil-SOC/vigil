@@ -73,11 +73,14 @@ class Refused(ValueError):
 
 class NotSaved(Exception):
     """An all-or-nothing save that failed after writing; ``undone`` says whether
-    the overlay and its rules were put back as they were."""
+    the overlay and its rules were put back, ``removed`` that its copies had
+    been synced and are now removed rules."""
 
-    def __init__(self, reason: str, undone: bool = True):
+    def __init__(self, reason: str, undone: bool = True, removed: bool = False):
         super().__init__(reason)
         self.undone = undone
+        # The sync had committed: the copies are back out, as removed rules.
+        self.removed = removed
 
 
 def _undo(
@@ -554,7 +557,7 @@ def save_rule(
                 raise
             undone = _undo(service, root, before, committed)
             reason = exc.args[0] if isinstance(exc, NotSaved) else type(exc).__name__
-            raise NotSaved(reason, undone=undone) from exc
+            raise NotSaved(reason, undone=undone, removed=committed) from exc
     result: Dict[str, Any] = {"saved": _saved(keys), "sync": asdict(report)}
     if added:
         result["exceptions"] = added

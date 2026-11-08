@@ -455,12 +455,17 @@ def import_skill(
             raise
         except overlay.NotSaved as exc:
             logger.exception("Detection Skill import: the save failed")
-            raise Refused(
-                f"The import didn't complete ({exc}); nothing was changed"
-                if exc.undone
-                else f"The import didn't complete ({exc}), and undoing it failed: "
-                "check the overlay for its copies"
-            ) from exc
+            if not exc.undone:
+                why = "and undoing it failed: check the overlay for its copies"
+            elif exc.removed:
+                why = (
+                    "its copies were saved and then removed, so none is active; "
+                    "this Vigil now holds their ids, so importing the skill again "
+                    "is refused as already held"
+                )
+            else:
+                why = "nothing was changed"
+            raise Refused(f"The import didn't complete ({exc}); {why}") from exc
         except Exception as exc:  # noqa: BLE001 -- a fault before any write
             logger.exception("Detection Skill import: the save failed")
             raise Refused(

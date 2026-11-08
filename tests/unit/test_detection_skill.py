@@ -636,6 +636,7 @@ def test_an_exceptions_fault_leaves_no_copy_active_without_them(vigil, monkeypat
     out = _import(v, data)
     _refused(v, out)
     assert "RuntimeError" in out["error"]
+    assert "none is active" in out["error"] and "already held" in out["error"]
     assert _files() == before
     # The sync had committed: its copies are marked removed again, none active.
     assert {status for _, status in _rows(v, keys)} <= {"removed"}
