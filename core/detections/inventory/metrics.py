@@ -43,7 +43,7 @@ from typing import (
 
 from sqlalchemy import func, select, text
 
-from core.detections.inventory import catalog, readers, rollout, splunk, sync
+from core.detections.inventory import catalog, readers, rollout, splunk
 from core.storage.connection import get_db_manager
 from core.storage.models import (
     DetectionRule,
@@ -367,7 +367,7 @@ def _live_copies(session: Any) -> List[Dict[str, Any]]:
         if r.source in SIEM_SOURCES
         or (
             r.source == readers.OVERLAY_SOURCE
-            and r.language in sync.STAGED_LANGUAGES
+            and r.language in rollout.VIGIL_RUNS
             and r.stage == "live"
         )
     ]

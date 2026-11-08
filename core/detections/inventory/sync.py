@@ -108,7 +108,7 @@ SYNC_LOCK_KEY = 0x7669_6769_6C52_554C  # "vigilRUL"
 REPO_PREFIX = "repo:"
 # How ESCU names the saved search it ships for a detection.
 ESCU_NAME = re.compile(r"^ESCU - (.+) - Rule$")
-STAGED_LANGUAGES = ("splunk", "elastic")
+STAGED_LANGUAGES = ("splunk", "elastic", "wazuh")
 
 
 @dataclass

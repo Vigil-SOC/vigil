@@ -185,7 +185,7 @@ def _wanted(
         if language not in copies:
             raise Refused(f"exceptions name a {language} copy that is not being saved")
         if language == "wazuh":
-            # Exceptions drop hits Vigil fetches; Vigil runs no Wazuh copy.
+            # Exceptions drop hits Vigil fetches; a Wazuh copy's are archive counts only.
             raise Refused("exceptions are not kept for a wazuh copy")
         if not isinstance(items, list):
             raise Refused(f"{language} exceptions must be a list")

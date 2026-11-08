@@ -325,7 +325,7 @@ class SecurityDetectionsTools:
         **_kwargs: object,
     ) -> Dict:
         """Save one rule's copies into Vigil's overlay; each Splunk and Elastic
-        copy enters shadow (a Wazuh copy is saved and versioned, with no stage).
+        copy enters shadow (a Wazuh copy too: Vigil searches wazuh-archives-* for it in shadow).
 
         With events, the Sigma form is replayed on them first and the save is
         refused unless a proven event matches and no ruled-out one does (a
