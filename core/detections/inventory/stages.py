@@ -36,11 +36,12 @@ def _row(r: Any) -> Dict[str, Any]:
 
 
 def _rows(session: Any, rule_id: int) -> List[Any]:
-    """The rule's stage rows, newest first, each with ``from_stage`` set."""
+    """The rule's stage rows, newest first (by time, then id, as rollout and the
+    listing order them), each with ``from_stage`` set."""
     rows = session.scalars(
         select(DetectionRuleStage)
         .where(DetectionRuleStage.rule_id == rule_id)
-        .order_by(DetectionRuleStage.id.desc())
+        .order_by(DetectionRuleStage.at.desc(), DetectionRuleStage.id.desc())
     ).all()
     for i, row in enumerate(rows):
         row.from_stage = rows[i + 1].stage if i + 1 < len(rows) else None
@@ -55,7 +56,7 @@ def _state(session: Any, rule_id: int) -> Tuple[Optional[Any], Optional[Any]]:
     rows = session.scalars(
         select(DetectionRuleStage)
         .where(DetectionRuleStage.rule_id == rule_id)
-        .order_by(DetectionRuleStage.id.desc())
+        .order_by(DetectionRuleStage.at.desc(), DetectionRuleStage.id.desc())
         .limit(1)
     ).all()
     return rule, rows[0] if rows else None
@@ -121,7 +122,7 @@ def _hold_row(session: Any, rule_id: int) -> Optional[Any]:
             DetectionRuleStage.rule_id == rule_id,
             DetectionRuleStage.proof.has_key("hold"),
         )
-        .order_by(DetectionRuleStage.id.desc())
+        .order_by(DetectionRuleStage.at.desc(), DetectionRuleStage.id.desc())
         .limit(1)
     ).first()
 
