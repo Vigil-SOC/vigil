@@ -17,23 +17,20 @@ ENTITIES = {
     "intrusion_set": [{"id": "is-1", "name": "APT Lab"}],
     "report": [{"id": "rep-1", "name": "Lab report"}],
 }
-RELATED = {
-    "is-1": {
-        "relationships": [
-            {"relationship_type": "uses", "to": {"x_mitre_id": "T1059.001"}},
-            {"relationship_type": "uses", "to": {"name": "a malware, no id"}},
-        ]
-    },
-    "rep-1": {"objects": [{"x_mitre_id": "T1105"}, {"x_mitre_id": "t1059.001"}]},
+# Each entity's attack patterns, as OpenCTI's filtered read gives them.
+USED = {
+    "is-1": ["T1059.001"],
+    "rep-1": ["T1105", "t1059.001"],
 }
 
 
 class FakeOpenCTI:
     """OpenCTIService's two reads, from fixed content; ``hang`` never answers."""
 
-    def __init__(self, hang=False):
+    def __init__(self, hang=False, totals=None):
         self.hang = hang
         self.closed = False
+        self.totals = totals or {}
 
     async def search_entities(self, query, entity_type, limit=10):
         assert query == ""  # newest first
@@ -41,15 +38,25 @@ class FakeOpenCTI:
             await asyncio.sleep(3600)
         return {"entities": ENTITIES.get(entity_type, [])[:limit]}
 
-    async def get_related(self, entity_id, limit=20):
-        return RELATED.get(entity_id, {})
+    async def techniques_of(self, entity_id, limit=500):
+        used = USED.get(entity_id, [])
+        total = self.totals.get(entity_id, len(used))
+        return {
+            "techniques": used[:limit],
+            "read": min(limit, len(used)),
+            "total": total,
+        }
 
     async def close(self):
         self.closed = True
 
 
 class Mcp:
+    hang = False
+
     async def connect_to_server(self, name):
+        if Mcp.hang:
+            await asyncio.sleep(3600)
         return name == "opencti"
 
 
@@ -74,6 +81,7 @@ def run(_run, monkeypatch):  # noqa: F811
     monkeypatch.setattr(
         "core.detections.tools.get_security_detection_tools", lambda: Tools()
     )
+    monkeypatch.setattr(Mcp, "hang", False)
     monkeypatch.setattr("core.integrations.mcp.client.process_mcp_client", Mcp)
     monkeypatch.setattr(
         "core.integrations.opencti.client.configured_service",
@@ -140,3 +148,60 @@ def test_mitre_analyst_keeps_its_opencti_tools():
     assert {"opencti_opencti_search_entities", "opencti_opencti_get_related"} <= set(
         tools
     )
+
+
+def test_opencti_not_connecting_is_logged_and_the_run_goes_on(run, monkeypatch, caplog):
+    monkeypatch.setattr(gap_run, "INTEL_TIMEOUT", 0.2)
+    monkeypatch.setattr(Mcp, "hang", True)
+    run.store.blind["logs-lab-*"] = 1
+    with caplog.at_level("WARNING", logger=gap_run.logger.name):
+        (payload,) = run(T0)
+    assert run.passed[-1] is None
+    assert "OpenCTI did not answer; the gaps run skips threat intel" in caplog.text
+
+
+def test_a_read_cut_short_by_the_cap_is_logged(caplog):
+    with caplog.at_level("WARNING", logger=gap_run.logger.name):
+        asyncio.run(gap_run.intel_techniques(FakeOpenCTI(totals={"rep-1": 612})))
+    assert "Lab report names 612 attack patterns; the gaps run read 2" in caplog.text
+
+
+def _client(monkeypatch, data):
+    from core.integrations.opencti.client import OpenCTIService
+
+    service = OpenCTIService("http://opencti.invalid", "token")
+    asked = {}
+
+    async def query(q, variables=None):
+        asked["query"], asked["variables"] = q, variables
+        return data
+
+    monkeypatch.setattr(service, "_query", query)
+    return service, asked
+
+
+def test_only_attack_patterns_are_read_so_nothing_else_takes_their_place(monkeypatch):
+    # An intrusion set with many malware and tool relationships: only its attack
+    # patterns are asked for, so none of them is pushed out of the page.
+    data = {
+        "stixCoreRelationships": {
+            "pageInfo": {"globalCount": 2},
+            "edges": [
+                {"node": {"to": {"x_mitre_id": "T1105"}}},
+                {"node": {"to": {"x_mitre_id": "T1566.001"}}},
+            ],
+        },
+        "stixDomainObject": {
+            "objects": {
+                "pageInfo": {"globalCount": 70},
+                "edges": [{"node": {"x_mitre_id": f"T{1000 + i}"}} for i in range(60)],
+            }
+        },
+    }
+    service, asked = _client(monkeypatch, data)
+    out = asyncio.run(service.techniques_of("a1b2c3d4-0000-4000-8000-000000000001"))
+    assert asked["variables"]["types"] == ["Attack-Pattern"]
+    assert "toTypes: $types" in asked["query"] and "types: $types" in asked["query"]
+    assert asked["variables"]["n"] == 500
+    assert out["techniques"][:2] == ["T1105", "T1566.001"]
+    assert (len(out["techniques"]), out["read"], out["total"]) == (62, 62, 72)

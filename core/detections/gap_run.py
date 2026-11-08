@@ -35,8 +35,8 @@ GAP_FLOOR = 2
 # Recent threat intel read each run: the newest-updated intrusion sets and
 # reports in OpenCTI, and the ATT&CK techniques each uses or holds.
 INTEL_ENTITIES = (("intrusion_set", 10), ("report", 10))
-# Each entity's relationships and contained objects read, at most.
-INTEL_RELATED = 50
+# Each entity's attack patterns read, at most (relationships and contained objects).
+INTEL_RELATED = 500
 # Seconds the run waits for OpenCTI: to connect, then for all its reads.
 INTEL_TIMEOUT = 30
 
@@ -144,18 +144,30 @@ async def intel_techniques(service: Any) -> Dict[str, List[str]]:
     or hold, with the names of those that do. Fixed reads in a fixed order, so the
     same OpenCTI content gives the same techniques every run."""
     named: Dict[str, Set[str]] = {}
+    read = []
     for entity_type, newest in INTEL_ENTITIES:
         found = await service.search_entities("", entity_type, limit=newest)
-        for entity in found.get("entities") or ():
-            related = await service.get_related(entity["id"], limit=INTEL_RELATED)
-            targets = [r.get("to") or {} for r in related.get("relationships") or ()]
-            targets += list(related.get("objects") or ())
-            for target in targets:
-                technique = str(target.get("x_mitre_id") or "").strip().upper()
+        entities = list(found.get("entities") or ())
+        read.append(f"{len(entities)} {entity_type}")
+        for entity in entities:
+            name = entity.get("name") or entity["id"]
+            used = await service.techniques_of(entity["id"], limit=INTEL_RELATED)
+            if used["total"] > used["read"]:
+                logger.warning(
+                    "Threat intel: %s names %d attack patterns; the gaps run read %d",
+                    name,
+                    used["total"],
+                    used["read"],
+                )
+            for technique in used["techniques"]:
+                technique = technique.strip().upper()
                 if TECHNIQUE_ID.match(technique):
-                    named.setdefault(technique, set()).add(
-                        entity.get("name") or entity["id"]
-                    )
+                    named.setdefault(technique, set()).add(name)
+    logger.info(
+        "Threat intel: read the newest %s; %d techniques named",
+        " and ".join(read),
+        len(named),
+    )
     return {t: sorted(names) for t, names in sorted(named.items())}
 
 
@@ -178,6 +190,7 @@ async def recent_intel() -> Dict[str, List[str]]:
             client.connect_to_server("opencti"), timeout=INTEL_TIMEOUT
         )
     except asyncio.TimeoutError:
+        logger.warning("OpenCTI did not answer; the gaps run skips threat intel")
         on = False
     service = configured_service(timeout=INTEL_TIMEOUT)[0] if on else None
     if service is None:

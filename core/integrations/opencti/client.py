@@ -274,6 +274,45 @@ class OpenCTIService:
             out["objects"] = objects
         return out
 
+    async def techniques_of(self, entity_id: str, limit: int = 500) -> Dict[str, Any]:
+        """The ATT&CK ids an entity uses (its relationships to attack patterns) or a
+        container holds (its attack-pattern objects), read filtered to attack
+        patterns so no other kind of relationship or object takes a place in the
+        page. ``total`` is how many there are; more than ``limit`` were not read."""
+        if not _ID.match(entity_id or ""):
+            raise OpenCTIError(f"Invalid entity id {entity_id!r}")
+        data = await self._query(
+            "query($id: String!, $ids: [String], $n: Int, $types: [String]) {"
+            " stixCoreRelationships(fromId: $ids, toTypes: $types, first: $n) {"
+            " pageInfo { globalCount }"
+            " edges { node { to { ... on AttackPattern { x_mitre_id } } } } }"
+            " stixDomainObject(id: $id) { ... on Container {"
+            " objects(first: $n, types: $types) { pageInfo { globalCount }"
+            " edges { node { ... on AttackPattern { x_mitre_id } } } } } } }",
+            {
+                "id": entity_id,
+                "ids": [entity_id],
+                "n": int(limit),
+                "types": ["Attack-Pattern"],
+            },
+        )
+        ids: List[str] = []
+        read = total = 0
+        relationships = data.get("stixCoreRelationships")
+        container = (data.get("stixDomainObject") or {}).get("objects")
+        for connection, node_of in (
+            (relationships, lambda n: n.get("to") or {}),
+            (container, lambda n: n),
+        ):
+            if not connection:
+                continue
+            nodes = _nodes(connection)
+            read += len(nodes)
+            count = (connection.get("pageInfo") or {}).get("globalCount")
+            total += count if isinstance(count, int) else len(nodes)
+            ids += [str(node_of(n).get("x_mitre_id") or "") for n in nodes]
+        return {"techniques": [i for i in ids if i], "read": read, "total": total}
+
 
 def configured_service(
     timeout: float = 30.0,
