@@ -6,6 +6,7 @@ manager run, as core/detections/inventory syncs them into Postgres.
 """
 
 import asyncio
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from core.agents.projections import read_projection
@@ -180,6 +181,7 @@ class SecurityDetectionsTools:
         context: str = "",
         since_days: int = 30,
         techniques: Any = None,
+        since: Optional[datetime] = None,
         **_kwargs: object,
     ) -> Dict:
         """Techniques seen on stored alerts that no active rule declares, with what it cannot say,
@@ -194,10 +196,14 @@ class SecurityDetectionsTools:
                 each is bucketed in ``techniques_checked``. An id that is not an
                 active ATT&CK technique (made up, revoked or deprecated) is listed in
                 ``techniques_checked.unknown`` with its reason, never as a gap.
+            since: The daily gaps run's marker: only alerts stored, and proven
+                Verdicts concluded, at or after it are counted. Not offered to the model.
         """
         # A model may send "30"; keep the window within what timedelta can hold.
         since_days = min(max(int(since_days), 0), 3650)
-        alerts = read_alert_labels(context)
+        if not isinstance(since, datetime):
+            since = None
+        alerts = read_alert_labels(context, since)
         rules_by_technique = catalog.rules_by_technique()
         siem_checks = catalog.siem_checks_by_technique()
         report = gap_report(
@@ -244,6 +250,7 @@ class SecurityDetectionsTools:
             ),
             rules_by_technique,
             since_days,
+            since,
         )
         report["rule_health"] = catalog.rule_health()
         return report

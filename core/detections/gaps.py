@@ -82,14 +82,25 @@ class AlertLabels:
     by_alert: Mapping[str, Collection[str]] = field(default_factory=dict)
 
 
-def read_alert_labels(context: str = "") -> AlertLabels:
-    """Scope by ``context``: empty is every alert, a case id is that case, else a label match."""
+def read_alert_labels(
+    context: str = "", since: Optional[datetime] = None
+) -> AlertLabels:
+    """Scope by ``context``: empty is every alert, a case id is that case, else a label
+    match; with ``since``, only alerts stored at or after it."""
     with get_db_manager().session_scope() as session:
         is_case = bool(context) and session.get(Case, context) is not None
         rows = session.query(
             FindingMitrePrediction.finding_id, FindingMitrePrediction.technique_id
         )
         total = session.query(Finding.finding_id)
+        if since is not None:
+            stored_since = session.query(Finding.finding_id).filter(
+                Finding.created_at >= _naive_utc(since)
+            )
+            rows = rows.filter(
+                FindingMitrePrediction.finding_id.in_(stored_since.subquery().select())
+            )
+            total = total.filter(Finding.created_at >= _naive_utc(since))
         if is_case:
             in_case = (
                 session.query(case_findings.c.finding_id)
@@ -484,12 +495,15 @@ def missed_runs_report(
     read_findings: FindingsReader,
     rules_by_technique: Mapping[str, Collection[int]],
     since_days: int,
+    since: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """Proven runs no rule alerted on, grouped by technique.
 
     A run is listed in a group when one of its proven Verdicts on that technique
     reconstructs as ``missed`` or ``loglm``. A Verdict that cannot be correlated
     (no host/IP/user, or a Findings read that was cut off) is unknown, never missed.
+    With ``since``, only proven Verdicts concluded at or after it are reconstructed;
+    ruled-out runs are still read across the whole window.
     """
     # Hunt Verdicts store techniques unchecked: an id that is not an active ATT&CK
     # technique never reaches a group, so a made-up one cannot become a Case.
@@ -508,6 +522,7 @@ def missed_runs_report(
         v
         for v in verdicts
         if v["outcome"] == "proven"
+        and (since is None or _naive_utc(v["concluded_at"]) >= _naive_utc(since))
         and (not is_case or _run(v) == ("case", context))
         and (not wanted or any(in_scope(t) for t in v["techniques"]))
     ]

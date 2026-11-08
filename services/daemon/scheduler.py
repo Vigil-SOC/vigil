@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional
 
 from core.config import get_settings
@@ -255,11 +255,14 @@ class TaskScheduler:
         )
 
     async def _run_detection_gaps(self):
-        """Queue a mitre_analyst run on the gaps identify_gaps lists; none when it lists
-        none, unless OpenCTI is configured: then recent intel is checked every day.
+        """Queue a mitre_analyst run on the gaps identify_gaps lists since the stored
+        marker, at or above the floor and not already carried by an open Case, biggest
+        first; none when there are none, unless OpenCTI is configured: then recent
+        intel is checked every day.
 
         A schedule intake with no case_id mints a Case, so an empty report with no
-        intel to read queues nothing.
+        intel to read queues nothing. The marker moves to this run's start only once
+        the run has queued, or found nothing to queue.
         """
         if not is_enabled(DETECTION_GAPS_WORKFLOW):
             logger.info(
@@ -267,15 +270,23 @@ class TaskScheduler:
                 DETECTION_GAPS_WORKFLOW,
             )
             return
+        from core.detections import gap_run
         from core.detections.tools import get_security_detection_tools
 
+        started = datetime.now(timezone.utc)
+        marker = gap_run.read_marker(started)
+        # The ledger window reaches back to the marker, however long ago it was.
+        since_days = max(gap_run.FIRST_RUN_DAYS, (started - marker.since).days + 1)
         # Off the loop: the report reads the ledger and Findings synchronously.
         report = await asyncio.to_thread(
-            asyncio.run, get_security_detection_tools().identify_gaps()
+            asyncio.run,
+            get_security_detection_tools().identify_gaps(
+                since_days=since_days, since=marker.since
+            ),
         )
-        missed = [g["technique"] for g in report["runs_rules_missed"]["groups"]]
-        paper = list(report["covered_on_paper_only"])
-        blind = [s["data_source"] for s in report["blind_spots"]]
+        gaps = gap_run.gaps_in(report)
+        raised = gap_run.to_raise(gaps, marker, gap_run.open_case_techniques())
+        after = gap_run.next_marker(started, marker, gaps, raised)
         from core.integrations.mcp.client import process_mcp_client
 
         # Connecting is the configured check (enabled, set up, credentials), and
@@ -289,25 +300,22 @@ class TaskScheduler:
         except asyncio.TimeoutError:
             logger.warning("OpenCTI did not answer; the gaps run skips threat intel")
             intel = False
-        if not (missed or paper or blind or intel):
-            logger.info("Daily detection gaps run: no gaps listed, nothing queued")
+        if not (raised or intel):
+            logger.info(
+                "Daily detection gaps run: no new gaps at or above %d, nothing queued",
+                gap_run.GAP_FLOOR,
+            )
+            gap_run.write_marker(after)
             return
 
-        listed = [
-            f"{label}: {', '.join(items)}"
-            for label, items in (
-                ("runs no rule caught", missed),
-                ("covered on paper only", paper),
-                ("blind spots (data sources)", blind),
-            )
-            if items
-        ]
         hypothesis = (
             "Turn the detection gaps identify_gaps lists into Cases with checked "
             "rule drafts, so each real gap is tracked and has a rule in shadow."
         )
-        if listed:
-            hypothesis += " " + "; ".join(listed)
+        if raised:
+            hypothesis += " New gaps, biggest first: " + "; ".join(
+                g.line() for g in raised
+            )
         if intel:
             hypothesis += (
                 " Threat intel: with opencti_opencti_search_entities (empty query, newest "
@@ -327,8 +335,11 @@ class TaskScheduler:
                 "trigger_type": "scheduled",
                 "finding_ids": [],
                 "hypothesis": hypothesis,
+                # The minted Case carries them, so the next run sees them covered.
+                "case_techniques": gap_run.case_techniques(raised),
             },
         )
+        gap_run.write_marker(after)
         logger.info("Queued the daily detection gaps run: %s", hypothesis)
 
     # What this hunt is out to test, read off the techniques the estate is showing, so
