@@ -341,13 +341,15 @@ _NATIVE = ("splunk", "eql", "esql", "lucene")
 
 def lint_record(record: Any) -> Optional[dict[str, Any]]:
     """A repo or overlay RuleRecord linted: Sigma as ``lint_sigma`` lints its
-    YAML, SPL/EQL/ES|QL/Lucene through ``lint_query``; None for any other
-    language (KQL, kuery), which gets no lint check."""
+    YAML, SPL/EQL/ES|QL/Lucene through ``lint_query``, and Elastic's kuery as
+    Lucene (its ``field : value`` pairs read the same); None for any other
+    language (Sentinel's KQL), which gets no lint check."""
     if record.language == "sigma":
         return _lint_doc(record.content)
     if record.language == "splunk":
         return lint_query(record.query, "splunk")
     language = record.logic.get("language")
+    language = "lucene" if language == "kuery" else language
     return lint_query(record.query, language) if language in _NATIVE else None
 
 

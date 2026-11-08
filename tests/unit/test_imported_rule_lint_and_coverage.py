@@ -53,7 +53,7 @@ def _spl(key, query, techniques=("T1649",)):
     )
 
 
-def _eql(key, query, techniques=("T1649",)):
+def _eql(key, query, techniques=("T1649",), language="eql"):
     return RuleRecord(
         native_key=key,
         name=key,
@@ -61,7 +61,7 @@ def _eql(key, query, techniques=("T1649",)):
         path=None,
         query=query,
         techniques=list(techniques),
-        logic={"language": "eql"},
+        logic={"language": language},
         content={"query": query},
     )
 
@@ -84,8 +84,17 @@ def _eql(key, query, techniques=("T1649",)):
             _eql("c", 'process where process.name == "mimikatz.exe"'),
             _eql("b", 'network where host.ip == "10.20.30.40"'),
         ),
+        # Elastic's kuery (831 of 2,225 corpus rules) is linted as Lucene.
+        (
+            _eql("c", 'process.name : "mimikatz.exe"', language="kuery"),
+            _eql("b", "source.ip : 10.20.30.40", language="kuery"),
+        ),
+        (
+            _eql("c", 'event.action : "logged-in"', language="kuery"),
+            _eql("b", 'user.name : "jdoe"', language="kuery"),
+        ),
     ],
-    ids=["sigma", "spl", "eql"],
+    ids=["sigma", "spl", "eql", "kuery-ip", "kuery-user"],
 )
 def test_lint_record_passes_clean_and_fails_one_environment(clean, bad):
     assert lint_record(clean)["passed"] is True
