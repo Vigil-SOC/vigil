@@ -78,6 +78,18 @@ TALLIED = (TOOL, RUNS, SEES, QUIET, ACCURATE, NOISY, SILENT, CAUGHT, NEVER_FIRED
 RUNS_RESULTS = ("pass", "fail", "unknown")
 # The rollout stages a listed copy can be in (#3995).
 STAGES = ("shadow", "live", "off")
+# Every rule's stage rows, newest first by time then id: the order CURRENT_STAGE,
+# rollout and GET /rules/{id}/stages all read them in.
+STAGE_ROWS = select(
+    DetectionRuleStage.rule_id,
+    DetectionRuleStage.stage,
+    DetectionRuleStage.actor,
+    DetectionRuleStage.proof,
+).order_by(
+    DetectionRuleStage.rule_id,
+    DetectionRuleStage.at.desc(),
+    DetectionRuleStage.id.desc(),
+)
 # Each rule's current stage: its latest stage row.
 CURRENT_STAGE = (
     select(DetectionRuleStage.rule_id, DetectionRuleStage.stage, DetectionRuleStage.at)
@@ -1080,6 +1092,7 @@ def _copies_listed(session: Any) -> Dict[str, Any]:
             rid: (stage, at)
             for rid, stage, at in session.execute(select(CURRENT_STAGE))
         },
+        "moves": stage_moves(session.execute(STAGE_ROWS)),
         "rule_of": _rule_of_copy(session),
         "blind_spots": [
             {
@@ -1153,6 +1166,7 @@ def _health_rows(
         flags, caught = _check_flags(checks)
         results = _results(checks)
         stage, entered = stages.get(rule.id, (None, None))
+        moves = copies.get("moves") or {}
         listed.append(
             {
                 "rule_id": rule.id,
@@ -1186,6 +1200,9 @@ def _health_rows(
                 "stage": stage,
                 "stage_since": entered.isoformat() if entered else None,
                 "days_in_shadow": None,
+                # Its stage moves and hold, as GET /rules/{id}/stages reads them
+                # (#4050); a SIEM copy has no stage rows and none of these.
+                **moves.get(rule.id, {}),
             }
         )
     listed.sort(key=lambda row: (HEALTH_ORDER.index(row["health"]), row["rule_id"]))
@@ -1255,6 +1272,28 @@ def _listing_now() -> Dict[str, Any]:
             _listing["health"] = _health_rows(_listing["copies"], _fires(session))
             _listing["fires_marks"] = fires_marks
         return {**_listing["health"], "blind_spots": _listing["copies"]["blind_spots"]}
+
+
+def stage_moves(rows: Iterable[Any]) -> Dict[int, Dict[str, Any]]:
+    """Per rule, from its stage rows ``(rule_id, stage, actor, proof)`` ordered by
+    rule then newest first (``STAGE_ROWS``, ``stages.history``'s order): how many there are, the
+    latest one's actor and from-stage, and whether a person holds the rule and
+    who (the latest row with a ``hold`` key decides, as rollout reads it)."""
+    by_rule: Dict[int, List[Any]] = {}
+    for rule_id, stage, actor, proof in rows:
+        by_rule.setdefault(rule_id, []).append((stage, actor, proof or {}))
+    out: Dict[int, Dict[str, Any]] = {}
+    for rule_id, rule_rows in by_rule.items():
+        hold = next((r for r in rule_rows if "hold" in r[2]), None)
+        held = hold is not None and hold[2]["hold"] is True
+        out[rule_id] = {
+            "stage_moves": len(rule_rows),
+            "stage_from": rule_rows[1][0] if len(rule_rows) > 1 else None,
+            "stage_actor": rule_rows[0][1],
+            "held": held,
+            "held_by": hold[1] if held else None,
+        }
+    return out
 
 
 def _with_days_in_shadow(row: Dict[str, Any], now: datetime) -> Dict[str, Any]:
