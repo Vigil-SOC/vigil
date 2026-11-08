@@ -50,6 +50,9 @@ def db(monkeypatch):
         assert in_use(session), "the database must have the audit trail in use"
         session.execute(text("TRUNCATE detection_rules RESTART IDENTITY CASCADE"))
         session.execute(text("DELETE FROM siem_searches"))
+        session.execute(
+            text("DELETE FROM approval_actions WHERE action_type = 'promote_rule'")
+        )
     yield manager
     manager._engine.dispose()
     connection.DatabaseManager._instance = None
@@ -146,10 +149,34 @@ def test_a_shadow_wazuh_copy_is_run_counted_and_promoted_but_a_chain_is_not(
 
     now = _age_a_clean_week(db, lab, "100100")
     _age_a_clean_week(db, lab, "100101")
+    monkeypatch.setattr(lab, "_asks_first", lambda: False)  # Act
     lab.sweep(now, lab.RolloutReport())
     after = _by_key(lab)
     assert after["100100"].stage == "live"
     assert after["100101"].stage == "shadow"
+
+
+def test_under_assist_a_validated_wazuh_copy_is_asked_for_not_promoted(
+    db, lab, monkeypatch
+):
+    from core.storage.models import ApprovalAction
+
+    _run(lab, monkeypatch, _Service(total=4))
+    now = _age_a_clean_week(db, lab, "100100")
+    _age_a_clean_week(db, lab, "100101")
+    monkeypatch.setattr(lab, "_asks_first", lambda: True)  # Assist
+    report = lab.RolloutReport()
+    lab.sweep(now, report)
+    after = _by_key(lab)
+    assert after["100100"].stage == "shadow"
+    assert after["100101"].stage == "shadow"
+    assert report.asked == [f"{after['100100'].rule_id} v1"]
+    with db.session_scope() as session:
+        asked = session.scalars(
+            select(ApprovalAction).where(ApprovalAction.action_type == "promote_rule")
+        ).all()
+        assert [a.parameters.get("rule_id") for a in asked] == [after["100100"].rule_id]
+        assert all(a.status == "pending" for a in asked)
 
 
 def test_with_the_archive_off_the_copy_stays_in_shadow_cant_validate(
