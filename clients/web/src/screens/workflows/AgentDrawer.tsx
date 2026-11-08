@@ -1,71 +1,49 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { parseDocument } from 'yaml'
 import { Icon } from '../../shared/icons'
 import { ConfirmDialog, OverlayPortal } from '../../shared/ui'
-import { agentsApi, aiConfigApi, type AIModelInfo, type GeneratedAgentDraft } from '../../services/api'
+import { TabStrip } from '../../shared/TabStrip'
+import { agentsApi } from '../../services/api'
+import { skillsApi, type ApiSkill } from '../../services/skillsApi'
 import type { ToolChange } from '../../data/appData'
 import { errMsg } from './runRead'
 
-interface CustomAgentDetail {
-  id: string
-  name?: string
-  description?: string | null
-  specialization?: string | null
-  icon?: string | null
-  color?: string | null
-  role?: string | null
-  methodology?: string | null
-  extra_principles?: string | null
-  system_prompt_override?: string | null
-  recommended_tools?: string[]
-  max_tokens?: number
-  enable_thinking?: boolean
-  model?: string | null
-  fallback_model?: string | null
-  effective_prompt?: string
-  forked_from?: string | null
-  /** a built-in's whole prompt; it has no role, principles or method parts */
-  system_prompt?: string | null
-}
-
-interface AgentForm {
-  name: string
-  specialization: string
-  description: string
-  icon: string
-  color: string
-  role: string
-  extra_principles: string
-  methodology: string
-  system_prompt_override: string
-  tools: string[]
-  max_tokens: number
-  enable_thinking: boolean
-  model: string
-  fallback_model: string
-}
-
-// Icon and colour are no longer fields: a new agent keeps these unless the AI draft supplies its own.
-const BLANK_FORM: AgentForm = {
-  name: '', specialization: '', description: '', icon: '', color: '#7d74f3', role: '',
-  extra_principles: '', methodology: '', system_prompt_override: '', tools: [],
-  max_tokens: 4096, enable_thinking: false, model: '', fallback_model: '',
-}
-
-const TOKEN_CHOICES = [4096, 8192, 16384, 32000]
-const READ_SKILL = 'read_skill'
-
-const fmtTokens = (n: number) => `${n.toLocaleString('en-US')} tokens`
-
-/** Select options: the listed ones, then a saved value the list does not carry so Save never drops it. */
-function withSaved<T extends string | number>(listed: T[], saved: T | ''): T[] {
-  return saved !== '' && !listed.includes(saved as T) ? [...listed, saved as T] : listed
-}
+const PREFIX = 'custom-'
+const BLANK = `id: ${PREFIX}\ndescription: ""\nsystem: ""\nneeds: []\nconclusion: prose\n`
+const RECORD_MODES = ['off', 'available', 'required'] as const
+// what Structured starts from; the schema itself is edited in YAML
+const STRUCTURED = { schema: { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] }, summary_field: 'summary' }
+const GUARD = { field: '', guarded: [], fallback: '', reviewer_prompt: '' }
 
 /** One row of GET /agents/custom/_meta/tools' `catalog`: "vigil" serves Vigil's own tools. */
 interface CatalogTool {
   name: string
   server: string
   description: string
+}
+const CAPABILITY_SERVER = 'Capabilities'
+
+type Doc = Record<string, unknown>
+const asText = (v: unknown) => (typeof v === 'string' ? v : v == null ? '' : String(v))
+const asList = (v: unknown) => (Array.isArray(v) ? v.map(asText) : [])
+const asMap = (v: unknown): Doc | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Doc) : null)
+
+/** The manifest as fields, or why it cannot be read as any. */
+function readText(text: string): { doc: Doc; error: null } | { doc: null; error: string } {
+  const parsed = parseDocument(text)
+  if (parsed.errors.length) return { doc: null, error: parsed.errors[0].message.split('\n')[0] }
+  const doc = parsed.toJS()
+  if (doc != null && !asMap(doc)) return { doc: null, error: 'the manifest is not a mapping' }
+  return { doc: (doc ?? {}) as Doc, error: null }
+}
+
+/** The text with one top-level key set (or removed when `value` is undefined), comments and order kept. */
+function withKey(text: string, key: string, value: unknown): string {
+  const parsed = parseDocument(text)
+  if (value === undefined) parsed.delete(key)
+  else parsed.set(key, parsed.createNode(value))
+  // no folding: a long line stays one line, and a multi-line string is a block
+  return parsed.toString({ lineWidth: 0 })
 }
 
 function ToolMark({ change }: { change: ToolChange | null | undefined }) {
@@ -79,8 +57,8 @@ function ToolMark({ change }: { change: ToolChange | null | undefined }) {
   )
 }
 
-/** Find a tool among every integration's by name, server or description, under the server that serves it.
- *  Servers start folded; a search unfolds every server with a match, and Enter adds the first. */
+/** Find a capability or tool by name, server or description, under what serves it.
+ *  Groups start folded; a search unfolds every group with a match, and Enter adds the first. */
 function ToolFinder({ catalog, markOf, onAdd }: {
   catalog: CatalogTool[] | null
   markOf: (tool: string) => ToolChange | null | undefined
@@ -109,17 +87,17 @@ function ToolFinder({ catalog, markOf, onAdd }: {
     <div className="vg-side-finder">
       <input
         className="vg-side-input"
-        aria-label="Find a tool"
+        aria-label="Find a capability or tool"
         value={query}
         autoComplete="off"
         disabled={!catalog?.length}
-        placeholder={catalog === null ? 'Add tool…' : catalog.length ? `Find a tool among ${catalog.length} by name or what it does` : 'No more connected tools'}
+        placeholder={catalog === null ? 'Add a need…' : catalog.length ? `Find a capability or tool among ${catalog.length}` : 'Nothing more to add'}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter' && needle && first) { onAdd(first.name); setQuery('') } }}
       />
       {!!catalog?.length && (
-        <div className="vg-side-finder-list" role="list" aria-label="Tools to add">
-          {groups.length === 0 && <span className="vg-side-hint">No tool matches “{query.trim()}”.</span>}
+        <div className="vg-side-finder-list" role="list" aria-label="Needs to add">
+          {groups.length === 0 && <span className="vg-side-hint">Nothing matches “{query.trim()}”.</span>}
           {groups.map(([server, tools]) => {
             const open = needle !== '' || unfolded.has(server)
             return (
@@ -147,55 +125,103 @@ function ToolFinder({ catalog, markOf, onAdd }: {
   )
 }
 
-/** The drawer over the Agents tab. `agentId` null builds a new agent; `describe` opens it with the describe box.
- *  `builtIn` shows a built-in's values: nothing exists until Save, which makes one copy. */
+function Chip({ name, mark, onRemove }: { name: string; mark?: React.ReactNode; onRemove: () => void }) {
+  return (
+    <div className="vg-side-tool">
+      <span className="vg-side-tool-name">{name}</span>
+      {mark}
+      <button type="button" className="vg-side-x" aria-label={`Remove ${name}`} onClick={onRemove}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />
+        </svg>
+      </button>
+    </div>
+  )
+}
+
+/** A whole number, or the key left out when blank. */
+function intOrNone(raw: string): number | undefined {
+  return raw.trim() === '' ? undefined : Number(raw)
+}
+
+/** A built-in, read only: what it is, and a fork into a manifest of your own. */
+function BuiltIn({ agentId, onForked }: { agentId: string; onForked: (id: string) => void }) {
+  const [agent, setAgent] = useState<{ name?: string; description?: string; manifest?: string; recommended_tools?: string[] } | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    agentsApi.getAgent(agentId).then((r) => setAgent(r.data)).catch((e) => setErr(errMsg(e)))
+  }, [agentId])
+  const fork = () => {
+    setBusy(true)
+    setErr(null)
+    agentsApi.forkAgent(agentId).then((r) => onForked(r.data.id)).catch((e) => { setErr(errMsg(e)); setBusy(false) })
+  }
+  if (!agent) return err ? <div className="vg-side-err">Couldn’t load agent: {err}</div> : <p className="text-[13px] text-tx-3">Loading agent…</p>
+  return (
+    <>
+      {agent.description && <p className="text-[13px] leading-[1.5] text-tx-1">{agent.description}</p>}
+      <div className="vg-side-field">
+        <span className="vg-side-label">Manifest (YAML)</span>
+        <pre className="vg-side-pre">{agent.manifest}</pre>
+      </div>
+      <div className="flex flex-col gap-2">
+        <span className="vg-side-title">Tools it may use</span>
+        {(agent.recommended_tools ?? []).length === 0 && <span className="vg-side-hint">No tools.</span>}
+        {(agent.recommended_tools ?? []).map((t) => <div key={t} className="vg-side-tool"><span className="vg-side-tool-name">{t}</span></div>)}
+      </div>
+      {err && <div className="vg-side-err">{err}</div>}
+      <div className="vg-side-foot">
+        <button type="button" className="vg-side-btn primary" disabled={busy} onClick={fork}>{busy ? 'Forking…' : 'Fork into my own agent'}</button>
+      </div>
+    </>
+  )
+}
+
+/** The drawer over the Agents tab. It edits one operator manifest: the YAML text is its only state, and the
+ *  fields read from and write into that text. `agentId` null builds a new agent; `describe` opens it with the
+ *  describe box; `seedFrom` starts a new one from a copy of that agent's manifest. `builtIn` shows a built-in. */
 export function AgentDrawer({
   agentId,
   builtIn = false,
   describe = false,
+  seedFrom = null,
   toolChanges = {},
-  skillCount = null,
   onClose,
   onSaved,
 }: {
   agentId: string | null
   builtIn?: boolean
   describe?: boolean
+  seedFrom?: string | null
   /** marks from the agent's list row, shown until the connected-tools list arrives */
   toolChanges?: Record<string, ToolChange>
-  /** size of the skill library; null while it is not known */
-  skillCount?: number | null
   onClose: () => void
-  /** gets the saved agent, so the screen can reopen on a new copy */
+  /** gets the saved agent's id, so the screen can reopen on it */
   onSaved: (saved: { id?: string }) => void
 }) {
   const isCreate = agentId === null
-  const [agent, setAgent] = useState<CustomAgentDetail | null>(null)
-  const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>(isCreate ? 'ready' : 'loading')
+  const [text, setText] = useState(BLANK)
+  const [opened, setOpened] = useState(BLANK)
+  const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>(isCreate && !seedFrom ? 'ready' : 'loading')
   const [loadErr, setLoadErr] = useState<string | null>(null)
-  const [form, setForm] = useState<AgentForm>({ ...BLANK_FORM })
-  const [advanced, setAdvanced] = useState(false)
-  // the form as it opened, so closing can tell whether there is anything to lose
-  const [opened, setOpened] = useState({ form: BLANK_FORM, advanced: false })
+  const [view, setView] = useState<'fields' | 'yaml'>('fields')
   const [confirmClose, setConfirmClose] = useState(false)
-  const [showPreview, setShowPreview] = useState(false)
-  const [models, setModels] = useState<AIModelInfo[]>([])
   // null until /_meta/tools answers, or when it fails
   const [connected, setConnected] = useState<Record<string, ToolChange> | null>(null)
   const [catalog, setCatalog] = useState<CatalogTool[] | null>(null)
+  const [capabilities, setCapabilities] = useState<Set<string>>(new Set())
+  const [skills, setSkills] = useState<ApiSkill[] | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const [aiText, setAiText] = useState('')
   const [aiFeedback, setAiFeedback] = useState('')
-  const [aiDraft, setAiDraft] = useState<GeneratedAgentDraft | null>(null)
+  const [drafted, setDrafted] = useState(false)
   const [aiBusy, setAiBusy] = useState(false)
   const [aiErr, setAiErr] = useState<string | null>(null)
 
-  const set = <K extends keyof AgentForm>(k: K, v: AgentForm[K]) => setForm((f) => ({ ...f, [k]: v }))
-
-  // Advanced decides whether Save keeps the whole-prompt override; text typed for an AI draft counts too
-  const dirty = aiText.trim() !== '' || advanced !== opened.advanced || JSON.stringify(form) !== JSON.stringify(opened.form)
+  const dirty = aiText.trim() !== '' || text !== opened
   const close = useCallback(() => (dirty ? setConfirmClose(true) : onClose()), [dirty, onClose])
 
   useEffect(() => {
@@ -207,144 +233,96 @@ export function AgentDrawer({
   }, [close])
 
   useEffect(() => {
+    if (builtIn) return
     let cancelled = false
     agentsApi.getAvailableTools().then((r) => {
       if (cancelled) return
+      const caps = (r.data?.capabilities || []) as { name: string; tools: string[] }[]
       setConnected((r.data?.changes || {}) as Record<string, ToolChange>)
-      setCatalog((r.data?.catalog || []) as CatalogTool[])
+      setCapabilities(new Set(caps.map((c) => c.name)))
+      setCatalog([
+        ...caps.map((c) => ({ name: c.name, server: CAPABILITY_SERVER, description: `Whichever of ${c.tools.join(', ')} is connected` })),
+        ...((r.data?.catalog || []) as CatalogTool[]),
+      ])
     }).catch(() => {})
-    aiConfigApi.listModels().then((r) => !cancelled && setModels(r.data?.models || [])).catch(() => {})
+    skillsApi.list().then((rows) => !cancelled && setSkills(rows)).catch(() => {})
     return () => { cancelled = true }
-  }, [])
+  }, [builtIn])
 
+  // an agent opens on its stored text; a copy opens on the source's, under a new id
   useEffect(() => {
-    if (agentId === null) return
+    const source = agentId ?? seedFrom
+    if (builtIn || source === null) return
     let cancelled = false
-    ;(builtIn ? agentsApi.getAgent(agentId) : agentsApi.getCustom(agentId))
+    agentsApi.getManifest(source)
       .then((res) => {
         if (cancelled) return
-        const a = res.data as CustomAgentDetail
-        // a built-in's prompt is its whole prompt, shown in the Advanced box
-        if (builtIn) a.system_prompt_override = a.system_prompt || ''
-        if (builtIn) a.recommended_tools = a.recommended_tools || []
-        setAgent(a)
-        const loaded: AgentForm = {
-          name: a.name || '',
-          specialization: a.specialization || '',
-          description: a.description || '',
-          icon: a.icon || '',
-          color: a.color || '', // a stored null stays null
-          role: a.role || '',
-          extra_principles: a.extra_principles || '',
-          methodology: a.methodology || '',
-          system_prompt_override: a.system_prompt_override || '',
-          tools: a.recommended_tools || [],
-          max_tokens: a.max_tokens || BLANK_FORM.max_tokens,
-          enable_thinking: !!a.enable_thinking,
-          model: a.model || '',
-          fallback_model: a.fallback_model || '',
-        }
-        setForm(loaded)
-        setAdvanced(!!a.system_prompt_override)
-        setOpened({ form: loaded, advanced: !!a.system_prompt_override })
+        const stored = res.data.manifest
+        const loaded = agentId ? stored : withKey(stored, 'id', `${source}-copy`)
+        setText(loaded)
+        setOpened(agentId ? loaded : BLANK)
         setPhase('ready')
       })
       .catch((e) => { if (!cancelled) { setLoadErr(errMsg(e)); setPhase('error') } })
     return () => { cancelled = true }
-  }, [agentId, builtIn])
+  }, [agentId, seedFrom, builtIn])
+
+  const read = useMemo(() => readText(text), [text])
+  const doc = read.doc ?? {}
+  const set = (key: string, value: unknown) => setText((t) => withKey(t, key, value))
+  const id = asText(doc.id)
+  const needs = asList(doc.needs)
+  const chosenSkills = asList(doc.skills)
+  const conclusion = asMap(doc.conclusion)
+  const guard = asMap(doc.guard)
 
   // A tool is connected when the list knows it. Before the list arrives, or if it fails, the row's marks
-  // stand in, and a tool with none is unknown (null) rather than not connected.
-  const markOf = (tool: string): ToolChange | null | undefined => (connected ? connected[tool] : toolChanges[tool] ?? null)
-  const addable = useMemo(
-    () => catalog && catalog.filter((t) => !form.tools.includes(t.name)),
-    [catalog, form.tools],
-  )
-
-  const modelOptions = withSaved(models.map((m) => m.model_id), form.model)
-  const fallbackOptions = withSaved(models.map((m) => m.model_id), form.fallback_model)
-  const modelLabel = (id: string) => {
-    const m = models.find((x) => x.model_id === id)
-    return m ? `${m.display_name} (${id})` : id
-  }
-
-  // merge an AI draft into the form, keeping a name already typed; the draft's icon and colour only matter for a new agent
-  const mergeDraft = (d: GeneratedAgentDraft) =>
-    setForm((f) => ({
-      ...f,
-      name: f.name.trim() ? f.name : d.name,
-      specialization: d.specialization || f.specialization,
-      description: d.description || f.description,
-      icon: isCreate ? d.icon || f.icon : f.icon,
-      color: isCreate ? d.color || f.color : f.color,
-      role: d.role || f.role,
-      extra_principles: d.extra_principles || f.extra_principles,
-      methodology: d.methodology || f.methodology,
-      tools: d.recommended_tools?.length ? d.recommended_tools : f.tools,
-      max_tokens: d.max_tokens || f.max_tokens,
-      enable_thinking: typeof d.enable_thinking === 'boolean' ? d.enable_thinking : f.enable_thinking,
-    }))
-
-  const draftOf = (): GeneratedAgentDraft => ({
-    name: form.name, description: form.description, specialization: form.specialization, icon: form.icon,
-    color: form.color, role: form.role, extra_principles: form.extra_principles, methodology: form.methodology,
-    recommended_tools: form.tools, max_tokens: form.max_tokens, enable_thinking: form.enable_thinking,
-  })
+  // stand in, and a tool with none is unknown (null) rather than not connected. A capability has no mark.
+  const markOf = (tool: string): ToolChange | null | undefined =>
+    capabilities.has(tool) ? null : connected ? connected[tool] : toolChanges[tool] ?? null
+  const addable = useMemo(() => catalog && catalog.filter((t) => !needs.includes(t.name)), [catalog, needs])
 
   // Creating: the box is the description and a refinement is feedback on the draft. Editing: the box is the
-  // change asked for, against the form as it stands.
+  // change asked for, against the manifest as it stands. A draft the check refuses is not applied.
   const generate = (feedback?: string) => {
-    const text = (feedback ?? aiText).trim()
-    if (!text) return
+    const ask = (feedback ?? aiText).trim()
+    if (!ask) return
     setAiBusy(true)
     setAiErr(null)
     const req = isCreate
-      ? agentsApi.generateCustom({ description: aiText.trim(), current_draft: aiDraft, feedback: feedback?.trim() || undefined })
-      : agentsApi.generateCustom({ description: form.description || form.specialization || form.name, current_draft: draftOf(), feedback: text })
+      ? agentsApi.generateManifest({ description: aiText.trim(), current_draft: drafted ? text : null, feedback: feedback?.trim() || undefined })
+      : agentsApi.generateManifest({ description: asText(doc.description) || id, current_draft: text, feedback: ask })
     req
       .then((res) => {
-        const d = res.data?.draft
-        if (d) { setAiDraft(d); mergeDraft(d); setAiFeedback(''); if (!isCreate) setAiText('') }
+        setText(res.data.manifest)
+        setDrafted(true)
+        setAiFeedback('')
+        if (!isCreate) setAiText('')
       })
       .catch((e) => setAiErr(errMsg(e)))
       .finally(() => setAiBusy(false))
   }
 
-  const canSave = !busy && phase === 'ready' && !!form.name.trim() && (builtIn ? !!form.system_prompt_override.trim() : !!form.role.trim())
-
-  const save = () => {
-    if (!canSave) return
+  const target = agentId ?? (id || PREFIX)
+  const save = async () => {
     setBusy(true)
     setError(null)
-    const shown = {
-      name: form.name.trim(),
-      specialization: form.specialization.trim(),
-      description: form.description.trim(),
-      recommended_tools: form.tools,
-      max_tokens: form.max_tokens,
-      enable_thinking: form.enable_thinking,
-      model: form.model || null,
-      fallback_model: form.fallback_model || null,
+    try {
+      // a PUT replaces: a new agent must not land on an id that is taken
+      if (isCreate) {
+        const taken = await agentsApi.getManifest(target).then(() => true, () => false)
+        if (taken) throw new Error(`${target} already exists. Choose another id.`)
+      }
+      const res = await agentsApi.putManifest(target, text)
+      onSaved({ id: res.data.id })
+    } catch (e) {
+      setError(errMsg(e))
+      setBusy(false)
     }
-    const payload = {
-      ...shown,
-      icon: form.icon.trim() || null,
-      color: form.color || null,
-      role: form.role.trim(),
-      extra_principles: form.extra_principles.trim(),
-      methodology: form.methodology.trim(),
-      // Advanced override replaces the base template; clear it when closed.
-      system_prompt_override: advanced ? form.system_prompt_override.trim() || null : null,
-    }
-    // A copy of a built-in sends only what the drawer shows; the server fills in the rest from the built-in.
-    const req = builtIn
-      ? agentsApi.forkAgent(agentId!, { ...shown, system_prompt_override: form.system_prompt_override.trim() })
-      : isCreate ? agentsApi.createCustom(payload) : agentsApi.updateCustom(agentId!, payload)
-    req.then((res) => onSaved((res?.data ?? {}) as { id?: string })).catch((e) => { setError(errMsg(e)); setBusy(false) })
   }
 
-  const title = isCreate ? 'New agent' : `Edit agent · ${agent?.name || agentId}`
-  const holdsSkills = form.tools.includes(READ_SKILL)
+  const title = builtIn ? `Agent · ${agentId}` : isCreate ? 'New agent' : `Edit agent · ${agentId!.replace(PREFIX, '')}`
+  const skillOptions = (skills ?? []).filter((s) => !chosenSkills.includes(s.name))
 
   return (
     <OverlayPortal>
@@ -352,15 +330,17 @@ export function AgentDrawer({
         <aside
           className="vg-side-panel"
           role="dialog"
-          aria-label={isCreate ? 'New agent' : 'Edit agent'}
+          aria-label={isCreate ? 'New agent' : builtIn ? 'Built-in agent' : 'Edit agent'}
           onMouseDown={(event) => event.stopPropagation()}
         >
           <div className="flex items-start gap-3">
             <span className="flex flex-col gap-[3px] grow min-w-0">
               <span className="text-[20px] font-bold leading-[1.25] tracking-[-0.2px] text-tx break-words">{title}</span>
-              {builtIn
-                ? <span className="vg-side-hint">Built in. Saving creates your own editable copy; the original stays available.</span>
-                : agent?.forked_from && <span className="vg-side-hint">Forked from <span className="mono">{agent.forked_from}</span></span>}
+              <span className="vg-side-hint">
+                {builtIn
+                  ? 'Built in. Forking stores it as a manifest of your own to edit; the original stays available.'
+                  : 'An agent is its manifest. The fields and the YAML edit the same text.'}
+              </span>
             </span>
             <button type="button" className="vg-side-close" aria-label="Close" onClick={close}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -368,9 +348,10 @@ export function AgentDrawer({
               </svg>
             </button>
           </div>
-          {phase === 'loading' && <p className="text-[13px] text-tx-3">Loading agent…</p>}
-          {phase === 'error' && <div className="vg-side-err">Couldn’t load agent: {loadErr}</div>}
-          {phase === 'ready' && (
+          {builtIn && agentId && <BuiltIn agentId={agentId} onForked={(newId) => onSaved({ id: newId })} />}
+          {!builtIn && phase === 'loading' && <p className="text-[13px] text-tx-3">Loading agent…</p>}
+          {!builtIn && phase === 'error' && <div className="vg-side-err">Couldn’t load agent: {loadErr}</div>}
+          {!builtIn && phase === 'ready' && (
             <>
               {isCreate && describe ? (
                 <div className="vg-side-field">
@@ -387,13 +368,13 @@ export function AgentDrawer({
                   <div className="flex items-center justify-end gap-2.5">
                     {aiErr && <span className="vg-side-err mr-auto">{aiErr}</span>}
                     <button type="button" className="vg-side-btn small line" disabled={aiBusy || !aiText.trim()} onClick={() => generate()}>
-                      <Icon name="sparkle" size={13} />&nbsp;{aiBusy ? 'Generating…' : aiDraft ? 'Regenerate draft' : 'Generate draft'}
+                      <Icon name="sparkle" size={13} />&nbsp;{aiBusy ? 'Drafting…' : drafted ? 'Draft again' : 'Draft manifest'}
                     </button>
                   </div>
-                  {aiDraft && (
+                  {drafted && (
                     <div className="vg-side-assist">
                       <Icon name="sparkle" size={16} />
-                      <label htmlFor="vg-a-refine" className="vg-side-assist-text">Draft applied below. Refine it: “add memory-forensics tools”</label>
+                      <label htmlFor="vg-a-refine" className="vg-side-assist-text">Draft checked and applied below. Refine it: “add memory-forensics tools”</label>
                       <input
                         id="vg-a-refine"
                         value={aiFeedback}
@@ -406,7 +387,7 @@ export function AgentDrawer({
                     </div>
                   )}
                 </div>
-              ) : !isCreate && !builtIn && (
+              ) : !isCreate && (
                 <div>
                   <div className="vg-side-assist">
                     <Icon name="sparkle" size={16} />
@@ -429,136 +410,185 @@ export function AgentDrawer({
                 </div>
               )}
 
-              <div className="vg-side-grid">
-                <div className="vg-side-field">
-                  <label htmlFor="vg-a-name" className="vg-side-label">Name</label>
-                  <input id="vg-a-name" className="vg-side-input" value={form.name} autoComplete="off" onChange={(e) => set('name', e.target.value)} />
-                </div>
-                <div className="vg-side-field">
-                  <label htmlFor="vg-a-spec" className="vg-side-label">Specialization</label>
-                  <input id="vg-a-spec" className="vg-side-input" value={form.specialization} autoComplete="off" onChange={(e) => set('specialization', e.target.value)} />
-                </div>
-              </div>
+              <TabStrip
+                label="Manifest views"
+                tabs={[{ id: 'fields', label: 'Fields' }, { id: 'yaml', label: 'YAML' }] as const}
+                active={view}
+                onChange={setView}
+              />
 
-              <div className="flex flex-col gap-3">
-                <span className="vg-side-title">Instructions</span>
-                {builtIn ? (
+              {view === 'yaml' && (
+                <div className="vg-side-field">
+                  <label htmlFor="vg-a-yaml" className="vg-side-label">Manifest (YAML)</label>
+                  <textarea id="vg-a-yaml" className="vg-side-input mono" rows={24} spellCheck={false} value={text} onChange={(e) => setText(e.target.value)} />
+                </div>
+              )}
+
+              {view === 'fields' && read.error !== null && (
+                <div className="vg-side-err">
+                  The YAML does not read as fields ({read.error}).{' '}
+                  <button type="button" className="vg-side-link" onClick={() => setView('yaml')}>Fix it in YAML</button>
+                </div>
+              )}
+
+              {view === 'fields' && read.error === null && (
+                <>
                   <div className="vg-side-field">
-                    <label htmlFor="vg-a-override" className="vg-side-label">Prompt</label>
-                    <textarea id="vg-a-override" className="vg-side-input mono" rows={10} value={form.system_prompt_override} onChange={(e) => set('system_prompt_override', e.target.value)} />
+                    <label htmlFor="vg-a-id" className="vg-side-label">Id</label>
+                    <div className="flex items-center gap-2">
+                      <span className="mono text-[12px] text-tx-2">{PREFIX}</span>
+                      <input
+                        id="vg-a-id"
+                        className="vg-side-input mono"
+                        value={id.startsWith(PREFIX) ? id.slice(PREFIX.length) : id}
+                        autoComplete="off"
+                        spellCheck={false}
+                        disabled={!isCreate}
+                        placeholder="phishing-triage"
+                        onChange={(e) => set('id', `${PREFIX}${e.target.value}`)}
+                      />
+                    </div>
+                    {!isCreate && <span className="vg-side-hint">The id names the agent; fork it to use another.</span>}
                   </div>
-                ) : (
-                  <>
-                    <div className="vg-side-field">
-                      <label htmlFor="vg-a-role" className="vg-side-label">Specialty</label>
-                      <input id="vg-a-role" className="vg-side-input" value={form.role} autoComplete="off" placeholder="e.g. investigator" onChange={(e) => set('role', e.target.value)} />
-                    </div>
-                    <div className="vg-side-field">
-                      <label htmlFor="vg-a-principles" className="vg-side-label">Principles</label>
-                      <textarea id="vg-a-principles" className="vg-side-input" rows={3} value={form.extra_principles} onChange={(e) => set('extra_principles', e.target.value)} />
-                    </div>
-                    <div className="vg-side-field">
-                      <label htmlFor="vg-a-method" className="vg-side-label">Method</label>
-                      <textarea id="vg-a-method" className="vg-side-input" rows={3} value={form.methodology} onChange={(e) => set('methodology', e.target.value)} />
-                      <span className="vg-side-hint">
-                        Role, principles and method.{' '}
-                        {advanced ? 'Advanced: replacing the whole prompt.' : (
-                          <>
-                            <button type="button" className="vg-side-link" onClick={() => setAdvanced(true)}>Advanced</button>: replace the whole prompt.
-                          </>
-                        )}
-                      </span>
-                    </div>
-                  </>
-                )}
-                {!builtIn && advanced && (
                   <div className="vg-side-field">
-                    <label htmlFor="vg-a-override" className="vg-side-label">Whole prompt (replaces the three parts above)</label>
-                    <textarea id="vg-a-override" className="vg-side-input mono" rows={10} value={form.system_prompt_override} onChange={(e) => set('system_prompt_override', e.target.value)} />
-                    <button type="button" className="vg-side-link self-start text-[12px]" onClick={() => setAdvanced(false)}>Use the three parts instead</button>
+                    <label htmlFor="vg-a-name" className="vg-side-label">Name</label>
+                    <input
+                      id="vg-a-name"
+                      className="vg-side-input"
+                      value={asText(doc.name)}
+                      autoComplete="off"
+                      placeholder={id.startsWith(PREFIX) && id.length > PREFIX.length ? id.slice(PREFIX.length) : 'The id, without custom-'}
+                      onChange={(e) => set('name', e.target.value === '' ? undefined : e.target.value)}
+                    />
                   </div>
-                )}
-                {!builtIn && advanced && agent?.effective_prompt && (
                   <div className="vg-side-field">
-                    <button type="button" className="vg-side-fold" aria-expanded={showPreview} onClick={() => setShowPreview((v) => !v)}>
-                      <span style={{ transform: showPreview ? 'rotate(90deg)' : 'none', transition: 'transform .12s', display: 'inline-flex' }}><Icon name="chevR" size={13} /></span>
-                      Preview effective prompt
-                    </button>
-                    {showPreview && (
+                    <label htmlFor="vg-a-description" className="vg-side-label">Description</label>
+                    <textarea id="vg-a-description" className="vg-side-input" rows={3} value={asText(doc.description)} onChange={(e) => set('description', e.target.value)} />
+                  </div>
+                  <div className="vg-side-field">
+                    <label htmlFor="vg-a-system" className="vg-side-label">System prompt</label>
+                    <textarea id="vg-a-system" className="vg-side-input mono" rows={10} value={asText(doc.system)} onChange={(e) => set('system', e.target.value)} />
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <span className="vg-side-title">Needs</span>
+                    <span className="vg-side-hint">A capability binds whichever tool this deployment has for it; a tool is granted by name.</span>
+                    {needs.length === 0 && <span className="vg-side-hint">No needs yet.</span>}
+                    {needs.map((need) => (
+                      <Chip
+                        key={need}
+                        name={need}
+                        mark={capabilities.has(need) ? <span className="vg-side-mark none">Capability</span> : <ToolMark change={markOf(need)} />}
+                        onRemove={() => set('needs', needs.filter((n) => n !== need))}
+                      />
+                    ))}
+                    <ToolFinder catalog={addable} markOf={markOf} onAdd={(tool) => set('needs', [...needs, tool])} />
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <span className="vg-side-title">Skills</span>
+                    {chosenSkills.length === 0 && <span className="vg-side-hint">No skills.</span>}
+                    {chosenSkills.map((s) => (
+                      <Chip key={s} name={s} onRemove={() => set('skills', chosenSkills.length > 1 ? chosenSkills.filter((x) => x !== s) : undefined)} />
+                    ))}
+                    <select
+                      className="vg-side-input"
+                      aria-label="Add a skill"
+                      value=""
+                      disabled={!skillOptions.length}
+                      onChange={(e) => e.target.value && set('skills', [...chosenSkills, e.target.value])}
+                    >
+                      <option value="">{skills === null ? 'Loading skills…' : skillOptions.length ? 'Add a skill…' : 'No more skills in the library'}</option>
+                      {skillOptions.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
+                    </select>
+                  </div>
+
+                  <div className="vg-side-card">
+                    <span className="vg-side-title">How it ends</span>
+                    <div className="vg-side-grid">
+                      <div className="vg-side-field">
+                        <label htmlFor="vg-a-conclusion" className="vg-side-label">Conclusion</label>
+                        <select
+                          id="vg-a-conclusion"
+                          className="vg-side-input"
+                          value={conclusion ? 'structured' : asText(doc.conclusion) === 'prose' ? 'prose' : ''}
+                          onChange={(e) => set('conclusion', e.target.value === 'prose' ? 'prose' : e.target.value === 'structured' ? STRUCTURED : undefined)}
+                        >
+                          {!conclusion && asText(doc.conclusion) !== 'prose' && <option value="">Not set</option>}
+                          <option value="prose">Prose</option>
+                          <option value="structured">Structured</option>
+                        </select>
+                      </div>
+                      <div className="vg-side-field">
+                        <label htmlFor="vg-a-record" className="vg-side-label">Hypothesis record</label>
+                        <select id="vg-a-record" className="vg-side-input" value={asText(doc.record)} onChange={(e) => set('record', e.target.value || undefined)}>
+                          <option value="">Default</option>
+                          {RECORD_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
+                          {doc.record != null && !RECORD_MODES.includes(asText(doc.record) as typeof RECORD_MODES[number]) && <option value={asText(doc.record)}>{asText(doc.record)}</option>}
+                        </select>
+                      </div>
+                      <div className="vg-side-field">
+                        <label htmlFor="vg-a-turns" className="vg-side-label">Most turns</label>
+                        <input id="vg-a-turns" className="vg-side-input" type="number" min={1} value={asText(doc.max_turns)} placeholder="The run's limit" onChange={(e) => set('max_turns', intOrNone(e.target.value))} />
+                      </div>
+                      <div className="vg-side-field">
+                        <label htmlFor="vg-a-min" className="vg-side-label">Fewest results</label>
+                        <input id="vg-a-min" className="vg-side-input" type="number" min={1} value={asText(doc.min_results)} placeholder="No floor" onChange={(e) => set('min_results', intOrNone(e.target.value))} />
+                      </div>
+                    </div>
+                    <span className="vg-side-hint">
+                      {conclusion
+                        ? <>A structured conclusion’s schema and fields are edited in <button type="button" className="vg-side-link" onClick={() => setView('yaml')}>YAML</button>.</>
+                        : 'Prose ends on what the agent last says.'}{' '}
+                      The record defaults to available.
+                    </span>
+                  </div>
+
+                  <div className="vg-side-card">
+                    <div className="flex items-center gap-2">
+                      <span className="vg-side-title grow">Guard</span>
+                      <button type="button" className="vg-side-btn small line" onClick={() => set('guard', guard ? undefined : GUARD)}>
+                        {guard ? 'Remove guard' : 'Add a guard'}
+                      </button>
+                    </div>
+                    {!guard && <span className="vg-side-hint">A reviewer that holds a conclusion field’s chosen values for a second look. Needs a structured conclusion.</span>}
+                    {guard && (
                       <>
-                        <pre className="vg-side-pre">{agent.effective_prompt}</pre>
-                        <span className="vg-side-hint">This is the exact system prompt the model receives. Re-save to refresh.</span>
+                        <div className="vg-side-grid">
+                          <div className="vg-side-field">
+                            <label htmlFor="vg-a-gfield" className="vg-side-label">Field</label>
+                            <input id="vg-a-gfield" className="vg-side-input mono" value={asText(guard.field)} autoComplete="off" onChange={(e) => set('guard', { ...guard, field: e.target.value })} />
+                          </div>
+                          <div className="vg-side-field">
+                            <label htmlFor="vg-a-gfallback" className="vg-side-label">Held values become</label>
+                            <input id="vg-a-gfallback" className="vg-side-input mono" value={asText(guard.fallback)} autoComplete="off" onChange={(e) => set('guard', { ...guard, fallback: e.target.value })} />
+                          </div>
+                        </div>
+                        <div className="vg-side-field">
+                          <label htmlFor="vg-a-guarded" className="vg-side-label">Values it holds (comma separated)</label>
+                          <input
+                            id="vg-a-guarded"
+                            className="vg-side-input mono"
+                            value={asList(guard.guarded).join(', ')}
+                            autoComplete="off"
+                            onChange={(e) => set('guard', { ...guard, guarded: e.target.value === '' ? [] : e.target.value.split(/,\s*/) })}
+                          />
+                        </div>
+                        <div className="vg-side-field">
+                          <label htmlFor="vg-a-greview" className="vg-side-label">Reviewer prompt</label>
+                          <textarea id="vg-a-greview" className="vg-side-input" rows={3} value={asText(guard.reviewer_prompt)} onChange={(e) => set('guard', { ...guard, reviewer_prompt: e.target.value })} />
+                        </div>
                       </>
                     )}
                   </div>
-                )}
-              </div>
+                </>
+              )}
 
-              <div className="vg-side-card">
-                <span className="vg-side-title">Model</span>
-                <div className="vg-side-grid">
-                  <div className="vg-side-field">
-                    <label htmlFor="vg-a-model" className="vg-side-label">Model</label>
-                    <select id="vg-a-model" className="vg-side-input" value={form.model} onChange={(e) => set('model', e.target.value)}>
-                      <option value="">Use the default</option>
-                      {modelOptions.map((id) => <option key={id} value={id}>{modelLabel(id)}</option>)}
-                    </select>
-                  </div>
-                  <div className="vg-side-field">
-                    <label htmlFor="vg-a-fb" className="vg-side-label">If it is unavailable, use</label>
-                    <select id="vg-a-fb" className="vg-side-input" value={form.fallback_model} onChange={(e) => set('fallback_model', e.target.value)}>
-                      <option value="">No fallback</option>
-                      {fallbackOptions.map((id) => <option key={id} value={id}>{modelLabel(id)}</option>)}
-                    </select>
-                  </div>
-                  <div className="vg-side-field">
-                    <label htmlFor="vg-a-th" className="vg-side-label">Thinking</label>
-                    <select id="vg-a-th" className="vg-side-input" value={form.enable_thinking ? 'on' : 'off'} onChange={(e) => set('enable_thinking', e.target.value === 'on')}>
-                      <option value="off">Off</option>
-                      <option value="on">On</option>
-                    </select>
-                  </div>
-                  <div className="vg-side-field">
-                    <label htmlFor="vg-a-mt" className="vg-side-label">Longest answer</label>
-                    <select id="vg-a-mt" className="vg-side-input" value={form.max_tokens} onChange={(e) => set('max_tokens', Number(e.target.value))}>
-                      {[...withSaved(TOKEN_CHOICES, form.max_tokens)].sort((a, b) => a - b).map((n) => <option key={n} value={n}>{fmtTokens(n)}</option>)}
-                    </select>
-                  </div>
-                </div>
-                <span className="vg-side-hint">Uses Settings › AI models by default. A model chosen here wins over the default for this agent only.</span>
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <span className="vg-side-title">Skills</span>
-                <span className="vg-side-hint" style={{ fontSize: 13 }}>
-                  {holdsSkills
-                    ? `Offered every skill in the library${skillCount === null ? '' : ` (${skillCount})`}. Choosing single skills comes later.`
-                    : 'Not offered skills.'}
-                </span>
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <span className="vg-side-title">Tools it may use</span>
-                {form.tools.length === 0 && <span className="vg-side-hint">No tools yet.</span>}
-                {form.tools.map((tool) => (
-                  <div key={tool} className="vg-side-tool">
-                    <span className="vg-side-tool-name">{tool}</span>
-                    <ToolMark change={markOf(tool)} />
-                    <button type="button" className="vg-side-x" aria-label={`Remove ${tool}`} onClick={() => set('tools', form.tools.filter((t) => t !== tool))}>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />
-                      </svg>
-                    </button>
-                  </div>
-                ))}
-                <ToolFinder catalog={addable} markOf={markOf} onAdd={(tool) => set('tools', [...form.tools, tool])} />
-              </div>
-
-              {error && <div className="vg-side-err">{error}</div>}
+              {error && <div className="vg-side-err" role="alert">{error}</div>}
               <div className="vg-side-foot">
                 <button type="button" className="vg-side-btn" onClick={close}>Cancel</button>
-                <button type="button" className="vg-side-btn primary" disabled={!canSave} onClick={save}>
-                  {busy ? (isCreate ? 'Creating…' : 'Saving…') : isCreate ? 'Create agent' : builtIn ? 'Save my copy' : 'Save'}
+                <button type="button" className="vg-side-btn primary" disabled={busy || (!isCreate && text === opened)} onClick={save}>
+                  {busy ? (isCreate ? 'Creating…' : 'Saving…') : isCreate ? 'Create agent' : 'Save'}
                 </button>
               </div>
             </>
@@ -568,7 +598,7 @@ export function AgentDrawer({
       <ConfirmDialog
         open={confirmClose}
         title="Discard changes?"
-        body={`Your changes to ${agent?.name || 'this agent'} are not saved.`}
+        body={`Your changes to ${agentId ? agentId.replace(PREFIX, '') : 'this agent'} are not saved.`}
         confirmLabel="Discard changes"
         onConfirm={onClose}
         onClose={() => setConfirmClose(false)}

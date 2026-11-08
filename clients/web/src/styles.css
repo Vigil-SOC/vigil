@@ -7358,6 +7358,11 @@
       overflow: visible;
    }
 
+   /* the reader's panels stack: three columns at this width truncate every chip and name */
+   .wfk-pane .wfk-panels {
+      grid-template-columns: minmax(0, 1fr);
+   }
+
    /* Agents & workflows head and the Skills bar: the button drops under the text */
    .wf-head,
    .sk-bar {

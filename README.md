@@ -14,9 +14,9 @@ Vigil rests on three parts — **agents** you can read, fork, and rewire; **work
 
 ## Agents
 
-Vigil ships a set of built-in specialist agents covering the core SOC roles — triage, investigation, threat hunting, correlation, response, reporting, ATT&CK mapping, forensics, threat intel, compliance, malware and network analysis — and you can add your own from the console. The set grows and changes with the project; the built-in definitions live in [`core/agents/builtins.py`](core/agents/builtins.py) and are described at [vigilsoc.org/docs/agents](https://vigilsoc.org/docs/agents/).
+Vigil ships a set of built-in specialist agents covering the core SOC roles — triage, investigation, threat hunting, correlation, response, reporting, ATT&CK mapping, forensics, threat intel, compliance, malware and network analysis — and you can add your own from the console. The set grows and changes with the project; the built-ins are manifests in [`core/agents/manifests/`](core/agents/manifests/) and are described at [vigilsoc.org/docs/agents](https://vigilsoc.org/docs/agents/).
 
-Every agent can call Vigil's backend tools (findings, cases, approvals, detections, ATT&CK, threat intel, memory, skills) and the tools of whichever MCP integrations you have connected. Each agent's tool list, prompt, model, and extended-thinking budget are visible in its definition.
+Every agent can call Vigil's backend tools (findings, cases, approvals, detections, ATT&CK, threat intel, memory, skills) and the tools of whichever MCP integrations you have connected. Each agent's needs and prompt are visible in its manifest; every agent runs on the investigation model assignment.
 
 Response actions are proposed as approval requests. A request from the Response agent always waits for an analyst. The daemon's executor carries out an approved action within about 30 seconds unless Stop holds it, and an AutoOps investigation that proposes containment pages PagerDuty when it is enabled. The approval pipeline records `isolate_host` actions but does not execute them; host isolation or quarantine happens only when an agent calls an EDR integration's tool directly.
 

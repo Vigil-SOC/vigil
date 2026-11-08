@@ -97,11 +97,29 @@ TALLIED = (
     LINT_FAILS,
 )
 RUNS_RESULTS = ("pass", "fail", "unknown")
+# The rollout stages a listed copy can be in (#3995).
+STAGES = ("shadow", "live", "off")
+# Every rule's stage rows, newest first by time then id: the order CURRENT_STAGE,
+# rollout and GET /rules/{id}/stages all read them in.
+STAGE_ROWS = select(
+    DetectionRuleStage.rule_id,
+    DetectionRuleStage.stage,
+    DetectionRuleStage.actor,
+    DetectionRuleStage.proof,
+).order_by(
+    DetectionRuleStage.rule_id,
+    DetectionRuleStage.at.desc(),
+    DetectionRuleStage.id.desc(),
+)
 # Each rule's current stage: its latest stage row.
 CURRENT_STAGE = (
-    select(DetectionRuleStage.rule_id, DetectionRuleStage.stage)
+    select(DetectionRuleStage.rule_id, DetectionRuleStage.stage, DetectionRuleStage.at)
     .distinct(DetectionRuleStage.rule_id)
-    .order_by(DetectionRuleStage.rule_id, DetectionRuleStage.id.desc())
+    .order_by(
+        DetectionRuleStage.rule_id,
+        DetectionRuleStage.at.desc(),
+        DetectionRuleStage.id.desc(),
+    )
     .subquery("current_stage")
 )
 LINKED = DetectionRule.link_kind.in_(("same_id", "known_name", "agent"))
@@ -257,6 +275,51 @@ def open_flags() -> List[Dict[str, Any]]:
     for flag in flags:
         del flag["changed_at"]
     return flags
+
+
+def open_reverts() -> List[Dict[str, Any]]:
+    """Each rule Vigil's sweep last moved live -> shadow and no one has moved
+    since, newest first, shaped like a flag. ``change_id`` is the stage row's
+    id negated, so it never meets a check change's id."""
+    s = DetectionRuleStage
+    ranked = select(
+        s,
+        func.lag(s.stage).over(partition_by=s.rule_id, order_by=s.id).label("prev"),
+        func.row_number()
+        .over(partition_by=s.rule_id, order_by=s.id.desc())
+        .label("rn"),
+    ).subquery()
+    with get_db_manager().session_scope() as session:
+        rows = session.execute(
+            select(ranked, DetectionRule)
+            .join(DetectionRule, DetectionRule.id == ranked.c.rule_id)
+            .where(
+                ranked.c.rn == 1,
+                ranked.c.stage == "shadow",
+                ranked.c.prev == "live",
+                ranked.c.actor == "system",
+            )
+        ).all()
+        return sorted(
+            (
+                {
+                    "change_id": -row.id,
+                    "rule_id": row.rule_id,
+                    "name": row.DetectionRule.name,
+                    "tool": tool_of(row.DetectionRule.source),
+                    "status": row.DetectionRule.status,
+                    "check": "revert",
+                    "old": "live",
+                    "new": "shadow",
+                    "version": row.version,
+                    "reason": row.reason,
+                    "since": row.at.isoformat(),
+                }
+                for row in rows
+            ),
+            key=lambda f: f["since"],
+            reverse=True,
+        )
 
 
 def rule_health(days: int = 7) -> Dict[str, Any]:
@@ -1016,6 +1079,7 @@ _LISTING_TABLES = (
     "detection_rule_versions",
     "detection_rule_check_changes",
     "detection_rule_exceptions",
+    "detection_rule_stages",
 )
 _FIRES_TABLES = ("findings",)
 _listing_lock = threading.Lock()
@@ -1061,6 +1125,11 @@ def _copies_listed(session: Any) -> Dict[str, Any]:
     return {
         "rows": rows,
         "exceptions": active,
+        "stages": {
+            rid: (stage, at)
+            for rid, stage, at in session.execute(select(CURRENT_STAGE))
+        },
+        "moves": stage_moves(session.execute(STAGE_ROWS)),
         "rule_of": _rule_of_copy(session),
         "blind_spots": [
             {
@@ -1104,6 +1173,7 @@ def _health_rows(
     rule_of = copies["rule_of"]
     since_day = _window_start(today)
     excepted = copies.get("exceptions") or {}
+    stages = copies.get("stages") or {}
     listed = []
     fired: Dict[int, List[Dict[str, Any]]] = {}
     # Each copy's counted findings per UTC day, so a shorter window than Fires'
@@ -1132,6 +1202,8 @@ def _health_rows(
         state, why, raw = _health(rule.status, checks, count)
         flags, caught = _check_flags(checks)
         results = _results(checks)
+        stage, entered = stages.get(rule.id, (None, None))
+        moves = copies.get("moves") or {}
         listed.append(
             {
                 "rule_id": rule.id,
@@ -1160,6 +1232,14 @@ def _health_rows(
                 # Its active exceptions, and the hits they silenced (#3794).
                 "exceptions": len(excepted.get(rule.id, [])),
                 "silenced": _silenced(checks, excepted.get(rule.id, []), since_day),
+                # Its overlay copy's rollout stage and when its current stage row
+                # was written (#3995); days_in_shadow is worked out when read.
+                "stage": stage,
+                "stage_since": entered.isoformat() if entered else None,
+                "days_in_shadow": None,
+                # Its stage moves and hold, as GET /rules/{id}/stages reads them
+                # (#4050); a SIEM copy has no stage rows and none of these.
+                **moves.get(rule.id, {}),
             }
         )
     listed.sort(key=lambda row: (HEALTH_ORDER.index(row["health"]), row["rule_id"]))
@@ -1168,7 +1248,13 @@ def _health_rows(
     }
     counts: Dict[Optional[str], Dict[str, int]] = {None: dict.fromkeys(HEALTH_ORDER, 0)}
     flag_counts: Dict[Optional[str], Dict[str, int]] = {None: dict.fromkeys(FLAGS, 0)}
+    stage_counts: Dict[Optional[str], Dict[str, int]] = {None: dict.fromkeys(STAGES, 0)}
     for row in listed:
+        if row["stage"] in STAGES:
+            stage_counts[None][row["stage"]] += 1
+            stage_counts.setdefault(row["tool"], dict.fromkeys(STAGES, 0))[
+                row["stage"]
+            ] += 1
         for key in _row_flags(row):
             flag_counts[None][key] += 1
             flag_counts.setdefault(row["tool"], dict.fromkeys(FLAGS, 0))[key] += 1
@@ -1183,6 +1269,7 @@ def _health_rows(
         "by_state": by_state,
         "counts": counts,
         "flag_counts": flag_counts,
+        "stage_counts": stage_counts,
         "never_fired_rules": len(
             {
                 rule_of[row["rule_id"]]
@@ -1224,6 +1311,37 @@ def _listing_now() -> Dict[str, Any]:
         return {**_listing["health"], "blind_spots": _listing["copies"]["blind_spots"]}
 
 
+def stage_moves(rows: Iterable[Any]) -> Dict[int, Dict[str, Any]]:
+    """Per rule, from its stage rows ``(rule_id, stage, actor, proof)`` ordered by
+    rule then newest first (``STAGE_ROWS``, ``stages.history``'s order): how many there are, the
+    latest one's actor and from-stage, and whether a person holds the rule and
+    who (the latest row with a ``hold`` key decides, as rollout reads it)."""
+    by_rule: Dict[int, List[Any]] = {}
+    for rule_id, stage, actor, proof in rows:
+        by_rule.setdefault(rule_id, []).append((stage, actor, proof or {}))
+    out: Dict[int, Dict[str, Any]] = {}
+    for rule_id, rule_rows in by_rule.items():
+        hold = next((r for r in rule_rows if "hold" in r[2]), None)
+        held = hold is not None and hold[2]["hold"] is True
+        out[rule_id] = {
+            "stage_moves": len(rule_rows),
+            "stage_from": rule_rows[1][0] if len(rule_rows) > 1 else None,
+            "stage_actor": rule_rows[0][1],
+            "held": held,
+            "held_by": hold[1] if held else None,
+        }
+    return out
+
+
+def _with_days_in_shadow(row: Dict[str, Any], now: datetime) -> Dict[str, Any]:
+    """The row with whole 24-hour days since its shadow stage began, the count
+    rollout's promotion uses (``now - stage_since`` against SHADOW_DAYS days)."""
+    if row.get("stage") != "shadow" or not row.get("stage_since"):
+        return row
+    since = now - datetime.fromisoformat(row["stage_since"])
+    return {**row, "days_in_shadow": since // timedelta(days=1)}
+
+
 def health_listing(
     health: Optional[str] = None,
     tool: Optional[str] = None,
@@ -1233,9 +1351,12 @@ def health_listing(
     flag: Optional[str] = None,
     rule_ids: Optional[Iterable[int]] = None,
     has_exceptions: bool = False,
+    stage: Optional[str] = None,
+    now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """Every listed copy's health, ``RULE_ROWS`` from ``offset``, narrowed to one
-    ``health`` (or "attention", the states to act on), one ``tool``, one ``flag``
+    ``health`` (or "attention", the states to act on), one ``tool``, one ``stage``
+    (shadow, live or off: the copy's current rollout stage), one ``flag``
     (a failing Noisy, Quiet, Accurate, Silent or drift check, or a passing
     Caught), a ``q`` over name, technique, reason and data source, and
     ``rule_ids`` (the copies a rule-health entry names) before the cap. ``sort``
@@ -1277,6 +1398,7 @@ def health_listing(
         if state in states
         for row_tool, hay, row in built["by_state"][state]
         if kept(row_tool, hay, row)
+        and (stage is None or row["stage"] == stage)
         and (flag is None or flag in _row_flags(row))
         and (not has_exceptions or row.get("exceptions"))
     ]
@@ -1308,6 +1430,9 @@ def health_listing(
         "mapped": built["mapped"],
         "counts": built["counts"].get(tool, dict.fromkeys(HEALTH_ORDER, 0)),
         "flag_counts": built["flag_counts"].get(tool, dict.fromkeys(FLAGS, 0)),
+        "stage_counts": built.get("stage_counts", {}).get(
+            tool, dict.fromkeys(STAGES, 0)
+        ),
         "never_fired_rules": built.get("never_fired_rules", 0),
         "matched": len(shown),
         "matched_elsewhere": elsewhere,
@@ -1320,7 +1445,10 @@ def health_listing(
             if kept(t, hay, row) and row["rule_id"] not in shown_ids
         ),
         "offset": offset,
-        "rules": shown[offset : offset + RULE_ROWS],
+        "rules": [
+            _with_days_in_shadow(row, now or datetime.now(timezone.utc))
+            for row in shown[offset : offset + RULE_ROWS]
+        ],
         "by_siem": built["by_siem"],
         "blind_spots": built["blind_spots"],
         "fires_window_days": FIRES_WINDOW_DAYS,

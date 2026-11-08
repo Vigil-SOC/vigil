@@ -12,7 +12,6 @@ import yaml
 from core.agents.enablement import disabled_agent_ids, disabled_message
 from core.llm.defaults import DEFAULT_MODEL
 from core.response.ceiling import gated_tools
-from core.skills.skill_library import READ_SKILL_TOOL
 
 if TYPE_CHECKING:
     from core.integrations.mcp.registry import MCPRegistry
@@ -181,12 +180,16 @@ CAPABILITY_BOUNDS: Dict[str, Dict[str, int]] = {
 
 # The tools that answer each capability the arch asked for, bound to what this
 # deployment reports. provides is what the agent layer matches a role's needs on.
+# A need that is not a capability but names a catalogue tool binds that tool.
 def _bound_capabilities(
     needs: List[str], catalogue: Dict[str, Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
     bound: List[Dict[str, Any]] = []
     for capability in needs:
-        for name, server in _candidates_by_name(capability):
+        candidates = _candidates_by_name(capability)
+        if capability not in CAPABILITIES:
+            candidates = ((capability, None),)
+        for name, server in candidates:
             entry = catalogue.get(name)
             if entry is None:
                 continue
@@ -215,6 +218,22 @@ def _bound_capabilities(
                 capability,
             )
     return bound
+
+
+# The needs an operator manifest may not hold: neither a capability nor a tool
+# this deployment carries. Empty when every need binds or can bind.
+def unknown_needs(
+    needs: List[str], registry: Optional["MCPRegistry"] = None
+) -> List[str]:
+    catalogue = _tool_catalogue(registry)
+    return [n for n in needs if n not in CAPABILITIES and n not in catalogue]
+
+
+# What an investigate run's lead holds: an operator manifest's needs, else the
+# investigate plugin's.
+def lead_needs(definition: Any) -> List[str]:
+    needs = definition.metadata.get("needs")
+    return list(needs) if isinstance(needs, list) else list(INVESTIGATE_CAPABILITIES)
 
 
 # Flattened once, so every caller matching the catalogue reads from one definition.
@@ -271,15 +290,27 @@ def _prompt_for(agent_id: str) -> str:
     return _profile_for(agent_id).system_prompt
 
 
-# Compose allows phase.tools. The prompt already tells an agent whose profile
-# recommends read_skill to call it, so that name has to be on the phase or the
-# call the prompt requires is refused. Other recommended tools stay off the
-# phase: the workflow author listed what this step may use.
-def _tools_for(phase: Dict[str, Any], recommended: List[str]) -> List[str]:
-    tools = list(phase.get("tools") or [])
-    if READ_SKILL_TOOL in recommended and READ_SKILL_TOOL not in tools:
-        tools.append(READ_SKILL_TOOL)
-    return tools
+# What each phase's agent needs, in phase order, as its profile states them; nothing
+# for an agent that does not exist. A listing reads this, so custom agents load
+# once for all the phases and the on/off switch is not read: a run checks that.
+def phases_needs(phases: List[Dict[str, Any]]) -> List[List[str]]:
+    from core.agents.manager import (
+        CUSTOM_AGENT_ID_PREFIX,
+        AgentManager,
+        SOCAgentLibrary,
+    )
+
+    custom: Optional[Dict[str, Any]] = None
+    needs: List[List[str]] = []
+    for phase in phases:
+        agent = (phase or {}).get("agent") or (phase or {}).get("agent_id") or ""
+        profile = SOCAgentLibrary.get_agent(agent)
+        if profile is None and agent.startswith(CUSTOM_AGENT_ID_PREFIX):
+            if custom is None:
+                custom = AgentManager().agents
+            profile = custom.get(agent)
+        needs.append(list(profile.recommended_tools or []) if profile else [])
+    return needs
 
 
 # A file playbook writes one instructions block. A custom workflow authors the same
@@ -300,7 +331,30 @@ def _instructions_of(phase: Dict[str, Any]) -> str:
     return "\n\n".join(part for part in parts if part)
 
 
-def _phases_of(definition: Any) -> List[Dict[str, Any]]:
+# Every phase holds its agent's needs as this deployment binds them; without a
+# catalogue (a preflight read) the needs themselves. A need that binds nothing is
+# returned beside them, so the run journals a blind spot rather than a log line.
+def _phase_tools(
+    profile: Any, catalogue: Optional[Dict[str, Dict[str, Any]]]
+) -> Tuple[List[str], List[Dict[str, str]]]:
+    needs = list(profile.recommended_tools or [])
+    if catalogue is None:
+        return needs, []
+    tools: List[str] = []
+    unavailable: List[Dict[str, str]] = []
+    for need in needs:
+        bound = [t["id"] for t in _bound_capabilities([need], catalogue)]
+        if not bound:
+            unavailable.append(
+                {"tool": need, "reason": f"no tool in this deployment answers {need}"}
+            )
+        tools += [t for t in bound if t not in tools]
+    return tools, unavailable
+
+
+def _phases_of(
+    definition: Any, catalogue: Optional[Dict[str, Dict[str, Any]]] = None
+) -> List[Dict[str, Any]]:
     resolved: List[Dict[str, Any]] = []
     for index, phase in enumerate(definition.phases):
         phase = phase or {}
@@ -309,6 +363,7 @@ def _phases_of(definition: Any) -> List[Dict[str, Any]]:
             raise UnknownPlaybook(f"phase {index + 1} names no agent")
 
         profile = _profile_for(agent)
+        tools, unavailable = _phase_tools(profile, catalogue)
         resolved.append(
             {
                 "id": phase.get("id") or phase.get("phase_id") or f"phase-{index + 1}",
@@ -316,8 +371,9 @@ def _phases_of(definition: Any) -> List[Dict[str, Any]]:
                 "name": phase.get("name") or f"Phase {index + 1}",
                 "instructions": _instructions_of(phase),
                 "approval_required": bool(phase.get("approval_required")),
-                "tools": _tools_for(phase, profile.recommended_tools),
+                "tools": tools,
                 "prompt": profile.system_prompt,
+                **({"unavailable": unavailable} if unavailable else {}),
             }
         )
     return resolved
@@ -325,7 +381,7 @@ def _phases_of(definition: Any) -> List[Dict[str, Any]]:
 
 # The tools the phases name, as this deployment carries them. A catalogue handed
 # to the registry would widen every grant to everything, which is deny-by-default
-# inverted. One the deployment lacks is dropped here and reported by _drop_missing.
+# inverted. Phases hold only bound ids; _phase_tools reports the needs that bound none.
 def _tools_of(
     phases: List[Dict[str, Any]], catalogue: Dict[str, Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
@@ -362,19 +418,6 @@ def _budgets(phases: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {"max_calls": max(len(phases), 1) * per_phase, **DEFAULT_SPEND}
 
 
-# A tool a phase named and this deployment lacks leaves its grant and is recorded
-# on the phase, so the run journals a blind spot rather than a log line.
-def _drop_missing(phases: List[Dict[str, Any]], declared: List[str]) -> None:
-    for phase in phases:
-        missing = [tool for tool in phase["tools"] if tool not in declared]
-        phase["tools"] = [tool for tool in phase["tools"] if tool in declared]
-        if missing:
-            phase["unavailable"] = [
-                {"tool": tool, "reason": f"no tool in this deployment answers {tool}"}
-                for tool in missing
-            ]
-
-
 # Every outside tool whose stored class is reversible, irreversible, or none.
 # The id must be one config.tools actually carries: spec.ts refuses an approvals
 # name that is not declared. A phase that lists one parks on that call,
@@ -400,7 +443,8 @@ def resolve(
     if definition is None:
         raise UnknownPlaybook(f"no such workflow: {workflow_id}")
 
-    phases = _phases_of(definition)
+    catalogue = _tool_catalogue(registry)
+    phases = _phases_of(definition, catalogue)
     # A lead has no steps; its playbook is the objectives and the body. Compose
     # with none completes instantly having done nothing, which reads exactly
     # like a run that worked.
@@ -409,10 +453,9 @@ def resolve(
             f"{workflow_id} declares no phases; there is nothing to run"
         )
 
-    catalogue = _tool_catalogue(registry)
     # A lead holds what it asked for; compose grants per phase and has no lead.
     lead = (
-        _bound_capabilities(list(INVESTIGATE_CAPABILITIES), catalogue)
+        _bound_capabilities(lead_needs(definition), catalogue)
         if definition.run_kind == "investigate"
         else []
     )
@@ -421,7 +464,6 @@ def resolve(
         for tool in _tools_of(phases, catalogue)
         if tool["id"] not in {held["id"] for held in lead}
     ]
-    _drop_missing(phases, [tool["id"] for tool in tools])
 
     playbook = {
         "name": definition.name,

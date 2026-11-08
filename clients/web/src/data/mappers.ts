@@ -343,13 +343,9 @@ export interface ApiAgent {
   id: string
   name?: string
   description?: string
-  icon?: string
-  color?: string
-  specialization?: string
   recommended_tools?: string[]
   model?: string | null
   model_source?: AgentTemplate['modelSource']
-  component_category?: string | null
   skills?: number
   changes?: AgentTemplate['changes']
   tool_changes?: AgentTemplate['toolChanges']
@@ -364,13 +360,11 @@ export function mapApiAgent(a: ApiAgent): AgentTemplate {
   return {
     name: a.name || a.id,
     handle: a.id,
-    spec: a.specialization || a.description || '—',
-    ini: a.icon || initials(a.name || a.id),
-    color: a.color || 'var(--accent)',
-    does: a.description || a.specialization || '—',
+    ini: initials(a.name || a.id),
+    color: 'var(--accent)',
+    does: a.description || '—',
     model: a.model ?? null,
     modelSource: a.model_source ?? null,
-    category: a.component_category ?? null,
     skills: a.skills ?? 0,
     changes: a.changes ?? null,
     toolChanges: a.tool_changes ?? {},

@@ -29,6 +29,8 @@ Usage: $0 [--daemon|-d] [--with <profile>] [--all]
 
 Core services come from .vigil-autostart (or \$AUTOSTART_SERVICES, else
 postgres redis bifrost ollama). --with/--all are additive to that list.
+Starting otel-collector sets OTEL_EXPORTER_OTLP_ENDPOINT to it when empty,
+which turns on trace and OTLP metric export.
 EOF
 }
 
@@ -213,6 +215,16 @@ ensure_redis_password || exit 1
 if [ -z "${BIFROST_URL+x}" ] || [ "${BIFROST_URL}" = "http://bifrost:8080" ]; then
     export BIFROST_URL="http://localhost:8080"
 fi
+
+# An endpoint is what turns telemetry export on. Starting the collector here
+# points the host-run processes at its published port, unless .env or the
+# caller already chose one.
+case " $EXTRA_SERVICES " in
+    *" otel-collector "*)
+        if [ -z "$(printf '%s' "${OTEL_EXPORTER_OTLP_ENDPOINT:-}" | tr -d '[:space:]')" ]; then
+            export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"
+        fi ;;
+esac
 
 # --- Services (autostart list + any --with/--all extras) ---
 start_autostart_services

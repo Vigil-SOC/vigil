@@ -2,6 +2,7 @@
 // and the Python backend, which enqueues plain JSON and writes no ledger.
 
 import type { RunKind, RunPayload } from "./events.js";
+import type { SkillSpec } from "./plugin.js";
 
 export const JOB_SCHEMA_VERSION = 1;
 
@@ -25,6 +26,9 @@ interface JobBase {
   // The W3C traceparent of whoever enqueued it, so the run's spans continue that
   // request's trace. Optional: absent when tracing is off, and on any older job.
   traceparent?: string;
+  // The case the run was started on, when there is one. Put on the run's root span
+  // and journaled with the spec (sections.refs), so a resume carries it too.
+  case_id?: string;
 }
 
 // References rather than resolved content: the worker resolves them and journals
@@ -51,6 +55,11 @@ export interface StartRequest {
   // Whether a person approves the hypotheses before the hunt spends anything. The policy
   // defaults to auto, so a headless run advances with nobody to ask.
   approve_hypotheses?: boolean;
+  // An operator's plugin manifest (YAML) for an investigate run, in place of
+  // plugins/investigate, and the skills it names that the bundled library lacks,
+  // resolved Python-side. Journaled on the spec, so a resume needs no request.
+  manifest?: string;
+  manifest_skills?: SkillSpec[];
 }
 
 // A resume carries no request, so a resume path that read one would not compile.

@@ -283,11 +283,15 @@ class WorkflowDefinition:
                 seen.append(agent)
         return seen
 
+    # What the phase agents need: a phase's agent brings its tools, so a stored
+    # phase.tools list is ignored.
     @property
     def tools_used(self) -> List[str]:
+        from core.workflows.playbook_resolver import phases_needs
+
         seen: List[str] = []
-        for phase in self.phases:
-            for tool in (phase or {}).get("tools") or []:
+        for needs in phases_needs(self.phases):
+            for tool in needs:
                 if tool not in seen:
                     seen.append(tool)
         return seen
@@ -357,12 +361,30 @@ class WorkflowDefinition:
 
 def _agent_run_definition(workflow_id: str) -> Optional[WorkflowDefinition]:
     """One phase holding one agent and its own tools; None for an unknown or disabled agent."""
+    from core.agents.manager import CUSTOM_AGENT_ID_PREFIX
     from core.workflows.playbook_resolver import UnknownPlaybook, _profile_for
 
     try:
         agent = _profile_for(workflow_id.removeprefix(AGENT_RUN_PREFIX))
     except UnknownPlaybook:
         return None
+    # An operator (custom-) agent runs as investigate under its manifest: its
+    # conclusion reaches the case through the same bridge the built-in's does. A
+    # built-in stays the one compose phase holding its own tools.
+    if agent.id.startswith(CUSTOM_AGENT_ID_PREFIX) and agent.manifest:
+        return WorkflowDefinition(
+            workflow_id=workflow_id,
+            file_path=None,
+            metadata={
+                "name": f"{agent.name} on its own",
+                "description": agent.description
+                or f"Runs {agent.name} on one alert or case.",
+                "run_kind": INVESTIGATE_RUN_KIND,
+                "operator_manifest": agent.manifest,
+                "needs": list(agent.recommended_tools),
+            },
+            body="",
+        )
     return WorkflowDefinition(
         workflow_id=workflow_id,
         file_path=None,
@@ -380,7 +402,6 @@ def _agent_run_definition(workflow_id: str) -> Optional[WorkflowDefinition]:
                         "say what you conclude.\n\nExpected output: a verdict with the "
                         "evidence for it, and what a person should do next."
                     ),
-                    "tools": list(agent.recommended_tools or []),
                 }
             ],
         },
@@ -428,6 +449,8 @@ def _render_custom_workflow_body(
 ) -> str:
     """Render a markdown body from structured phases, compatible with
     build_execution_prompt()'s template."""
+    from core.workflows.playbook_resolver import phases_needs
+
     lines: List[str] = []
     lines.append(f"# {wf.get('name', wf.get('workflow_id'))}")
     if wf.get("description"):
@@ -436,7 +459,7 @@ def _render_custom_workflow_body(
     lines.append("")
     lines.append("## Agent Sequence")
     lines.append("")
-    for phase in phases:
+    for phase, tools in zip(phases, phases_needs(phases)):
         order = phase.get("order", "?")
         name = phase.get("name", f"Phase {order}")
         agent = phase.get("agent_id", "")
@@ -444,7 +467,6 @@ def _render_custom_workflow_body(
         if phase.get("purpose"):
             lines.append("")
             lines.append(f"**Purpose:** {phase['purpose']}")
-        tools = phase.get("tools") or []
         if tools:
             lines.append("")
             lines.append("**Tools:** " + ", ".join(f"`{t}`" for t in tools))
@@ -630,6 +652,7 @@ class WorkflowsService:
         and the outcome are read back through the run record, which the
         agent layer mirrors as each phase completes.
         """
+        from core.agents.operator_manifest import operator_request
         from core.agents.queue import build_start_job, enqueue_run
 
         workflow = self.get_workflow(workflow_id)
@@ -783,11 +806,13 @@ class WorkflowsService:
             run_id=run_id,
             # The definition's run_kind, so both entry points queue the same loop.
             run_kind=workflow.run_kind,
-            request=spec,
+            # A custom agent's manifest and skills ride the job, not the trail entry.
+            request={**spec, **operator_request(workflow.metadata)},
             enqueued_by=actor or triggered_by or "api",
             principal=principal,
             actor=actor_principal,
             origin=resolved_origin,
+            case_id=context.get("case_id"),
         )
         try:
             job_id = await enqueue_run(job)

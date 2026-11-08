@@ -6,7 +6,7 @@ import { Markdown } from '../../shared/Markdown'
 import { Toggle } from '../../shared/ui'
 import type { Workflow } from '../../data/appData'
 import { workflowApi } from '../../services/api'
-import { modelSource, useAgentMeta } from './useWorkflowsData'
+import { modelSource, useAgentMeta, type AgentGrant } from './useWorkflowsData'
 import { CHECKPOINT_CLASSES, HANDOFF_ROW, LOOP_CAPTION, composeStrip, stripFor, type RoleRef, type StageDef, type Strip } from './readerStages'
 
 /* What a workflow is, read before it runs: the definition plus the preflight
@@ -33,7 +33,7 @@ interface Preflight {
   checkpoints_note: string | null
 }
 
-interface Phase { agent?: string; agent_id?: string; name?: string; tools?: string[]; approval_required?: boolean }
+interface Phase { agent?: string; agent_id?: string; name?: string; approval_required?: boolean }
 
 /** GET /workflows/{id}, or an unsaved draft. */
 interface Definition {
@@ -65,9 +65,10 @@ interface ReaderActions {
 }
 
 /** A draft's `onSave` resolves once the workflow exists and rejects with what the server said. */
-type ReaderProps = ({ wf: Workflow } & ReaderActions) | { draft: DraftDefinition; onBack?: () => void; onSave: () => Promise<unknown>; onChangeDescription: () => void }
+type ReaderProps = ({ wf: Workflow } & ReaderActions) | { draft: DraftDefinition; grants: AgentGrant[]; onBack?: () => void; onSave: () => Promise<unknown>; onChangeDescription: () => void }
 
 const DRAFT_MISSING = 'Shown once the workflow is saved.'
+const DRAFT_ASKS = 'Which of these ask you first is shown once the workflow is saved.'
 const NOT_LOADED = 'Couldn’t load this.'
 
 function errMsg(e: unknown): string {
@@ -88,12 +89,14 @@ interface Source {
 
 const NO_DEFINITION: Definition = {}
 
-function draftSource(draft: DraftDefinition): Source {
+// An agent missing from the list shows no tools rather than a list the run would not grant.
+function draftSource(draft: DraftDefinition, grants: AgentGrant[]): Source {
   const phases = draft.phases ?? []
+  const needs = new Map(grants.map((g) => [g.id, g.recommended_tools]))
   const helpers = phases.map((p) => ({
     agent: p.agent_id || p.agent || '',
     name: p.name || p.agent_id || '',
-    tools: p.tools ?? [],
+    tools: needs.get(p.agent_id || p.agent || '') ?? [],
     approval_required: !!p.approval_required,
   }))
   return {
@@ -104,7 +107,7 @@ function draftSource(draft: DraftDefinition): Source {
   }
 }
 
-function useSource(id: string | null, draft: DraftDefinition | null): Source {
+function useSource(id: string | null, draft: DraftDefinition | null, grants: AgentGrant[]): Source {
   const [state, setState] = useState<Source>({ phase: 'loading', definition: NO_DEFINITION, pre: {}, missing: NOT_LOADED })
   useEffect(() => {
     if (!id) return
@@ -122,7 +125,7 @@ function useSource(id: string | null, draft: DraftDefinition | null): Source {
     })
     return () => { cancelled = true }
   }, [id])
-  return draft ? draftSource(draft) : state
+  return draft ? draftSource(draft, grants) : state
 }
 
 /** A role card, with the refs a stage may name it by. */
@@ -263,7 +266,7 @@ function HowItRuns({ strip, entries, pre, selected, onSelect, children }: {
 
 function ModelLine({ pre }: { pre: Partial<Preflight> }) {
   if (!pre.model) return null
-  const source = modelSource({ model: pre.model, modelSource: pre.model_source ?? null, category: 'investigation' })
+  const source = modelSource({ model: pre.model, modelSource: pre.model_source ?? null })
   return (
     <span className="flex flex-col gap-px">
       <span className="text-[13px] text-tx" style={{ fontWeight: 650 }}>{pre.model}</span>
@@ -344,7 +347,14 @@ function MayDo({ entries, pre, stage, missing }: { entries: Entry[]; pre: Partia
   const rows = (pre.permissions ?? []).filter((p) => !stage || tools.has(p.name) || (stage.handoff && p.name === HANDOFF_ROW))
   return (
     <Panel title="What it may do on its own">
-      {!pre.permissions && <Muted>{missing}</Muted>}
+      {/* a draft has no preflight: it lists what the agents hold, not yet whether each asks first */}
+      {!pre.permissions && tools.size > 0 && (
+        <>
+          {[...tools].map((name) => <span key={name} className="min-w-0 break-words font-mono text-[12px] text-tx-2">{name}</span>)}
+          <Muted>{DRAFT_ASKS}</Muted>
+        </>
+      )}
+      {!pre.permissions && tools.size === 0 && <Muted>{missing}</Muted>}
       {pre.permissions && rows.length === 0 && <Muted>{stage ? 'Nothing it does at this stage needs a permission.' : pre.permissions_note ?? 'It holds no tools.'}</Muted>}
       {rows.map((p) => {
         // optional: an opt-in source that is not connected, which the run counts nothing against
@@ -558,7 +568,7 @@ function Header({ name, wf, actions, definition, onSave, onChangeDescription }: 
 
 export default function WorkflowReaderPane(props: ReaderProps) {
   const draft = 'draft' in props ? props.draft : null
-  const { phase, definition, pre, missing } = useSource('wf' in props ? props.wf.id : null, draft)
+  const { phase, definition, pre, missing } = useSource('wf' in props ? props.wf.id : null, draft, 'draft' in props ? props.grants : [])
   const [selected, setSelected] = useState<number | null>(null)
   // a new draft may have other stages at the same place
   useEffect(() => setSelected(null), [draft])
@@ -571,7 +581,7 @@ export default function WorkflowReaderPane(props: ReaderProps) {
   const stages = strip ? [...strip.before, ...strip.loop, ...strip.after] : []
   const stage = selected === null ? null : stages[selected] ?? null
   const panels = single ? (
-    <div className="grid grid-cols-2 gap-3 items-start">
+    <div className="wfk-panels grid grid-cols-2 gap-3 items-start">
       <RunsAsOneAgent definition={definition} entries={entries} pre={pre} missing={missing} />
       <div className="flex flex-col gap-3">
         <MayDo entries={entries} pre={pre} stage={null} missing={missing} />
@@ -579,7 +589,7 @@ export default function WorkflowReaderPane(props: ReaderProps) {
       </div>
     </div>
   ) : (
-    <div className="grid grid-cols-3 gap-3 items-start">
+    <div className="wfk-panels grid grid-cols-3 gap-3 items-start">
       <WhoDoesIt entries={entries} pre={pre} stage={stage} huntLike={huntLike} missing={missing} />
       <MayDo entries={entries} pre={pre} stage={stage} missing={missing} />
       <StopsAndCheckpoints definition={definition} single={false} pre={pre} stage={stage} selected={selected} missing={missing} />

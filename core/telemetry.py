@@ -1,13 +1,14 @@
 """
 core/telemetry.py — OpenTelemetry bootstrap for Vigil SOC.
 
-When VIGIL_OTEL_ENABLED is falsy OR the SDK cannot be imported, every
-public function returns a no-op object. Telemetry failures never crash
-the application.
+Metrics are always on: the Prometheus reader behind /metrics is a local pull.
+Traces and OTLP metric export start only when OTEL_EXPORTER_OTLP_ENDPOINT is
+set; otherwise the tracer helpers are no-ops. If the SDK cannot be imported
+every public function returns a no-op object. Telemetry failures never crash
+the application. Span schema: docs/telemetry.md.
 
 Environment variables:
-    VIGIL_OTEL_ENABLED              Master switch ("true"/"1"/"yes" to enable)
-    OTEL_EXPORTER_OTLP_ENDPOINT     Collector address (default http://localhost:4317)
+    OTEL_EXPORTER_OTLP_ENDPOINT     Collector address; empty (default) exports nothing
     ENVIRONMENT                     Deployment environment label (default "development")
     RELEASE_VERSION                 Service version label (default "unknown")
 """
@@ -26,7 +27,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Module state
 # ---------------------------------------------------------------------------
-_initialized: bool = False
+_metrics_initialized: bool = False  # MeterProvider installed (always attempted)
+_tracing_initialized: bool = False  # TracerProvider + OTLP export (endpoint set)
 _tracer_provider: Any = None
 _meter_provider: Any = None
 
@@ -36,8 +38,9 @@ _meter_provider: Any = None
 # ---------------------------------------------------------------------------
 
 
-def _is_otel_enabled() -> bool:
-    return get_settings().vigil_otel_enabled
+def otlp_endpoint() -> str:
+    """The collector address, or "" when export is off. The one switch."""
+    return (get_settings().otel_exporter_otlp_endpoint or "").strip()
 
 
 # ---------------------------------------------------------------------------
@@ -134,31 +137,30 @@ class _FallbackNoOpMeter:
 # ---------------------------------------------------------------------------
 
 
-def _do_init(service_name: str) -> None:
-    """Actually initialize OTEL providers. Raises on any failure."""
-    from opentelemetry import metrics, trace
-    from opentelemetry.sdk.metrics import MeterProvider
+def _resource(service_name: str) -> Any:
     from opentelemetry.sdk.resources import Resource
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor
-
-    global _tracer_provider, _meter_provider
 
     settings = get_settings()
-    endpoint = settings.otel_exporter_otlp_endpoint
-    environment = settings.environment
-    version = settings.release_version
-
-    resource = Resource.create(
+    return Resource.create(
         {
             "service.name": service_name,
-            "service.version": version,
-            "deployment.environment": environment,
+            "service.version": settings.release_version,
+            "deployment.environment": settings.environment,
             "vigil.component": service_name,
         }
     )
 
-    # --- TracerProvider ---
+
+def _init_tracing(service_name: str, endpoint: str) -> None:
+    """Install the TracerProvider exporting to *endpoint*. Raises on any failure."""
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+    global _tracer_provider
+
+    resource = _resource(service_name)
+
     try:
         from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
             OTLPSpanExporter,
@@ -193,36 +195,45 @@ def _do_init(service_name: str) -> None:
 
         tracer_provider.add_span_processor(SentrySpanProcessor())
 
+    # The global provider can be set once per process; after a shutdown and
+    # re-init the new one is still what get_tracer() hands out via _tracer_provider.
     trace.set_tracer_provider(tracer_provider)
     _tracer_provider = tracer_provider
 
-    # --- MeterProvider ---
-    # Two readers, not either/or. The Prometheus reader registers its collector
-    # on prometheus_client's default REGISTRY, which is what the backend
-    # /metrics route and the daemon's :9090 listener serve. The OTLP reader
+
+def _init_metrics(service_name: str, endpoint: str) -> None:
+    """Install the MeterProvider. Raises on any failure."""
+    from opentelemetry import metrics
+    from opentelemetry.exporter.prometheus import PrometheusMetricReader
+    from opentelemetry.sdk.metrics import MeterProvider
+
+    global _meter_provider
+
+    # The Prometheus reader registers its collector on prometheus_client's
+    # default REGISTRY, which is what the backend /metrics route and the
+    # daemon's :9090 listener serve. With an endpoint, an OTLP reader also
     # pushes to the collector so processes with no HTTP port (llm-worker)
     # still appear on the collector's Prometheus exporter.
-    from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
-        OTLPMetricExporter,
-    )
-    from opentelemetry.exporter.prometheus import PrometheusMetricReader
-    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+    readers: list = []
+    if endpoint:
+        from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+            OTLPMetricExporter,
+        )
+        from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 
-    # OTLP first: constructing PrometheusMetricReader registers on REGISTRY, so
+        readers.append(
+            PeriodicExportingMetricReader(
+                OTLPMetricExporter(endpoint=endpoint, insecure=True)
+            )
+        )
+    # Last: constructing PrometheusMetricReader registers on REGISTRY, so
     # anything that can raise happens before that side effect.
-    otlp_reader = PeriodicExportingMetricReader(
-        OTLPMetricExporter(endpoint=endpoint, insecure=True)
-    )
+    readers.insert(0, PrometheusMetricReader())
     meter_provider = MeterProvider(
-        resource=resource,
-        metric_readers=[PrometheusMetricReader(), otlp_reader],
+        resource=_resource(service_name), metric_readers=readers
     )
     metrics.set_meter_provider(meter_provider)
     _meter_provider = meter_provider
-
-    logger.info(
-        "OpenTelemetry initialized for service '%s' → %s", service_name, endpoint
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -234,34 +245,40 @@ def init_telemetry(service_name: str) -> bool:
     """
     Bootstrap tracing and metrics for a process.
 
-    Safe to call multiple times — subsequent calls are no-ops if already
-    initialized. Returns True if OTEL was actually enabled and initialized.
+    Metrics always start; traces and OTLP export only when an endpoint is set.
+    Safe to call multiple times — each half is skipped once initialized.
+    Returns True if export to a collector is running.
     """
-    global _initialized
+    global _metrics_initialized, _tracing_initialized
 
-    if not _is_otel_enabled():
-        logger.debug("VIGIL_OTEL_ENABLED is not set — telemetry disabled")
+    endpoint = otlp_endpoint()
+    if not _metrics_initialized:
+        try:
+            _init_metrics(service_name, endpoint)
+            _metrics_initialized = True
+        except Exception as exc:
+            logger.warning("OpenTelemetry metrics failed to start (non-fatal): %s", exc)
+
+    if not endpoint:
+        logger.debug("OTEL_EXPORTER_OTLP_ENDPOINT is empty — nothing exported")
         return False
-
-    if _initialized:
-        return True
-
-    try:
-        _do_init(service_name)
-        _initialized = True
-        return True
-    except Exception as exc:
-        logger.warning("OpenTelemetry initialization failed (non-fatal): %s", exc)
-        return False
+    if not _tracing_initialized:
+        try:
+            _init_tracing(service_name, endpoint)
+            _tracing_initialized = True
+            logger.info(
+                "OpenTelemetry export for service '%s' → %s", service_name, endpoint
+            )
+        except Exception as exc:
+            logger.warning("OpenTelemetry tracing failed to start (non-fatal): %s", exc)
+    return _tracing_initialized
 
 
 def get_tracer(name: str) -> Any:
     """Return a tracer. Always safe to call — returns a no-op when disabled."""
-    if _initialized:
+    if _tracing_initialized and _tracer_provider is not None:
         try:
-            from opentelemetry import trace
-
-            return trace.get_tracer(name)
+            return _tracer_provider.get_tracer(name)
         except Exception:
             pass
     return _FallbackNoOpTracer()
@@ -269,11 +286,9 @@ def get_tracer(name: str) -> Any:
 
 def get_meter(name: str) -> Any:
     """Return a meter. Always safe to call — returns a no-op when disabled."""
-    if _initialized:
+    if _metrics_initialized and _meter_provider is not None:
         try:
-            from opentelemetry import metrics
-
-            return metrics.get_meter(name)
+            return _meter_provider.get_meter(name)
         except Exception:
             pass
     return _FallbackNoOpMeter()
@@ -286,9 +301,11 @@ def inject_traceparent(carrier: Optional[dict] = None) -> dict:
     """
     if carrier is None:
         carrier = {}
-    if _initialized:
+    if _tracing_initialized:
         try:
-            from opentelemetry.propagators.textmap import TraceContextTextMapPropagator
+            from opentelemetry.trace.propagation.tracecontext import (
+                TraceContextTextMapPropagator,
+            )
 
             TraceContextTextMapPropagator().inject(carrier)
         except Exception:
@@ -301,9 +318,11 @@ def extract_traceparent(carrier: dict) -> Any:
     Extract W3C trace context from *carrier* and return an OTEL Context.
     Returns None when disabled or on any error.
     """
-    if _initialized and carrier:
+    if _tracing_initialized and carrier:
         try:
-            from opentelemetry.propagators.textmap import TraceContextTextMapPropagator
+            from opentelemetry.trace.propagation.tracecontext import (
+                TraceContextTextMapPropagator,
+            )
 
             return TraceContextTextMapPropagator().extract(carrier)
         except Exception:
@@ -386,7 +405,7 @@ def record_llm_call(
         if metrics is None:
             meter = get_meter("vigil.llm")
             metrics = create_genai_metrics(meter)
-            if _initialized and not isinstance(meter, _FallbackNoOpMeter):
+            if _metrics_initialized and not isinstance(meter, _FallbackNoOpMeter):
                 _genai_metrics = metrics
 
         metrics["llm_calls"].add(1, attrs)
@@ -414,7 +433,7 @@ def record_budget_unenforced(reason: str) -> None:
         if metrics is None:
             meter = get_meter("vigil.llm")
             metrics = create_genai_metrics(meter)
-            if _initialized and not isinstance(meter, _FallbackNoOpMeter):
+            if _metrics_initialized and not isinstance(meter, _FallbackNoOpMeter):
                 _genai_metrics = metrics
         metrics["llm_budget_unenforced"].add(1, {"reason": reason})
     except Exception:
@@ -428,7 +447,8 @@ def shutdown() -> None:
     Safe to call even when OTEL was never initialized.
     After shutdown, init_telemetry() may be called again.
     """
-    global _initialized, _tracer_provider, _meter_provider, _genai_metrics
+    global _metrics_initialized, _tracing_initialized
+    global _tracer_provider, _meter_provider, _genai_metrics
 
     if _tracer_provider is not None:
         try:
@@ -447,7 +467,9 @@ def shutdown() -> None:
     _tracer_provider = None
     _meter_provider = None
     _genai_metrics = None  # instruments belong to the provider just shut down
-    _initialized = False  # reset so init_telemetry() can be called again
+    # reset so init_telemetry() can be called again
+    _metrics_initialized = False
+    _tracing_initialized = False
 
 
 # Alias used in the plan and by callers that prefer the longer name

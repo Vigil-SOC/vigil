@@ -58,7 +58,6 @@ from core.skills.skill_library import (
 from core.storage.config_service import get_config_service
 from core.storage.models import (
     AIModelConfig,
-    CustomAgent,
     EpisodicDistilMarker,
     User,
 )
@@ -618,12 +617,10 @@ def set_theme_config(
 def assigned_model_ids(session) -> set[str]:
     """Distinct models actually assigned. ``fallback_model`` is not one of them."""
     found: set[str] = set()
-    columns = (AIModelConfig.model_id, CustomAgent.model)
-    for column in columns:
-        for (value,) in session.query(column).all():
-            text = value.strip() if isinstance(value, str) else ""
-            if text:
-                found.add(text)
+    for (value,) in session.query(AIModelConfig.model_id).all():
+        text = value.strip() if isinstance(value, str) else ""
+        if text:
+            found.add(text)
     return found
 
 
