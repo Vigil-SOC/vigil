@@ -237,6 +237,12 @@ class Settings(BaseSettings):
     password_reset_ttl_seconds: int = 3600
     revocation_fail_open: bool = False
 
+    # Vigil's own Wazuh manager, the wazuh-sandbox compose profile (#4099): it
+    # counts shadow Wazuh copies with wazuh-logtest. Empty: no sandbox.
+    wazuh_sandbox_url: str = ""
+    wazuh_sandbox_username: str = "wazuh"
+    wazuh_sandbox_password: Optional[SecretStr] = None
+
     # LLM / gateway
     # Host-run default: `bifrost` resolves only inside the compose network, and
     # compose, Helm and start.sh all inject the right hostname explicitly.

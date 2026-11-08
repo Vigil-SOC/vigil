@@ -313,7 +313,7 @@ def run(monkeypatch):
         monkeypatch.setattr(
             rollout,
             "_write_runs",
-            lambda cs, results, now, excepted=None: wrote["runs"].update(results)
+            lambda cs, results, now, excepted=None, sampled=None: wrote["runs"].update(results)
             or len(results),
         )
         report = rollout.RolloutReport()
