@@ -115,7 +115,10 @@ def test_the_repositories_are_indexed_and_a_bad_file_is_listed_not_fatal(tmp_pat
     live = _Copy("100200", _rule("<match>live</match>", rid="100200"))
     repo = wazuh_sandbox.read_repos([_repo(tmp_path)], [live])
     assert repo.rule_file["100001"] == "acme/rules/local_rules.xml"
-    assert repo.group_files["acme"] == ["acme/rules/local_rules.xml"]
+    assert repo.group_rules["acme"] == [
+        ("100001", "acme/rules/local_rules.xml"),
+        ("100100", "acme/rules/local_rules.xml"),
+    ]
     assert repo.decoder_file["acmeapp-user"] == "acme/decoders/local_decoder.xml"
     assert repo.needs["acme/rules/local_rules.xml"]["decoded_as"] == ["acmeapp"]
     assert repo.rule_file["100200"] == "overlay/100200.xml"
@@ -154,6 +157,66 @@ async def test_only_the_files_the_copies_need_are_planned(tmp_path, monkeypatch)
         "100301", _rule("<if_sid>5710</if_sid><match>x</match>", rid="100301")
     )
     assert await box.plan([stock_child], repo) == ([], [])
+
+
+@pytest.mark.asyncio
+async def test_if_group_loads_only_the_groups_rules_the_stock_ruleset_lacks(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "corp"
+    root.mkdir()
+    # The repository carries a stock file (its rules are the image's own) and
+    # one custom rule in the same group.
+    (root / "0095-sshd_rules.xml").write_text(
+        '<group name="syslog,sshd,"><rule id="5710" level="5"><match>illegal</match>'
+        "<group>authentication_failed,</group><description>s</description></rule>"
+        '<rule id="5711" level="0"><match>x</match>'
+        "<group>authentication_failed,</group><description>t</description></rule></group>"
+    )
+    (root / "local_rules.xml").write_text(
+        '<group name="local,authentication_failed,"><rule id="100060" level="5">'
+        "<match>corp-vpn</match><description>c</description></rule></group>"
+    )
+    repo = wazuh_sandbox.read_repos([root])
+    box = _sandbox(lambda r: _ok({}))
+    asked = []
+
+    async def loaded(ids):
+        asked.append(sorted(ids))
+        return {"5710", "5711"} & set(ids)
+
+    async def has(kind, name):
+        return False
+
+    monkeypatch.setattr(box, "_loaded", loaded)
+    monkeypatch.setattr(box, "_has", has)
+    copy = _Copy(
+        "100300", _rule("<if_group>authentication_failed</if_group><match>m</match>")
+    )
+    assert await box.plan([copy], repo) == (["corp/local_rules.xml"], [])
+    assert asked == [["100060", "5710", "5711"]]  # one listing for the group
+
+
+@pytest.mark.asyncio
+async def test_a_busy_managers_timeout_is_asked_again(monkeypatch):
+    slept, answers = [], [500, 200]
+
+    async def sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr(wazuh_sandbox.asyncio, "sleep", sleep)
+
+    def handler(request):
+        if request.url.path.endswith("/authenticate"):
+            return _ok({"token": "t"})
+        if answers.pop(0) == 500:
+            return httpx.Response(500, json={"title": "Timeout executing API request"})
+        return _ok({"hostname": "wazuh-sandbox"})
+
+    box = _sandbox(handler)
+    box.retry_waits = (7.0,)
+    assert (await box._request("GET", "/"))["hostname"] == "wazuh-sandbox"
+    assert 7.0 in slept
 
 
 @pytest.mark.asyncio

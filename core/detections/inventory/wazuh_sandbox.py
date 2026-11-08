@@ -194,7 +194,8 @@ class Repo:
     rules: Dict[str, str] = field(default_factory=dict)  # file -> text
     decoders: Dict[str, str] = field(default_factory=dict)
     rule_file: Dict[str, str] = field(default_factory=dict)  # rule id -> file
-    group_files: Dict[str, List[str]] = field(default_factory=dict)
+    # group -> (rule id, file) for each rule in it
+    group_rules: Dict[str, List[Tuple[str, str]]] = field(default_factory=dict)
     decoder_file: Dict[str, str] = field(default_factory=dict)  # name -> file
     needs: Dict[str, Dict[str, List[str]]] = field(default_factory=dict)
     unreadable: List[str] = field(default_factory=list)  # "file: why"
@@ -208,9 +209,8 @@ class Repo:
             if rid:
                 self.rule_file.setdefault(rid, name)
             for group in wazuh_xml.groups(rule, enclosing):
-                files = self.group_files.setdefault(group, [])
-                if name not in files:
-                    files.append(name)
+                if rid:
+                    self.group_rules.setdefault(group, []).append((rid, name))
             _parents_of(rule, needs)
 
     def add_decoders(self, name: str, text: str) -> None:
@@ -308,14 +308,30 @@ class Sandbox(WazuhService):
     read-only), Vigil writes its rule and decoder files."""
 
     pace = 60.0 / CALLS_PER_MINUTE  # seconds between calls
+    # A busy manager (a fresh one's first minutes, a big listing) answers 500
+    # "Timeout executing API request": wait and ask again, this long each time.
+    retry_waits: Tuple[float, ...] = (10.0, 30.0)
     _next = 0.0  # monotonic time the next call may go
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        kwargs.setdefault("timeout", 120.0)  # GET /rules takes seconds on 4.9.2
+        super().__init__(*args, **kwargs)
+
     async def _request(self, method: str, path: str, **kwargs) -> Dict[str, Any]:
-        wait = self._next - time.monotonic()
-        if wait > 0:
-            await asyncio.sleep(wait)
-        self._next = time.monotonic() + self.pace
-        return await super()._request(method, path, **kwargs)
+        for wait_after in (*self.retry_waits, None):
+            wait = self._next - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._next = time.monotonic() + self.pace
+            try:
+                return await super()._request(method, path, **kwargs)
+            except WazuhError as exc:
+                if wait_after is None or "Timeout executing API request" not in str(
+                    exc
+                ):
+                    raise
+                await asyncio.sleep(wait_after)
+        raise AssertionError("unreachable")  # pragma: no cover
 
     async def guard(self, theirs: Optional[Mapping[str, Any]]) -> Optional[str]:
         """Why Vigil may not write to this sandbox, or None: it is the customer's
@@ -364,6 +380,22 @@ class Sandbox(WazuhService):
             return 0
         return int(data.get("total_affected_items") or 0)
 
+    async def _loaded(self, ids: Sequence[str]) -> set:
+        """Which of the rule ids the sandbox has loaded: a few listings, not one each."""
+        found: set = set()
+        unique = sorted(set(ids))
+        for n in range(0, len(unique), 100):
+            chunk = unique[n : n + 100]
+            try:
+                have, _ = await self.list_rules(rule_ids=chunk)
+            except WazuhError as exc:
+                # When none of the ids is loaded the manager fails the whole call.
+                if "does not exist" not in str(exc):
+                    raise
+                continue
+            found |= {str(r.get("id")) for r in have}
+        return found
+
     async def _has(self, kind: str, name: str) -> bool:
         """Whether the sandbox has loaded the rule id or decoder ``name``."""
         if kind == "rule":
@@ -396,8 +428,15 @@ class Sandbox(WazuhService):
                 if ("group", group) in seen:
                     continue
                 seen.add(("group", group))
-                for name in repo.group_files.get(group, ()):
-                    if name not in rules:
+                # As for if_sid: only the group's rules the stock ruleset lacks.
+                members = [
+                    (rid, name)
+                    for rid, name in repo.group_rules.get(group, ())
+                    if rid not in keys and name not in rules
+                ]
+                stock = await self._loaded([rid for rid, _ in members])
+                for rid, name in members:
+                    if rid not in stock and name not in rules:
                         rules.append(name)
                         queue.append(repo.needs[name])
             for decoder in needs.get("decoded_as", ()):
