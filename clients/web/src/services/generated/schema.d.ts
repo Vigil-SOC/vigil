@@ -1218,6 +1218,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/autonomy/rollout-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Rollout Limits */
+        get: operations["get_api_autonomy_rollout-limits"];
+        /**
+         * Put Rollout Limits
+         * @description Change the promotion cap, the days in shadow or the daily hit ceiling.
+         *
+         *     ``ai_autonomy.write``, as raising the ceiling is: these decide how fast a
+         *     rule reaches live. A service account may only tighten (a lower cap, more
+         *     days, a lower hit ceiling). The change and who made it go on the audit trail.
+         */
+        put: operations["put_api_autonomy_rollout-limits"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/autonomy/tools": {
         parameters: {
             query?: never;
@@ -11327,6 +11352,49 @@ export interface components {
             playbook: string;
         };
         /**
+         * RolloutLimitsBody
+         * @description A partial edit of the rollout limits. Omitted fields stay as they are.
+         *
+         *     Whole numbers only; an unknown key is a 422. ``reason`` goes on the audit entry.
+         */
+        RolloutLimitsBody: {
+            /** Live Per Day */
+            live_per_day?: number | null;
+            /** Max Hits Per Day */
+            max_hits_per_day?: number | null;
+            /** Reason */
+            reason?: string | null;
+            /** Shadow Days */
+            shadow_days?: number | null;
+        };
+        /**
+         * RolloutLimitsResponse
+         * @description The limits in force, the defaults and bounds, and (read only) each SIEM
+         *     integration's Quiet, Noisy and Silent thresholds, which are edited on it.
+         */
+        RolloutLimitsResponse: {
+            /** Bounds */
+            bounds: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
+            /** Defaults */
+            defaults: {
+                [key: string]: number;
+            };
+            /** Limits */
+            limits: {
+                [key: string]: number;
+            };
+            /** Siem Thresholds */
+            siem_thresholds: {
+                [key: string]: {
+                    [key: string]: number;
+                } | null;
+            };
+        };
+        /**
          * Routability
          * @description Declared rather than a bare dict so the generated client carries the
          *     shape: hand-maintaining it in TypeScript is the drift this route's own
@@ -14558,6 +14626,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_autonomy_rollout-limits": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RolloutLimitsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "put_api_autonomy_rollout-limits": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RolloutLimitsBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RolloutLimitsResponse"];
                 };
             };
             /** @description Validation Error */

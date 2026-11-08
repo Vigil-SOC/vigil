@@ -81,6 +81,7 @@ def estate(monkeypatch):
     monkeypatch.setattr(rollout, "handed_off", lambda ids: state["gone"] & set(ids))
     monkeypatch.setattr(rollout, "_deploy_targets", lambda: state["targets"])
     monkeypatch.setattr(rollout, "_stopped", lambda: state["stopped"])
+    monkeypatch.setattr(rollout, "_asks_first", lambda: False)  # Act
     monkeypatch.setattr(rollout, "_open_pr", open_pr)
 
     def record(copy, out, actor="system"):

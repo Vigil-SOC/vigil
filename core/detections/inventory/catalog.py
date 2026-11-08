@@ -23,7 +23,8 @@ never-firing; a Wazuh rule below level 3 that has alerts is judged on them).
 A linked Kibana or Splunk copy also carries checks['drift']: fail when it was
 disabled, removed or edited in the SIEM while its repo rule stayed the same.
 
-A repo or overlay rule's latest version carries checks['lint'] (sync lints it).
+A repo or overlay rule's latest version carries checks['lint'] (sync lints it),
+result 'none' when there is nothing to lint, which is coverage like a pass.
 One failing lint is keyed to one environment: it is listed and searched, but
 left out of every coverage count (``CREDITED``), and analyze_coverage's by_tool
 counts it as ``lint_failing``. Lint is no flag and no rule_health entry.
@@ -166,6 +167,8 @@ WORST_ORDER = (
     "fires",
     CAUGHT_CHECK,
     "disabled",
+    # Only a Case's card can name a removed rule: the listing shows none.
+    "removed",
     "no_fire_data",
 )
 # The listing's orders besides worst first (HEALTH_ORDER, then rule id). Each
@@ -966,6 +969,8 @@ def _health(
     silent = checks.get("silent") or {}
     if status == "disabled":
         return "disabled", "Switched off in the SIEM.", None
+    if status == "removed":
+        return "removed", "Removed from its SIEM or repo: it fires nowhere now.", None
     if runs.get("result") == "fail":
         raw = str(runs.get("reason") or "")
         return "fails_to_run", _first_line(raw) or "Its last run failed.", raw or None
@@ -1014,9 +1019,9 @@ def _check_flags(checks: Dict[str, Any]) -> Tuple[List[str], bool]:
 
 
 def _worst(health: str, flags: List[str], caught: bool) -> str:
-    """The row's worst problem: a rule that can't fire, or is off, stays so; else
-    its worst failing flag; else Caught over Fires; else its health."""
-    if health in CANT_FIRE or health == "disabled":
+    """The row's worst problem: a rule that can't fire, or is off or removed,
+    stays so; else its worst failing flag; else Caught over Fires; else its health."""
+    if health in CANT_FIRE or health in ("disabled", "removed"):
         return health
     if flags:
         return flags[0]
@@ -1042,11 +1047,12 @@ def _first_line(reason: str) -> str:
 
 
 def _results(checks: Dict[str, Any]) -> List[Any]:
-    """Each stored check's result; drift compares copies, so it is no check of the rule."""
+    """Each stored check's result; drift compares copies, so it is no check of
+    the rule, and a lint with nothing to lint ('none') checked nothing."""
     return [
         value.get("result")
         for key, value in checks.items()
-        if key != "drift" and isinstance(value, dict)
+        if key != "drift" and isinstance(value, dict) and value.get("result") != "none"
     ]
 
 
@@ -1369,7 +1375,7 @@ def stage_moves(rows: Iterable[Any]) -> Dict[int, Dict[str, Any]]:
 
 def _with_days_in_shadow(row: Dict[str, Any], now: datetime) -> Dict[str, Any]:
     """The row with whole 24-hour days since its shadow stage began, the count
-    rollout's promotion uses (``now - stage_since`` against SHADOW_DAYS days)."""
+    rollout's promotion uses (``now - stage_since`` against the stored shadow days)."""
     if row.get("stage") != "shadow" or not row.get("stage_since"):
         return row
     since = now - datetime.fromisoformat(row["stage_since"])

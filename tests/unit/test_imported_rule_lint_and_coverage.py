@@ -66,6 +66,34 @@ def _eql(key, query, techniques=("T1649",), language="eql"):
     )
 
 
+def _ml(key, techniques=("T1078",)):
+    """An Elastic machine learning rule: it reads an ML job and has no query."""
+    return RuleRecord(
+        native_key=key,
+        name=key,
+        language="elastic",
+        path=f"{key}.toml",
+        query="",
+        techniques=list(techniques),
+        tactics=["initial-access"],
+        logic={"type": "machine_learning", "machine_learning_job_id": ["auth_rare"]},
+        content={"_content": "[rule]"},
+    )
+
+
+def _kql(key, techniques=("T1078",)):
+    return RuleRecord(
+        native_key=key,
+        name=key,
+        language="kql",
+        path=f"{key}.yaml",
+        query="SigninLogs | where ResultType == 0",
+        techniques=list(techniques),
+        tactics=["initial-access"],
+        content={"query": "SigninLogs"},
+    )
+
+
 # lint_record ---------------------------------------------------------------
 
 
@@ -106,6 +134,25 @@ def test_lint_record_passes_clean_and_fails_one_environment(clean, bad):
 def test_lint_record_gives_kql_no_lint():
     kql = RuleRecord(native_key="k", name="k", language="kql", path=None, query="a")
     assert lint_record(kql) is None
+
+
+def test_nothing_to_lint_is_recorded_with_why():
+    from core.detections.inventory import sync
+
+    assert sync._lint(_ml("m"), "now") == {
+        "result": "none",
+        "reason": "machine learning rule: reads an ML job, no query",
+        "checked_at": "now",
+    }
+    assert sync._lint(_kql("k"), "now")["reason"] == "no lint for kql queries"
+
+
+def test_nothing_to_lint_is_no_check_run():
+    from core.detections.inventory import catalog
+
+    none = {"result": "none", "reason": "no lint for kql queries"}
+    assert catalog._results({"lint": none}) == []
+    assert catalog._results({"lint": none, "sees": {"result": "pass"}}) == ["pass"]
 
 
 # sync and catalog ----------------------------------------------------------
@@ -245,3 +292,40 @@ def test_analyze_coverage_counts_only_credited_rules(db):
     assert out["T1649"]["by_tool"]["repo"]["lint_failing"] == 2
     assert out["T1003"]["count"] == 1
     assert out["T1003"]["by_source"] == {"sigma": 1}
+
+
+NOTHING_TO_LINT = [_ml("ml"), _kql("kql")]
+
+
+@needs_pg
+def test_sync_lints_a_rule_with_nothing_to_lint_once(db, lints):
+    _sync(NOTHING_TO_LINT)
+    _sync(NOTHING_TO_LINT)
+    assert sorted(lints) == ["kql", "ml"]
+    assert _lint_results(db) == {"kql": "none", "ml": "none"}
+
+
+@needs_pg
+def test_nothing_to_lint_counts_as_coverage_as_no_lint_did(db):
+    """A version with result 'none' is credited exactly as one with no lint."""
+    import asyncio
+
+    from core.detections.inventory import catalog
+    from core.detections.tools import SecurityDetectionsTools
+
+    def coverage():
+        out = asyncio.run(SecurityDetectionsTools().analyze_coverage(["T1078"]))
+        return (
+            catalog.rules_by_technique().keys(),
+            catalog.rules_by_tactic(),
+            catalog.techniques_per_language(),
+            out["T1078"]["count"],
+            out["T1078"]["by_tool"],
+        )
+
+    _sync(NOTHING_TO_LINT)
+    marked = coverage()
+    with db.session_scope() as session:
+        session.execute(text("UPDATE detection_rule_versions SET checks = '{}'"))
+    assert coverage() == marked
+    assert marked[0] == {"T1078"} and marked[3] == 2

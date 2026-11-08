@@ -164,6 +164,35 @@ def deploy_host_refused(source: Dict[str, Any]) -> str:
     return GITHUB_ONLY
 
 
+_DEPLOY_SEGMENT = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def deploy_subdirectory_refused(source: Dict[str, Any]) -> str:
+    """Why this target's subdirectory may not go into a deploy PR's file path;
+    '' when it may.
+
+    The path is sent to the Git host with the token, so a ``..`` segment would
+    write outside the target's repo. One leading and one trailing slash are
+    trimmed; every segment must be non-empty, not ``.`` or ``..``, and made of
+    letters, digits, ``.``, ``_`` and ``-``.
+    """
+    sub = str(source.get("subdirectory") or "")
+    if sub.startswith("/"):
+        sub = sub[1:]
+    if sub.endswith("/"):
+        sub = sub[:-1]
+    if not sub:
+        return ""
+    for seg in sub.split("/"):
+        if seg in (".", "..") or not _DEPLOY_SEGMENT.fullmatch(seg):
+            return (
+                f"subdirectory {source.get('subdirectory')!r} is not allowed: use "
+                "folder names of letters, digits, '.', '_' and '-' separated by '/', "
+                "with no '..'"
+            )
+    return ""
+
+
 def _deploy_target_of(sources: List[Dict[str, Any]], fmt: str) -> Optional[Dict]:
     return next(
         (
@@ -400,20 +429,23 @@ class DetectionRulesService:
             count += len(list(target.rglob(f"*{ext}")))
         return count
 
-    def _get_rules_path(self, source: Dict) -> str:
-        """Get the actual rules path for a source (base + subdirectory)."""
-        base = Path(source["local_path"])
-        subdir = source.get("subdirectory", "")
-        if subdir:
-            return str(base / subdir)
-        return str(base)
+    def _contained(self, source: Dict, rel: str) -> Optional[str]:
+        """``rel`` under the source's clone path, or None (logged) when a stored
+        value leaves it: ``..``, an absolute path or a symlink out."""
+        try:
+            return self._under(source["local_path"], rel or "")
+        except ValueError as e:
+            logger.warning("Ignoring source %r: %s", source.get("name"), e)
+            return None
+
+    def _get_rules_path(self, source: Dict) -> Optional[str]:
+        """The rules path for a source (base + subdirectory); None if it leaves the source."""
+        return self._contained(source, source.get("subdirectory", ""))
 
     def _get_story_path(self, source: Dict) -> Optional[str]:
-        """Get the story path for a source (Splunk only)."""
+        """The story path for a source (Splunk only); None if none or it leaves the source."""
         story_sub = source.get("story_subdirectory", "")
-        if story_sub:
-            return str(Path(source["local_path"]) / story_sub)
-        return None
+        return self._contained(source, story_sub) if story_sub else None
 
     # --- Public API ---
 
@@ -543,6 +575,7 @@ class DetectionRulesService:
                         existing
                         or {"type": source_type, "format": format, "git_url": url}
                     ),
+                    "subdirectory": subdirectory,
                     "github_enterprise": bool(github_enterprise),
                 }
             )
@@ -663,7 +696,7 @@ class DetectionRulesService:
                 f"{source.get('git_url')} is a vendor's public repo; a deploy target "
                 "must be your own repo, since Vigil opens pull requests into it"
             )
-        refused = deploy_host_refused(source)
+        refused = deploy_host_refused(source) or deploy_subdirectory_refused(source)
         if refused:
             raise ValueError(refused)
         other = self.deploy_target(fmt)
@@ -810,7 +843,7 @@ class DetectionRulesService:
                 continue
 
             rules_path = self._get_rules_path(source)
-            if Path(rules_path).exists():
+            if rules_path and Path(rules_path).exists():
                 fmt = source["format"]
                 if fmt in FORMAT_ENV_VARS:
                     paths_by_format[fmt].append(rules_path)
