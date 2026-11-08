@@ -2,7 +2,8 @@
 
 The overlay is a plain directory under the State Directory, read like any
 local source in format 'auto': one file per copy, ``splunk/<id>.yml`` (ESCU
-YAML), ``elastic/<id>.toml`` (detection-rules TOML), ``sigma/<id>.yml``. Every
+YAML), ``elastic/<id>.toml`` (detection-rules TOML), ``sigma/<id>.yml``,
+``wazuh/<id>.xml`` (one Wazuh rule, its id in Wazuh's custom range). Every
 copy is parsed with the inventory readers, and the Sigma form and each Splunk
 and Elastic query linted, before any file is written; one bad part writes nothing. A copy keeps the id it
 carries, so a change to a rule lands on that rule as a new version; a copy
@@ -31,6 +32,7 @@ import yaml
 from sqlalchemy import select, update
 
 from core.detections import exceptions as excepts
+from core.detections import wazuh_xml as wxml
 from core.detections.detection_rules_service import DetectionRulesService
 from core.detections.inventory import readers, rollout, sync
 from core.detections.inventory.record import RuleRecord
@@ -48,6 +50,7 @@ LAYOUT = {
     "splunk": ("splunk", ".yml"),
     "elastic": ("elastic", ".toml"),
     "sigma": ("sigma", ".yml"),
+    "wazuh": ("wazuh", ".xml"),
 }
 # The [rule] header line, with any comment or CR after it.
 _RULE_TABLE = re.compile(r"^[ \t]*\[[ \t]*rule[ \t]*\][^\n]*$", re.MULTILINE)
@@ -91,6 +94,63 @@ def _with_id(language: str, text: str) -> str:
     return f"{text[:at]}id: {fresh}\n{text[at:]}"
 
 
+def _wazuh_ids(session: Any) -> Tuple[set, set]:
+    """(ids the Wazuh manager has loaded, as the inventory read them; ids the
+    overlay's own Wazuh copies hold)."""
+    rows = session.execute(
+        select(DetectionRule.source, DetectionRule.native_key).where(
+            DetectionRule.status != "removed",
+            (DetectionRule.source == "wazuh")
+            | (
+                (DetectionRule.source == readers.OVERLAY_SOURCE)
+                & (DetectionRule.language == "wazuh")
+            ),
+        )
+    ).all()
+    loaded = {key for source, key in rows if source == "wazuh"}
+    own = {key for source, key in rows if source == readers.OVERLAY_SOURCE}
+    return loaded, own
+
+
+def _wazuh_with_id(text: str) -> str:
+    """``text`` with an id in Wazuh's custom range that no other rule holds.
+
+    A given id must be in the range, and not one the manager has loaded unless
+    it is this overlay copy's own (a rule Vigil deployed is loaded under its id).
+    With none, the lowest free id is set.
+    """
+    try:
+        rule = wxml.parse(text)
+    except wxml.NotARule as exc:
+        raise Refused(f"wazuh copy is refused: {exc}") from exc
+    first, last = wxml.CUSTOM_IDS[0], wxml.CUSTOM_IDS[-1]
+    with get_db_manager().session_scope() as session:
+        loaded, own = _wazuh_ids(session)
+    # Compared as the numbers the manager reads ids as ("0100001" is 100001).
+    loaded_ids = {n for n in map(wxml.number, loaded) if n is not None}
+    own_ids = {n for n in map(wxml.number, own) if n is not None}
+    given = wxml.rule_id(rule)
+    if given is None:
+        taken = loaded_ids | own_ids
+        free = next((i for i in wxml.CUSTOM_IDS if i not in taken), None)
+        if free is None:
+            raise Refused(f"no free Wazuh rule id is left in {first}-{last}")
+        return wxml.with_id(text, free)
+    number = wxml.custom_id(given)
+    if number is None:
+        raise Refused(
+            f"wazuh copy's id {given} is outside Wazuh's range for custom rules "
+            f"({first}-{last}, written in ASCII digits with no leading zero): "
+            "use one in it, or leave the id out"
+        )
+    if number in loaded_ids and number not in own_ids:
+        raise Refused(
+            f"wazuh copy's id {given} is a rule the Wazuh manager already loaded: "
+            "use another, or leave the id out"
+        )
+    return text
+
+
 def _parse(language: str, text: str) -> RuleRecord:
     """The copy as the overlay's own reader will see it; Refused unless it reads as ``language``."""
     _, suffix = LAYOUT[language]
@@ -124,6 +184,9 @@ def _wanted(
     for language, items in given.items():
         if language not in copies:
             raise Refused(f"exceptions name a {language} copy that is not being saved")
+        if language == "wazuh":
+            # Exceptions drop hits Vigil fetches; Vigil runs no Wazuh copy.
+            raise Refused("exceptions are not kept for a wazuh copy")
         if not isinstance(items, list):
             raise Refused(f"{language} exceptions must be a list")
         try:
@@ -224,18 +287,18 @@ def _record_replay(sigma_key: str, replay: Dict[str, Any]) -> None:
 
 
 def _prepare(copies: Dict[str, str]) -> List[Tuple[str, str, RuleRecord]]:
-    if not ({"splunk", "elastic"} & copies.keys()):
-        raise Refused("a rule needs a splunk or an elastic copy")
+    if not ({"splunk", "elastic", "wazuh"} & copies.keys()):
+        raise Refused("a rule needs a splunk, an elastic or a wazuh copy")
     prepared = []
     for language, text in copies.items():
-        text = _with_id(language, text)
+        text = _wazuh_with_id(text) if language == "wazuh" else _with_id(language, text)
         if language == "elastic":
             # Vigil runs the copy itself (rollout): only languages it can run.
             why = rollout.runnable(tomllib.loads(text).get("rule") or {})
             if why:
                 raise Refused(f"elastic copy is refused: {why}")
         record = _parse(language, text)
-        if language in sync.STAGED_LANGUAGES:
+        if language in sync.STAGED_LANGUAGES or language == "wazuh":
             lint = lint_record(record)
             if lint and not lint["passed"]:
                 raise Refused(
@@ -363,6 +426,7 @@ def save_rule(
     proven_events: Optional[list] = None,
     ruled_out_events: Optional[list] = None,
     exceptions: Optional[Dict[str, Any]] = None,
+    wazuh_xml: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Write each copy into the overlay and sync it; refuse the lot if any part fails."""
     copies = {
@@ -371,6 +435,7 @@ def save_rule(
             ("splunk", splunk_yaml),
             ("elastic", elastic_toml),
             ("sigma", sigma_yaml),
+            ("wazuh", wazuh_xml),
         )
         if text and text.strip()
     }

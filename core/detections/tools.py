@@ -338,9 +338,11 @@ class SecurityDetectionsTools:
         proven_events: Optional[List[Dict]] = None,
         ruled_out_events: Optional[List[Dict]] = None,
         exceptions: Optional[Dict[str, List[Dict]]] = None,
+        wazuh_xml: Optional[str] = None,
         **_kwargs: object,
     ) -> Dict:
-        """Save one rule's copies into Vigil's overlay; each enters shadow.
+        """Save one rule's copies into Vigil's overlay; each Splunk and Elastic
+        copy enters shadow (a Wazuh copy is saved and versioned, with no stage).
 
         With events, the Sigma form is replayed on them first and the save is
         refused unless a proven event matches and no ruled-out one does (a
@@ -354,6 +356,7 @@ class SecurityDetectionsTools:
             proven_events,
             ruled_out_events,
             exceptions,
+            wazuh_xml,
         )
 
     async def detection_rule_exception(
