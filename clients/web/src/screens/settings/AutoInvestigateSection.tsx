@@ -23,6 +23,7 @@ import {
 } from './useSettings'
 import type { SectionProps } from './types'
 import IntentReportCard from './IntentReportCard'
+import RolloutLimitsCard from './RolloutLimitsCard'
 import { detectionRulesApi, type EffectClass, type OverlayOnlyRule, type ToolClass } from '../../services/api'
 import { errorText } from '../../shared/errorText'
 
@@ -440,6 +441,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
         min={b.min}
         max={b.max}
         step={b.step}
+        readOnly={!canRaise}
         onCommit={(v) => applyAndSave({ [r.field]: v })}
       />
     )
@@ -537,29 +539,34 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
           {change && <span title={change}>{change}</span>}
         </span>
         <span className="lim-row-ctl">
-          <div className="lim-seg" role="group" aria-label={`Autonomy of ${w.name}`}>
-            {choices.map((c) => {
-              const blocked = c.to !== current && raises(c.to) && (stopped || (c.to === 'act' && locked))
-              return (
-                <button
-                  key={c.to}
-                  type="button"
-                  aria-pressed={c.to === current}
-                  disabled={blocked}
-                  title={blocked ? (stopped ? STOPPED_LOOSEN : 'Locked by the environment') : undefined}
-                  onClick={() => {
-                    if (c.to === current) return
-                    if (c.to === 'act') {
-                      setFloor('')
-                      setPending({ kind: 'workflow', workflow: w })
-                    } else setWorkflow(w, c.to)
-                  }}
-                >
-                  {c.label}
-                </button>
-              )
-            })}
-          </div>
+          {choices.length < 2 ? (
+            // nothing else this person may pick: the current setting, as text
+            <span className="text-sm text-tx-2">{WORKFLOW_CHOICES.find((c) => c.to === current)?.label}</span>
+          ) : (
+            <div className="lim-seg" role="group" aria-label={`Autonomy of ${w.name}`}>
+              {choices.map((c) => {
+                const blocked = c.to !== current && raises(c.to) && (stopped || (c.to === 'act' && locked))
+                return (
+                  <button
+                    key={c.to}
+                    type="button"
+                    aria-pressed={c.to === current}
+                    disabled={blocked}
+                    title={blocked ? (stopped ? STOPPED_LOOSEN : 'Locked by the environment') : undefined}
+                    onClick={() => {
+                      if (c.to === current) return
+                      if (c.to === 'act') {
+                        setFloor('')
+                        setPending({ kind: 'workflow', workflow: w })
+                      } else setWorkflow(w, c.to)
+                    }}
+                  >
+                    {c.label}
+                  </button>
+                )
+              })}
+            </div>
+          )}
         </span>
       </div>
     )
@@ -646,18 +653,26 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
               When off, alerts still arrive and wait in the Triage queue; no case opens and no agent starts. Alerts waiting over 4 hours expire when it is turned back on.
             </span>
           </div>
-          <Toggle
-            label="Investigate new alerts automatically"
-            checked={config.enabled}
-            onChange={(v) => applyAndSave({ enabled: v })}
-          />
+          {canRaise ? (
+            <Toggle
+              label="Investigate new alerts automatically"
+              checked={config.enabled}
+              onChange={(v) => applyAndSave({ enabled: v })}
+            />
+          ) : (
+            <span className="text-sm text-tx-2">{config.enabled ? 'On' : 'Off'}</span>
+          )}
         </div>
         <div className="lim-switch">
           <div className="toggle-row-text">
             <span className="toggle-row-label">Dry run</span>
             <span className="toggle-row-hint">Agents gather evidence but skip every change, even ones you would approve.</span>
           </div>
-          <Toggle label="Dry run" checked={config.dry_run} onChange={(v) => applyAndSave({ dry_run: v })} />
+          {canRaise ? (
+            <Toggle label="Dry run" checked={config.dry_run} onChange={(v) => applyAndSave({ dry_run: v })} />
+          ) : (
+            <span className="text-sm text-tx-2">{config.dry_run ? 'On' : 'Off'}</span>
+          )}
         </div>
 
         <div className="lim-profiles">
@@ -668,6 +683,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                 key={key}
                 type="button"
                 aria-pressed={activeProfile === key}
+                disabled={!canRaise}
                 onClick={() => applyAndSave(profile.values)}
                 className={`lim-profile${activeProfile === key ? ' on' : ''}`}
               >
@@ -698,7 +714,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
       <SettingsCard
         wide
         title="Default limits for new cases"
-        desc="Existing cases keep theirs. Drag a value left or right, or click it to type. Tightening applies when you let go; loosening asks you to confirm."
+        desc="Existing cases keep theirs. Click a value to type a new one. Tightening applies at once; loosening asks you to confirm."
       >
         {outside.length > 0 && (
           <div className="settings-banner err mb-2">
@@ -721,10 +737,13 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
               minMinutes={idle.min / 60}
               maxMinutes={idle.max / 60}
               onChange={(h) => setDuration('stale_threshold', h)}
+              readOnly={!canRaise}
             />,
           )}
         {FLEET_ROWS.map((r) => row(r.title, r.hint, r.field, scrub(r)))}
       </SettingsCard>
+
+      <RolloutLimitsCard notify={notify} canWrite={canRaise} />
 
       <SettingsCard
         wide
@@ -846,6 +865,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                   minMinutes={runtime.min / 60}
                   maxMinutes={runtime.max / 60}
                   onChange={(h) => setDuration('max_runtime_per_investigation', h)}
+                  readOnly={!canRaise}
                 />
               ),
             )}
@@ -862,6 +882,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                   min={loop.min}
                   max={loop.max}
                   step={loop.step}
+                  readOnly={!canRaise}
                   onCommit={(v) => applyAndSave({ loop_interval: v })}
                 />,
               )}
@@ -869,6 +890,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
               <TextInput
                 value={config.workdir_base}
                 onChange={(e) => setConfig((prev) => (prev ? { ...prev, workdir_base: e.target.value } : prev))}
+                readOnly={!canRaise}
                 onBlur={persistIfChanged}
               />
             </Field>

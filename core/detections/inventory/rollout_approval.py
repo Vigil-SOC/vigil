@@ -42,6 +42,8 @@ PR_LEASE = timedelta(minutes=10)
 def _audit(
     event: str, rule_id: int, who: str, reason: Optional[str], **more: Any
 ) -> None:
+    from core.detections.inventory.sync import trail_actor
+
     with get_db_manager().session_scope() as session:
         write_config_audit(
             session,
@@ -50,7 +52,7 @@ def _audit(
             action=event,
             old_value=None,
             new_value={"rule_id": rule_id, **more},
-            changed_by=who,
+            changed_by=trail_actor(who),
             change_reason=reason,
         )
 

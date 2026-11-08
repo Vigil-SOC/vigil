@@ -125,6 +125,12 @@
    cursor: pointer;
 }
 
+/* Unlayered, so it beats the rule above: without ai_autonomy.write a profile card
+   still shows which is active, with nothing to pick */
+.soc-console .lim-profile:disabled {
+   cursor: default;
+}
+
 @keyframes soc-fade {
    from {
       transform: translateY(6px);
@@ -4760,6 +4766,15 @@
       justify-self: end;
       min-width: 0;
    }
+
+   /* Under the Detection rules rows: where the SIEM thresholds are set */
+   .lim-foot {
+      margin: 10px 0 0;
+      font-size: 12.5px;
+      color: var(--tx2);
+   }
+   .lim-foot a { color: var(--ac); text-decoration: none; }
+   .lim-foot a:hover { text-decoration: underline; }
 
    /* Tool-class cards and their segment: tokens.json (meta 12px, label 12px/600) */
    .lim-class {
