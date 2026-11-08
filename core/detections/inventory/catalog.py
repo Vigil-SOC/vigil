@@ -1259,7 +1259,13 @@ def _listing_now() -> Dict[str, Any]:
     new day (the window rolls)."""
     with _listing_lock, get_db_manager().session_scope() as session:
         written = _write_marks(session, _LISTING_TABLES + _FIRES_TABLES)
-        marks = tuple(m for m in written if m[0] in _LISTING_TABLES)
+        # The newest stage row too: write stats lag a commit by seconds, so a
+        # Revert or release read straight after would get the old row (#4053).
+        # Its id is exact at commit, in every process.
+        newest_stage = session.scalar(select(func.max(DetectionRuleStage.id)))
+        marks = tuple(m for m in written if m[0] in _LISTING_TABLES) + (
+            ("detection_rule_stages:newest", newest_stage),
+        )
         if _listing.get("marks") != marks:
             _listing.clear()
             _listing["copies"] = _copies_listed(session)
