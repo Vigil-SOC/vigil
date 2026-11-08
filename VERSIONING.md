@@ -12,9 +12,12 @@ releases and how that changes. How `VERSION` itself is bumped is on the
   not frozen: they are left out of the snapshot and may change until their
   shape settles. The resources it covers: findings, approvals, cases, case
   metrics, the workflow catalog, agent runs, the audit trail reads (entries,
-  export, poll, verify) and the autonomy ceiling with its tool classes. An
+  export, poll, verify), the autonomy ceiling with its tool classes, and
+  operator agents (`/api/v1/agents`: list, read, `PUT` a manifest, delete). An
   audit entry freezes its envelope; its payload keys beyond `action`, `object`,
-  `outcome` and `run_id` are open per action and may grow.
+  `outcome` and `run_id` are open per action and may grow. An operator agent
+  freezes the route shapes; the manifest text it carries is the agent
+  service's plugin manifest, whose grammar the plugins README defines.
 - **The frozen tools on the `vigil` MCP server** at `/mcp`. The name and input
   schema of every tool in `FROZEN_TOOLS` (`tools/mcp/vigil.py`), as held by
   [`tools/mcp/frozen_tools.snapshot.json`](tools/mcp/frozen_tools.snapshot.json).

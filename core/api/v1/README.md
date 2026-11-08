@@ -124,6 +124,7 @@ the v1 functions, staying in-router with the literal siblings.
 | runs (agent-runs) | done   | 4/3       | whole move of the 3 routes (start/get/directives) + built `GET /api/v1/agent-runs` (`list_runs`, reads workflow_runs filtered to source=agent). Frozen run surface = agent runs, not workflow runs or `/internal/runs` |
 | audit      | done          | 4 / 7      | trail reads: entries, export, poll, verify. Console keeps retention (GET, PUT) and erasure. Entry envelope frozen, payload open (`extra="allow"`); export is NDJSON with no response model |
 | autonomy   | done          | 5 / 6      | ceiling (GET, PUT, resume) + tool classes (list, set). Console keeps `PUT /workflows/{workflow_id}`; `CeilingResponse.workflows` is an open map |
+| agents     | done          | 4 / 4      | operator manifests on `custom_agents` (#4023): list, get, PUT (create or replace, checked by agent-serve's `/plugins/check`), delete. Additive: not legacy-mounted, `/api/agents` is the console's catalogue |
 | analytics  | deferred      | —          | RULED: not frozen now (routes exist but shape will churn)     |
 | cases/metrics | done       | 6 / 7      | all 7 under `/api/v1/cases/metrics`; 6 frozen, 1 marked `x-vigil-beta` (excluded from the contract snapshot). Frozen: by-priority, by-status, breached, mttr, mttd, summary |
 | verdicts   | deferred      | build      | no routes exist yet                          |

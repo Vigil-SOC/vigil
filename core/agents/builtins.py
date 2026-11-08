@@ -85,6 +85,9 @@ class AgentProfile:
     # Custom agents have no action of their own, so they log under their
     # agent id (build_profile falls back to the row id).
     decision_id: str = ""
+    # Custom agents only: the operator manifest a run of this agent loads, whose
+    # system and needs are this profile's prompt and recommended_tools (#4023).
+    manifest: Optional[str] = None
 
 
 BUILTIN_AGENTS = [

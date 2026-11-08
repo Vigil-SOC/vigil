@@ -30,15 +30,12 @@ def _resolve_agent(agent_id: str):
     """Resolve an agent_id to an AgentProfile, lazy-loading custom agents on miss.
 
     Built-in agents are served from the in-memory dict with zero DB calls.
-    Only misses for IDs prefixed with custom- trigger a refresh and retry.
+    A custom- id is read fresh: /api/v1/agents writes its manifest without
+    this process's cache knowing.
     """
-    agent = agent_manager.agents.get(agent_id)
-    if agent is not None:
-        return agent
     if agent_id and agent_id.startswith(CUSTOM_AGENT_ID_PREFIX):
         agent_manager.refresh_custom_agents()
-        return agent_manager.agents.get(agent_id)
-    return None
+    return agent_manager.agents.get(agent_id)
 
 
 @router.get("/agents")
