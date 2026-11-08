@@ -129,10 +129,12 @@ export function remoteDispatch(options: RemoteOptions): ToolDispatch {
   };
 
   return {
-    invoke: (tool, args, signal, agentId, approval) => {
+    // Opened around local tools too: send() answers them inside this span.
+    invoke: (tool, args, signal, agentId, approval, callId) => {
       const attributes = {
         "gen_ai.operation.name": "execute_tool",
         "gen_ai.tool.name": tool.id,
+        ...(callId === undefined ? {} : { "gen_ai.tool.call.id": callId }),
         ...(agentId === undefined ? {} : { "gen_ai.agent.id": agentId }),
       };
       return traced(`execute_tool ${tool.id}`, attributes, async (span) => {

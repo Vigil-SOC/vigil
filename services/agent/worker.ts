@@ -29,7 +29,7 @@ import {
 import { LeaseRepository } from "./ledger/leases.js";
 import { seedFrom } from "./core/budget.js";
 import type { State } from "./core/seams.js";
-import { httpPlaybooks, isReference, type PlaybookResolver } from "./core/playbooks.js";
+import { httpPlaybooks, isReference, workflowIdOf, type PlaybookResolver } from "./core/playbooks.js";
 import { assembleSpec, buildSpec, DEFAULT_BUDGETS, loadArch, parseConfig, parsePlaybook, SpecError, withOverrides, type RunSpec } from "./core/spec.js";
 import { LedgerRepository } from "./ledger/repository.js";
 import { httpMirror, nullMirror, type Mirror, type StatusUpdate } from "./plugins/compose/mirror.js";
@@ -61,6 +61,8 @@ export async function resolveSpec(job: StartJob, resolve: PlaybookResolver = def
   const turns = job.request.iterations;
   // Only ever tightens: a caller may ask to be asked, never to skip a declared gate.
   const gate = job.request.approve_hypotheses === true ? { hypothesis_approval: "ask" } : {};
+  // Journaled for the root span of every later job: a resume carries neither.
+  const refs = refsOf(job);
   // An operator manifest stands in for plugins/investigate alone. Parsed here so a bad
   // one fails before the ledger opens, and journaled so a resume reads it back.
   const manifest = job.request.manifest;
@@ -78,6 +80,7 @@ export async function resolveSpec(job: StartJob, resolve: PlaybookResolver = def
           ...(asked.length === 0 ? {} : { operator_hypotheses: asked }),
           ...(Object.keys(subjects).length === 0 ? {} : { operator_hypothesis_subjects: subjects }),
           ...(recallKeys.length === 0 ? {} : { recall_keys: recallKeys }),
+          ...(Object.keys(refs).length === 0 ? {} : { refs }),
           ...(manifest === undefined ? {} : { operator_manifest: manifest, operator_skills: manifestSkills }),
           ...(Object.keys(gate).length === 0
             ? {}
@@ -647,7 +650,8 @@ export async function handle(
     "vigil.run_id": job.run_id,
     "vigil.job.reason": job.reason,
   };
-  await traced(`invoke_agent ${job.run_kind}`, attributes, async () => {
+  await traced(`invoke_agent ${job.run_kind}`, attributes, async (span) => {
+    if (span.isRecording()) span.setAttributes(await spanRefs(state, job));
     try {
       await advance(state, leases, job, build, directives, final);
     } catch (error) {
@@ -657,6 +661,34 @@ export async function handle(
       throw error;
     }
   }, { parent: { traceparent: job.traceparent } });
+}
+
+interface RunRefs {
+  case_id?: string;
+  workflow_id?: string;
+}
+
+function refsOf(job: StartJob): RunRefs {
+  const workflow_id = workflowIdOf(job.request.playbook);
+  return {
+    ...(job.case_id ? { case_id: job.case_id } : {}),
+    ...(workflow_id === undefined ? {} : { workflow_id }),
+  };
+}
+
+// vigil.case_id and vigil.workflow_id: off the job on a start, off the journaled
+// spec on a resume. Absent when the run has none; never a reason to fail the job.
+async function spanRefs(state: State, job: RunJob): Promise<Record<string, string>> {
+  let refs: RunRefs = {};
+  try {
+    refs = job.reason === "start" ? refsOf(job) : (((await specOf(state, job.run_id))?.sections["refs"] as RunRefs | undefined) ?? {});
+  } catch (error) {
+    log.warn("run refs unread for its span", { run_id: job.run_id, ...errorFields(error) });
+  }
+  return {
+    ...(refs.case_id ? { "vigil.case_id": refs.case_id } : {}),
+    ...(refs.workflow_id ? { "vigil.workflow_id": refs.workflow_id } : {}),
+  };
 }
 
 // One line per failed attempt: warn while BullMQ will retry, error once it will not.

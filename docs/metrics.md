@@ -1,5 +1,8 @@
 # Adoption figures
 
+This page is about the project's public adoption figures. For the traces and
+metrics a running Vigil emits, see [telemetry.md](telemetry.md).
+
 Vigil publishes its adoption figures in a public repository,
 [Vigil-SOC/metrics](https://github.com/Vigil-SOC/metrics). A scheduled job
 reads GitHub's traffic and repository statistics for this repository once a

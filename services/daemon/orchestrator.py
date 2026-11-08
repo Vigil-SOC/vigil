@@ -1631,6 +1631,7 @@ class Orchestrator:
                 principal=token,
                 actor=actor,
                 origin=origin,
+                case_id=inv_record.get("case_id"),
             )
             await enqueue_run(job)
         except Exception as exc:  # noqa: BLE001 — a queue that refuses is not a crash
