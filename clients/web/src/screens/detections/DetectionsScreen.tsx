@@ -332,8 +332,10 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   const moreValue = stage ? `stage:${stage}` : !flag && !excepted && MORE.includes(view) ? view : ''
   const pickMore = (v: string) => (v.startsWith('stage:') ? pickStage(v.slice(6) as Stage) : pickView((v || 'attention') as View))
   // The view's rule copies for a proof card: the pages listed so far, then the rest.
+  // A rule a Revert or Release moved out of the view is left out, and the next page
+  // starts after the rules still in it.
   const viewIds = async () => {
-    const ids = rows.map((r) => r.rule_id)
+    const ids = rows.filter((r) => !moved.has(r.rule_id)).map((r) => r.rule_id)
     while (ids.length < matched) {
       const page = (await detectionRulesApi.rules({ ...params, offset: ids.length })).data as RulesReport
       if (!page.rules.length) break
