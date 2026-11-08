@@ -228,3 +228,76 @@ def test_a_stage_write_patches_the_listing_to_what_a_rebuild_gives(db, monkeypat
         "system",
         "fails lint",
     )
+
+
+def test_a_stage_write_with_a_new_version_or_checks_is_read_fresh(db):
+    """A move written with other rule tables (a sync's new version, or a run's
+    checks then the sweep's move) is read as a rebuild reads it, though the
+    write statistics don't show those tables moved yet."""
+    from core.detections.inventory import catalog
+    from core.storage.models import (
+        DetectionRule,
+        DetectionRuleStage,
+        DetectionRuleVersion,
+    )
+
+    synced, swept = _live_rule(db), _live_rule(db, "r2")
+    with db.session_scope() as session:  # version 1 has run; version 2 won't have
+        session.get(DetectionRuleVersion, (synced, 1)).checks = {
+            "runs": {"result": "pass"}
+        }
+    _settled(db)
+    catalog._listing_now()  # warm
+    now = datetime.now(timezone.utc)
+
+    with db.session_scope() as session:  # a sync: version 2 enters shadow
+        rule = session.get(DetectionRule, synced)
+        rule.latest_version = 2
+        session.add(
+            DetectionRuleVersion(
+                rule_id=synced,
+                version=2,
+                fingerprint="g",
+                content={},
+                checks={},
+            )
+        )
+        session.add(
+            DetectionRuleStage(
+                rule_id=synced,
+                version=2,
+                stage="shadow",
+                actor="system",
+                proof={},
+                reason="new version",
+                at=now,
+            )
+        )
+    first = catalog._listing_now()
+    assert first == _rebuilt()
+    (row,) = catalog.health_listing(rule_ids=[synced])["rules"]
+    assert (row["checks_run"], row["stage_reason"]) == (0, "new version")
+
+    with db.session_scope() as session:  # a run's checks, then the sweep's move
+        version = session.get(DetectionRuleVersion, (swept, 1))
+        version.checks = {"runs": {"result": "fail", "reason": "boom"}}
+    with db.session_scope() as session:
+        session.add(
+            DetectionRuleStage(
+                rule_id=swept,
+                version=1,
+                stage="shadow",
+                actor="system",
+                proof={},
+                reason="its runs failed",
+                at=now,
+            )
+        )
+    second = catalog._listing_now()
+    assert second == _rebuilt()
+    (row,) = catalog.health_listing(rule_ids=[swept])["rules"]
+    assert (row["health"], row["stage"], row["stage_reason"]) == (
+        "fails_to_run",
+        "shadow",
+        "its runs failed",
+    )

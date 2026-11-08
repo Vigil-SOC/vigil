@@ -1130,9 +1130,10 @@ def _write_marks(session: Any, tables: Tuple[str, ...]) -> Tuple[Any, ...]:
     return tuple(tuple(r) for r in rows)
 
 
-def _copies_listed(session: Any) -> Dict[str, Any]:
-    """Every listed copy with its checks, which rule each belongs to, and the blind spots."""
-    rows = session.execute(
+def _copy_rows(session: Any, rule_ids: Optional[Set[int]] = None) -> List[Any]:
+    """The listed copies (or these of them) as the listing reads them, each with
+    its latest version's number and checks."""
+    query = (
         select(
             DetectionRule.id,
             DetectionRule.name,
@@ -1140,12 +1141,21 @@ def _copies_listed(session: Any) -> Dict[str, Any]:
             DetectionRule.source,
             DetectionRule.status,
             DetectionRule.techniques,
+            DetectionRule.latest_version,
             DetectionRuleVersion.checks,
         )
         .join(DetectionRuleVersion, _latest_join())
         .where(LISTED)
         .order_by(DetectionRule.id)
-    ).all()
+    )
+    if rule_ids is not None:
+        query = query.where(DetectionRule.id.in_(rule_ids))
+    return session.execute(query).all()
+
+
+def _copies_listed(session: Any) -> Dict[str, Any]:
+    """Every listed copy with its checks, which rule each belongs to, and the blind spots."""
+    rows = _copy_rows(session)
     active: Dict[int, List[int]] = {}
     for rid, eid in session.execute(
         select(DetectionRuleException.rule_id, DetectionRuleException.id)
@@ -1344,6 +1354,18 @@ def _restage(session: Any, copies: Dict[str, Any]) -> Tuple[Dict[str, Any], Set[
     return {**copies, "stages": stages, "moves": moves}, changed
 
 
+def _rows_unchanged(session: Any, copies: Dict[str, Any], changed: Set[int]) -> bool:
+    """Whether the moved rules' copies (their version, checks, status and the
+    rest) are still what the listing holds: only then is patching their stage
+    fields the full rebuild's answer. A stage row written with a new version or
+    after a run is read before the write statistics show the other tables moved."""
+    if not changed:
+        return True
+    held = {row.id: tuple(row) for row in copies["rows"] if row.id in changed}
+    fresh = {row.id: tuple(row) for row in _copy_rows(session, changed)}
+    return fresh == held
+
+
 def _restaged(
     health: Dict[str, Any], copies: Dict[str, Any], changed: Set[int]
 ) -> Dict[str, Any]:
@@ -1402,12 +1424,19 @@ def _listing_now() -> Dict[str, Any]:
             _listing["marks"] = marks
             _listing["stage_marks"] = stage_marks
         elif _listing.get("stage_marks") != stage_marks:
-            _listing["copies"], changed = _restage(session, _listing["copies"])
-            _listing["stage_marks"] = stage_marks
-            if changed and "health" in _listing:
-                _listing["health"] = _restaged(
-                    _listing["health"], _listing["copies"], changed
-                )
+            copies, changed = _restage(session, _listing["copies"])
+            if _rows_unchanged(session, _listing["copies"], changed):
+                _listing["copies"] = copies
+                _listing["stage_marks"] = stage_marks
+                if changed and "health" in _listing:
+                    _listing["health"] = _restaged(_listing["health"], copies, changed)
+            else:
+                # The move came with a new version or new checks (a sync, or a
+                # run then the sweep), which the lagging marks don't show yet.
+                _listing.clear()
+                _listing["copies"] = _copies_listed(session)
+                _listing["marks"] = marks
+                _listing["stage_marks"] = stage_marks
         fires_marks = (
             tuple(m for m in written if m[0] in _FIRES_TABLES),
             datetime.now(timezone.utc).date(),
