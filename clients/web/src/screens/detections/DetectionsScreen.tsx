@@ -7,6 +7,8 @@ import { detectionRulesApi } from '../../services/api'
 import { Empty, Failure } from '../shared/x1'
 import RuleExceptions, { KEEP_DAYS } from './RuleExceptions'
 import RuleFindings from './RuleFindings'
+import RolloutMetrics from './RolloutMetrics'
+import { useRolloutMetrics } from './useRolloutMetrics'
 import FindingPopup from '../dashboard/FindingPopup'
 import ProofCardExport from './ProofCardExport'
 import './detections.css'
@@ -20,6 +22,7 @@ type RuleHealth =
   | 'disabled'
   | 'no_fire_data'
 type View = RuleHealth | 'attention' | 'all'
+type Stage = 'shadow' | 'live' | 'off'
 type Flag = 'noisy' | 'quiet' | 'accurate' | 'silent' | 'drift'
 type FlagView = Flag | 'caught'
 type Sort = 'worst' | 'most_fires' | 'fewest_fires' | 'name'
@@ -61,7 +64,7 @@ interface RuleRow {
   /** Its active exceptions, and the hits they silenced in the days the runner keeps. */
   exceptions?: number
   /** Its overlay copy's rollout stage (null without one), and whole days since a shadow stage began. */
-  stage?: 'shadow' | 'live' | 'off' | null
+  stage?: Stage | null
   /** When its current stage row was written (ISO), null without one. */
   stage_since?: string | null
   days_in_shadow?: number | null
@@ -100,6 +103,8 @@ interface RulesReport {
   with_exceptions?: number
   /** Of those, the ones this view and search leave out. */
   exceptions_elsewhere?: number
+  /** Vigil's own rules at each rollout stage. */
+  stage_counts?: Partial<Record<Stage, number>>
   offset: number
   rules: RuleRow[]
   by_siem: Partial<Record<Siem, SiemTally>>
@@ -131,6 +136,24 @@ const isFlag = (k: string): k is FlagView => k in FLAG
 const labelOf = (k: RuleRow['worst']) => (isFlag(k) ? FLAG[k] : HEALTH[k])
 const ATTENTION: RuleHealth[] = ['fails_to_run', 'data_silent', 'missing_field', 'never_fired']
 const MORE: View[] = ['disabled', 'no_fire_data', 'all']
+/** The rollout stages of Vigil's own rules: a group in More views, and a filter on top of All rules. */
+const STAGE: Record<Stage, { label: string; note: string }> = {
+  shadow: { label: 'In shadow', note: 'Vigil runs these but alerts nobody yet' },
+  live: { label: 'Live', note: 'Vigil’s rules alerting analysts' },
+  off: { label: 'Switched off', note: 'Vigil stopped running these' },
+}
+const STAGES: Stage[] = ['shadow', 'live', 'off']
+const dayMonth = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+/** A Vigil rule's stage, as its grey line says it. */
+function stageText(r: RuleRow): string {
+  const since = r.stage_since ? dayMonth(r.stage_since) : ''
+  if (r.stage === 'shadow') {
+    const d = r.days_in_shadow
+    return d == null ? 'In shadow' : d === 0 ? 'In shadow · since today' : `In shadow · ${plural(d, 'day', 'days')}`
+  }
+  if (r.stage === 'live') return since ? `Live since ${since}` : 'Live'
+  return since ? `Off since ${since}` : 'Switched off'
+}
 const SIEMS: Siem[] = ['elastic', 'splunk', 'wazuh']
 const SIEM_NAME: Record<string, string> = { elastic: 'Elastic', splunk: 'Splunk', wazuh: 'Wazuh', repo: 'Repo', overlay: 'Vigil' }
 
@@ -188,9 +211,12 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   const [flag, setFlag] = useState<FlagView | null>(null)
   // Has exceptions: every rule with an active exception, whatever its health.
   const [excepted, setExcepted] = useState(false)
-  const pickView = (v: View) => { setFlag(null); setExcepted(false); setView(v) }
-  const pickFlag = (f: FlagView) => { setView('all'); setExcepted(false); setFlag(flag === f ? null : f) }
-  const pickExcepted = () => { setFlag(null); setView('all'); setExcepted(!excepted) }
+  // A rollout stage from More views: Vigil's rules at that stage, whatever their health.
+  const [stage, setStage] = useState<Stage | null>(null)
+  const pickView = (v: View) => { setFlag(null); setExcepted(false); setStage(null); setView(v) }
+  const pickFlag = (f: FlagView) => { setView('all'); setExcepted(false); setStage(null); setFlag(flag === f ? null : f) }
+  const pickExcepted = () => { setFlag(null); setView('all'); setStage(null); setExcepted(!excepted) }
+  const pickStage = (st: Stage) => { setFlag(null); setExcepted(false); setView('all'); setStage(st) }
   const [report, setReport] = useState<RulesReport | null>(null)
   const [rows, setRows] = useState<RuleRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -201,6 +227,8 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   // A finding opened from a rule's fire count.
   const [finding, setFinding] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
+  // The rollout's success metrics, a card under the stats strip.
+  const rollout = useRolloutMetrics()
   const listRef = useRef<HTMLDivElement>(null)
   // Bumped per view, so a page asked for under the last view is dropped.
   const generation = useRef(0)
@@ -216,7 +244,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
     return () => window.clearTimeout(t)
   }, [typed])
 
-  const params = { health: view === 'all' ? undefined : view, tool: siem === 'all' ? undefined : siem, q: q || undefined, sort: sort === 'worst' ? undefined : sort, flag: flag ?? undefined, rules: picked || undefined, has_exceptions: excepted || undefined }
+  const params = { health: view === 'all' ? undefined : view, tool: siem === 'all' ? undefined : siem, q: q || undefined, sort: sort === 'worst' ? undefined : sort, flag: flag ?? undefined, rules: picked || undefined, has_exceptions: excepted || undefined, stage: stage ?? undefined }
 
   // Each view, SIEM and search asks the server: the listing is capped, so narrowing capped rows here would miss rules.
   useEffect(() => {
@@ -237,9 +265,9 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
       .catch((e) => { if (live) setError(errorText(e, 'Rule health did not load.')) })
       .finally(() => { if (live) setLoading(false) })
     return () => { live = false }
-    // params follows view, siem, q, sort, flag, picked and excepted
+    // params follows view, siem, q, sort, flag, picked, excepted and stage
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, siem, q, sort, flag, picked, excepted])
+  }, [view, siem, q, sort, flag, picked, excepted, stage])
 
   const matched = report?.matched ?? 0
   const hasMore = !loading && rows.length < matched
@@ -281,13 +309,16 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   const siems = SIEMS.filter((s) => report.by_siem[s])
   const cantFire = siems.reduce((a, s) => a + (report.by_siem[s]?.cant_fire ?? 0), 0)
   const of = viewCount(report, view)
-  const viewName = excepted ? 'Has exceptions' : flag ? FLAG[flag].label : view === 'attention' ? 'Needs attention' : view === 'all' ? 'All rules' : HEALTH[view].label
+  const viewName = stage ? STAGE[stage].label : excepted ? 'Has exceptions' : flag ? FLAG[flag].label : view === 'attention' ? 'Needs attention' : view === 'all' ? 'All rules' : HEALTH[view].label
   // A search that misses here may hit in a view the chips leave out (a healthy rule
   // under Needs attention): say how many and where, one click from all of them.
   const elsewhere = Object.entries(report.matched_elsewhere ?? {}) as [RuleHealth, number][]
   const elsewhereN = elsewhere.reduce((a, [, c]) => a + c, 0)
   const elsewhereText = elsewhere.map(([h, c]) => `${n(c)} in ${HEALTH[h].label}`).join(', ')
   const showAll = () => { setView('all'); setOpen(null) }
+  // More views holds the quieter health views and the rollout stages.
+  const moreValue = stage ? `stage:${stage}` : !flag && !excepted && MORE.includes(view) ? view : ''
+  const pickMore = (v: string) => (v.startsWith('stage:') ? pickStage(v.slice(6) as Stage) : pickView((v || 'attention') as View))
   // The view's rule copies for a proof card: the pages listed so far, then the rest.
   const viewIds = async () => {
     const ids = rows.map((r) => r.rule_id)
@@ -303,7 +334,9 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   // Rules with active exceptions this view leaves out (a healthy one under Needs
   // attention): say so, one click from all of them, so what's silenced stays in sight.
   const excElsewhere = excepted ? 0 : report.exceptions_elsewhere ?? 0
-  const note = excepted && !q
+  const note = stage && !q
+    ? `${plural(report.matched, 'rule', 'rules')} · ${STAGE[stage].note}, ${order}`
+    : excepted && !q
     ? `${plural(report.matched, 'rule has', 'rules have')} active exceptions, whatever ${report.matched === 1 ? 'its' : 'their'} health, ${order}`
     : flag && !q
     ? `${plural(report.matched, 'rule', 'rules')} · ${FLAG[flag].note}, ${order}`
@@ -336,6 +369,8 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
           <span className="de-kpi-sub">{siems.map((s) => `${n(report.by_siem[s]?.cant_fire ?? 0)} ${SIEM_NAME[s]}`).join(' · ')}</span>
         </div>
       </div>
+
+      <RolloutMetrics data={rollout.data} error={rollout.error} onRetry={rollout.retry} />
 
       <div className="de-pair">
         <section className="x1-card de-card de-siems">
@@ -463,11 +498,16 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
             <span className="de-div" aria-hidden="true" />
             <Chip on={excepted} tone="fair" onClick={pickExcepted} label="Has exceptions" count={report.with_exceptions ?? 0} />
           </div>
-          <select aria-label="Other views" className={`de-more${!flag && !excepted && MORE.includes(view) ? ' on' : ''}`} value={!flag && !excepted && MORE.includes(view) ? view : ''} onChange={(e) => pickView((e.target.value || 'attention') as View)}>
+          <select aria-label="Other views" className={`de-more${moreValue ? ' on' : ''}`} value={moreValue} onChange={(e) => pickMore(e.target.value)}>
             <option value="">More views</option>
             <option value="disabled">Disabled · {n(report.counts.disabled)}</option>
             <option value="no_fire_data">No fire data · {n(report.counts.no_fire_data)}</option>
             <option value="all">All rules · {n(viewCount(report, 'all'))}</option>
+            <optgroup label="Rollout">
+              {STAGES.map((st) => (
+                <option key={st} value={`stage:${st}`}>{STAGE[st].label}{report.stage_counts ? ` · ${n(report.stage_counts[st] ?? 0)}` : ''}</option>
+              ))}
+            </optgroup>
           </select>
         </div>
 
@@ -501,6 +541,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                   )}
                   <div className="de-meta">
                     <span>{!r.checks_run ? 'Not checked' : r.checks_passing ? plural(r.checks_passing, 'check passes', 'checks pass') : 'No check passes'}</span>
+                    {r.stage && <span>· {stageText(r)}</span>}
                   </div>
                   <div className="de-toggles">
                     {r.raw && (

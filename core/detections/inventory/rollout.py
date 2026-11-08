@@ -1038,7 +1038,10 @@ def _deploy(
     outcomes: Dict[int, Dict[str, Any]] = {}
     if not pending:
         return outcomes
-    from core.detections.detection_rules_service import deploy_host_refused
+    from core.detections.detection_rules_service import (
+        deploy_host_refused,
+        deploy_subdirectory_refused,
+    )
     from core.secrets import get_secret
 
     with get_db_manager().session_scope() as session:
@@ -1051,8 +1054,9 @@ def _deploy(
         outcome: Dict[str, Any] = {"version": copy.version, "at": now.isoformat()}
         try:
             # Again here, not only when the target was set: a hand-edited file
-            # must not send the GitHub token to a GitLab or Bitbucket host.
-            refused = deploy_host_refused(target)
+            # must not send the GitHub token to a GitLab or Bitbucket host, nor
+            # write outside the repo through a '..' subdirectory.
+            refused = deploy_host_refused(target) or deploy_subdirectory_refused(target)
             if refused:
                 raise RuntimeError(f"{target.get('git_url')}: {refused}")
             if not token:
@@ -1181,11 +1185,15 @@ def _open_pr(
 
     import httpx
 
-    from core.detections.detection_rules_service import deploy_host_refused
+    from core.detections.detection_rules_service import (
+        deploy_host_refused,
+        deploy_subdirectory_refused,
+    )
 
     # Last guard before the token leaves: whoever calls this, an unmarked
-    # non-github.com host gets no request at all.
-    refused = deploy_host_refused(target)
+    # non-github.com host, or a subdirectory that climbs out of the repo, gets
+    # no request at all.
+    refused = deploy_host_refused(target) or deploy_subdirectory_refused(target)
     if refused:
         raise RuntimeError(f"{target.get('git_url')}: {refused}")
     api, repo = _api_of(str(target.get("git_url") or ""))

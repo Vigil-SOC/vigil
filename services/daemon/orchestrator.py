@@ -505,6 +505,7 @@ class CaseSpec:
     finding_ids: List[str]
     priority: str
     case_id: Optional[str] = None
+    mitre_techniques: Optional[List[str]] = None
 
 
 def _new_case_id() -> str:
@@ -582,6 +583,7 @@ def _mint_case(session, spec: CaseSpec) -> str:
         status="open",
         priority=spec.priority,
         timeline=[{"timestamp": now.isoformat() + "Z", "event": "Case created"}],
+        mitre_techniques=spec.mitre_techniques or None,
     )
     session.add(case)
     session.flush()
@@ -1159,6 +1161,8 @@ class Orchestrator:
                 title=_human_ask_case_title(hypothesis, findings, workflow_id),
                 finding_ids=list(finding_ids),
                 priority=item.get("priority") or "medium",
+                # The daily gaps run names the techniques its Case is about.
+                mitre_techniques=list(item.get("case_techniques") or []) or None,
             )
 
         await self._create_investigation(
