@@ -162,6 +162,15 @@ def _proof_export(p: Mapping[str, Any]) -> str:
     return f"Exported a proof card ({p['kind']}, {n} {'rule' if n == 1 else 'rules'})"
 
 
+def _skill(verb: str):
+    def words(p: Mapping[str, Any]) -> str:
+        name = f" {p['name']!r}" if p.get("name") else ""
+        where = f" from {p['exported_from']}" if p.get("exported_from") else ""
+        return f"{verb} the Detection Skill{name}{where}"
+
+    return words
+
+
 # Who needed the key is the entry's on_behalf_of, which the trail names when it is
 # read; the sentence says what needed it and never prints an id.
 def _proof_key(p: Mapping[str, Any]) -> str:
@@ -185,6 +194,13 @@ def _staged(p: Mapping[str, Any]) -> str:
     if p.get("from_stage"):
         return f"Moved {rule}{version} from {_word(p['from_stage'])} to {to}{hold}"
     return f"Put {rule}{version} in {to}{hold}"
+
+
+def _saved(p: Mapping[str, Any]) -> str:
+    rule = f"rule {p['rule_id']}" if p.get("rule_id") is not None else "a rule"
+    version = f" v{p['version']}" if p.get("version") is not None else ""
+    language = f" ({_word(p['language'])} copy)" if p.get("language") else ""
+    return f"Saved {rule}{version}{language}"
 
 
 def _ingested(p: Mapping[str, Any]) -> str:
@@ -229,10 +245,15 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "roles.revised": "Revised the built-in roles",
     "detections.proof_card_exported": _proof_export,
     "detections.proof_key_created": _proof_key,
+    "detections.skill_exported": _skill("Exported"),
+    "detections.skill_imported": _skill("Imported"),
+    "detections.skill_import_refused": lambda p: "Refused a Detection Skill import"
+    + (f": {p['reason']}" if p.get("reason") else ""),
     "autonomy.tool_classified": lambda p: f"Classed {p.get('tool') or 'a tool'} as "
     f"{_word(p.get('class_after')) or 'unclassified'}",
     "tools.classified": "Classed outside tools on upgrade",
     "detections.rule_staged": _staged,
+    "detections.rule_saved": _saved,
     "findings.ingested": _ingested,
     "findings.technique_confidence_cleared": lambda p: "Cleared technique confidence"
     + (f" on {p['rows_cleared']} findings" if p.get("rows_cleared") else ""),

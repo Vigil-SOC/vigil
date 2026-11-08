@@ -210,6 +210,9 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   const pickStage = (st: Stage) => { setFlag(null); setExcepted(false); setView('all'); setStage(st) }
   const [report, setReport] = useState<RulesReport | null>(null)
   const [rows, setRows] = useState<RuleRow[]>([])
+  // Rules a Revert or Release moved out of this Rollout view: their rows stay (with the
+  // open panel) until the view changes, but are not counted as in it.
+  const [moved, setMoved] = useState<Set<number>>(() => new Set())
   const [loading, setLoading] = useState(true)
   const [more, setMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -250,6 +253,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
         const data = res.data as RulesReport
         setReport(data)
         setRows(data.rules)
+        setMoved(new Set())
         setOpen(null)
         listRef.current?.scrollTo({ top: 0 })
         setError(null)
@@ -262,7 +266,8 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   }, [view, siem, q, sort, flag, picked, excepted, stage])
 
   const matched = report?.matched ?? 0
-  const hasMore = !loading && rows.length < matched
+  const inView = rows.length - moved.size
+  const hasMore = !loading && inView < matched
   // Only the rows on screen are in the DOM; each is measured, so a wrapped name or an open raw error or exception list keeps its height.
   const virtual = useVirtualizer({
     count: rows.length,
@@ -281,7 +286,16 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
     detectionRulesApi.rules({ rules: String(id) })
       .then((res) => {
         const fresh = (res.data as RulesReport).rules.find((x) => x.rule_id === id)
-        if (fresh) setRows((rs) => rs.map((x) => (x.rule_id === id ? fresh : x)))
+        if (!fresh) return
+        setRows((rs) => rs.map((x) => (x.rule_id === id ? fresh : x)))
+        setMoved((m) => {
+          const out = !!stage && fresh.stage !== stage
+          if (out === m.has(id)) return m
+          const next = new Set(m)
+          if (out) next.add(id)
+          else next.delete(id)
+          return next
+        })
       })
       .catch(() => {})
       .finally(() => {
@@ -295,7 +309,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
     if (!hasMore || more || last < rows.length - 40) return
     const asked = generation.current
     setMore(true)
-    detectionRulesApi.rules({ ...params, offset: rows.length })
+    detectionRulesApi.rules({ ...params, offset: inView })
       .then((res) => { if (asked === generation.current) setRows((prev) => [...prev, ...(res.data as RulesReport).rules]) })
       .catch((e) => { if (asked === generation.current) setError(errorText(e, 'More rules did not load.')) })
       .finally(() => { if (asked === generation.current) setMore(false) })
@@ -328,8 +342,10 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   const moreValue = stage ? `stage:${stage}` : !flag && !excepted && MORE.includes(view) ? view : ''
   const pickMore = (v: string) => (v.startsWith('stage:') ? pickStage(v.slice(6) as Stage) : pickView((v || 'attention') as View))
   // The view's rule copies for a proof card: the pages listed so far, then the rest.
+  // A rule a Revert or Release moved out of the view is left out, and the next page
+  // starts after the rules still in it.
   const viewIds = async () => {
-    const ids = rows.map((r) => r.rule_id)
+    const ids = rows.filter((r) => !moved.has(r.rule_id)).map((r) => r.rule_id)
     while (ids.length < matched) {
       const page = (await detectionRulesApi.rules({ ...params, offset: ids.length })).data as RulesReport
       if (!page.rules.length) break
@@ -625,7 +641,11 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
           <div className="de-end" aria-hidden="true">{more ? 'Loading more rules…' : hasMore ? '' : rows.length ? 'End of the list' : ''}</div>
         </div>
         <div className="de-foot">
-          <span aria-live="polite">Showing {n(rows.length)} of {n(report.matched)}{more ? ' · loading more…' : ''}</span>
+          <span aria-live="polite">
+            Showing {n(inView)} of {n(report.matched)}
+            {moved.size > 0 && ` · ${plural(moved.size, 'rule', 'rules')} moved out of this view`}
+            {more ? ' · loading more…' : ''}
+          </span>
           {excElsewhere > 0 && (
             <span>
               {plural(excElsewhere, 'rule with active exceptions isn’t', 'rules with active exceptions aren’t')} in this view.{' '}

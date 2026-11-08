@@ -208,11 +208,9 @@ def _wazuh(text: str, rel: str) -> Optional[RuleRecord]:
 def wazuh_records(text: str, rel: str) -> List[RuleRecord]:
     """Every rule in a Wazuh rule file. A file of one rule reads as _wazuh();
     each rule of a ruleset file (a local_rules.xml) as its own XML, all at
-    the file's path. A decoder or other XML file holds none."""
-    try:
-        rules = wazuh_xml.parse_all(text)
-    except wazuh_xml.NotARule:
-        return []
+    the file's path. A decoder or other well-formed XML file holds none; text
+    that is no XML raises NotARule, for read_source() to report."""
+    rules = wazuh_xml.parse_all(text)
     if len(rules) == 1:
         rule, enclosing = rules[0]
         one = _wazuh_record(rule, enclosing, rel, text)
@@ -354,7 +352,10 @@ def read_source(source: Dict[str, Any], root: Path) -> List[RuleRecord]:
         try:
             # Postgres text cannot hold NUL, so such a file is not stored.
             found = [] if b"\x00" in raw else _records(fmt, path, rel, raw)
-        except Exception:  # noqa: BLE001 -- a malformed file is not a rule
+        except Exception as exc:  # noqa: BLE001 -- a malformed file is not a rule
+            logger.warning(
+                "detection rules: %s not read, no rules listed: %s", rel, exc
+            )
             found = []
         for record in found:
             # Two rules with one id stay two rows: the first by path keeps the id.
