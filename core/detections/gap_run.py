@@ -9,14 +9,17 @@ window re-read each day catches what a time marker would skip for good: evidence
 committed after a run started, an alert labelled after it was stored, and sightings
 that reach the floor only over several days."""
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Set, Tuple
+from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Set, Tuple
 
 from core.cases.case_status import CLOSED
 from core.detections.gaps import TECHNIQUE_ID, read_alert_labels
 from core.storage.connection import get_db_manager
 from core.storage.models import Case, SystemConfig
+
+logger = logging.getLogger(__name__)
 
 RAISED_KEY = "detection_gaps.raised"
 # Defaults, not settings yet.
@@ -29,14 +32,23 @@ WINDOW_DAYS = 30
 # starves, and ranked by that.
 GAP_FLOOR = 2
 
-MISSED, PAPER, BLIND = "missed", "paper", "blind"
+# Recent threat intel read each run: the newest-updated intrusion sets and
+# reports in OpenCTI, and the ATT&CK techniques each uses or holds.
+INTEL_ENTITIES = (("intrusion_set", 10), ("report", 10))
+# Each entity's attack patterns read, at most (relationships and contained objects).
+INTEL_RELATED = 500
+# Seconds the run waits for OpenCTI: to connect, then for all its reads.
+INTEL_TIMEOUT = 30
+
+MISSED, PAPER, INTEL, BLIND = "missed", "paper", "intel", "blind"
 _LABEL = {
     MISSED: "runs no rule caught",
     PAPER: "covered on paper only",
+    INTEL: "named in recent threat intel, no proven rule",
     BLIND: "blind spot (data source)",
 }
 _UNIT = {MISSED: ("run", "runs"), PAPER: ("alert", "alerts")}
-_KIND_ORDER = {MISSED: 0, PAPER: 1, BLIND: 2}
+_KIND_ORDER = {MISSED: 0, PAPER: 1, INTEL: 2, BLIND: 3}
 
 
 @dataclass(frozen=True)
@@ -47,6 +59,8 @@ class Raised:
     runs: Mapping[str, str] = field(default_factory=dict)
     alerts: Mapping[str, str] = field(default_factory=dict)
     blind_spots: FrozenSet[str] = frozenset()
+    # Intel technique gaps raised, each with when.
+    intel: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -59,10 +73,14 @@ class Gap:
     confirmed: int = 0
     # The run keys or alert ids counted, recorded once the gap is raised.
     evidence: Tuple[str, ...] = ()
+    # The intrusion sets and reports that name an intel gap's technique.
+    sources: Tuple[str, ...] = ()
 
     def line(self) -> str:
         if self.kind == BLIND:
             n = f"{self.count} rule{'' if self.count == 1 else 's'} starved"
+        elif self.kind == INTEL:
+            n = "named by " + ", ".join(self.sources)
         else:
             one, many = _UNIT[self.kind]
             n = f"{self.count} new {one if self.count == 1 else many}"
@@ -78,6 +96,7 @@ def read_raised() -> Raised:
         dict(value.get("runs") or {}),
         dict(value.get("alerts") or {}),
         frozenset(value.get("blind_spots") or ()),
+        dict(value.get("intel") or {}),
     )
 
 
@@ -87,6 +106,7 @@ def write_raised(raised: Raised) -> None:
         "runs": dict(raised.runs),
         "alerts": dict(raised.alerts),
         "blind_spots": sorted(raised.blind_spots),
+        "intel": dict(raised.intel),
     }
     with get_db_manager().session_scope() as session:
         row = session.get(SystemConfig, RAISED_KEY)
@@ -119,6 +139,71 @@ def alert_ids(since: datetime) -> Dict[str, List[str]]:
     return out
 
 
+async def intel_techniques(service: Any) -> Dict[str, List[str]]:
+    """Each ATT&CK technique the newest intrusion sets and reports in OpenCTI use
+    or hold, with the names of those that do. Fixed reads in a fixed order, so the
+    same OpenCTI content gives the same techniques every run."""
+    named: Dict[str, Set[str]] = {}
+    read = []
+    for entity_type, newest in INTEL_ENTITIES:
+        found = await service.search_entities("", entity_type, limit=newest)
+        entities = list(found.get("entities") or ())
+        read.append(f"{len(entities)} {entity_type}")
+        for entity in entities:
+            name = entity.get("name") or entity["id"]
+            used = await service.techniques_of(entity["id"], limit=INTEL_RELATED)
+            if used["total"] > used["read"]:
+                logger.warning(
+                    "Threat intel: %s names %d attack patterns; the gaps run read %d",
+                    name,
+                    used["total"],
+                    used["read"],
+                )
+            for technique in used["techniques"]:
+                technique = technique.strip().upper()
+                if TECHNIQUE_ID.match(technique):
+                    named.setdefault(technique, set()).add(name)
+    logger.info(
+        "Threat intel: read the newest %s; %d techniques named",
+        " and ".join(read),
+        len(named),
+    )
+    return {t: sorted(names) for t, names in sorted(named.items())}
+
+
+async def recent_intel() -> Dict[str, List[str]]:
+    """``intel_techniques`` from the configured OpenCTI; empty when OpenCTI is off,
+    unconfigured or not answering, and the run goes on without intel.
+
+    Connecting through the process's MCP client is the configured check (enabled,
+    set up, credentials), and it binds OpenCTI's tools to the agent run the gaps
+    queue, which still uses them to draft rules."""
+    import asyncio
+
+    from core.integrations.mcp.client import process_mcp_client
+    from core.integrations.opencti.client import OpenCTIError, configured_service
+
+    client = process_mcp_client()
+    try:
+        # Bounded: a wedged server must not hold up every other scheduled task.
+        on = client is not None and await asyncio.wait_for(
+            client.connect_to_server("opencti"), timeout=INTEL_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        logger.warning("OpenCTI did not answer; the gaps run skips threat intel")
+        on = False
+    service = configured_service(timeout=INTEL_TIMEOUT)[0] if on else None
+    if service is None:
+        return {}
+    try:
+        return await asyncio.wait_for(intel_techniques(service), timeout=INTEL_TIMEOUT)
+    except (asyncio.TimeoutError, OpenCTIError) as exc:
+        logger.warning("The gaps run skips threat intel: %s", str(exc) or "timed out")
+        return {}
+    finally:
+        await service.close()
+
+
 def open_case_techniques() -> Set[str]:
     """Techniques an open Case already carries: a gap on one is not raised again."""
     with get_db_manager().session_scope() as session:
@@ -133,9 +218,13 @@ def _run_key(run: Mapping[str, Any]) -> str:
 
 
 def gaps_in(
-    report: Dict[str, Any], alerts: Mapping[str, List[str]], raised: Raised
+    report: Dict[str, Any],
+    alerts: Mapping[str, List[str]],
+    raised: Raised,
+    intel: Optional[Mapping[str, List[str]]] = None,
 ) -> List[Gap]:
-    """Every gap the report lists, counting only evidence no run raised yet."""
+    """Every gap the report lists, counting only evidence no run raised yet, and
+    each technique recent intel names that ``techniques_checked`` calls a gap."""
     gaps = []
     for group in report["runs_rules_missed"]["groups"]:
         new = [_run_key(r) for r in group["runs"] if _run_key(r) not in raised.runs]
@@ -154,6 +243,11 @@ def gaps_in(
             )
         )
         gaps.append(Gap(PAPER, technique, len(new), 0, new))
+    checked = report.get("techniques_checked") or {}
+    for technique in checked.get("gaps") or ():
+        sources = tuple((intel or {}).get(technique) or ())
+        if sources:
+            gaps.append(Gap(INTEL, technique, len(sources), 0, (technique,), sources))
     gaps += [
         Gap(BLIND, spot["data_source"], len(spot.get("rules") or ()))
         for spot in report["blind_spots"]
@@ -166,19 +260,24 @@ def to_raise(
     raised: Raised,
     covered: Set[str],
     floor: int = GAP_FLOOR,
+    window_start: Optional[datetime] = None,
 ) -> Tuple[List[Gap], List[Gap]]:
     """(the gaps to raise, biggest first; the technique gaps an open Case covers).
     A technique is raised at or above the floor of new evidence (or one new
     confirmed run); a blind spot when no run raised it while it stayed open."""
+    # An intel gap raised before the window is raised again while intel names it.
+    since = window_start.isoformat() if window_start else ""
     to, held = [], []
     for gap in gaps:
         if gap.kind == BLIND:
             if gap.subject not in raised.blind_spots:
                 to.append(gap)
+        elif gap.kind == INTEL and raised.intel.get(gap.subject, "") >= since:
+            continue  # raised within the window
         elif gap.subject.upper() in covered:
             if gap.evidence:
                 held.append(gap)
-        elif gap.count >= floor or gap.confirmed:
+        elif gap.kind == INTEL or gap.count >= floor or gap.confirmed:
             to.append(gap)
     to.sort(key=lambda g: (-g.count, _KIND_ORDER[g.kind], g.subject))
     return to, held
@@ -200,15 +299,17 @@ def after_run(
     start = window_start.isoformat()
     runs = {k: v for k, v in raised.runs.items() if v >= start}
     alerts = {k: v for k, v in raised.alerts.items() if v >= start}
+    intel = {k: v for k, v in raised.intel.items() if v >= start}
+    buckets = {MISSED: runs, PAPER: alerts, INTEL: intel}
     for gap in list(to) + list(held):
-        bucket = runs if gap.kind == MISSED else alerts if gap.kind == PAPER else None
+        bucket = buckets.get(gap.kind)
         if bucket is not None:
             bucket.update({e: at for e in gap.evidence})
     still_open = {g.subject for g in gaps if g.kind == BLIND}
     blind = (
         raised.blind_spots | {g.subject for g in to if g.kind == BLIND}
     ) & still_open
-    return Raised(runs, alerts, frozenset(blind))
+    return Raised(runs, alerts, frozenset(blind), intel)
 
 
 def case_techniques(raised: Iterable[Gap]) -> List[str]:

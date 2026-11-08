@@ -35,8 +35,11 @@ rule version cited on a matching compose-run step or proven Verdict
 After the sources, each SIEM rule is linked to the repo rule it came from when
 that is certain: a Kibana rule by ``same_id`` (one active repo Elastic rule with
 its rule_id), a Splunk saved search by ``known_name`` ('ESCU - <name> - Rule' and
-one active repo Splunk rule named <name>). A link or decline an agent or person
-made is never touched.
+one active repo Splunk rule named <name>), a Wazuh manager rule by ``same_id``
+(one active repo or overlay Wazuh rule with its id, once a Vigil rule's PR is
+merged and the manager loads it). A link or decline an agent or person made is
+never touched. Wazuh links get no drift check: the manager's listing and the
+XML file never fingerprint alike.
 
 Every change of a check result is also appended to detection_rule_check_changes
 (``_record_changes``): a Runs result that differs from the rule's last recorded
@@ -78,6 +81,7 @@ Nothing is ever written to a SIEM.
 from __future__ import annotations
 
 import logging
+import posixpath
 import re
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
@@ -116,7 +120,9 @@ SYNC_LOCK_KEY = 0x7669_6769_6C52_554C  # "vigilRUL"
 REPO_PREFIX = "repo:"
 # How ESCU names the saved search it ships for a detection.
 ESCU_NAME = re.compile(r"^ESCU - (.+) - Rule$")
-STAGED_LANGUAGES = ("splunk", "elastic")
+STAGED_LANGUAGES = ("splunk", "elastic", "wazuh")
+# Overlay copies linted on each sync: every staged one, Wazuh's included.
+LINTED_LANGUAGES = STAGED_LANGUAGES
 
 
 @dataclass
@@ -134,6 +140,21 @@ class SourceReport:
     drifted: int = 0
     error: Optional[str] = None
     skipped: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class Saves:
+    """What ``save_rule`` just wrote into the overlay, for the sync reading it (#4097).
+
+    ``author`` is who saved (see ``saved_entry``); ``fingerprints`` is each
+    saved copy's native key and the fingerprint of the content written. A
+    version the sync creates whose fingerprint matches gets one SAVED trail
+    entry in the sync's own transaction. A version created with none was
+    first seen by the sync alone: a file put in the folder by hand.
+    """
+
+    author: Dict[str, Any]
+    fingerprints: Dict[str, str]
 
 
 @contextmanager
@@ -258,6 +279,67 @@ def staged_entry(
         "hold": hold,
         **more,
     }
+
+
+SAVED = "detections.rule_saved"
+SAVE_AUDIT_TYPE = "detection_rule_save"
+
+
+def saved_entry(
+    author: Dict[str, Any],
+    rule_id: int,
+    version: int,
+    record: RuleRecord,
+    fp: str,
+) -> Dict[str, Any]:
+    """The one trail entry a rule saved through Vigil leaves, per copy and version.
+
+    ``author`` is ``{actor, by, agent_id?, run_id?}``: ``actor`` the principal id
+    the trail names (the person; for a run no person started, its agent) and
+    ``by`` "agent" for a run's tool call, "person" for a signed-in caller
+    outside one, "unknown" for neither. ``agent_id`` and ``run_id`` are the
+    run's signed claims, never arguments the model gave.
+    """
+    from core.audit import trail
+
+    return {
+        trail.ACTION: SAVED,
+        trail.ACTOR: author["actor"],
+        trail.OBJECT: str(rule_id),
+        "by": author["by"],
+        **{k: author[k] for k in ("agent_id", "run_id") if author.get(k)},
+        "rule_id": rule_id,
+        "native_key": record.native_key,
+        "version": version,
+        "language": record.language,
+        "fingerprint": fp,
+    }
+
+
+def _record_saves(session: Any, author: Dict[str, Any], saved: List[tuple]) -> None:
+    """One entry per saved copy's new version, in the transaction that wrote the version.
+
+    Not gated, like the stage rows beside it: a restore's pause must not roll
+    back the versions. A refused append fails the sync and writes none of them.
+    """
+    from core.audit import trail
+    from core.storage.config_service import ConfigService
+
+    use_trail = trail.in_use(session)
+    for rule_id, version, record, fp in saved:
+        entry = saved_entry(author, rule_id, version, record, fp)
+        if use_trail:
+            trail.append(session, entry, gated=False)
+            continue
+        value = {k: v for k, v in entry.items() if k not in (trail.ACTION, trail.ACTOR)}
+        ConfigService(user_id=author["actor"])._create_audit_log(
+            session,
+            config_type=SAVE_AUDIT_TYPE,
+            config_key=f"detection_rule:{rule_id}",
+            action="save",
+            old_value=None,
+            new_value=value,
+        )
 
 
 def _lint(record: RuleRecord, now: str) -> Dict[str, Any]:
@@ -452,8 +534,13 @@ def _record_changes(session: Any, rows: List[dict], now: str) -> None:
         )
 
 
-def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
-    """Write the differences between ``records`` (all of ``source``) and the tables."""
+def sync_source(
+    source: str, records: List[RuleRecord], saves: Optional[Saves] = None
+) -> SourceReport:
+    """Write the differences between ``records`` (all of ``source``) and the tables.
+
+    ``saves`` is only ever given for the overlay, by the save that wrote it.
+    """
     report = SourceReport(source=source, read=len(records))
     now = datetime.now(timezone.utc).isoformat()
     siem = not source.startswith(REPO_PREFIX)
@@ -501,6 +588,9 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
 
         new: List[tuple] = []
         versions: List[dict] = []
+        # (rule id, version, record, fingerprint) of each version a save made.
+        saved: List[tuple] = []
+        saved_keys = saves.fingerprints if saves and overlay else {}
         # (rule id, version, checks) to write once the versions exist.
         checked: List[tuple] = []
         for record in records:
@@ -510,12 +600,12 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
                 new.append((record, fp))
                 continue
             rule, latest_fp, stored = hit
-            staged = overlay and record.language in STAGED_LANGUAGES
+            staged = overlay and record.language in LINTED_LANGUAGES
             kept = (stored or {}).get("lint") or {}
             if staged:
-                # Every staged copy is linted on each sync, so one passed by an
-                # older lint is re-judged; an unchanged verdict on the same
-                # version is kept.
+                # Every staged copy (and an overlay Wazuh copy, deployable by a
+                # person) is linted on each sync, so one passed by an older lint
+                # is re-judged; an unchanged verdict on the same version is kept.
                 lint = _lint(record, now)
                 if fp == latest_fp and (
                     kept.get("result"),
@@ -532,6 +622,8 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
             if fp != latest_fp:
                 rule.latest_version += 1
                 versions.append(_version_row(rule.id, rule.latest_version, record, fp))
+                if saved_keys.get(record.native_key) == fp:
+                    saved.append((rule.id, rule.latest_version, record, fp))
                 report.versioned += 1
                 stored = {}
                 stage(
@@ -651,6 +743,8 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
             ).all()
             for rule_id, (r, fp) in zip(ids, new):
                 versions.append(_version_row(rule_id, 1, r, fp))
+                if saved_keys.get(r.native_key) == fp:
+                    saved.append((rule_id, 1, r, fp))
                 lint = None if siem else _lint(r, now)
                 stage(rule_id, 1, r.language, "shadow", "new rule", lint)
                 checks = _checks({}, r, now)
@@ -671,6 +765,8 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
         report.checked = len(checked)
         _record_changes(session, changes, now)
         # Last: the trail lock its entries take is held until commit.
+        if saved:
+            _record_saves(session, saves.author, saved)
         if stages:
             _insert_stages(session, stages, current)
     return report
@@ -736,7 +832,7 @@ def sync_repos() -> List[Any]:
         reports = [_sync_one(service, source) for source in sources]
         removed = _remove_unconfigured([readers.source_name(s) for s in sources])
         # Wazuh's searches go before Kibana's Sees backlog can spend the budget.
-        wazuh_report = _sync_wazuh()
+        wazuh_report = _wazuh_synced()
         reports.append(wazuh_report)
         if not (wazuh_report.error or wazuh_report.skipped):
             reports.append(quiet.sweep_wazuh())  # Quiet first, as for Kibana
@@ -800,7 +896,9 @@ def _drifted(report: SourceReport) -> SourceReport:
     return report
 
 
-def _sync_one(service: Any, source: Dict[str, Any]) -> SourceReport:
+def _sync_one(
+    service: Any, source: Dict[str, Any], saves: Optional[Saves] = None
+) -> SourceReport:
     name = readers.source_name(source)
     if source.get("status") != "ready":
         return SourceReport(source=name, skipped=source.get("status"))
@@ -808,7 +906,7 @@ def _sync_one(service: Any, source: Dict[str, Any]) -> SourceReport:
         root = Path(
             service._under(source["local_path"], source.get("subdirectory", ""))
         )
-        report = sync_source(name, readers.read_source(source, root))
+        report = sync_source(name, readers.read_source(source, root), saves)
     except Exception as exc:  # noqa: BLE001 -- the other sources still sync
         logger.warning("detection rules: syncing %s failed: %s", name, exc)
         return SourceReport(source=name, error=f"{type(exc).__name__}: {exc}")
@@ -992,6 +1090,39 @@ def _link_same_id() -> tuple:
     )
 
 
+def _wazuh_synced() -> SourceReport:
+    """The manager's rules synced, then linked by id when they were read."""
+    report = _sync_wazuh()
+    if report.error or report.skipped:
+        return report  # unread: its links stay as they were
+    return _linked(report, _link_wazuh_id)
+
+
+def vigil_wazuh_file(path: Optional[str], key: str) -> bool:
+    """Whether the manager loads this rule from Vigil's own file for ``key``
+    (``vigil_<id>.xml``, the deploy PR's), not a file of the customer's."""
+    return posixpath.basename(path or "") == f"vigil_{key}.xml"
+
+
+def _link_wazuh_id() -> tuple:
+    """Link each Wazuh manager rule to the one active repo Wazuh rule with its id:
+    a Vigil rule the customer merged and the manager now loads.
+
+    The overlay's own rule is linked only from Vigil's file: a customer's rule
+    file loading that id is another rule. Each change is audited, as it hands
+    the Vigil copy off (or back)."""
+    return _link(
+        wazuh.SOURCE,
+        "wazuh",
+        "same_id",
+        lambda copy: copy.native_key,
+        DetectionRule.native_key,
+        "same Wazuh rule id {}",
+        overlay_ok=lambda copy: vigil_wazuh_file(copy.path, copy.native_key),
+        audited=True,
+    )
+
+
 def _link_known_name() -> tuple:
     """Link each 'ESCU - <name> - Rule' search to the one active repo Splunk rule named <name>."""
 
@@ -1016,14 +1147,17 @@ def _link(
     key_of: Callable[[DetectionRule], Optional[str]],
     origin_key: Any,
     reason: str,
+    overlay_ok: Optional[Callable[[DetectionRule], bool]] = None,
+    audited: bool = False,
 ) -> tuple:
     """Link each ``source`` rule to the one active repo ``language`` rule whose
     ``origin_key`` is ``key_of(copy)``.
 
     Only rows the sync owns (no link, or a ``kind`` one) are written, and only
     when the origin differs. A key more than one repo rule carries links nothing;
-    the overlay's rule is left out of that count when a customer repo carries it.
-    Returns (linked, unlinked).
+    the overlay's rule is left out of that count when a customer repo carries it,
+    and links only copies ``overlay_ok`` passes. ``audited``: each change gets an
+    audit row, as an agent's link does. Returns (linked, unlinked).
     """
     linked = unlinked = 0
     now = datetime.now(timezone.utc)
@@ -1060,19 +1194,61 @@ def _link(
             key = key_of(copy) if copy.language == language else None
             ids = origins.get(key, []) if key is not None else []
             target = ids[0] if len(ids) == 1 else None
+            if key is not None and target is not None and target == overlay.get(key):
+                if overlay_ok is not None and not overlay_ok(copy):
+                    target = None
             if target == copy.origin_rule_id:
                 continue
+            old = _link_value(copy)
             if target is None:
                 copy.origin_rule_id = copy.link_kind = copy.linked_by = None
                 copy.link_reason = copy.linked_at = None
                 unlinked += 1
-                continue
-            copy.origin_rule_id, copy.link_kind = target, kind
-            copy.linked_by = "system"
-            copy.link_reason = reason.format(key)
-            copy.linked_at = now
-            linked += 1
+            else:
+                copy.origin_rule_id, copy.link_kind = target, kind
+                copy.linked_by = "system"
+                copy.link_reason = reason.format(key)
+                copy.linked_at = now
+                linked += 1
+            if audited:
+                _audit_link(session, copy, old)
     return linked, unlinked
+
+
+def _link_value(rule: DetectionRule) -> Dict[str, Any]:
+    """The copy's link, as an agent's link audit records it."""
+    return {
+        "origin_rule_id": rule.origin_rule_id,
+        "link_kind": rule.link_kind,
+        "linked_by": rule.linked_by,
+        "link_reason": rule.link_reason,
+        "linked_at": rule.linked_at.isoformat() if rule.linked_at else None,
+    }
+
+
+def _audit_link(session: Any, copy: DetectionRule, old: Dict[str, Any]) -> None:
+    """One audit row for a link the sync changed, in its transaction: a trail
+    entry (ungated, a system write, as stage rows are) or the legacy row."""
+    from core.audit import trail
+    from core.detections.inventory.links import AUDIT_TYPE
+    from core.storage.config_service import CONFIG_CHANGE, write_config_audit
+
+    verb = "link" if copy.origin_rule_id is not None else "unlink"
+    entry: Dict[str, Any] = {
+        "config_type": AUDIT_TYPE,
+        "config_key": f"detection_rule:{copy.id}",
+        "change_reason": copy.link_reason or "no repo rule carries its key now",
+        "old_value": old,
+        "new_value": _link_value(copy),
+    }
+    if trail.in_use(session):
+        trail.append(
+            session,
+            {"action": CONFIG_CHANGE, "actor": "system", "verb": verb, **entry},
+            gated=False,
+        )
+        return
+    write_config_audit(session, action=verb, changed_by="system", **entry)
 
 
 DRIFT_LINKS = ("same_id", "known_name", "agent")

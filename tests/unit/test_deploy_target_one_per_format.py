@@ -80,7 +80,7 @@ def test_adding_a_second_target_of_one_format_is_refused(service):
 
 @pytest.mark.parametrize(
     "sid, reason",
-    [("sigma", "splunk or elastic"), ("vendor-e", "vendor's public repo")],
+    [("sigma", "splunk, elastic or wazuh"), ("vendor-e", "vendor's public repo")],
 )
 def test_formats_and_vendor_repos_that_cannot_be_targets(service, sid, reason):
     service.set_deploy_target("own-e1", False)
