@@ -5,6 +5,7 @@ import pg from "pg";
 import { archFor } from "./plugins/kinds.js";
 import { deniedPark, runAgent, type AgentKinds } from "./core/agent.js";
 import { loadPlugin } from "./plugins/index.js";
+import { operatorPlugin } from "./plugins/registry.js";
 import { toolsFrom } from "./tools/remote.js";
 import { httpAnswers, journalAnswers, noAnswers, type Answers } from "./core/answers.js";
 import { httpAnnounce, noAnnounce, type Announce } from "./core/checkpoints.js";
@@ -62,6 +63,14 @@ export async function resolveSpec(job: StartJob, resolve: PlaybookResolver = def
   const gate = job.request.approve_hypotheses === true ? { hypothesis_approval: "ask" } : {};
   // Journaled for the root span of every later job: a resume carries neither.
   const refs = refsOf(job);
+  // An operator manifest stands in for plugins/investigate alone. Parsed here so a bad
+  // one fails before the ledger opens, and journaled so a resume reads it back.
+  const manifest = job.request.manifest;
+  const manifestSkills = job.request.manifest_skills ?? [];
+  if (manifest !== undefined) {
+    if (entry.plugin !== "investigate") throw new SpecError(`an operator manifest runs only as investigate, not ${job.run_kind}`);
+    operatorPlugin(manifest, manifestSkills);
+  }
   const tighten = (spec: RunSpec): RunSpec =>
     withOverrides(
       {
@@ -72,6 +81,7 @@ export async function resolveSpec(job: StartJob, resolve: PlaybookResolver = def
           ...(Object.keys(subjects).length === 0 ? {} : { operator_hypothesis_subjects: subjects }),
           ...(recallKeys.length === 0 ? {} : { recall_keys: recallKeys }),
           ...(Object.keys(refs).length === 0 ? {} : { refs }),
+          ...(manifest === undefined ? {} : { operator_manifest: manifest, operator_skills: manifestSkills }),
           ...(Object.keys(gate).length === 0
             ? {}
             : { checkpoints: { ...((spec.sections?.["checkpoints"] as object) ?? {}), ...gate } }),
@@ -228,7 +238,9 @@ async function drive(
   // A kind whose plugin the worker drives directly: investigate. The others run their
   // plugin through the wrappers below, which carry what each one reports out.
   if (entry.plugin !== undefined) {
-    const { manifest, hooks } = loadPlugin(entry.plugin);
+    // Read off the spec, never the request: a resume has none, and the run event holds it.
+    const carried = spec.sections["operator_manifest"];
+    const { manifest, hooks } = carried === undefined ? loadPlugin(entry.plugin) : { manifest: operatorPlugin(carried, spec.sections["operator_skills"]), hooks: undefined };
     const harness = build(spec, as<AgentKinds>(state), undefined, seed);
     // The plugin's grants, not the arch's: the kernel registers the deployment's
     // tools, the plugin's own and the skill loader, and grants by the plugin's needs.

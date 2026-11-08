@@ -5,15 +5,24 @@ entries, closes collapse windows, writes the 15-minute checkpoint, imports
 upgrade history, and sends the trail as CEF over TLS (RFC 5425) when an admin
 has turned the feed on. The cursor is ``audit_feed_state``, outside the chain.
 The trail is the backlog: a failed batch is resent from the same sequence.
+
+Beside syslog, the same tick pushes the trail to one webhook as signed
+CloudEvents batches (#4019), with its own cursor (``audit_webhook_state``),
+backoff and failure state. Syslog's restore pause and erasure bookkeeping
+stay syslog's.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
+import hmac
 import json
 import logging
 import os
+import re
+import secrets
 import socket
 import ssl
 import tempfile
@@ -24,7 +33,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator, Optional
+from urllib.parse import urlsplit
 
+import httpx
 from sqlalchemy import text
 
 from core.audit import retention, trail
@@ -43,6 +54,16 @@ KEY_SECRET = "audit_syslog_key"
 ACTION_FAILED = "audit.feed.failed"
 ACTION_RECOVERED = "audit.feed.recovered"
 ACTION_UPGRADE = "upgrade.run"
+
+WEBHOOK_INTEGRATION_ID = "audit_webhook"
+WEBHOOK_SECRET = "audit_webhook_secret"
+# CloudEvents ``type`` is this prefix, a dot, then the trail action.
+EVENT_TYPE_PREFIX = "ai.deeptempo.vigil.audit"
+EVENT_SOURCE = "/vigil/audit"
+_SECRET_PREFIX = "whsec_"
+_WEBHOOK_TIMEOUT = 10.0
+_URL_MAX = 2048
+_AREA = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 # "vigilFED". Session lock, held for the life of the leader. Not the trail's
 # transaction lock and not the Medic poller's.
@@ -442,7 +463,12 @@ def _fail(session, state: State, error: str) -> None:
     session.execute(_MARK_FAIL, {"error": error})
 
 
-def maintenance_and_send(clock: SendClock, *, now: Optional[datetime] = None) -> None:
+def maintenance_and_send(
+    clock: SendClock,
+    *,
+    now: Optional[datetime] = None,
+    hook: Optional[SendClock] = None,
+) -> None:
     """One leader tick. Sending is its own transaction, after the socket write.
 
     ``now`` is the wall clock for retention and erasure. The send clock stays
@@ -473,6 +499,8 @@ def maintenance_and_send(clock: SendClock, *, now: Optional[datetime] = None) ->
             },
         )
     _send(clock)
+    if hook is not None:
+        _send_webhook(hook)
 
 
 def _send(clock: SendClock) -> None:
@@ -526,7 +554,9 @@ def _try_lock(conn) -> bool:
     )
 
 
-def attempt(conn, clock: SendClock, leading: bool) -> bool:
+def attempt(
+    conn, clock: SendClock, leading: bool, hook: Optional[SendClock] = None
+) -> bool:
     """Take the lock if ``leading`` is false, then run one tick.
 
     Returns false when another session holds the lock. The caller keeps the
@@ -536,7 +566,7 @@ def attempt(conn, clock: SendClock, leading: bool) -> bool:
         if not _try_lock(conn):
             return False
         on_become_leader()
-    maintenance_and_send(clock)
+    maintenance_and_send(clock, hook=hook)
     return True
 
 
@@ -588,6 +618,7 @@ def _loop(stop: threading.Event) -> None:
     conn = None
     leading = False
     clock = SendClock()
+    hook = SendClock()
     try:
         while not stop.is_set():
             try:
@@ -602,9 +633,9 @@ def _loop(stop: threading.Event) -> None:
                     _release(conn, leading)
                     conn = _connect()
                     leading = False
-                clock.now = time.monotonic()
+                clock.now = hook.now = time.monotonic()
                 was = leading
-                leading = attempt(conn, clock, leading)
+                leading = attempt(conn, clock, leading, hook)
                 if leading and not was:
                     logger.info("this replica is the audit feed leader")
             except Exception:  # noqa: BLE001 - the next tick tries again
@@ -780,5 +811,366 @@ def send_test(session) -> dict:
         raise FeedError(_safe_error(exc)) from exc
     get_config_service(user_id="system").record_integration_test(
         INTEGRATION_ID, success=True, error=None, tested_at=when
+    )
+    return {"ok": True}
+
+
+# --- Webhook (#4019): signed CloudEvents batches, one destination ---------
+
+
+@dataclass(frozen=True)
+class Webhook:
+    enabled: bool
+    url: str
+    area: Optional[str]
+    secret: str
+
+    @property
+    def ready(self) -> bool:
+        return bool(self.enabled and self.url and self.secret)
+
+
+@dataclass
+class HookState:
+    last_delivered_seq: Optional[int]
+    failing: bool
+    pending_through: Optional[int]
+
+
+def _hook_table(session) -> bool:
+    return (
+        session.execute(
+            text("SELECT to_regclass('public.audit_webhook_state')")
+        ).scalar()
+        is not None
+    )
+
+
+def _hook_load(session) -> Optional[HookState]:
+    row = session.execute(text("""
+                SELECT last_delivered_seq, failing, pending_through
+                FROM public.audit_webhook_state WHERE id = 1 FOR UPDATE
+            """)).mappings().first()
+    if row is None:
+        return None
+    return HookState(
+        last_delivered_seq=row["last_delivered_seq"],
+        failing=bool(row["failing"]),
+        pending_through=row["pending_through"],
+    )
+
+
+def _webhook(session) -> Webhook:
+    row = (
+        session.execute(
+            text(
+                "SELECT enabled, config FROM public.integration_configs "
+                "WHERE integration_id = :id"
+            ),
+            {"id": WEBHOOK_INTEGRATION_ID},
+        )
+        .mappings()
+        .first()
+    )
+    config = (
+        row["config"] if row is not None and isinstance(row["config"], dict) else {}
+    )
+    return Webhook(
+        enabled=bool(row["enabled"]) if row is not None else False,
+        url=str(config.get("url") or "").strip(),
+        area=(str(config.get("area") or "").strip() or None),
+        secret=get_secret(WEBHOOK_SECRET) or "",
+    )
+
+
+def cloudevent(row: dict) -> dict:
+    """One CloudEvents 1.0 event whose ``data`` is the trail entry as poll returns it."""
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    action = str(payload.get(trail.ACTION) or "audit")
+    return {
+        "specversion": "1.0",
+        "id": str(row["seq"]),
+        "source": EVENT_SOURCE,
+        "type": f"{EVENT_TYPE_PREFIX}.{action}",
+        "time": row["occurred_at"],
+        "datacontenttype": "application/json",
+        "data": row,
+    }
+
+
+def _signing_key(secret: str) -> bytes:
+    return base64.b64decode(secret.removeprefix(_SECRET_PREFIX), validate=True)
+
+
+def sign(secret: str, msg_id: str, timestamp: int, body: bytes) -> str:
+    """The Standard Webhooks ``webhook-signature`` header value."""
+    signed = f"{msg_id}.{timestamp}.".encode() + body
+    digest = hmac.new(_signing_key(secret), signed, hashlib.sha256).digest()
+    return "v1," + base64.b64encode(digest).decode()
+
+
+def post_webhook(hook: Webhook, msg_id: str, events: list[dict]) -> None:
+    """POST a signed batch. Raises on a transport error or a non-2xx answer."""
+    body = json.dumps(events, separators=(",", ":"), default=str).encode("utf-8")
+    timestamp = int(time.time())  # fresh per attempt; the id stays the batch's
+    headers = {
+        "content-type": "application/cloudevents-batch+json; charset=utf-8",
+        "webhook-id": msg_id,
+        "webhook-timestamp": str(timestamp),
+        "webhook-signature": sign(hook.secret, msg_id, timestamp, body),
+        "user-agent": f"Vigil/{__version__}",
+    }
+    response = httpx.post(
+        hook.url, content=body, headers=headers, timeout=_WEBHOOK_TIMEOUT
+    )
+    if not 200 <= response.status_code < 300:
+        raise RuntimeError(f"the webhook answered HTTP {response.status_code}")
+
+
+def _hook_fail(session, state: HookState, error: str, pending: Optional[int]) -> None:
+    if not state.failing:
+        trail.append(
+            session,
+            {
+                trail.ACTION: ACTION_FAILED,
+                trail.ACTOR: trail.SYSTEM,
+                "destination": "webhook",
+                "error": error,
+            },
+            gated=False,
+        )
+    session.execute(
+        text("""
+            UPDATE public.audit_webhook_state
+            SET failing = true, last_error = :error,
+                pending_through = COALESCE(:pending, pending_through)
+            WHERE id = 1
+        """),
+        {"error": error, "pending": pending},
+    )
+
+
+def _send_webhook(clock: SendClock) -> None:
+    """One webhook batch. Advances only its own cursor, and only after a 2xx."""
+    if not clock.due():
+        return
+    with _tx() as session:
+        if not _hook_table(session):
+            return
+        hook = _webhook(session)
+        state = _hook_load(session)
+        if state is None or not hook.enabled:
+            return
+        if not hook.ready:
+            _hook_fail(
+                session, state, "the webhook is on but has no URL or secret", None
+            )
+            clock.failed()
+            return
+        cursor = state.last_delivered_seq or 0
+        # Tip before the read: a short page means nothing else matches up to it,
+        # so a filtered cursor moves past entries it skips instead of rescanning.
+        tip = trail.current_tip(session).seq
+        rows = trail.read(
+            session, trail.make_query(after=cursor, area=hook.area), BATCH
+        )
+        through = rows[-1]["seq"] if len(rows) == BATCH else tip
+        # A resend is the batch that failed, so it keeps its webhook-id.
+        if state.pending_through is not None:
+            kept = [row for row in rows if row["seq"] <= state.pending_through]
+            if kept:
+                rows, through = kept, kept[-1]["seq"]
+        if not rows:
+            if through > cursor:
+                session.execute(
+                    text(
+                        "UPDATE public.audit_webhook_state"
+                        " SET last_delivered_seq = :seq WHERE id = 1"
+                    ),
+                    {"seq": through},
+                )
+            return
+    first, last = rows[0]["seq"], rows[-1]["seq"]
+    through = max(through, last)
+    try:
+        post_webhook(hook, f"vigil-audit-{first}-{last}", [cloudevent(r) for r in rows])
+    except Exception as exc:  # noqa: BLE001 - the next due tick resends this batch
+        logger.warning(
+            "audit webhook send failed: %s; next try in %.0fs",
+            type(exc).__name__,
+            clock.backoff,
+        )
+        with _tx() as session:
+            state = _hook_load(session)
+            if state is not None:
+                _hook_fail(session, state, _safe_error(exc), last)
+        clock.failed()
+        return
+    with _tx() as session:
+        state = _hook_load(session)
+        if state is None:
+            return
+        if state.failing:
+            trail.append(
+                session,
+                {
+                    trail.ACTION: ACTION_RECOVERED,
+                    trail.ACTOR: trail.SYSTEM,
+                    "destination": "webhook",
+                },
+                gated=False,
+            )
+        session.execute(
+            text("""
+                UPDATE public.audit_webhook_state
+                SET failing = false, last_error = NULL, pending_through = NULL,
+                    last_delivered_seq = :seq, last_delivered_at = now()
+                WHERE id = 1
+            """),
+            {"seq": through},
+        )
+    clock.ok()
+
+
+def webhook_health(session) -> dict:
+    """URL, filter and cursor. Never the secret."""
+    if not _hook_table(session):
+        raise FeedUnavailable("the audit webhook is not available")
+    row = session.execute(text("""
+                SELECT last_delivered_seq, last_delivered_at, last_error, failing
+                FROM public.audit_webhook_state WHERE id = 1
+            """)).mappings().first()
+    hook = _webhook(session)
+    tip = trail.current_tip(session) if trail.trail_ready(session) else trail.Tip(0, "")
+    delivered = row["last_delivered_seq"] if row else None
+    return {
+        "enabled": hook.enabled,
+        "url": hook.url,
+        "area": hook.area,
+        "secret_set": bool(hook.secret),
+        "failing": bool(row["failing"]) if row else False,
+        "last_delivered_at": _iso(row["last_delivered_at"]) if row else None,
+        "last_delivered_seq": delivered,
+        "last_error": row["last_error"] if row else None,
+        # With an area filter this counts entries the webhook will never send.
+        "behind": max(0, tip.seq - (delivered or 0)),
+        "tip_seq": tip.seq,
+    }
+
+
+def _url_ok(url: str) -> bool:
+    if len(url) > _URL_MAX or any(ch.isspace() for ch in url):
+        return False
+    try:
+        parts = urlsplit(url)
+        parts.port  # noqa: B018 - raises on a bad port
+    except ValueError:
+        return False
+    # No user:pass@: the URL is written to the trail with the config change.
+    return (
+        parts.scheme in ("http", "https")
+        and bool(parts.hostname)
+        and not (parts.username or parts.password)
+    )
+
+
+def _secret_ok(secret: str) -> bool:
+    if not secret.startswith(_SECRET_PREFIX):
+        return False
+    try:
+        key = _signing_key(secret)
+    except ValueError:
+        return False
+    return 24 <= len(key) <= 64
+
+
+def save_webhook(
+    user_id: str,
+    *,
+    enabled: bool,
+    url: str,
+    area: Optional[str],
+    secret: Optional[str],
+) -> dict:
+    """URL, area and enabled through the integration config; the secret in the store.
+
+    None keeps the stored secret, or generates one when none is stored. A
+    generated secret is in this response and never again.
+    """
+    url = url.strip()
+    area = (area or "").strip() or None
+    if url and not _url_ok(url):
+        raise FeedError("URL must be an http or https URL with no credentials in it")
+    if area is not None and not _AREA.match(area):
+        raise FeedError("Area is a trail area such as case or audit")
+    if enabled and not url:
+        raise FeedError("A URL is required to turn the webhook on")
+    if secret is not None:
+        secret = secret.strip()
+        if not _secret_ok(secret):
+            raise FeedError("Secret must be whsec_ and 24 to 64 base64-encoded bytes")
+    with _tx() as session:
+        if not _hook_table(session):
+            raise FeedUnavailable("the audit webhook is not available")
+        generated = None
+        if secret is None and not _webhook(session).secret:
+            secret = generated = (
+                _SECRET_PREFIX + base64.b64encode(secrets.token_bytes(32)).decode()
+            )
+    if secret is not None and not set_secret(WEBHOOK_SECRET, secret):
+        raise RuntimeError("could not store the webhook secret")
+
+    written = get_config_service(user_id=user_id).set_integration_config(
+        WEBHOOK_INTEGRATION_ID,
+        {"url": url, "area": area, "enabled": enabled},
+        enabled=enabled,
+        integration_name="Audit trail webhook",
+        integration_type="webhook",
+        description="Signed CloudEvents batches",
+        change_reason=(
+            "turned the audit webhook on" if enabled else "saved the audit webhook"
+        ),
+    )
+    if not written:
+        if generated is not None:  # never shown, so do not keep it
+            delete_secret(WEBHOOK_SECRET)
+        raise RuntimeError("could not save the audit webhook")
+    with _tx() as session:
+        result = webhook_health(session)
+    if generated is not None:
+        result["secret"] = generated
+    return result
+
+
+def send_webhook_test(session) -> dict:
+    """One signed event that is not a trail entry and does not move the cursor."""
+    if not _hook_table(session):
+        raise FeedUnavailable("the audit webhook is not available")
+    hook = _webhook(session)
+    if not hook.url or not hook.secret:
+        raise FeedError("Save a URL before sending a test")
+    when = datetime.now(timezone.utc)
+    event_id = f"test-{secrets.token_hex(8)}"
+    event = {
+        "specversion": "1.0",
+        "id": event_id,
+        "source": EVENT_SOURCE,
+        "type": f"{EVENT_TYPE_PREFIX}.audit.feed.test",
+        "time": when.isoformat(),
+        "datacontenttype": "application/json",
+        "data": {"test": True},
+    }
+    try:
+        post_webhook(hook, f"vigil-audit-{event_id}", [event])
+    except Exception as exc:  # noqa: BLE001 - the caller reports the failure
+        get_config_service(user_id="system").record_integration_test(
+            WEBHOOK_INTEGRATION_ID,
+            success=False,
+            error=_safe_error(exc),
+            tested_at=when,
+        )
+        raise FeedError(_safe_error(exc)) from exc
+    get_config_service(user_id="system").record_integration_test(
+        WEBHOOK_INTEGRATION_ID, success=True, error=None, tested_at=when
     )
     return {"ok": True}

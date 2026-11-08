@@ -85,6 +85,10 @@ docstring-parser==0.18.0
 email-validator==2.3.0
     # via -r requirements.txt
 fastapi==0.141.1
+    # via
+    #   -r requirements.txt
+    #   fastapi-offline
+fastapi-offline==1.7.7
     # via -r requirements.txt
 frozenlist==1.8.0
     # via

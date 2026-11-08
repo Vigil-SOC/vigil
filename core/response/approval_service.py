@@ -463,6 +463,8 @@ class ApprovalService:
                 session.add(row)
                 session.flush()
                 pending = _row_to_pending(row)
+                if status == ActionStatus.PENDING.value:
+                    _trail_request(session, row, effect_class)
             logger.info(
                 "Created action %s: %s (confidence: %s)",
                 action_id,
@@ -836,6 +838,36 @@ def _trail_refusal(session, action_id: str, approver: str) -> None:
             "reason": "four_eyes",
         },
     )
+
+
+def _trail_request(
+    session, row: ApprovalActionRow, effect_class: Optional[str]
+) -> None:
+    """The pending row as an entry, in its insert's transaction. A run's row is
+    the run parking on it."""
+    from core.audit import trail
+
+    if not trail.in_use(session):
+        return
+    case_ids = proposal_case_ids(row.parameters)
+    if not case_ids and row.workflow_run_id:
+        run = session.get(WorkflowRun, row.workflow_run_id)
+        ctx = run.trigger_context if run is not None else None
+        from_run = _text_id(ctx.get("case_id")) if isinstance(ctx, dict) else None
+        case_ids = [from_run] if from_run else []
+    payload: Dict[str, Any] = {
+        trail.ACTION: "approval.request",
+        trail.ACTOR: row.created_by_principal_id or trail.SYSTEM,
+        trail.OBJECT: row.action_id,
+        "action_id": row.action_id,
+        "action_type": row.action_type,
+        "effect_class": effect_class,
+    }
+    if row.workflow_run_id:
+        payload["run_id"] = row.workflow_run_id
+    if case_ids:
+        payload["case_id"] = case_ids[0]
+    trail.append(session, payload)
 
 
 def _text_id(value: Any) -> Optional[str]:

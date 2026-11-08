@@ -731,6 +731,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audit/feed/webhook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Webhook
+         * @description URL, area filter and cursor. Never the signing secret.
+         */
+        get: operations["get_api_audit_feed_webhook"];
+        /**
+         * Update Webhook
+         * @description Save URL, area and enabled. A generated secret is returned here only.
+         */
+        put: operations["put_api_audit_feed_webhook"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/audit/feed/webhook/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Webhook
+         * @description Send one signed test event. Does not move the cursor or append a trail entry.
+         */
+        post: operations["post_api_audit_feed_webhook_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/audit/poll": {
         parameters: {
             query?: never;
@@ -6311,6 +6355,176 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/audit/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Entries
+         * @description The trail, oldest sequence first, under the shared filter.
+         */
+        get: operations["get_api_v1_audit_entries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/audit/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Entries
+         * @description NDJSON of the filter, closed by a checkpoint line. Writes one export entry.
+         */
+        get: operations["get_api_v1_audit_export"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/audit/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Poll Entries
+         * @description Entries after ``after``. A cursor past the tip is a reset, not an empty page.
+         */
+        get: operations["get_api_v1_audit_poll"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/audit/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Verify Range
+         * @description ``trail.verify`` over a sequence range. The first break, when there is one.
+         */
+        get: operations["get_api_v1_audit_verify"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/autonomy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Ceiling */
+        get: operations["get_api_v1_autonomy"];
+        /**
+         * Put Ceiling
+         * @description Edit the ceiling. The permission depends on the direction.
+         *
+         *     Only lowering act flags is ``ai_autonomy.stop``. Raising one, or changing
+         *     four-eyes, is ``ai_autonomy.write``.
+         */
+        put: operations["put_api_v1_autonomy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/autonomy/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Resume
+         * @description Restore the act flags minus anything lowered during the stop.
+         *
+         *     Executes nothing.
+         */
+        post: operations["post_api_v1_autonomy_resume"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/autonomy/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Tool Classes
+         * @description Every stored class, and each unclassified name a connected server exposes.
+         */
+        get: operations["get_api_v1_autonomy_tools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/autonomy/tools/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put Tool Class
+         * @description Set one tool's class. The permission depends on the direction.
+         *
+         *     Loosening, or classifying an unclassified name, is a person's
+         *     ``ai_autonomy.write`` and is refused while stopped. Tightening is
+         *     ``ai_autonomy.stop``, which a service account may hold.
+         */
+        put: operations["put_api_v1_autonomy_tools_name"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/cases": {
         parameters: {
             query?: never;
@@ -7710,6 +7924,119 @@ export interface components {
              * @description Identity of the approving analyst. Defaults to 'analyst'.
              */
             approved_by?: string | null;
+        };
+        /**
+         * AuditEntry
+         * @description One trail entry. Columns beside the envelope pass through.
+         */
+        AuditEntry: {
+            actor?: components["schemas"]["AuditPrincipal"] | null;
+            /** Entry Hash */
+            entry_hash: string;
+            /** Late */
+            late: boolean;
+            /** Occurred At */
+            occurred_at: string;
+            payload: components["schemas"]["AuditPayload"];
+            /** Seq */
+            seq: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * AuditFeedHealth
+         * @description The feed as the Audit section sees it: no host, no certificates.
+         */
+        AuditFeedHealth: {
+            /** Behind */
+            behind?: number | null;
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Last Delivered At */
+            last_delivered_at?: string | null;
+            /** Last Delivered Seq */
+            last_delivered_seq?: number | null;
+            /** Last Error */
+            last_error?: string | null;
+            /** Paused */
+            paused?: boolean | null;
+            /** Unconfirmed */
+            unconfirmed?: number | null;
+        };
+        /** AuditPage */
+        AuditPage: {
+            /** Entries */
+            entries: components["schemas"]["AuditEntry"][];
+            feed: components["schemas"]["AuditFeedHealth"];
+            tip: components["schemas"]["AuditTip"];
+        };
+        /**
+         * AuditPayload
+         * @description The hashed record. Open per action: other keys pass through.
+         */
+        AuditPayload: {
+            /** Action */
+            action?: string | null;
+            /** Object */
+            object?: unknown | null;
+            /** Outcome */
+            outcome?: string | null;
+            /** Run Id */
+            run_id?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * AuditPollPage
+         * @description Entries after the cursor, or ``reset`` with the latest restore entry
+         *     when the cursor is past the tip. Only the keys of the case in hand are sent.
+         */
+        AuditPollPage: {
+            /** Entries */
+            entries?: components["schemas"]["AuditEntry"][] | null;
+            /** Reset */
+            reset?: boolean | null;
+            restore?: components["schemas"]["AuditEntry"] | null;
+            tip: components["schemas"]["AuditTip"];
+        };
+        /**
+         * AuditPrincipal
+         * @description A principal an entry names, read from principals when the entry is read.
+         */
+        AuditPrincipal: {
+            /** Deleted */
+            deleted: boolean;
+            /** Erased */
+            erased: boolean;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind?: string | null;
+            /** Label */
+            label?: string | null;
+        };
+        /**
+         * AuditTip
+         * @description The newest entry, or the anchor when the trail is empty.
+         */
+        AuditTip: {
+            /** Hash */
+            hash: string;
+            /** Seq */
+            seq: number;
+        };
+        /** AuditVerification */
+        AuditVerification: {
+            /** First */
+            first?: number | null;
+            /** First Bad */
+            first_bad?: number | null;
+            /** Last */
+            last?: number | null;
+            /** Ok */
+            ok: boolean;
+            /** Reason */
+            reason: string;
         };
         /** AutostartRequest */
         AutostartRequest: {
@@ -11936,6 +12263,23 @@ export interface components {
             /** User Id */
             user_id: string;
         };
+        /** WebhookIn */
+        WebhookIn: {
+            /** Area */
+            area?: string | null;
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /** Secret */
+            secret?: string | null;
+            /**
+             * Url
+             * @default
+             */
+            url: string;
+        };
         /**
          * WorkflowAutonomyBody
          * @description One workflow's tier. No tier returns it to the fleet flags.
@@ -13307,7 +13651,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AuditPage"];
                 };
             };
             /** @description Validation Error */
@@ -13378,13 +13722,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description One entry per line, then a closing `{"checkpoint": {"seq", "hash"}}` line. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/x-ndjson": unknown;
                 };
             };
             /** @description Validation Error */
@@ -13495,6 +13839,103 @@ export interface operations {
             };
         };
     };
+    get_api_audit_feed_webhook: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_audit_feed_webhook: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebhookIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_audit_feed_webhook_test: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_audit_poll: {
         parameters: {
             query?: {
@@ -13524,7 +13965,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AuditPollPage"];
                 };
             };
             /** @description Validation Error */
@@ -13624,7 +14065,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AuditVerification"];
                 };
             };
             /** @description Validation Error */
@@ -23313,6 +23754,333 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApprovalActionResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_v1_audit_entries: {
+        parameters: {
+            query?: {
+                limit?: number;
+                since?: string | null;
+                until?: string | null;
+                actor?: string | null;
+                person?: string | null;
+                kind?: string | null;
+                area?: string | null;
+                object?: string | null;
+                outcome?: string | null;
+                attribution?: string | null;
+                after?: number | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_v1_audit_export: {
+        parameters: {
+            query?: {
+                since?: string | null;
+                until?: string | null;
+                actor?: string | null;
+                person?: string | null;
+                kind?: string | null;
+                area?: string | null;
+                object?: string | null;
+                outcome?: string | null;
+                attribution?: string | null;
+                after?: number | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One entry per line, then a closing `{"checkpoint": {"seq", "hash"}}` line. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-ndjson": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_v1_audit_poll: {
+        parameters: {
+            query?: {
+                limit?: number;
+                since?: string | null;
+                until?: string | null;
+                actor?: string | null;
+                person?: string | null;
+                kind?: string | null;
+                area?: string | null;
+                object?: string | null;
+                outcome?: string | null;
+                attribution?: string | null;
+                after?: number | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditPollPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_v1_audit_verify: {
+        parameters: {
+            query?: {
+                first?: number | null;
+                last?: number | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditVerification"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_v1_autonomy: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_v1_autonomy: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CeilingBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_v1_autonomy_resume: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_v1_autonomy_tools: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolClassEntry"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_v1_autonomy_tools_name: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolClassBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolClassEntry"];
                 };
             };
             /** @description Validation Error */
