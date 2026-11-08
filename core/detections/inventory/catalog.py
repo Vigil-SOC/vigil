@@ -1106,6 +1106,7 @@ _LISTING_TABLES = (
     "detection_rule_stages",
 )
 _FIRES_TABLES = ("findings",)
+_STAGES_TABLE = "detection_rule_stages"
 _listing_lock = threading.Lock()
 _listing: Dict[str, Any] = {}
 
@@ -1197,7 +1198,6 @@ def _health_rows(
     rule_of = copies["rule_of"]
     since_day = _window_start(today)
     excepted = copies.get("exceptions") or {}
-    stages = copies.get("stages") or {}
     listed = []
     fired: Dict[int, List[Dict[str, Any]]] = {}
     # Each copy's counted findings per UTC day, so a shorter window than Fires'
@@ -1226,8 +1226,6 @@ def _health_rows(
         state, why, raw = _health(rule.status, checks, count)
         flags, caught = _check_flags(checks)
         results = _results(checks)
-        stage, entered = stages.get(rule.id, (None, None))
-        moves = copies.get("moves") or {}
         listed.append(
             {
                 "rule_id": rule.id,
@@ -1256,29 +1254,17 @@ def _health_rows(
                 # Its active exceptions, and the hits they silenced (#3794).
                 "exceptions": len(excepted.get(rule.id, [])),
                 "silenced": _silenced(checks, excepted.get(rule.id, []), since_day),
-                # Its overlay copy's rollout stage and when its current stage row
-                # was written (#3995); days_in_shadow is worked out when read.
-                "stage": stage,
-                "stage_since": entered.isoformat() if entered else None,
-                "days_in_shadow": None,
-                # Its stage moves and hold, as GET /rules/{id}/stages reads them
-                # (#4050); a SIEM copy has no stage rows and none of these.
-                **moves.get(rule.id, {}),
+                **_stage_fields(rule.id, copies),
             }
         )
     listed.sort(key=lambda row: (HEALTH_ORDER.index(row["health"]), row["rule_id"]))
+    stage_counts = _stage_counts(listed)
     by_state: Dict[str, List[Tuple[str, str, Dict[str, Any]]]] = {
         state: [] for state in HEALTH_ORDER
     }
     counts: Dict[Optional[str], Dict[str, int]] = {None: dict.fromkeys(HEALTH_ORDER, 0)}
     flag_counts: Dict[Optional[str], Dict[str, int]] = {None: dict.fromkeys(FLAGS, 0)}
-    stage_counts: Dict[Optional[str], Dict[str, int]] = {None: dict.fromkeys(STAGES, 0)}
     for row in listed:
-        if row["stage"] in STAGES:
-            stage_counts[None][row["stage"]] += 1
-            stage_counts.setdefault(row["tool"], dict.fromkeys(STAGES, 0))[
-                row["stage"]
-            ] += 1
         for key in _row_flags(row):
             flag_counts[None][key] += 1
             flag_counts.setdefault(row["tool"], dict.fromkeys(FLAGS, 0))[key] += 1
@@ -1309,6 +1295,78 @@ def _health_rows(
     }
 
 
+def _stage_fields(rule_id: int, copies: Dict[str, Any]) -> Dict[str, Any]:
+    """A row's stage fields: its overlay copy's rollout stage and when its current
+    stage row was written (days_in_shadow is worked out when read), and its stage
+    moves and hold, as GET /rules/{id}/stages reads them. A SIEM copy has no stage
+    rows and none of the moves fields."""
+    stage, entered = (copies.get("stages") or {}).get(rule_id, (None, None))
+    return {
+        "stage": stage,
+        "stage_since": entered.isoformat() if entered else None,
+        "days_in_shadow": None,
+        **(copies.get("moves") or {}).get(rule_id, {}),
+    }
+
+
+def _stage_counts(
+    rows: Iterable[Dict[str, Any]],
+) -> Dict[Optional[str], Dict[str, int]]:
+    """Copies per stage, across every tool (None) and per tool."""
+    counts: Dict[Optional[str], Dict[str, int]] = {None: dict.fromkeys(STAGES, 0)}
+    for row in rows:
+        if row["stage"] in STAGES:
+            counts[None][row["stage"]] += 1
+            counts.setdefault(row["tool"], dict.fromkeys(STAGES, 0))[row["stage"]] += 1
+    return counts
+
+
+def _restage(session: Any, copies: Dict[str, Any]) -> Tuple[Dict[str, Any], Set[int]]:
+    """The copies with their stages and moves read again (a few rows, unlike the
+    copies themselves), and the rules whose stage fields that changed."""
+    stages = {
+        rid: (stage, at) for rid, stage, at in session.execute(select(CURRENT_STAGE))
+    }
+    moves = stage_moves(session.execute(STAGE_ROWS))
+    old_stages, old_moves = copies.get("stages") or {}, copies.get("moves") or {}
+    changed = {
+        rid
+        for rid in set(stages) | set(old_stages) | set(moves) | set(old_moves)
+        if stages.get(rid) != old_stages.get(rid)
+        or moves.get(rid) != old_moves.get(rid)
+    }
+    return {**copies, "stages": stages, "moves": moves}, changed
+
+
+def _restaged(
+    health: Dict[str, Any], copies: Dict[str, Any], changed: Set[int]
+) -> Dict[str, Any]:
+    """The health rows with only the ``changed`` rules' stage fields replaced, and
+    the stage counts taken again. Nothing else in a row reads its stage, so this
+    is the full rebuild's answer without reading every copy again. New lists and
+    rows, never edits: a reader may still hold the old ones."""
+    moved = set(STAGE_MOVE_FIELDS)
+
+    def patched(page_row: Dict[str, Any]) -> Dict[str, Any]:
+        kept = {k: v for k, v in page_row.items() if k not in moved}
+        return {**kept, **_stage_fields(page_row["rule_id"], copies)}
+
+    by_state = {
+        state: [
+            (tool, hay, patched(row) if row["rule_id"] in changed else row)
+            for tool, hay, row in rows
+        ]
+        for state, rows in health["by_state"].items()
+    }
+    return {
+        **health,
+        "by_state": by_state,
+        "stage_counts": _stage_counts(
+            row for rows in by_state.values() for _, _, row in rows
+        ),
+    }
+
+
 def _row_flags(row: Dict[str, Any]) -> List[str]:
     """The flag filters a row matches: its failing flags, and Caught if it passed."""
     return row["flags"] + ([CAUGHT_CHECK] if row["caught"] else [])
@@ -1317,20 +1375,33 @@ def _row_flags(row: Dict[str, Any]) -> List[str]:
 def _listing_now() -> Dict[str, Any]:
     """The health rows, rebuilt only when a table they read was written: the
     copies on a rules or checks write, the fire counts on a findings write or a
-    new day (the window rolls)."""
+    new day (the window rolls). A stage write alone (a Revert, a release, a
+    sweep's move) reads the stages again and patches the rows that moved, which
+    takes milliseconds where reading every copy takes seconds."""
     with _listing_lock, get_db_manager().session_scope() as session:
         written = _write_marks(session, _LISTING_TABLES + _FIRES_TABLES)
         # The newest stage row too: write stats lag a commit by seconds, so a
         # Revert or release read straight after would get the old row (#4053).
         # Its id is exact at commit, in every process.
         newest_stage = session.scalar(select(func.max(DetectionRuleStage.id)))
-        marks = tuple(m for m in written if m[0] in _LISTING_TABLES) + (
-            ("detection_rule_stages:newest", newest_stage),
+        marks = tuple(
+            m for m in written if m[0] in _LISTING_TABLES and m[0] != _STAGES_TABLE
+        )
+        stage_marks = tuple(m for m in written if m[0] == _STAGES_TABLE) + (
+            (f"{_STAGES_TABLE}:newest", newest_stage),
         )
         if _listing.get("marks") != marks:
             _listing.clear()
             _listing["copies"] = _copies_listed(session)
             _listing["marks"] = marks
+            _listing["stage_marks"] = stage_marks
+        elif _listing.get("stage_marks") != stage_marks:
+            _listing["copies"], changed = _restage(session, _listing["copies"])
+            _listing["stage_marks"] = stage_marks
+            if changed and "health" in _listing:
+                _listing["health"] = _restaged(
+                    _listing["health"], _listing["copies"], changed
+                )
         fires_marks = (
             tuple(m for m in written if m[0] in _FIRES_TABLES),
             datetime.now(timezone.utc).date(),
@@ -1339,6 +1410,17 @@ def _listing_now() -> Dict[str, Any]:
             _listing["health"] = _health_rows(_listing["copies"], _fires(session))
             _listing["fires_marks"] = fires_marks
         return {**_listing["health"], "blind_spots": _listing["copies"]["blind_spots"]}
+
+
+# The fields stage_moves gives each rule with stage rows.
+STAGE_MOVE_FIELDS = (
+    "stage_moves",
+    "stage_from",
+    "stage_actor",
+    "stage_reason",
+    "held",
+    "held_by",
+)
 
 
 def stage_moves(rows: Iterable[Any]) -> Dict[int, Dict[str, Any]]:
