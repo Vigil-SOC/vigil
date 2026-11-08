@@ -18,6 +18,7 @@ const KIND: Record<string, { label: string; plural: string; why: string; tone: s
   silent: { label: 'Went silent', plural: 'went silent', why: 'It fired regularly, then stopped.', tone: 'ac' },
   drift: { label: 'Changed outside the repo', plural: 'changed outside the repo', why: 'Edited, disabled or removed in the SIEM, not in its repo.', tone: 'ac' },
   revert: { label: 'Moved back to shadow', plural: 'moved back to shadow', why: 'Vigil moved it from live back to shadow. Analysts no longer get its alerts.', tone: 'fair' },
+  off: { label: 'Turned off', plural: 'turned off', why: 'Vigil turned it off. It no longer runs anywhere.', tone: 'poor' },
 }
 const kindOf = (check: string) => KIND[check] ?? { label: `${check} failing`, plural: `${check} failing`, why: 'A check that passed now fails.', tone: 'poor' }
 const SIEM_NAME: Record<string, string> = { elastic: 'Elastic', splunk: 'Splunk', wazuh: 'Wazuh', overlay: 'Vigil', repo: 'Repo' }
@@ -120,7 +121,7 @@ export default function RuleHealthBell({ go }: { go: (screen: string, options?: 
     const k = kindOf(e.check)
     const done = reverted.has(e.change_id)
     // Vigil's own rules only; the server refuses one that isn't live, and says so.
-    const canRevert = canWrite && e.tool === 'overlay' && e.check !== 'revert' && !done
+    const canRevert = canWrite && e.tool === 'overlay' && e.check !== 'revert' && e.check !== 'off' && !done
     const why = done
       ? 'You moved it back to shadow just now. Analysts no longer get its alerts.'
       : e.check === 'revert' && e.reason === NEW_VERSION
@@ -128,7 +129,9 @@ export default function RuleHealthBell({ go }: { go: (screen: string, options?: 
         ? 'New version · back in shadow for its week. Analysts get its alerts again once it goes live.'
         : e.check === 'revert' && e.reason
           ? `Vigil moved it back to shadow: ${e.reason}. Analysts no longer get its alerts.`
-          : k.why
+          : e.check === 'off' && e.reason
+            ? `Vigil turned it off: ${e.reason}. It no longer runs anywhere.`
+            : k.why
     return (
       <li key={e.change_id} className={`rh-item${e.read ? '' : ' unread'}`}>
         <span className={`rh-dot ${k.tone}`} aria-hidden="true" />

@@ -1,4 +1,4 @@
-"""A rule's stage history, and a person's Revert and release of it (#3996).
+"""A rule's stage history, and a person's Revert and release of it.
 
 The history is the rule's ``detection_rule_stages`` rows, newest first. A
 person's Revert (live -> shadow) is a stage row with the person as actor and
@@ -6,7 +6,9 @@ person's Revert (live -> shadow) is a stage row with the person as actor and
 row says so. A release is a later shadow row with ``hold`` false (the latest row with a ``hold`` key
 decides, so a new version's row does not lift it), so the normal
 rollout rules apply again, their shadow days counted from the release. Each
-write also lands in the config audit log, in the same transaction.
+write is audited in the same transaction as the same ``detections.rule_staged``
+entry Vigil's own moves write, the person as actor (the config audit log where
+the trail is not in use).
 """
 
 from __future__ import annotations
@@ -15,7 +17,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import select
 
+from core.audit import trail
 from core.detections.inventory import readers
+from core.detections.inventory.sync import staged_entry
 from core.storage.config_service import ConfigService
 from core.storage.connection import get_db_manager
 from core.storage.models import DetectionRule, DetectionRuleStage
@@ -98,6 +102,23 @@ def _write(
             proof={"hold": hold},
         )
     )
+    if trail.in_use(session):
+        trail.append(
+            session,
+            staged_entry(
+                principal,
+                rule.id,
+                rule.latest_version,
+                latest.stage,
+                stage,
+                reason,
+                hold,
+                event=action,
+                held_before=was_held,
+                username=username,
+            ),
+        )
+        return {"success": True, "rule_id": rule.id, "stage": stage, "hold": hold}
     ConfigService(user_id=principal)._create_audit_log(
         session,
         config_type=AUDIT_TYPE,
