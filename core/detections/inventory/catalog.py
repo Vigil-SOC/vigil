@@ -42,10 +42,11 @@ import binascii
 import logging
 import re
 import threading
+import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
-from sqlalchemy import Text, and_, case, cast, func, select, text, tuple_
+from sqlalchemy import Text, and_, case, cast, func, or_, select, text, tuple_
 from sqlalchemy.orm import defer
 
 from core.detections.inventory.readers import OVERLAY_SOURCE
@@ -842,20 +843,29 @@ def repo_coverage() -> Dict[str, int]:
     }
 
 
-def _rule_of_copy(session: Any) -> Dict[int, Tuple[Any, ...]]:
-    """Which rule each stored copy belongs to, so one rule's copies count once.
+def _rule_of_copy(
+    session: Any, rule_ids: Optional[Set[int]] = None
+) -> Dict[int, Tuple[Any, ...]]:
+    """Which rule each stored copy (or each of these) belongs to, so one rule's
+    copies count once.
 
     A linked SIEM copy belongs to its origin. The overlay saves one rule's copies under one name.
     """
-    rows = session.execute(
-        select(
-            DetectionRule.id,
-            DetectionRule.source,
-            DetectionRule.name,
-            DetectionRule.origin_rule_id,
-            DetectionRule.link_kind,
+    query = select(
+        DetectionRule.id,
+        DetectionRule.source,
+        DetectionRule.name,
+        DetectionRule.origin_rule_id,
+        DetectionRule.link_kind,
+    )
+    if rule_ids is not None:
+        origins = select(DetectionRule.origin_rule_id).where(
+            DetectionRule.id.in_(rule_ids)
         )
-    ).all()
+        query = query.where(
+            or_(DetectionRule.id.in_(rule_ids), DetectionRule.id.in_(origins))
+        )
+    rows = session.execute(query).all()
     own = {
         r.id: (OVERLAY_SOURCE, r.name) if r.source == OVERLAY_SOURCE else (r.id,)
         for r in rows
@@ -867,6 +877,7 @@ def _rule_of_copy(session: Any) -> Dict[int, Tuple[Any, ...]]:
             else own[r.id]
         )
         for r in rows
+        if rule_ids is None or r.id in rule_ids
     }
 
 
@@ -1102,8 +1113,7 @@ def _where(checks: Dict[str, Any], tool: str) -> Optional[str]:
 
 # The listing reads every listed copy (about 2 s on 19k copies), so it is built
 # once and reused for every page, filter and search until a table it reads is
-# written. Postgres's own write counters say when: they move on any insert,
-# update or delete, from this process or the daemon's syncs and checks.
+# written, by this process or the daemon's syncs, runs and sweeps.
 _LISTING_TABLES = (
     "detection_rules",
     "detection_rule_versions",
@@ -1111,8 +1121,33 @@ _LISTING_TABLES = (
     "detection_rule_exceptions",
     "detection_rule_stages",
 )
+# Whether those tables were written is read exactly at commit, in every process:
+# Postgres's write statistics lag a commit by seconds. A table whose rows are
+# updated in place (a run rewrites a version's checks) is marked by its row
+# count and the sum of its rows' xmin, the transaction that last wrote each row:
+# an insert, update or delete changes one or the other once it commits, not
+# before. VACUUM FREEZE keeps a row's xmin (Postgres 9.4 on), and anything that
+# did change it would only force a rebuild. Missing a write would take an update
+# by a transaction whose id equals that row's own xmin, reused after a
+# wraparound (2^32 transactions later). The append-only tables are marked by
+# their newest id. The in-place tables are scanned whole, so the scan runs at
+# most once a second (a screen's burst of reads pays once): a write to a rule no
+# stage row moved shows within that second. The stage marks are read every time,
+# and a moved rule's own copy is read again before it is patched, so a move is
+# never shown with its rule's old version or checks.
+_SCAN_EVERY = 1.0
+_EXACT_MARKS = text(
+    "SELECT"
+    " (SELECT count(*) FROM detection_rules),"
+    " (SELECT sum(xmin::text::bigint) FROM detection_rules),"
+    " (SELECT count(*) FROM detection_rule_versions),"
+    " (SELECT sum(xmin::text::bigint) FROM detection_rule_versions),"
+    " (SELECT count(*) FROM detection_rule_exceptions),"
+    " (SELECT sum(xmin::text::bigint) FROM detection_rule_exceptions),"
+    " (SELECT max(id) FROM detection_rule_check_changes)"
+)
+_STAGE_MARKS = text("SELECT count(*), max(id) FROM detection_rule_stages")
 _FIRES_TABLES = ("findings",)
-_STAGES_TABLE = "detection_rule_stages"
 _listing_lock = threading.Lock()
 _listing: Dict[str, Any] = {}
 
@@ -1153,19 +1188,28 @@ def _copy_rows(session: Any, rule_ids: Optional[Set[int]] = None) -> List[Any]:
     return session.execute(query).all()
 
 
-def _copies_listed(session: Any) -> Dict[str, Any]:
-    """Every listed copy with its checks, which rule each belongs to, and the blind spots."""
-    rows = _copy_rows(session)
-    active: Dict[int, List[int]] = {}
-    for rid, eid in session.execute(
+def _active_exceptions(
+    session: Any, rule_ids: Optional[Set[int]] = None
+) -> Dict[int, List[int]]:
+    """Each rule's active exception ids (or these rules')."""
+    query = (
         select(DetectionRuleException.rule_id, DetectionRuleException.id)
         .where(DetectionRuleException.removed_at.is_(None))
         .order_by(DetectionRuleException.id)
-    ):
+    )
+    if rule_ids is not None:
+        query = query.where(DetectionRuleException.rule_id.in_(rule_ids))
+    active: Dict[int, List[int]] = {}
+    for rid, eid in session.execute(query):
         active.setdefault(rid, []).append(eid)
+    return active
+
+
+def _copies_listed(session: Any) -> Dict[str, Any]:
+    """Every listed copy with its checks, which rule each belongs to, and the blind spots."""
     return {
-        "rows": rows,
-        "exceptions": active,
+        "rows": _copy_rows(session),
+        "exceptions": _active_exceptions(session),
         "stages": {
             rid: (stage, at)
             for rid, stage, at in session.execute(select(CURRENT_STAGE))
@@ -1355,15 +1399,46 @@ def _restage(session: Any, copies: Dict[str, Any]) -> Tuple[Dict[str, Any], Set[
 
 
 def _rows_unchanged(session: Any, copies: Dict[str, Any], changed: Set[int]) -> bool:
-    """Whether the moved rules' copies (their version, checks, status and the
-    rest) are still what the listing holds: only then is patching their stage
-    fields the full rebuild's answer. A stage row written with a new version or
-    after a run is read before the write statistics show the other tables moved."""
+    """Whether what the listing holds for the moved rules is still current: each
+    one's copy (version, checks, status and the rest), its active exceptions,
+    and the rule it belongs to. Only then is patching their stage fields the full
+    rebuild's answer. Inside the scan's second, a stage row written with a new
+    version, after a run, or after an exception or link change is read before
+    the marks show it."""
     if not changed:
         return True
-    held = {row.id: tuple(row) for row in copies["rows"] if row.id in changed}
-    fresh = {row.id: tuple(row) for row in _copy_rows(session, changed)}
+
+    def state(rows, exceptions, rule_of):
+        return {
+            row.id: (tuple(row), tuple(exceptions.get(row.id, ())), rule_of.get(row.id))
+            for row in rows
+            if row.id in changed
+        }
+
+    held = state(copies["rows"], copies["exceptions"], copies["rule_of"])
+    fresh = state(
+        _copy_rows(session, changed),
+        _active_exceptions(session, changed),
+        _rule_of_copy(session, changed),
+    )
     return fresh == held
+
+
+def _rebuild(
+    session: Any,
+    stage_marks: Tuple[Any, ...],
+    marks: Optional[Tuple[Any, ...]] = None,
+) -> None:
+    """Read every copy again. The marks are taken first (or were, just now, by
+    the caller), so a write that lands while the copies are read moves them and
+    is read next time."""
+    if marks is None:
+        marks = tuple(session.execute(_EXACT_MARKS).one())
+    _listing.clear()
+    _listing["scanned"] = time.monotonic()
+    _listing["copies"] = _copies_listed(session)
+    _listing["marks"] = marks
+    _listing["stage_marks"] = stage_marks
 
 
 def _restaged(
@@ -1407,38 +1482,32 @@ def _listing_now() -> Dict[str, Any]:
     sweep's move) reads the stages again and patches the rows that moved, which
     takes milliseconds where reading every copy takes seconds."""
     with _listing_lock, get_db_manager().session_scope() as session:
-        written = _write_marks(session, _LISTING_TABLES + _FIRES_TABLES)
-        # The newest stage row too: write stats lag a commit by seconds, so a
-        # Revert or release read straight after would get the old row (#4053).
-        # Its id is exact at commit, in every process.
-        newest_stage = session.scalar(select(func.max(DetectionRuleStage.id)))
-        marks = tuple(
-            m for m in written if m[0] in _LISTING_TABLES and m[0] != _STAGES_TABLE
-        )
-        stage_marks = tuple(m for m in written if m[0] == _STAGES_TABLE) + (
-            (f"{_STAGES_TABLE}:newest", newest_stage),
-        )
-        if _listing.get("marks") != marks:
-            _listing.clear()
-            _listing["copies"] = _copies_listed(session)
-            _listing["marks"] = marks
-            _listing["stage_marks"] = stage_marks
-        elif _listing.get("stage_marks") != stage_marks:
+        written = _write_marks(session, _FIRES_TABLES)
+        # Stage rows are only ever added: their count and newest id, every read. A
+        # Revert or release read straight after sees its own row.
+        stage_marks = tuple(session.execute(_STAGE_MARKS).one())
+        if "marks" not in _listing:
+            _rebuild(session, stage_marks)
+        elif time.monotonic() - _listing["scanned"] >= _SCAN_EVERY:
+            marks = tuple(session.execute(_EXACT_MARKS).one())
+            _listing["scanned"] = time.monotonic()
+            if marks != _listing["marks"]:
+                _rebuild(session, stage_marks, marks)
+        if _listing["stage_marks"] != stage_marks:
             copies, changed = _restage(session, _listing["copies"])
             if _rows_unchanged(session, _listing["copies"], changed):
+                # Only stages moved for these rules: patching their stage fields
+                # is a rebuild's answer.
                 _listing["copies"] = copies
                 _listing["stage_marks"] = stage_marks
                 if changed and "health" in _listing:
                     _listing["health"] = _restaged(_listing["health"], copies, changed)
             else:
                 # The move came with a new version or new checks (a sync, or a
-                # run then the sweep), which the lagging marks don't show yet.
-                _listing.clear()
-                _listing["copies"] = _copies_listed(session)
-                _listing["marks"] = marks
-                _listing["stage_marks"] = stage_marks
+                # run then the sweep) that the throttled marks don't show yet.
+                _rebuild(session, stage_marks)
         fires_marks = (
-            tuple(m for m in written if m[0] in _FIRES_TABLES),
+            written,
             datetime.now(timezone.utc).date(),
         )
         if _listing.get("fires_marks") != fires_marks or "health" not in _listing:

@@ -301,3 +301,204 @@ def test_a_stage_write_with_a_new_version_or_checks_is_read_fresh(db):
         "shadow",
         "its runs failed",
     )
+
+
+def _rewrite_checks(db, rid, checks):
+    """A run rewrites the version's checks in place, as sync._write_checks does."""
+    from sqlalchemy import update
+
+    from core.storage.models import DetectionRuleVersion
+
+    with db.session_scope() as session:
+        session.execute(
+            update(DetectionRuleVersion)
+            .where(
+                DetectionRuleVersion.rule_id == rid, DetectionRuleVersion.version == 1
+            )
+            .values(checks=checks)
+        )
+
+
+def test_a_moved_rule_is_exact_inside_the_scan_window(db, monkeypatch):
+    """Inside the second the table scan is reused for, a stage move written with
+    its rule's new version, or right after a run rewrote its checks, is still
+    read as a rebuild reads it: the moved rule's own copy is read again."""
+    from core.detections.inventory import catalog
+    from core.storage.models import (
+        DetectionRule,
+        DetectionRuleStage,
+        DetectionRuleVersion,
+    )
+
+    synced, swept = _live_rule(db), _live_rule(db, "r2")
+    _rewrite_checks(db, synced, {"runs": {"result": "pass"}})
+    catalog._listing_now()  # warm: the scan is taken now
+    monkeypatch.setattr(catalog, "_SCAN_EVERY", 3600.0)  # and reused from here on
+    now = datetime.now(timezone.utc)
+
+    with db.session_scope() as session:  # a sync: version 2 enters shadow
+        session.get(DetectionRule, synced).latest_version = 2
+        session.add(
+            DetectionRuleVersion(
+                rule_id=synced, version=2, fingerprint="g", content={}, checks={}
+            )
+        )
+        session.flush()
+        session.add(
+            DetectionRuleStage(
+                rule_id=synced,
+                version=2,
+                stage="shadow",
+                actor="system",
+                proof={},
+                reason="new version",
+                at=now,
+            )
+        )
+    first = catalog._listing_now()
+    assert first == _rebuilt()
+    (row,) = catalog.health_listing(rule_ids=[synced])["rules"]
+    assert (row["checks_run"], row["stage_reason"]) == (0, "new version")
+
+    catalog._listing_now()  # the rebuild took a scan; reused again from here
+    _rewrite_checks(db, swept, {"runs": {"result": "fail", "reason": "boom"}})
+    with db.session_scope() as session:  # the sweep's move, its own commit
+        session.add(
+            DetectionRuleStage(
+                rule_id=swept,
+                version=1,
+                stage="shadow",
+                actor="system",
+                proof={},
+                reason="its runs failed",
+                at=now,
+            )
+        )
+    second = catalog._listing_now()
+    assert second == _rebuilt()
+    (row,) = catalog.health_listing(rule_ids=[swept])["rules"]
+    assert (row["health"], row["stage"], row["stage_reason"]) == (
+        "fails_to_run",
+        "shadow",
+        "its runs failed",
+    )
+
+
+def test_another_rules_checks_show_within_the_scan_window(db):
+    """A run rewrites rule A's checks in place (no check-change row when the
+    result holds); the sweep then moves rule B only. B's move shows at once; A's
+    new checks show once the second is up, though the write statistics lag."""
+    import time
+
+    from core.detections.inventory import catalog
+    from core.storage.models import DetectionRuleStage
+
+    moved = _live_rule(db)
+    bystander = _siem_rule(db, "siem")
+    catalog._listing_now()  # warm
+    _rewrite_checks(
+        db, bystander, {"runs": {"result": "pass"}, "quiet": {"count": 7, "days": 3}}
+    )
+    with db.session_scope() as session:
+        session.add(
+            DetectionRuleStage(
+                rule_id=moved,
+                version=1,
+                stage="off",
+                actor="system",
+                proof={},
+                reason="fails lint",
+                at=datetime.now(timezone.utc),
+            )
+        )
+    (row,) = catalog.health_listing(rule_ids=[moved])["rules"]
+    assert (row["stage"], row["stage_reason"]) == ("off", "fails lint")
+    time.sleep(catalog._SCAN_EVERY + 0.05)
+    assert catalog._listing_now() == _rebuilt()
+    (row,) = catalog.health_listing(rule_ids=[bystander])["rules"]
+    assert (row["siem_alerts"], row["siem_days"]) == (7, 3)
+
+
+def test_a_checks_write_with_no_stage_move_shows_within_the_scan_window(db):
+    """A run that moves no stage: its checks show once the second is up."""
+    import time
+
+    from core.detections.inventory import catalog
+
+    rid = _siem_rule(db, "siem")
+    assert _row(rid)["siem_alerts"] is None  # warms the cache
+    _rewrite_checks(
+        db, rid, {"runs": {"result": "pass"}, "quiet": {"count": 12, "days": 7}}
+    )
+    time.sleep(catalog._SCAN_EVERY + 0.05)
+    row = _row(rid)
+    assert (row["siem_alerts"], row["siem_days"]) == (12, 7)
+
+
+def test_with_a_scan_on_every_read_a_checks_write_shows_at_once(db, monkeypatch):
+    """The scan itself is exact: read every time, an in-place checks write shows
+    on the very next read, where the write statistics would lag it by seconds."""
+    from core.detections.inventory import catalog
+
+    monkeypatch.setattr(catalog, "_SCAN_EVERY", 0.0, raising=False)
+    rid = _siem_rule(db, "siem")
+    assert _row(rid)["siem_alerts"] is None  # warms the cache
+    _rewrite_checks(
+        db, rid, {"runs": {"result": "pass"}, "quiet": {"count": 12, "days": 7}}
+    )
+    row = _row(rid)  # no wait
+    assert (row["siem_alerts"], row["siem_days"]) == (12, 7)
+
+
+def test_an_exception_or_a_link_then_a_move_is_exact_inside_the_scan_window(
+    db, monkeypatch
+):
+    """Inside the scan's second, an exception added to a rule, or the rule linked
+    to another, then a stage move of that rule, is read as a rebuild reads it:
+    the moved rule's exceptions and the rule it belongs to are read again too."""
+    from core.detections.inventory import catalog
+    from core.storage.models import (
+        DetectionRule,
+        DetectionRuleException,
+        DetectionRuleStage,
+    )
+
+    excepted, linked = _live_rule(db), _live_rule(db, "r2")
+    origin = _siem_rule(db, "origin")
+    catalog._listing_now()  # warm: the scan is taken now
+    monkeypatch.setattr(catalog, "_SCAN_EVERY", 3600.0)  # and reused from here on
+
+    def move(rid, reason):
+        with db.session_scope() as session:
+            session.add(
+                DetectionRuleStage(
+                    rule_id=rid,
+                    version=1,
+                    stage="shadow",
+                    actor="system",
+                    proof={},
+                    reason=reason,
+                    at=datetime.now(timezone.utc),
+                )
+            )
+
+    with db.session_scope() as session:
+        session.add(
+            DetectionRuleException(
+                rule_id=excepted,
+                match={"host": "build-01"},
+                note="farm",
+                created_by="ana",
+            )
+        )
+    move(excepted, "too loud")
+    assert catalog._listing_now() == _rebuilt()
+    (row,) = catalog.health_listing(rule_ids=[excepted])["rules"]
+    assert (row["exceptions"], row["stage"]) == (1, "shadow")
+
+    catalog._listing_now()  # the rebuild took a scan; reused again from here
+    with db.session_scope() as session:
+        rule = session.get(DetectionRule, linked)
+        rule.origin_rule_id, rule.link_kind = origin, "same_id"
+    move(linked, "linked")
+    assert catalog._listing_now() == _rebuilt()
