@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   detectionRulesApi, type CoverageCell, type CoverageSiemName, type CoverageState, type DetectionCoverage,
 } from '../../services/api'
@@ -110,6 +110,7 @@ export default function CoverageMap({ goSettings }: { goSettings: (section: 'dat
           ))}
           <span className="de-cov-sep" aria-hidden="true" />
           <button type="button" className={`de-cov-lens-b${full ? ' on' : ''}`} aria-pressed={full} onClick={() => setFull(!full)}>Full map</button>
+          <TacticMenu tactics={coverage.tactics} known={known} onAll={() => pick([])} onToggle={toggleTactic} />
         </div>
         <div className="de-cov-legend">
           {ORDER.map((s) => (
@@ -151,6 +152,39 @@ function Cell({ cell, lens, on, onSelect, extra }: { cell: CoverageCell; lens: L
       <b>{cell.name}</b>
       <span className="x1-mono">{cell.technique}{cell.rules ? ` · ${plural(cell.rules, 'rule')}` : ''}{extra ? ` · ${extra}` : ''}</span>
     </button>
+  )
+}
+
+/** Small screens: the tactic chips as one "Tactics" dropdown checklist beside the lens. */
+function TacticMenu({ tactics, known, onAll, onToggle }: { tactics: string[]; known: string[]; onAll: () => void; onToggle: (tactic: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const box = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const away = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) setOpen(false) }
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', away)
+    document.addEventListener('keydown', esc)
+    return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc) }
+  }, [open])
+  const label = known.length ? `${known.length} of ${tactics.length}` : 'All'
+  return (
+    <div className="de-cov-tacmenu" ref={box}>
+      <button type="button" className={`de-cov-lens-b${known.length ? ' on' : ''}`} aria-expanded={open} aria-haspopup="true" onClick={() => setOpen(!open)}>
+        Tactics: {label} <span aria-hidden="true">▾</span>
+      </button>
+      {open && (
+        <div className="de-cov-tacmenu-list" role="group" aria-label="Tactics shown">
+          <button type="button" className="x1-link" onClick={onAll}>All tactics</button>
+          {tactics.map((tactic) => (
+            <label key={tactic}>
+              <input type="checkbox" checked={known.includes(tactic)} onChange={() => onToggle(tactic)} />
+              {tactic}
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 

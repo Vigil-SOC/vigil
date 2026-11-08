@@ -327,3 +327,14 @@
 .de-cov-tac-b { padding: 2px 9px; border-radius: 999px; border: 1px solid var(--ln1); background: none; color: var(--tx2); font-size: 11.5px; cursor: pointer; }
 .de-cov-tac-b.on { border-color: var(--ac); color: var(--tx0); background: var(--bg2); }
 .de-cov-tac-b:focus-visible { outline: 2px solid var(--ac); outline-offset: 1px; }
+/* Small screens: the chips give way to one "Tactics" dropdown beside the lens. */
+.de-cov-tacmenu { position: relative; display: none; }
+.de-cov-tacmenu-list { position: absolute; top: calc(100% + 6px); left: 0; z-index: 5; width: min(240px, 80vw); max-height: 60vh; overflow-y: auto; display: grid; gap: 2px; padding: 8px; border: 1px solid var(--ln1); border-radius: 9px; background: var(--bg2); box-shadow: 0 10px 30px rgba(0, 0, 0, .45); }
+.de-cov-tacmenu-list .x1-link { font-size: 12px; padding: 2px 6px 6px; }
+.de-cov-tacmenu-list label { display: flex; gap: 8px; align-items: center; padding: 4px 6px; border-radius: 6px; font-size: 12.5px; color: var(--tx1); cursor: pointer; }
+.de-cov-tacmenu-list label:hover { background: var(--bg1); }
+.de-cov-tacmenu-list input { accent-color: var(--ac); margin: 0; }
+@media (max-width: 900px) {
+  .de-cov-tacmenu { display: block; }
+  .de-cov-tactics { display: none; }
+}
