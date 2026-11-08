@@ -14,6 +14,7 @@ import inspect
 import io
 import json
 import os
+import random
 import uuid
 import zipfile
 from contextlib import contextmanager
@@ -71,6 +72,16 @@ detection:
 level: medium
 tags:
 - attack.t1105
+"""
+WAZUH = """<rule id="{wid}" level="10">
+  <if_group>windows</if_group>
+  <field name="win.eventdata.image" type="pcre2">(?i)\\\\certutil\\.exe$</field>
+  <field name="win.eventdata.commandLine" type="pcre2">(?i)-urlcache</field>
+  <description>Skill probe {k}</description>
+  <mitre>
+    <id>T1105</id>
+  </mitre>
+</rule>
 """
 EXCEPTION = {"match": {"host.name": "build-01"}, "note": "the build box fetches tools"}
 PROVEN = {
@@ -135,12 +146,13 @@ def vigil(monkeypatch, tmp_path, trail):
     )
     monkeypatch.setattr(proof_card, "instance_name", lambda: "vigil-a")
     k = f"skill-{uuid.uuid4().hex[:10]}"
+    wid = random.randint(110000, 119999)
 
     class Vigil:
         pass
 
     v = Vigil()
-    v.k, v.db, v.trail, v.key_a = k, manager, trail, key_a
+    v.k, v.db, v.trail, v.key_a, v.wid = k, manager, trail, key_a, wid
     v.pem = proof_card.public_pem(key_a.public_key())
 
     def become_b():
@@ -185,6 +197,7 @@ def _save(v, exceptions=True):
             splunk_yaml=SPLUNK.format(k=v.k),
             elastic_toml=ELASTIC.format(k=v.k),
             sigma_yaml=SIGMA.format(k=v.k),
+            wazuh_xml=WAZUH.format(k=v.k, wid=v.wid),
             proven_events=[PROVEN],
             ruled_out_events=[QUIET],
             exceptions={"elastic": [EXCEPTION]} if exceptions else None,
@@ -264,7 +277,12 @@ def test_a_rule_moves_with_its_copies_exceptions_and_proof_and_starts_in_shadow(
     live_id = _went_live(v)
     manifest, data = detection_skill.export(v.saved[0]["rule_id"], actor="user-ana")
     files = _members(data)
-    assert {c["language"] for c in manifest["copies"]} == {"splunk", "elastic", "sigma"}
+    assert {c["language"] for c in manifest["copies"]} == {
+        "splunk",
+        "elastic",
+        "sigma",
+        "wazuh",
+    }
     assert {"proof-card.json", "proof-card.pdf", "vigil-proof-key.pub"} <= set(files)
     card = json.loads(files["proof-card.json"])
     assert [
@@ -283,11 +301,11 @@ def test_a_rule_moves_with_its_copies_exceptions_and_proof_and_starts_in_shadow(
     assert not out.get("error"), out
     assert out["exported_from"] == "vigil-a"
     by = {s["source"]: s for s in out["saved"]}
-    assert set(by) == {"splunk", "elastic", "sigma"}
+    assert set(by) == {"splunk", "elastic", "sigma", "wazuh"}
     # Proven live at A; here it starts where every new rule does.
     # (The Sigma form is no SIEM copy, so it has no stage.)
     staged = [s for s in out["saved"] if s["source"] in sync.STAGED_LANGUAGES]
-    assert {s["source"] for s in staged} == {"splunk", "elastic"}
+    assert {s["source"] for s in staged} == {"splunk", "elastic", "wazuh"}
     assert {s["stage"] for s in staged} == {"shadow"}
     assert all(_stage(v, s["rule_id"]) == "shadow" for s in staged)
     assert [e["match"] for e in out["exceptions"]] == [EXCEPTION["match"]]
