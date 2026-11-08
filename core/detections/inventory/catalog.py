@@ -1233,7 +1233,8 @@ def _copies_listed(session: Any) -> Dict[str, Any]:
 def _not_loaded(rows: List[Any]) -> Dict[int, Dict[str, str]]:
     """Each Wazuh copy the manager doesn't run yet (no manager rule loaded from
     Vigil's file for it, ``rollout.handed_off``), with where its deploy got: its
-    PR, its file already on the default branch, or the error. Vigil runs a Wazuh
+    PR (and ``pr_state``, open, closed or merged, as the sweep last read it), its
+    file already on the default branch, or the error. Vigil runs a Wazuh
     copy only in shadow, so a live one runs nowhere until the manager loads it."""
     from core.detections.inventory.rollout import WAZUH, handed_off
 
@@ -1242,7 +1243,7 @@ def _not_loaded(rows: List[Any]) -> Dict[int, Dict[str, str]]:
     return {
         r.id: {
             k: str(v)
-            for k in ("pr_url", "in_repo", "error")
+            for k in ("pr_url", "pr_state", "in_repo", "error")
             if (v := ((r.checks or {}).get("deploy") or {}).get(k))
         }
         for r in mine
