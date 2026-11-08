@@ -120,10 +120,9 @@ SYNC_LOCK_KEY = 0x7669_6769_6C52_554C  # "vigilRUL"
 REPO_PREFIX = "repo:"
 # How ESCU names the saved search it ships for a detection.
 ESCU_NAME = re.compile(r"^ESCU - (.+) - Rule$")
-STAGED_LANGUAGES = ("splunk", "elastic")
-# Overlay copies linted on each sync: the staged ones, and Wazuh copies, which a
-# person may deploy before Vigil can run them in shadow.
-LINTED_LANGUAGES = STAGED_LANGUAGES + ("wazuh",)
+STAGED_LANGUAGES = ("splunk", "elastic", "wazuh")
+# Overlay copies linted on each sync: every staged one, Wazuh's included.
+LINTED_LANGUAGES = STAGED_LANGUAGES
 
 
 @dataclass

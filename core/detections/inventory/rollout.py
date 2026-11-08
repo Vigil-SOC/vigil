@@ -107,7 +107,16 @@ from sqlalchemy import (
 from sqlalchemy.orm import aliased
 
 from core.detections import exceptions
-from core.detections.inventory import accurate, kibana, readers, sees, splunk, wazuh
+from core.detections.inventory import (
+    accurate,
+    kibana,
+    readers,
+    sees,
+    splunk,
+    wazuh,
+    wazuh_sees,
+    wazuh_shadow,
+)
 from core.detections.inventory.catalog import REPO_PREFIX
 from core.detections.inventory.rollout_limits import DEFAULTS as DEFAULT_LIMITS
 from core.detections.inventory.rollout_limits import (
@@ -130,6 +139,8 @@ logger = logging.getLogger(__name__)
 
 INTEGRATION = ELASTIC.id
 LANGUAGES = ("eql", "esql", "lucene")
+# Staged copies Vigil runs live; the Wazuh manager runs a live Wazuh copy.
+VIGIL_RUNS = ("splunk", "elastic")
 FIRST_WINDOW = timedelta(hours=1)
 LAG = timedelta(minutes=30)  # how late an event may be indexed and still be seen
 MAX_DOCS = 100  # documents fetched per run; the count is the full total
@@ -143,7 +154,7 @@ OFF_AFTER_FAILURES = 3
 HANDOFF_LINKS = ("same_id", "known_name", "agent")
 WAZUH = "wazuh"
 # What a Wazuh deploy says while Vigil cannot run Wazuh rules in shadow.
-UNTESTED = "not shadow-tested: Vigil can't validate Wazuh rules in shadow yet (#4061)"
+UNTESTED = "not shadow-tested: Vigil has not validated this Wazuh copy in shadow"
 NO_STAGE_AT = datetime.fromtimestamp(0, timezone.utc)
 
 
@@ -194,7 +205,10 @@ def _toml_rule(content: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 def _rule_of(language: str, content: Mapping[str, Any]) -> Dict[str, Any]:
-    # A Splunk copy's content is its ESCU YAML as JSON; an Elastic one's is its TOML.
+    # A Splunk copy's content is its ESCU YAML as JSON; an Elastic one's is its TOML;
+    # a Wazuh one's XML is read by wazuh_shadow from Copy.toml.
+    if language == "wazuh":
+        return {}
     return dict(content) if language == "splunk" else _toml_rule(content)
 
 
@@ -1823,8 +1837,9 @@ def overlay_only() -> List[Dict[str, Any]]:
 
 
 def _deployable(copies: List[Copy]) -> List[Copy]:
-    """The copies a person may deploy: live ones, and any Wazuh copy (until
-    Vigil can run Wazuh rules in shadow, none goes live on its own)."""
+    """The copies a person may deploy: live ones, and any Wazuh copy, which Vigil
+    may not be able to validate in shadow (archives off, or a rule it can't
+    translate)."""
     return [c for c in copies if c.stage == "live" or c.language == WAZUH]
 
 
@@ -1957,6 +1972,7 @@ def run_copies(live: bool) -> RolloutReport:
     for language, step in (
         ("elastic", _run_elastic_copies),
         ("splunk", _run_splunk_copies),
+        ("wazuh", _run_wazuh_copies),
     ):
         mine = [c for c in copies if c.language == language]
         if not mine:
@@ -2056,4 +2072,103 @@ def _run_splunk_copies(
         )
     )
     report.written += _write_unrunnable(blocked, now)
+    _finish(ready, results, now, report)
+
+
+async def _wazuh_query(
+    service: Any, copy: Copy, start: datetime, end: datetime
+) -> Tuple[int, List[Dict[str, Any]]]:
+    query = wazuh_shadow.translate(copy.toml).query
+    window = {"@timestamp": {"gte": start.isoformat(), "lt": end.isoformat()}}
+    return await service.dsl_search(wazuh_shadow.ARCHIVES, query, window, MAX_DOCS)
+
+
+async def _archive_events(
+    service: Any, per_hour: int, report: RolloutReport
+) -> Optional[bool]:
+    """Whether the archive has had an event in the Sees window; None when the
+    budget is spent. The index listing is metadata and spends nothing."""
+    why, exists_ = await wazuh_sees.indices(service, (wazuh_shadow.ARCHIVES,))
+    if why:
+        raise RuntimeError(why)
+    if not exists_[wazuh_shadow.ARCHIVES]:
+        return False
+    if not search_budget.spend(INTEGRATION, per_hour, "overlay:wazuh-archives"):
+        return None
+    report.searched += 1
+    return await service.any_event_since(wazuh_shadow.ARCHIVES, "@timestamp", sees.DAYS)
+
+
+def _write_sees(copies: List[Tuple[Copy, str, str]], now: datetime) -> int:
+    """checks['sees'] per (copy, result, reason): the archive is the data source."""
+    results = {
+        (c.rule_id, c.version): {
+            "result": result,
+            "reason": reason,
+            "data_source": wazuh_shadow.ARCHIVES,
+            "checked_at": now.isoformat(),
+        }
+        for c, result, reason in copies
+    }
+    return sees.write_check("sees", results, source=readers.OVERLAY_SOURCE)
+
+
+def _run_wazuh_copies(copies: List[Copy], now: datetime, report: RolloutReport) -> None:
+    """Shadow runs of Wazuh copies over the archive, on elastic-siem's indexer and
+    budget. A live copy is the manager's to run. A copy whose rule cannot be
+    translated, or whose archive is off, is not validated: its runs read unknown
+    with the reason and its Sees is unknown, so it never promotes."""
+    shadow = [c for c in copies if c.stage == "shadow"]
+    plan = {c.rule_id: wazuh_shadow.translate(c.toml) for c in shadow}
+    blocked = [(c, plan[c.rule_id].why) for c in shadow if plan[c.rule_id].why]
+    ready = [c for c in shadow if not plan[c.rule_id].why]
+
+    def unvalidated(why: str) -> None:
+        every = blocked + [(c, why) for c in ready]
+        report.written += _write_unrunnable(every, now)
+        report.written += _write_sees([(c, "unknown", w) for c, w in every], now)
+
+    why, config = wazuh_sees.indexer()
+    if why:
+        unvalidated(f"{wazuh_shadow.CANT}{why}")
+        report.skipped.append(why)
+        return
+    per_hour = config.get("max_searches_per_hour")
+    per_hour = sees.DEFAULT_PER_HOUR if per_hour is None else max(int(per_hour), 0)
+    service = kibana.service_of(config)
+
+    async def _go() -> Tuple[str, Dict[int, tuple]]:
+        try:
+            if not ready:
+                return "ran", {}
+            on = await _archive_events(service, per_hour, report)
+            if on is None:
+                report.deferred += len(ready)
+                return "deferred", {}
+            if not on:
+                return "off", {}
+            ran = await _run_all(
+                INTEGRATION, service, _wazuh_query, ready, per_hour, now, report
+            )
+            return "ran", ran
+        finally:
+            await service.close()
+
+    try:
+        state, results = asyncio.run(_go())
+    except Exception as exc:  # noqa: BLE001 -- the copies stay as they were
+        report.error = report.error or f"wazuh: {type(exc).__name__}: {exc}"
+        return
+    if state == "deferred":
+        return
+    if state == "off":
+        unvalidated(wazuh_shadow.ARCHIVES_OFF)
+        return
+    report.written += _write_unrunnable(blocked, now)
+    ok = f"{wazuh_shadow.ARCHIVES} has events in {sees.DAYS}d"
+    report.written += _write_sees(
+        [(c, "unknown", w) for c, w in blocked]
+        + [(c, "pass", ok) for c in ready if c.rule_id in results],
+        now,
+    )
     _finish(ready, results, now, report)

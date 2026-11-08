@@ -49,7 +49,6 @@ from core.detections.inventory import (
     rollout,
     rollout_limits,
     splunk,
-    sync,
 )
 from core.storage.connection import get_db_manager
 from core.storage.models import (
@@ -381,7 +380,7 @@ def _live_copies(session: Any) -> List[Dict[str, Any]]:
         if r.source in SIEM_SOURCES
         or (
             r.source == readers.OVERLAY_SOURCE
-            and r.language in sync.STAGED_LANGUAGES
+            and r.language in rollout.VIGIL_RUNS
             and r.stage == "live"
         )
     ]

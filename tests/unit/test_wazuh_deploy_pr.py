@@ -199,7 +199,7 @@ def test_a_wazuh_repo_can_be_the_deploy_target():
 
 def test_overlay_wazuh_copies_are_linted_on_sync():
     assert "wazuh" in sync.LINTED_LANGUAGES
-    assert "wazuh" not in sync.STAGED_LANGUAGES  # linted, never staged
+    assert "wazuh" in sync.STAGED_LANGUAGES  # Vigil runs it in shadow (#4061)
 
 
 # --- the person's deploy button ------------------------------------------------
@@ -284,8 +284,11 @@ def test_a_key_with_a_leading_zero_is_refused(github, deploy):
     assert "outside Wazuh's range" in out["error"] and github.calls == []
 
 
-def test_the_untested_note_names_the_issue_that_lifts_it():
-    assert rollout.UNTESTED.endswith("(#4061)")
+def test_the_untested_note_says_this_copy_was_not_validated():
+    # Vigil can validate a Wazuh copy in shadow now (#4061); the note is about
+    # this copy, not a missing capability.
+    assert "can't validate Wazuh rules" not in rollout.UNTESTED
+    assert "not shadow-tested" in rollout.UNTESTED
 
 
 def test_a_customer_file_whose_name_only_ends_like_vigils_is_refused(github, deploy):
