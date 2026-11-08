@@ -43,7 +43,14 @@ from typing import (
 
 from sqlalchemy import func, select, text
 
-from core.detections.inventory import catalog, readers, rollout, splunk, sync
+from core.detections.inventory import (
+    catalog,
+    readers,
+    rollout,
+    rollout_limits,
+    splunk,
+    sync,
+)
 from core.storage.connection import get_db_manager
 from core.storage.models import (
     DetectionRule,
@@ -235,13 +242,16 @@ def _overlay_rules(session: Any) -> List[Dict[str, Any]]:
 def shadow_to_live(
     stages: Iterable[Tuple[int, int, str, int, str, str, Optional[str], datetime]],
     now: datetime,
+    limits: Optional[rollout_limits.RolloutLimits] = None,
 ) -> Dict[str, Any]:
     """``stages``: (id, rule_id, name, version, stage, actor, reason, at).
+    ``limits`` are the stored rollout limits, read now when not given.
 
     Paired in time order (at, then id); a rule's current stage is its last row in
     that order, as the inventory reads it (CURRENT_STAGE). A live row before the
     version's shadow row is no promotion.
     """
+    limits = limits or rollout_limits.read_limits()
     rows = sorted(stages, key=lambda r: (_utc(r[7]), r[0]))
     first: Dict[Tuple[int, int], Dict[str, Any]] = {}
     current = {r[1]: (r[3], r[4]) for r in rows}
@@ -276,8 +286,8 @@ def shadow_to_live(
         "promoted_by_vigil": sum(1 for r in promoted if r["promoted_by"] == "system"),
         "in_shadow": len(waiting),
         "exit_criteria": (
-            f"{rollout.SHADOW_DAYS} days in shadow, every day's runs passed, no day "
-            f"above {rollout.MAX_HITS_PER_DAY} hits, Sees passed"
+            f"{limits.shadow_days} days in shadow, every day's runs passed, no day "
+            f"above {limits.max_hits_per_day} hits, Sees and lint passed"
         ),
         "rows": promoted,
         "waiting": waiting,

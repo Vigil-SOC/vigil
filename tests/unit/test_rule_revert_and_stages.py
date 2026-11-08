@@ -10,9 +10,11 @@ import pytest
 from fastapi import HTTPException
 
 from core.detections.inventory import catalog, health_inbox, rollout, stages
+from core.detections.inventory.rollout_limits import DEFAULTS
 from services.api.routers import detection_rules as routes
 
 NOW = datetime(2026, 11, 7, 9, 30, tzinfo=timezone.utc)
+DEFAULT_SHADOW_DAYS = DEFAULTS.shadow_days
 ANA = SimpleNamespace(username="ana", user_id="u-ana")
 
 
@@ -221,7 +223,7 @@ HEALTHY_WEEK = {
         "failures": 0,
         "days": {
             (NOW - timedelta(days=i)).date().isoformat(): {"pass": 5, "fail": 0}
-            for i in range(rollout.SHADOW_DAYS)
+            for i in range(DEFAULT_SHADOW_DAYS)
         },
     },
     "sees": {"result": "pass"},
@@ -237,7 +239,7 @@ def _copy(held):
         name="r",
         language="elastic",
         stage="shadow",
-        stage_at=NOW - timedelta(days=rollout.SHADOW_DAYS + 1),
+        stage_at=NOW - timedelta(days=DEFAULT_SHADOW_DAYS + 1),
         checks=HEALTHY_WEEK,
         rule={},
         held=held,
