@@ -1354,7 +1354,7 @@ def _record_deploy(
     records neither, so the next sweep re-finds the PR and records both. Returns
     the outcome left recorded: a PR a racing attempt recorded is not replaced by
     this one's error."""
-    from core.detections.inventory.sync import _write_checks
+    from core.detections.inventory.sync import _write_checks, trail_actor
     from core.storage.config_service import write_config_audit
 
     with get_db_manager().session_scope() as session:
@@ -1386,7 +1386,7 @@ def _record_deploy(
                 action="update",
                 old_value=None,
                 new_value={"rule_id": copy.rule_id, **new},
-                changed_by=actor,
+                changed_by=trail_actor(actor),
             )
     return outcome
 

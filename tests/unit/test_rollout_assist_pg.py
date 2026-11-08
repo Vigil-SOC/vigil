@@ -507,3 +507,82 @@ def test_a_manual_deploy_by_an_approver_opens_the_pr_at_once(db, github, mine):
     rid = _seed(db, mine, stage="live")
     result = rollout.deploy_overlay_only([rid], actor="dana", approver=True)
     assert result["asked"] == [] and github.opened == 1
+
+
+def _person(db):
+    """A real user: the trail names a person by principal id, equal to user_id."""
+    from core.auth.principals import add_for_user
+    from core.storage.models import Role, User
+
+    name = f"erin-{uuid.uuid4().hex[:8]}"
+    pid = f"user-{uuid.uuid4().hex[:12]}"
+    with db.session_scope() as session:
+        user = User(
+            user_id=pid,
+            principal_id=pid,
+            username=name,
+            email=f"{name}@example.com",
+            password_hash="x",
+            full_name=name,
+            role_id=session.scalars(select(Role.role_id)).first(),
+        )
+        add_for_user(session, user)
+        session.add(user)
+    return name, pid
+
+
+def _actors(db, rule_id):
+    """(action, actor) of every trail entry on this rule, or on the rollout
+    limits, written since the test began."""
+    with db.session_scope() as session:
+        rows = session.execute(
+            text(
+                "SELECT payload FROM audit_trail WHERE occurred_at >= :since "
+                "ORDER BY seq"
+            ),
+            {"since": SINCE[-1]},
+        ).all()
+    out = []
+    for (p,) in rows:
+        target = p.get("rule_id") or (p.get("new_value") or {}).get("rule_id")
+        if p.get("config_key") == "rollout.limits":
+            out.append(("limits", p["actor"]))
+        elif target == rule_id:
+            out.append((p.get("verb") or p["action"], p["actor"]))
+    return out
+
+
+def test_one_person_is_one_actor_across_approve_revert_and_limits(db, github, mine):
+    from core.detections.inventory import rollout_limits, stages
+
+    with db.session_scope() as session:
+        if not session.execute(
+            text("SELECT to_regclass('public.audit_trail')")
+        ).scalar():
+            pytest.skip("needs a database with the audit trail in use")
+    name, pid = _person(db)
+    rid = _seed(db, mine)
+    _sweep()
+    rollout_approval.on_decided(_approved(rid, who=name), name)
+    stages.revert(rid, (name, pid), "another look")
+    # A different value each time, so the edit is a change and is audited.
+    days = 8 if rollout_limits.read_stored_limits().shadow_days != 8 else 9
+    rollout_limits.update_limits(
+        user_id=pid, caller_is_service=False, changes={"shadow_days": days}
+    )
+    actors = _actors(db, rid)
+    assert ("limits", pid) in actors, actors
+    person = [(what, who) for what, who in actors if who != "system"]
+    # The approve, the promotion it made, its deploy record, the Revert, the limits.
+    assert {what for what, _ in person} >= {
+        "approve",
+        "detections.rule_staged",
+        "update",
+        "limits",
+    }
+    assert {who for _, who in person} == {pid}, actors
+    with db.session_scope() as session:
+        rows = session.scalars(
+            select(DetectionRuleStage.actor).where(DetectionRuleStage.rule_id == rid)
+        ).all()
+    assert set(rows) == {"system", name}  # stage rows keep the username
