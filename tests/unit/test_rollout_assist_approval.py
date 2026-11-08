@@ -295,6 +295,22 @@ def test_a_manual_deploy_under_act_opens_the_pr(monkeypatch):
     assert world.deploys == [(1, "sam")] and result["asked"] == []
 
 
+def test_a_wazuh_deploy_under_assist_asks_then_opens_its_pr(monkeypatch):
+    # A person may deploy a Wazuh copy whatever its stage (#4062); Assist still
+    # asks first, and the yes opens the PR though the copy is not live.
+    copy = _copy(stage="", days_in=0)
+    copy.language, copy.stage_at = "wazuh", rollout.NO_STAGE_AT
+    world = World(monkeypatch, [copy])
+    monkeypatch.setattr(rollout, "_deploy_targets", lambda: {"wazuh": TARGET})
+    monkeypatch.setattr(rollout_approval, "_latest_stage", lambda s, rid: None)
+    assert rollout.deploy_overlay_only([1], actor="sam")["asked"]
+    row = _only_request()
+    assert rollout.UNTESTED in row.description and "is live" not in row.description
+    row.status, row.approved_by = ActionStatus.APPROVED.value, "dana"
+    rollout_approval.on_decided(row, "dana")
+    assert world.deploys == [(1, "dana")] and row.status == "executed"
+
+
 # --- reading the autonomy setting -------------------------------------------
 
 

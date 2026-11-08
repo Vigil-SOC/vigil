@@ -117,6 +117,9 @@ REPO_PREFIX = "repo:"
 # How ESCU names the saved search it ships for a detection.
 ESCU_NAME = re.compile(r"^ESCU - (.+) - Rule$")
 STAGED_LANGUAGES = ("splunk", "elastic")
+# Overlay copies linted on each sync: the staged ones, and Wazuh copies, which a
+# person may deploy before Vigil can run them in shadow.
+LINTED_LANGUAGES = STAGED_LANGUAGES + ("wazuh",)
 
 
 @dataclass
@@ -594,12 +597,12 @@ def sync_source(
                 new.append((record, fp))
                 continue
             rule, latest_fp, stored = hit
-            staged = overlay and record.language in STAGED_LANGUAGES
+            staged = overlay and record.language in LINTED_LANGUAGES
             kept = (stored or {}).get("lint") or {}
             if staged:
-                # Every staged copy is linted on each sync, so one passed by an
-                # older lint is re-judged; an unchanged verdict on the same
-                # version is kept.
+                # Every staged copy (and an overlay Wazuh copy, deployable by a
+                # person) is linted on each sync, so one passed by an older lint
+                # is re-judged; an unchanged verdict on the same version is kept.
                 lint = _lint(record, now)
                 if fp == latest_fp and (
                     kept.get("result"),
