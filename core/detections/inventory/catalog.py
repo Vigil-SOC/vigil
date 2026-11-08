@@ -85,6 +85,7 @@ STAGE_ROWS = select(
     DetectionRuleStage.stage,
     DetectionRuleStage.actor,
     DetectionRuleStage.proof,
+    DetectionRuleStage.reason,
 ).order_by(
     DetectionRuleStage.rule_id,
     DetectionRuleStage.at.desc(),
@@ -1304,13 +1305,15 @@ def _listing_now() -> Dict[str, Any]:
 
 
 def stage_moves(rows: Iterable[Any]) -> Dict[int, Dict[str, Any]]:
-    """Per rule, from its stage rows ``(rule_id, stage, actor, proof)`` ordered by
+    """Per rule, from its stage rows ``(rule_id, stage, actor, proof, reason)`` ordered by
     rule then newest first (``STAGE_ROWS``, ``stages.history``'s order): how many there are, the
-    latest one's actor and from-stage, and whether a person holds the rule and
+    latest one's actor, reason and from-stage, and whether a person holds the rule and
     who (the latest row with a ``hold`` key decides, as rollout reads it)."""
     by_rule: Dict[int, List[Any]] = {}
-    for rule_id, stage, actor, proof in rows:
-        by_rule.setdefault(rule_id, []).append((stage, actor, proof or {}))
+    for rule_id, stage, actor, proof, reason in rows:
+        by_rule.setdefault(rule_id, []).append(
+            (stage, actor, proof or {}, reason or "")
+        )
     out: Dict[int, Dict[str, Any]] = {}
     for rule_id, rule_rows in by_rule.items():
         hold = next((r for r in rule_rows if "hold" in r[2]), None)
@@ -1319,6 +1322,8 @@ def stage_moves(rows: Iterable[Any]) -> Dict[int, Dict[str, Any]]:
             "stage_moves": len(rule_rows),
             "stage_from": rule_rows[1][0] if len(rule_rows) > 1 else None,
             "stage_actor": rule_rows[0][1],
+            # Why the latest move: a new version going back to shadow is not a Revert.
+            "stage_reason": rule_rows[0][3],
             "held": held,
             "held_by": hold[1] if held else None,
         }
