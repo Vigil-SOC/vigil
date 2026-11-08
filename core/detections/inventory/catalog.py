@@ -266,17 +266,18 @@ def open_vigil_moves() -> List[Dict[str, Any]]:
             )
             .join(DetectionRule, DetectionRule.id == s.rule_id)
             .where(s.rule_id.in_(select(s.rule_id).where(s.actor == "system")))
-            .order_by(s.rule_id, s.id)
+            .order_by(s.rule_id, s.at, s.id)
         ).all()
     return vigil_moves(rows)
 
 
 def vigil_moves(rows: Iterable[Any]) -> List[Dict[str, Any]]:
-    """The bell entries in stage ``rows`` ordered by rule, then id: per rule, its last
-    row when Vigil wrote it as a Revert (live -> shadow) or as an off from live or
-    shadow. A rule that started off, or was removed, has none."""
+    """The bell entries in stage ``rows``: per rule, its last row in time order (at,
+    then id, as CURRENT_STAGE and rollout read them) when Vigil wrote it as a Revert
+    (live -> shadow) or as an off from live or shadow. A rule that started off, or
+    was removed, has none."""
     last: Dict[int, Tuple[Any, Optional[str]]] = {}
-    for row in rows:
+    for row in sorted(rows, key=lambda r: (r.rule_id, r.at, r.id)):
         prev = last.get(row.rule_id)
         last[row.rule_id] = (row, prev[0].stage if prev else None)
     out = []

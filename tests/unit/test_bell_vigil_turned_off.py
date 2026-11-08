@@ -29,7 +29,7 @@ def _row(sid, rule_id, stage, actor="system", reason="", hours_ago=0, status="ac
 
 
 def _entries(*rows):
-    return catalog.vigil_moves(sorted(rows, key=lambda r: (r.rule_id, r.id)))
+    return catalog.vigil_moves(list(rows))
 
 
 @pytest.mark.parametrize("before", ["live", "shadow"])
@@ -60,6 +60,24 @@ def test_the_entry_clears_when_the_stage_moves_again():
     assert [e["check"] for e in _entries(*rows)] == ["off"]
     fixed = rows + [_row(3, 7, "shadow", reason="new version")]
     assert _entries(*fixed) == []
+
+
+def test_the_last_row_is_the_last_in_time_not_by_id():
+    """A row written later but stamped earlier is not the rule's current stage."""
+    rows = [
+        _row(1, 7, "live", hours_ago=30),
+        _row(3, 7, "off", reason=LINT, hours_ago=5),
+        _row(4, 7, "shadow", reason="late write of an older move", hours_ago=40),
+    ]
+    (entry,) = _entries(*rows)
+    assert (entry["check"], entry["old"], entry["change_id"]) == ("off", "live", -3)
+    # And the other way: the newest in time clears it, whatever its id.
+    rows = [
+        _row(1, 7, "live", hours_ago=30),
+        _row(5, 7, "off", reason=LINT, hours_ago=5),
+        _row(2, 7, "shadow", reason="new version", hours_ago=1),
+    ]
+    assert _entries(*rows) == []
 
 
 def test_a_removed_rule_is_no_entry():
