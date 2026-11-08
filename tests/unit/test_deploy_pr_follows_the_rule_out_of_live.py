@@ -333,7 +333,7 @@ DSN = os.environ.get("VIGIL_TEST_POSTGRES_DSN")
 def test_left_live_reads_open_prs_of_rules_no_longer_live(monkeypatch):
     """On a real Postgres: which versions' PRs the sweep would close, and the
     stage row (latest by time) that says who moved the rule and why."""
-    from sqlalchemy import create_engine
+    from sqlalchemy import create_engine, text
     from sqlalchemy.orm import sessionmaker
 
     from core.detections.inventory import readers
@@ -350,8 +350,10 @@ def test_left_live_reads_open_prs_of_rules_no_longer_live(monkeypatch):
         DetectionRuleVersion.__table__,
         DetectionRuleStage.__table__,
     ]
-    Base.metadata.drop_all(engine, tables=tables)
+    # Works on any throwaway database, empty or a copy with rules of its own.
     Base.metadata.create_all(engine, tables=tables)
+    with engine.begin() as conn:
+        conn.execute(text("TRUNCATE detection_rules RESTART IDENTITY CASCADE"))
     factory = sessionmaker(bind=engine)
 
     class Manager:
