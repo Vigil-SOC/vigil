@@ -22,6 +22,8 @@ const KIND: Record<string, { label: string; plural: string; why: string; tone: s
 const kindOf = (check: string) => KIND[check] ?? { label: `${check} failing`, plural: `${check} failing`, why: 'A check that passed now fails.', tone: 'poor' }
 const SIEM_NAME: Record<string, string> = { elastic: 'Elastic', splunk: 'Splunk', wazuh: 'Wazuh', overlay: 'Vigil', repo: 'Repo' }
 const POLL_MS = 60_000
+/** The reason sync writes when a live rule's new version goes back to shadow. */
+const NEW_VERSION = 'new version'
 
 /** The top bar's bell: notifications for the signed-in person, read or unread; only rule health for now. In-app only. */
 export default function RuleHealthBell({ go }: { go: (screen: string, options?: ConsoleScreenGoOptions) => void }) {
@@ -121,9 +123,12 @@ export default function RuleHealthBell({ go }: { go: (screen: string, options?: 
     const canRevert = canWrite && e.tool === 'overlay' && e.check !== 'revert' && !done
     const why = done
       ? 'You moved it back to shadow just now. Analysts no longer get its alerts.'
-      : e.check === 'revert' && e.reason
-        ? `Vigil moved it: ${e.reason}. Analysts no longer get its alerts.`
-        : k.why
+      : e.check === 'revert' && e.reason === NEW_VERSION
+        // A new version starts its own week in shadow: not a Revert of the rule.
+        ? 'New version · back in shadow for its week. Analysts get its alerts again once it goes live.'
+        : e.check === 'revert' && e.reason
+          ? `Vigil moved it back to shadow: ${e.reason}. Analysts no longer get its alerts.`
+          : k.why
     return (
       <li key={e.change_id} className={`rh-item${e.read ? '' : ' unread'}`}>
         <span className={`rh-dot ${k.tone}`} aria-hidden="true" />
