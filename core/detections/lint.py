@@ -21,6 +21,7 @@ from typing import Any, Iterable, Optional
 
 import yaml
 
+from core.detections import wazuh_xml
 from core.detections.inventory.record import normalize_query
 
 _REWRITE = (
@@ -532,9 +533,36 @@ def _report(
 _NATIVE = ("splunk", "eql", "esql", "lucene")
 
 
+def lint_wazuh(text: str) -> dict[str, Any]:
+    """Lint one Wazuh rule's XML: each value it matches on (``<field>``,
+    ``<match>``, ``<regex>``, ``<srcip>``, ``<hostname>``, ``<user>``...) is read
+    as a Sigma value on that field is. A host the rule only leaves out
+    (``negate="yes"``, ``!`` on an address) is a warning, as under a Sigma not."""
+    try:
+        rule = wazuh_xml.parse(text)
+    except wazuh_xml.NotARule as exc:
+        return {"passed": False, "error": str(exc)}
+    findings: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for field, value, negated in wazuh_xml.conditions(rule):
+        for finding in _findings_for(field, value):
+            if negated and finding == _host_finding(field, value):
+                warnings.append(finding)
+                continue
+            key = (finding["kind"], finding["value"], finding["field"])
+            if key not in seen:
+                seen.add(key)
+                findings.append(finding)
+    return _report(findings, warnings, title=wazuh_xml.description(rule))
+
+
 def lint_record(record: Any) -> Optional[dict[str, Any]]:
-    """``lint_query`` on a staged overlay copy's RuleRecord, or None for a
-    language Vigil does not run (an Elastic kuery copy)."""
+    """``lint_query`` on a staged overlay copy's RuleRecord (``lint_wazuh`` on a
+    Wazuh copy), or None for a language Vigil does not run (an Elastic kuery copy)."""
+    if record.language == "wazuh":
+        content = record.content if isinstance(record.content, dict) else {}
+        return lint_wazuh(str(content.get("_content") or ""))
     if record.language == "splunk":
         return lint_query(record.query, "splunk")
     language = record.logic.get("language")

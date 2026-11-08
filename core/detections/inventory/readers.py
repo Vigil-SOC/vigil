@@ -12,11 +12,15 @@ import logging
 import os
 import re
 import tomllib
+
+# Serialises a rule wazuh_xml.parse() already read; parses nothing itself.
+import xml.etree.ElementTree as ET  # nosec B405
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import yaml
 
+from core.detections import wazuh_xml
 from core.detections.gaps import TACTICS, normalize_label
 from core.detections.inventory.record import RuleRecord
 
@@ -62,7 +66,8 @@ FORMAT_SUFFIXES = {
     "splunk": (".yml",),
     "elastic": (".toml",),
     "kql": (".yaml", ".md", ".kql"),
-    "auto": (".yml", ".yaml", ".toml", ".md", ".kql"),
+    "wazuh": (".xml",),
+    "auto": (".yml", ".yaml", ".toml", ".md", ".kql", ".xml"),
 }
 KQL_SKIPPED_DOCS = ("readme.md", "detectiontemplate.md")
 
@@ -161,6 +166,33 @@ def _elastic(text: str, rel: str) -> RuleRecord:
     )
 
 
+def _wazuh(text: str, rel: str) -> Optional[RuleRecord]:
+    """A file holding one Wazuh rule, keyed by its id; None for anything else
+    (a ruleset file of many rules, or XML that is no rule)."""
+    try:
+        rule = wazuh_xml.parse(text)
+    except wazuh_xml.NotARule:
+        return None
+    key = wazuh_xml.rule_id(rule)
+    if key is None:
+        return None
+    level = rule.get("level")
+    return RuleRecord(
+        native_key=key,
+        name=wazuh_xml.description(rule) or key,
+        language="wazuh",
+        path=rel,
+        query=ET.tostring(rule, encoding="unicode").strip(),
+        techniques=wazuh_xml.techniques(rule),
+        logic={
+            "level": int(level) if level and level.strip().isdigit() else level,
+            "groups": wazuh_xml.groups(rule, text),
+            "if_sid": (rule.findtext("if_sid") or "").strip() or None,
+        },
+        content={"_content": text, "description": wazuh_xml.description(rule)},
+    )
+
+
 def _kql_yaml(doc: Dict[str, Any], rel: str) -> RuleRecord:
     return RuleRecord(
         native_key=str(doc.get("id") or rel),
@@ -229,6 +261,8 @@ def parse_file(fmt: str, path: Path, rel: str, text: str) -> Optional[RuleRecord
         return _kql_markdown(text, rel)
     if suffix == ".kql":
         return _kql_file(text, rel)
+    if suffix == ".xml":
+        return _wazuh(text, rel)
     doc = yaml.load(text, Loader=_YAML_LOADER)  # nosec B506
     if not isinstance(doc, dict):
         return None
