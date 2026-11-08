@@ -19,6 +19,7 @@ import uuid
 import zipfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
@@ -26,7 +27,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from sqlalchemy import select, text
 
 from core.detections import detection_skill, overlay, proof_card
-from core.detections.inventory import sync
+from core.detections.detection_rules_service import DetectionRulesService
+from core.detections.inventory import readers, sync
 from core.storage.models import DetectionRule, DetectionRuleStage
 
 DSN = os.environ.get("VIGIL_TEST_PG_DSN")
@@ -582,3 +584,158 @@ def test_a_viewers_export_is_refused_403_and_audited(
     else:
         assert gate(None, viewer) is viewer
         assert trail == []
+
+
+# --- an import that fails after the save has begun (#4116) ----------------------
+
+
+def _exported(v):
+    _save(v)
+    _, data = detection_skill.export(v.saved[0]["rule_id"], actor="user-ana")
+    keys = [s["id"] for s in v.saved]
+    v.become_b()
+    return data, keys
+
+
+def _rows(v, keys):
+    """(key, status) of B's overlay rows for these keys."""
+    with v.db.session_scope() as session:
+        return sorted(
+            session.execute(
+                select(DetectionRule.native_key, DetectionRule.status).where(
+                    DetectionRule.source == readers.OVERLAY_SOURCE,
+                    DetectionRule.native_key.in_(keys),
+                )
+            ).all()
+        )
+
+
+def _files():
+    root = Path(DetectionRulesService().overlay_source()["local_path"])
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file())
+
+
+def _refused(v, out):
+    assert "didn't complete" in out["error"], out
+    action, fields = v.trail[-1]
+    assert action == detection_skill.IMPORT_REFUSED
+    assert fields["actor"] == "user-erin"
+    assert "didn't complete" in fields["reason"]
+
+
+@pg
+def test_an_exceptions_fault_leaves_no_copy_active_without_them(vigil, monkeypatch):
+    v = vigil
+    data, keys = _exported(v)
+    before = _files()
+
+    def broken(*_a, **_k):
+        raise RuntimeError("database went away")
+
+    monkeypatch.setattr(overlay, "_add_exceptions", broken)
+    out = _import(v, data)
+    _refused(v, out)
+    assert "RuntimeError" in out["error"]
+    assert _files() == before
+    # The sync had committed: its copies are marked removed again, none active.
+    assert {status for _, status in _rows(v, keys)} <= {"removed"}
+
+
+@pg
+def test_a_sync_fault_keeps_nothing(vigil, monkeypatch):
+    v = vigil
+    data, keys = _exported(v)
+    before = _files()
+
+    def broken(*_a, **_k):
+        raise RuntimeError("database went away")
+
+    monkeypatch.setattr(sync, "sync_source", broken)
+    out = _import(v, data)
+    _refused(v, out)
+    assert "nothing was changed" in out["error"]
+    assert _files() == before
+    assert _rows(v, keys) == []
+
+
+@pg
+def test_after_a_sync_fault_the_same_skill_imports(vigil, monkeypatch):
+    v = vigil
+    data, keys = _exported(v)
+    real = sync.sync_source
+    calls = []
+
+    def once(*a, **k):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("database went away")
+        return real(*a, **k)
+
+    monkeypatch.setattr(sync, "sync_source", once)
+    _refused(v, _import(v, data))
+    out = _import(v, data)
+    assert not out.get("error"), out
+    assert {status for _, status in _rows(v, keys)} == {"active"}
+
+
+@pg
+def test_a_write_fault_part_way_removes_the_files_already_written(vigil, monkeypatch):
+    v = vigil
+    data, keys = _exported(v)
+    before = _files()
+    real = overlay._write
+    writes = []
+
+    def second_fails(root, rel, text):
+        writes.append(rel)
+        if len(writes) == 2:
+            raise OSError("disk full")
+        real(root, rel, text)
+
+    monkeypatch.setattr(overlay, "_write", second_fails)
+    out = _import(v, data)
+    _refused(v, out)
+    assert "OSError" in out["error"] and "nothing was changed" in out["error"]
+    assert _files() == before
+    assert _rows(v, keys) == []
+
+
+@pg
+def test_a_database_fault_before_the_save_is_refused_on_the_trail(vigil, monkeypatch):
+    v = vigil
+    data, keys = _exported(v)
+
+    def broken(_keys):
+        raise RuntimeError("database went away")
+
+    monkeypatch.setattr(detection_skill, "_held", broken)
+    out = _import(v, data)
+    _refused(v, out)
+    assert _rows(v, keys) == []
+
+
+@pg
+def test_a_failed_undo_says_so(vigil, monkeypatch):
+    v = vigil
+    data, _ = _exported(v)
+
+    def broken(*_a, **_k):
+        raise RuntimeError("database went away")
+
+    monkeypatch.setattr(overlay, "_add_exceptions", broken)
+    monkeypatch.setattr(overlay, "_undo", lambda *a: False)
+    out = _import(v, data)
+    _refused(v, out)
+    assert "undoing it failed" in out["error"]
+    assert "nothing was changed" not in out["error"]
+
+
+def test_a_save_outside_an_import_still_keeps_its_files_on_a_sync_failure():
+    # A person's save keeps its written files for the next sync, as before;
+    # only an import asks for all or nothing.
+    import inspect
+
+    assert (
+        inspect.signature(overlay.save_rule).parameters["all_or_nothing"].default
+        is False
+    )
