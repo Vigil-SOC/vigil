@@ -1904,3 +1904,215 @@ def _resolved(
     if full:
         out.update(query=version.query, checks=version.checks or {})
     return out
+
+
+# The checks a Case's proof card shows, as each version stored them.
+CARD_CHECKS = (
+    "runs",
+    "sees",
+    "quiet",
+    "accurate",
+    "noisy",
+    "silent",
+    "caught",
+    "drift",
+)
+
+
+def case_rules(session: Any, findings: Iterable[Any]) -> Dict[str, Any]:
+    """The proof cards of the rule versions behind a Case's alerts.
+
+    ``findings`` are the Case's finding rows (finding_id, title, timestamp,
+    data_source, entity_context). Each is traced as Fires traces it: to the
+    version ``resolve_findings`` maps it to; an alert that names no rule falls
+    back to the rule name it carries, else its title, when exactly one rule
+    (its copies counted once, as Fires counts them) carries that name, the
+    version being the one live at the alert's time. One version is one card,
+    worst first; an alert traced to none is counted in ``unresolved`` with why.
+    """
+    rows = list(findings)
+    alerts = {
+        r.finding_id: {
+            "data_source": r.data_source,
+            "entity_context": r.entity_context,
+            "timestamp": r.timestamp,
+        }
+        for r in rows
+    }
+    resolved = resolve_findings(session, alerts) if rows else {}
+    names = {
+        r.finding_id: _alert_name(r)
+        for r in rows
+        if not (resolved.get(r.finding_id) or {}).get("resolved")
+    }
+    carriers, versions = _name_carriers(session, {n for n in names.values() if n})
+    cards: Dict[Tuple[int, int], Dict[str, Any]] = {}
+    unresolved: List[Dict[str, Any]] = []
+    for r in rows:
+        found = resolved.get(r.finding_id) or _unknown("no rule could be read")
+        by_name = False
+        if not found.get("resolved"):
+            alt = _by_name(names[r.finding_id], r.timestamp, carriers, versions)
+            if alt.get("resolved"):
+                found, by_name = alt, True
+            elif _names_no_rule(alerts[r.finding_id]):
+                # Why its name traced to none; one naming a rule keeps that reason.
+                found = alt
+        if not found.get("resolved"):
+            unresolved.append(
+                {"finding_id": r.finding_id, "reason": found.get("reason") or ""}
+            )
+            continue
+        key = (found["rule_id"], found["version"])
+        if key not in cards:
+            cards[key] = _card(found)
+        card = cards[key]
+        card["findings"].append(r.finding_id)
+        card["by_name"] += by_name
+    overlay = [c["rule_id"] for c in cards.values() if c["tool"] == OVERLAY]
+    stages = _stage_rows(session, overlay) if overlay else {}
+    listed = []
+    for card in cards.values():
+        history = stages.get(card["rule_id"]) or []
+        card["stage"] = history[-1]["stage"] if history else None
+        health, _why, _raw = _health(
+            card["status"], card.pop("_checks"), len(card["findings"])
+        )
+        card["health"] = health
+        card["worst"] = _worst(health, card["flags"], card["caught"])
+        listed.append(card)
+    listed.sort(
+        key=lambda c: (WORST_ORDER.index(c["worst"]), c["rule_id"], -c["version"])
+    )
+    return {
+        "rules": listed,
+        "unresolved": len(unresolved),
+        "unresolved_findings": unresolved,
+    }
+
+
+def _names_no_rule(alert: Mapping[str, Any]) -> bool:
+    """Whether an alert names no rule by id or version, only by name if at all."""
+    return _named(alert) is None and not isinstance(_rule_ref(alert), tuple)
+
+
+def _alert_name(row: Any) -> Optional[str]:
+    """The rule name an alert carries, else its title: Fires' fallback."""
+    context = row.entity_context if isinstance(row.entity_context, dict) else {}
+    return context.get("rule_name") or row.title or None
+
+
+def _by_name(
+    name: Optional[str],
+    timestamp: Any,
+    carriers: Dict[str, List[List[DetectionRule]]],
+    versions: Dict[int, List[DetectionRuleVersion]],
+) -> Dict[str, Any]:
+    """The version a name-only alert traces to, or why it traces to none."""
+    if not name:
+        return _unknown("the alert carries no rule name or title")
+    rules = carriers.get(name, [])
+    if not rules:
+        return _unknown(f"no listed rule is named {name!r}")
+    if len(rules) > 1:
+        return _unknown(
+            f"the name {name!r} is shared by {len(rules)} rules, so the alert "
+            "cannot be traced to one"
+        )
+    fired = _when(timestamp)
+    if fired is None:
+        return _unknown("the alert has no readable time to pick a rule version by")
+    rule = _firing_copy(rules[0])
+    return _pick(rule, versions.get(rule.id, []), fired, True)
+
+
+def _firing_copy(copies: List[DetectionRule]) -> DetectionRule:
+    """Of one rule's copies, the one that fires: a SIEM copy, then an overlay
+    copy Vigil runs, then any other."""
+    return min(
+        copies,
+        key=lambda c: (
+            c.source.startswith(REPO_PREFIX),
+            not (c.source == OVERLAY_SOURCE and c.language in ("elastic", "splunk")),
+            c.id,
+        ),
+    )
+
+
+def _name_carriers(
+    session: Any, names: Set[str]
+) -> Tuple[Dict[str, List[List[DetectionRule]]], Dict[int, List[DetectionRuleVersion]]]:
+    """name -> the listed rules carrying it, each as its copies (grouped as
+    ``_rule_of_copy`` groups them: a linked copy with its origin, an overlay
+    rule's copies by name); and each copy's versions, newest first."""
+    if not names:
+        return {}, {}
+    copies = list(
+        session.scalars(
+            select(DetectionRule).where(LISTED, DetectionRule.name.in_(names))
+        )
+    )
+    origin_ids = {
+        c.origin_rule_id
+        for c in copies
+        if c.origin_rule_id is not None and c.link_kind != "declined"
+    }
+    origins = (
+        {
+            r.id: r
+            for r in session.scalars(
+                select(DetectionRule).where(DetectionRule.id.in_(origin_ids))
+            )
+        }
+        if origin_ids
+        else {}
+    )
+
+    def own(rule: Any) -> Tuple[Any, ...]:
+        return (
+            (OVERLAY_SOURCE, rule.name) if rule.source == OVERLAY_SOURCE else (rule.id,)
+        )
+
+    def group(copy: Any) -> Tuple[Any, ...]:
+        origin = origins.get(copy.origin_rule_id)
+        linked = origin is not None and copy.link_kind != "declined"
+        return own(origin) if linked else own(copy)
+
+    grouped: Dict[str, Dict[Tuple[Any, ...], List[DetectionRule]]] = {}
+    for copy in copies:
+        grouped.setdefault(copy.name, {}).setdefault(group(copy), []).append(copy)
+    carriers = {name: list(rules.values()) for name, rules in grouped.items()}
+    versions: Dict[int, List[DetectionRuleVersion]] = {}
+    if copies:
+        for v in session.scalars(
+            select(DetectionRuleVersion)
+            .options(defer(DetectionRuleVersion.content))
+            .where(DetectionRuleVersion.rule_id.in_({c.id for c in copies}))
+            .order_by(DetectionRuleVersion.rule_id, DetectionRuleVersion.version.desc())
+        ):
+            versions.setdefault(v.rule_id, []).append(v)
+    return carriers, versions
+
+
+def _card(found: Dict[str, Any]) -> Dict[str, Any]:
+    """A resolved version's card, before its findings, stage and health."""
+    checks = found.get("checks") or {}
+    flags, caught = _check_flags(checks)
+    return {
+        "rule_id": found["rule_id"],
+        "version": found["version"],
+        "latest_version": found["latest_version"],
+        "name": found["name"],
+        "source": found["source"],
+        "tool": tool_of(found["source"]),
+        "native_key": found["native_key"],
+        "status": found["status"],
+        "checks": {
+            k: checks[k] for k in CARD_CHECKS if isinstance(checks.get(k), dict)
+        },
+        "flags": flags,
+        "caught": caught,
+        "findings": [],
+        "by_name": 0,
+        "_checks": checks,
+    }
