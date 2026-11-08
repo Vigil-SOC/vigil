@@ -289,11 +289,14 @@ def handed_off(rule_ids: List[int]) -> Set[int]:
     the sync (same_id / known_name) or an agent to the
     overlay rule, or to an active repo rule of its language carrying its key
     (rule_id). A Splunk copy also matches a repo rule by name, since ESCU links
-    by name (known_name); an Elastic copy matches by rule_id only.
+    by name (known_name); an Elastic copy matches by rule_id only. A Wazuh
+    manager rule takes a Wazuh copy over only when it is loaded from Vigil's own
+    file for it (vigil_<id>.xml): a customer's file with that id is another rule.
     """
     if not rule_ids:
         return set()
     o, r, s = aliased(DetectionRule), aliased(DetectionRule), aliased(DetectionRule)
+    vigil_file = func.concat("vigil_", o.native_key, ".xml")
     same_rule = (
         select(r.id)
         .where(
@@ -317,6 +320,12 @@ def handed_off(rule_ids: List[int]) -> Set[int]:
         s.status == "active",
         s.link_kind.in_(HANDOFF_LINKS),
         or_(s.origin_rule_id == o.id, s.origin_rule_id.in_(same_rule)),
+        # Vigil's own file, alone or after a directory (sync.vigil_wazuh_file).
+        or_(
+            o.language != WAZUH,
+            s.path == vigil_file,
+            s.path.like(func.concat("%/", vigil_file)),
+        ),
     )
     with get_db_manager().session_scope() as session:
         ids = session.scalars(

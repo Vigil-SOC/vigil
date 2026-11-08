@@ -9,19 +9,36 @@ from types import SimpleNamespace
 from urllib.parse import urlparse
 
 import pytest
+from sqlalchemy import text
 
 from core.detections.inventory import rollout, sync, wazuh
+from core.storage.connection import get_db_manager
 
 
 def test_the_wazuh_link_is_by_id_on_the_managers_rules(monkeypatch):
     seen = {}
     monkeypatch.setattr(
-        sync, "_link", lambda *args: seen.setdefault("args", args) and (0, 0)
+        sync,
+        "_link",
+        lambda *args, **kw: seen.update(args=args, kw=kw) or (0, 0),
     )
     sync._link_wazuh_id()
-    source, language, kind, key_of, _origin_key, _reason = seen["args"]
+    source, language, kind, key_of, _origin_key, _reason = seen["args"][:6]
     assert (source, language, kind) == (wazuh.SOURCE, "wazuh", "same_id")
     assert key_of(SimpleNamespace(native_key="100100")) == "100100"
+    assert seen["kw"]["audited"] is True
+    overlay_ok = seen["kw"]["overlay_ok"]
+    assert overlay_ok(
+        SimpleNamespace(native_key="100100", path="etc/rules/vigil_100100.xml")
+    )
+    assert overlay_ok(SimpleNamespace(native_key="100100", path="vigil_100100.xml"))
+    for path in (
+        "etc/rules/local_rules.xml",
+        "etc/rules/xvigil_100100.xml",
+        "etc/rules/vigil_100101.xml",
+        None,
+    ):
+        assert not overlay_ok(SimpleNamespace(native_key="100100", path=path)), path
 
 
 @pytest.mark.parametrize(
@@ -51,8 +68,6 @@ DSN = os.environ.get("VIGIL_TEST_PG_DSN")
 def pg(monkeypatch):
     if not DSN:
         pytest.skip("VIGIL_TEST_PG_DSN not set")
-    from sqlalchemy import text
-
     from core.storage import connection
 
     url = urlparse(DSN)
@@ -72,15 +87,19 @@ def pg(monkeypatch):
     key = str(random.randint(119000, 119999))
     made = []
 
-    def rule(source, status="active"):
+    vigil_file = f"etc/rules/vigil_{key}.xml"
+
+    def rule(source, status="active", path="vigil"):
+        # A manager rule is loaded from Vigil's merged file unless told otherwise.
+        path = (vigil_file if source == "wazuh" else None) if path == "vigil" else path
         with manager.session_scope() as session:
             rid = session.execute(
                 text(
                     "INSERT INTO detection_rules (source, native_key, name, language,"
-                    " status, latest_version) VALUES (:s, :k, 'Handoff probe', 'wazuh',"
-                    " :st, 1) RETURNING id"
+                    " status, latest_version, path) VALUES (:s, :k, 'Handoff probe',"
+                    " 'wazuh', :st, 1, :p) RETURNING id"
                 ),
-                {"s": source, "k": key, "st": status},
+                {"s": source, "k": key, "st": status, "p": path},
             ).scalar()
         made.append(rid)
         return rid
@@ -94,7 +113,34 @@ def pg(monkeypatch):
                 {"i": rid},
             ).one()
 
-    yield SimpleNamespace(rule=rule, origin_of=origin_of, key=key)
+    def audited(rid):
+        """(verb, actor, old origin, new origin) of each link audit row for ``rid``."""
+        from core.audit import trail
+
+        with manager.session_scope() as session:
+            if trail.in_use(session):
+                rows = session.execute(
+                    text(
+                        "SELECT payload->>'verb', payload->>'actor',"
+                        " payload->'old_value'->>'origin_rule_id',"
+                        " payload->'new_value'->>'origin_rule_id'"
+                        " FROM audit_trail WHERE payload->>'action' = 'config.change'"
+                        " AND payload->>'config_key' = :k ORDER BY seq"
+                    ),
+                    {"k": f"detection_rule:{rid}"},
+                ).all()
+            else:
+                rows = session.execute(
+                    text(
+                        "SELECT action, changed_by, old_value->>'origin_rule_id',"
+                        " new_value->>'origin_rule_id' FROM config_audit_log"
+                        " WHERE config_key = :k ORDER BY id"
+                    ),
+                    {"k": f"detection_rule:{rid}"},
+                ).all()
+        return [tuple(r) for r in rows]
+
+    yield SimpleNamespace(rule=rule, origin_of=origin_of, key=key, audited=audited)
     with manager.session_scope() as session:
         session.execute(
             text(
@@ -132,4 +178,52 @@ def test_a_disabled_manager_rule_takes_nothing_over(pg):
     overlay = pg.rule("repo:overlay")
     pg.rule("wazuh", status="disabled")
     sync._link_wazuh_id()
+    assert rollout.handed_off([overlay]) == set()
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "etc/rules/local_rules.xml",
+        "etc/rules/xvigil_{key}.xml",
+        "etc/rules/vigil_{key}0.xml",
+        None,
+    ],
+    ids=["local-rules", "prefixed", "other-id", "no-path"],
+)
+def test_a_customer_file_loading_the_id_takes_nothing_over(pg, path):
+    overlay = pg.rule("repo:overlay")
+    loaded = pg.rule("wazuh", path=path and path.format(key=pg.key))
+    sync._link_wazuh_id()
+    assert tuple(pg.origin_of(loaded)) == (None, None)
+    assert rollout.handed_off([overlay]) == set()
+    assert pg.audited(loaded) == []
+
+
+def test_a_customers_own_rule_links_to_its_repo_rule_but_takes_no_vigil_copy(pg):
+    # The customer's local_rules.xml rule is its repo rule's SIEM copy; the
+    # Vigil copy with the id is another rule and stays deployable.
+    overlay = pg.rule("repo:overlay")
+    repo = pg.rule("repo:customer-wazuh")
+    loaded = pg.rule("wazuh", path="etc/rules/local_rules.xml")
+    sync._link_wazuh_id()
+    assert tuple(pg.origin_of(loaded)) == (repo, "same_id")
+    assert rollout.handed_off([overlay]) == set()
+
+
+def test_each_wazuh_link_change_is_audited(pg):
+    overlay = pg.rule("repo:overlay")
+    loaded = pg.rule("wazuh")
+    sync._link_wazuh_id()
+    sync._link_wazuh_id()  # unchanged: no second row
+    assert pg.audited(loaded) == [("link", "system", None, str(overlay))]
+    with get_db_manager().session_scope() as session:
+        session.execute(
+            text(
+                "UPDATE detection_rules SET path = 'etc/rules/local_rules.xml' WHERE id = :i"
+            ),
+            {"i": loaded},
+        )
+    sync._link_wazuh_id()
+    assert pg.audited(loaded)[-1] == ("unlink", "system", str(overlay), None)
     assert rollout.handed_off([overlay]) == set()
