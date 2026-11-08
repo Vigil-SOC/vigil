@@ -44,11 +44,13 @@ import asyncio
 import logging
 import os
 import re
+import time
 import xml.etree.ElementTree as ET  # nosec B405 -- serialises rules already parsed
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from urllib.parse import urlparse
 
 from core.detections import wazuh_xml
 from core.detections.inventory.wazuh_shadow import CANT
@@ -61,13 +63,14 @@ FILE_PREFIX = "vigil_sandbox_"
 # Events replayed per run, at most; one logtest call each (~60 ms on 4.9.2).
 SAMPLE_EVENTS = 500
 # The sandbox's API answers 429 past 300 calls a minute (its default, kept so
-# the image runs unmodified): logtest calls are paced under it. A run's 500
-# events take about two minutes.
+# the image runs unmodified): every call is paced under it, uploads and checks
+# as well as logtest. A run's 500 events take about two minutes.
 CALLS_PER_MINUTE = 240
 # A run waits until the copies' window is this long: at most 4 runs, and so
 # 4 x SAMPLE_EVENTS replays, a day.
 EVERY = timedelta(hours=6)
 NOT_IN_REPO = f"{CANT}not in repo: "
+NOT_A_SANDBOX = f"{CANT}the Wazuh sandbox "
 FAILED = f"{CANT}Wazuh sandbox: "
 NO_SANDBOX = (
     "no Wazuh sandbox is configured to count it (the wazuh-sandbox compose profile)"
@@ -93,6 +96,41 @@ def configured() -> Optional[Dict[str, str]]:
         "username": settings.wazuh_sandbox_username,
         "password": password.get_secret_value() if password else "",
     }
+
+
+def customer() -> Optional[Dict[str, Any]]:
+    """The customer's Wazuh integration (its resolved config), or None."""
+    from core.config import load_integrations_config
+    from core.integrations._base.config import missing, resolve
+    from core.integrations.wazuh.descriptor import WAZUH, WAZUH_REQUIRED
+
+    if WAZUH.id not in load_integrations_config()["enabled_integrations"]:
+        return None
+    config = resolve(WAZUH)
+    return None if missing(config, *WAZUH_REQUIRED) else dict(config)
+
+
+async def customer_hostname(config: Mapping[str, Any]) -> Optional[str]:
+    """The customer's manager's hostname (``GET /``), or None when unread."""
+    verify = True if config.get("verify_ssl") is None else config["verify_ssl"]
+    service = WazuhService(
+        config["api_url"],
+        config["username"],
+        config["password"],
+        verify_ssl=verify,
+        ca_cert_path=config.get("ca_cert_path"),
+    )
+    try:
+        return (await service._request("GET", "/")).get("hostname")
+    except WazuhError:
+        return None
+    finally:
+        await service.close()
+
+
+def _endpoint(url: str) -> Tuple[str, int]:
+    parts = urlparse(url if "://" in url else f"https://{url}")
+    return (parts.hostname or "").lower(), parts.port or 55000
 
 
 def refusal(text: str) -> Optional[str]:
@@ -218,7 +256,33 @@ class Sandbox(WazuhService):
     """Vigil's own Wazuh manager. Unlike the customer's (``WazuhService``,
     read-only), Vigil writes its rule and decoder files."""
 
-    pace = 60.0 / CALLS_PER_MINUTE  # seconds between logtest calls
+    pace = 60.0 / CALLS_PER_MINUTE  # seconds between calls
+    _next = 0.0  # monotonic time the next call may go
+
+    async def _request(self, method: str, path: str, **kwargs) -> Dict[str, Any]:
+        wait = self._next - time.monotonic()
+        if wait > 0:
+            await asyncio.sleep(wait)
+        self._next = time.monotonic() + self.pace
+        return await super()._request(method, path, **kwargs)
+
+    async def guard(self, theirs: Optional[Mapping[str, Any]]) -> Optional[str]:
+        """Why this is not a sandbox Vigil may write to, or None: it is the
+        customer's manager (the Wazuh integration's host and port, or the same
+        manager hostname), or it has agents, which no sandbox does."""
+        if theirs and _endpoint(str(theirs["api_url"])) == _endpoint(self.api_url):
+            return "is the customer's Wazuh manager (the same host and port)"
+        data = await self._request(
+            "GET", "/agents", params={"limit": 2, "select": "id"}
+        )
+        ids = [str(a.get("id")) for a in data.get("affected_items") or []]
+        if any(i != "000" for i in ids):
+            return "has agents reporting to it, so it is a real manager, not a sandbox"
+        if theirs:
+            ours = (await self._request("GET", "/")).get("hostname")
+            if ours and ours == await customer_hostname(theirs):
+                return "is the customer's Wazuh manager (the same manager hostname)"
+        return None
 
     async def _files(self, kind: str) -> List[str]:
         data = await self._request(
@@ -277,9 +341,7 @@ class Sandbox(WazuhService):
         token: Optional[str] = None
         outputs: List[Optional[Dict[str, Any]]] = []
         try:
-            for n, event in enumerate(events):
-                if n:
-                    await asyncio.sleep(self.pace)
+            for event in events:
                 body = {**event, **({"token": token} if token else {})}
                 try:
                     data = await self._request("PUT", "/logtest", json=body)
@@ -306,9 +368,18 @@ def event(doc: Mapping[str, Any]) -> Optional[Dict[str, str]]:
     if not isinstance(line, str) or not line:
         return None
     decoder = (source.get("decoder") or {}).get("name")
+    location = str(source.get("location") or "")
+    if location.lower() == "eventchannel":
+        log_format = "eventchannel"
+    elif decoder == "json":
+        log_format = "json"
+    else:
+        # The archive keeps no log_format: a localfile read as another format
+        # (audit, multi-line...) may decode differently, and is left out.
+        log_format = "syslog"
     return {
         "event": line,
-        "log_format": "json" if decoder == "json" else "syslog",
+        "log_format": log_format,
         "location": str(source.get("location") or "vigil-sandbox"),
     }
 

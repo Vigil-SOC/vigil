@@ -2152,6 +2152,11 @@ async def _sandboxed(
     )
     whys: Dict[int, str] = {}
     try:
+        # Never write to the customer's manager, however the URL is set.
+        wrong = await box.guard(wazuh_sandbox.customer())
+        if wrong:
+            why = f"{wazuh_sandbox.NOT_A_SANDBOX}{wrong}"
+            return "ran", {}, {c.rule_id: why for c in counted}, None
         await box.load(wazuh_sandbox.ruleset(loaded, wazuh_sandbox.repo_roots()))
         for c in counted:
             gone = await box.missing(wazuh_sandbox.parents(c.toml))

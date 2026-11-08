@@ -309,6 +309,11 @@ class _Box:
         self.finals, self.lacks, self.fails = finals or {}, list(lacks), fails
         self.loaded, self.closed = None, False
 
+    wrong = None
+
+    async def guard(self, theirs):
+        return self.wrong
+
     async def load(self, rs):
         if self.fails:
             raise wazuh_sandbox.WazuhError(self.fails)
@@ -372,6 +377,7 @@ def run(monkeypatch):
         )
         monkeypatch.setattr(rollout.wazuh_sandbox, "Sandbox", lambda *a, **k: box)
         monkeypatch.setattr(rollout.wazuh_sandbox, "repo_roots", lambda: [])
+        monkeypatch.setattr(rollout.wazuh_sandbox, "customer", lambda: None)
         monkeypatch.setattr(
             rollout,
             "_write_unrunnable",
@@ -459,3 +465,77 @@ def test_a_sandbox_run_waits_until_its_window_is_due(run):
     run([_copy(1, MATCH, ran=True)], service, box)
     assert box.loaded is None and run.wrote["runs"] == {}
     assert run.wrote["unrunnable"] == []  # nothing written: the window keeps growing
+
+
+def test_a_sandbox_that_is_the_customers_manager_is_never_written_to(run):
+    box = _Box()
+    box.wrong = "is the customer's Wazuh manager (the same host and port)"
+    run([_copy(1, MATCH)], _Service([_doc("x")]), box)
+    ((copy, why),) = run.wrote["unrunnable"]
+    assert why == (
+        "can't validate: the Wazuh sandbox is the customer's Wazuh manager "
+        "(the same host and port)"
+    )
+    assert box.loaded is None and run.wrote["runs"] == {}
+
+
+@pytest.mark.asyncio
+async def test_guard_refuses_the_customers_manager_or_any_with_agents(monkeypatch):
+    calls = []
+
+    def handler(agents, hostname):
+        def h(request):
+            calls.append(request.url.path)
+            if request.url.path.endswith("/authenticate"):
+                return _ok({"token": "t"})
+            if request.url.path == "/agents":
+                return _ok({"affected_items": [{"id": a} for a in agents]})
+            return _ok({"hostname": hostname})
+
+        return h
+
+    async def theirs_host(config):
+        return "wazuh-prod"
+
+    monkeypatch.setattr(wazuh_sandbox, "customer_hostname", theirs_host)
+    theirs = {
+        "api_url": "https://Wazuh-Sandbox:55000/",
+        "username": "u",
+        "password": "p",
+    }
+    same = await _sandbox(handler(["000"], "x")).guard(theirs)
+    assert "same host and port" in same and calls == []  # refused before any call
+    other = {**theirs, "api_url": "https://wazuh.acme.corp:55000"}
+    assert "has agents" in await _sandbox(handler(["000", "001"], "x")).guard(other)
+    assert "same manager hostname" in await _sandbox(
+        handler(["000"], "wazuh-prod")
+    ).guard(other)
+    assert await _sandbox(handler(["000"], "wazuh-sandbox")).guard(other) is None
+    assert await _sandbox(handler(["000"], "wazuh-sandbox")).guard(None) is None
+
+
+@pytest.mark.asyncio
+async def test_every_sandbox_call_is_paced(monkeypatch):
+    slept = []
+
+    async def sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr(wazuh_sandbox.asyncio, "sleep", sleep)
+
+    def handler(request):
+        if request.url.path.endswith("/authenticate"):
+            return _ok({"token": "t"})
+        return _ok({"affected_items": []})
+
+    box = _sandbox(handler)
+    box.pace = 30.0
+    await box.load(wazuh_sandbox.Ruleset(rules={"vigil_sandbox_0.xml": MATCH}))
+    # Uploads and listings, not only logtest: one wait before each call but the first.
+    assert len(slept) == 2 and all(0 < s <= 30.0 for s in slept)
+
+
+def test_an_eventchannel_event_is_replayed_as_eventchannel():
+    doc = _doc("{}", decoder="windows_eventchannel")
+    doc["_source"]["location"] = "EventChannel"
+    assert wazuh_sandbox.event(doc)["log_format"] == "eventchannel"
