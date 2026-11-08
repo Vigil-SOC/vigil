@@ -570,6 +570,31 @@
   overflow-wrap: anywhere;
 }
 
+/* The alert's rule: proven or passing, else its worst check, and a link to it. */
+.case-side .case-rule-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--tx2);
+}
+.case-side .case-rule-line svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin-top: 2px;
+  fill: none;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.case-side .case-rule-line.ok svg { stroke: var(--good); }
+.case-side .case-rule-line.warn svg { stroke: var(--fair); }
+.case-side .case-rule-line.warn > span { color: var(--tx1); }
+.case-side .case-rule-line a { color: var(--ac); text-decoration: none; }
+.case-side .case-rule-line a:hover { text-decoration: underline; }
+
 /* Related cases: title and state on one line, the case ID as the link beneath. */
 .case-side .case-related-head { display: flex; align-items: flex-start; gap: 8px; }
 .case-side .case-related-head .side-clamp { flex: 1; min-width: 0; }
