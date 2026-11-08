@@ -1016,7 +1016,6 @@ interface WorkflowPhase {
   agent_id: string
   name: string
   purpose?: string
-  tools: string[]
   steps: string[]
   expected_output?: string
   approval_required?: boolean

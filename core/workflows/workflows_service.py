@@ -283,11 +283,15 @@ class WorkflowDefinition:
                 seen.append(agent)
         return seen
 
+    # What the phase agents need: a phase's agent brings its tools, so a stored
+    # phase.tools list is ignored.
     @property
     def tools_used(self) -> List[str]:
+        from core.workflows.playbook_resolver import phases_needs
+
         seen: List[str] = []
-        for phase in self.phases:
-            for tool in (phase or {}).get("tools") or []:
+        for needs in phases_needs(self.phases):
+            for tool in needs:
                 if tool not in seen:
                     seen.append(tool)
         return seen
@@ -396,7 +400,6 @@ def _agent_run_definition(workflow_id: str) -> Optional[WorkflowDefinition]:
                         "say what you conclude.\n\nExpected output: a verdict with the "
                         "evidence for it, and what a person should do next."
                     ),
-                    "tools": list(agent.recommended_tools or []),
                 }
             ],
         },
@@ -444,6 +447,8 @@ def _render_custom_workflow_body(
 ) -> str:
     """Render a markdown body from structured phases, compatible with
     build_execution_prompt()'s template."""
+    from core.workflows.playbook_resolver import phases_needs
+
     lines: List[str] = []
     lines.append(f"# {wf.get('name', wf.get('workflow_id'))}")
     if wf.get("description"):
@@ -452,7 +457,7 @@ def _render_custom_workflow_body(
     lines.append("")
     lines.append("## Agent Sequence")
     lines.append("")
-    for phase in phases:
+    for phase, tools in zip(phases, phases_needs(phases)):
         order = phase.get("order", "?")
         name = phase.get("name", f"Phase {order}")
         agent = phase.get("agent_id", "")
@@ -460,7 +465,6 @@ def _render_custom_workflow_body(
         if phase.get("purpose"):
             lines.append("")
             lines.append(f"**Purpose:** {phase['purpose']}")
-        tools = phase.get("tools") or []
         if tools:
             lines.append("")
             lines.append("**Tools:** " + ", ".join(f"`{t}`" for t in tools))

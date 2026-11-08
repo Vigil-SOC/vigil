@@ -12,7 +12,6 @@ import yaml
 from core.agents.enablement import disabled_agent_ids, disabled_message
 from core.llm.defaults import DEFAULT_MODEL
 from core.response.ceiling import gated_tools
-from core.skills.skill_library import READ_SKILL_TOOL
 
 if TYPE_CHECKING:
     from core.integrations.mcp.registry import MCPRegistry
@@ -291,15 +290,27 @@ def _prompt_for(agent_id: str) -> str:
     return _profile_for(agent_id).system_prompt
 
 
-# Compose allows phase.tools. The prompt already tells an agent whose profile
-# recommends read_skill to call it, so that name has to be on the phase or the
-# call the prompt requires is refused. Other recommended tools stay off the
-# phase: the workflow author listed what this step may use.
-def _tools_for(phase: Dict[str, Any], recommended: List[str]) -> List[str]:
-    tools = list(phase.get("tools") or [])
-    if READ_SKILL_TOOL in recommended and READ_SKILL_TOOL not in tools:
-        tools.append(READ_SKILL_TOOL)
-    return tools
+# What each phase's agent needs, in phase order, as its profile states them; nothing
+# for an agent that does not exist. A listing reads this, so custom agents load
+# once for all the phases and the on/off switch is not read: a run checks that.
+def phases_needs(phases: List[Dict[str, Any]]) -> List[List[str]]:
+    from core.agents.manager import (
+        CUSTOM_AGENT_ID_PREFIX,
+        AgentManager,
+        SOCAgentLibrary,
+    )
+
+    custom: Optional[Dict[str, Any]] = None
+    needs: List[List[str]] = []
+    for phase in phases:
+        agent = (phase or {}).get("agent") or (phase or {}).get("agent_id") or ""
+        profile = SOCAgentLibrary.get_agent(agent)
+        if profile is None and agent.startswith(CUSTOM_AGENT_ID_PREFIX):
+            if custom is None:
+                custom = AgentManager().agents
+            profile = custom.get(agent)
+        needs.append(list(profile.recommended_tools or []) if profile else [])
+    return needs
 
 
 # A file playbook writes one instructions block. A custom workflow authors the same
@@ -320,19 +331,25 @@ def _instructions_of(phase: Dict[str, Any]) -> str:
     return "\n\n".join(part for part in parts if part)
 
 
-# A custom agent's phase holds what its manifest needs, as the deployment binds
-# them; without a catalogue (a preflight read) the needs themselves.
+# Every phase holds its agent's needs as this deployment binds them; without a
+# catalogue (a preflight read) the needs themselves. A need that binds nothing is
+# returned beside them, so the run journals a blind spot rather than a log line.
 def _phase_tools(
-    phase: Dict[str, Any],
-    profile: Any,
-    catalogue: Optional[Dict[str, Dict[str, Any]]],
-) -> List[str]:
-    if not getattr(profile, "manifest", None):
-        return _tools_for(phase, profile.recommended_tools)
-    needs = list(profile.recommended_tools)
+    profile: Any, catalogue: Optional[Dict[str, Dict[str, Any]]]
+) -> Tuple[List[str], List[Dict[str, str]]]:
+    needs = list(profile.recommended_tools or [])
     if catalogue is None:
-        return needs
-    return [tool["id"] for tool in _bound_capabilities(needs, catalogue)]
+        return needs, []
+    tools: List[str] = []
+    unavailable: List[Dict[str, str]] = []
+    for need in needs:
+        bound = [t["id"] for t in _bound_capabilities([need], catalogue)]
+        if not bound:
+            unavailable.append(
+                {"tool": need, "reason": f"no tool in this deployment answers {need}"}
+            )
+        tools += [t for t in bound if t not in tools]
+    return tools, unavailable
 
 
 def _phases_of(
@@ -346,6 +363,7 @@ def _phases_of(
             raise UnknownPlaybook(f"phase {index + 1} names no agent")
 
         profile = _profile_for(agent)
+        tools, unavailable = _phase_tools(profile, catalogue)
         resolved.append(
             {
                 "id": phase.get("id") or phase.get("phase_id") or f"phase-{index + 1}",
@@ -353,8 +371,9 @@ def _phases_of(
                 "name": phase.get("name") or f"Phase {index + 1}",
                 "instructions": _instructions_of(phase),
                 "approval_required": bool(phase.get("approval_required")),
-                "tools": _phase_tools(phase, profile, catalogue),
+                "tools": tools,
                 "prompt": profile.system_prompt,
+                **({"unavailable": unavailable} if unavailable else {}),
             }
         )
     return resolved
@@ -362,7 +381,7 @@ def _phases_of(
 
 # The tools the phases name, as this deployment carries them. A catalogue handed
 # to the registry would widen every grant to everything, which is deny-by-default
-# inverted. One the deployment lacks is dropped here and reported by _drop_missing.
+# inverted. Phases hold only bound ids; _phase_tools reports the needs that bound none.
 def _tools_of(
     phases: List[Dict[str, Any]], catalogue: Dict[str, Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
@@ -397,19 +416,6 @@ def _tools_of(
 def _budgets(phases: List[Dict[str, Any]]) -> Dict[str, Any]:
     per_phase = int(DEFAULT_RUNTIME["max_turns"]) + EMIT_ATTEMPTS
     return {"max_calls": max(len(phases), 1) * per_phase, **DEFAULT_SPEND}
-
-
-# A tool a phase named and this deployment lacks leaves its grant and is recorded
-# on the phase, so the run journals a blind spot rather than a log line.
-def _drop_missing(phases: List[Dict[str, Any]], declared: List[str]) -> None:
-    for phase in phases:
-        missing = [tool for tool in phase["tools"] if tool not in declared]
-        phase["tools"] = [tool for tool in phase["tools"] if tool in declared]
-        if missing:
-            phase["unavailable"] = [
-                {"tool": tool, "reason": f"no tool in this deployment answers {tool}"}
-                for tool in missing
-            ]
 
 
 # Every outside tool whose stored class is reversible, irreversible, or none.
@@ -458,7 +464,6 @@ def resolve(
         for tool in _tools_of(phases, catalogue)
         if tool["id"] not in {held["id"] for held in lead}
     ]
-    _drop_missing(phases, [tool["id"] for tool in tools])
 
     playbook = {
         "name": definition.name,
