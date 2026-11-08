@@ -19,10 +19,6 @@ logger = logging.getLogger(__name__)
 CHECK_ROUTE = "/plugins/check"
 CHECK_TIMEOUT_S = 10
 
-# What a legacy Agent Builder row converts to. A manifest with any other key
-# says something the persona columns cannot, so the legacy shim leaves it alone.
-LEGACY_KEYS = frozenset({"id", "description", "needs", "system", "conclusion"})
-
 
 class ManifestRefused(Exception):
     """The manifest cannot be stored; ``str(exc)`` is the reason."""
@@ -32,8 +28,8 @@ class CheckUnavailable(Exception):
     """agent-serve could not be asked."""
 
 
-# The one conversion: the migration fills every existing row with it, and the
-# legacy POST/PATCH /agents/custom routes render their payload through it.
+# The one conversion of a persona row: the 0038/0039 migrations fill rows with it,
+# and forking a built-in renders the built-in's record through it.
 def manifest_from_row(row: Mapping[str, Any]) -> str:
     doc = {
         "id": row["id"],
@@ -66,11 +62,6 @@ def _strings(value: Any) -> List[str]:
 
 def manifest_needs(doc: Mapping[str, Any]) -> List[str]:
     return _strings(doc.get("needs"))
-
-
-def is_legacy_shaped(text: Optional[str]) -> bool:
-    doc = read_manifest(text)
-    return not doc or (set(doc) <= LEGACY_KEYS and doc.get("conclusion") == "prose")
 
 
 # The skills a manifest names, from the same roots the console and the Python
@@ -118,6 +109,32 @@ def check_manifest(text: str, skills: List[Dict[str, str]]) -> str:
     if response.status_code != 200:
         raise CheckUnavailable(f"the agent service answered {response.status_code}")
     return str(response.json().get("id") or "")
+
+
+# Both checks a manifest passes before it is stored or shown as a draft: the
+# parser a run loads with, then needs this deployment can bind. Returns its id.
+def vet_manifest(text: str, registry: Any = None) -> str:
+    from core.llm.system_prompt import validate_system_prompt
+    from core.workflows.playbook_resolver import unknown_needs
+
+    doc = read_manifest(text)
+    system = doc.get("system")
+    try:
+        # The size, control-character and injection-audit guard every operator
+        # prompt has passed since #87.
+        validate_system_prompt(
+            system if isinstance(system, str) else None, source="operator_manifest"
+        )
+    except ValueError as exc:
+        raise ManifestRefused(str(exc)) from exc
+    checked = check_manifest(text, manifest_skills(doc))
+    missing = unknown_needs(manifest_needs(doc), registry)
+    if missing:
+        raise ManifestRefused(
+            f"needs {', '.join(missing)}, which is neither a capability nor a "
+            "tool this deployment carries"
+        )
+    return checked
 
 
 # The start request's operator fields for a definition that carries a manifest,

@@ -22,10 +22,7 @@ from core.agents.enablement import set_agent_enabled
 from core.agents.operator_manifest import (
     CheckUnavailable,
     ManifestRefused,
-    check_manifest,
-    manifest_needs,
-    manifest_skills,
-    read_manifest,
+    vet_manifest,
 )
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
@@ -33,7 +30,6 @@ from core.deps import provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
-from core.workflows.playbook_resolver import unknown_needs
 
 logger = logging.getLogger(__name__)
 
@@ -108,9 +104,8 @@ def put_agent(
 
     201 on create, 200 on replace. 422 carries why a manifest was refused.
     """
-    doc = read_manifest(body.manifest)
     try:
-        checked = check_manifest(body.manifest, manifest_skills(doc))
+        checked = vet_manifest(body.manifest, registry)
     except ManifestRefused as exc:
         raise _refused(str(exc)) from exc
     except CheckUnavailable as exc:
@@ -120,12 +115,6 @@ def put_agent(
         ) from exc
     if checked != agent_id:
         raise _refused(f"the manifest's id is {checked}, not {agent_id}")
-    missing = unknown_needs(manifest_needs(doc), registry)
-    if missing:
-        raise _refused(
-            f"needs {', '.join(missing)}, which is neither a capability nor a "
-            "tool this deployment carries"
-        )
     try:
         row, created = service.put_manifest(
             agent_id, body.manifest, changed_by=str(current_user.user_id)

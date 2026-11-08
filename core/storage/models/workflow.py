@@ -421,50 +421,16 @@ class ApprovalAction(Base):
 
 
 class CustomAgent(Base):
-    """User-defined SOC agent created via the Agent Builder UI."""
+    """An operator agent: a plugin manifest under a custom- id (#4023, #4024)."""
 
     __tablename__ = "custom_agents"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    icon: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    color: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    specialization: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-
-    role: Mapped[str] = mapped_column(Text, nullable=False)
-    extra_principles: Mapped[str] = mapped_column(
-        Text, nullable=False, default="", server_default=""
-    )
-    methodology: Mapped[str] = mapped_column(
-        Text, nullable=False, default="", server_default=""
-    )
-    system_prompt_override: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-
-    recommended_tools: Mapped[list] = mapped_column(
-        JSONB, nullable=False, default=list, server_default="[]"
-    )
-    max_tokens: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=4096, server_default="4096"
-    )
-    enable_thinking: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default="false"
-    )
-    model: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    fallback_model: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    component_category: Mapped[str] = mapped_column(
-        String(32),
-        nullable=False,
-        default="investigation",
-        server_default="investigation",
-    )
-    # Origin agent ID this row was forked from (built-in id like "reporter" or
-    # another custom id). Null for agents authored from scratch. Breadcrumb
-    # only — no FK, because built-ins live in code, not a table.
+    # The operator manifest (plugin YAML) a run of this agent loads.
+    manifest: Mapped[str] = mapped_column(Text, nullable=False)
+    # Origin agent ID this row was forked from (a built-in id like "reporter").
+    # Breadcrumb only: no FK, because built-ins live in code, not a table.
     forked_from: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    # The operator manifest (plugin YAML) a run of this agent loads (#4023). The
-    # persona columns above stay until #4024 drops them.
-    manifest: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     created_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

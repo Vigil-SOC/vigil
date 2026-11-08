@@ -1799,16 +1799,6 @@
   "nullable": true,
   "type": "character varying(50)"
  },
- "column custom_agents.color": {
-  "default": null,
-  "nullable": true,
-  "type": "text"
- },
- "column custom_agents.component_category": {
-  "default": "'investigation'::character varying",
-  "nullable": false,
-  "type": "character varying(32)"
- },
  "column custom_agents.created_at": {
   "default": "now()",
   "nullable": false,
@@ -1819,32 +1809,7 @@
   "nullable": true,
   "type": "character varying(100)"
  },
- "column custom_agents.description": {
-  "default": null,
-  "nullable": true,
-  "type": "text"
- },
- "column custom_agents.enable_thinking": {
-  "default": "false",
-  "nullable": false,
-  "type": "boolean"
- },
- "column custom_agents.extra_principles": {
-  "default": "''::text",
-  "nullable": false,
-  "type": "text"
- },
- "column custom_agents.fallback_model": {
-  "default": null,
-  "nullable": true,
-  "type": "text"
- },
  "column custom_agents.forked_from": {
-  "default": null,
-  "nullable": true,
-  "type": "text"
- },
- "column custom_agents.icon": {
   "default": null,
   "nullable": true,
   "type": "text"
@@ -1856,47 +1821,7 @@
  },
  "column custom_agents.manifest": {
   "default": null,
-  "nullable": true,
-  "type": "text"
- },
- "column custom_agents.max_tokens": {
-  "default": "4096",
   "nullable": false,
-  "type": "integer"
- },
- "column custom_agents.methodology": {
-  "default": "''::text",
-  "nullable": false,
-  "type": "text"
- },
- "column custom_agents.model": {
-  "default": null,
-  "nullable": true,
-  "type": "text"
- },
- "column custom_agents.name": {
-  "default": null,
-  "nullable": false,
-  "type": "text"
- },
- "column custom_agents.recommended_tools": {
-  "default": "'[]'::jsonb",
-  "nullable": false,
-  "type": "jsonb"
- },
- "column custom_agents.role": {
-  "default": null,
-  "nullable": false,
-  "type": "text"
- },
- "column custom_agents.specialization": {
-  "default": null,
-  "nullable": true,
-  "type": "text"
- },
- "column custom_agents.system_prompt_override": {
-  "default": null,
-  "nullable": true,
   "type": "text"
  },
  "column custom_agents.updated_at": {

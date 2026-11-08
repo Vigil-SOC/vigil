@@ -20,7 +20,8 @@
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.5",
     "remark-breaks": "^4.0.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "yaml": "^2.9.1"
   },
   "overrides": {
     "react-is": "^18.3.1"

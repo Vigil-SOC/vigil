@@ -145,7 +145,7 @@ def render_base_prompt(
     tools: Optional[Iterable[str]] = None,
     skills: Optional[Iterable[Skill]] = None,
 ) -> str:
-    """Render BASE_PROMPT with the given fragments. Shared by built-in + custom.
+    """Render BASE_PROMPT with the given fragments. Used for built-ins.
 
     ``tools`` is the agent's ``recommended_tools``, which is what decides
     whether the memory and skills blocks appear: the prompt describes what this
@@ -197,7 +197,7 @@ def render_confidence_bands(
 # a fifth input meant editing both. They differ only in returning a profile or
 # the prompt alone, which is not a difference in how a row becomes a prompt.
 def prompt_for_row(row: Mapping[str, Any]) -> str:
-    """Render a built-in or custom agent record's prompt, override winning."""
+    """Render a built-in record's prompt (or a persona row being migrated), override winning."""
     override = row.get("system_prompt_override")
     if override:
         return str(override)
