@@ -394,6 +394,36 @@ def _held(keys: List[str]) -> List[str]:
         )
 
 
+def _save(
+    skill: Dict[str, Any],
+    username: str,
+    proven_events: Optional[list],
+    ruled_out_events: Optional[list],
+) -> Dict[str, Any]:
+    """Save the skill's copies as one new rule, all or nothing; Refused when held
+    or refused by the save."""
+    keys = [c["native_key"] for c in skill["copies"]]
+    held = _held(keys)
+    if held:
+        raise Refused(
+            f"This Vigil already holds {', '.join(sorted(held))}: an import adds "
+            "a new rule and never changes one here"
+        )
+    kwargs = {SAVE_ARG[c["language"]]: c["text"] for c in skill["copies"]}
+    given = {c["language"]: c["exceptions"] for c in skill["copies"] if c["exceptions"]}
+    with acting_as(username):
+        saved = overlay.save_rule(
+            proven_events=proven_events,
+            ruled_out_events=ruled_out_events,
+            exceptions=given or None,
+            all_or_nothing=True,
+            **kwargs,
+        )
+    if saved.get("error"):
+        raise Refused(saved["error"])
+    return saved
+
+
 def import_skill(
     data: bytes,
     public_key_pem: str,
@@ -419,26 +449,28 @@ def import_skill(
             raise Refused(
                 f"The skill could not be read ({type(exc).__name__})"
             ) from exc
-        keys = [c["native_key"] for c in skill["copies"]]
-        held = _held(keys)
-        if held:
+        try:
+            saved = _save(skill, username, proven_events, ruled_out_events)
+        except Refused:
+            raise
+        except overlay.NotSaved as exc:
+            logger.exception("Detection Skill import: the save failed")
+            if not exc.undone:
+                why = "and undoing it failed: check the overlay for its copies"
+            elif exc.removed:
+                why = (
+                    "its copies were saved and then removed, so none is active; "
+                    "this Vigil now holds their ids, so importing the skill again "
+                    "is refused as already held"
+                )
+            else:
+                why = "nothing was changed"
+            raise Refused(f"The import didn't complete ({exc}); {why}") from exc
+        except Exception as exc:  # noqa: BLE001 -- a fault before any write
+            logger.exception("Detection Skill import: the save failed")
             raise Refused(
-                f"This Vigil already holds {', '.join(sorted(held))}: an import adds "
-                "a new rule and never changes one here"
-            )
-        kwargs = {SAVE_ARG[c["language"]]: c["text"] for c in skill["copies"]}
-        given = {
-            c["language"]: c["exceptions"] for c in skill["copies"] if c["exceptions"]
-        }
-        with acting_as(username):
-            saved = overlay.save_rule(
-                proven_events=proven_events,
-                ruled_out_events=ruled_out_events,
-                exceptions=given or None,
-                **kwargs,
-            )
-        if saved.get("error") and not saved.get("saved"):
-            raise Refused(saved["error"])
+                f"The import didn't complete ({type(exc).__name__}); nothing was changed"
+            ) from exc
     except Refused as exc:
         trail_events.refused(
             IMPORT_REFUSED, actor=actor, key_id=kid, reason=str(exc)[:500]

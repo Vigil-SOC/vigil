@@ -22,6 +22,7 @@ sync has the copies; the replay counts a ruled-out event that a Sigma exception
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import tomllib
@@ -48,6 +49,8 @@ from core.storage.models import (
     DetectionRuleVersion,
 )
 
+logger = logging.getLogger(__name__)
+
 # Copy language: (overlay subdirectory, file suffix).
 LAYOUT = {
     "splunk": ("splunk", ".yml"),
@@ -66,6 +69,40 @@ class Refused(ValueError):
     def __init__(self, message: str, **detail: Any):
         super().__init__(message)
         self.detail = detail
+
+
+class NotSaved(Exception):
+    """An all-or-nothing save that failed after writing; ``undone`` says whether
+    the overlay and its rules were put back, ``removed`` that its copies had
+    been synced and are now removed rules."""
+
+    def __init__(self, reason: str, undone: bool = True, removed: bool = False):
+        super().__init__(reason)
+        self.undone = undone
+        # The sync had committed: the copies are back out, as removed rules.
+        self.removed = removed
+
+
+def _undo(
+    service: Any, root: str, before: List[Tuple[str, Optional[str]]], committed: bool
+) -> bool:
+    """Put the files written back as they were and, if their sync committed, sync
+    the overlay again so the copies it added are removed. True when that worked."""
+    try:
+        for rel, text in reversed(before):
+            path = Path(DetectionRulesService._under(root, rel))
+            if text is None:
+                path.unlink(missing_ok=True)
+            else:
+                _write(root, rel, text)
+        if committed:
+            report = sync._sync_one(service, service.overlay_source())
+            if report.error:
+                raise RuntimeError(report.error)
+        return True
+    except Exception:  # noqa: BLE001 -- the caller says the undo failed
+        logger.exception("Overlay save: undoing a failed save failed")
+        return False
 
 
 def _with_id(language: str, text: str) -> str:
@@ -450,8 +487,15 @@ def save_rule(
     ruled_out_events: Optional[list] = None,
     exceptions: Optional[Dict[str, Any]] = None,
     wazuh_xml: Optional[str] = None,
+    all_or_nothing: bool = False,
 ) -> Dict[str, Any]:
-    """Write each copy into the overlay and sync it; refuse the lot if any part fails."""
+    """Write each copy into the overlay and sync it; refuse the lot if any part fails.
+
+    With ``all_or_nothing``, a fault after the first file is written (a write, the
+    sync, the replay record or the exceptions) is undone before it is raised as
+    ``NotSaved``: the files written are put back as they were and, if the sync had
+    committed, the overlay is synced again, so no copy is left active without its
+    exceptions."""
     copies = {
         language: text
         for language, text in (
@@ -485,17 +529,35 @@ def save_rule(
             targets = _targets(source["local_path"], prepared)
         except Refused as exc:
             return {"error": str(exc), "saved": []}
-        for rel, text in targets:
-            _write(source["local_path"], rel, text)
-        source = service.overlay_source()  # recounted with the new files
-        saves = sync.Saves(
-            _author(),
-            {record.native_key: fingerprint(record) for _, _, record in prepared},
-        )
-        report = sync._sync_one(service, source, saves)
-        if sigma_key and not report.error:
-            _record_replay(sigma_key, replay)
-        added = [] if report.error else _add_exceptions(prepared, wanted)
+        root = source["local_path"]
+        before: List[Tuple[str, Optional[str]]] = []
+        committed = False
+        try:
+            for rel, text in targets:
+                path = Path(DetectionRulesService._under(root, rel))
+                before.append(
+                    (rel, path.read_text(encoding="utf-8") if path.exists() else None)
+                )
+                _write(root, rel, text)
+            source = service.overlay_source()  # recounted with the new files
+            saves = sync.Saves(
+                _author(),
+                {record.native_key: fingerprint(record) for _, _, record in prepared},
+            )
+            report = sync._sync_one(service, source, saves)
+            if report.error and all_or_nothing:
+                # The sync is one transaction: nothing of it was kept.
+                raise NotSaved(f"the overlay sync failed: {report.error}")
+            committed = not report.error
+            if sigma_key and not report.error:
+                _record_replay(sigma_key, replay)
+            added = [] if report.error else _add_exceptions(prepared, wanted)
+        except Exception as exc:
+            if not all_or_nothing:
+                raise
+            undone = _undo(service, root, before, committed)
+            reason = exc.args[0] if isinstance(exc, NotSaved) else type(exc).__name__
+            raise NotSaved(reason, undone=undone, removed=committed) from exc
     result: Dict[str, Any] = {"saved": _saved(keys), "sync": asdict(report)}
     if added:
         result["exceptions"] = added
