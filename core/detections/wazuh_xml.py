@@ -23,6 +23,11 @@ _DECLARATION = re.compile(r"<!\s*(DOCTYPE|ENTITY)", re.IGNORECASE)
 _XML_DECLARATION = re.compile(r"\A\ufeff?\s*<\?xml\b[^>]*\?>")
 # A comment may hold "<rule ...>" text that is no rule.
 _COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+# A "<" that opens no tag, comment, CDATA section or declaration, as in the
+# regex Set-.+Url.+\<\w+ of Wazuh's own 0910 rules. Wazuh's parser reads such
+# a "<" as text; a strict XML parser refuses it. Comments and CDATA are matched
+# first so their text is left alone.
+_STRAY_LT = re.compile(r"<!--.*?-->|<!\[CDATA\[.*?\]\]>|<(?![A-Za-z_/!?])", re.DOTALL)
 # The opening tag of the rule, to set its id in place and keep the text as written.
 _RULE_TAG = re.compile(r"<rule\b([^>]*)>")
 _ID_ATTR = re.compile(r"""\sid\s*=\s*(["'])[^"']*\1""")
@@ -77,12 +82,18 @@ def number(value: Optional[str]) -> Optional[int]:
     return int(value) if value.isascii() and value.isdigit() else None
 
 
+def _escape_stray_lt(text: str) -> str:
+    """``text`` with each "<" that starts no markup written as ``&lt;``, the
+    way Wazuh's own parser reads it."""
+    return _STRAY_LT.sub(lambda m: "&lt;" if m.group() == "<" else m.group(), text)
+
+
 def _root(text: str) -> ET.Element:
     """``text`` parsed, wrapped (a rule file may hold a <group> and a comment
     side by side); NotARule when it declares a DTD or is not well-formed."""
     if _DECLARATION.search(text):
         raise NotARule("a Wazuh rule file must not declare a DOCTYPE or ENTITY")
-    wrapped = f"<vigil>{without_declaration(text)}</vigil>"
+    wrapped = f"<vigil>{_escape_stray_lt(without_declaration(text))}</vigil>"
     try:
         # No DTD reaches here (refused above), so no entity can expand.
         return ET.fromstring(wrapped)  # nosec B314
