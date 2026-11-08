@@ -14,13 +14,18 @@ request has no field for a rule). A logtest session reads the ruleset when it
 opens, so files uploaded over the server API (``PUT /rules/files``,
 ``PUT /decoders/files``) count from the next session, with no restart.
 
-Each run loads the sandbox with:
+Each run clears the files it loaded last time, then loads:
 
-- every rule and decoder file in the customer's repositories (the clones Vigil
-  syncs), as written, except a rule a shadow copy replaces (same id);
-- the overlay's Wazuh copies, shadow and live.
+- each copy it counts, in a file of its own (wrapped in a ``<group>``);
+- from the customer's repositories (the clones Vigil syncs) and the overlay's
+  other copies, only the files those copies need: the rules their ``if_sid`` /
+  ``if_group`` name and the decoders their ``decoded_as`` names, and those
+  files' own parents, that Wazuh's stock ruleset (the image's own) lacks. A
+  repository carrying the whole stock ruleset would otherwise double it.
 
-Wazuh's stock ruleset is the image's own. A rule or decoder only on the
+A file the manager refuses is deleted again at once (the manager keeps it, and
+every later upload would fail) and reported; the rest still load. A copy whose
+own file is refused reads "can't validate" with the manager's reason. A rule or decoder only on the
 customer's manager is not in the sandbox: a copy whose ``if_sid``,
 ``if_group`` or ``decoded_as`` names one reads "can't validate: not in repo".
 
@@ -70,7 +75,7 @@ CALLS_PER_MINUTE = 240
 # 4 x SAMPLE_EVENTS replays, a day.
 EVERY = timedelta(hours=6)
 NOT_IN_REPO = f"{CANT}not in repo: "
-NOT_A_SANDBOX = f"{CANT}the Wazuh sandbox "
+REFUSED = f"{CANT}the Wazuh sandbox refused it: "
 FAILED = f"{CANT}Wazuh sandbox: "
 NO_SANDBOX = (
     "no Wazuh sandbox is configured to count it (the wazuh-sandbox compose profile)"
@@ -110,8 +115,10 @@ def customer() -> Optional[Dict[str, Any]]:
     return None if missing(config, *WAZUH_REQUIRED) else dict(config)
 
 
-async def customer_hostname(config: Mapping[str, Any]) -> Optional[str]:
-    """The customer's manager's hostname (``GET /``), or None when unread."""
+async def customer_hostname(
+    config: Mapping[str, Any],
+) -> Tuple[Optional[str], Optional[str]]:
+    """(the customer's manager's hostname from ``GET /``, or None; why not)."""
     verify = True if config.get("verify_ssl") is None else config["verify_ssl"]
     service = WazuhService(
         config["api_url"],
@@ -121,9 +128,10 @@ async def customer_hostname(config: Mapping[str, Any]) -> Optional[str]:
         ca_cert_path=config.get("ca_cert_path"),
     )
     try:
-        return (await service._request("GET", "/")).get("hostname")
-    except WazuhError:
-        return None
+        name = (await service._request("GET", "/")).get("hostname")
+        return (name, None) if name else (None, "it reported no hostname")
+    except WazuhError as exc:
+        return None, str(exc)
     finally:
         await service.close()
 
@@ -153,11 +161,11 @@ def refusal(text: str) -> Optional[str]:
     return CANT + "; ".join(dict.fromkeys(reasons)) if reasons else None
 
 
-def parents(text: str) -> Dict[str, List[str]]:
-    """What the rule needs loaded beside it: the rules (``if_sid``), groups
-    (``if_group``) and decoders (``decoded_as``) it names."""
-    rule = wazuh_xml.parse(text)
-    found: Dict[str, List[str]] = {"if_sid": [], "if_group": [], "decoded_as": []}
+def _needs() -> Dict[str, List[str]]:
+    return {"if_sid": [], "if_group": [], "decoded_as": []}
+
+
+def _parents_of(rule: ET.Element, found: Dict[str, List[str]]) -> Dict[str, List[str]]:
     for node in rule:
         value = (node.text or "").strip()
         if node.tag in found and value:
@@ -165,11 +173,56 @@ def parents(text: str) -> Dict[str, List[str]]:
     return found
 
 
+def parents(text: str) -> Dict[str, List[str]]:
+    """What the rule needs loaded beside it: the rules (``if_sid``), groups
+    (``if_group``) and decoders (``decoded_as``) it names."""
+    return _parents_of(wazuh_xml.parse(text), _needs())
+
+
+def wrapped(text: str) -> str:
+    """A copy as a rule file the manager loads: inside a ``<group>``."""
+    if wazuh_xml.grouped(text):
+        return text
+    return f'<group name="vigil,">{wazuh_xml.without_declaration(text)}</group>'
+
+
 @dataclass
-class Ruleset:
-    rules: Dict[str, str] = field(default_factory=dict)  # file name -> XML
+class Repo:
+    """The customer's repository Wazuh files, by what each defines and needs.
+    The sandbox loads only the files the copies it counts need, never all."""
+
+    rules: Dict[str, str] = field(default_factory=dict)  # file -> text
     decoders: Dict[str, str] = field(default_factory=dict)
-    skipped: List[str] = field(default_factory=list)  # repo files not loaded, why
+    rule_file: Dict[str, str] = field(default_factory=dict)  # rule id -> file
+    group_files: Dict[str, List[str]] = field(default_factory=dict)
+    decoder_file: Dict[str, str] = field(default_factory=dict)  # name -> file
+    needs: Dict[str, Dict[str, List[str]]] = field(default_factory=dict)
+    unreadable: List[str] = field(default_factory=list)  # "file: why"
+
+    def add_rules(self, name: str, text: str) -> None:
+        rules = wazuh_xml.parse_all(text)  # NotARule: the caller's to report
+        self.rules[name] = text
+        needs = self.needs.setdefault(name, _needs())
+        for rule, enclosing in rules:
+            rid = wazuh_xml.rule_id(rule)
+            if rid:
+                self.rule_file.setdefault(rid, name)
+            for group in wazuh_xml.groups(rule, enclosing):
+                files = self.group_files.setdefault(group, [])
+                if name not in files:
+                    files.append(name)
+            _parents_of(rule, needs)
+
+    def add_decoders(self, name: str, text: str) -> None:
+        root = wazuh_xml._root(text)  # NotARule: the caller's to report
+        self.decoders[name] = text
+        needs = self.needs.setdefault(name, _needs())
+        for decoder in root.iter("decoder"):
+            if decoder.get("name"):
+                self.decoder_file.setdefault(str(decoder.get("name")), name)
+            parent = (decoder.findtext("parent") or "").strip()
+            if parent:
+                needs["decoded_as"].append(parent)
 
 
 def _xml_files(root: Path) -> List[Path]:
@@ -180,54 +233,52 @@ def _xml_files(root: Path) -> List[Path]:
     return found
 
 
-def _without(text: str, ids: Iterable[str]) -> Optional[str]:
-    """``text`` without the rules whose id is in ``ids``, each kept rule in its
-    enclosing groups; ``text`` itself when none is; None when it can't be read
-    (the manager reads more than ElementTree does, so such a file goes as is)."""
-    try:
-        rules = wazuh_xml.parse_all(text)
-    except wazuh_xml.NotARule:
-        return None
+def read_repos(roots: Sequence[Path], others: Sequence[Any] = ()) -> Repo:
+    """The repositories' rule and decoder files, and the overlay's other copies
+    (live ones a counted copy may name as a parent). A file that can't be read
+    is listed, never loaded: one bad file must not stop the rest."""
+    repo = Repo()
+    for root in roots:
+        for path in _xml_files(root):
+            name = f"{root.name}/{path.relative_to(root).as_posix()}"
+            try:
+                text = path.read_text(encoding="utf-8")
+                if _RULE.search(text):
+                    repo.add_rules(name, text)
+                elif _DECODER.search(text):
+                    repo.add_decoders(name, text)
+            except (OSError, UnicodeDecodeError, wazuh_xml.NotARule) as exc:
+                repo.unreadable.append(f"{name}: {exc}")
+    for copy in others:
+        try:
+            repo.add_rules(f"overlay/{copy.key}.xml", wrapped(copy.toml))
+        except wazuh_xml.NotARule as exc:
+            repo.unreadable.append(f"overlay/{copy.key}.xml: {exc}")
+    return repo
+
+
+def _without(text: str, ids: Iterable[str]) -> str:
+    """``text`` without the rules whose id is in ``ids`` (a copy is the newer
+    text of a rule it shares an id with), each kept rule in its groups."""
+    rules = wazuh_xml.parse_all(text)
     drop = set(ids)
     if not any(wazuh_xml.rule_id(r) in drop for r, _ in rules):
         return text
-    kept = [
+    return "\n".join(
         f'<group name="{",".join(n for n in names if n) or "local,"}">'
         f"{ET.tostring(rule, encoding='unicode')}</group>"
         for rule, names in rules
         if wazuh_xml.rule_id(rule) not in drop
-    ]
-    return "\n".join(kept)
+    )
 
 
-def ruleset(copies: Sequence[Any], roots: Sequence[Path]) -> Ruleset:
-    """What the sandbox loads: the repositories' rule and decoder files and the
-    overlay's copies (``key``, ``toml``), named ``vigil_sandbox_<n>.xml``."""
-    out = Ruleset()
-    keys = {c.key for c in copies}
-    n = 0
+@dataclass
+class Loaded:
+    """What one load put in the sandbox, and what it couldn't."""
 
-    def add(kind: Dict[str, str], text: str) -> None:
-        nonlocal n
-        kind[f"{FILE_PREFIX}{n}.xml"] = text
-        n += 1
-
-    for root in roots:
-        for path in _xml_files(root):
-            try:
-                text = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError) as exc:
-                out.skipped.append(f"{path.name}: {type(exc).__name__}")
-                continue
-            if _RULE.search(text):
-                # The copy is the newer text of a rule it shares an id with.
-                kept = _without(text, keys)
-                add(out.rules, text if kept is None else kept)
-            elif _DECODER.search(text):
-                add(out.decoders, text)
-    for copy in copies:
-        add(out.rules, copy.toml)
-    return out
+    refused: Dict[str, str] = field(default_factory=dict)  # copy key -> why
+    skipped: List[str] = field(default_factory=list)  # "file: why"
+    files: int = 0
 
 
 def repo_roots() -> List[Path]:
@@ -267,21 +318,32 @@ class Sandbox(WazuhService):
         return await super()._request(method, path, **kwargs)
 
     async def guard(self, theirs: Optional[Mapping[str, Any]]) -> Optional[str]:
-        """Why this is not a sandbox Vigil may write to, or None: it is the
-        customer's manager (the Wazuh integration's host and port, or the same
-        manager hostname), or it has agents, which no sandbox does."""
+        """Why Vigil may not write to this sandbox, or None: it is the customer's
+        manager (the Wazuh integration's host and port, or the same manager
+        hostname), it has agents (no sandbox does), or the customer's manager
+        couldn't be read to tell them apart: unconfirmed is never written to."""
         if theirs and _endpoint(str(theirs["api_url"])) == _endpoint(self.api_url):
-            return "is the customer's Wazuh manager (the same host and port)"
+            return "the Wazuh sandbox is your Wazuh manager (the same host and port)"
         data = await self._request(
             "GET", "/agents", params={"limit": 2, "select": "id"}
         )
         ids = [str(a.get("id")) for a in data.get("affected_items") or []]
         if any(i != "000" for i in ids):
-            return "has agents reporting to it, so it is a real manager, not a sandbox"
+            return (
+                "the Wazuh sandbox has agents reporting to it, so it is a real "
+                "manager, not a sandbox"
+            )
         if theirs:
             ours = (await self._request("GET", "/")).get("hostname")
-            if ours and ours == await customer_hostname(theirs):
-                return "is the customer's Wazuh manager (the same manager hostname)"
+            name, why = await customer_hostname(theirs)
+            if name is None:
+                # Fail closed: unconfirmed is never written to.
+                return (
+                    "couldn't confirm the sandbox isn't your Wazuh manager (your "
+                    f"manager's hostname couldn't be read: {why})"
+                )
+            if ours and ours == name:
+                return "the Wazuh sandbox is your Wazuh manager (the same hostname)"
         return None
 
     async def _files(self, kind: str) -> List[str]:
@@ -291,45 +353,124 @@ class Sandbox(WazuhService):
         names = [i.get("filename", "") for i in data.get("affected_items") or []]
         return [n for n in names if n.startswith(FILE_PREFIX)]
 
-    async def load(self, rs: Ruleset) -> None:
-        """Replace the sandbox's ``vigil_sandbox_*`` files with ``rs``."""
-        for kind, files in (("decoders", rs.decoders), ("rules", rs.rules)):
-            for name, text in files.items():
-                await self._request(
-                    "PUT",
-                    f"/{kind}/files/{name}",
-                    params={"overwrite": "true"},
-                    content=text.encode("utf-8"),
-                    headers={"Content-Type": "application/octet-stream"},
-                )
-            for name in set(await self._files(kind)) - set(files):
+    async def _count(self, path: str, params: Dict[str, Any]) -> int:
+        """How many items a listing finds; 0 where the manager answers that
+        none exists by failing the call."""
+        try:
+            data = await self._request("GET", path, params={**params, "limit": 1})
+        except WazuhError as exc:
+            if "does not exist" not in str(exc):
+                raise
+            return 0
+        return int(data.get("total_affected_items") or 0)
+
+    async def _has(self, kind: str, name: str) -> bool:
+        """Whether the sandbox has loaded the rule id or decoder ``name``."""
+        if kind == "rule":
+            return bool(await self._count("/rules", {"rule_ids": name}))
+        return bool(await self._count("/decoders", {"decoder_names": name}))
+
+    async def plan(
+        self, copies: Sequence[Any], repo: Repo
+    ) -> Tuple[List[str], List[str]]:
+        """The repository rule and decoder files the copies need: their parents'
+        files, and those files' parents, that Wazuh's stock ruleset (the
+        image's) does not already hold. Only these are loaded: a repository
+        that carries the whole ruleset would otherwise double the manager's."""
+        keys = {c.key for c in copies}
+        rules: List[str] = []
+        decoders: List[str] = []
+        queue = [parents(c.toml) for c in copies]
+        seen: set = set()
+        while queue:
+            needs = queue.pop()
+            for sid in needs.get("if_sid", ()):
+                if sid in keys or ("sid", sid) in seen:
+                    continue
+                seen.add(("sid", sid))
+                name = repo.rule_file.get(sid)
+                if name and name not in rules and not await self._has("rule", sid):
+                    rules.append(name)
+                    queue.append(repo.needs[name])
+            for group in needs.get("if_group", ()):
+                if ("group", group) in seen:
+                    continue
+                seen.add(("group", group))
+                for name in repo.group_files.get(group, ()):
+                    if name not in rules:
+                        rules.append(name)
+                        queue.append(repo.needs[name])
+            for decoder in needs.get("decoded_as", ()):
+                if ("decoder", decoder) in seen:
+                    continue
+                seen.add(("decoder", decoder))
+                name = repo.decoder_file.get(decoder)
+                if (
+                    name
+                    and name not in decoders
+                    and not await self._has("decoder", decoder)
+                ):
+                    decoders.append(name)
+                    queue.append(repo.needs[name])
+        return rules, decoders
+
+    async def _put(self, kind: str, name: str, text: str) -> Optional[str]:
+        """Upload one file; on a refusal delete it again (the manager keeps a
+        refused file, and every later upload then fails) and say why."""
+        try:
+            await self._request(
+                "PUT",
+                f"/{kind}/files/{name}",
+                params={"overwrite": "true"},
+                content=text.encode("utf-8"),
+                headers={"Content-Type": "application/octet-stream"},
+            )
+            return None
+        except WazuhError as exc:
+            try:
                 await self._request("DELETE", f"/{kind}/files/{name}")
+            except WazuhError as gone:
+                logger.warning("Wazuh sandbox kept refused %s: %s", name, gone)
+            return str(exc)
+
+    async def load(self, copies: Sequence[Any], repo: Repo) -> Loaded:
+        """Clear the sandbox's ``vigil_sandbox_*`` files, then load the copies,
+        each in its own file, and the repository files they need. A file the
+        manager refuses is deleted and reported; the rest still load."""
+        for kind in ("rules", "decoders"):
+            for name in await self._files(kind):
+                await self._request("DELETE", f"/{kind}/files/{name}")
+        rule_files, decoder_files = await self.plan(copies, repo)
+        out = Loaded(skipped=list(repo.unreadable))
+        keys = [c.key for c in copies]
+        uploads = [("decoders", f, repo.decoders[f], None) for f in decoder_files]
+        uploads += [
+            ("rules", f, _without(repo.rules[f], keys), None) for f in rule_files
+        ]
+        uploads += [
+            ("rules", f"overlay/{c.key}", wrapped(c.toml), c.key) for c in copies
+        ]
+        for n, (kind, source, text, key) in enumerate(uploads):
+            why = await self._put(kind, f"{FILE_PREFIX}{n}.xml", text)
+            if why is None:
+                out.files += 1
+            elif key is not None:
+                out.refused[key] = why
+            else:
+                out.skipped.append(f"{source}: {why}")
+        return out
 
     async def missing(self, needs: Mapping[str, Iterable[str]]) -> List[str]:
         """Of the rules, groups and decoders named, those the sandbox lacks."""
         absent: List[str] = []
-        sids = sorted({s for s in needs.get("if_sid", ()) if s.isdigit()})
-        if sids:
-            try:
-                have, _ = await self.list_rules(rule_ids=sids)
-            except WazuhError as exc:
-                # When none of the ids is loaded the manager fails the whole call.
-                if "does not exist" not in str(exc):
-                    raise
-                have = []
-            loaded = {str(r.get("id")) for r in have}
-            absent += [f"if_sid {s}" for s in sids if s not in loaded]
+        for sid in sorted({s for s in needs.get("if_sid", ()) if s.isdigit()}):
+            if not await self._has("rule", sid):
+                absent.append(f"if_sid {sid}")
         for group in sorted(set(needs.get("if_group", ()))):
-            data = await self._request(
-                "GET", "/rules", params={"group": group, "limit": 1}
-            )
-            if not data.get("total_affected_items"):
+            if not await self._count("/rules", {"group": group}):
                 absent.append(f"if_group {group}")
         for name in sorted(set(needs.get("decoded_as", ()))):
-            data = await self._request(
-                "GET", "/decoders", params={"decoder_names": name, "limit": 1}
-            )
-            if not data.get("total_affected_items"):
+            if not await self._has("decoder", name):
                 absent.append(f"decoded_as {name}")
         return absent
 

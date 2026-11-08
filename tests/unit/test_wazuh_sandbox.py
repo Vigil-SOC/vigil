@@ -81,37 +81,126 @@ class _Copy:
         self.key, self.toml = key, toml
 
 
-def test_it_loads_the_repositories_rules_and_decoders_and_the_copies(tmp_path):
-    repo = tmp_path / "repo"
+def _repo(tmp_path):
+    repo = tmp_path / "acme"
     (repo / "rules").mkdir(parents=True)
     (repo / "decoders").mkdir()
     (repo / ".git").mkdir()
     (repo / "rules" / "local_rules.xml").write_text(
-        '<group name="local,">'
-        '<rule id="100001" level="3"><match>a</match><description>a</description></rule>'
+        '<group name="local,acme,">'
+        '<rule id="100001" level="3"><decoded_as>acmeapp</decoded_as>'
+        "<description>a</description></rule>"
         '<rule id="100100" level="3"><match>old</match><description>b</description></rule>'
         "</group>"
     )
+    (repo / "rules" / "unrelated.xml").write_text(
+        '<group name="other,"><rule id="100050" level="3"><match>z</match>'
+        "<description>z</description></rule></group>"
+    )
     (repo / "decoders" / "local_decoder.xml").write_text(
-        '<decoder name="acme"><prematch>^ACME:</prematch></decoder>'
+        '<decoder name="acmeapp"><prematch>^ACME:</prematch></decoder>'
+        '<decoder name="acmeapp-user"><parent>acmeapp</parent><regex>u=(\\S+)</regex>'
+        "<order>user</order></decoder>"
     )
     (repo / ".git" / "ignored.xml").write_text("<rule id='1'/>")
-    (repo / "rules" / "proxylogon.xml").write_text(
-        '<group name="x,"><rule id="100002" level="3"><regex>\\<a</regex>'
+    # Wazuh's stock 0910: a raw "\<" ElementTree (and the API) can't read.
+    (repo / "rules" / "0910-proxylogon.xml").write_text(
+        '<group name="x,"><rule id="100002" level="3"><regex>a\\<b</regex>'
         "<description>raw</description></rule></group>"
     )
-    rs = wazuh_sandbox.ruleset([_Copy("100100", MATCH)], [repo])
-    assert all(n.startswith("vigil_sandbox_") for n in [*rs.rules, *rs.decoders])
-    texts = list(rs.rules.values())
-    # The copy replaces the repository's rule with its id; the rest stays.
-    assert 'id="100001"' in texts[0] and "old" not in texts[0]
-    # A file ElementTree can't read (Wazuh's raw "\<") goes as written.
-    assert "\\<a" in texts[1]
-    assert texts[-1] == MATCH
-    assert list(rs.decoders.values()) == [
-        '<decoder name="acme"><prematch>^ACME:</prematch></decoder>'
+    return repo
+
+
+def test_the_repositories_are_indexed_and_a_bad_file_is_listed_not_fatal(tmp_path):
+    live = _Copy("100200", _rule("<match>live</match>", rid="100200"))
+    repo = wazuh_sandbox.read_repos([_repo(tmp_path)], [live])
+    assert repo.rule_file["100001"] == "acme/rules/local_rules.xml"
+    assert repo.group_files["acme"] == ["acme/rules/local_rules.xml"]
+    assert repo.decoder_file["acmeapp-user"] == "acme/decoders/local_decoder.xml"
+    assert repo.needs["acme/rules/local_rules.xml"]["decoded_as"] == ["acmeapp"]
+    assert repo.rule_file["100200"] == "overlay/100200.xml"
+    assert [u.split(":")[0] for u in repo.unreadable] == [
+        "acme/rules/0910-proxylogon.xml"
     ]
-    assert not any("ignored" in t for t in texts)
+    assert not any("ignored" in name for name in repo.rules)
+
+
+def test_a_bare_rule_copy_is_wrapped_in_a_group():
+    bare = '<rule id="100100" level="5"><match>x</match><description>d</description></rule>'
+    assert wazuh_sandbox.wrapped(bare).startswith(
+        '<group name="vigil,"><rule id="100100"'
+    )
+    assert wazuh_sandbox.wrapped(MATCH) == MATCH
+
+
+@pytest.mark.asyncio
+async def test_only_the_files_the_copies_need_are_planned(tmp_path, monkeypatch):
+    repo = wazuh_sandbox.read_repos([_repo(tmp_path)])
+    box = _sandbox(lambda r: _ok({}))
+    stock = {("rule", "5710")}
+
+    async def has(kind, name):
+        return (kind, name) in stock
+
+    monkeypatch.setattr(box, "_has", has)
+    child = _Copy(
+        "100300", _rule("<if_sid>100001</if_sid><match>x</match>", rid="100300")
+    )
+    rules, decoders = await box.plan([child], repo)
+    # The parent's file, and the decoder its rule is decoded_as: not unrelated.xml.
+    assert rules == ["acme/rules/local_rules.xml"]
+    assert decoders == ["acme/decoders/local_decoder.xml"]
+    stock_child = _Copy(
+        "100301", _rule("<if_sid>5710</if_sid><match>x</match>", rid="100301")
+    )
+    assert await box.plan([stock_child], repo) == ([], [])
+
+
+@pytest.mark.asyncio
+async def test_a_refused_file_is_deleted_and_reported_and_the_rest_still_load(
+    tmp_path, monkeypatch
+):
+    seen = []
+    bad_copy = _Copy(
+        "100400", _rule("<if_sid>5710</if_sid><match>bad</match>", rid="100400")
+    )
+
+    def handler(request):
+        seen.append((request.method, request.url.path))
+        if request.url.path.endswith("/authenticate"):
+            return _ok({"token": "t"})
+        if request.method == "GET":
+            kind = request.url.path.split("/")[1]
+            names = (
+                ["vigil_sandbox_7.xml", "local_rules.xml"] if kind == "rules" else []
+            )
+            return _ok({"affected_items": [{"filename": n} for n in names]})
+        if request.method == "PUT" and b"bad" in request.content:
+            return httpx.Response(400, json={"title": "XML syntax error"})
+        return _ok({})
+
+    box = _sandbox(handler)
+
+    async def has(kind, name):
+        return name == "5710"
+
+    monkeypatch.setattr(box, "_has", has)
+    repo = wazuh_sandbox.read_repos([_repo(tmp_path)])
+    good = _Copy(
+        "100300", _rule("<if_sid>100001</if_sid><match>x</match>", rid="100300")
+    )
+    done = await box.load([good, bad_copy], repo)
+    # Last run's file is cleared first; the image's own are never touched.
+    assert seen.index(("DELETE", "/rules/files/vigil_sandbox_7.xml")) < seen.index(
+        ("PUT", "/decoders/files/vigil_sandbox_0.xml")
+    )
+    assert not any("local_rules" in path for m, path in seen if m == "DELETE")
+    # decoder, the parent's file, the good copy: loaded. The bad copy: refused,
+    # then deleted again so it can't poison the next upload.
+    assert done.files == 3
+    assert "XML syntax error" in done.refused["100400"]
+    assert ("DELETE", "/rules/files/vigil_sandbox_3.xml") in seen
+    assert any(s.startswith("acme/rules/0910-proxylogon.xml") for s in done.skipped)
 
 
 # --- the sandbox's API ----------------------------------------------------------
@@ -128,42 +217,6 @@ def _sandbox(handler):
 
 def _ok(data):
     return httpx.Response(200, json={"data": data, "error": 0})
-
-
-@pytest.mark.asyncio
-async def test_load_uploads_its_files_and_drops_its_stale_ones():
-    seen = []
-
-    def handler(request):
-        seen.append(
-            (request.method, request.url.path, request.headers.get("content-type"))
-        )
-        if request.url.path.endswith("/authenticate"):
-            return _ok({"token": "t"})
-        if request.method == "GET":
-            kind = request.url.path.split("/")[1]
-            return _ok(
-                {
-                    "affected_items": (
-                        [{"filename": f"vigil_sandbox_{n}.xml"} for n in (0, 9)]
-                        + [{"filename": "local_rules.xml"}]
-                        if kind == "rules"
-                        else []
-                    )
-                }
-            )
-        return _ok({})
-
-    rs = wazuh_sandbox.Ruleset(rules={"vigil_sandbox_0.xml": MATCH})
-    await _sandbox(handler).load(rs)
-    assert (
-        "PUT",
-        "/rules/files/vigil_sandbox_0.xml",
-        "application/octet-stream",
-    ) in seen
-    assert ("DELETE", "/rules/files/vigil_sandbox_9.xml", None) in seen
-    # Only its own files: the sandbox image's are never touched.
-    assert not any("local_rules" in path for m, path, _ in seen if m == "DELETE")
 
 
 @pytest.mark.asyncio
@@ -193,6 +246,14 @@ async def test_missing_names_the_parents_the_sandbox_lacks():
         if request.url.path.endswith("/authenticate"):
             return _ok({"token": "t"})
         q = request.url.params
+        if request.url.path == "/rules" and q.get("rule_ids") == "123456":
+            # The manager fails the call when no listed id exists.
+            return httpx.Response(
+                400,
+                json={
+                    "detail": "The rule does not exist or you do not have permission to see it"
+                },
+            )
         if request.url.path == "/rules" and q.get("rule_ids"):
             return _ok({"affected_items": [{"id": 5710}], "total_affected_items": 1})
         if request.url.path == "/rules":
@@ -314,10 +375,13 @@ class _Box:
     async def guard(self, theirs):
         return self.wrong
 
-    async def load(self, rs):
+    refused = {}
+
+    async def load(self, copies, repo):
         if self.fails:
             raise wazuh_sandbox.WazuhError(self.fails)
-        self.loaded = rs
+        self.loaded = list(copies)
+        return wazuh_sandbox.Loaded(refused=dict(self.refused), files=len(copies))
 
     async def missing(self, needs):
         return [f"if_sid {s}" for s in needs.get("if_sid", ()) if s in self.lacks]
@@ -424,7 +488,7 @@ def test_a_rule_on_the_raw_line_is_counted_by_the_sandbox(run):
     assert report.searched == 2
     ((_, query, _, size),) = service.searched
     assert "function_score" in query and size == wazuh_sandbox.SAMPLE_EVENTS
-    assert box.loaded.rules and box.closed and service.closed
+    assert [c.rule_id for c in box.loaded] == [1] and box.closed and service.closed
 
 
 def test_without_a_sandbox_the_rule_reads_cant_validate_and_why(run):
@@ -469,11 +533,11 @@ def test_a_sandbox_run_waits_until_its_window_is_due(run):
 
 def test_a_sandbox_that_is_the_customers_manager_is_never_written_to(run):
     box = _Box()
-    box.wrong = "is the customer's Wazuh manager (the same host and port)"
+    box.wrong = "the Wazuh sandbox is your Wazuh manager (the same host and port)"
     run([_copy(1, MATCH)], _Service([_doc("x")]), box)
     ((copy, why),) = run.wrote["unrunnable"]
     assert why == (
-        "can't validate: the Wazuh sandbox is the customer's Wazuh manager "
+        "can't validate: the Wazuh sandbox is your Wazuh manager "
         "(the same host and port)"
     )
     assert box.loaded is None and run.wrote["runs"] == {}
@@ -495,7 +559,7 @@ async def test_guard_refuses_the_customers_manager_or_any_with_agents(monkeypatc
         return h
 
     async def theirs_host(config):
-        return "wazuh-prod"
+        return "wazuh-prod", None
 
     monkeypatch.setattr(wazuh_sandbox, "customer_hostname", theirs_host)
     theirs = {
@@ -507,9 +571,9 @@ async def test_guard_refuses_the_customers_manager_or_any_with_agents(monkeypatc
     assert "same host and port" in same and calls == []  # refused before any call
     other = {**theirs, "api_url": "https://wazuh.acme.corp:55000"}
     assert "has agents" in await _sandbox(handler(["000", "001"], "x")).guard(other)
-    assert "same manager hostname" in await _sandbox(
-        handler(["000"], "wazuh-prod")
-    ).guard(other)
+    assert "same hostname" in await _sandbox(handler(["000"], "wazuh-prod")).guard(
+        other
+    )
     assert await _sandbox(handler(["000"], "wazuh-sandbox")).guard(other) is None
     assert await _sandbox(handler(["000"], "wazuh-sandbox")).guard(None) is None
 
@@ -530,8 +594,8 @@ async def test_every_sandbox_call_is_paced(monkeypatch):
 
     box = _sandbox(handler)
     box.pace = 30.0
-    await box.load(wazuh_sandbox.Ruleset(rules={"vigil_sandbox_0.xml": MATCH}))
-    # Uploads and listings, not only logtest: one wait before each call but the first.
+    await box.load([_Copy("100100", MATCH)], wazuh_sandbox.Repo())
+    # Listings and the upload, not only logtest: a wait before each call but the first.
     assert len(slept) == 2 and all(0 < s <= 30.0 for s in slept)
 
 
@@ -539,3 +603,38 @@ def test_an_eventchannel_event_is_replayed_as_eventchannel():
     doc = _doc("{}", decoder="windows_eventchannel")
     doc["_source"]["location"] = "EventChannel"
     assert wazuh_sandbox.event(doc)["log_format"] == "eventchannel"
+
+
+@pytest.mark.asyncio
+async def test_guard_fails_closed_when_the_customers_manager_cant_be_read(monkeypatch):
+    async def unread(config):
+        return None, "Wazuh manager could not be reached (ConnectError)"
+
+    monkeypatch.setattr(wazuh_sandbox, "customer_hostname", unread)
+
+    def handler(request):
+        if request.url.path.endswith("/authenticate"):
+            return _ok({"token": "t"})
+        if request.url.path == "/agents":
+            return _ok({"affected_items": [{"id": "000"}]})
+        return _ok({"hostname": "wazuh-sandbox"})
+
+    theirs = {
+        "api_url": "https://wazuh.acme.corp:55000",
+        "username": "u",
+        "password": "p",
+    }
+    why = await _sandbox(handler).guard(theirs)
+    assert why.startswith("couldn't confirm the sandbox isn't your Wazuh manager")
+    assert "could not be reached" in why
+
+
+def test_a_copy_the_sandbox_refuses_reads_why(run):
+    box = _Box()
+    box.refused = {
+        "100001": "Wazuh PUT /rules/files/x failed (HTTP 400): XML syntax error"
+    }
+    run([_copy(1, MATCH)], _Service([_doc("x")]), box)
+    ((copy, why),) = run.wrote["unrunnable"]
+    assert why.startswith("can't validate: the Wazuh sandbox refused it: ")
+    assert "XML syntax error" in why and run.wrote["runs"] == {}

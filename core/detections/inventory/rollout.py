@@ -2155,10 +2155,17 @@ async def _sandboxed(
         # Never write to the customer's manager, however the URL is set.
         wrong = await box.guard(wazuh_sandbox.customer())
         if wrong:
-            why = f"{wazuh_sandbox.NOT_A_SANDBOX}{wrong}"
+            why = f"{wazuh_shadow.CANT}{wrong}"
             return "ran", {}, {c.rule_id: why for c in counted}, None
-        await box.load(wazuh_sandbox.ruleset(loaded, wazuh_sandbox.repo_roots()))
+        others = [c for c in loaded if c not in counted]
+        done = await box.load(
+            counted, wazuh_sandbox.read_repos(wazuh_sandbox.repo_roots(), others)
+        )
+        report.skipped += [f"wazuh sandbox: not loaded: {s}" for s in done.skipped]
         for c in counted:
+            if c.key in done.refused:
+                whys[c.rule_id] = f"{wazuh_sandbox.REFUSED}{done.refused[c.key]}"
+                continue
             gone = await box.missing(wazuh_sandbox.parents(c.toml))
             if gone:
                 whys[c.rule_id] = (
@@ -2179,6 +2186,10 @@ async def _sandboxed(
             wazuh_sandbox.sample_query(int(end.timestamp()) // 3600),
             {"@timestamp": {"gte": start.isoformat(), "lt": end.isoformat()}},
             wazuh_sandbox.SAMPLE_EVENTS,
+        )
+        # In time order, as the manager saw them: one session carries state.
+        docs = sorted(
+            docs, key=lambda d: str((d.get("_source") or {}).get("@timestamp"))
         )
         events = [(d, e) for d in docs if (e := wazuh_sandbox.event(d))]
         outputs = await box.replay([e for _, e in events])
