@@ -176,9 +176,15 @@ def _staged(p: Mapping[str, Any]) -> str:
     rule = f"rule {p['rule_id']}" if p.get("rule_id") is not None else "a rule"
     version = f" v{p['version']}" if p.get("version") is not None else ""
     to = _word(p.get("to_stage")) or "a new stage"
+    # A person's Revert sets a hold, a release lifts it; Vigil's moves leave it.
+    held = p.get("hold")
+    hold = " and held it there" if held is True else ""
+    hold = " and released its hold" if held is False else hold
+    if p.get("hold") is False and p.get("from_stage") == p.get("to_stage"):
+        return f"Released the hold on {rule}{version} in {to}"
     if p.get("from_stage"):
-        return f"Moved {rule}{version} from {_word(p['from_stage'])} to {to}"
-    return f"Put {rule}{version} in {to}"
+        return f"Moved {rule}{version} from {_word(p['from_stage'])} to {to}{hold}"
+    return f"Put {rule}{version} in {to}{hold}"
 
 
 def _ingested(p: Mapping[str, Any]) -> str:
