@@ -932,6 +932,8 @@ export interface CoverageCell {
 export interface DetectionCoverage {
   techniques: CoverageCell[]
   tactics: string[]
+  /** Every SIEM with a listed (active or disabled) rule, in order, whether or not its rules declare a technique. */
+  siems: CoverageSiemName[]
   summary: Record<CoverageState, number>
   rule_total: number
   mapped: number

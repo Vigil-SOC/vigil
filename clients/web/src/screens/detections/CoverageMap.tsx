@@ -58,6 +58,10 @@ function writePicked(picked: string[]) {
 
 /** A technique's parent id: T1059 for T1059.001, itself for a parent. */
 const parentOf = (technique: string) => technique.split('.')[0]
+/** A state's name through the lens: under one SIEM, "no active rule" is in that SIEM. */
+const stateName = (state: CoverageState, lens: Lens) =>
+  state === 'no_rule' && lens !== 'all' ? `No active rule in ${siemLabel(lens)}` : STATES[state]
+const siemLabel = (siem: CoverageSiemName) => SIEMS.find((s) => s.id === siem)?.label ?? siem
 
 export default function CoverageMap({ goSettings }: { goSettings: (section: 'data') => void }) {
   const [coverage, setCoverage] = useState<DetectionCoverage | null>(null)
@@ -93,7 +97,8 @@ export default function CoverageMap({ goSettings }: { goSettings: (section: 'dat
       </Empty>
     )
   }
-  const present = SIEMS.filter((s) => coverage.techniques.some((t) => t.siems[s.id]))
+  // Every SIEM with a listed rule, even one whose rules declare no technique.
+  const present = SIEMS.filter((s) => coverage.siems.includes(s.id))
   const known = picked.filter((t) => coverage.tactics.includes(t))
   const tactics = known.length ? coverage.tactics.filter((t) => known.includes(t)) : coverage.tactics
   const total = countStates(coverage.techniques.filter((t) => tactics.includes(t.tactic)), lens)
@@ -114,7 +119,7 @@ export default function CoverageMap({ goSettings }: { goSettings: (section: 'dat
         </div>
         <div className="de-cov-legend">
           {ORDER.map((s) => (
-            <span key={s}><span className={`de-swatch ${s}`} />{STATES[s]} · {total[s]}</span>
+            <span key={s}><span className={`de-swatch ${s}`} />{stateName(s, lens)} · {total[s]}</span>
           ))}
         </div>
       </div>
@@ -147,10 +152,13 @@ export default function CoverageMap({ goSettings }: { goSettings: (section: 'dat
 }
 
 function Cell({ cell, lens, on, onSelect, extra }: { cell: CoverageCell; lens: Lens; on: boolean; onSelect: (technique: string) => void; extra?: string }) {
+  const state = stateIn(cell, lens)
+  // Under one SIEM an empty cell says so, not the rules other SIEMs have.
+  const rules = state === 'no_rule' && lens !== 'all' ? stateName(state, lens) : cell.rules ? plural(cell.rules, 'rule') : ''
   return (
-    <button type="button" className={`de-cell ${stateIn(cell, lens)}${on ? ' on' : ''}`} aria-pressed={on} onClick={() => onSelect(cell.technique)}>
+    <button type="button" className={`de-cell ${state}${on ? ' on' : ''}`} aria-pressed={on} title={stateName(state, lens)} onClick={() => onSelect(cell.technique)}>
       <b>{cell.name}</b>
-      <span className="x1-mono">{cell.technique}{cell.rules ? ` · ${plural(cell.rules, 'rule')}` : ''}{extra ? ` · ${extra}` : ''}</span>
+      <span className="x1-mono">{cell.technique}{rules ? ` · ${rules}` : ''}{extra ? ` · ${extra}` : ''}</span>
     </button>
   )
 }
@@ -205,7 +213,7 @@ function TacticSummary({ coverage, tactics, lens, selected, onSelect }: { covera
                 {ORDER.map((s) => n[s] > 0 && <span key={s} className={`de-tac-seg ${s}`} style={{ flexGrow: n[s] }} />)}
               </span>
               <span className="de-tac-counts">
-                <span className="proven">{n.proven} proven</span> · <span className="unproven">{n.unproven} rule, not proven</span> · <span className="no_rule">{n.no_rule} no active rule</span>
+                <span className="proven">{n.proven} proven</span> · <span className="unproven">{n.unproven} rule, not proven</span> · <span className="no_rule">{n.no_rule} no active rule{lens === 'all' ? '' : ` in ${siemLabel(lens)}`}</span>
               </span>
             </button>
             {isOpen && <TacticTechniques cells={cells} lens={lens} selected={selected} onSelect={onSelect} />}

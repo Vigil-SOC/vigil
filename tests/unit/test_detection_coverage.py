@@ -164,6 +164,17 @@ def test_a_disabled_rule_is_counted_but_is_no_coverage(inventory):
     assert (out["rule_total"], out["mapped"]) == (1, 3)
 
 
+def test_every_siem_with_a_listed_rule_is_in_the_lens(inventory):
+    # The Elastic copy declares no technique, the Wazuh one is disabled: both count.
+    inventory["copies"] = [
+        _copy(1, "splunk", ["T1003"]),
+        _copy(2, "elastic", [], language="kuery"),
+        _copy(3, "wazuh", ["T1021"], status="disabled", language="wazuh"),
+        _copy(4, "repo:acme", ["T1059"]),
+    ]
+    assert coverage.coverage()["siems"] == ["elastic", "splunk", "wazuh"]
+
+
 def test_a_passing_replay_is_a_detail_not_proof(inventory):
     inventory["copies"] = [
         _copy(1, "repo:overlay", ["T1218.011"], language="sigma", replay="pass")

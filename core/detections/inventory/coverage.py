@@ -176,9 +176,13 @@ def coverage() -> Dict[str, Any]:
             }
         )
     tactics = [t for t in order if any(row["tactic"] == t for row in rows)]
+    listed_siems = {_siem_of(c.source) for c in copies}
     return {
         "techniques": rows,
         "tactics": tactics,
+        # Every SIEM with a listed rule, so the lens hides none: one whose rules
+        # declare no technique has no row to show it by.
+        "siems": [s for s in SIEMS if s in listed_siems],
         "summary": {s: sum(1 for row in rows if row["state"] == s) for s in STATES},
         "rule_total": len(
             {rule_of.get(c.id, (c.id,)) for c in copies if c.status == "active"}
