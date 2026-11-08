@@ -1,16 +1,30 @@
 """Detection Rules API endpoints for managing detection rule sources."""
 
 import asyncio
+import json
 import logging
 from dataclasses import asdict
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+)
 from pydantic import BaseModel, Field, field_validator
 
-from core.auth.permissions import permission_gate
+from core.auth import trail_events
+from core.auth.current_user import get_current_user
+from core.auth.permissions import permission_gate, require_permission
 from core.deps import provide_detection_rules, provide_mcp_client, provide_mcp_registry
-from core.detections import exceptions, proof_card
+from core.detections import detection_skill, exceptions, proof_card
 from core.detections.detection_rules_service import (
     DEPLOY_FORMATS,
     DetectionRulesService,
@@ -526,6 +540,93 @@ def get_proof_card_key(user: User = Depends(get_current_active_user)):
         return proof_card.public_key(actor=user.user_id)
     except proof_card.ProofKeyUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
+
+
+def _audited_write_gate(attempted: str):
+    """The detections.write gate, with a refusal on the audit trail: a skill
+    carries a rule's queries, exceptions and proof out of this Vigil."""
+    inner = require_permission("detections.write")
+
+    def _check(request: Request, user: User = Depends(get_current_user)) -> User:
+        try:
+            return inner(request, user)
+        except HTTPException as exc:
+            if exc.status_code == 403:
+                trail_events.refused(
+                    "auth.denied", actor=user.principal_id, attempted=attempted
+                )
+            raise
+
+    # Introspectable by the role x route matrix test, as require_permission's is.
+    _check.permission, _check.unsafe_only = "detections.write", False  # type: ignore[attr-defined]
+    return Depends(_check)
+
+
+@router.post(
+    "/rules/{rule_id}/detection-skill",
+    dependencies=[_audited_write_gate("detection_skill.export")],
+)
+def export_detection_skill(rule_id: int, user: User = Depends(get_current_active_user)):
+    """A zip of the rule as a Detection Skill: each copy's file, its exceptions
+    and its signed proof card, signed together. ``rule_id`` is any of the rule's
+    overlay copies, or a SIEM copy linked to one. The trail records the export
+    as this user."""
+    try:
+        manifest, data = detection_skill.export(rule_id, actor=user.user_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except detection_skill.Refused as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except proof_card.ProofKeyUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    stamp = manifest["exported_at"][:19].replace(":", "").replace("-", "")
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="vigil-detection-skill_{rule_id}_{stamp}.zip"'
+        },
+    )
+
+
+def _events(raw: Optional[str], name: str) -> Optional[list]:
+    if not raw:
+        return None
+    try:
+        events = json.loads(raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"{name} is not valid JSON")
+    if not isinstance(events, list):
+        raise HTTPException(status_code=400, detail=f"{name} must be a JSON list")
+    return events
+
+
+@router.post("/detection-skill/import", dependencies=_SETTINGS_WRITE)
+async def import_detection_skill(
+    file: UploadFile = File(...),
+    public_key_pem: str = Form("", max_length=4096),
+    proven_events: Optional[str] = Form(None),
+    ruled_out_events: Optional[str] = Form(None),
+    user: User = Depends(get_current_active_user),
+):
+    """Import a Detection Skill zip as a new rule, in shadow. ``public_key_pem``
+    is the exporting Vigil's key (its GET /proof-card/key); the events, JSON
+    lists, are replayed on the Sigma form as a new rule's are. Refused, with
+    the reason, on a failed signature, hash, lint or replay. The trail records
+    the import, or its refusal, as this user."""
+    data = await file.read(detection_skill.MAX_ZIP_BYTES + 1)
+    result = await asyncio.to_thread(
+        detection_skill.import_skill,
+        data,
+        public_key_pem,
+        user.user_id,
+        user.username,
+        _events(proven_events, "proven_events"),
+        _events(ruled_out_events, "ruled_out_events"),
+    )
+    if result.get("error") and not result.get("saved"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
 
 
 @router.get("/rules/{rule_id}/exceptions")

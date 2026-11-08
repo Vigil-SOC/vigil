@@ -162,6 +162,15 @@ def _proof_export(p: Mapping[str, Any]) -> str:
     return f"Exported a proof card ({p['kind']}, {n} {'rule' if n == 1 else 'rules'})"
 
 
+def _skill(verb: str):
+    def words(p: Mapping[str, Any]) -> str:
+        name = f" {p['name']!r}" if p.get("name") else ""
+        where = f" from {p['exported_from']}" if p.get("exported_from") else ""
+        return f"{verb} the Detection Skill{name}{where}"
+
+    return words
+
+
 # Who needed the key is the entry's on_behalf_of, which the trail names when it is
 # read; the sentence says what needed it and never prints an id.
 def _proof_key(p: Mapping[str, Any]) -> str:
@@ -236,6 +245,10 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "roles.revised": "Revised the built-in roles",
     "detections.proof_card_exported": _proof_export,
     "detections.proof_key_created": _proof_key,
+    "detections.skill_exported": _skill("Exported"),
+    "detections.skill_imported": _skill("Imported"),
+    "detections.skill_import_refused": lambda p: "Refused a Detection Skill import"
+    + (f": {p['reason']}" if p.get("reason") else ""),
     "autonomy.tool_classified": lambda p: f"Classed {p.get('tool') or 'a tool'} as "
     f"{_word(p.get('class_after')) or 'unclassified'}",
     "tools.classified": "Classed outside tools on upgrade",
