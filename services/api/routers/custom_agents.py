@@ -2,7 +2,7 @@
 
 An operator agent is read, saved and deleted through /api/v1/agents. Here: the
 tool catalogue the drawer's needs picker reads, drafting a manifest from plain
-English, and forking a built-in into a manifest of its own.
+English, and forking a built-in's manifest into one of its own.
 """
 
 import logging
@@ -12,16 +12,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from core.agents.agent_ai_generator import AgentAIGenerator
-from core.agents.builtins import BUILTIN_AGENTS
+from core.agents.builtins import builtin_manifests
 from core.agents.custom_agent_service import CustomAgentService
-from core.agents.prompts import render_confidence_bands
 from core.auth.permissions import permission_gate
 from core.deps import provide_agent_ai, provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry, refresh_from_client
 from core.integrations.mcp.surface import VIGIL_SERVER
 from core.llm.tool_schemas import ALL_TOOLS
 from core.response.ceiling import asks_first
-from core.response.config import ResponseConfig
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
 from core.workflows.playbook_resolver import CAPABILITIES
@@ -189,13 +187,14 @@ def fork_agent(
 ) -> Dict[str, Any]:
     """Fork a built-in into an operator manifest under ``custom-<id>``.
 
-    The built-in, with its confidence bands filled, converts the way the
-    migration converts a row. The built-in itself never changes.
+    The built-in's manifest text, with only its id rewritten: placeholders and
+    comments survive. The built-in itself never changes.
     """
-    source = next((r for r in BUILTIN_AGENTS if r["id"] == source_agent_id), None)
-    if source is None:
+    text = builtin_manifests().get(source_agent_id)
+    if text is None:
         raise HTTPException(
             status_code=404, detail=f"Built-in agent not found: {source_agent_id}"
         )
-    row = render_confidence_bands(source, ResponseConfig.from_settings())
-    return service.fork_builtin(row, changed_by=str(current_user.user_id))
+    return service.fork_builtin(
+        source_agent_id, text, changed_by=str(current_user.user_id)
+    )

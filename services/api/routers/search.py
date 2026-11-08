@@ -146,7 +146,7 @@ def search(
         results.agents = [
             SearchHit(id=a.id, title=a.name, description=a.description)
             for a in agent_manager.agents.values()
-            if _matches(q, a.id, a.name, a.description, a.specialization)
+            if _matches(q, a.id, a.name, a.description)
         ][:LIMIT]
         results.skills = [
             SearchHit(id=s.name, title=s.name, description=s.description)

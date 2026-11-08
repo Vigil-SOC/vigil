@@ -361,15 +361,17 @@ class WorkflowDefinition:
 
 def _agent_run_definition(workflow_id: str) -> Optional[WorkflowDefinition]:
     """One phase holding one agent and its own tools; None for an unknown or disabled agent."""
+    from core.agents.manager import CUSTOM_AGENT_ID_PREFIX
     from core.workflows.playbook_resolver import UnknownPlaybook, _profile_for
 
     try:
         agent = _profile_for(workflow_id.removeprefix(AGENT_RUN_PREFIX))
     except UnknownPlaybook:
         return None
-    # A custom agent is an operator manifest, and runs as investigate under it:
-    # its conclusion reaches the case through the same bridge the built-in's does.
-    if agent.manifest:
+    # An operator (custom-) agent runs as investigate under its manifest: its
+    # conclusion reaches the case through the same bridge the built-in's does. A
+    # built-in stays the one compose phase holding its own tools.
+    if agent.id.startswith(CUSTOM_AGENT_ID_PREFIX) and agent.manifest:
         return WorkflowDefinition(
             workflow_id=workflow_id,
             file_path=None,

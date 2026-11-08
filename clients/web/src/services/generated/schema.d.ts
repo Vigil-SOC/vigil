@@ -190,8 +190,8 @@ export interface paths {
          * Fork Agent
          * @description Fork a built-in into an operator manifest under ``custom-<id>``.
          *
-         *     The built-in, with its confidence bands filled, converts the way the
-         *     migration converts a row. The built-in itself never changes.
+         *     The built-in's manifest text, with only its id rewritten: placeholders and
+         *     comments survive. The built-in itself never changes.
          */
         post: operations["post_api_agents_source_agent_id_fork"];
         delete?: never;

@@ -1,22 +1,21 @@
 """Operator agents: plugin manifests stored on custom_agents (#4023, #4024)."""
 
 import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.exc import IntegrityError
 
 from core.agents.manager import CUSTOM_AGENT_ID_PREFIX
-from core.agents.operator_manifest import (
-    manifest_from_row,
-    manifest_needs,
-    read_manifest,
-)
+from core.agents.operator_manifest import manifest_needs, read_manifest
 from core.auth import principals
 from core.storage.config_service import write_config_audit
 from core.storage.connection import get_db_manager
 from core.storage.models import CustomAgent
 
 logger = logging.getLogger(__name__)
+
+_ID_LINE = re.compile(r"^id:.*$", re.MULTILINE)
 
 
 # One entry per manifest change, on the caller's session so it commits with it.
@@ -87,17 +86,16 @@ class CustomAgentService:
             return _manifest_row(agent), created
 
     def fork_builtin(
-        self, row: Dict[str, Any], changed_by: Optional[str] = None
+        self, source: str, manifest: str, changed_by: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Store a built-in's record as a manifest under the first free
-        ``custom-<id>[-n]``, converted the way the migration converts a row.
-        ``row`` is the built-in's record with its confidence bands rendered."""
-        source = row["id"]
+        """Store a built-in's manifest text under the first free
+        ``custom-<id>[-n]``, only its id line rewritten (as the drawer's Copy
+        does), so placeholders and comments survive."""
         base = f"{CUSTOM_AGENT_ID_PREFIX}{source}"
         db_manager = get_db_manager()
         for n in range(1, 1000):
             new_id = base if n == 1 else f"{base}-{n}"
-            text = manifest_from_row({**row, "id": new_id})
+            text = _ID_LINE.sub(f"id: {new_id}", manifest, count=1)
             try:
                 with db_manager.session_scope() as session:
                     # Insert only: an id taken meanwhile is skipped, never replaced.

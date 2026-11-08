@@ -512,11 +512,6 @@ export interface AgentSummary {
   id: string
   name: string
   description?: string
-  icon?: string
-  color?: string
-  specialization?: string
-  /** Action id this agent's decisions are logged under (#476). */
-  decision_id?: string
 }
 
 /** Reads the shell folds itself. Health is public; processes and the provider map need a sign-in. */

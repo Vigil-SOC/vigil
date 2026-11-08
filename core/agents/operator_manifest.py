@@ -12,8 +12,6 @@ from typing import Any, Dict, List, Mapping, Optional
 
 import yaml
 
-from core.agents.prompts import prompt_for_row
-
 logger = logging.getLogger(__name__)
 
 CHECK_ROUTE = "/plugins/check"
@@ -26,22 +24,6 @@ class ManifestRefused(Exception):
 
 class CheckUnavailable(Exception):
     """agent-serve could not be asked."""
-
-
-# The one conversion of a persona row: the 0038/0039 migrations fill rows with it,
-# and forking a built-in renders the built-in's record through it.
-def manifest_from_row(row: Mapping[str, Any]) -> str:
-    doc = {
-        "id": row["id"],
-        # parsePlugin requires a description; a row may have left it blank.
-        "description": (row.get("description") or "").strip()
-        or row.get("name")
-        or row["id"],
-        "needs": [str(t) for t in (row.get("recommended_tools") or [])],
-        "system": prompt_for_row(row),
-        "conclusion": "prose",
-    }
-    return yaml.safe_dump(doc, sort_keys=False, allow_unicode=True, width=1000)
 
 
 # Lenient: a stored manifest has passed the check, and an unreadable one reads as
@@ -62,6 +44,41 @@ def _strings(value: Any) -> List[str]:
 
 def manifest_needs(doc: Mapping[str, Any]) -> List[str]:
     return _strings(doc.get("needs"))
+
+
+class _BlockDumper(yaml.SafeDumper):
+    """Multi-line strings as | blocks, so a rendered prompt stays readable."""
+
+
+_BlockDumper.add_representer(
+    str,
+    lambda dumper, value: dumper.represent_scalar(
+        "tag:yaml.org,2002:str", value, style="|" if "\n" in value else None
+    ),
+)
+
+
+# The manifest a run loads: system rendered (core.agents.prompts.render_system),
+# the rest as stored. Parsed and dumped rather than substituted in the text, since
+# the $memory and $skills blocks are multi-line. Text with nothing to fill is
+# returned as stored, comments and all.
+def rendered_manifest(text: str) -> str:
+    from core.agents.prompts import render_system
+
+    doc = read_manifest(text)
+    system = doc.get("system")
+    if not isinstance(system, str):
+        return text
+    rendered = render_system(system, manifest_needs(doc))
+    if rendered == system:
+        return text
+    return yaml.dump(
+        {**doc, "system": rendered},
+        Dumper=_BlockDumper,
+        sort_keys=False,
+        allow_unicode=True,
+        width=1000,
+    )
 
 
 # The skills a manifest names, from the same roots the console and the Python
@@ -128,9 +145,13 @@ def vet_manifest(text: str, registry: Any = None) -> str:
 
 
 # The start request's operator fields for a definition that carries a manifest,
-# else nothing. Skills are resolved now, so the run journals the bodies it used.
+# else nothing. The prompt and skills are resolved now, so the run journals the
+# text and bodies it used; the stored manifest keeps its placeholders.
 def operator_request(metadata: Mapping[str, Any]) -> Dict[str, Any]:
     text = metadata.get("operator_manifest")
     if not text:
         return {}
-    return {"manifest": text, "manifest_skills": manifest_skills(read_manifest(text))}
+    return {
+        "manifest": rendered_manifest(text),
+        "manifest_skills": manifest_skills(read_manifest(text)),
+    }

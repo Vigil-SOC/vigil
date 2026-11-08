@@ -266,7 +266,7 @@ function HowItRuns({ strip, entries, pre, selected, onSelect, children }: {
 
 function ModelLine({ pre }: { pre: Partial<Preflight> }) {
   if (!pre.model) return null
-  const source = modelSource({ model: pre.model, modelSource: pre.model_source ?? null, category: 'investigation' })
+  const source = modelSource({ model: pre.model, modelSource: pre.model_source ?? null })
   return (
     <span className="flex flex-col gap-px">
       <span className="text-[13px] text-tx" style={{ fontWeight: 650 }}>{pre.model}</span>

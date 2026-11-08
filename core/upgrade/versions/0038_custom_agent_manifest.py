@@ -1,7 +1,7 @@
 """Every custom agent becomes an operator manifest (#4023).
 
-Each row is converted by the function the legacy /agents/custom writes use
-(``manifest_from_row``), so a migrated row and a newly saved one read alike.
+Each row is converted by ``manifest_from_row`` as it shipped with this revision,
+frozen in ``frozen/persona_manifest.py``.
 """
 
 from alembic import op
@@ -14,7 +14,7 @@ down_revision = "0037_audit_webhook"
 
 
 def upgrade() -> None:
-    from core.agents.operator_manifest import manifest_from_row
+    from core.upgrade.versions.frozen.persona_manifest import manifest_from_row
 
     conn = op.get_bind()
     run_sql(__file__)

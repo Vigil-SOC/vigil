@@ -152,7 +152,7 @@ class WorkflowAIGenerator:
         for agent_id, profile in agents.items():
             tools = ", ".join(profile.recommended_tools[:6]) or "n/a"
             lines.append(
-                f"- `{agent_id}` \u2014 {profile.name}: {profile.specialization}. "
+                f"- `{agent_id}` \u2014 {profile.name}: {profile.description}. "
                 f"Typical tools: {tools}."
             )
         return "\n".join(lines)
