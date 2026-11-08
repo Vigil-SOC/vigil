@@ -1,7 +1,8 @@
 """A custom agent is its manifest; the persona columns go (#4024).
 
 A row written between 0038 and the console moving to /api/v1/agents may lack a
-manifest; it is filled through ``manifest_from_row`` before the columns go.
+manifest; it is filled through ``manifest_from_row`` (frozen in
+``frozen/persona_manifest.py``) before the columns go.
 """
 
 from alembic import op
@@ -14,7 +15,7 @@ down_revision = "0038_custom_agent_manifest"
 
 
 def upgrade() -> None:
-    from core.agents.operator_manifest import manifest_from_row
+    from core.upgrade.versions.frozen.persona_manifest import manifest_from_row
 
     conn = op.get_bind()
     rows = (

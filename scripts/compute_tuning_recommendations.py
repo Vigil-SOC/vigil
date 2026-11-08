@@ -1,11 +1,8 @@
 """Data-driven per-agent thinking-budget recommendations (GH #84 PR-E).
 
-PR-D shipped best-guess ``thinking_budget`` values on each agent in
-``core/agents/builtins.py``. Point this script at LLMInteractionLog and
-it prints evidence-based recommendations (p50 / p95 / max).
-
-Operators run it periodically and apply the numbers by editing
-``core/agents/builtins.py``.
+Point this script at LLMInteractionLog and it prints evidence-based
+recommendations (p50 / p95 / max). Agents carry no thinking budget of their
+own since #4041; the numbers inform the investigation assignment's effort.
 
 Connects through ``get_session()`` (encrypted DSN / POSTGRES_*), the same
 path the backend and daemon use. ``DATABASE_URL`` is not consulted.
@@ -162,12 +159,9 @@ def main() -> int:
                 f"{stats['max']:>8}"
                 f"  {stats['recommended_thinking_budget']:>12}"
             )
-        print(
-            "\n  Apply via core/agents/builtins.py → agent config → thinking_budget field."
-        )
 
     print()
-    print("Per-agent thinking_budget edits land in core/agents/builtins.py.")
+    print("Agents have no budget of their own; apply via the investigation assignment.")
     return 0
 
 

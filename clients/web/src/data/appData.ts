@@ -58,15 +58,13 @@ export type ToolChange = 'read_only' | 'asks_first' | 'on_its_own'
 export interface AgentTemplate {
   name: string
   handle: string
-  spec: string
   ini: string
   color: string
-  /** what the agent does: description, else specialization */
+  /** what the agent does: its description */
   does: string
+  /** every agent runs on the investigation assignment */
   model: string | null
-  modelSource: 'agent' | 'assignment' | 'default' | null
-  /** Triage, Investigation, Reporting… for an assignment-sourced model */
-  category: string | null
+  modelSource: 'assignment' | 'default' | null
   skills: number
   changes: 'read_only' | 'asks_first' | 'on_its_own' | null
   /** the mark of each tool the agent holds */

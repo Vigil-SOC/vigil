@@ -16,7 +16,6 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from core.agents.builtins import blank_model
 from core.auth.permissions import permission_gate
 from core.llm.providers.registry import (
     COMPONENTS,
@@ -26,6 +25,7 @@ from core.llm.providers.registry import (
     get_registry,
     is_valid_component,
 )
+from core.llm.target import blank_model
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.config_service import write_config_audit
 from core.storage.models import AIModelConfig, LLMProviderConfig, User

@@ -146,7 +146,7 @@ function intOrNone(raw: string): number | undefined {
 
 /** A built-in, read only: what it is, and a fork into a manifest of your own. */
 function BuiltIn({ agentId, onForked }: { agentId: string; onForked: (id: string) => void }) {
-  const [agent, setAgent] = useState<{ name?: string; description?: string; system_prompt?: string; recommended_tools?: string[] } | null>(null)
+  const [agent, setAgent] = useState<{ name?: string; description?: string; manifest?: string; recommended_tools?: string[] } | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   useEffect(() => {
@@ -162,8 +162,8 @@ function BuiltIn({ agentId, onForked }: { agentId: string; onForked: (id: string
     <>
       {agent.description && <p className="text-[13px] leading-[1.5] text-tx-1">{agent.description}</p>}
       <div className="vg-side-field">
-        <span className="vg-side-label">Prompt</span>
-        <pre className="vg-side-pre">{agent.system_prompt}</pre>
+        <span className="vg-side-label">Manifest (YAML)</span>
+        <pre className="vg-side-pre">{agent.manifest}</pre>
       </div>
       <div className="flex flex-col gap-2">
         <span className="vg-side-title">Tools it may use</span>
@@ -449,6 +449,17 @@ export function AgentDrawer({
                       />
                     </div>
                     {!isCreate && <span className="vg-side-hint">The id names the agent; fork it to use another.</span>}
+                  </div>
+                  <div className="vg-side-field">
+                    <label htmlFor="vg-a-name" className="vg-side-label">Name</label>
+                    <input
+                      id="vg-a-name"
+                      className="vg-side-input"
+                      value={asText(doc.name)}
+                      autoComplete="off"
+                      placeholder={id.startsWith(PREFIX) && id.length > PREFIX.length ? id.slice(PREFIX.length) : 'The id, without custom-'}
+                      onChange={(e) => set('name', e.target.value === '' ? undefined : e.target.value)}
+                    />
                   </div>
                   <div className="vg-side-field">
                     <label htmlFor="vg-a-description" className="vg-side-label">Description</label>
