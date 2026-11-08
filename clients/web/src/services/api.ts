@@ -988,7 +988,7 @@ export const detectionRulesApi = {
 
   /** The rollout's success metrics, each with its source and what it can't say. It
    * reads 30 days of check changes, so it gets longer than the default timeout. */
-  metrics: () => api.get<DetectionMetrics>('/detection-rules/metrics', { timeout: 60_000 }),
+  metrics: () => api.get<DetectionMetrics>('/detection-rules/metrics'),
 
   /** Marks these entries read for the signed-in person, or every open one; returns the inbox. */
   markHealthRead: (changeIds: number[] | 'all') =>
