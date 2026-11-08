@@ -98,6 +98,12 @@ def parse(text: str) -> ET.Element:
     return rules[0]
 
 
+def grouped(text: str) -> bool:
+    """Whether the file's rule sits inside a ``<group>`` element, as the manager
+    needs (a rule's own ``<group>`` child, or "<group" in a comment, is not one)."""
+    return any(node.tag == "group" for node in _root(text))
+
+
 def parse_all(text: str) -> List[Tuple[ET.Element, List[str]]]:
     """Each ``<rule>`` in a rule file, in order, with its enclosing groups' names."""
     root = _root(text)

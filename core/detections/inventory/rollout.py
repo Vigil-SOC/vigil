@@ -130,7 +130,7 @@ OFF_AFTER_FAILURES = 3
 HANDOFF_LINKS = ("same_id", "known_name", "agent")
 WAZUH = "wazuh"
 # What a Wazuh deploy says while Vigil cannot run Wazuh rules in shadow.
-UNTESTED = "not shadow-tested: Vigil can't validate Wazuh rules in shadow yet"
+UNTESTED = "not shadow-tested: Vigil can't validate Wazuh rules in shadow yet (#4061)"
 NO_STAGE_AT = datetime.fromtimestamp(0, timezone.utc)
 
 
@@ -1123,9 +1123,13 @@ def _deploy_file(copy: Copy) -> Tuple[str, bytes]:
     import posixpath
 
     if copy.language == WAZUH:
+        from core.detections import wazuh_xml
+
         text = copy.toml
-        if not re.search(r"<group\b", text):
-            text = f'<group name="vigil,">\n{text.strip()}\n</group>\n'
+        if not wazuh_xml.grouped(text):
+            # An XML declaration must open the file, so it can't go inside.
+            body = wazuh_xml.without_declaration(text).strip()
+            text = f'<group name="vigil,">\n{body}\n</group>\n'
         return f"vigil_{copy.key}.xml", text.encode()
     ext = "yml" if copy.language == "splunk" else "toml"
     name = posixpath.basename(copy.path or "") or f"vigil-rule-{copy.rule_id}.{ext}"
@@ -1150,7 +1154,7 @@ def _wazuh_refused(session: Any, copy: Copy) -> Optional[str]:
             'it sets overwrite="yes", which would replace a rule of the customer\'s: '
             "a Vigil rule only adds one, under its own custom id"
         )
-    if not copy.key.isdigit() or int(copy.key) not in wazuh_xml.CUSTOM_IDS:
+    if wazuh_xml.custom_id(copy.key) is None:
         return f"its id {copy.key} is outside Wazuh's range for custom rules"
     own = f"vigil_{copy.key}.xml"
     for path in session.scalars(
