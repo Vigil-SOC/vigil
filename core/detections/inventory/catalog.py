@@ -166,6 +166,8 @@ WORST_ORDER = (
     "fires",
     CAUGHT_CHECK,
     "disabled",
+    # Only a Case's card can name a removed rule: the listing shows none.
+    "removed",
     "no_fire_data",
 )
 # The listing's orders besides worst first (HEALTH_ORDER, then rule id). Each
@@ -966,6 +968,8 @@ def _health(
     silent = checks.get("silent") or {}
     if status == "disabled":
         return "disabled", "Switched off in the SIEM.", None
+    if status == "removed":
+        return "removed", "Removed from its SIEM or repo: it fires nowhere now.", None
     if runs.get("result") == "fail":
         raw = str(runs.get("reason") or "")
         return "fails_to_run", _first_line(raw) or "Its last run failed.", raw or None
@@ -1014,9 +1018,9 @@ def _check_flags(checks: Dict[str, Any]) -> Tuple[List[str], bool]:
 
 
 def _worst(health: str, flags: List[str], caught: bool) -> str:
-    """The row's worst problem: a rule that can't fire, or is off, stays so; else
-    its worst failing flag; else Caught over Fires; else its health."""
-    if health in CANT_FIRE or health == "disabled":
+    """The row's worst problem: a rule that can't fire, or is off or removed,
+    stays so; else its worst failing flag; else Caught over Fires; else its health."""
+    if health in CANT_FIRE or health in ("disabled", "removed"):
         return health
     if flags:
         return flags[0]
