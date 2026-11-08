@@ -23,6 +23,11 @@ never-firing; a Wazuh rule below level 3 that has alerts is judged on them).
 A linked Kibana or Splunk copy also carries checks['drift']: fail when it was
 disabled, removed or edited in the SIEM while its repo rule stayed the same.
 
+A repo or overlay rule's latest version carries checks['lint'] (sync lints it).
+One failing lint is keyed to one environment: it is listed and searched, but
+left out of every coverage count (``CREDITED``), and analyze_coverage's by_tool
+counts it as ``lint_failing``. Lint is no flag and no rule_health entry.
+
 A flag is a (rule, check) whose latest recorded change went pass -> fail, on a
 rule not removed (a drift flag stays on a removed copy). Nothing to fail, or a
 change to unknown, is no flag; a later change back to pass clears it. It is a
@@ -71,10 +76,26 @@ ACCURATE = DetectionRuleVersion.checks["accurate"]["result"].astext
 NOISY = DetectionRuleVersion.checks["noisy"]["result"].astext
 SILENT = DetectionRuleVersion.checks["silent"]["result"].astext
 CAUGHT = DetectionRuleVersion.checks["caught"]["result"].astext
+# A repo or overlay rule whose latest version failed lint (keyed to one
+# environment): listed and searched, never counted as coverage.
+LINT = DetectionRuleVersion.checks["lint"]["result"].astext
+LINT_FAILS = LINT == "fail"
+CREDITED = LINT.is_distinct_from("fail")
 # No alert across Quiet's whole 30-day search: a never-firing rule.
 NEVER_FIRED = DetectionRuleVersion.checks["silent"]["days_fired"].astext == "0"
 # The per-tool tally columns _by_tool reads, in order, before the count.
-TALLIED = (TOOL, RUNS, SEES, QUIET, ACCURATE, NOISY, SILENT, CAUGHT, NEVER_FIRED)
+TALLIED = (
+    TOOL,
+    RUNS,
+    SEES,
+    QUIET,
+    ACCURATE,
+    NOISY,
+    SILENT,
+    CAUGHT,
+    NEVER_FIRED,
+    LINT_FAILS,
+)
 RUNS_RESULTS = ("pass", "fail", "unknown")
 # The rollout stages a listed copy can be in (#3995).
 STAGES = ("shadow", "live", "off")
@@ -460,12 +481,20 @@ def _with_links(session: Any, hits: List[Dict], rules: List[DetectionRule]) -> N
 def _by_tool(rows: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
     """(TALLIED..., count) rows as rules per tool, and for a SIEM's its Runs, Sees,
     Quiet, Accurate, Noisy, Silent and Caught, and (where Noisy and Silent run)
-    its never-firing rules."""
+    its never-firing rules. A repo or overlay entry counts its rules failing lint
+    (``lint_failing``), which are not coverage."""
     out: Dict[str, Dict[str, Any]] = {}
-    for tool, runs, sees, quiet, accurate, noisy, silent, caught, never, count in rows:
+    for *tallied, count in rows:
+        tool, runs, sees, quiet, accurate, noisy, silent, caught, never, lint_fails = (
+            tallied
+        )
         entry = out.setdefault(tool, {"rules": 0})
         entry["rules"] += count
-        if tool not in ("repo", OVERLAY):
+        if tool in ("repo", OVERLAY):
+            entry["lint_failing"] = entry.get("lint_failing", 0) + (
+                count if lint_fails else 0
+            )
+        else:
             for check, result in (
                 ("runs", runs),
                 ("sees", sees),
@@ -498,55 +527,63 @@ def rule_counts() -> Dict[str, int]:
 
 
 def rules_by_technique() -> Dict[str, Set[int]]:
-    """Each technique an active rule declares, and the ids of those rules."""
+    """Each technique an active rule declares, and the ids of those rules; a rule
+    failing lint is no coverage and left out."""
     technique = func.unnest(DetectionRule.techniques).table_valued("t").alias("t")
     with get_db_manager().session_scope() as session:
         rows = session.execute(
             select(technique.c.t, func.array_agg(DetectionRule.id))
             .select_from(DetectionRule)
+            .join(DetectionRuleVersion, _latest_join())
             .join(technique, technique.c.t.isnot(None))
-            .where(ACTIVE)
+            .where(ACTIVE, CREDITED)
             .group_by(technique.c.t)
         ).all()
     return {t: set(ids) for t, ids in rows}
 
 
 def rules_by_tactic() -> Dict[str, int]:
-    """How many active rules declare each tactic (only Sigma and Elastic do)."""
+    """How many active rules declare each tactic (only Sigma and Elastic do),
+    leaving out rules failing lint."""
     tactic = func.unnest(DetectionRule.tactics).table_valued("t").alias("t")
     with get_db_manager().session_scope() as session:
         rows = session.execute(
             select(tactic.c.t, func.count())
             .select_from(DetectionRule)
+            .join(DetectionRuleVersion, _latest_join())
             .join(tactic, tactic.c.t.isnot(None))
-            .where(ACTIVE)
+            .where(ACTIVE, CREDITED)
             .group_by(tactic.c.t)
         ).all()
     return {t: count for t, count in rows}
 
 
 def techniques_per_language() -> Dict[str, int]:
-    """Distinct techniques the active rules of each format declare."""
+    """Distinct techniques the active rules of each format declare, leaving out
+    rules failing lint."""
     technique = func.unnest(DetectionRule.techniques).table_valued("t").alias("t")
     with get_db_manager().session_scope() as session:
         rows = session.execute(
             select(DetectionRule.language, func.count(func.distinct(technique.c.t)))
             .select_from(DetectionRule)
+            .join(DetectionRuleVersion, _latest_join())
             .join(technique, technique.c.t.isnot(None))
-            .where(ACTIVE)
+            .where(ACTIVE, CREDITED)
             .group_by(DetectionRule.language)
         ).all()
     return {language: count for language, count in rows}
 
 
 def rules_for_technique(technique: str, top: int = 5) -> Dict[str, Any]:
-    """Active rules declaring ``technique``: the count by format and the first ``top``."""
+    """Active rules declaring ``technique``: the count by format (rules failing lint
+    left out, as they are no coverage) and the first ``top``."""
     declares = DetectionRule.techniques.contains([technique])
     with get_db_manager().session_scope() as session:
         by_source = dict(
             session.execute(
                 select(DetectionRule.language, func.count())
-                .where(ACTIVE, declares)
+                .join(DetectionRuleVersion, _latest_join())
+                .where(ACTIVE, declares, CREDITED)
                 .group_by(DetectionRule.language)
             ).all()
         )

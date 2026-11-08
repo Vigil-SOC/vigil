@@ -283,8 +283,9 @@ class SecurityDetectionsTools:
     ) -> Dict:
         """Reject Sigma rules keyed to a specific IP, host, user, or subnet.
 
-        Pass a rule YAML string or a directory of ``.yml`` files. Does not
-        run on ``add_source`` / clone; community corpora stay importable.
+        Pass a rule YAML string or a directory of ``.yml`` files. Sync lints
+        every imported repo and local rule the same way (checks.lint) without
+        blocking it, and a failing one is left out of coverage counts.
         """
         return lint_sigma(rule_yaml=rule_yaml, source_path=source_path)
 
