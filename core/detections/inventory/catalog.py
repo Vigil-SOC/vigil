@@ -1207,14 +1207,16 @@ def _active_exceptions(
 
 def _copies_listed(session: Any) -> Dict[str, Any]:
     """Every listed copy with its checks, which rule each belongs to, and the blind spots."""
+    rows = _copy_rows(session)
     return {
-        "rows": _copy_rows(session),
+        "rows": rows,
         "exceptions": _active_exceptions(session),
         "stages": {
             rid: (stage, at)
             for rid, stage, at in session.execute(select(CURRENT_STAGE))
         },
         "moves": stage_moves(session.execute(STAGE_ROWS)),
+        "waiting": _not_loaded(rows),
         "rule_of": _rule_of_copy(session),
         "blind_spots": [
             {
@@ -1225,6 +1227,26 @@ def _copies_listed(session: Any) -> Dict[str, Any]:
             for spot in blind_spots()
             for rule in {r["tool"]: r for r in spot["rules"]}.values()
         ],
+    }
+
+
+def _not_loaded(rows: List[Any]) -> Dict[int, Dict[str, str]]:
+    """Each Wazuh copy the manager doesn't run yet (no manager rule loaded from
+    Vigil's file for it, ``rollout.handed_off``), with where its deploy got: its
+    PR, its file already on the default branch, or the error. Vigil runs a Wazuh
+    copy only in shadow, so a live one runs nowhere until the manager loads it."""
+    from core.detections.inventory.rollout import WAZUH, handed_off
+
+    mine = [r for r in rows if r.source == OVERLAY_SOURCE and r.language == WAZUH]
+    loaded = handed_off([r.id for r in mine])
+    return {
+        r.id: {
+            k: str(v)
+            for k in ("pr_url", "in_repo", "error")
+            if (v := ((r.checks or {}).get("deploy") or {}).get(k))
+        }
+        for r in mine
+        if r.id not in loaded
     }
 
 
@@ -1363,10 +1385,13 @@ def _stage_fields(rule_id: int, copies: Dict[str, Any]) -> Dict[str, Any]:
     moves and hold, as GET /rules/{id}/stages reads them. A SIEM copy has no stage
     rows and none of the moves fields."""
     stage, entered = (copies.get("stages") or {}).get(rule_id, (None, None))
+    waiting = (copies.get("waiting") or {}).get(rule_id)
     return {
         "stage": stage,
         "stage_since": entered.isoformat() if entered else None,
         "days_in_shadow": None,
+        # A live Wazuh copy the manager hasn't loaded: it runs nowhere yet.
+        "waiting": waiting if stage == "live" and waiting is not None else None,
         **(copies.get("moves") or {}).get(rule_id, {}),
     }
 

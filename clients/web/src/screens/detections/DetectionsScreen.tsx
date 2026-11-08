@@ -6,10 +6,12 @@ import { errorText } from '../../shared/errorText'
 import { detectionRulesApi } from '../../services/api'
 import { useAuth } from '../../contexts/AuthContext'
 import { Empty, Failure } from '../shared/x1'
+import { TabStrip } from '../../shared/TabStrip'
 import RuleExceptions, { KEEP_DAYS } from './RuleExceptions'
 import RuleFindings from './RuleFindings'
 import RuleStages from './RuleStages'
-import { stageLine, type Stage, type StageFields } from './ruleStage'
+import { stageLine, waitingNote, type Stage, type StageFields } from './ruleStage'
+import CoverageMap from './CoverageMap'
 import RolloutMetrics from './RolloutMetrics'
 import { useRolloutMetrics } from './useRolloutMetrics'
 import FindingPopup from '../dashboard/FindingPopup'
@@ -169,14 +171,22 @@ function prompt(r: RuleRow, days: number): string {
   }
 }
 
-/** The shell heads the page (TITLES); under it, Import rules and the rule health. */
+type Section = 'rules' | 'coverage'
+const SECTIONS: readonly { id: Section; label: string }[] = [
+  { id: 'rules', label: 'Rules' },
+  { id: 'coverage', label: 'Coverage' },
+]
+
+/** The shell heads the page (TITLES); under it, Import rules, then the rule health or the ATT&CK coverage map. */
 export default function DetectionsScreen({ goSettings, openChat }: ConsoleScreenProps) {
+  const [section, setSection] = useState<Section>('rules')
   return (
     <div className="x1 de">
-      <div className="de-top">
+      <div className="de-top de-top-tabs">
+        <TabStrip label="Detections sections" tabs={SECTIONS} active={section} onChange={setSection} />
         <button type="button" className="btn primary" onClick={() => goSettings('data')}>Import rules</button>
       </div>
-      <RulesTab goSettings={goSettings} openChat={openChat} />
+      {section === 'rules' ? <RulesTab goSettings={goSettings} openChat={openChat} /> : <CoverageMap goSettings={goSettings} />}
     </div>
   )
 }
@@ -543,6 +553,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
             const fdOpen = open?.id === r.rule_id && open.what === 'findings'
             const stOpen = open?.id === r.rule_id && (open.what === 'stages' || open.what === 'revert')
             const line = stageLine(r)
+            const waiting = waitingNote(r)
             const siemOnly = r.fires === 0 && (r.siem_alerts ?? 0) > 0
             const fired = siemOnly ? `${n(r.siem_alerts ?? 0)} in SIEM` : r.health === 'no_fire_data' ? 'No data' : r.health === 'never_fired' ? 'Never' : 'None'
             return (
@@ -556,7 +567,14 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                     </div>
                   )}
                   <div className="de-meta">
-                    <span>{!r.checks_run ? 'Not checked' : r.checks_passing ? plural(r.checks_passing, 'check passes', 'checks pass') : 'No check passes'}</span>
+                    {waiting ? (
+                      <span title={waiting.title}>
+                        {waiting.text}
+                        {waiting.href && <> (<a className="de-link" href={waiting.href} target="_blank" rel="noreferrer">{waiting.link}</a>)</>}
+                      </span>
+                    ) : (
+                      <span>{!r.checks_run ? 'Not checked' : r.checks_passing ? plural(r.checks_passing, 'check passes', 'checks pass') : 'No check passes'}</span>
+                    )}
                     {line && <span className={`de-st-line${line.amber ? ' amber' : ''}`} title={line.title || undefined}>· {line.text}</span>}
                     {line?.live && canWrite && (
                       <span>· <button type="button" className="de-link de-st-revert" onClick={() => setOpen({ id: r.rule_id, what: 'revert' })}>Revert</button></span>
