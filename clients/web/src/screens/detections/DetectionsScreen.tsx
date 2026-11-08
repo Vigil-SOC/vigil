@@ -568,9 +568,15 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                   )}
                   <div className="de-meta">
                     {waiting ? (
-                      <span title={waiting.title}>
-                        {waiting.text}
-                        {waiting.href && <> (<a className="de-link" href={waiting.href} target="_blank" rel="noreferrer">{waiting.link}</a>)</>}
+                      <span className={waiting.amber ? 'de-st-line amber' : undefined} title={waiting.title}>
+                        {waiting.linkFirst && waiting.href ? (
+                          <><a className="de-link" href={waiting.href} target="_blank" rel="noreferrer">{waiting.link}</a> {waiting.text}</>
+                        ) : (
+                          <>
+                            {waiting.text}
+                            {waiting.href && <> (<a className="de-link" href={waiting.href} target="_blank" rel="noreferrer">{waiting.link}</a>{waiting.linkSuffix ?? ''})</>}
+                          </>
+                        )}
                       </span>
                     ) : (
                       <span>{!r.checks_run ? 'Not checked' : r.checks_passing ? plural(r.checks_passing, 'check passes', 'checks pass') : 'No check passes'}</span>
