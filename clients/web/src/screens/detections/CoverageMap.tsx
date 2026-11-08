@@ -6,7 +6,7 @@ import { Empty, Failure } from '../shared/x1'
 
 // The heat map is Alex Margaris's from the 1.x line (ProgramTab's HeatMap), here
 // with main's meaning of proven (an active SIEM copy passes Runs and Sees) and a
-// split by SIEM.
+// split by SIEM. It opens on a summary per tactic; the whole grid is "Full map".
 
 const STATES: Record<CoverageState, string> = {
   proven: 'Proven',
@@ -30,11 +30,23 @@ function plural(count: number, one: string, many = `${one}s`): string {
   return `${count} ${count === 1 ? one : many}`
 }
 
+const ORDER = Object.keys(STATES) as CoverageState[]
+
+function countStates(cells: CoverageCell[], lens: Lens): Record<CoverageState, number> {
+  const out: Record<CoverageState, number> = { proven: 0, unproven: 0, no_rule: 0 }
+  for (const c of cells) out[stateIn(c, lens)] += 1
+  return out
+}
+
+/** A technique's parent id: T1059 for T1059.001, itself for a parent. */
+const parentOf = (technique: string) => technique.split('.')[0]
+
 export default function CoverageMap({ goSettings }: { goSettings: (section: 'data') => void }) {
   const [coverage, setCoverage] = useState<DetectionCoverage | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [lens, setLens] = useState<Lens>('all')
   const [selected, setSelected] = useState<string | null>(null)
+  const [full, setFull] = useState(false)
 
   const load = () => {
     setError(null)
@@ -61,7 +73,8 @@ export default function CoverageMap({ goSettings }: { goSettings: (section: 'dat
     )
   }
   const present = SIEMS.filter((s) => coverage.techniques.some((t) => t.siems[s.id]))
-  const counts = (Object.keys(STATES) as CoverageState[]).map((s) => [s, coverage.techniques.filter((t) => stateIn(t, lens) === s).length] as const)
+  const total = countStates(coverage.techniques, lens)
+  const select = (technique: string) => setSelected(selected === technique ? null : technique)
   const cell = coverage.techniques.find((t) => t.technique === selected) ?? null
   return (
     <div className="x1-card de-cov" data-testid="coverage-map">
@@ -71,32 +84,113 @@ export default function CoverageMap({ goSettings }: { goSettings: (section: 'dat
           {present.map((s) => (
             <button key={s.id} type="button" className={`de-cov-lens-b${lens === s.id ? ' on' : ''}`} aria-pressed={lens === s.id} onClick={() => setLens(s.id)}>{s.label}</button>
           ))}
+          <span className="de-cov-sep" aria-hidden="true" />
+          <button type="button" className={`de-cov-lens-b${full ? ' on' : ''}`} aria-pressed={full} onClick={() => setFull(!full)}>Full map</button>
         </div>
         <div className="de-cov-legend">
-          {counts.map(([s, count]) => (
-            <span key={s}><span className={`de-swatch ${s}`} />{STATES[s]} · {count}</span>
+          {ORDER.map((s) => (
+            <span key={s}><span className={`de-swatch ${s}`} />{STATES[s]} · {total[s]}</span>
           ))}
         </div>
       </div>
-      <div className="de-matrix-wrap">
+      {!full && <TacticSummary coverage={coverage} lens={lens} selected={selected} onSelect={select} />}
+      {full && <div className="de-matrix-wrap">
         <div className="de-matrix">
           {coverage.tactics.map((tactic) => (
             <div key={tactic} className="de-col">
               <h4>{tactic}</h4>
               {coverage.techniques.filter((t) => t.tactic === tactic).map((t) => (
-                <button key={t.technique} type="button" className={`de-cell ${stateIn(t, lens)}${selected === t.technique ? ' on' : ''}`} aria-pressed={selected === t.technique} onClick={() => setSelected(selected === t.technique ? null : t.technique)}>
-                  <b>{t.name}</b>
-                  <span className="x1-mono">{t.technique}{t.rules ? ` · ${plural(t.rules, 'rule')}` : ''}</span>
-                </button>
+                <Cell key={t.technique} cell={t} lens={lens} on={selected === t.technique} onSelect={select} />
               ))}
             </div>
           ))}
         </div>
-      </div>
-      {cell && <CellDetail cell={cell} />}
+      </div>}
+      {full && cell && <CellDetail cell={cell} />}
       <p className="de-note">
         Proven: an active copy in a SIEM passes Runs and Sees, as the Rules page counts it. A rule counts once however many SIEM copies it has. {plural(coverage.mapped, 'rule')} declare a technique, as on the Rules page; a disabled one is no coverage, so its technique shows as no active rule.
       </p>
+    </div>
+  )
+}
+
+function Cell({ cell, lens, on, onSelect, extra }: { cell: CoverageCell; lens: Lens; on: boolean; onSelect: (technique: string) => void; extra?: string }) {
+  return (
+    <button type="button" className={`de-cell ${stateIn(cell, lens)}${on ? ' on' : ''}`} aria-pressed={on} onClick={() => onSelect(cell.technique)}>
+      <b>{cell.name}</b>
+      <span className="x1-mono">{cell.technique}{cell.rules ? ` · ${plural(cell.rules, 'rule')}` : ''}{extra ? ` · ${extra}` : ''}</span>
+    </button>
+  )
+}
+
+/** One row per tactic: a bar and counts of its techniques' states; open one for its techniques. */
+function TacticSummary({ coverage, lens, selected, onSelect }: { coverage: DetectionCoverage; lens: Lens; selected: string | null; onSelect: (technique: string) => void }) {
+  const [open, setOpen] = useState<string | null>(null)
+  return (
+    <div className="de-tac" data-testid="coverage-tactics">
+      {coverage.tactics.map((tactic) => {
+        const cells = coverage.techniques.filter((t) => t.tactic === tactic)
+        const n = countStates(cells, lens)
+        const isOpen = open === tactic
+        return (
+          <div key={tactic} className={`de-tac-row${isOpen ? ' open' : ''}`}>
+            <button type="button" className="de-tac-head" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : tactic)}>
+              <span className="de-tac-name"><span aria-hidden="true">{isOpen ? '▾' : '▸'}</span> {tactic}</span>
+              <span className="de-tac-bar" aria-hidden="true">
+                {ORDER.map((s) => n[s] > 0 && <span key={s} className={`de-tac-seg ${s}`} style={{ flexGrow: n[s] }} />)}
+              </span>
+              <span className="de-tac-counts">
+                <span className="proven">{n.proven} proven</span> · <span className="unproven">{n.unproven} rule, not proven</span> · <span className="no_rule">{n.no_rule} no active rule</span>
+              </span>
+            </button>
+            {isOpen && <TacticTechniques cells={cells} lens={lens} selected={selected} onSelect={onSelect} />}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** A tactic's techniques, each parent with its sub-techniques folded under it. */
+function TacticTechniques({ cells, lens, selected, onSelect }: { cells: CoverageCell[]; lens: Lens; selected: string | null; onSelect: (technique: string) => void }) {
+  const [unfolded, setUnfolded] = useState<Set<string>>(() => new Set())
+  const groups = new Map<string, { parent: CoverageCell | null; subs: CoverageCell[] }>()
+  for (const c of cells) {
+    const key = parentOf(c.technique)
+    const group = groups.get(key) ?? { parent: null, subs: [] }
+    if (c.technique === key) group.parent = c
+    else group.subs.push(c)
+    groups.set(key, group)
+  }
+  const toggle = (key: string) => setUnfolded((u) => {
+    const next = new Set(u)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    return next
+  })
+  const cell = cells.find((t) => t.technique === selected) ?? null
+  return (
+    <div className="de-tac-body">
+      <div className="de-tac-groups">
+        {[...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, { parent, subs }]) => {
+          const isOpen = unfolded.has(key)
+          const subsLabel = subs.length ? plural(subs.length, 'sub-technique') : undefined
+          return (
+            <div key={key} className="de-tac-group">
+              {parent
+                ? <Cell cell={parent} lens={lens} on={selected === key} onSelect={onSelect} extra={subsLabel} />
+                : <span className="de-tac-orphan x1-mono">{key} · {subsLabel}</span>}
+              {subs.length > 0 && (
+                <button type="button" className="x1-link de-tac-fold" aria-expanded={isOpen} onClick={() => toggle(key)}>
+                  {isOpen ? 'Fold' : `Show ${subsLabel}`}
+                </button>
+              )}
+              {isOpen && <div className="de-tac-subs">{subs.map((t) => <Cell key={t.technique} cell={t} lens={lens} on={selected === t.technique} onSelect={onSelect} />)}</div>}
+            </div>
+          )
+        })}
+      </div>
+      {cell && <CellDetail cell={cell} />}
     </div>
   )
 }
