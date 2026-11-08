@@ -80,8 +80,8 @@ except Exception:
     _inv_created = _inv_completed = _inv_failed = _dedup_prevented = _stuck_agents = (
         _intake_queue_depth
     ) = None  # type: ignore[assignment]
-from core.agents.projections import read_projection, run_id_for
 from core.agents.operator_manifest import operator_request
+from core.agents.projections import read_projection, run_id_for
 from core.agents.queue import RUN_KINDS, build_start_job, enqueue_run
 from core.findings.exclusions import cached_active_ips, excluded_ips_of
 from core.memory.entity_keys import finding_entity_keys, normalise_keys
