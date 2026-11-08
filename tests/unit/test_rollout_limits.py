@@ -86,6 +86,7 @@ def _sweep(monkeypatch, copies):
 
     monkeypatch.setattr(rollout, "get_db_manager", lambda: _Db())
     monkeypatch.setattr(rollout, "_stopped", lambda: False)
+    monkeypatch.setattr(rollout, "_asks_first", lambda: False)  # Act
     monkeypatch.setattr(rollout, "handed_off", lambda ids: set())
     monkeypatch.setattr(rollout, "_deploy_targets", lambda: {})
     monkeypatch.setattr(rollout, "_deploy", lambda *a: None)
