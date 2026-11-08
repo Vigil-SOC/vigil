@@ -99,3 +99,90 @@ def test_vigil_rows_carry_the_fields_and_siem_rows_none():
         "held": True, "held_by": "d.lee",
     }
     assert not FIELDS & set(rows[2])
+
+
+# On a real Postgres: one ordering everywhere ---------------------------------
+# Set VIGIL_TEST_PG_DSN to a throwaway database to run these, e.g.
+# postgresql://postgres:t@127.0.0.1:55453/t (the unit suite has none).
+
+import os  # noqa: E402
+from datetime import timedelta  # noqa: E402
+from urllib.parse import urlparse  # noqa: E402
+
+from sqlalchemy import select, text  # noqa: E402
+
+DSN = os.environ.get("VIGIL_TEST_PG_DSN")
+needs_pg = pytest.mark.skipif(not DSN, reason="VIGIL_TEST_PG_DSN not set")
+
+
+@pytest.fixture
+def db(monkeypatch):
+    """The detection tables, empty, on the throwaway Postgres."""
+    url = urlparse(DSN)
+    monkeypatch.setenv("POSTGRES_HOST", url.hostname)
+    monkeypatch.setenv("POSTGRES_PORT", str(url.port))
+    monkeypatch.setenv("POSTGRES_DB", url.path.lstrip("/"))
+    monkeypatch.setenv("POSTGRES_USER", url.username)
+    monkeypatch.setenv("POSTGRES_PASSWORD", url.password)
+    monkeypatch.setenv("POSTGRES_SSL_MODE", "disable")
+    from core.storage import connection
+
+    connection.DatabaseManager._instance = None
+    monkeypatch.setattr(connection, "_db_manager", None)
+    manager = connection.get_db_manager()
+    manager.initialize(force=True)
+    manager.create_tables()
+    with manager.session_scope() as session:
+        session.execute(text("TRUNCATE detection_rules RESTART IDENTITY CASCADE"))
+    yield manager
+    manager._engine.dispose()
+    connection.DatabaseManager._instance = None
+
+
+@needs_pg
+def test_an_out_of_order_row_reads_the_same_in_the_listing_stages_and_rollout(db):
+    """The newest row by id is not the newest by time. Stage, from-stage, actor and
+    hold must all come from the same row order in every reader."""
+    from core.detections.inventory import readers, rollout, stages
+    from core.storage.models import (
+        DetectionRule,
+        DetectionRuleStage,
+        DetectionRuleVersion,
+    )
+
+    t0 = datetime(2026, 11, 1, 9, 0, tzinfo=timezone.utc)
+    with db.session_scope() as session:
+        rule = DetectionRule(
+            source=readers.OVERLAY_SOURCE, native_key="r", name="r",
+            language="splunk", status="active", latest_version=1,
+        )
+        session.add(rule)
+        session.flush()
+        session.add(DetectionRuleVersion(
+            rule_id=rule.id, version=1, fingerprint="f", content={}, checks={},
+        ))
+        for stage, actor, proof, at in [
+            ("shadow", "system", {}, t0),
+            ("live", "system", {}, t0 + timedelta(days=8)),
+            # Written last (highest id) but stamped earlier than the live row.
+            ("shadow", "d.lee", {"hold": True}, t0 + timedelta(days=7)),
+        ]:
+            session.add(DetectionRuleStage(
+                rule_id=rule.id, version=1, stage=stage, actor=actor,
+                proof=proof, reason="", at=at,
+            ))
+        rid = rule.id
+
+    with db.session_scope() as session:
+        current = {r: s for r, s, _at in session.execute(select(catalog.CURRENT_STAGE))}
+        moves = catalog.stage_moves(session.execute(catalog.STAGE_ROWS))[rid]
+    hist = stages.history(rid)
+    (copy,) = [c for c in rollout._copies() if c.rule_id == rid]
+
+    # The newest by time is the live row; the earlier-stamped hold row precedes it.
+    assert current[rid] == hist["stages"][0]["to_stage"] == copy.stage == "live"
+    assert moves["stage_from"] == hist["stages"][0]["from_stage"] == "shadow"
+    assert moves["stage_actor"] == hist["stages"][0]["actor"] == "system"
+    assert moves["stage_moves"] == len(hist["stages"]) == 3
+    assert moves["held"] is hist["held"] is copy.held is True
+    assert moves["held_by"] == "d.lee"
