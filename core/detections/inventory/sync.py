@@ -35,8 +35,11 @@ rule version cited on a matching compose-run step or proven Verdict
 After the sources, each SIEM rule is linked to the repo rule it came from when
 that is certain: a Kibana rule by ``same_id`` (one active repo Elastic rule with
 its rule_id), a Splunk saved search by ``known_name`` ('ESCU - <name> - Rule' and
-one active repo Splunk rule named <name>). A link or decline an agent or person
-made is never touched.
+one active repo Splunk rule named <name>), a Wazuh manager rule by ``same_id``
+(one active repo or overlay Wazuh rule with its id, once a Vigil rule's PR is
+merged and the manager loads it). A link or decline an agent or person made is
+never touched. Wazuh links get no drift check: the manager's listing and the
+XML file never fingerprint alike.
 
 Every change of a check result is also appended to detection_rule_check_changes
 (``_record_changes``): a Runs result that differs from the rule's last recorded
@@ -78,6 +81,7 @@ Nothing is ever written to a SIEM.
 from __future__ import annotations
 
 import logging
+import posixpath
 import re
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
@@ -829,7 +833,7 @@ def sync_repos() -> List[Any]:
         reports = [_sync_one(service, source) for source in sources]
         removed = _remove_unconfigured([readers.source_name(s) for s in sources])
         # Wazuh's searches go before Kibana's Sees backlog can spend the budget.
-        wazuh_report = _sync_wazuh()
+        wazuh_report = _wazuh_synced()
         reports.append(wazuh_report)
         if not (wazuh_report.error or wazuh_report.skipped):
             reports.append(quiet.sweep_wazuh())  # Quiet first, as for Kibana
@@ -1087,6 +1091,39 @@ def _link_same_id() -> tuple:
     )
 
 
+def _wazuh_synced() -> SourceReport:
+    """The manager's rules synced, then linked by id when they were read."""
+    report = _sync_wazuh()
+    if report.error or report.skipped:
+        return report  # unread: its links stay as they were
+    return _linked(report, _link_wazuh_id)
+
+
+def vigil_wazuh_file(path: Optional[str], key: str) -> bool:
+    """Whether the manager loads this rule from Vigil's own file for ``key``
+    (``vigil_<id>.xml``, the deploy PR's), not a file of the customer's."""
+    return posixpath.basename(path or "") == f"vigil_{key}.xml"
+
+
+def _link_wazuh_id() -> tuple:
+    """Link each Wazuh manager rule to the one active repo Wazuh rule with its id:
+    a Vigil rule the customer merged and the manager now loads.
+
+    The overlay's own rule is linked only from Vigil's file: a customer's rule
+    file loading that id is another rule. Each change is audited, as it hands
+    the Vigil copy off (or back)."""
+    return _link(
+        wazuh.SOURCE,
+        "wazuh",
+        "same_id",
+        lambda copy: copy.native_key,
+        DetectionRule.native_key,
+        "same Wazuh rule id {}",
+        overlay_ok=lambda copy: vigil_wazuh_file(copy.path, copy.native_key),
+        audited=True,
+    )
+
+
 def _link_known_name() -> tuple:
     """Link each 'ESCU - <name> - Rule' search to the one active repo Splunk rule named <name>."""
 
@@ -1111,14 +1148,17 @@ def _link(
     key_of: Callable[[DetectionRule], Optional[str]],
     origin_key: Any,
     reason: str,
+    overlay_ok: Optional[Callable[[DetectionRule], bool]] = None,
+    audited: bool = False,
 ) -> tuple:
     """Link each ``source`` rule to the one active repo ``language`` rule whose
     ``origin_key`` is ``key_of(copy)``.
 
     Only rows the sync owns (no link, or a ``kind`` one) are written, and only
     when the origin differs. A key more than one repo rule carries links nothing;
-    the overlay's rule is left out of that count when a customer repo carries it.
-    Returns (linked, unlinked).
+    the overlay's rule is left out of that count when a customer repo carries it,
+    and links only copies ``overlay_ok`` passes. ``audited``: each change gets an
+    audit row, as an agent's link does. Returns (linked, unlinked).
     """
     linked = unlinked = 0
     now = datetime.now(timezone.utc)
@@ -1155,19 +1195,61 @@ def _link(
             key = key_of(copy) if copy.language == language else None
             ids = origins.get(key, []) if key is not None else []
             target = ids[0] if len(ids) == 1 else None
+            if key is not None and target is not None and target == overlay.get(key):
+                if overlay_ok is not None and not overlay_ok(copy):
+                    target = None
             if target == copy.origin_rule_id:
                 continue
+            old = _link_value(copy)
             if target is None:
                 copy.origin_rule_id = copy.link_kind = copy.linked_by = None
                 copy.link_reason = copy.linked_at = None
                 unlinked += 1
-                continue
-            copy.origin_rule_id, copy.link_kind = target, kind
-            copy.linked_by = "system"
-            copy.link_reason = reason.format(key)
-            copy.linked_at = now
-            linked += 1
+            else:
+                copy.origin_rule_id, copy.link_kind = target, kind
+                copy.linked_by = "system"
+                copy.link_reason = reason.format(key)
+                copy.linked_at = now
+                linked += 1
+            if audited:
+                _audit_link(session, copy, old)
     return linked, unlinked
+
+
+def _link_value(rule: DetectionRule) -> Dict[str, Any]:
+    """The copy's link, as an agent's link audit records it."""
+    return {
+        "origin_rule_id": rule.origin_rule_id,
+        "link_kind": rule.link_kind,
+        "linked_by": rule.linked_by,
+        "link_reason": rule.link_reason,
+        "linked_at": rule.linked_at.isoformat() if rule.linked_at else None,
+    }
+
+
+def _audit_link(session: Any, copy: DetectionRule, old: Dict[str, Any]) -> None:
+    """One audit row for a link the sync changed, in its transaction: a trail
+    entry (ungated, a system write, as stage rows are) or the legacy row."""
+    from core.audit import trail
+    from core.detections.inventory.links import AUDIT_TYPE
+    from core.storage.config_service import CONFIG_CHANGE, write_config_audit
+
+    verb = "link" if copy.origin_rule_id is not None else "unlink"
+    entry: Dict[str, Any] = {
+        "config_type": AUDIT_TYPE,
+        "config_key": f"detection_rule:{copy.id}",
+        "change_reason": copy.link_reason or "no repo rule carries its key now",
+        "old_value": old,
+        "new_value": _link_value(copy),
+    }
+    if trail.in_use(session):
+        trail.append(
+            session,
+            {"action": CONFIG_CHANGE, "actor": "system", "verb": verb, **entry},
+            gated=False,
+        )
+        return
+    write_config_audit(session, action=verb, changed_by="system", **entry)
 
 
 DRIFT_LINKS = ("same_id", "known_name", "agent")
