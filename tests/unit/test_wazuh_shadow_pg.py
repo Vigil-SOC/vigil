@@ -53,9 +53,24 @@ def db(monkeypatch):
         session.execute(
             text("DELETE FROM approval_actions WHERE action_type = 'promote_rule'")
         )
+    _forget_settings(manager)
     yield manager
+    _forget_settings(manager)
     manager._engine.dispose()
     connection.DatabaseManager._instance = None
+
+
+def _forget_settings(manager):
+    """The stored settings the sweep reads (the rollout limits, the autonomy
+    ceiling), gone before and after each test: an earlier test's limits must
+    not hold a copy in shadow here, nor this test's change a later one."""
+    with manager.session_scope() as session:
+        session.execute(
+            text(
+                "DELETE FROM system_config "
+                "WHERE key IN ('autonomy.ceiling', 'rollout.limits')"
+            )
+        )
 
 
 @pytest.fixture
