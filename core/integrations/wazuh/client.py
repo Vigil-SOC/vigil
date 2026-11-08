@@ -142,12 +142,13 @@ class WazuhService:
         """One authenticated call; a 401 (expired JWT) logs in again once."""
         if self._token is None:
             await self.authenticate()
+        extra = kwargs.pop("headers", None) or {}
         resp = None
         for attempt in range(2):
             resp = await self._send(
                 method,
                 path,
-                headers={"Authorization": f"Bearer {self._token}"},
+                headers={**extra, "Authorization": f"Bearer {self._token}"},
                 **kwargs,
             )
             if resp.status_code != 401 or attempt:

@@ -195,6 +195,10 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       BIFROST_URL: ${BIFROST_URL:-http://bifrost:8080}
+      # Vigil's Wazuh sandbox (#4099); empty unless the wazuh-sandbox profile runs.
+      WAZUH_SANDBOX_URL: ${WAZUH_SANDBOX_URL:-}
+      WAZUH_SANDBOX_USERNAME: ${WAZUH_SANDBOX_USERNAME:-vigil}
+      WAZUH_SANDBOX_PASSWORD: ${WAZUH_SANDBOX_PASSWORD:-}
       # Management API only. Inference does not use it.
       BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-}
       REDIS_URL: redis://redis:6379/0
@@ -397,6 +401,10 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       BIFROST_URL: ${BIFROST_URL:-http://bifrost:8080}
+      # Vigil's Wazuh sandbox (#4099); empty unless the wazuh-sandbox profile runs.
+      WAZUH_SANDBOX_URL: ${WAZUH_SANDBOX_URL:-}
+      WAZUH_SANDBOX_USERNAME: ${WAZUH_SANDBOX_USERNAME:-vigil}
+      WAZUH_SANDBOX_PASSWORD: ${WAZUH_SANDBOX_PASSWORD:-}
       BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-}
       # Redis (LLM queue)
       REDIS_URL: redis://redis:6379/0
@@ -1133,6 +1141,38 @@ services:
       retries: 5
     profiles:
       - splunk  # Only start when splunk profile is active
+
+  # ─── Wazuh sandbox (opt-in: --profile wazuh-sandbox) ─────────────────────
+  # Vigil's own Wazuh manager (#4099). The rollout loads it over its server API
+  # with the customer's repository rules and decoders and Vigil's shadow Wazuh
+  # copies, and replays a sample of wazuh-archives-* through wazuh-logtest to
+  # count each copy with Wazuh's own engine. The customer's manager is never
+  # written to or asked to replay. Pinned to the release Vigil reads.
+  # Cost (measured on 4.9.2): image 1.98 GB; ~70 s to the API; ~335 MiB idle,
+  # ~370 MiB replaying. Vigil paces its calls under the API's default 300 a
+  # minute, so the image runs unmodified. Set WAZUH_SANDBOX_URL to
+  # https://wazuh-sandbox:55000 for the backend and daemon to use it.
+  wazuh-sandbox:
+    image: wazuh/wazuh-manager:${WAZUH_SANDBOX_TAG:-4.9.2}
+    container_name: deeptempo-wazuh-sandbox
+    hostname: wazuh-sandbox
+    mem_limit: 1g
+    environment:
+      # The image makes this its one API user and disables its default ones
+      # (wazuh, wazuh-wui). No default password: it refuses to start without
+      # one (not "${VAR:?}", which would fail every compose command).
+      API_USERNAME: ${WAZUH_SANDBOX_USERNAME:-vigil}
+      API_PASSWORD: ${WAZUH_SANDBOX_PASSWORD:-}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - '[ -n "$$API_PASSWORD" ] || { echo "wazuh-sandbox: set WAZUH_SANDBOX_PASSWORD" >&2; exit 1; }; exec /init'
+    restart: unless-stopped
+    # No host port: only the backend and daemon reach it.
+    networks:
+      - deeptempo-network
+    profiles:
+      - wazuh-sandbox
 
   # ─── Kafka (opt-in: --profile kafka) ─────────────────────────────────────
   # Single-broker KRaft-mode Kafka for local streaming ingestion. See the

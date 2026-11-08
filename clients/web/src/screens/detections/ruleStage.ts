@@ -26,6 +26,8 @@ export interface StageFields {
     /** Its PR as the sweep last read it from GitHub (at most hourly); absent before a read. */
     pr_state?: 'open' | 'closed' | 'merged'
   } | null
+  /** Its shadow count came from Vigil's Wazuh sandbox replaying a sample of the archive (#4099). */
+  sampled?: SampledCount | null
 }
 
 export interface WaitingNote {
@@ -90,6 +92,34 @@ export function waitingNote(r: StageFields): WaitingNote | null {
   }
   const why = `${until} a deploy PR is merged; Vigil has opened none for this version.`
   return { text: 'Not running yet: no deploy PR', title: why, panel: why }
+}
+
+export interface SampledCount {
+  /** What counted it: Vigil's Wazuh sandbox, and its logtest release. */
+  engine: string
+  /** Events replayed and counted, of the archived events with a raw line in the window. */
+  events: number
+  of: number
+  /** Left out: the sandbox decoded them with another decoder than the customer's manager. */
+  decoded_differently: number
+  /** Left out: logtest refused them. */
+  refused: number
+  /** The copy's hits in the sample, and scaled to every event in the window (what the hit limit uses). */
+  hits?: number
+  estimated?: number
+}
+
+/** How a sandbox count was made, as the rule's Rollout panel says it. */
+export function sampledText(s: SampledCount): string {
+  const left = s.decoded_differently + s.refused
+  return (
+    `Counted by ${s.engine} on a sample: ${s.events.toLocaleString()} of ` +
+    `${s.of.toLocaleString()} archived events replayed in its last run` +
+    (left ? `, ${left.toLocaleString()} left out (${s.decoded_differently.toLocaleString()} decoded differently than on the customer's manager)` : '') +
+    (s.hits == null
+      ? '.'
+      : `. ${s.hits.toLocaleString()} ${s.hits === 1 ? 'hit' : 'hits'} in the sample, about ${(s.estimated ?? 0).toLocaleString()} across every event: the daily hit limit uses that estimate.`)
+  )
 }
 
 export interface StageLine {

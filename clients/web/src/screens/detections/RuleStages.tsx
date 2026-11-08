@@ -3,7 +3,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { errorText } from '../../shared/errorText'
 import { utcDayClock } from '../../shared/utc'
 import { detectionRulesApi, type RuleStages as Stages } from '../../services/api'
-import { stageLine, waitingNote, who, type Stage, type StageFields } from './ruleStage'
+import { sampledText, stageLine, waitingNote, who, type Stage, type StageFields } from './ruleStage'
 
 const STAGE_NAME: Record<Stage, string> = { shadow: 'Shadow', live: 'Live', off: 'Off' }
 
@@ -63,6 +63,7 @@ export default function RuleStages({ ruleId, row, asking: askFirst, onChanged }:
           ))}
         </ul>
       )}
+      {row.sampled && <p className="de-x-none" data-testid="rule-sampled">{sampledText(row.sampled)}</p>}
       <p className="de-x-none">
         {waiting
           ? waiting.panel

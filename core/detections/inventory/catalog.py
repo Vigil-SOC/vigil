@@ -1334,6 +1334,8 @@ def _health_rows(
                 "checks_run": len(results),
                 "runs": checks.get("runs"),
                 "sees": checks.get("sees"),
+                # A Wazuh copy counted on a sample by Vigil's sandbox (#4099).
+                "sampled": (checks.get("runs") or {}).get("sampled"),
                 # Its active exceptions, and the hits they silenced (#3794).
                 "exceptions": len(excepted.get(rule.id, [])),
                 "silenced": _silenced(checks, excepted.get(rule.id, []), since_day),

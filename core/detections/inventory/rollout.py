@@ -114,6 +114,7 @@ from core.detections.inventory import (
     sees,
     splunk,
     wazuh,
+    wazuh_sandbox,
     wazuh_sees,
     wazuh_shadow,
 )
@@ -127,6 +128,7 @@ from core.integrations._base import search_budget
 from core.integrations._base.ids import EXTERNAL_ID_MAX, fit_id
 from core.integrations.elastic.descriptor import ELASTIC
 from core.integrations.splunk.descriptor import SPLUNK, SPLUNK_SELFHOSTED_REQUIRED
+from core.integrations.wazuh.client import WazuhError
 from core.storage.connection import get_db_manager
 from core.storage.models import (
     DetectionRule,
@@ -474,12 +476,14 @@ def _ran(
     outcome: Tuple[Optional[int], List[Dict], Optional[str]],
     searched_to: datetime,
     excepted: Optional[Tuple[Dict[str, int], Dict[str, List[str]], int]] = None,
+    sampled: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """``checks`` after one run: Runs, and on a pass the stage's per-day hits,
     each exception's per-day matches and, when the run fetched rows, how many
     it dropped and which of its fields none of them carried (``seen``), and
     what they dropped together (``exceptions_seen``): all of a run's rows
-    dropped means the copy raised nothing (#3994)."""
+    dropped means the copy raised nothing (#3994). A count from the Wazuh
+    sandbox's sample carries the sample (``runs.sampled``, #4099)."""
     total, docs, error = outcome
     day = end.date().isoformat()
     runs = dict(checks.get("runs") or {})
@@ -496,6 +500,10 @@ def _ran(
         tally["pass"] += 1
     days[day] = tally
     runs.update(days=_trimmed(days, day), checked_at=end.isoformat())
+    if sampled and not error:
+        runs["sampled"] = sampled
+    elif not error:
+        runs.pop("sampled", None)
     out = {**checks, "runs": runs}
     if not error:
         block = dict(checks.get(stage) or {})
@@ -640,6 +648,7 @@ def _write_runs(
     results: Dict[int, tuple],
     now: datetime,
     excepted: Optional[Dict[int, tuple]] = None,
+    sampled: Optional[Dict[int, Dict[str, Any]]] = None,
 ) -> int:
     """Merge each run into its version's checks; record changed Runs results."""
     from core.detections.inventory.sync import _change, _last_results, _record_changes
@@ -672,6 +681,7 @@ def _write_runs(
                 results[rid],
                 _window(copy, now)[1],
                 (excepted or {}).get(rid),
+                (sampled or {}).get(rid),
             )
             runs = new["runs"]
             before = last.get((rid, "runs"))
@@ -2134,10 +2144,14 @@ def _except(
 
 
 def _finish(
-    copies: List[Copy], results: Dict[int, tuple], now: datetime, report: RolloutReport
+    copies: List[Copy],
+    results: Dict[int, tuple],
+    now: datetime,
+    report: RolloutReport,
+    sampled: Optional[Dict[int, Dict[str, Any]]] = None,
 ) -> None:
     results, excepted = _except(results)
-    report.written += _write_runs(copies, results, now, excepted)
+    report.written += _write_runs(copies, results, now, excepted, sampled)
     for copy in copies:
         _, docs, error = results.get(copy.rule_id, (None, [], "not run"))
         if copy.stage == "live" and not error:
@@ -2227,18 +2241,120 @@ def _write_sees(copies: List[Tuple[Copy, str, str]], now: datetime) -> int:
     return sees.write_check("sees", results, source=readers.OVERLAY_SOURCE)
 
 
+async def _sandboxed(
+    service: Any,
+    config: Mapping[str, str],
+    counted: List[Copy],
+    loaded: List[Copy],
+    per_hour: int,
+    now: datetime,
+    report: RolloutReport,
+) -> Tuple[str, Dict[int, tuple], Dict[int, str], Optional[Dict[int, Dict[str, Any]]]]:
+    """(state, results, why each copy has no count, each one's sample) for the copies the
+    Wazuh sandbox counts: load it, check each copy's parents are in it, replay a
+    sample of the archive. State is "wait" until a run is due, "deferred" when
+    the budget is spent, else "ran"."""
+    windows = {c.rule_id: _window(c, now) for c in counted}
+    if not wazuh_sandbox.due(
+        (*windows[c.rule_id], not (c.checks.get("runs") or {}).get("last_success"))
+        for c in counted
+    ):
+        return "wait", {}, {}, None
+    # Vigil's own manager on the compose network, with the image's own certificate.
+    box = wazuh_sandbox.Sandbox(
+        config["url"], config["username"], config["password"], verify_ssl=False
+    )
+    whys: Dict[int, str] = {}
+    try:
+        # Never write to the customer's manager, however the URL is set.
+        wrong = await box.guard(wazuh_sandbox.customer())
+        if wrong:
+            why = f"{wazuh_shadow.CANT}{wrong}"
+            return "ran", {}, {c.rule_id: why for c in counted}, None
+        others = [c for c in loaded if c not in counted]
+        done = await box.load(
+            counted, wazuh_sandbox.read_repos(wazuh_sandbox.repo_roots(), others)
+        )
+        report.skipped += [f"wazuh sandbox: not loaded: {s}" for s in done.skipped]
+        for c in counted:
+            if c.key in done.refused:
+                whys[c.rule_id] = f"{wazuh_sandbox.REFUSED}{done.refused[c.key]}"
+                continue
+            gone = await box.missing(wazuh_sandbox.parents(c.toml))
+            if gone:
+                whys[c.rule_id] = (
+                    f"{wazuh_sandbox.NOT_IN_REPO}{', '.join(gone)} is in neither "
+                    "Wazuh's stock ruleset nor the customer's repositories"
+                )
+        live = [c for c in counted if c.rule_id not in whys]
+        if not live:
+            return "ran", {}, whys, None
+        if not search_budget.spend(INTEGRATION, per_hour, "overlay:wazuh-sandbox"):
+            report.deferred += len(live)
+            return "deferred", {}, whys, None
+        report.searched += 1
+        start = min(windows[c.rule_id][0] for c in live)
+        end = max(windows[c.rule_id][1] for c in live)
+        total, docs = await service.dsl_search(
+            wazuh_shadow.ARCHIVES,
+            wazuh_sandbox.sample_query(int(end.timestamp()) // 3600),
+            {"@timestamp": {"gte": start.isoformat(), "lt": end.isoformat()}},
+            wazuh_sandbox.SAMPLE_EVENTS,
+        )
+        # In time order, as the manager saw them: one session carries state.
+        docs = sorted(
+            docs, key=lambda d: str((d.get("_source") or {}).get("@timestamp"))
+        )
+        events = [(d, e) for d in docs if (e := wazuh_sandbox.event(d))]
+        outputs = await box.replay([e for _, e in events])
+        tally = wazuh_sandbox.count(
+            [d for d, _ in events],
+            outputs,
+            {c.key: windows[c.rule_id][0] for c in live},
+            total,
+        )
+        # The shadow count is the estimate across the window, not the sample's.
+        results = {
+            c.rule_id: (tally.estimate(c.key), tally.hits.get(c.key, []), None)
+            for c in live
+        }
+        return "ran", results, whys, {c.rule_id: tally.sampled(c.key) for c in live}
+    except WazuhError as exc:
+        why = f"{wazuh_sandbox.FAILED}{exc}"
+        return "ran", {}, {**{c.rule_id: why for c in counted}, **whys}, None
+    finally:
+        await box.close()
+
+
 def _run_wazuh_copies(copies: List[Copy], now: datetime, report: RolloutReport) -> None:
     """Shadow runs of Wazuh copies over the archive, on elastic-siem's indexer and
-    budget. A live copy is the manager's to run. A copy whose rule cannot be
-    translated, or whose archive is off, is not validated: its runs read unknown
-    with the reason and its Sees is unknown, so it never promotes."""
+    budget. A live copy is the manager's to run. A copy the archive query can't
+    reproduce is counted by Vigil's Wazuh sandbox on a sample of the archive
+    (``wazuh_sandbox``) when one is configured. A copy neither can count, or
+    whose archive is off, is not validated: its runs read unknown with the
+    reason and its Sees is unknown, so it never promotes."""
     shadow = [c for c in copies if c.stage == "shadow"]
     plan = {c.rule_id: wazuh_shadow.translate(c.toml) for c in shadow}
-    blocked = [(c, plan[c.rule_id].why) for c in shadow if plan[c.rule_id].why]
+    sandbox = wazuh_sandbox.configured()
+    blocked: List[Tuple[Copy, str]] = []
+    counted: List[Copy] = []
+    for c in shadow:
+        why = plan[c.rule_id].why
+        if not why:
+            continue
+        hard = wazuh_sandbox.refusal(c.toml)
+        if hard:
+            blocked.append((c, hard))
+        elif sandbox is None:
+            blocked.append((c, f"{why}; {wazuh_sandbox.NO_SANDBOX}"))
+        elif not sandbox["password"]:
+            blocked.append((c, f"{why}; {wazuh_sandbox.NO_PASSWORD}"))
+        else:
+            counted.append(c)
     ready = [c for c in shadow if not plan[c.rule_id].why]
 
     def unvalidated(why: str) -> None:
-        every = blocked + [(c, why) for c in ready]
+        every = blocked + [(c, why) for c in ready + counted]
         report.written += _write_unrunnable(every, now)
         report.written += _write_sees([(c, "unknown", w) for c, w in every], now)
 
@@ -2251,25 +2367,34 @@ def _run_wazuh_copies(copies: List[Copy], now: datetime, report: RolloutReport) 
     per_hour = sees.DEFAULT_PER_HOUR if per_hour is None else max(int(per_hour), 0)
     service = kibana.service_of(config)
 
-    async def _go() -> Tuple[str, Dict[int, tuple]]:
+    async def _go() -> Tuple[str, Dict[int, tuple], tuple]:
+        boxed: tuple = ("wait", {}, {}, None)
         try:
-            if not ready:
-                return "ran", {}
+            if not ready and not counted:
+                return "ran", {}, boxed
             on = await _archive_events(service, per_hour, report)
             if on is None:
-                report.deferred += len(ready)
-                return "deferred", {}
+                report.deferred += len(ready) + len(counted)
+                return "deferred", {}, boxed
             if not on:
-                return "off", {}
-            ran = await _run_all(
-                INTEGRATION, service, _wazuh_query, ready, per_hour, now, report
+                return "off", {}, boxed
+            ran = (
+                await _run_all(
+                    INTEGRATION, service, _wazuh_query, ready, per_hour, now, report
+                )
+                if ready
+                else {}
             )
-            return "ran", ran
+            if counted and sandbox is not None:
+                boxed = await _sandboxed(
+                    service, sandbox, counted, copies, per_hour, now, report
+                )
+            return "ran", ran, boxed
         finally:
             await service.close()
 
     try:
-        state, results = asyncio.run(_go())
+        state, results, boxed = asyncio.run(_go())
     except Exception as exc:  # noqa: BLE001 -- the copies stay as they were
         report.error = report.error or f"wazuh: {type(exc).__name__}: {exc}"
         return
@@ -2278,11 +2403,22 @@ def _run_wazuh_copies(copies: List[Copy], now: datetime, report: RolloutReport) 
     if state == "off":
         unvalidated(wazuh_shadow.ARCHIVES_OFF)
         return
+    _, box_results, box_whys, sampled = boxed
+    blocked += [(c, box_whys[c.rule_id]) for c in counted if c.rule_id in box_whys]
     report.written += _write_unrunnable(blocked, now)
     ok = f"{wazuh_shadow.ARCHIVES} has events in {sees.DAYS}d"
     report.written += _write_sees(
         [(c, "unknown", w) for c, w in blocked]
-        + [(c, "pass", ok) for c in ready if c.rule_id in results],
+        + [(c, "pass", ok) for c in ready if c.rule_id in results]
+        + [(c, "pass", ok) for c in counted if c.rule_id in box_results],
         now,
     )
     _finish(ready, results, now, report)
+    if box_results:
+        _finish(
+            [c for c in counted if c.rule_id in box_results],
+            box_results,
+            now,
+            report,
+            sampled,
+        )
