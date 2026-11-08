@@ -390,10 +390,16 @@ def deploy_overlay_only(
     """Open the deploy pull request now, as the rollout sweep would, into the
     deploy target for each live rule only Vigil runs (these, or all); a failed
     one is tried again. Says what each came to and why others were skipped."""
+    from core.auth.permissions import username_has_permission
     from core.detections.inventory import rollout
 
     # Each outcome's trail row is written with its checks['deploy'], as this user.
-    return rollout.deploy_overlay_only(body.rule_ids, actor=user.username)
+    # Under Assist, someone who may approve is the approval; others are asked for.
+    return rollout.deploy_overlay_only(
+        body.rule_ids,
+        actor=user.username,
+        approver=username_has_permission(user.username, "ai_decisions.approve"),
+    )
 
 
 class AddExceptionRequest(BaseModel):

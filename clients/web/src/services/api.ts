@@ -337,6 +337,10 @@ export const casesApi = {
   getSLA: (id: string) =>
     api.get<Schema<'CaseSLAStatusSchema'>>(`/cases/${id}/sla`),
 
+  /** The proof card of each rule version that raised the case's alerts, worst first. */
+  getRules: (id: string) =>
+    api.get<Schema<'CaseRulesResponse'>>(`/cases/${id}/rules`),
+
   closeCase: (id: string, data: Schema<'ClosureInfo'>) =>
     api.post<Schema<'CaseCloseResponse'>>(`/cases/${id}/close`, data),
 
@@ -890,11 +894,35 @@ export interface HealthEntry {
   name: string
   tool: string
   status: string
-  /** A check key, or 'revert' for Vigil's own live -> shadow move (its change_id is negative). */
+  /** A check key; or Vigil's own move, its change_id negative: 'revert' (live -> shadow) or 'off' (turned off from live or shadow). */
   check: string
   reason: string | null
   since: string
   read: boolean
+}
+
+/** Each rollout metric carries where its numbers come from and what they can't say. */
+interface MetricNotes { source: string; unknown: string[] }
+
+/** GET /detection-rules/metrics: the rollout's success metrics from stored data. */
+export interface DetectionMetrics {
+  generated_at: string
+  gap_to_shadow: MetricNotes & { gaps: number; closed: number; median_hours: number | null; within_target: number; target_hours: number }
+  shadow_to_live: MetricNotes & { promoted: number; promoted_by_vigil: number; median_hours: number | null; in_shadow: number; exit_criteria: string }
+  live_health: MetricNotes & { live_rules: number; passing: number; share: number | null; target: number; blind_spots: number; rules_starved: number }
+  first_week: MetricNotes & {
+    started_at: string | null
+    ends_at: string | null
+    week_over: boolean
+    silent: number
+    no_data: number
+    never_firing: number
+    first_found_day: Partial<Record<'silent' | 'no_data' | 'never_firing', number>>
+  }
+  search_budget: MetricNotes & {
+    integrations: Record<string, { searches_last_hour: number; max_searches_per_hour: number }>
+    throttle_errors: number
+  }
 }
 
 export interface HealthInbox {
@@ -961,6 +989,10 @@ export const detectionRulesApi = {
 
   /** The open rule-health flags, newest first, read or unread for the signed-in person. */
   healthInbox: () => api.get<HealthInbox>('/detection-rules/health-inbox'),
+
+  /** The rollout's success metrics, each with its source and what it can't say. It
+   * reads 30 days of check changes, so it gets longer than the default timeout. */
+  metrics: () => api.get<DetectionMetrics>('/detection-rules/metrics'),
 
   /** Marks these entries read for the signed-in person, or every open one; returns the inbox. */
   markHealthRead: (changeIds: number[] | 'all') =>
@@ -1202,7 +1234,13 @@ export const workflowApi = {
 export type Ceiling = Schema<'CeilingResponse'>
 export type ToolClass = Schema<'ToolClassEntry'>
 export type EffectClass = NonNullable<ToolClass['effect_class']>
+// The rule-rollout limits (#4058): promotion cap, days in shadow, hits a day. The SIEM
+// Quiet/Noisy/Silent thresholds ride along read only; they are edited on the integration.
+export type RolloutLimits = Schema<'RolloutLimitsResponse'>
 export const autonomyApi = {
+  rolloutLimits: () => api.get<RolloutLimits>('/autonomy/rollout-limits'),
+  updateRolloutLimits: (body: Schema<'RolloutLimitsBody'>) =>
+    api.put<RolloutLimits>('/autonomy/rollout-limits', body),
   get: () => api.get<Ceiling>('/autonomy'),
   update: (body: Schema<'CeilingBody'>) => api.put<Ceiling>('/autonomy', body),
   resume: () => api.post<Ceiling>('/autonomy/resume'),

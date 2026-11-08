@@ -227,6 +227,7 @@ def overlay(monkeypatch):
     monkeypatch.setattr(rollout, "handed_off", lambda ids: set())
     monkeypatch.setattr(rollout, "_deploy_targets", lambda: {"wazuh": TARGET})
     monkeypatch.setattr(rollout, "_stopped", lambda: False)
+    monkeypatch.setattr(rollout, "_asks_first", lambda: False)  # on Act
     return copies
 
 
