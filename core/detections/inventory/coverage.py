@@ -33,28 +33,13 @@ from core.detections.inventory import catalog
 from core.storage.connection import get_db_manager
 from core.storage.models import DetectionRule, DetectionRuleVersion
 from core.storage.models.finding import FindingMitrePrediction
-from core.threat_intel.mitre_lookup import resolve_technique
+from core.threat_intel.mitre_lookup import attack_tactics, resolve_technique
 
 SIEMS = ("elastic", "splunk", "wazuh")
 UNMAPPED_TACTIC = "Unmapped"
-TACTIC_ORDER = (
-    "Reconnaissance",
-    "Resource Development",
-    "Initial Access",
-    "Execution",
-    "Persistence",
-    "Privilege Escalation",
-    "Defense Evasion",
-    "Credential Access",
-    "Discovery",
-    "Lateral Movement",
-    "Collection",
-    "Command and Control",
-    "Exfiltration",
-    "Impact",
-    UNMAPPED_TACTIC,
-)
-_TACTIC_NAMES = {name.lower(): name for name in TACTIC_ORDER}
+# Defense Evasion, which ATT&CK 18 split into Stealth and Defense Impairment, is
+# kept as a column for a rule that still declares it on an id ATT&CK lacks.
+LEGACY_TACTICS = {"Stealth": "Defense Evasion"}
 TECHNIQUE_ID = re.compile(r"^T\d{4}(\.\d{3})?$")
 STATES = ("proven", "unproven", "no_rule")
 
@@ -93,12 +78,31 @@ def _seen(session: Any) -> Dict[str, int]:
     return seen
 
 
-def _tactic_of(technique: str, declared: Dict[str, str]) -> Tuple[str, str]:
+def tactic_order() -> List[str]:
+    """The tactic columns: the pinned ATT&CK release's own, in matrix order, so a
+    tactic ATT&CK adds can't fall into Unmapped, with Defense Evasion before
+    Stealth; then Unmapped."""
+    order: List[str] = []
+    for tactic in attack_tactics():
+        if tactic in LEGACY_TACTICS:
+            order.append(LEGACY_TACTICS[tactic])
+        order.append(tactic)
+    return [*dict.fromkeys(order), UNMAPPED_TACTIC]
+
+
+def _label(tactic: str) -> str:
+    """defense_evasion, Defense-Evasion, defense evasion -> defense evasion."""
+    return re.sub(r"[\s_-]+", " ", tactic.strip().lower())
+
+
+def _tactic_of(
+    technique: str, declared: Dict[str, str], columns: Dict[str, str]
+) -> Tuple[str, str]:
     """(name, tactic column): ATT&CK's own, else the one tactic a rule declares."""
     _, name, tactic = resolve_technique(technique)
     if tactic == "Unknown":
         tactic = declared.get(technique, UNMAPPED_TACTIC)
-    return name, _TACTIC_NAMES.get(tactic.lower(), UNMAPPED_TACTIC)
+    return name, columns.get(_label(tactic), UNMAPPED_TACTIC)
 
 
 def _siem_of(source: str) -> Optional[str]:
@@ -140,12 +144,14 @@ def coverage() -> Dict[str, Any]:
                 tally["proven"] += 1
             if "fail" in (copy.runs, copy.sees):
                 tally["failing"] += 1
+    order = tactic_order()
+    columns = {_label(tactic): tactic for tactic in order}
     rows = []
     for technique in sorted({*rules, *disabled, *seen}):
         split = siems.get(technique, {})
         proven = sum(t["proven"] for t in split.values())
         state = "proven" if proven else "unproven" if technique in rules else "no_rule"
-        name, tactic = _tactic_of(technique, declared)
+        name, tactic = _tactic_of(technique, declared, columns)
         rows.append(
             {
                 "technique": technique,
@@ -169,7 +175,7 @@ def coverage() -> Dict[str, Any]:
                 },
             }
         )
-    tactics = [t for t in TACTIC_ORDER if any(row["tactic"] == t for row in rows)]
+    tactics = [t for t in order if any(row["tactic"] == t for row in rows)]
     return {
         "techniques": rows,
         "tactics": tactics,

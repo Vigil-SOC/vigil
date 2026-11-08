@@ -112,6 +112,42 @@ def test_techniques_sit_in_attack_tactic_columns(inventory):
     assert out["tactics"] == ["Persistence", "Credential Access", "Unmapped"]
 
 
+def test_every_attack_technique_has_a_tactic_column():
+    # ATT&CK 18 split Defense Evasion into Stealth and Defense Impairment: the
+    # columns come from the bundled release, so none of its techniques is Unmapped.
+    from core.threat_intel.mitre_lookup import attack_tactics, attack_techniques
+
+    order = coverage.tactic_order()
+    assert [t for t in order if t in attack_tactics()] == attack_tactics()
+    columns = {coverage._label(t): t for t in order}
+    unmapped = [
+        technique
+        for technique, entry in attack_techniques().items()
+        if entry["tactics"]
+        and coverage._tactic_of(technique, {}, columns)[1] == coverage.UNMAPPED_TACTIC
+    ]
+    assert unmapped == []
+
+
+def test_the_split_defense_evasion_tactics_are_columns(inventory):
+    inventory["copies"] = [
+        _copy(1, "splunk", ["T1027"], "pass", "pass"),  # Obfuscated Files
+        _copy(2, "splunk", ["T1685"], "pass", "pass"),  # Disable or Modify Tools
+        _copy(3, "splunk", ["T9997"], tactics=["defense_evasion"]),  # not in ATT&CK
+        _copy(4, "splunk", ["T1003"]),
+    ]
+    out = coverage.coverage()
+    assert _row(out, "T1027")["tactic"] == "Stealth"
+    assert _row(out, "T1685")["tactic"] == "Defense Impairment"
+    assert _row(out, "T9997")["tactic"] == "Defense Evasion"
+    assert out["tactics"] == [
+        "Defense Evasion",
+        "Stealth",
+        "Defense Impairment",
+        "Credential Access",
+    ]
+
+
 def test_a_disabled_rule_is_counted_but_is_no_coverage(inventory):
     inventory["copies"] = [
         _copy(1, "splunk", ["T1003"], "pass", "pass", status="disabled"),
