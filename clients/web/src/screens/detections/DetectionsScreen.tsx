@@ -62,6 +62,11 @@ interface RuleRow {
   checks_run: number
   /** Its active exceptions, and the hits they silenced in the days the runner keeps. */
   exceptions?: number
+  /** Its overlay copy's rollout stage (null without one), and whole days since a shadow stage began. */
+  stage?: 'shadow' | 'live' | 'off' | null
+  /** When its current stage row was written (ISO), null without one. */
+  stage_since?: string | null
+  days_in_shadow?: number | null
   silenced?: number
 }
 

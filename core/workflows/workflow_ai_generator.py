@@ -2,17 +2,16 @@
 AI-assisted workflow generator.
 
 Takes a natural-language description of a security scenario and produces a
-draft workflow definition (phases, agents, tools) by prompting the assigned
-model with
-context about the available agents, MCP tools, and existing workflow patterns.
+draft workflow definition (phases and the agent each runs) by prompting the
+assigned model with context about the available agents and existing workflow
+patterns. A phase's tools come with its agent, so a draft names none.
 """
 
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
-from core.integrations.mcp.registry import MCPRegistry, safe_tool_names
 from core.workflows.workflows_service import WorkflowsService
 
 logger = logging.getLogger(__name__)
@@ -21,13 +20,8 @@ logger = logging.getLogger(__name__)
 class WorkflowAIGenerator:
     """Generates draft workflow definitions from natural-language descriptions."""
 
-    def __init__(
-        self,
-        workflows: Optional[WorkflowsService] = None,
-        mcp_registry: Optional[MCPRegistry] = None,
-    ):
+    def __init__(self, workflows: Optional[WorkflowsService] = None):
         self._workflows = workflows
-        self._mcp_registry = mcp_registry
 
     async def generate(self, description: str) -> Dict[str, Any]:
         """
@@ -96,13 +90,12 @@ class WorkflowAIGenerator:
         return (
             "You are a SOC workflow designer for the Vigil SOC platform. "
             "Given a plain-English scenario, design a multi-phase agent workflow "
-            "that uses only the agents and tools listed in the user message. "
+            "that uses only the agents listed in the user message. "
             "Return STRICT JSON only \u2014 no prose, no markdown, no code fences."
         )
 
     def _build_user_prompt(self, description: str) -> str:
         agents_block = self._agents_context()
-        tools_block = self._tools_context()
         exemplars_block = self._exemplars_context()
 
         schema = {
@@ -117,7 +110,6 @@ class WorkflowAIGenerator:
                     "agent_id": "triage",
                     "name": "Phase name",
                     "purpose": "What this phase accomplishes",
-                    "tools": ["tool_name_1", "tool_name_2"],
                     "steps": ["Step 1", "Step 2"],
                     "expected_output": "Description of phase output",
                     "approval_required": False,
@@ -128,12 +120,10 @@ class WorkflowAIGenerator:
         return (
             f"## Scenario\n{description.strip()}\n\n"
             f"## Available Agents\n{agents_block}\n\n"
-            f"## Available Tools\n{tools_block}\n\n"
             f"## Existing Workflow Patterns (for reference)\n{exemplars_block}\n\n"
             "## Requirements\n"
             "- Use ONLY the agent_ids listed above.\n"
             "- Prefer 3-5 phases unless the scenario is trivial.\n"
-            "- Each phase's `tools` must be chosen from the available tool list.\n"
             "- `phase_id` values must be unique (e.g., phase-1, phase-2).\n"
             "- `order` must start at 1 and increase by 1.\n"
             "- `approval_required` should be true for any containment "
@@ -162,31 +152,10 @@ class WorkflowAIGenerator:
         for agent_id, profile in agents.items():
             tools = ", ".join(profile.recommended_tools[:6]) or "n/a"
             lines.append(
-                f"- `{agent_id}` \u2014 {profile.name}: {profile.specialization}. "
+                f"- `{agent_id}` \u2014 {profile.name}: {profile.description}. "
                 f"Typical tools: {tools}."
             )
         return "\n".join(lines)
-
-    def _tools_context(self) -> str:
-        tool_names = self._get_mcp_tool_names()
-        if not tool_names:
-            return (
-                "(MCP registry unavailable; use tool names from the existing "
-                "workflow patterns)"
-            )
-        return ", ".join(sorted(tool_names)[:80])
-
-    def _get_mcp_tool_names(self) -> List[str]:
-        # Refresh from the running client each turn so a server connected since
-        # startup is usable without a restart. See registry.refresh_from_client.
-        from core.integrations.mcp.registry import refresh_from_client
-
-        registry = self._mcp_registry or MCPRegistry()
-        try:
-            refresh_from_client(registry)
-        except Exception as e:
-            logger.debug(f"MCP refresh failed: {e}")
-        return safe_tool_names(registry)
 
     def _exemplars_context(self) -> str:
         try:
@@ -232,7 +201,8 @@ class WorkflowAIGenerator:
         for idx, phase in enumerate(phases, start=1):
             phase.setdefault("phase_id", f"phase-{idx}")
             phase["order"] = idx
-            phase.setdefault("tools", [])
+            # An agent brings its own tools; a list the model adds anyway is not kept.
+            phase.pop("tools", None)
             phase.setdefault("steps", [])
             phase.setdefault("approval_required", False)
 

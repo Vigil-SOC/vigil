@@ -21,9 +21,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from core.agents.builtins import blank_model
 from core.llm.providers.discovery import is_embedding_model_id
 from core.llm.router.router import get_default_provider_spec
+from core.llm.target import blank_model
 
 logger = logging.getLogger(__name__)
 

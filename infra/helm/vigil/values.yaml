@@ -900,9 +900,10 @@ config:
   # skills/ folder (created on the first save), or to an existing directory.
   VIGIL_SKILLS_PATH: ""
 
-  # OTEL — disabled by default; turn on when an OTEL collector is reachable.
-  VIGIL_OTEL_ENABLED: "false"
-  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+  # OTEL — empty exports nothing; set it to a reachable collector to turn on
+  # traces and the OTLP metric push. otelCollector.enabled sets it for you.
+  # /metrics serves Vigil's instruments either way. Spans: docs/telemetry.md.
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""
   OTEL_TRACES_SAMPLER: "parentbased_always_on"
   # Agent-layer spans carry prompts, responses and tool I/O only when this is on.
   # They hold customer logs and IOCs, so leave it off outside development.
@@ -952,8 +953,7 @@ extraConfig: {}
 #   helm dependency update infra/helm/vigil
 #
 # When enabled, the chart auto-rewrites OTEL_EXPORTER_OTLP_ENDPOINT in the
-# app ConfigMap to the in-cluster Collector service. You still need to flip
-# config.VIGIL_OTEL_ENABLED=true to actually emit telemetry.
+# app ConfigMap to the in-cluster Collector service, which turns export on.
 otelCollector:
   enabled: false
   mode: deployment
@@ -994,8 +994,8 @@ otelCollector:
 observability:
   # Prometheus Operator ServiceMonitor — requires the monitoring.coreos.com
   # CRD to be installed on the cluster (Prometheus Operator / kube-prometheus-stack).
-  # Daemon must also have config.VIGIL_OTEL_ENABLED=true to actually serve
-  # metrics; otherwise scrapes will fail with connection refused.
+  # Daemon must also have DAEMON_METRICS_ENABLED on to serve :9090; otherwise
+  # scrapes will fail with connection refused.
   serviceMonitor:
     enabled: false
     # Namespace to deploy the ServiceMonitor into. Empty = Release namespace.

@@ -2,8 +2,8 @@
 {{- /*
 Prometheus Operator ServiceMonitor for the daemon's /metrics endpoint.
 
-The metrics port only serves traffic when config.VIGIL_OTEL_ENABLED=true.
-If OTEL is off, Prometheus will get connection-refused — enable OTEL or
+The metrics port only serves traffic when DAEMON_METRICS_ENABLED is on.
+If it is off, Prometheus will get connection-refused — enable it or
 disable this ServiceMonitor.
 
 The CRD lives in monitoring.coreos.com/v1; clusters without the Prometheus

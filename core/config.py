@@ -272,10 +272,10 @@ class Settings(BaseSettings):
 
     # Observability
     sentry_dsn: str = ""
-    vigil_otel_enabled: bool = False
     # Process log output: "json" (one object per line) or plain "text".
     vigil_log_format: Literal["json", "text"] = "json"
-    otel_exporter_otlp_endpoint: str = "http://localhost:4317"
+    # Empty exports nothing; setting it turns on traces and OTLP metric export.
+    otel_exporter_otlp_endpoint: str = ""
 
     # Daemon
     daemon_log_level: str = "INFO"

@@ -11,7 +11,7 @@ import {
 import { prettyHandle } from '../../data/appData'
 import type { Workflow, AgentTemplate, Skill } from '../../data/appData'
 
-interface AgentGrant {
+export interface AgentGrant {
   id: string
   recommended_tools: string[]
 }
@@ -156,9 +156,7 @@ export function useSkills() {
 }
 
 /** The line under a model name: where the model came from. */
-export function modelSource(a: Pick<AgentTemplate, 'model' | 'modelSource' | 'category'>): string | null {
+export function modelSource(a: Pick<AgentTemplate, 'model' | 'modelSource'>): string | null {
   if (!a.model) return null
-  if (a.modelSource === 'agent') return 'Set for this agent'
-  if (a.modelSource === 'assignment' && a.category) return `${a.category.charAt(0).toUpperCase()}${a.category.slice(1).replace(/_/g, ' ')} default`
-  return 'Default'
+  return a.modelSource === 'assignment' ? 'Investigation default' : 'Default'
 }

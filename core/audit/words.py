@@ -172,6 +172,27 @@ def _proof_key(p: Mapping[str, Any]) -> str:
     return "Made the proof card signing key" + made.get(p.get("made_by"), "")
 
 
+def _staged(p: Mapping[str, Any]) -> str:
+    rule = f"rule {p['rule_id']}" if p.get("rule_id") is not None else "a rule"
+    version = f" v{p['version']}" if p.get("version") is not None else ""
+    to = _word(p.get("to_stage")) or "a new stage"
+    if p.get("from_stage"):
+        return f"Moved {rule}{version} from {_word(p['from_stage'])} to {to}"
+    return f"Put {rule}{version} in {to}"
+
+
+def _ingested(p: Mapping[str, Any]) -> str:
+    collapsed = p.get("collapsed")
+    total = collapsed.get("count") if isinstance(collapsed, Mapping) else None
+    n = total if total is not None else p.get("count")
+    found = f"{n} finding{'' if n == 1 else 's'}" if isinstance(n, int) else "findings"
+    source = f" from {p['data_source']}" if p.get("data_source") else ""
+    return f"Ingested {found}{source}" + (" within a minute" if total else "")
+
+
+# Actions whose sentence already says the window's count.
+_COUNTED = frozenset({"findings.ingested"})
+
 _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     # Sign-in, account and credential (core/auth/trail_events.py and its callers)
     "auth.sign_in": "Signed in",
@@ -205,6 +226,8 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "autonomy.tool_classified": lambda p: f"Classed {p.get('tool') or 'a tool'} as "
     f"{_word(p.get('class_after')) or 'unclassified'}",
     "tools.classified": "Classed outside tools on upgrade",
+    "detections.rule_staged": _staged,
+    "findings.ingested": _ingested,
     "findings.technique_confidence_cleared": lambda p: "Cleared technique confidence"
     + (f" on {p['rows_cleared']} findings" if p.get("rows_cleared") else ""),
     # Config (core/storage/config_service.py)
@@ -251,6 +274,8 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "case.sla.resume": "Resumed the SLA",
     "approval.approve": _approve,
     "approval.reject": "Rejected an action",
+    "approval.request": lambda p: "Asked for approval"
+    + (f" of {_word(p['action_type'])}" if p.get("action_type") else ""),
     trail.ACTION_FINDING_NOISE_MARK: _noise_mark,
     trail.ACTION_FINDING_NOISE_CLEAR: _noise_clear,
     # Analyst notes on an entity (core/memory/notes.py)
@@ -267,6 +292,7 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "agent.run.start": _run_start,
     "agent.tool.intent": _tool("Asked to call"),
     "agent.tool.outcome": _tool("Called"),
+    "agent.run.resume": "Resumed a run after a decision",
     "agent.conclusion": "Concluded a run",
     "agent.outcome": lambda p: "Ended a run"
     + (f": {_word(p['outcome'])}" if p.get("outcome") else ""),
@@ -282,8 +308,16 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
         else "Set the retention period"
     ),
     trail.ACTION_ERASURE: "Erased a principal's details",
-    "audit.feed.failed": "The audit feed failed",
-    "audit.feed.recovered": "The audit feed recovered",
+    "audit.feed.failed": lambda p: (
+        "The audit webhook failed"
+        if p.get("destination") == "webhook"
+        else "The audit feed failed"
+    ),
+    "audit.feed.recovered": lambda p: (
+        "The audit webhook recovered"
+        if p.get("destination") == "webhook"
+        else "The audit feed recovered"
+    ),
     "upgrade.run": _upgrade,
 }
 
@@ -299,6 +333,10 @@ def sentence(payload: Any) -> str:
         text = None
     text = text or action or "—"
     collapsed = p.get("collapsed")
-    if isinstance(collapsed, Mapping) and collapsed.get("count"):
+    if (
+        isinstance(collapsed, Mapping)
+        and collapsed.get("count")
+        and action not in _COUNTED
+    ):
         text += f" ({collapsed['count']} times)"
     return text

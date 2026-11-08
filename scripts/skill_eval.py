@@ -2,8 +2,8 @@
 """Live-model check a skill's author runs on the PR that adds or changes it.
 
 Paste the printed summary into that PR. There is no scheduled run. For each
-skill the system prompt is ``render_base_prompt`` for a role, a note that no
-tool is callable, and the SKILL.md body inlined; each case's ``input`` is sent
+skill the system prompt is a built-in agent's manifest ``system`` rendered with
+no grants (``--agent``), a note that no tool is callable, and the SKILL.md body inlined; each case's ``input`` is sent
 as one user turn through ``LLMRouter.dispatch`` (Bifrost, any provider) and
 graded by substring containment against ``expect``. Exit is 1 below 100
 percent, 2 for an unknown ``--skill``, and 3 when the provider names a key
@@ -28,9 +28,10 @@ from typing import Dict, Optional, Sequence, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from core.agents.builtins import builtin_manifests  # noqa: E402
 from core.config import get_settings  # noqa: E402
 from core.llm.router.router import LLMRouter, ProviderSpec  # noqa: E402
-from core.skills.skill_eval import run_cases  # noqa: E402
+from core.skills.skill_eval import DEFAULT_AGENT, run_cases  # noqa: E402
 from core.skills.skill_library import LIBRARY_ROOT, Skill, load_skills  # noqa: E402
 
 # The env var a provider's key lives in; None for a keyless provider. Anything
@@ -47,7 +48,7 @@ async def run_skill(
     provider: ProviderSpec,
     skill: Skill,
     *,
-    role: str,
+    agent_id: str,
     root: Path,
     max_tokens: int,
 ) -> Tuple[int, int]:
@@ -58,7 +59,7 @@ async def run_skill(
         router,
         provider,
         skill,
-        role=role,
+        agent_id=agent_id,
         root=root,
         max_tokens=max_tokens,
         sequential=True,
@@ -79,7 +80,10 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--provider", required=True, help="Bifrost provider type")
     parser.add_argument("--model", help="model id (default: Settings.default_model)")
     parser.add_argument(
-        "--role", default="analyst", help="role rendered into the base prompt"
+        "--agent",
+        default=DEFAULT_AGENT,
+        choices=list(builtin_manifests()),
+        help="built-in agent whose prompt the skill runs under",
     )
     parser.add_argument(
         "--root", type=Path, default=LIBRARY_ROOT, help="skills library root"
@@ -125,7 +129,7 @@ async def main(argv: Sequence[str]) -> int:
             router,
             provider,
             skill,
-            role=args.role,
+            agent_id=args.agent,
             root=args.root,
             max_tokens=args.max_tokens,
         )

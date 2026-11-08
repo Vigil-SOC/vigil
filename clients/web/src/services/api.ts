@@ -490,69 +490,28 @@ export const agentsApi = {
   setEnabled: (agent_id: string, enabled: boolean) =>
     api.put(`/agents/agents/${agent_id}/enabled`, { enabled }),
 
-  listCustom: () => api.get('/agents/custom'),
-  getCustom: (agent_id: string) => api.get(`/agents/custom/${agent_id}`),
-  createCustom: (data: CustomAgentPayload) => api.post('/agents/custom', data),
-  updateCustom: (agent_id: string, data: Partial<CustomAgentPayload>) =>
-    api.patch(`/agents/custom/${agent_id}`, data),
-  deleteCustom: (agent_id: string) => api.delete(`/agents/custom/${agent_id}`),
   getAvailableTools: () => api.get('/agents/custom/_meta/tools'),
-  // any agent, built-in or custom, with its prompt, model and fallback
+  // any agent, built-in or custom, with its prompt
   getAgent: (agent_id: string) => api.get(`/agents/agents/${agent_id}`),
-  // built-ins are never mutated; a fork is a new editable copy, with these fields replacing the source's
-  forkAgent: (source_agent_id: string, overrides: Partial<CustomAgentPayload> = {}) =>
-    api.post(`/agents/${source_agent_id}/fork`, overrides),
+  // a built-in is never mutated; a fork stores it as a manifest under custom-<id>
+  forkAgent: (source_agent_id: string) => api.post<AgentManifest>(`/agents/${source_agent_id}/fork`),
+  // a draft manifest, checked as a PUT would be; a refused draft is a 422 with the reason
+  generateManifest: (data: { description: string; current_draft?: string | null; feedback?: string }) =>
+    api.post<{ manifest: string }>('/agents/custom/generate', data, { timeout: LLM_TIMEOUT }),
 
-  generateCustom: (data: {
-    description: string
-    current_draft?: GeneratedAgentDraft | null
-    feedback?: string
-  }) =>
-    api.post<{ draft: GeneratedAgentDraft }>('/agents/custom/generate', data, {
-      timeout: LLM_TIMEOUT,
-    }),
+  // Operator agents are manifests (/api/v1/agents): read, PUT whole, delete.
+  listManifests: () => api.get<Schema<'AgentManifestListResponse'>>('/v1/agents'),
+  getManifest: (agent_id: string) => api.get<AgentManifest>(`/v1/agents/${agent_id}`),
+  putManifest: (agent_id: string, manifest: string) => api.put<AgentManifest>(`/v1/agents/${agent_id}`, { manifest }),
+  deleteManifest: (agent_id: string) => api.delete(`/v1/agents/${agent_id}`),
 }
 
-export interface GeneratedAgentDraft {
-  name: string
-  description: string
-  specialization: string
-  icon: string
-  color: string
-  role: string
-  extra_principles: string
-  methodology: string
-  recommended_tools: string[]
-  max_tokens: number
-  enable_thinking: boolean
-}
-
-interface CustomAgentPayload {
-  name: string
-  role: string
-  description?: string | null
-  icon?: string | null
-  color?: string | null
-  specialization?: string | null
-  extra_principles?: string | null
-  methodology?: string | null
-  system_prompt_override?: string | null
-  recommended_tools?: string[]
-  max_tokens?: number
-  enable_thinking?: boolean
-  model?: string | null
-  fallback_model?: string | null
-}
+export type AgentManifest = Schema<'AgentManifestResponse'>
 
 export interface AgentSummary {
   id: string
   name: string
   description?: string
-  icon?: string
-  color?: string
-  specialization?: string
-  /** Action id this agent's decisions are logged under (#476). */
-  decision_id?: string
 }
 
 /** Reads the shell folds itself. Health is public; processes and the provider map need a sign-in. */
@@ -983,7 +942,7 @@ export const detectionRulesApi = {
   listSources: () => api.get('/detection-rules/sources'),
 
   /** Every listed rule copy's health and its reason, worst first; one health's when given. */
-  rules: (params: { health?: string; tool?: string; q?: string; offset?: number; sort?: string; flag?: string; rules?: string; has_exceptions?: boolean } = {}) =>
+  rules: (params: { health?: string; tool?: string; q?: string; offset?: number; sort?: string; flag?: string; rules?: string; has_exceptions?: boolean; stage?: 'shadow' | 'live' | 'off' } = {}) =>
     api.get('/detection-rules/rules', { params }),
 
   /** The findings a rule copy raised in the fires window, newest first, as the rules list counts them. */
@@ -1093,7 +1052,6 @@ interface WorkflowPhase {
   agent_id: string
   name: string
   purpose?: string
-  tools: string[]
   steps: string[]
   expected_output?: string
   approval_required?: boolean
