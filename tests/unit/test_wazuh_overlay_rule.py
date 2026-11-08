@@ -110,6 +110,13 @@ def test_lint_passes_a_wazuh_rule_on_behaviour(body):
     assert lint_wazuh(_rule(body))["passed"] is True
 
 
+def test_lint_passes_a_wazuh_rule_on_a_vendor_built_in_account():
+    # Wazuh's stock rule 7420 (0125-symantec-ws_rules.xml): Symantec Web
+    # Security's appliance admin logging in (#4105).
+    body = "<if_sid>7415</if_sid><user>virtadmin</user>"
+    assert lint_wazuh(_rule(body, 'id="7420" level="3"'))["passed"] is True
+
+
 def test_a_host_the_rule_only_leaves_out_is_a_warning():
     report = lint_wazuh(_rule('<hostname negate="yes">dc01</hostname><match>x</match>'))
     assert report["passed"] is True
