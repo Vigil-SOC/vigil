@@ -276,8 +276,11 @@
 .de-cov-legend > span { display: inline-flex; gap: 6px; align-items: center; }
 .de-matrix-wrap { overflow-x: auto; }
 .de-matrix { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(136px, 240px); gap: 6px; min-width: min-content; align-items: start; }
-.de-col { display: grid; gap: 5px; }
+.de-col { display: grid; gap: 5px; align-content: start; }
 .de-col h4 { margin: 0 0 2px; font-size: 11px; font-weight: 650; color: var(--tx2); }
+/* Full map: the grid is no taller than the screen, and each tactic scrolls on its own. */
+.de-matrix .de-col { max-height: max(320px, calc(100vh - 300px)); overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }
+.de-matrix .de-col h4 { position: sticky; top: 0; z-index: 1; padding: 2px 0 4px; background: var(--bg1); }
 .de-cell { display: grid; gap: 1px; text-align: left; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--ln1); background: var(--bg2); color: var(--tx1); font-size: 11.5px; cursor: pointer; min-width: 0; }
 .de-cell b { font-weight: 600; color: var(--tx0); overflow-wrap: anywhere; }
 .de-cell .x1-mono { font-size: 10.5px; color: var(--tx2); }
