@@ -646,7 +646,7 @@ def _write_runs(
     results: Dict[int, tuple],
     now: datetime,
     excepted: Optional[Dict[int, tuple]] = None,
-    sampled: Optional[Dict[str, Any]] = None,
+    sampled: Optional[Dict[int, Dict[str, Any]]] = None,
 ) -> int:
     """Merge each run into its version's checks; record changed Runs results."""
     from core.detections.inventory.sync import _change, _last_results, _record_changes
@@ -679,7 +679,7 @@ def _write_runs(
                 results[rid],
                 _window(copy, now)[1],
                 (excepted or {}).get(rid),
-                sampled,
+                (sampled or {}).get(rid),
             )
             runs = new["runs"]
             before = last.get((rid, "runs"))
@@ -2034,7 +2034,7 @@ def _finish(
     results: Dict[int, tuple],
     now: datetime,
     report: RolloutReport,
-    sampled: Optional[Dict[str, Any]] = None,
+    sampled: Optional[Dict[int, Dict[str, Any]]] = None,
 ) -> None:
     results, excepted = _except(results)
     report.written += _write_runs(copies, results, now, excepted, sampled)
@@ -2135,8 +2135,8 @@ async def _sandboxed(
     per_hour: int,
     now: datetime,
     report: RolloutReport,
-) -> Tuple[str, Dict[int, tuple], Dict[int, str], Optional[Dict[str, Any]]]:
-    """(state, results, why each copy has no count, the sample) for the copies the
+) -> Tuple[str, Dict[int, tuple], Dict[int, str], Optional[Dict[int, Dict[str, Any]]]]:
+    """(state, results, why each copy has no count, each one's sample) for the copies the
     Wazuh sandbox counts: load it, check each copy's parents are in it, replay a
     sample of the archive. State is "wait" until a run is due, "deferred" when
     the budget is spent, else "ran"."""
@@ -2199,11 +2199,12 @@ async def _sandboxed(
             {c.key: windows[c.rule_id][0] for c in live},
             total,
         )
+        # The shadow count is the estimate across the window, not the sample's.
         results = {
-            c.rule_id: (len(tally.hits.get(c.key, [])), tally.hits.get(c.key, []), None)
+            c.rule_id: (tally.estimate(c.key), tally.hits.get(c.key, []), None)
             for c in live
         }
-        return "ran", results, whys, tally.sampled()
+        return "ran", results, whys, {c.rule_id: tally.sampled(c.key) for c in live}
     except WazuhError as exc:
         why = f"{wazuh_sandbox.FAILED}{exc}"
         return "ran", {}, {**{c.rule_id: why for c in counted}, **whys}, None

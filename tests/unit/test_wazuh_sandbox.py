@@ -373,13 +373,16 @@ def test_a_hit_is_an_event_whose_final_rule_is_the_copy():
         docs, outputs, {"100100": NOW - timedelta(hours=6)}, window_events=1200
     )
     assert [d["_id"] for d in tally.hits["100100"]] == ["a"]
-    assert tally.sampled() == {
+    assert tally.sampled("100100") == {
         "engine": wazuh_sandbox.ENGINE,
         "events": 3,
         "of": 1200,
         "decoded_differently": 1,
         "refused": 1,
+        "hits": 1,
+        "estimated": 400,  # 1 hit in 3 replayed of 1,200: about 400 across the window
     }
+    assert tally.estimate("5710") == 0
 
 
 def test_a_run_waits_for_six_hours_of_window_unless_a_copy_never_ran():
@@ -525,7 +528,7 @@ def run(monkeypatch):
 
         def write_runs(cs, results, now, excepted=None, sampled=None):
             wrote["runs"].update(results)
-            wrote["sampled"].update({rid: sampled for rid in results})
+            wrote["sampled"].update({rid: (sampled or {}).get(rid) for rid in results})
             return len(results)
 
         monkeypatch.setattr(rollout, "_write_runs", write_runs)
@@ -542,8 +545,10 @@ def test_a_rule_on_the_raw_line_is_counted_by_the_sandbox(run):
     box = _Box(finals={"zzmarker 1": "100001", "zzmarker 2": "100001"})
     report = run([_copy(1, MATCH)], service, box)
     total, docs, error = run.wrote["runs"][1]
+    # 2 hits in the 3 events replayed of 1,200 in the window: about 800, and
+    # that estimate is what the daily hit limit sees.
     assert (total, [d["_id"] for d in docs], error) == (
-        2,
+        800,
         ["zzmarker 1", "zzmarker 2"],
         None,
     )
@@ -712,3 +717,24 @@ def test_a_sandbox_without_a_password_is_not_used(run):
     run([_copy(1, MATCH)], _Service([_doc("x")]), box, password="")
     ((copy, why),) = run.wrote["unrunnable"]
     assert why.endswith(wazuh_sandbox.NO_PASSWORD) and box.loaded is None
+
+
+def test_a_loud_rule_counted_on_a_sample_cannot_promote():
+    # 1 hit in 486 replayed of 12,840: ~27 a day, above the 20-hit ceiling.
+    tally = wazuh_sandbox.Tally(window_events=12840, replayed=486)
+    tally.hits["100100"] = [{}]
+    assert tally.estimate("100100") == 27
+    checks = rollout._ran(
+        {},
+        "shadow",
+        NOW,
+        (tally.estimate("100100"), [], None),
+        NOW,
+        sampled=tally.sampled("100100"),
+    )
+    assert (
+        checks["shadow"]["days"]["2026-11-07"]
+        == 27
+        > rollout.DEFAULT_LIMITS.max_hits_per_day
+    )
+    assert checks["runs"]["sampled"]["hits"] == 1

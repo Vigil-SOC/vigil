@@ -586,13 +586,24 @@ class Tally:
     decoded_differently: int = 0
     refused: int = 0
 
-    def sampled(self) -> Dict[str, Any]:
+    def estimate(self, key: str) -> int:
+        """The copy's hits scaled from the sample to every archived event in the
+        window, rounded up: what the rollout's per-day hit limit compares, so a
+        loud rule can't look quiet because only a sample was replayed."""
+        hits = len(self.hits.get(key, ()))
+        if not hits or not self.replayed:
+            return 0
+        return -(-hits * max(self.window_events, self.replayed) // self.replayed)
+
+    def sampled(self, key: str) -> Dict[str, Any]:
         return {
             "engine": ENGINE,
             "events": self.replayed,
             "of": self.window_events,
             "decoded_differently": self.decoded_differently,
             "refused": self.refused,
+            "hits": len(self.hits.get(key, ())),
+            "estimated": self.estimate(key),
         }
 
 
