@@ -1,63 +1,45 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { errorText } from '../../shared/errorText'
 import { utcDayClock } from '../../shared/utc'
-import { relativeTime } from '../settings/integrationHealth'
-import { detectionRulesApi, type RuleStageRow, type RuleStages as Stages } from '../../services/api'
+import { detectionRulesApi, type RuleStages as Stages } from '../../services/api'
+import { stageLine, who, type Stage, type StageFields } from './ruleStage'
 
-/** How long Vigil's own move back to shadow stays amber on the rule's line. */
-const RECENT_MS = 7 * 24 * 60 * 60 * 1000
-const STAGE_NAME: Record<RuleStageRow['to_stage'], string> = { shadow: 'Shadow', live: 'Live', off: 'Off' }
+const STAGE_NAME: Record<Stage, string> = { shadow: 'Shadow', live: 'Live', off: 'Off' }
 
-const who = (actor: string) => (actor === 'system' ? 'Vigil' : actor)
-const dayMonth = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
-
-/** The person's Revert that holds the rule: their newest live -> shadow move. */
-const revertOf = (rows: RuleStageRow[]) => rows.find((r) => r.actor !== 'system' && r.from_stage === 'live' && r.to_stage === 'shadow') ?? null
-
-export interface StageLine {
-  text: string
-  /** The full reason, for the hover. */
-  title: string
-  /** Vigil moved it back to shadow in the last 7 days. */
-  amber: boolean
-  live: boolean
-  held: boolean
-}
-
-/** A Vigil rule's stage, as the grey line under its name says it. Null before its first stage. */
-export function stageLine({ stages: rows, held: isHeld }: Stages): StageLine | null {
-  const now = rows[0]
-  if (!now) return null
-  const held = isHeld ? revertOf(rows) : null
-  const backByVigil = now.to_stage === 'shadow' && now.from_stage === 'live' && now.actor === 'system'
-  const base = { title: `${who(now.actor)}: ${now.reason}`, amber: false, live: now.to_stage === 'live', held: isHeld }
-  if (backByVigil && Date.now() - new Date(now.at).getTime() < RECENT_MS) {
-    return { ...base, amber: true, text: `Vigil moved it back to shadow ${relativeTime(now.at)}` }
-  }
-  if (isHeld && now.to_stage === 'shadow') return { ...base, ...(held && { title: `${held.actor}: ${held.reason}` }), text: held ? `In shadow, held by ${held.actor} since ${dayMonth(held.at)}` : 'In shadow, held by a person' }
-  if (now.to_stage === 'live') return { ...base, text: `Live since ${dayMonth(now.at)}` }
-  if (now.to_stage === 'off') return { ...base, text: `Off since ${dayMonth(now.at)}` }
-  return { ...base, text: `In shadow since ${dayMonth(now.at)}` }
-}
-
-/** An overlay rule's rollout moves, newest first, with Revert to shadow (live) or
- * Release (held by a person) where Add exception sits on the Exceptions panel. */
-export default function RuleStages({ ruleId, data, error, asking: askFirst, onChanged }: {
+/** An overlay rule's rollout moves, newest first, read when the panel opens, with
+ * Revert to shadow (live) or Release (held by a person) where Add exception sits on
+ * the Exceptions panel. ``row`` is the rule's listing row, refetched after a change. */
+export default function RuleStages({ ruleId, row, asking: askFirst, onChanged }: {
   ruleId: number
-  data: Stages | null
-  error: string | null
+  row: StageFields
   /** Opened from the line's Revert link: ask why straight away. */
   asking: boolean
+  /** A Revert or Release was written: the listing (counts and this row) is read again. */
   onChanged: () => void
 }) {
   const canWrite = useAuth().hasPermission('detections.write')
   const [asking, setAsking] = useState(askFirst)
-  if (!data) return <div className="de-x">{error ? <span className="de-x-err" role="alert">{error}</span> : <span className="x1-muted">Reading its rollout…</span>}</div>
+  const [data, setData] = useState<Stages | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const load = () =>
+    detectionRulesApi.ruleStages(ruleId)
+      .then((res) => { setData(res.data); setError(null) })
+      .catch((e) => setError(errorText(e, 'Its rollout did not load.')))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load() }, [ruleId])
 
-  const rows = data.stages
-  const line = stageLine(data)
+  const line = stageLine(row)
   const action = !canWrite || !line ? null : line.live ? 'revert' : line.held ? 'release' : null
+  const changed = () => { load(); onChanged() }
+  if (!data) {
+    return (
+      <div className="de-x">
+        {error ? <span className="de-x-err" role="alert">{error}</span> : <span className="x1-muted">Reading its rollout…</span>}
+      </div>
+    )
+  }
+  const rows = data.stages
   return (
     <div className="de-x">
       <div className="de-x-head">
@@ -66,7 +48,7 @@ export default function RuleStages({ ruleId, data, error, asking: askFirst, onCh
           <button type="button" className="x1-link de-x-add" onClick={() => setAsking(true)}>{action === 'revert' ? 'Revert to shadow' : 'Release'}</button>
         )}
       </div>
-      {action && asking && <Ask ruleId={ruleId} action={action} onDone={(changed) => { setAsking(false); if (changed) onChanged() }} />}
+      {action && asking && <Ask ruleId={ruleId} action={action} onDone={(done) => { setAsking(false); if (done) changed() }} />}
       {rows.length === 0 ? (
         <p className="de-x-none">No moves yet.</p>
       ) : (

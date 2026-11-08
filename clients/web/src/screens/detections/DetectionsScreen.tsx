@@ -3,12 +3,13 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { useLocation, useNavigate } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { errorText } from '../../shared/errorText'
-import { detectionRulesApi, type RuleStages as Stages } from '../../services/api'
+import { detectionRulesApi } from '../../services/api'
 import { useAuth } from '../../contexts/AuthContext'
 import { Empty, Failure } from '../shared/x1'
 import RuleExceptions, { KEEP_DAYS } from './RuleExceptions'
 import RuleFindings from './RuleFindings'
-import RuleStages, { stageLine } from './RuleStages'
+import RuleStages from './RuleStages'
+import { stageLine, type Stage, type StageFields } from './ruleStage'
 import FindingPopup from '../dashboard/FindingPopup'
 import ProofCardExport from './ProofCardExport'
 import './detections.css'
@@ -22,7 +23,6 @@ type RuleHealth =
   | 'disabled'
   | 'no_fire_data'
 type View = RuleHealth | 'attention' | 'all'
-type Stage = 'shadow' | 'live' | 'off'
 type Flag = 'noisy' | 'quiet' | 'accurate' | 'silent' | 'drift'
 type FlagView = Flag | 'caught'
 type Sort = 'worst' | 'most_fires' | 'fewest_fires' | 'name'
@@ -34,7 +34,7 @@ const SORTS: { key: Sort; label: string }[] = [
 ]
 type Siem = 'elastic' | 'splunk' | 'wazuh'
 
-interface RuleRow {
+interface RuleRow extends StageFields {
   rule_id: number
   name: string
   language: string
@@ -63,18 +63,8 @@ interface RuleRow {
   checks_run: number
   /** Its active exceptions, and the hits they silenced in the days the runner keeps. */
   exceptions?: number
-  /** Its overlay copy's rollout stage (null without one), and whole days since a shadow stage began. */
-  stage?: Stage | null
-  /** When its current stage row was written (ISO), null without one. */
-  stage_since?: string | null
-  days_in_shadow?: number | null
-  /** Vigil rules only (absent on SIEM rows), as GET /rules/{id}/stages reads them:
-   *  its stage moves, the last move's from-stage and actor, and who holds it. */
+  /** Vigil rules only: how many stage moves it has (its rollout fields are StageFields). */
   stage_moves?: number
-  stage_from?: 'shadow' | 'live' | 'off' | null
-  stage_actor?: string
-  held?: boolean
-  held_by?: string | null
   silenced?: number
 }
 
@@ -143,17 +133,6 @@ const STAGE: Record<Stage, { label: string; note: string }> = {
   off: { label: 'Switched off', note: 'Vigil stopped running these' },
 }
 const STAGES: Stage[] = ['shadow', 'live', 'off']
-const dayMonth = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
-/** A Vigil rule's stage, as its grey line says it. */
-function stageText(r: RuleRow): string {
-  const since = r.stage_since ? dayMonth(r.stage_since) : ''
-  if (r.stage === 'shadow') {
-    const d = r.days_in_shadow
-    return d == null ? 'In shadow' : d === 0 ? 'In shadow · since today' : `In shadow · ${plural(d, 'day', 'days')}`
-  }
-  if (r.stage === 'live') return since ? `Live since ${since}` : 'Live'
-  return since ? `Off since ${since}` : 'Switched off'
-}
 const SIEMS: Siem[] = ['elastic', 'splunk', 'wazuh']
 const SIEM_NAME: Record<string, string> = { elastic: 'Elastic', splunk: 'Splunk', wazuh: 'Wazuh', repo: 'Repo', overlay: 'Vigil' }
 
@@ -225,12 +204,6 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   // One row opens at a time: its raw error, or (a Vigil copy) its exceptions.
   const [open, setOpen] = useState<{ id: number; what: 'raw' | 'exceptions' | 'findings' | 'stages' | 'revert' } | null>(null)
   const canWrite = useAuth().hasPermission('detections.write')
-  // Each listed Vigil rule's rollout moves, newest first (or why they didn't load), read as its row shows.
-  const [stagesOf, setStagesOf] = useState<Record<number, Stages | string>>({})
-  const loadStages = (id: number) =>
-    detectionRulesApi.ruleStages(id)
-      .then((res) => setStagesOf((m) => ({ ...m, [id]: res.data })))
-      .catch((e) => setStagesOf((m) => ({ ...m, [id]: errorText(e, 'Its rollout did not load.') })))
   // A finding opened from a rule's fire count.
   const [finding, setFinding] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
@@ -287,12 +260,24 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   })
   const shown = virtual.getVirtualItems()
   const last = shown.length ? shown[shown.length - 1].index : -1
-  const shownOverlay = shown.map((i) => rows[i.index]).filter((r) => r?.tool === 'overlay').map((r) => r.rule_id).join(',')
-  useEffect(() => {
-    for (const id of shownOverlay ? shownOverlay.split(',').map(Number) : []) if (!(id in stagesOf)) loadStages(id)
-    // stagesOf only guards against a second read of the same rule
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shownOverlay])
+  // After a Revert or Release: the view's counts and that rule's row are read again;
+  // the list, its scroll and the open panel stay. The listing's cache sees a stage
+  // write only after Postgres's stats flush (a few seconds), so it reads twice.
+  const refreshRule = (id: number) => {
+    readRule(id)
+    window.setTimeout(() => readRule(id), 4000)
+  }
+  const readRule = (id: number) => {
+    detectionRulesApi.rules(params)
+      .then((res) => { const d = res.data as RulesReport; setReport((r) => ({ ...d, rules: r?.rules ?? d.rules })) })
+      .catch(() => {})
+    detectionRulesApi.rules({ rules: String(id) })
+      .then((res) => {
+        const fresh = (res.data as RulesReport).rules.find((x) => x.rule_id === id)
+        if (fresh) setRows((rs) => rs.map((x) => (x.rule_id === id ? fresh : x)))
+      })
+      .catch(() => {})
+  }
   // The next page loads as the list's end nears, inside the list's own scroll.
   useEffect(() => {
     if (!hasMore || more || last < rows.length - 40) return
@@ -537,10 +522,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
             const excOpen = open?.id === r.rule_id && open.what === 'exceptions'
             const fdOpen = open?.id === r.rule_id && open.what === 'findings'
             const stOpen = open?.id === r.rule_id && (open.what === 'stages' || open.what === 'revert')
-            const st = r.tool === 'overlay' ? stagesOf[r.rule_id] : undefined
-            const stages = st && typeof st !== 'string' ? st : null
-            const moves = stages?.stages ?? null
-            const line = stages ? stageLine(stages) : null
+            const line = stageLine(r)
             const siemOnly = r.fires === 0 && (r.siem_alerts ?? 0) > 0
             const fired = siemOnly ? `${n(r.siem_alerts ?? 0)} in SIEM` : r.health === 'no_fire_data' ? 'No data' : r.health === 'never_fired' ? 'Never' : 'None'
             return (
@@ -555,7 +537,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                   )}
                   <div className="de-meta">
                     <span>{!r.checks_run ? 'Not checked' : r.checks_passing ? plural(r.checks_passing, 'check passes', 'checks pass') : 'No check passes'}</span>
-                    {line && <span className={`de-st-line${line.amber ? ' amber' : ''}`} title={line.title}>· {line.text}</span>}
+                    {line && <span className={`de-st-line${line.amber ? ' amber' : ''}`} title={line.title || undefined}>· {line.text}</span>}
                     {line?.live && canWrite && (
                       <span>· <button type="button" className="de-link de-st-revert" onClick={() => setOpen({ id: r.rule_id, what: 'revert' })}>Revert</button></span>
                     )}
@@ -578,9 +560,9 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                         <svg viewBox="0 0 24 24" aria-hidden="true" className={excOpen ? 'up' : ''}><path d="m6 9 6 6 6-6" /></svg>
                       </button>
                     )}
-                    {moves && moves.length > 0 && (
+                    {(r.stage_moves ?? 0) > 0 && (
                       <button type="button" className="de-flag idle de-exc-pill de-st-pill" aria-expanded={stOpen} onClick={() => setOpen(stOpen ? null : { id: r.rule_id, what: 'stages' })}>
-                        History · {plural(moves.length, 'move', 'moves')}
+                        History · {plural(r.stage_moves ?? 0, 'move', 'moves')}
                         <svg viewBox="0 0 24 24" aria-hidden="true" className={stOpen ? 'up' : ''}><path d="m6 9 6 6 6-6" /></svg>
                       </button>
                     )}
@@ -610,7 +592,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                 {excOpen && <RuleExceptions ruleId={r.rule_id} />}
                 {fdOpen && <RuleFindings ruleId={r.rule_id} onOpen={setFinding} />}
                 {stOpen && (
-                  <RuleStages key={open.what} ruleId={r.rule_id} data={stages} error={typeof st === 'string' ? st : null} asking={open.what === 'revert'} onChanged={() => loadStages(r.rule_id)} />
+                  <RuleStages key={open.what} ruleId={r.rule_id} row={r} asking={open.what === 'revert'} onChanged={() => refreshRule(r.rule_id)} />
                 )}
               </div>
             )
