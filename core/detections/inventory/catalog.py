@@ -42,6 +42,7 @@ import binascii
 import logging
 import re
 import threading
+import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
@@ -1119,8 +1120,12 @@ _LISTING_TABLES = (
 # did change it would only force a rebuild. Missing a write would take an update
 # by a transaction whose id equals that row's own xmin, reused after a
 # wraparound (2^32 transactions later). The append-only tables are marked by
-# their newest id. One scan of each in-place table per read: about 15 ms each
-# at 24k rows.
+# their newest id. The in-place tables are scanned whole, so the scan runs at
+# most once a second (a screen's burst of reads pays once): a write to a rule no
+# stage row moved shows within that second. The stage marks are read every time,
+# and a moved rule's own copy is read again before it is patched, so a move is
+# never shown with its rule's old version or checks.
+_SCAN_EVERY = 1.0
 _EXACT_MARKS = text(
     "SELECT"
     " (SELECT count(*) FROM detection_rules),"
@@ -1374,6 +1379,29 @@ def _restage(session: Any, copies: Dict[str, Any]) -> Tuple[Dict[str, Any], Set[
     return {**copies, "stages": stages, "moves": moves}, changed
 
 
+def _rows_unchanged(session: Any, copies: Dict[str, Any], changed: Set[int]) -> bool:
+    """Whether the moved rules' copies (their version, checks, status and the
+    rest) are still what the listing holds: only then is patching their stage
+    fields the full rebuild's answer. Inside the scan's second, a stage row
+    written with a new version or after a run is read before the marks show it."""
+    if not changed:
+        return True
+    held = {row.id: tuple(row) for row in copies["rows"] if row.id in changed}
+    fresh = {row.id: tuple(row) for row in _copy_rows(session, changed)}
+    return fresh == held
+
+
+def _rebuild(session: Any, stage_marks: Tuple[Any, ...]) -> None:
+    """Read every copy again. The marks are taken first, so a write that lands
+    while the copies are read moves them and is read next time."""
+    marks = tuple(session.execute(_EXACT_MARKS).one())
+    _listing.clear()
+    _listing["scanned"] = time.monotonic()
+    _listing["copies"] = _copies_listed(session)
+    _listing["marks"] = marks
+    _listing["stage_marks"] = stage_marks
+
+
 def _restaged(
     health: Dict[str, Any], copies: Dict[str, Any], changed: Set[int]
 ) -> Dict[str, Any]:
@@ -1416,24 +1444,29 @@ def _listing_now() -> Dict[str, Any]:
     takes milliseconds where reading every copy takes seconds."""
     with _listing_lock, get_db_manager().session_scope() as session:
         written = _write_marks(session, _FIRES_TABLES)
-        marks = tuple(session.execute(_EXACT_MARKS).one())
-        # Stage rows are only ever added: their count and newest id. A Revert or
-        # release read straight after sees its own row.
+        # Stage rows are only ever added: their count and newest id, every read. A
+        # Revert or release read straight after sees its own row.
         stage_marks = tuple(session.execute(_STAGE_MARKS).one())
-        if _listing.get("marks") != marks:
-            _listing.clear()
-            _listing["copies"] = _copies_listed(session)
-            _listing["marks"] = marks
-            _listing["stage_marks"] = stage_marks
-        elif _listing.get("stage_marks") != stage_marks:
-            # Only stages moved: no version, check or rule row changed with them,
-            # so patching the moved rows' stage fields is a rebuild's answer.
-            _listing["copies"], changed = _restage(session, _listing["copies"])
-            _listing["stage_marks"] = stage_marks
-            if changed and "health" in _listing:
-                _listing["health"] = _restaged(
-                    _listing["health"], _listing["copies"], changed
-                )
+        if "marks" not in _listing:
+            _rebuild(session, stage_marks)
+        elif time.monotonic() - _listing["scanned"] >= _SCAN_EVERY:
+            marks = tuple(session.execute(_EXACT_MARKS).one())
+            _listing["scanned"] = time.monotonic()
+            if marks != _listing["marks"]:
+                _rebuild(session, stage_marks)
+        if _listing["stage_marks"] != stage_marks:
+            copies, changed = _restage(session, _listing["copies"])
+            if _rows_unchanged(session, _listing["copies"], changed):
+                # Only stages moved for these rules: patching their stage fields
+                # is a rebuild's answer.
+                _listing["copies"] = copies
+                _listing["stage_marks"] = stage_marks
+                if changed and "health" in _listing:
+                    _listing["health"] = _restaged(_listing["health"], copies, changed)
+            else:
+                # The move came with a new version or new checks (a sync, or a
+                # run then the sweep) that the throttled marks don't show yet.
+                _rebuild(session, stage_marks)
         fires_marks = (
             written,
             datetime.now(timezone.utc).date(),
