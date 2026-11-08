@@ -41,7 +41,7 @@ from typing import (
     Tuple,
 )
 
-from sqlalchemy import func, select, text
+from sqlalchemy import and_, case, func, select, text
 
 from core.detections.inventory import catalog, readers, rollout, splunk, sync
 from core.storage.connection import get_db_manager
@@ -457,9 +457,22 @@ def _siem_start(session: Any) -> Optional[datetime]:
     return _utc(start) if start else None
 
 
-def _siem_changes(session: Any, checks: Tuple[str, ...]) -> List[Tuple]:
+def _siem_changes(session: Any, start: Optional[datetime]) -> List[Tuple]:
+    """The SIEM rules' check changes first_week() counts, not all of them: each
+    of a kind it counts dated before the week ends, in order, then each kind's
+    earliest, for the day it was first found. Its rows, read from fewer."""
     change = DetectionRuleCheckChange
-    return session.execute(
+    silent, sees = change.check_key == "silent", change.check_key == "sees"
+    # first_week()'s kinds, in its order.
+    kind = case(
+        (and_(silent, change.new_result == "fail"), "silent"),
+        (and_(sees, change.new_result == "fail"), "no_data"),
+        (
+            and_(silent, change.reason.startswith(NEVER_FIRED_REASON, autoescape=True)),
+            "never_firing",
+        ),
+    )
+    counted = (
         select(
             change.rule_id,
             DetectionRule.name,
@@ -469,9 +482,20 @@ def _siem_changes(session: Any, checks: Tuple[str, ...]) -> List[Tuple]:
             change.changed_at,
         )
         .join(DetectionRule, DetectionRule.id == change.rule_id)
-        .where(DetectionRule.source.in_(SIEM_SOURCES), change.check_key.in_(checks))
-        .order_by(change.id)
+        .where(DetectionRule.source.in_(SIEM_SOURCES), kind.isnot(None))
+    )
+    in_week: List[Tuple] = []
+    if start:
+        end = start + timedelta(days=FIRST_WEEK_DAYS)
+        in_week = list(
+            session.execute(
+                counted.where(change.changed_at < end).order_by(change.id)
+            ).all()
+        )
+    earliest = session.execute(
+        counted.distinct(kind).order_by(kind, change.changed_at, change.id)
     ).all()
+    return in_week + list(earliest)
 
 
 # 5. Searches within budget, and throttle errors Vigil met
@@ -559,7 +583,25 @@ def _limits() -> Dict[str, int]:
     return limits
 
 
+def _throttle_reasons(session: Any, since: datetime) -> List[str]:
+    """The distinct reasons since ``since`` that are a throttle error.
+
+    Many changes share a reason (a lab's 136k changes hold 2.6k), so the
+    database hands each over once and throttle_error reads it once.
+    """
+    change = DetectionRuleCheckChange
+    found = session.scalars(
+        select(change.reason)
+        .where(change.changed_at >= since, change.reason.isnot(None))
+        .distinct()
+    )
+    return [reason for reason in found if throttle_error(reason)]
+
+
 def _throttled(session: Any, since: datetime) -> List[Tuple]:
+    reasons = _throttle_reasons(session, since)
+    if not reasons:
+        return []
     change = DetectionRuleCheckChange
     rows = session.execute(
         select(
@@ -571,12 +613,11 @@ def _throttled(session: Any, since: datetime) -> List[Tuple]:
             change.changed_at,
         )
         .join(DetectionRule, DetectionRule.id == change.rule_id)
-        .where(change.changed_at >= since, change.reason.isnot(None))
+        .where(change.changed_at >= since, change.reason.in_(reasons))
     ).all()
     return [
         (rule_id, catalog.tool_of(source), check, result, reason, at)
         for rule_id, source, check, result, reason, at in rows
-        if throttle_error(reason)
     ]
 
 
@@ -591,7 +632,7 @@ def report(
         stages = _stages(session)
         copies = _live_copies(session)
         start = _siem_start(session)
-        changes = _siem_changes(session, ("silent", "sees"))
+        changes = _siem_changes(session, start)
         sent = _sent(session)
         throttled = _throttled(session, now - timedelta(days=THROTTLE_DAYS))
     return {
