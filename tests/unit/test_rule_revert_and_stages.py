@@ -10,9 +10,11 @@ import pytest
 from fastapi import HTTPException
 
 from core.detections.inventory import catalog, health_inbox, rollout, stages
+from core.detections.inventory.rollout_limits import DEFAULTS
 from services.api.routers import detection_rules as routes
 
 NOW = datetime(2026, 11, 7, 9, 30, tzinfo=timezone.utc)
+DEFAULT_SHADOW_DAYS = DEFAULTS.shadow_days
 ANA = SimpleNamespace(username="ana", user_id="u-ana")
 
 
@@ -221,7 +223,7 @@ HEALTHY_WEEK = {
         "failures": 0,
         "days": {
             (NOW - timedelta(days=i)).date().isoformat(): {"pass": 5, "fail": 0}
-            for i in range(rollout.SHADOW_DAYS)
+            for i in range(DEFAULT_SHADOW_DAYS)
         },
     },
     "sees": {"result": "pass"},
@@ -237,7 +239,7 @@ def _copy(held):
         name="r",
         language="elastic",
         stage="shadow",
-        stage_at=NOW - timedelta(days=rollout.SHADOW_DAYS + 1),
+        stage_at=NOW - timedelta(days=DEFAULT_SHADOW_DAYS + 1),
         checks=HEALTHY_WEEK,
         rule={},
         held=held,
@@ -262,6 +264,7 @@ def test_the_sweep_writes_no_live_row_for_a_held_rule(monkeypatch):
 
     monkeypatch.setattr(rollout, "get_db_manager", lambda: _Db())
     monkeypatch.setattr(rollout, "_stopped", lambda: False)
+    monkeypatch.setattr(rollout, "_asks_first", lambda: False)  # Act
     monkeypatch.setattr(rollout, "handed_off", lambda ids: set())
     monkeypatch.setattr(rollout, "_deploy_targets", lambda: {})
     monkeypatch.setattr(rollout, "_deploy", lambda *a: None)
@@ -286,7 +289,7 @@ def test_vigils_revert_is_a_bell_entry_for_everyone(monkeypatch):
         "since": "2026-11-07T09:00:00+00:00",
     }
     monkeypatch.setattr(catalog, "open_flags", lambda: [])
-    monkeypatch.setattr(catalog, "open_reverts", lambda: [revert])
+    monkeypatch.setattr(catalog, "open_vigil_moves", lambda: [revert])
     reads = {}
     monkeypatch.setattr(health_inbox, "_read_ids", lambda u: reads.get(u, set()))
 

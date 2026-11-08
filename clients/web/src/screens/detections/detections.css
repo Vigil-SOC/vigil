@@ -233,3 +233,33 @@
 .de-pc-scope label > span > span { color: var(--tx2); font-size: 12.5px; }
 .de-pc-err { margin: 0; color: var(--poor); }
 .de-pc-actions { display: flex; justify-content: flex-end; gap: 10px; }
+
+/* A Vigil rule's rollout: its stage on the grey line, a History pill, and the moves panel. */
+.de-st-line.amber { color: var(--fair); }
+.de-st-revert { font-size: 12px; }
+.de .de-st-pill { --t: var(--tx2); }
+.de-st-list li { grid-template-columns: 130px 140px minmax(0, 1fr); align-items: baseline; }
+.de-st-when { color: var(--tx2); font-variant-numeric: tabular-nums; }
+.de-st-move { color: var(--tx0); }
+.de-st-why { min-width: 0; color: var(--tx1); overflow-wrap: anywhere; }
+.de-st-why b { font-weight: 600; color: var(--ac); }
+.de-st-why b.vigil { color: var(--tx0); }
+
+/* The rollout's success metrics: a card under the stats strip, one cell per metric. */
+.de-rollout { display: grid; gap: 12px; }
+.de-rollout-toggle { align-self: start; font-size: 12.5px; font-weight: 600; }
+.de-rollout-cells { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1px; background: var(--ln0); border: 1px solid var(--ln0); border-radius: 8px; overflow: hidden; }
+.de-rollout-cells li { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 14px 16px; background: var(--bg1); }
+.de-rollout-name { font-size: 12px; font-weight: 500; color: var(--tx2); }
+.de-rollout-cells b { margin-top: 2px; font-size: 24px; font-weight: 700; letter-spacing: -.3px; line-height: 1.1; color: var(--tx0); font-variant-numeric: tabular-nums; }
+.de-rollout-cells b.good { color: var(--good); }
+.de-rollout-cells b.fair { color: var(--fair); }
+.de-rollout-cells b.poor { color: var(--poor); }
+.de-rollout-line { font-size: 12.5px; line-height: 1.45; color: var(--tx2); overflow-wrap: anywhere; }
+.de-rollout-target { font-size: 12px; color: var(--tx3); }
+.de-rollout-cant { margin-top: 6px; padding-top: 8px; border-top: 1px dashed var(--ln1); font-size: 12px; line-height: 1.45; color: var(--tx2); }
+.de-rollout-cant ul { margin: 3px 0 0; padding-left: 15px; list-style: disc; }
+.de-rollout-cells .de-rollout-cant li { display: list-item; padding: 0; background: none; }
+.de-rollout-cells .de-rollout-cant li + li { margin-top: 4px; }
+.de-rollout-err { margin: 0; display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--tx2); }
+

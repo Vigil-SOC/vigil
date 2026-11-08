@@ -126,7 +126,7 @@ def test_route_rejects_an_unknown_stage(monkeypatch):
     ],
 )
 def test_days_in_shadow_are_whole_24_hour_days_like_rollout(listing, now, days):
-    """Rollout promotes once now - stage_at reaches SHADOW_DAYS days, so the
+    """Rollout promotes once now - stage_at reaches the shadow days, so the
     listing counts whole 24-hour days from stage_at, not calendar days."""
     rows = _by_id(catalog.health_listing(now=now))
     assert rows[1]["days_in_shadow"] == days
