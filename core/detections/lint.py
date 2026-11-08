@@ -250,6 +250,18 @@ _WELL_KNOWN_USERS = frozenset(
         # Product defaults: PowerShell Web Access's app pool, Cisco SD-WAN's admin.
         "pswa_pool",
         "vmanage-admin",
+        # Vendor built-in accounts: Symantec Web Security's appliance admin (Wazuh's
+        # stock rule 7420), Splunk's internal search user, SQL Server's and WMI's
+        # service accounts, and Kubernetes' anonymous user as Azure flattens it.
+        "virtadmin",
+        "splunk-system-user",
+        "splunk_system_user",
+        "sqlserveragent",
+        "mssqlserver",
+        "mssqlserverolapservice",
+        "sqlwriter",
+        "winmgmt",
+        "system.anonymous",
         # Kubernetes and managed-cluster identities.
         "cluster-admin",
         "kubernetes-admin",
@@ -284,10 +296,11 @@ _WELL_KNOWN_USERS = frozenset(
 # Principals a platform owns, whole: SharePoint's app identity.
 _WELL_KNOWN_PRINCIPALS = frozenset({"app@sharepoint"})
 # Account families: Windows window-manager and font-driver virtual accounts,
-# AWS service-linked roles, versioned Tomcat users, Kubernetes controllers and
+# AWS service-linked roles, versioned Tomcat users, SQL Server Integration
+# Services' versioned accounts (MsDtsServer150), Kubernetes controllers and
 # system users, systemd's, Debian's and underscore-named (_apt) daemon accounts.
 _SERVICE_ACCOUNT = re.compile(
-    r"^(?:(?:dwm|umfd)-\d+|awsservicerole\S*|tomcat\d+|\S+-controller"
+    r"^(?:(?:dwm|umfd)-\d+|awsservicerole\S*|tomcat\d+|msdtsserver\d+|\S+-controller"
     r"|system:\S+|systemd-\S+|debian-\S+|_[a-z]\S*)$"
 )
 

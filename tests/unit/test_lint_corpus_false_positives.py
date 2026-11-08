@@ -236,6 +236,28 @@ PASS = [
     ),
 ]
 
+PASS += [
+    # Vendor built-in accounts (#4105).
+    (
+        "splunk_edit_user_privilege_escalation",
+        "splunk",
+        "NOT user IN (admin, splunk-system-user)",
+    ),
+    ("splunk_dos_via_printf_search_function", "splunk", 'user="splunk_system_user"'),
+    (
+        "kubernetes_azure_detect_sensitive_object_access",
+        "splunk",
+        'user.username="system.anonymous"',
+    ),
+    (
+        "lateral_movement_unusual_process_sql_accounts",
+        "eql",
+        'process where user.name : ("SQLSERVERAGENT", "MSSQLSERVER", '
+        '"MSSQLServerOLAPService", "MsDtsServer150", "SQLWriter", "winmgmt")',
+    ),
+    ("symantec_ws_admin_login", "sigma", "{TargetUserName: virtadmin}"),
+]
+
 # Values tied to one site: these still fail, next to the cases above.
 FAIL = [
     ("splunk", 'index=win user="jdoe"', "jdoe"),
