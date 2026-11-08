@@ -23,6 +23,7 @@ import {
 } from './useSettings'
 import type { SectionProps } from './types'
 import IntentReportCard from './IntentReportCard'
+import RolloutLimitsCard from './RolloutLimitsCard'
 import { detectionRulesApi, type EffectClass, type OverlayOnlyRule, type ToolClass } from '../../services/api'
 import { errorText } from '../../shared/errorText'
 
@@ -698,7 +699,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
       <SettingsCard
         wide
         title="Default limits for new cases"
-        desc="Existing cases keep theirs. Drag a value left or right, or click it to type. Tightening applies when you let go; loosening asks you to confirm."
+        desc="Existing cases keep theirs. Click a value to type a new one. Tightening applies at once; loosening asks you to confirm."
       >
         {outside.length > 0 && (
           <div className="settings-banner err mb-2">
@@ -725,6 +726,8 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
           )}
         {FLEET_ROWS.map((r) => row(r.title, r.hint, r.field, scrub(r)))}
       </SettingsCard>
+
+      <RolloutLimitsCard notify={notify} canWrite={canRaise} />
 
       <SettingsCard
         wide
