@@ -9,12 +9,12 @@ import pytest
 
 from core.detections.inventory import catalog
 
-FIELDS = {"stage_moves", "stage_from", "stage_actor", "held", "held_by"}
+FIELDS = {"stage_moves", "stage_from", "stage_actor", "stage_reason", "held", "held_by"}
 
 
 def _rows(rule_id, *newest_first):
-    """(rule_id, stage, actor, proof) rows, newest first, as the query orders them."""
-    return [(rule_id, stage, actor, proof) for stage, actor, proof in newest_first]
+    """(rule_id, stage, actor, proof, reason) rows, newest first, as the query orders them."""
+    return [(rule_id, stage, actor, proof, "") for stage, actor, proof in newest_first]
 
 
 @pytest.mark.parametrize(
@@ -23,33 +23,33 @@ def _rows(rule_id, *newest_first):
         # One row: the copy entered shadow; nothing to move from.
         (
             [("shadow", "system", {})],
-            {"stage_moves": 1, "stage_from": None, "stage_actor": "system",
+            {"stage_moves": 1, "stage_from": None, "stage_actor": "system", "stage_reason": "",
              "held": False, "held_by": None},
         ),
         # Vigil moved it back to shadow itself: the row turns amber.
         (
             [("shadow", "system", {}), ("live", "system", {}), ("shadow", "system", {})],
-            {"stage_moves": 3, "stage_from": "live", "stage_actor": "system",
+            {"stage_moves": 3, "stage_from": "live", "stage_actor": "system", "stage_reason": "",
              "held": False, "held_by": None},
         ),
         # A person reverted it: held by them.
         (
             [("shadow", "d.lee", {"hold": True}), ("live", "system", {})],
-            {"stage_moves": 2, "stage_from": "live", "stage_actor": "d.lee",
+            {"stage_moves": 2, "stage_from": "live", "stage_actor": "d.lee", "stage_reason": "",
              "held": True, "held_by": "d.lee"},
         ),
         # A new version's row after the Revert does not lift the hold.
         (
             [("shadow", "system", {}), ("shadow", "d.lee", {"hold": True}),
              ("live", "system", {})],
-            {"stage_moves": 3, "stage_from": "shadow", "stage_actor": "system",
+            {"stage_moves": 3, "stage_from": "shadow", "stage_actor": "system", "stage_reason": "",
              "held": True, "held_by": "d.lee"},
         ),
         # Released: no longer held.
         (
             [("shadow", "a.kim", {"hold": False}), ("shadow", "d.lee", {"hold": True}),
              ("live", "system", {})],
-            {"stage_moves": 3, "stage_from": "shadow", "stage_actor": "a.kim",
+            {"stage_moves": 3, "stage_from": "shadow", "stage_actor": "a.kim", "stage_reason": "",
              "held": False, "held_by": None},
         ),
     ],
@@ -95,7 +95,7 @@ def test_vigil_rows_carry_the_fields_and_siem_rows_none():
         for _tool, _hay, r in state
     }
     assert {k: rows[1][k] for k in FIELDS} == {
-        "stage_moves": 2, "stage_from": "live", "stage_actor": "d.lee",
+        "stage_moves": 2, "stage_from": "live", "stage_actor": "d.lee", "stage_reason": "",
         "held": True, "held_by": "d.lee",
     }
     assert not FIELDS & set(rows[2])
