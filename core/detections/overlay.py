@@ -108,17 +108,39 @@ def _undo(
     except Exception:  # noqa: BLE001 -- judged below by what the rules say
         logger.exception("Overlay save: undoing a failed save failed")
         ok = False
-    with get_db_manager().session_scope() as session:
-        statuses = session.scalars(
-            select(DetectionRule.status).where(
-                DetectionRule.source == readers.OVERLAY_SOURCE,
-                DetectionRule.native_key.in_(keys),
-            )
-        ).all()
+    statuses = _mark_failed_import(keys)
     # A sync that faulted before it kept anything left no copy to remove: the
     # undo worked unless a copy is still active.
     ok = ok or (not any(st != "removed" for st in statuses))
     return ok, bool(statuses)
+
+
+def _mark_failed_import(keys: List[str]) -> List[str]:
+    """Mark every removed copy of ``keys`` as a failed import's, whoever removed it
+    (a sync that ran between the undo's file restore and its own sync removes them
+    unmarked). Safe: an import is refused while a copy of its keys is held, so a
+    removed one is either marked already or was removed since this import began.
+    Returns the statuses of the copies there are."""
+    with get_db_manager().session_scope() as session:
+        rows = session.execute(
+            select(DetectionRule.status, DetectionRuleVersion)
+            .join(
+                DetectionRuleVersion,
+                (DetectionRuleVersion.rule_id == DetectionRule.id)
+                & (DetectionRuleVersion.version == DetectionRule.latest_version),
+            )
+            .where(
+                DetectionRule.source == readers.OVERLAY_SOURCE,
+                DetectionRule.native_key.in_(keys),
+            )
+        ).all()
+        for status, version in rows:
+            if status == "removed" and sync.IMPORT_FAILED not in (version.checks or {}):
+                version.checks = {
+                    **(version.checks or {}),
+                    sync.IMPORT_FAILED: {"at": datetime.now(timezone.utc).isoformat()},
+                }
+        return [status for status, _ in rows]
 
 
 def _with_id(language: str, text: str) -> str:

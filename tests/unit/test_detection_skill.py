@@ -895,3 +895,29 @@ def test_a_sync_between_the_write_and_the_fault_leaves_those_copies_removed(
     out = _import(v, data)
     assert not out.get("error"), out
     assert {st for _, st in _rows(v, keys)} == {"active"}
+
+
+@pg
+def test_a_sync_between_the_undo_restoring_files_and_its_sync_still_allows_retry(
+    vigil, monkeypatch
+):
+    """A run without the failed-import keys removes the copies first, unmarked: the
+    undo marks them anyway, so the refusal's promise (import again) holds."""
+    v = vigil
+    data, keys = _exported(v)
+    _late_fault(monkeypatch)
+    real = sync._sync_one
+
+    def hooked(service, source, saves=None, failed_import=None):
+        if failed_import:  # the undo's call: another run got in first
+            real(service, source)
+        return real(service, source, saves, failed_import)
+
+    monkeypatch.setattr(sync, "_sync_one", hooked)
+    out = _import(v, data)
+    monkeypatch.setattr(sync, "_sync_one", real)
+    assert "import the skill again to retry" in out["error"], out
+    assert {st for _, st in _rows(v, keys)} == {"removed"}
+    out = _import(v, data)
+    assert not out.get("error"), out
+    assert {st for _, st in _rows(v, keys)} == {"active"}
