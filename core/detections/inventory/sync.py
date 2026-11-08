@@ -68,7 +68,8 @@ findings in the proof.
 Every repo and local rule (any ``repo:`` source) is linted the same way on a
 new version, and once on a version stored before lint ran: checks['lint'], a
 Sigma rule's detection and logsource, a Splunk, EQL, ES|QL or Lucene query
-whole. It never blocks, stages or disables the rule; the catalog stops counting
+whole. One with nothing to lint (a machine learning rule, a KQL query) records
+result 'none' and why, once a version too. It never blocks, stages or disables the rule; the catalog stops counting
 a failing one as coverage.
 
 Nothing is ever written to a SIEM.
@@ -243,11 +244,13 @@ def staged_entry(
     }
 
 
-def _lint(record: RuleRecord, now: str) -> Optional[Dict[str, Any]]:
-    """checks['lint'] for a repo or overlay rule, linted as a save lints it."""
+def _lint(record: RuleRecord, now: str) -> Dict[str, Any]:
+    """checks['lint'] for a repo or overlay rule, linted as a save lints it. One
+    with nothing to lint gets result 'none' and why, so it is linted once a
+    version like the rest; 'none' is no fail, so the rule stays coverage."""
     report = lint_record(record)
     if report is None:
-        return None  # a language with no lint (KQL)
+        return {"result": "none", "reason": _no_lint(record), "checked_at": now}
     return {
         "result": "pass" if report["passed"] else "fail",
         "findings": report["findings"],
@@ -255,6 +258,15 @@ def _lint(record: RuleRecord, now: str) -> Optional[Dict[str, Any]]:
         "warnings": report.get("warnings") or [],
         "checked_at": now,
     }
+
+
+def _no_lint(record: RuleRecord) -> str:
+    """Why lint_record has nothing to lint in this rule."""
+    kind = (record.logic or {}).get("type")
+    if kind == "machine_learning":
+        return "machine learning rule: reads an ML job, no query"
+    language = (record.logic or {}).get("language") or record.language
+    return f"no lint for {language} queries"
 
 
 def _lint_off(lint: Dict[str, Any]) -> tuple:
@@ -493,7 +505,7 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
                     kept.get("result"),
                     kept.get("findings"),
                     kept.get("warnings"),
-                ) == (lint["result"], lint["findings"], lint["warnings"]):
+                ) == (lint["result"], lint.get("findings"), lint.get("warnings")):
                     lint = None
             elif not siem and (fp != latest_fp or "lint" not in (stored or {})):
                 # Any other imported rule: a new version is linted, and one
