@@ -166,16 +166,15 @@ def _elastic(text: str, rel: str) -> RuleRecord:
     )
 
 
-def _wazuh(text: str, rel: str) -> Optional[RuleRecord]:
-    """A file holding one Wazuh rule, keyed by its id; None for anything else
-    (a ruleset file of many rules, or XML that is no rule)."""
-    try:
-        rule = wazuh_xml.parse(text)
-    except wazuh_xml.NotARule:
+def _wazuh_record(
+    rule: ET.Element, enclosing: List[str], rel: str, content: str
+) -> Optional[RuleRecord]:
+    """One Wazuh rule keyed by its id, as the number the manager reads it as."""
+    raw = wazuh_xml.rule_id(rule)
+    if raw is None:
         return None
-    key = wazuh_xml.rule_id(rule)
-    if key is None:
-        return None
+    number = wazuh_xml.number(raw)
+    key = raw if number is None else str(number)
     level = rule.get("level")
     return RuleRecord(
         native_key=key,
@@ -186,11 +185,43 @@ def _wazuh(text: str, rel: str) -> Optional[RuleRecord]:
         techniques=wazuh_xml.techniques(rule),
         logic={
             "level": int(level) if level and level.strip().isdigit() else level,
-            "groups": wazuh_xml.groups(rule, text),
+            "groups": wazuh_xml.groups(rule, enclosing),
             "if_sid": (rule.findtext("if_sid") or "").strip() or None,
         },
-        content={"_content": text, "description": wazuh_xml.description(rule)},
+        content={"_content": content, "description": wazuh_xml.description(rule)},
     )
+
+
+def _wazuh(text: str, rel: str) -> Optional[RuleRecord]:
+    """A file holding one Wazuh rule, as written; None for anything else
+    (a ruleset file of many rules, or XML that is no rule)."""
+    try:
+        rules = wazuh_xml.parse_all(text)
+    except wazuh_xml.NotARule:
+        return None
+    if len(rules) != 1:
+        return None
+    rule, enclosing = rules[0]
+    return _wazuh_record(rule, enclosing, rel, text)
+
+
+def wazuh_records(text: str, rel: str) -> List[RuleRecord]:
+    """Every rule in a Wazuh rule file. A file of one rule reads as _wazuh();
+    each rule of a ruleset file (a local_rules.xml) as its own XML, all at
+    the file's path. A decoder or other XML file holds none."""
+    try:
+        rules = wazuh_xml.parse_all(text)
+    except wazuh_xml.NotARule:
+        return []
+    if len(rules) == 1:
+        rule, enclosing = rules[0]
+        one = _wazuh_record(rule, enclosing, rel, text)
+        return [one] if one else []
+    found = (
+        _wazuh_record(rule, enclosing, rel, ET.tostring(rule, encoding="unicode"))
+        for rule, enclosing in rules
+    )
+    return [record for record in found if record]
 
 
 def _kql_yaml(doc: Dict[str, Any], rel: str) -> RuleRecord:
@@ -322,23 +353,27 @@ def read_source(source: Dict[str, Any], root: Path) -> List[RuleRecord]:
         raw = path.read_bytes()
         try:
             # Postgres text cannot hold NUL, so such a file is not stored.
-            record = (
-                None
-                if b"\x00" in raw
-                else parse_file(fmt, path, rel, raw.decode("utf-8"))
-            )
+            found = [] if b"\x00" in raw else _records(fmt, path, rel, raw)
         except Exception:  # noqa: BLE001 -- a malformed file is not a rule
-            record = None
-        if record is None:
-            continue
-        # Two files with one id stay two rows: the first by path keeps the id.
-        if record.native_key in keys:
-            logger.warning(
-                "detection rules: %s repeats id %s; keyed by path",
-                rel,
-                record.native_key,
-            )
-            record.native_key = f"{record.native_key}@{rel}"
-        keys.add(record.native_key)
-        records.append(record)
+            found = []
+        for record in found:
+            # Two rules with one id stay two rows: the first by path keeps the id.
+            if record.native_key in keys:
+                logger.warning(
+                    "detection rules: %s repeats id %s; keyed by path",
+                    rel,
+                    record.native_key,
+                )
+                record.native_key = f"{record.native_key}@{rel}"
+            keys.add(record.native_key)
+            records.append(record)
     return records
+
+
+def _records(fmt: str, path: Path, rel: str, raw: bytes) -> List[RuleRecord]:
+    """The rules a file holds: many in a Wazuh ruleset file, else one or none."""
+    text = raw.decode("utf-8")
+    if path.suffix == ".xml":
+        return wazuh_records(text, rel)
+    record = parse_file(fmt, path, rel, text)
+    return [record] if record else []

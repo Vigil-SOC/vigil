@@ -220,3 +220,92 @@ def test_the_save_tool_passes_the_wazuh_copy(monkeypatch):
     tools = SecurityDetectionsTools.__new__(SecurityDetectionsTools)
     asyncio.run(tools.save_detection_rule(wazuh_xml=RULE))
     assert seen["args"][-1] == RULE
+
+
+# --- ids as the manager reads them, and files as Wazuh writes them --------------
+
+
+@pytest.mark.parametrize(
+    "given",
+    ["0100001", "１００１０３", "100100 0", "+100100"],
+    ids=["leading-zero", "fullwidth", "space", "sign"],
+)
+def test_an_id_not_written_as_six_ascii_digits_is_refused(ids, given):
+    ids["loaded"] = {"100001"}
+    with pytest.raises(overlay.Refused, match="ASCII digits with no leading zero"):
+        overlay._wazuh_with_id(RULE.replace('id="100100"', f'id="{given}"'))
+
+
+def test_loaded_ids_are_compared_as_numbers(ids):
+    ids["loaded"] = {"100100"}
+    ids["own"] = {"0100100"}  # the same rule, read as a number
+    assert overlay._wazuh_with_id(RULE) == RULE
+    ids["own"] = set()
+    ids["loaded"] = {" 100100"}
+    with pytest.raises(overlay.Refused, match="already loaded"):
+        overlay._wazuh_with_id(RULE)
+
+
+def test_a_leading_xml_declaration_is_accepted():
+    text = '<?xml version="1.0" encoding="UTF-8"?>\n' + RULE
+    record = readers.parse_file("auto", Path("r.xml"), "r.xml", text)
+    assert record.native_key == "100100" and record.content["_content"] == text
+    assert wazuh_xml.without_declaration("﻿" + text) == "\n" + RULE
+
+
+def test_a_rule_tag_inside_a_comment_is_not_given_the_id(ids):
+    text = '<!-- was <rule id="7" level="3"> -->\n' + _rule(
+        "<match>x</match>", attrs='level="5"'
+    )
+    out = overlay._wazuh_with_id(text)
+    assert out.startswith('<!-- was <rule id="7" level="3"> -->')
+    assert wazuh_xml.rule_id(wazuh_xml.parse(out)) == "100000"
+
+
+LOCAL_RULES = """<!-- Local rules -->
+<group name="local,syslog,">
+  <rule id="100001" level="5">
+    <match>Failed password for</match>
+    <description>sshd: failed password</description>
+  </rule>
+  <rule id="0100002" level="7">
+    <if_sid>100001</if_sid>
+    <description>sshd: repeated failures</description>
+    <mitre><id>T1110</id></mitre>
+  </rule>
+</group>
+<group name="windows,">
+  <rule id="100003" level="10">
+    <if_sid>61603</if_sid>
+    <group>sysmon,</group>
+    <description>Rundll32 proxying JavaScript</description>
+  </rule>
+</group>
+"""
+
+
+def test_a_ruleset_file_is_read_rule_by_rule(tmp_path):
+    (tmp_path / "local_rules.xml").write_text(LOCAL_RULES)
+    (tmp_path / "local_decoder.xml").write_text(
+        '<decoder name="x"><prematch>x</prematch></decoder>'
+    )
+    records = readers.read_source({"id": "acme", "format": "wazuh"}, tmp_path)
+    assert [(r.native_key, r.name) for r in records] == [
+        ("100001", "sshd: failed password"),
+        ("100002", "sshd: repeated failures"),  # read as the manager reads it
+        ("100003", "Rundll32 proxying JavaScript"),
+    ]
+    assert {r.path for r in records} == {"local_rules.xml"}
+    assert [r.logic["groups"] for r in records] == [
+        ["local", "syslog"],
+        ["local", "syslog"],
+        ["windows", "sysmon"],
+    ]
+    assert records[1].techniques == ["T1110"]
+    assert records[2].content["_content"].startswith('<rule id="100003"')
+
+
+def test_a_single_rule_file_is_still_kept_as_written(tmp_path):
+    (tmp_path / "vigil_100100.xml").write_text(RULE)
+    (record,) = readers.read_source({"id": "acme", "format": "wazuh"}, tmp_path)
+    assert record.content["_content"] == RULE
