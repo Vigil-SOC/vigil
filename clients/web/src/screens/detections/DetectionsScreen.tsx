@@ -7,6 +7,8 @@ import { detectionRulesApi } from '../../services/api'
 import { Empty, Failure } from '../shared/x1'
 import RuleExceptions, { KEEP_DAYS } from './RuleExceptions'
 import RuleFindings from './RuleFindings'
+import RolloutMetrics from './RolloutMetrics'
+import { useRolloutMetrics } from './useRolloutMetrics'
 import FindingPopup from '../dashboard/FindingPopup'
 import ProofCardExport from './ProofCardExport'
 import './detections.css'
@@ -225,6 +227,8 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   // A finding opened from a rule's fire count.
   const [finding, setFinding] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
+  // The rollout's success metrics, a card under the stats strip.
+  const rollout = useRolloutMetrics()
   const listRef = useRef<HTMLDivElement>(null)
   // Bumped per view, so a page asked for under the last view is dropped.
   const generation = useRef(0)
@@ -365,6 +369,8 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
           <span className="de-kpi-sub">{siems.map((s) => `${n(report.by_siem[s]?.cant_fire ?? 0)} ${SIEM_NAME[s]}`).join(' · ')}</span>
         </div>
       </div>
+
+      <RolloutMetrics data={rollout.data} error={rollout.error} onRetry={rollout.retry} />
 
       <div className="de-pair">
         <section className="x1-card de-card de-siems">
