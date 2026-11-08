@@ -904,6 +904,40 @@ export interface HealthEntry {
 /** Each rollout metric carries where its numbers come from and what they can't say. */
 interface MetricNotes { source: string; unknown: string[] }
 
+/** One SIEM's active copies of the rules declaring a technique. */
+export interface CoverageSiem {
+  copies: number
+  proven: number
+  failing: number
+  state: 'proven' | 'unproven'
+}
+
+export type CoverageState = 'proven' | 'unproven' | 'no_rule'
+export type CoverageSiemName = 'elastic' | 'splunk' | 'wazuh'
+
+/** One ATT&CK technique on the coverage heat map. */
+export interface CoverageCell {
+  technique: string
+  name: string
+  tactic: string
+  state: CoverageState
+  rules: number
+  disabled: number
+  seen: number
+  replayed: number
+  siems: Partial<Record<CoverageSiemName, CoverageSiem>>
+}
+
+/** GET /detection-rules/coverage: ATT&CK coverage by technique and SIEM (#4103). */
+export interface DetectionCoverage {
+  techniques: CoverageCell[]
+  tactics: string[]
+  summary: Record<CoverageState, number>
+  rule_total: number
+  mapped: number
+  source: string
+}
+
 /** GET /detection-rules/metrics: the rollout's success metrics from stored data. */
 export interface DetectionMetrics {
   generated_at: string
@@ -993,6 +1027,9 @@ export const detectionRulesApi = {
   /** The rollout's success metrics, each with its source and what it can't say. It
    * reads 30 days of check changes, so it gets longer than the default timeout. */
   metrics: () => api.get<DetectionMetrics>('/detection-rules/metrics'),
+
+  /** ATT&CK coverage by technique and SIEM: the heat map. */
+  coverage: () => api.get<DetectionCoverage>('/detection-rules/coverage'),
 
   /** Marks these entries read for the signed-in person, or every open one; returns the inbox. */
   markHealthRead: (changeIds: number[] | 'all') =>

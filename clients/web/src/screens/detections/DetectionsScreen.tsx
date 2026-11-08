@@ -6,10 +6,12 @@ import { errorText } from '../../shared/errorText'
 import { detectionRulesApi } from '../../services/api'
 import { useAuth } from '../../contexts/AuthContext'
 import { Empty, Failure } from '../shared/x1'
+import { TabStrip } from '../../shared/TabStrip'
 import RuleExceptions, { KEEP_DAYS } from './RuleExceptions'
 import RuleFindings from './RuleFindings'
 import RuleStages from './RuleStages'
 import { stageLine, type Stage, type StageFields } from './ruleStage'
+import CoverageMap from './CoverageMap'
 import RolloutMetrics from './RolloutMetrics'
 import { useRolloutMetrics } from './useRolloutMetrics'
 import FindingPopup from '../dashboard/FindingPopup'
@@ -169,14 +171,22 @@ function prompt(r: RuleRow, days: number): string {
   }
 }
 
-/** The shell heads the page (TITLES); under it, Import rules and the rule health. */
+type Section = 'rules' | 'coverage'
+const SECTIONS: readonly { id: Section; label: string }[] = [
+  { id: 'rules', label: 'Rules' },
+  { id: 'coverage', label: 'Coverage' },
+]
+
+/** The shell heads the page (TITLES); under it, Import rules, then the rule health or the ATT&CK coverage map. */
 export default function DetectionsScreen({ goSettings, openChat }: ConsoleScreenProps) {
+  const [section, setSection] = useState<Section>('rules')
   return (
     <div className="x1 de">
-      <div className="de-top">
+      <div className="de-top de-top-tabs">
+        <TabStrip label="Detections sections" tabs={SECTIONS} active={section} onChange={setSection} />
         <button type="button" className="btn primary" onClick={() => goSettings('data')}>Import rules</button>
       </div>
-      <RulesTab goSettings={goSettings} openChat={openChat} />
+      {section === 'rules' ? <RulesTab goSettings={goSettings} openChat={openChat} /> : <CoverageMap goSettings={goSettings} />}
     </div>
   )
 }
