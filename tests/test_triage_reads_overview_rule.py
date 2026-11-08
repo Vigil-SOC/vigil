@@ -1,25 +1,25 @@
 """Triage reads Overview's rule for an alert's state (#3485).
 
-Needs a real Postgres: set ``VIGIL_TEST_POSTGRES_DSN`` to an empty database.
+Needs a real Postgres: set ``VIGIL_TEST_PG_DSN`` to a throwaway database. The
+test builds its tables in a schema of its own there (tests/pg_scratch.py).
 """
 
-import os
 from collections import Counter
 from contextlib import contextmanager
 
 import pytest
 
-DSN = os.environ.get("VIGIL_TEST_POSTGRES_DSN")
-pytestmark = pytest.mark.skipif(not DSN, reason="VIGIL_TEST_POSTGRES_DSN not set")
+from tests.pg_scratch import DSN, create_tables, scratch_engine
+
+pytestmark = pytest.mark.skipif(not DSN, reason="VIGIL_TEST_PG_DSN not set")
 
 
 @pytest.fixture
 def seeded(monkeypatch):
-    from sqlalchemy import create_engine, text
+    from sqlalchemy import text
     from sqlalchemy.orm import sessionmaker
 
     from core.storage.models import (
-        Base,
         Case,
         Finding,
         IntakeTrigger,
@@ -27,69 +27,75 @@ def seeded(monkeypatch):
     )
     from core.time import utcnow
 
-    engine = create_engine(DSN)
-    with engine.begin() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
-    Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine)
+    with scratch_engine() as engine:
+        with engine.begin() as conn:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+        create_tables(engine)
+        factory = sessionmaker(bind=engine)
 
-    class Manager:
-        @contextmanager
-        def session_scope(self):
-            session = factory()
-            try:
-                yield session
-                session.commit()
-            finally:
-                session.close()
+        class Manager:
+            @contextmanager
+            def session_scope(self):
+                session = factory()
+                try:
+                    yield session
+                    session.commit()
+                finally:
+                    session.close()
 
-    manager = Manager()
-    for module in (
-        "core.findings.alert_outcomes",
-        "core.findings.arrival_counts",
-        "core.federation.lag",
-        "services.api.triage_read",
-    ):
-        monkeypatch.setattr(f"{module}.get_db_manager", lambda: manager)
-    monkeypatch.setattr("core.findings.alert_outcomes.needs_you_case_ids", set)
-    monkeypatch.setattr("core.config.is_demo_mode", lambda: False)
+        manager = Manager()
+        for module in (
+            "core.findings.alert_outcomes",
+            "core.findings.arrival_counts",
+            "core.federation.lag",
+            "services.api.triage_read",
+        ):
+            monkeypatch.setattr(f"{module}.get_db_manager", lambda: manager)
+        monkeypatch.setattr("core.findings.alert_outcomes.needs_you_case_ids", set)
+        monkeypatch.setattr("core.config.is_demo_mode", lambda: False)
 
-    now = utcnow()
-    with manager.session_scope() as session:
-        for fid in ("f-queued", "f-oncase", "f-noise", "f-none", "f-expired"):
-            session.add(
-                Finding(
-                    finding_id=fid,
-                    data_source="splunk",
-                    severity="high",
-                    noise_marked_at=now if fid == "f-noise" else None,
+        now = utcnow()
+        with manager.session_scope() as session:
+            for fid in ("f-queued", "f-oncase", "f-noise", "f-none", "f-expired"):
+                session.add(
+                    Finding(
+                        finding_id=fid,
+                        data_source="splunk",
+                        severity="high",
+                        noise_marked_at=now if fid == "f-noise" else None,
+                    )
                 )
+            session.add(Case(case_id="case-1", title="c", status="open"))
+            session.flush()
+            session.execute(
+                case_findings.insert().values(case_id="case-1", finding_id="f-oncase")
             )
-        session.add(Case(case_id="case-1", title="c", status="open"))
-        session.flush()
-        session.execute(
-            case_findings.insert().values(case_id="case-1", finding_id="f-oncase")
-        )
-        session.add_all(
-            [
-                IntakeTrigger(kind="detection", state="queued", finding_id="f-queued"),
-                # a hunt linked it to a case; its row stays queued until the daemon's next pass
-                IntakeTrigger(kind="detection", state="queued", finding_id="f-oncase"),
-                IntakeTrigger(kind="detection", state="queued", finding_id="f-noise"),
-                IntakeTrigger(
-                    kind="detection",
-                    state="expired",
-                    finding_id="f-expired",
-                    decided_at=now,
-                ),
-                IntakeTrigger(kind="schedule", state="queued"),
-                # the alert was deleted: Overview cannot see it, so Triage does not list it
-                IntakeTrigger(kind="detection", state="queued", finding_id="f-gone"),
-            ]
-        )
-    yield
-    engine.dispose()
+            session.add_all(
+                [
+                    IntakeTrigger(
+                        kind="detection", state="queued", finding_id="f-queued"
+                    ),
+                    # a hunt linked it to a case; its row stays queued until the daemon's next pass
+                    IntakeTrigger(
+                        kind="detection", state="queued", finding_id="f-oncase"
+                    ),
+                    IntakeTrigger(
+                        kind="detection", state="queued", finding_id="f-noise"
+                    ),
+                    IntakeTrigger(
+                        kind="detection",
+                        state="expired",
+                        finding_id="f-expired",
+                        decided_at=now,
+                    ),
+                    IntakeTrigger(kind="schedule", state="queued"),
+                    # the alert was deleted: Overview cannot see it, so Triage does not list it
+                    IntakeTrigger(
+                        kind="detection", state="queued", finding_id="f-gone"
+                    ),
+                ]
+            )
+        yield
 
 
 def test_overview_counts_do_not_move(seeded):
