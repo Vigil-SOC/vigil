@@ -212,7 +212,7 @@ def _lint(record: RuleRecord, now: str) -> Optional[Dict[str, Any]]:
     """checks['lint'] for a repo or overlay rule, linted as a save lints it."""
     report = lint_record(record)
     if report is None:
-        return None  # a language with no lint (KQL, kuery)
+        return None  # a language with no lint (KQL)
     return {
         "result": "pass" if report["passed"] else "fail",
         "findings": report["findings"],
