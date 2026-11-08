@@ -45,8 +45,17 @@ class FakeGitHub:
         self.files = {"main": {}}
         self.pulls = []
         self.opened = 0  # POST /pulls that made a PR
+        self.slow = 0.0  # seconds each write takes
+        self.writing = threading.Event()  # set when the first write arrives
+        self.writes = []  # (thread, method, path) of every write
 
     def __call__(self, request):
+        if request.method in ("POST", "PUT", "PATCH"):
+            self.writes.append(
+                (threading.current_thread(), request.method, request.url.path)
+            )
+            self.writing.set()
+            time.sleep(self.slow)
         with self.lock:
             return self._answer(request)
 
@@ -403,22 +412,55 @@ def test_a_failed_pr_leaves_the_rule_live_and_the_sweep_retries_only_the_pr(
     assert _status(db, rid) == ["executed"]
 
 
-def test_a_crash_after_the_stage_commit_is_finished_by_the_next_sweep(
+def test_a_sweep_during_the_pr_sends_no_github_write(db, github, mine):
+    rid = _seed(db, mine)
+    _sweep()
+    approved = _approved(rid)
+    github.slow = 2.0  # each write: the approval is in the GitHub call a long while
+    approve = threading.Thread(
+        target=rollout_approval.on_decided, args=(approved, "dana"), daemon=True
+    )
+    approve.start()
+    assert github.writing.wait(SECONDS)
+    sweeper = threading.current_thread()
+    _sweep()  # under Assist: carries out approved rows, but this one is leased
+    assert [w for w in github.writes if w[0] is sweeper] == []
+    approve.join(SECONDS)
+    assert not approve.is_alive()
+    assert len(github.pulls) == 1 and github.opened == 1
+    assert _live_rows(db, rid) == 1 and _status(db, rid) == ["executed"]
+
+
+def test_an_expired_lease_is_taken_over_and_the_pr_completed_once(
     db, github, mine, monkeypatch
 ):
     rid = _seed(db, mine)
     _sweep()
     approved = _approved(rid)
+    real = rollout_approval._open_pr
+    crash = [True]
 
-    def dies(*args, **kwargs):
-        raise KeyboardInterrupt
+    def open_pr(*args, **kwargs):
+        if crash[0]:
+            raise KeyboardInterrupt  # the process dies mid-PR: no cleanup runs
+        return real(*args, **kwargs)
 
-    monkeypatch.setattr(rollout_approval, "_open_pr", dies)
+    monkeypatch.setattr(rollout_approval, "_open_pr", open_pr)
     with pytest.raises(KeyboardInterrupt):
         rollout_approval.carry_out(approved, rollout.RolloutReport())
-    monkeypatch.undo()  # the process is back; the fakes below are reinstalled
+    crash[0] = False
     assert _live_rows(db, rid) == 1 and github.opened == 0
-    assert _status(db, rid) == ["approved"]
+    _sweep()  # the dead carrier's lease still stands
+    assert github.opened == 0 and _status(db, rid) == ["approved"]
+    with db.session_scope() as session:
+        row = session.get(ApprovalAction, approved.action_id)
+        lease = dict(row.execution_result["pr_lease"])
+        lease["until"] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        row.execution_result = {"pr_lease": lease}
+    _sweep()
+    _sweep()
+    assert github.opened == 1 and _live_rows(db, rid) == 1
+    assert _status(db, rid) == ["executed"]
 
 
 @pytest.mark.parametrize("round_", range(15))

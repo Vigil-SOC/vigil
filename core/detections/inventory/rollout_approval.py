@@ -9,8 +9,9 @@ audit row naming who did it. Reuses the approvals queue: no table of its own.
 from __future__ import annotations
 
 import logging
+import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterator, Mapping, Optional, Tuple
 
 from sqlalchemy import select
@@ -32,6 +33,10 @@ logger = logging.getLogger(__name__)
 
 AUDIT_TYPE = "detection_rules"
 AUDIT_KEY = "rule_approval"
+# While one carrier's PR is in flight, no other opens one. Longer than a deploy's
+# slowest pass (every call at DEPLOY_TIMEOUT, plus the race waits), so a live
+# carrier never loses it; a crashed one's expires and the sweep takes over.
+PR_LEASE = timedelta(minutes=10)
 
 
 def _audit(
@@ -86,7 +91,7 @@ def request_promotion(copy: Any, reason: str, proof: Mapping[str, Any]) -> bool:
             "system",
             reason,
             action_id=action.action_id,
-            kind="promote",
+            kind=ActionType.PROMOTE_RULE.value,
             version=copy.version,
         )
     return inserted
@@ -125,7 +130,7 @@ def request_deploy(copy: Any, requested_by: str) -> str:
         requested_by,
         reason,
         action_id=action.action_id,
-        kind="deploy",
+        kind=ActionType.DEPLOY_RULE.value,
         version=copy.version,
     )
     return action.action_id
@@ -167,21 +172,51 @@ def carry_out_approved(report: Any) -> None:
                 )
 
 
+def _leased(row: Any) -> bool:
+    """Whether another carrier's PR is in flight on ``row``."""
+    lease = (row.execution_result or {}).get("pr_lease") or {}
+    try:
+        return datetime.fromisoformat(lease["until"]) > datetime.now(timezone.utc)
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
 @contextmanager
 def _claimed(action_id: str) -> Iterator[Tuple[Any, Any]]:
     """(session, the approval row) locked for the caller, or (None, None) when it
-    is no longer approved or another carrier holds it. The row is the one
-    serialization point: whoever holds it promotes and opens the PR, and a
-    second carrier skips instead of repeating either. The lock lasts until the
-    transaction ends, so the answer a skipped carrier sees is the committed one."""
+    is no longer approved, another carrier is writing it, or another carrier's
+    PR is in flight (its ``pr_lease``). The row lock serializes the stage write,
+    the lease the PR step, which runs after the lock is released. The lock lasts
+    until the transaction ends, so a skipped carrier sees the committed answer."""
     with get_db_manager().session_scope() as session:
         row = session.scalar(
             select(ApprovalActionRow)
             .where(ApprovalActionRow.action_id == action_id)
             .with_for_update(skip_locked=True)
         )
-        ok = row is not None and row.status == ActionStatus.APPROVED.value
+        ok = (
+            row is not None
+            and row.status == ActionStatus.APPROVED.value
+            and not _leased(row)
+        )
         yield (session, row) if ok else (None, None)
+
+
+def _lease(row: Any) -> str:
+    """Take the PR lease on a claimed row, in the claim's own transaction."""
+    holder = uuid.uuid4().hex
+    until = (datetime.now(timezone.utc) + PR_LEASE).isoformat()
+    row.execution_result = {"pr_lease": {"holder": holder, "until": until}}
+    return holder
+
+
+def _release(action_id: str, holder: str) -> None:
+    """Drop the lease after a PR that did not finish, so the next sweep retries."""
+    with get_db_manager().session_scope() as session:
+        row = session.get(ApprovalActionRow, action_id, with_for_update=True)
+        held = ((row.execution_result or {}).get("pr_lease") or {}) if row else {}
+        if row is not None and held.get("holder") == holder:
+            row.execution_result = None
 
 
 def _close(row: Any, status: ActionStatus, result: Dict[str, Any]) -> None:
@@ -245,23 +280,31 @@ def carry_out(action: PendingAction, report: Any) -> bool:
         elif copy.stage != "live":
             _close(row, ActionStatus.FAILED, {"error": f"rule {rule_id} is not live"})
             return False
-    if promote:
-        done = _open_pr(copy, who, report)
-        result: Dict[str, Any] = {"promoted": True, "pr_opened": done}
-    else:
-        outcome = rollout.deploy_overlay_only([rule_id], actor=who, approver=True)
-        if outcome["skipped"]:
-            _finish(
-                action.action_id,
-                ActionStatus.FAILED,
-                {"error": outcome["skipped"][0]["reason"]},
-            )
-            return False
-        done = not outcome["failed"]
-        result = {"opened": outcome["opened"], "failed": outcome["failed"]}
-    if done:
-        _finish(action.action_id, ActionStatus.EXECUTED, result)
-    return done
+        holder = _lease(row)
+    try:
+        if promote:
+            done = _open_pr(copy, who, report)
+            result: Dict[str, Any] = {"promoted": True, "pr_opened": done}
+        else:
+            outcome = rollout.deploy_overlay_only([rule_id], actor=who, approver=True)
+            if outcome["skipped"]:
+                _finish(
+                    action.action_id,
+                    ActionStatus.FAILED,
+                    {"error": outcome["skipped"][0]["reason"]},
+                )
+                return False
+            done = not outcome["failed"]
+            result = {"opened": outcome["opened"], "failed": outcome["failed"]}
+        if done:
+            _finish(action.action_id, ActionStatus.EXECUTED, result)
+        else:
+            _release(action.action_id, holder)
+        return done
+    except Exception:
+        # A crash leaves the lease to expire; an error frees it for the retry.
+        _release(action.action_id, holder)
+        raise
 
 
 def _promote(session: Any, copy: Any, action: Any, who: str, report: Any) -> None:

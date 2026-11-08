@@ -138,6 +138,8 @@ class World:
 
         monkeypatch.setattr(rollout_approval, "_claimed", claimed)
         monkeypatch.setattr(rollout_approval, "_finish", finish)
+        monkeypatch.setattr(rollout_approval, "_lease", lambda row: "holder")
+        monkeypatch.setattr(rollout_approval, "_release", lambda aid, holder: None)
         monkeypatch.setattr(
             rollout_approval, "_latest_stage", lambda s, rid: self.copies[0].stage
         )
@@ -319,3 +321,8 @@ def test_asks_first_follows_the_stored_ceiling(monkeypatch, stored, asks):
     monkeypatch.setattr(ceiling, "try_read_stored_ceiling", lambda: (stored, True))
     monkeypatch.setattr(ceiling, "environment_locks_act", lambda s=None: False)
     assert rollout._asks_first() is asks
+
+
+def test_the_pr_lease_outlasts_the_slowest_deploy():
+    slowest = rollout.DEPLOY_TIMEOUT * 10 + sum(rollout.RACE_WAITS)
+    assert rollout_approval.PR_LEASE.total_seconds() > slowest
