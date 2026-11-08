@@ -125,6 +125,12 @@
    cursor: pointer;
 }
 
+/* Unlayered, so it beats the rule above: without ai_autonomy.write a profile card
+   still shows which is active, with nothing to pick */
+.soc-console .lim-profile:disabled {
+   cursor: default;
+}
+
 @keyframes soc-fade {
    from {
       transform: translateY(6px);
@@ -4620,11 +4626,6 @@
    .lim-profile.on {
       border-color: var(--ac);
       background: var(--ac-bg);
-   }
-
-   /* Without ai_autonomy.write: the active profile still shows, nothing to pick */
-   .lim-profile:disabled {
-      cursor: default;
    }
 
    .lim-profile:focus-visible {
