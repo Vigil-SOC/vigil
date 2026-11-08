@@ -197,10 +197,25 @@ def _latest_stage(session: Any, rule_id: int) -> Optional[str]:
     return latest.stage if latest is not None else None
 
 
+def _finish(action_id: str, status: ActionStatus, result: Dict[str, Any]) -> None:
+    """Close the approval in its own transaction, after the move is done."""
+    with get_db_manager().session_scope() as session:
+        row = session.get(ApprovalActionRow, action_id, with_for_update=True)
+        if row is not None and row.status == ActionStatus.APPROVED.value:
+            _close(row, status, result)
+
+
 def carry_out(action: PendingAction, report: Any) -> bool:
     """Do what an approved request asked. True when it is done; False leaves it
     approved for the sweep to retry (Stop set, or the PR failed), and also when
-    another carrier already has it."""
+    another carrier already has it.
+
+    Three steps, never nested: the locked transaction writes the live stage row
+    and commits; the PR opens with no lock or transaction held (the audit trail
+    takes a lock per write, and a second session waiting on it would wait for
+    ever); then the approval is closed in a fresh transaction. The row stays
+    approved until the PR is done, so a crash or a failed PR leaves the copy
+    live with its PR owed, and the sweep's next pass retries only the PR."""
     from core.detections.inventory import rollout
 
     if rollout._stopped():
@@ -211,6 +226,7 @@ def carry_out(action: PendingAction, report: Any) -> bool:
         params = row.parameters or {}
         rule_id, version = int(params["rule_id"]), params.get("version")
         who = row.approved_by or "system"
+        promote = row.action_type == ActionType.PROMOTE_RULE.value
         # Read after the lock: an earlier carrier's commit is what this sees.
         copy = next((c for c in rollout._copies() if c.rule_id == rule_id), None)
         if copy is None or copy.version != version or copy.held:
@@ -220,33 +236,32 @@ def carry_out(action: PendingAction, report: Any) -> bool:
                 {"error": f"rule {rule_id} v{version} is no longer promotable"},
             )
             return False
-        promote = row.action_type == ActionType.PROMOTE_RULE.value
         if (
             promote
             and copy.stage == "shadow"
-            and (_latest_stage(session, rule_id) == "shadow")
+            and _latest_stage(session, rule_id) == "shadow"
         ):
             _promote(session, copy, row, who, report)
         elif copy.stage != "live":
             _close(row, ActionStatus.FAILED, {"error": f"rule {rule_id} is not live"})
             return False
-        if promote:
-            done = _open_pr(copy, who, report)
-            result: Dict[str, Any] = {"promoted": True, "pr_opened": done}
-        else:
-            outcome = rollout.deploy_overlay_only([rule_id], actor=who, approver=True)
-            if outcome["skipped"]:
-                _close(
-                    row,
-                    ActionStatus.FAILED,
-                    {"error": outcome["skipped"][0]["reason"]},
-                )
-                return False
-            done = not outcome["failed"]
-            result = {"opened": outcome["opened"], "failed": outcome["failed"]}
-        if done:
-            _close(row, ActionStatus.EXECUTED, result)
-        return done
+    if promote:
+        done = _open_pr(copy, who, report)
+        result: Dict[str, Any] = {"promoted": True, "pr_opened": done}
+    else:
+        outcome = rollout.deploy_overlay_only([rule_id], actor=who, approver=True)
+        if outcome["skipped"]:
+            _finish(
+                action.action_id,
+                ActionStatus.FAILED,
+                {"error": outcome["skipped"][0]["reason"]},
+            )
+            return False
+        done = not outcome["failed"]
+        result = {"opened": outcome["opened"], "failed": outcome["failed"]}
+    if done:
+        _finish(action.action_id, ActionStatus.EXECUTED, result)
+    return done
 
 
 def _promote(session: Any, copy: Any, action: Any, who: str, report: Any) -> None:

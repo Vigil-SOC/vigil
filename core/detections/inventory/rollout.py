@@ -872,6 +872,7 @@ def sweep(now: datetime, report: RolloutReport) -> None:
             )
         )
         rows, live = [], [c for c in copies if c.stage == "live"]
+        asking: List[Tuple[Copy, str, Dict[str, Any]]] = []
         for copy in copies:
             due = _due(session, copy, now, live_24h, limits)
             if due is None:
@@ -881,10 +882,7 @@ def sweep(now: datetime, report: RolloutReport) -> None:
                 report.held += 1
                 continue
             if asks and stage == "live":
-                from core.detections.inventory import rollout_approval
-
-                if rollout_approval.request_promotion(copy, reason, proof):
-                    report.asked.append(f"{copy.rule_id} v{copy.version}")
+                asking.append((copy, reason, proof))
                 continue
             rows.append(
                 {
@@ -902,6 +900,14 @@ def sweep(now: datetime, report: RolloutReport) -> None:
                 live.remove(copy)
         if rows:
             _insert_stages(session, rows, {c.rule_id: c.stage for c in copies})
+    if asking:
+        # After the transaction: a request writes the audit trail in sessions of
+        # its own, which must not wait on this one's trail lock.
+        from core.detections.inventory import rollout_approval
+
+        for copy, reason, proof in asking:
+            if rollout_approval.request_promotion(copy, reason, proof):
+                report.asked.append(f"{copy.rule_id} v{copy.version}")
     # After the stage rows commit: a PR that fails leaves the promotion standing,
     # and the next sweep is its retry.
     if stopped:

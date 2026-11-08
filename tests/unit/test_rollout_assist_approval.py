@@ -133,7 +133,11 @@ class World:
             ok = row.status == "approved"
             yield (object(), row) if ok else (None, None)
 
+        def finish(action_id, status, result):
+            FakeApprovals.rows[action_id].status = status.value
+
         monkeypatch.setattr(rollout_approval, "_claimed", claimed)
+        monkeypatch.setattr(rollout_approval, "_finish", finish)
         monkeypatch.setattr(
             rollout_approval, "_latest_stage", lambda s, rid: self.copies[0].stage
         )
