@@ -53,6 +53,18 @@ DOCS = [
         "predecoder": {"program_name": "apache2"},
         "data": {"win": {"eventdata": {"image": "C:\\Windows\\a.exe"}}},
     },
+    # Designer's wazuh-logtest probe events (4.9.2), as the archive keeps them.
+    {"decoder": {"name": "json"}, "predecoder": {"program_name": "d4086prog"}},
+    {"decoder": {"name": "json"}, "predecoder": {"program_name": "D4086PROG"}},
+    {"decoder": {"name": "json"}, "data": {"d4086": {"who": "root"}}},
+    {"decoder": {"name": "json"}, "data": {"d4086": {"who": "ROOT"}}},
+    {"decoder": {"name": "json"}, "data": {"action": "allow"}},
+    {"decoder": {"name": "json"}, "data": {"action": "disallow"}},
+    {"decoder": {"name": "json"}, "data": {"action": "ALLOW"}},
+    {"decoder": {"name": "json"}, "data": {"d4086": {"v": "abc"}}},
+    {"decoder": {"name": "json"}, "data": {"d4086": {"v": "a(b)c"}}},
+    {"decoder": {"name": "json"}, "data": {"srcuser": "bob"}},
+    {"decoder": {"name": "json"}, "data": {"srcuser": "bob", "dstuser": "alice"}},
 ]
 
 
@@ -111,12 +123,27 @@ def _count(body):
         ('<field name="win.eventdata.image">^C:</field>', 1),
         ("<decoded_as>nginx</decoded_as>", 0),
         ("<srcip>10.0.0.9</srcip>", 0),
-        ("<program_name>SSHD</program_name>", 0),  # case-sensitive, as Wazuh is
+        ("<program_name>SSHD</program_name>", 2),  # Wazuh folds case
+        ("<decoded_as>SSHD</decoded_as>", 0),  # a decoder name is exact
+        # What wazuh-logtest 4.9.2 matched on the same events:
+        ("<program_name>D4086PROG</program_name>", 2),  # d4086prog and D4086PROG
+        ('<field name="d4086.who">^ROOT$</field>', 2),  # root and ROOT
+        ("<action>allow</action>", 1),  # allow only: not disallow, not ALLOW
+        ("<action>ALLOW</action>", 1),
+        ("<user>bob</user>", 1),  # srcuser, since that event has no dstuser
+        ("<user>alice</user>", 1),
+        ('<field name="d4086.v" type="osmatch">^abc$</field>', 1),
         ("<decoded_as>sshd</decoded_as><user>nobody</user>", 0),
     ],
 )
 def test_the_translated_query_counts_the_right_events(node, body, hits):
     assert _count(body) == hits
+
+
+def test_a_field_with_osregex_operators_is_refused_not_mis_counted():
+    # Wazuh matches abc; a literal a(b)c query would match the other event.
+    got = translate(_rule('<field name="d4086.v">^a(b)c$</field>'))
+    assert got.query is None
 
 
 def test_a_wildcard_character_in_a_value_is_literal(node):

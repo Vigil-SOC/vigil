@@ -33,32 +33,42 @@ def _filters(body):
                 "wildcard": {
                     "predecoder.program_name": {
                         "value": "*sshd*",
-                        "case_insensitive": False,
+                        "case_insensitive": True,
                     }
                 }
             },
         ),
         (
             "<program_name>^sshd</program_name>",
-            {"prefix": {"predecoder.program_name": "sshd"}},
+            {
+                "prefix": {
+                    "predecoder.program_name": {
+                        "value": "sshd",
+                        "case_insensitive": True,
+                    }
+                }
+            },
         ),
         (
             "<location>^/var/log/auth.log$</location>",
-            {"term": {"location": "/var/log/auth.log"}},
-        ),
-        (
-            "<user>root$</user>",
             {
-                "wildcard": {
-                    "data.dstuser": {"value": "*root", "case_insensitive": False}
+                "term": {
+                    "location": {"value": "/var/log/auth.log", "case_insensitive": True}
                 }
             },
         ),
         ("<srcip>10.0.0.1</srcip>", {"term": {"data.srcip": "10.0.0.1"}}),
-        ("<dstip>::1</dstip>", {"term": {"data.dstip": "::1"}}),
+        ("<dstip>10.9.8.7</dstip>", {"term": {"data.dstip": "10.9.8.7"}}),
         (
             '<field name="win.eventdata.image">^C:</field>',
-            {"prefix": {"data.win.eventdata.image": "C:"}},
+            {
+                "prefix": {
+                    "data.win.eventdata.image": {
+                        "value": "C:",
+                        "case_insensitive": True,
+                    }
+                }
+            },
         ),
         (
             "<id>4625|4624</id>",
@@ -69,7 +79,7 @@ def _filters(body):
                             "wildcard": {
                                 "data.id": {
                                     "value": "*4625*",
-                                    "case_insensitive": False,
+                                    "case_insensitive": True,
                                 }
                             }
                         },
@@ -77,7 +87,7 @@ def _filters(body):
                             "wildcard": {
                                 "data.id": {
                                     "value": "*4624*",
-                                    "case_insensitive": False,
+                                    "case_insensitive": True,
                                 }
                             }
                         },
@@ -90,7 +100,7 @@ def _filters(body):
             "<url>a*b?</url>",
             {
                 "wildcard": {
-                    "data.url": {"value": "*a\\*b\\?*", "case_insensitive": False}
+                    "data.url": {"value": "*a\\*b\\?*", "case_insensitive": True}
                 }
             },
         ),
@@ -98,6 +108,45 @@ def _filters(body):
 )
 def test_a_supported_condition_becomes_its_archive_query(body, expected):
     assert _filters(body) == [expected]
+
+
+def test_user_is_the_dstuser_else_the_srcuser():
+    (got,) = _filters("<user>root$</user>")
+    dst, src = [c["bool"] for c in got["bool"]["should"]]
+    ci = {"value": "*root", "case_insensitive": True}
+    assert dst["filter"] == [{"wildcard": {"data.dstuser": ci}}]
+    assert src["filter"] == [{"wildcard": {"data.srcuser": ci}}]
+    assert src["must_not"] == [{"exists": {"field": "data.dstuser"}}]
+
+
+# What Wazuh 4.9.2's wazuh-logtest matched (rules.c: osmatch and osregex fold
+# ASCII case; <action> is a string compare; an untyped <field> is osregex).
+def test_osmatch_elements_fold_case():
+    ci = {"value": "D4086PROG", "case_insensitive": True}
+    assert _filters("<program_name>^D4086PROG$</program_name>") == [
+        {"term": {"predecoder.program_name": ci}}
+    ]
+    (got,) = _filters("<program_name>D4086PROG</program_name>")
+    assert got["wildcard"]["predecoder.program_name"] == {
+        "value": "*D4086PROG*",
+        "case_insensitive": True,
+    }
+
+
+def test_a_field_with_plain_osregex_folds_case_like_wazuh():
+    assert _filters('<field name="d4086.who">^ROOT$</field>') == [
+        {"term": {"data.d4086.who": {"value": "ROOT", "case_insensitive": True}}}
+    ]
+
+
+def test_action_is_an_exact_case_sensitive_string():
+    assert _filters("<action>allow</action>") == [{"term": {"data.action": "allow"}}]
+
+
+def test_a_field_with_osregex_operators_is_not_translated():
+    got = translate(_rule('<field name="d4086.v">^a(b)c$</field>'))
+    assert got.query is None
+    assert got.reasons == ["<field>: osregex isn't translated faithfully"]
 
 
 def test_conditions_are_anded_and_inert_elements_are_ignored():
@@ -146,6 +195,18 @@ def test_conditions_are_anded_and_inert_elements_are_ignored():
         ("<program_name>a^b</program_name>", "", "an anchor inside a value"),
         ("<program_name>a||b</program_name>", "", "an anchor inside a value"),
         ('<field name="x" type="pcre2">a</field>', "", "a pcre2 <field>"),
+        ('<field name="x" type="osregex">a</field>', "", "a osregex <field>"),
+        (
+            '<field name="d4086.v">^a(b)c$</field>',
+            "",
+            "osregex isn't translated faithfully",
+        ),
+        ('<field name="x">a.c</field>', "", "osregex isn't translated faithfully"),
+        ('<field name="x">a|b</field>', "", "osregex isn't translated faithfully"),
+        ('<action type="osmatch">a</action>', "", "a osmatch <action>"),
+        ('<program_name type="pcre2">a</program_name>', "", "a pcre2 <program_name>"),
+        ("<program_name>caf\u00e9</program_name>", "", "a non-ASCII value"),
+        ("<srcip>fe80::1</srcip>", "", "an IPv6 address"),
         ('<field name="bad name">a</field>', "", "isn't translated"),
         ("<srcgeoip>US</srcgeoip>", "", "<srcgeoip> isn't translated"),
         ("<decoded_as></decoded_as>", "", "<decoded_as> is empty"),

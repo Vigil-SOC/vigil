@@ -5,22 +5,37 @@ search what the indexer stored. The archive holds every event after decoding
 (it exists only when the customer sets ``logall_json``), so a rule's matchable
 conditions on decoded fields become an OpenSearch query over it. The indexer's
 template (wazuh-template.json) maps these fields as keyword; ``full_log`` is
-analysed text:
+analysed text. Types and case rules are read from Wazuh v4.9.0
+(analysisd/rules.c, os_regex), checked with wazuh-logtest on 4.9.2:
 
-====================  ==========================================
-``<decoded_as>``      ``decoder.name`` (exact term)
-``<program_name>``    ``predecoder.program_name``
-``<location>``        ``location``
-``<srcip>/<dstip>``   ``data.srcip`` / ``data.dstip`` (one address)
-``<user>``            ``data.dstuser``
-``<id>`` ``<status>`` ``<action>`` ``<protocol>`` ``<url>``
-``<srcport>`` ``<dstport>``   ``data.<name>``
-``<field name=x>``    ``data.x``
-====================  ==========================================
+==================  =========  ==========  ====================================
+element             Wazuh type case        archive field and query
+==================  =========  ==========  ====================================
+``decoded_as``      name       sensitive   ``decoder.name`` term
+``program_name``    osmatch    insensitive ``predecoder.program_name``
+``location``        osmatch    insensitive ``location``
+``id`` ``status``   osmatch    insensitive ``data.<name>``
+``url`` ``protocol``
+``srcport``
+``dstport``
+``user``            osmatch    insensitive ``data.dstuser`` when the event has
+                                           one, else ``data.srcuser``
+``action``          string     sensitive   ``data.action`` term, exact
+``srcip`` ``dstip`` ip list    n/a         ``data.srcip`` / ``data.dstip``
+                                           term, one IPv4 address
+``field name=x``    osregex    insensitive ``data.x``; only a value osregex and
+                                           osmatch read alike (see below)
+``field type=       osmatch    insensitive ``data.x``
+osmatch``
+==================  =========  ==========  ====================================
 
-A value is OSMatch: a literal, ``^`` / ``$`` anchoring its ends, ``|`` between
-alternatives, searched anywhere in the value. On a keyword field that is a term,
-prefix or wildcard query, case-sensitive as Wazuh is. All conditions are ANDed.
+An osmatch value is a literal, ``^`` / ``$`` anchoring its ends, ``|`` between
+alternatives, found anywhere in the value, case-folded over ASCII only. On a
+keyword field that is a term, prefix or wildcard query with ``case_insensitive``
+(OpenSearch folds Unicode, so a pattern with a non-ASCII character is refused).
+An untyped ``<field>`` is osregex: only ``^literal$``, ``^literal``,
+``literal$`` or ``literal`` with no regex metacharacter is read, as osmatch.
+All conditions are ANDed.
 
 Anything that cannot be reproduced faithfully is refused with its reason, and a
 refused rule is not validated: it has no passing runs and never promotes itself.
@@ -29,8 +44,9 @@ rule to have matched), ``frequency`` / ``timeframe`` (a count needs an
 aggregation per correlated key), ``<list>``, geoip, ``<hostname>`` (the syslog
 host or the agent name, the archive keeps both), ``<match>`` / ``<regex>`` /
 ``<pcre2>`` on ``full_log`` (analysed text: a substring, anchor or regex cannot
-be reproduced exactly), negation (Wazuh's result when the field is missing is
-not known here), CIDR addresses, escapes in a value, and any element not listed.
+be reproduced exactly), a ``type`` other than the element's own, osregex with
+metacharacters, negation, CIDR and IPv6 addresses (the archive keeps the
+decoded text), escapes in a value, and any element not listed.
 """
 
 from __future__ import annotations
@@ -47,16 +63,19 @@ CANT = "can't validate: "
 ARCHIVES_OFF = f"{CANT}archives off ({ARCHIVES} has no events in the last 7 days)"
 
 _DECODER = "decoder.name"
-# Wildcards on a keyword are case-sensitive by default; stated so it stays so.
-_CASE = {"case_insensitive": False}
-_KEYWORD = {
+# Wazuh folds ASCII case in osmatch; OpenSearch's keyword queries are exact unless told.
+_FOLD = {"case_insensitive": True}
+_OSMATCH = {
     "program_name": "predecoder.program_name",
     "location": "location",
-    "user": "data.dstuser",
-    **{t: f"data.{t}" for t in ("id", "status", "action", "protocol", "url")},
-    **{t: f"data.{t}" for t in ("srcport", "dstport")},
+    **{
+        t: f"data.{t}"
+        for t in ("id", "status", "protocol", "url", "srcport", "dstport")
+    },
 }
 _ADDRESS = {"srcip": "data.srcip", "dstip": "data.dstip"}
+# What osregex reads as itself: none of its operators, nor ``.`` and ``<`` it also knows.
+_PLAIN = re.compile(r"\^?[^\\()|^$+*?\[\]{}.&<]+\$?")
 # Elements that say nothing about which events match.
 _INERT = {"description", "group", "mitre", "info", "options", "example"}
 _LINKS = re.compile(r"if_(sid|group|level|matched_\w+)|(same|different)_\w+")
@@ -75,11 +94,13 @@ class Translation:
 
 
 def _osmatch(path: str, value: str) -> Dict[str, Any]:
-    """One OSMatch value on a keyword field; ValueError with the reason."""
+    """One osmatch value on a keyword field; ValueError with the reason."""
     if value.startswith("!"):
         raise ValueError("negation isn't reproduced")
     if "\\" in value:
         raise ValueError("an escape in a value isn't reproduced")
+    if not value.isascii():
+        raise ValueError("a non-ASCII value isn't folded as Wazuh folds it")
     clauses = []
     for alt in value.split("|"):
         head, tail = alt.startswith("^"), alt.endswith("$") and len(alt) > 1
@@ -87,18 +108,34 @@ def _osmatch(path: str, value: str) -> Dict[str, Any]:
         if not body or any(c in body for c in "^$"):
             raise ValueError("an anchor inside a value isn't reproduced")
         if head and tail:
-            clauses.append({"term": {path: body}})
+            clauses.append({"term": {path: {"value": body, **_FOLD}}})
         elif head:
-            clauses.append({"prefix": {path: body}})
+            clauses.append({"prefix": {path: {"value": body, **_FOLD}}})
         else:
             safe = re.sub(r"([\\*?])", r"\\\1", body)
             value = f"*{safe}" if tail else f"*{safe}*"
-            clauses.append({"wildcard": {path: {"value": value, **_CASE}}})
-    return (
-        clauses[0]
-        if len(clauses) == 1
-        else {"bool": {"should": clauses, "minimum_should_match": 1}}
-    )
+            clauses.append({"wildcard": {path: {"value": value, **_FOLD}}})
+    if len(clauses) == 1:
+        return clauses[0]
+    return {"bool": {"should": clauses, "minimum_should_match": 1}}
+
+
+def _user(value: str) -> Dict[str, Any]:
+    """Wazuh matches ``<user>`` on the event's dstuser, else its srcuser."""
+    return {
+        "bool": {
+            "should": [
+                {"bool": {"filter": [_osmatch("data.dstuser", value)]}},
+                {
+                    "bool": {
+                        "filter": [_osmatch("data.srcuser", value)],
+                        "must_not": [{"exists": {"field": "data.dstuser"}}],
+                    }
+                },
+            ],
+            "minimum_should_match": 1,
+        }
+    }
 
 
 def _address(path: str, value: str) -> Dict[str, Any]:
@@ -107,9 +144,11 @@ def _address(path: str, value: str) -> Dict[str, Any]:
     if "/" in value:
         raise ValueError("a CIDR range isn't exact on a keyword field")
     try:
-        ipaddress.ip_address(value)
+        ip = ipaddress.ip_address(value)
     except ValueError:
         raise ValueError(f"{value!r} is not one address") from None
+    if ip.version != 4:
+        raise ValueError("an IPv6 address isn't normalised in the archive")
     return {"term": {path: value}}
 
 
@@ -153,29 +192,37 @@ def translate(text: str) -> Translation:
         if tag == "hostname":
             refuse("<hostname> is the syslog host or the agent name: two fields")
             continue
-        if tag not in (*_KEYWORD, *_ADDRESS, "decoded_as", "field"):
+        if tag not in (*_OSMATCH, *_ADDRESS, "user", "action", "decoded_as", "field"):
             refuse(f"<{tag}> isn't translated")
             continue
         if not value:
             refuse(f"<{tag}> is empty")
             continue
+        kind = (node.get("type") or "").strip().lower()
         try:
             if tag == "decoded_as":
                 filters.append({"term": {_DECODER: value}})
             elif tag in _ADDRESS:
                 filters.append(_address(_ADDRESS[tag], value))
+            elif tag == "action":
+                if kind:
+                    raise ValueError(f"a {kind} <action> isn't reproduced")
+                filters.append({"term": {"data.action": value}})  # a string compare
+            elif tag == "field":
+                name = (node.get("name") or "").strip()
+                if not _FIELD_NAME.fullmatch(name):
+                    raise ValueError(f"field name {name!r} isn't translated")
+                if kind not in ("", "osmatch"):
+                    raise ValueError(f"a {kind} <field> isn't reproduced")
+                if not kind and not _PLAIN.fullmatch(value):
+                    raise ValueError("osregex isn't translated faithfully")
+                filters.append(_osmatch(f"data.{name}", value))
             else:
-                if tag == "field":
-                    name = (node.get("name") or "").strip()
-                    kind = (node.get("type") or "osmatch").strip().lower()
-                    if not _FIELD_NAME.fullmatch(name):
-                        raise ValueError(f"field name {name!r} isn't translated")
-                    if kind != "osmatch":
-                        raise ValueError(f"a {kind} <field> isn't reproduced")
-                    path = f"data.{name}"
-                else:
-                    path = _KEYWORD[tag]
-                filters.append(_osmatch(path, value))
+                if kind not in ("", "osmatch"):
+                    raise ValueError(f"a {kind} <{tag}> isn't reproduced")
+                filters.append(
+                    _user(value) if tag == "user" else _osmatch(_OSMATCH[tag], value)
+                )
         except ValueError as exc:
             refuse(f"<{tag}>: {exc}")
     if not filters and not reasons:
