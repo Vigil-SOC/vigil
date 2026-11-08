@@ -83,7 +83,14 @@ def _name_and_tactic(technique_id: str) -> tuple[Optional[str], Optional[str]]:
     if not entry:
         return None, None
     tactics = entry.get("tactics") or []
-    return entry["name"], _tactic_title(tactics[0]) if tactics else None
+    name = entry["name"]
+    if entry["status"] == "revoked":
+        name += (
+            f" (revoked: use {entry['replaced_by']})"
+            if entry.get("replaced_by")
+            else " (revoked)"
+        )
+    return name, _tactic_title(tactics[0]) if tactics else None
 
 
 def resolve_technique(

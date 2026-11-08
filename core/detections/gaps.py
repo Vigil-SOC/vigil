@@ -335,6 +335,13 @@ def technique_check(
     }
 
 
+def _is_listable(technique: str) -> bool:
+    """False for a well-formed id that is not an active ATT&CK technique."""
+    if not TECHNIQUE_ID.match(technique):
+        return True
+    return not _not_active_reason(attack_techniques().get(technique.upper()))
+
+
 def _not_active_reason(entry: Optional[Mapping[str, Any]]) -> str:
     """Why an id is not an active ATT&CK technique; empty when it is."""
     if entry is None:
@@ -484,6 +491,12 @@ def missed_runs_report(
     reconstructs as ``missed`` or ``loglm``. A Verdict that cannot be correlated
     (no host/IP/user, or a Findings read that was cut off) is unknown, never missed.
     """
+    # Hunt Verdicts store techniques unchecked: an id that is not an active ATT&CK
+    # technique never reaches a group, so a made-up one cannot become a Case.
+    verdicts = [
+        {**v, "techniques": {t for t in v["techniques"] if _is_listable(t)}}
+        for v in verdicts
+    ]
     # A case id scopes to that Case's Verdict, any other context to matching
     # techniques. Ruled-out runs are read across the whole window either way.
     wanted = normalize_label(context) if context and not is_case else ""

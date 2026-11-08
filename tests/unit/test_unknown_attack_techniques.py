@@ -115,3 +115,49 @@ def test_lookup_keeps_names_it_resolved_before():
 def test_lookup_falls_back_to_the_parent_then_the_id():
     assert resolve_technique("T1059.999")[1] == "Command and Scripting Interpreter"
     assert resolve_technique("T9999") == ("T9999", "T9999", "Unknown")
+
+
+def _verdict(techniques, outcome="proven"):
+    from datetime import datetime
+
+    return {
+        "investigation_kind": "hunt",
+        "investigation_id": "h1",
+        "hypothesis_id": "hyp",
+        "outcome": outcome,
+        "trust": "analyst",
+        "techniques": set(techniques),
+        "subjects": [],
+        "first_seen": datetime(2026, 11, 1),
+        "last_seen": datetime(2026, 11, 1, 1),
+        "concluded_at": datetime(2026, 11, 2),
+        "entities": {"hostnames": ["h"], "src_ips": [], "users": []},
+    }
+
+
+def test_missed_runs_never_list_ids_that_are_not_active_techniques():
+    report = gaps.missed_runs_report(
+        "",
+        False,
+        [
+            _verdict({"T1059", "T9999", "T1002"}),
+            _verdict({"T9999", "T1002"}, outcome="disproven"),
+        ],
+        lambda start, end: [],
+        {},
+        30,
+    )
+    assert [g["technique"] for g in report["groups"]] == ["T1059"]
+    assert report["groups"][0]["ruled_out"] == []
+    assert "T9999" not in str(report) and "T1002" not in str(report)
+
+
+def test_revoked_chain_names_the_final_active_id():
+    out = _check("T1073")  # revoked -> T1574.002, itself revoked -> T1574.001
+    assert out["unknown"] == [
+        {"technique": "T1073", "reason": "revoked; replaced by T1574.001"}
+    ]
+
+
+def test_revoked_id_is_marked_revoked_where_its_name_is_shown():
+    assert resolve_technique("T1073")[1] == "DLL Side-Loading (revoked: use T1574.001)"

@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """Write core/threat_intel/attack_techniques.json from MITRE's Enterprise ATT&CK bundle.
 
-One pinned release is downloaded from mitre-attack/attack-stix-data and cut down to
+One pinned release of MITRE's bundle (mitre-attack/attack-stix-data) is cut down to
 what Vigil reads offline: each technique and sub-technique id with its name, tactics,
-status and, for a revoked one, the technique that replaced it. To move to a newer
-release, change ATTACK_VERSION, run this script and commit the result.
+status and, for a revoked one, the active technique that finally replaced it.
 
-    python scripts/generate_attack_techniques.py [path/to/enterprise-attack-X.json]
+The script fetches nothing. Download enterprise-attack-<ATTACK_VERSION>.json from
+SOURCE_URL first, then:
+
+    python scripts/generate_attack_techniques.py --bundle path/to/enterprise-attack-X.json
+
+To move to a newer release, change ATTACK_VERSION, download that file, run this and
+commit the result.
 """
 
+import argparse
 import json
-import sys
-import urllib.request
 from pathlib import Path
 
 ATTACK_VERSION = "20.1"
@@ -38,6 +42,7 @@ def build(bundle: dict) -> dict:
     objects = bundle["objects"]
     ids = {}
     techniques = {}
+    replaced_by = {}
     for obj in objects:
         if obj.get("type") != "attack-pattern":
             continue
@@ -63,17 +68,29 @@ def build(bundle: dict) -> dict:
             continue
         old, new = ids.get(obj.get("source_ref")), ids.get(obj.get("target_ref"))
         if old and new and techniques[old]["status"] == "revoked":
-            techniques[old]["replaced_by"] = new
+            replaced_by[old] = new
+    for old, new in replaced_by.items():
+        # A replacement may itself be revoked: follow it to the active id.
+        seen = {old}
+        while techniques[new]["status"] == "revoked" and new in replaced_by:
+            if new in seen:
+                break
+            seen.add(new)
+            new = replaced_by[new]
+        techniques[old]["replaced_by"] = new
     return {"version": ATTACK_VERSION, "techniques": techniques}
 
 
 def main() -> None:
-    if len(sys.argv) > 1:
-        bundle = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-    else:
-        with urllib.request.urlopen(SOURCE_URL, timeout=300) as response:
-            bundle = json.load(response)
-    data = build(bundle)
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument(
+        "--bundle",
+        required=True,
+        type=Path,
+        help=f"local enterprise-attack-{ATTACK_VERSION}.json, downloaded from {SOURCE_URL}",
+    )
+    args = parser.parse_args()
+    data = build(json.loads(args.bundle.read_text(encoding="utf-8")))
     OUTPUT.write_text(
         json.dumps(data, sort_keys=True, separators=(",", ":")) + "\n",
         encoding="utf-8",
