@@ -244,6 +244,51 @@ def open_flags() -> List[Dict[str, Any]]:
     return flags
 
 
+def open_reverts() -> List[Dict[str, Any]]:
+    """Each rule Vigil's sweep last moved live -> shadow and no one has moved
+    since, newest first, shaped like a flag. ``change_id`` is the stage row's
+    id negated, so it never meets a check change's id."""
+    s = DetectionRuleStage
+    ranked = select(
+        s,
+        func.lag(s.stage).over(partition_by=s.rule_id, order_by=s.id).label("prev"),
+        func.row_number()
+        .over(partition_by=s.rule_id, order_by=s.id.desc())
+        .label("rn"),
+    ).subquery()
+    with get_db_manager().session_scope() as session:
+        rows = session.execute(
+            select(ranked, DetectionRule)
+            .join(DetectionRule, DetectionRule.id == ranked.c.rule_id)
+            .where(
+                ranked.c.rn == 1,
+                ranked.c.stage == "shadow",
+                ranked.c.prev == "live",
+                ranked.c.actor == "system",
+            )
+        ).all()
+        return sorted(
+            (
+                {
+                    "change_id": -row.id,
+                    "rule_id": row.rule_id,
+                    "name": row.DetectionRule.name,
+                    "tool": tool_of(row.DetectionRule.source),
+                    "status": row.DetectionRule.status,
+                    "check": "revert",
+                    "old": "live",
+                    "new": "shadow",
+                    "version": row.version,
+                    "reason": row.reason,
+                    "since": row.at.isoformat(),
+                }
+                for row in rows
+            ),
+            key=lambda f: f["since"],
+            reverse=True,
+        )
+
+
 def rule_health(days: int = 7) -> Dict[str, Any]:
     """The open flags, and how many flags opened and cleared in the last ``days``."""
     since = datetime.now(timezone.utc) - timedelta(days=days)
@@ -1153,7 +1198,9 @@ def _health_rows(
     for row in listed:
         if row["stage"] in STAGES:
             stage_counts[None][row["stage"]] += 1
-            stage_counts.setdefault(row["tool"], dict.fromkeys(STAGES, 0))[row["stage"]] += 1
+            stage_counts.setdefault(row["tool"], dict.fromkeys(STAGES, 0))[
+                row["stage"]
+            ] += 1
         for key in _row_flags(row):
             flag_counts[None][key] += 1
             flag_counts.setdefault(row["tool"], dict.fromkeys(FLAGS, 0))[key] += 1
@@ -1307,7 +1354,9 @@ def health_listing(
         "mapped": built["mapped"],
         "counts": built["counts"].get(tool, dict.fromkeys(HEALTH_ORDER, 0)),
         "flag_counts": built["flag_counts"].get(tool, dict.fromkeys(FLAGS, 0)),
-        "stage_counts": built.get("stage_counts", {}).get(tool, dict.fromkeys(STAGES, 0)),
+        "stage_counts": built.get("stage_counts", {}).get(
+            tool, dict.fromkeys(STAGES, 0)
+        ),
         "never_fired_rules": built.get("never_fired_rules", 0),
         "matched": len(shown),
         "matched_elsewhere": elsewhere,

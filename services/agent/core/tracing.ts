@@ -33,10 +33,11 @@ export function registerProvider(registered: TracerProvider): void {
   );
 }
 
-// Python's switch, so one setting traces both sides. The SDK reads the endpoint and
-// sampler itself, from the OTEL_* variables Python is given.
+// The same test Python makes on the same variable, so one setting traces both sides:
+// an endpoint is what turns export on. The SDK reads the endpoint and sampler itself,
+// from the OTEL_* variables Python is given. Span schema: docs/telemetry.md.
 export function initTracing(service: string): boolean {
-  if (!enabled("VIGIL_OTEL_ENABLED") || provider !== null) return provider !== null;
+  if ((process.env["OTEL_EXPORTER_OTLP_ENDPOINT"] ?? "").trim() === "" || provider !== null) return provider !== null;
   try {
     provider = new TracerProvider({
       resource: resourceFromAttributes({

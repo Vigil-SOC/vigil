@@ -41,14 +41,17 @@ are not applied; alerts the SIEM itself raises are never filtered.
 
 The sweep (after ``sync_repos``) then writes a stage row (actor 'system', proof
 holding the numbers) for each move that is due: shadow -> live after a quiet,
-passing week with checks['sees'] pass (at most ``LIVE_PER_DAY`` a day across
-all rules), live -> shadow when half its findings are judged not real
-(``accurate.verdicts``: the latest analyst determination wins), a loud day or a
-Sees fail (its data stopped), shadow -> off after ``OFF_AFTER_FAILURES``
-failed runs in a row. No stage row is written while Stop is set, or while the
-ceiling cannot be read. After those rows commit, each live copy whose format
-(elastic or splunk) has a git source marked ``deploy_target`` and whose version
-has no PR recorded gets one, opened by fixed code over the GitHub REST API
+passing week with checks['sees'] pass and checks['lint'] pass (at most
+``LIVE_PER_DAY`` a day across all rules; a copy with no lint result yet waits
+for the sync that lints it), live -> shadow when half its findings are judged
+not real (``accurate.verdicts``: the latest analyst determination wins), a loud
+day or a Sees fail (its data stopped), shadow -> off after
+``OFF_AFTER_FAILURES`` failed runs in a row, shadow or live -> off when
+checks['lint'] reads fail (sync never got to turn it off). No stage row is
+written while Stop is set, or while the ceiling cannot be read. After those rows
+commit, each live copy whose format (elastic or splunk) has a git source marked
+``deploy_target`` and whose version passed lint and has no PR recorded gets one,
+opened by fixed code over the GitHub REST API
 (github.com, or GitHub Enterprise Server at ``<host>/api/v3``): branch
 ``vigil/rule-<id>-v<version>``, the overlay TOML or ESCU YAML file exactly as
 stored under the target's subdirectory, its active exceptions listed in the
@@ -86,7 +89,6 @@ from sqlalchemy import (
     case,
     exists,
     func,
-    insert,
     or_,
     select,
     update,
@@ -146,6 +148,7 @@ class Copy:
     key: str = ""  # its rule_id, the overlay rule's native_key
     toml: str = ""  # the overlay file exactly as stored
     path: Optional[str] = None
+    held: bool = False  # a person reverted it: shadow until a person releases it
 
 
 @dataclass
@@ -186,6 +189,14 @@ def _copies() -> List[Copy]:
         .order_by(s.rule_id, s.at.desc(), s.id.desc())
         .subquery()
     )
+    # A person's hold: the latest row with a 'hold' key, whatever rows follow it.
+    hold = (
+        select(s.rule_id, s.proof["hold"].astext.label("hold"))
+        .where(s.proof.has_key("hold"))
+        .distinct(s.rule_id)
+        .order_by(s.rule_id, s.id.desc())
+        .subquery()
+    )
     with get_db_manager().session_scope() as session:
         rows = session.execute(
             select(
@@ -195,6 +206,7 @@ def _copies() -> List[Copy]:
                 DetectionRule.language,
                 current.c.stage,
                 current.c.at,
+                hold.c.hold,
                 DetectionRuleVersion.checks,
                 DetectionRuleVersion.content,
                 DetectionRule.native_key,
@@ -208,6 +220,7 @@ def _copies() -> List[Copy]:
                 ),
             )
             .join(current, current.c.rule_id == DetectionRule.id)
+            .outerjoin(hold, hold.c.rule_id == DetectionRule.id)
             .where(
                 DetectionRule.source == readers.OVERLAY_SOURCE,
                 DetectionRule.language.in_(("elastic", "splunk")),
@@ -228,8 +241,9 @@ def _copies() -> List[Copy]:
             key,
             str((content or {}).get("_content") or ""),
             path,
+            hold == "true",
         )
-        for rid, ver, name, lang, stage, at, checks, content, key, path in rows
+        for rid, ver, name, lang, stage, at, hold, checks, content, key, path in rows
     ]
 
 
@@ -724,6 +738,11 @@ def _due(
         k: sees_check.get(k) for k in ("result", "reason", "data_source", "checked_at")
     }
     since = copy.stage_at.isoformat()
+    lint = copy.checks.get("lint") or {}
+    if lint.get("result") == "fail":  # a version sync never got to turn off
+        from core.detections.inventory.sync import _lint_off
+
+        return ("off", *_lint_off(lint))
     if copy.stage == "shadow":
         failures = int(runs.get("failures") or 0)
         if failures >= OFF_AFTER_FAILURES:
@@ -732,6 +751,8 @@ def _due(
                 f"{failures} failed runs in a row",
                 {"failures": failures, "last_reason": runs.get("reason")},
             )
+        if copy.held:  # a person's Revert stands until a person releases it
+            return None
         if now - copy.stage_at < timedelta(days=SHADOW_DAYS):
             return None
         week = _week(now)
@@ -751,18 +772,21 @@ def _due(
             return None
         if seen.get("result") != "pass":  # its data must be shown to arrive
             return None
+        if not _linted(copy):  # no result yet: the next sync lints it
+            return None
         if live_24h >= LIVE_PER_DAY:
             return None
         return (
             "live",
             f"{SHADOW_DAYS} days in shadow, every day's runs passed, no day "
-            f"above {MAX_HITS_PER_DAY} hits, Sees passed",
+            f"above {MAX_HITS_PER_DAY} hits, Sees and lint passed",
             {
                 "shadow_since": since,
                 "days": days,
                 "max_hits_per_day": max(v["hits"] for v in days.values()),
                 "live_rows_last_24h": live_24h,
                 "sees": seen,
+                "lint": lint,
             },
         )
     # live: only what happened since it went live counts.
@@ -804,7 +828,7 @@ def _stopped() -> bool:
 
 def sweep(now: datetime, report: RolloutReport) -> None:
     """Write a stage row for each move due, unless Stop is set."""
-    from core.detections.inventory.sync import _stage_row
+    from core.detections.inventory.sync import _insert_stages, _stage_row
 
     copies = [c for c in _copies() if c.stage in ("shadow", "live")]
     # A handed-off copy keeps its stage: Vigil no longer runs it.
@@ -848,11 +872,17 @@ def sweep(now: datetime, report: RolloutReport) -> None:
             elif copy.stage == "live":
                 live.remove(copy)
         if rows:
-            session.execute(insert(DetectionRuleStage), rows)
+            _insert_stages(session, rows, {c.rule_id: c.stage for c in copies})
     # After the stage rows commit: a PR that fails leaves the promotion standing,
     # and the next sweep is its retry.
     if not stopped:
-        _deploy(live, targets, now, report)
+        # A live copy promoted before lint gated it waits for a lint pass.
+        _deploy([c for c in live if _linted(c)], targets, now, report)
+
+
+def _linted(copy: Copy) -> bool:
+    """Whether the copy's current version has a lint pass recorded."""
+    return (copy.checks.get("lint") or {}).get("result") == "pass"
 
 
 def _deploy_targets() -> Dict[str, Dict[str, Any]]:
@@ -1421,6 +1451,8 @@ def deploy_overlay_only(
             skipped[copy.rule_id] = f"it is already in the repo: {done['in_repo']}"
         elif not copy.toml:
             skipped[copy.rule_id] = "its overlay file could not be read"
+        elif not _linted(copy):
+            skipped[copy.rule_id] = "its current version has not passed lint"
         else:
             todo.append(copy)
     if todo and _stopped():

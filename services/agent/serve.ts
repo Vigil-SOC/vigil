@@ -17,6 +17,7 @@ import { assembleSpec, loadArch, parseConfig, parsePlaybook, SpecError, type Pla
 import { chatEvents, sse } from "./plugins/chat/sse.js";
 import { runChat, type Turn } from "./plugins/chat/workflow.js";
 import { harnessFor, internalToken, type HarnessFactory } from "./harness.js";
+import { operatorPlugin } from "./plugins/registry.js";
 import type { ProjectionOptions } from "./plugins/hunt/projection.js";
 import { narrateRun } from "./plugins/hunt/workflow.js";
 import type { HuntEvent, HuntKinds } from "./plugins/hunt/ledger.js";
@@ -33,6 +34,9 @@ import { rootCauseV3Replay } from "./plugins/rootcause/v3/projection.js";
 const log = logger("agent.serve");
 
 const CHAT = "/chat/stream";
+// POST /plugins/check -- an operator manifest and its skills, refused as a run would
+// refuse them, or 200. Stores nothing.
+const CHECK = "/plugins/check";
 // GET /runs/<id>/projection -- what a supervisor outside this process reads.
 const PROJECTION = /^\/runs\/([0-9a-fA-F-]{36})\/projection$/;
 // GET /runs/<id>/distil -- what episodic memory reads once the run has ended.
@@ -380,6 +384,21 @@ async function openChat(state: State, req: IncomingMessage, res: ServerResponse,
   await traced("invoke_agent chat", attributes, () => streamChat(state, request, res, build), { kind: SpanKind.SERVER, parent: req.headers });
 }
 
+// The one parser, so a manifest that passes here is one a run will load.
+async function checkManifest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let request: { manifest?: unknown; skills?: unknown };
+  try {
+    request = JSON.parse(await body(req)) as typeof request;
+    if (typeof request !== "object" || request === null) throw new SpecError("a check request must be a JSON object");
+    const manifest = operatorPlugin(request.manifest, request.skills);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true, id: manifest.id }));
+  } catch (error) {
+    if (error instanceof SpecError || error instanceof SyntaxError) return refuse(res, 422, error.message);
+    throw error;
+  }
+}
+
 export type VerifyRun = (runId: string) => Promise<VerifyResult>;
 
 export function chatServer(state: State, ready: Ready, build: HarnessFactory = harnessFor, verify?: VerifyRun): Server {
@@ -395,6 +414,7 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
 
       const url = req.url ?? "";
       if (req.method === "POST" && url === CHAT) return openChat(state, req, res, build);
+      if (req.method === "POST" && url === CHECK) return checkManifest(req, res);
 
       const distilled = req.method === "GET" ? DISTIL.exec(url) : null;
       if (distilled !== null) return readFold(state, distilled[1] as string, "distil", res);

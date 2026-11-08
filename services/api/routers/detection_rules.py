@@ -6,7 +6,7 @@ from dataclasses import asdict
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from core.auth.permissions import permission_gate
 from core.deps import provide_detection_rules, provide_mcp_client, provide_mcp_registry
@@ -16,7 +16,7 @@ from core.detections.detection_rules_service import (
     DetectionRulesService,
     is_vendor_repo,
 )
-from core.detections.inventory import catalog, health_inbox
+from core.detections.inventory import catalog, health_inbox, stages
 from core.detections.inventory.sync import sync_repos
 from core.integrations.mcp.registry import MCPRegistry, register_connected
 from core.integrations.mcp.surface import acting_as
@@ -358,6 +358,15 @@ def read_health_inbox(
     return health_inbox.mark_read(user.user_id, None if body.all else body.change_ids)
 
 
+@router.get("/metrics")
+def get_metrics():
+    """The rollout's success metrics from stored data, each with where its
+    numbers come from and what that data cannot say. Read-only."""
+    from core.detections.inventory import metrics
+
+    return metrics.report()
+
+
 @router.get("/overlay-only")
 def get_overlay_only():
     """Live overlay copies no SIEM rule runs: only Vigil detects with these,
@@ -406,6 +415,64 @@ def _edited(result: Dict[str, Any]) -> Dict[str, Any]:
     else:
         status = 400
     raise HTTPException(status_code=status, detail=error)
+
+
+@router.get("/rules/{rule_id}/stages")
+def get_rule_stages(rule_id: int):
+    """A rule's stage rows, newest first: version, from and to stage, actor,
+    reason and time; and ``held``, whether a person's Revert holds it in shadow.
+    Read-only."""
+    try:
+        return {"rule_id": rule_id, **stages.history(rule_id)}
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+class StageChangeRequest(BaseModel):
+    """Why a person reverts a rule, or releases it."""
+
+    reason: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("reason")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("reason must not be blank")
+        return value
+
+
+def _stage_change(change, rule_id: int, body: StageChangeRequest, user: User):
+    from core.agents.attribution import principal_id_for_username
+
+    who = (user.username, principal_id_for_username(user.username) or user.username)
+    try:
+        return change(rule_id, who, body.reason.strip())
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@router.post("/rules/{rule_id}/revert", dependencies=_SETTINGS_WRITE)
+def revert_rule(
+    rule_id: int,
+    body: StageChangeRequest,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Moves a live rule back to shadow and holds it there: the rollout does
+    not promote it again until a person releases it."""
+    return _stage_change(stages.revert, rule_id, body, current_user)
+
+
+@router.post("/rules/{rule_id}/release", dependencies=_SETTINGS_WRITE)
+def release_rule(
+    rule_id: int,
+    body: StageChangeRequest,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Lifts a person's hold, leaving the rule in its current stage; the normal
+    rollout applies again."""
+    return _stage_change(stages.release, rule_id, body, current_user)
 
 
 @router.get("/rules/{rule_id}/findings")

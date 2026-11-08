@@ -308,7 +308,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
           yield* this.record(call, gate.result, gate.checkpoint_id);
           continue;
         }
-        const measured = await this.invoke(tool, call.args, gate.checkpoint_id);
+        const measured = await this.invoke(tool, call.args, call.id, gate.checkpoint_id);
         yield* this.record(call, measured.result, gate.checkpoint_id, measured.duration_ms, measured.redacted);
         // Journaled first, so a resume shows the model what was denied. No checkpoint:
         // nobody approves this, and the run waits for the ceiling or the role to change.
@@ -379,6 +379,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
   private async invoke(
     tool: RegisteredTool,
     rawArgs: string,
+    callId: string,
     checkpointId?: string,
   ): Promise<{ result: ToolResult; duration_ms: number; redacted?: number }> {
     const started = performance.now();
@@ -400,6 +401,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
         this.cfg.signal,
         this.cfg.agent_id,
         checkpointId === undefined ? undefined : { runId: this.cfg.run_id, checkpointId },
+        callId,
       ),
     );
     return finish(value, redacted);

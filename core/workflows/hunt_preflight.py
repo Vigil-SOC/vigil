@@ -16,9 +16,10 @@ from core.response.ceiling import asks_first, gated_tools
 from core.workflows.playbook_resolver import (
     CAPABILITIES,
     HUNT_CAPABILITIES,
-    INVESTIGATE_CAPABILITIES,
     OPTIONAL_HUNT_CAPABILITIES,
     UnknownPlaybook,
+    lead_needs,
+    phases_needs,
 )
 from core.workflows.workflows_service import (
     ADJUDICATE_RUN_KIND,
@@ -103,12 +104,12 @@ HANDOFF_IR = {
 }
 
 
-def _helper(phase: Dict[str, Any], tools: Optional[List[str]] = None) -> Dict[str, Any]:
+def _helper(phase: Dict[str, Any], tools: List[str]) -> Dict[str, Any]:
     agent = phase.get("agent") or phase.get("agent_id") or ""
     return {
         "agent": agent,
         "name": phase.get("name") or agent,
-        "tools": list(phase.get("tools") or []) if tools is None else tools,
+        "tools": tools,
         "approval_required": bool(phase.get("approval_required")),
     }
 
@@ -137,7 +138,7 @@ def _roles(definition: WorkflowDefinition) -> Tuple[Dict[str, Any], Optional[str
         lead = {"name": SINGLE_LEAD, "tools": list(LEAD_TOOLS[kind])}
         return {"lead": lead, "helpers": [], "reviewer": None}, None
     if kind != COMPOSE_RUN_KIND:
-        lead = {"name": SINGLE_LEAD, "tools": list(INVESTIGATE_CAPABILITIES)}
+        lead = {"name": SINGLE_LEAD, "tools": lead_needs(definition)}
         return {"lead": lead, "helpers": [], "reviewer": None}, None
 
     from core.workflows.playbook_resolver import _phases_of
@@ -246,11 +247,7 @@ def _compose_pause_note(definition: WorkflowDefinition) -> str:
     tool stops on the call, whether or not the phase is marked, because the
     grant itself is what parks it.
     """
-    names = [
-        str(tool)
-        for phase in definition.phases or []
-        for tool in ((phase or {}).get("tools") or [])
-    ]
+    names = [str(tool) for needs in phases_needs(definition.phases) for tool in needs]
     if gated_tools(n for n in names if n not in CAPABILITIES):
         return "Direct-action calls pause for approval before they run."
     return "It pauses only at phases marked approval_required."
@@ -302,7 +299,12 @@ def preflight(
     if hunt_like:
         report = capabilities(registry, _hunt_needs(definition.run_kind))
     elif investigate:
-        report = capabilities(registry, INVESTIGATE_CAPABILITIES)
+        needs = tuple(lead_needs(definition))
+        report = (
+            capabilities(registry, needs)
+            if needs
+            else {"bound": [], "unbound": [], "absent": []}
+        )
     else:
         report = {"bound": [], "unbound": [], "absent": []}
     roles, roles_note = _roles(definition)
