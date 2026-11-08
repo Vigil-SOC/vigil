@@ -20,8 +20,10 @@ def _copy(
     stage="live",
     toml="[rule]\n",
     deploy=None,
-    lint={"result": "pass"},
+    lint=None,
 ):
+    # A lint pass unless the test says otherwise; {} is a version with no lint result.
+    lint = {"result": "pass"} if lint is None else lint
     checks = {"lint": lint} if lint else {}
     if deploy:
         checks["deploy"] = deploy
@@ -298,7 +300,7 @@ def test_a_real_failure_still_fails_after_looking_again(raced):
 @pytest.mark.parametrize(
     "lint, reason",
     [
-        (None, "its current version has not passed lint"),
+        ({}, "its current version has not passed lint"),
         (
             {"result": "fail", "findings": [{"kind": "host", "value": "dc01"}]},
             "its current version has not passed lint",
