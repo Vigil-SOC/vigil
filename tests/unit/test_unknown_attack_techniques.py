@@ -74,7 +74,7 @@ async def test_identify_gaps_keeps_unknown_out_of_gaps_and_answer(monkeypatch):
     monkeypatch.setattr(
         tools,
         "read_alert_labels",
-        lambda _c: gaps.AlertLabels(scope="all alerts", total=0),
+        lambda _c, _since=None: gaps.AlertLabels(scope="all alerts", total=0),
     )
     monkeypatch.setattr(tools, "DatabaseDataService", lambda: object())
     monkeypatch.setattr(catalog, "rules_by_technique", lambda: {"T1059": {1}})
