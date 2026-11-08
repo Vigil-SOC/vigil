@@ -234,6 +234,17 @@
 .de-pc-err { margin: 0; color: var(--poor); }
 .de-pc-actions { display: flex; justify-content: flex-end; gap: 10px; }
 
+/* A Vigil rule's rollout: its stage on the grey line, a History pill, and the moves panel. */
+.de-st-line.amber { color: var(--fair); }
+.de-st-revert { font-size: 12px; }
+.de .de-st-pill { --t: var(--tx2); }
+.de-st-list li { grid-template-columns: 130px 140px minmax(0, 1fr); align-items: baseline; }
+.de-st-when { color: var(--tx2); font-variant-numeric: tabular-nums; }
+.de-st-move { color: var(--tx0); }
+.de-st-why { min-width: 0; color: var(--tx1); overflow-wrap: anywhere; }
+.de-st-why b { font-weight: 600; color: var(--ac); }
+.de-st-why b.vigil { color: var(--tx0); }
+
 /* The rollout's success metrics: a card under the stats strip, one cell per metric. */
 .de-rollout { display: grid; gap: 12px; }
 .de-rollout-toggle { align-self: start; font-size: 12.5px; font-weight: 600; }
