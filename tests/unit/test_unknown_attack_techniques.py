@@ -161,3 +161,8 @@ def test_revoked_chain_names_the_final_active_id():
 
 def test_revoked_id_is_marked_revoked_where_its_name_is_shown():
     assert resolve_technique("T1073")[1] == "DLL Side-Loading (revoked: use T1574.001)"
+
+
+def test_tactic_shown_is_the_earliest_in_matrix_order():
+    assert resolve_technique("T1078")[2] == "Initial Access"
+    assert resolve_technique("T1574")[2] == "Execution"

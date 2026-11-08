@@ -68,7 +68,7 @@ def attack_techniques_version() -> str:
 def attack_techniques() -> dict[str, dict]:
     """Every Enterprise ATT&CK technique and sub-technique id in the pinned release
     (attack_techniques.json, written by scripts/generate_attack_techniques.py), as
-    {id: {"name", "tactics", "status", "replaced_by"?}}. Status is active, revoked
+    {id: {"name", "tactics" (matrix order), "status", "replaced_by"?}}. Status is active, revoked
     or deprecated."""
     return _attack_data()["techniques"]
 

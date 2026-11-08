@@ -40,6 +40,18 @@ def _external_id(obj: dict) -> str:
 
 def build(bundle: dict) -> dict:
     objects = bundle["objects"]
+    tactic_names = {
+        o["id"]: o["x_mitre_shortname"]
+        for o in objects
+        if o.get("type") == "x-mitre-tactic"
+    }
+    # The matrix lists its tactics in kill-chain order; each technique's follow it.
+    matrix = next(o for o in objects if o.get("type") == "x-mitre-matrix")
+    order = {
+        tactic_names[ref]: i
+        for i, ref in enumerate(matrix["tactic_refs"])
+        if ref in tactic_names
+    }
     ids = {}
     techniques = {}
     replaced_by = {}
@@ -58,7 +70,10 @@ def build(bundle: dict) -> dict:
             status = "active"
         techniques[technique_id] = {
             "name": obj["name"],
-            "tactics": [p["phase_name"] for p in obj.get("kill_chain_phases", [])],
+            "tactics": sorted(
+                {p["phase_name"] for p in obj.get("kill_chain_phases", [])},
+                key=lambda name: (order.get(name, len(order)), name),
+            ),
             "status": status,
         }
     for obj in objects:
