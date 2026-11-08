@@ -2232,6 +2232,8 @@ def _run_wazuh_copies(copies: List[Copy], now: datetime, report: RolloutReport) 
             blocked.append((c, hard))
         elif sandbox is None:
             blocked.append((c, f"{why}; {wazuh_sandbox.NO_SANDBOX}"))
+        elif not sandbox["password"]:
+            blocked.append((c, f"{why}; {wazuh_sandbox.NO_PASSWORD}"))
         else:
             counted.append(c)
     ready = [c for c in shadow if not plan[c.rule_id].why]

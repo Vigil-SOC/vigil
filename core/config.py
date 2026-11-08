@@ -240,7 +240,7 @@ class Settings(BaseSettings):
     # Vigil's own Wazuh manager, the wazuh-sandbox compose profile (#4099): it
     # counts shadow Wazuh copies with wazuh-logtest. Empty: no sandbox.
     wazuh_sandbox_url: str = ""
-    wazuh_sandbox_username: str = "wazuh"
+    wazuh_sandbox_username: str = "vigil"
     wazuh_sandbox_password: Optional[SecretStr] = None
 
     # LLM / gateway

@@ -80,6 +80,7 @@ FAILED = f"{CANT}Wazuh sandbox: "
 NO_SANDBOX = (
     "no Wazuh sandbox is configured to count it (the wazuh-sandbox compose profile)"
 )
+NO_PASSWORD = "the Wazuh sandbox has no password (set WAZUH_SANDBOX_PASSWORD)"
 
 _CORRELATED = re.compile(r"if_matched_\w+|(same|different)_\w+")
 _RULE = re.compile(r"<rule\b")

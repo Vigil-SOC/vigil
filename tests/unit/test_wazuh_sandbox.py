@@ -485,7 +485,7 @@ def _copy(rule_id, xml, ran=False):
 def run(monkeypatch):
     wrote = {"runs": {}, "sampled": {}, "unrunnable": [], "sees": {}}
 
-    def go(copies, service, box=None, configured=True):
+    def go(copies, service, box=None, configured=True, password="p"):
         monkeypatch.setattr(
             rollout.wazuh_sees, "indexer", lambda: (None, {"max_searches_per_hour": 30})
         )
@@ -497,7 +497,11 @@ def run(monkeypatch):
             rollout.wazuh_sandbox,
             "configured",
             lambda: (
-                {"url": "https://wazuh-sandbox:55000", "username": "w", "password": "p"}
+                {
+                    "url": "https://wazuh-sandbox:55000",
+                    "username": "w",
+                    "password": password,
+                }
                 if configured
                 else None
             ),
@@ -701,3 +705,10 @@ def test_a_copy_the_sandbox_refuses_reads_why(run):
     ((copy, why),) = run.wrote["unrunnable"]
     assert why.startswith("can't validate: the Wazuh sandbox refused it: ")
     assert "XML syntax error" in why and run.wrote["runs"] == {}
+
+
+def test_a_sandbox_without_a_password_is_not_used(run):
+    box = _Box()
+    run([_copy(1, MATCH)], _Service([_doc("x")]), box, password="")
+    ((copy, why),) = run.wrote["unrunnable"]
+    assert why.endswith(wazuh_sandbox.NO_PASSWORD) and box.loaded is None
