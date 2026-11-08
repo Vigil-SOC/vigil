@@ -415,10 +415,14 @@ def test_a_loud_rule_does_not_promote_at_the_hit_ceiling():
     assert rollout._due(None, loud, NOW, 0) is None
 
 
-def test_the_overlay_deploy_list_leaves_out_a_wazuh_copy(monkeypatch):
+def test_the_overlay_deploy_list_says_which_wazuh_copies_went_untested(monkeypatch):
+    # A person may deploy a Wazuh copy whatever its stage (#4062); one Vigil
+    # validated in shadow and promoted carries no untested note.
     monkeypatch.setattr(
-        rollout, "_copies", lambda: [_copy(1, GOOD, "live"), _copy(2, "", "live")]
+        rollout, "_copies", lambda: [_copy(1, GOOD, "live"), _copy(2, GOOD, "shadow")]
     )
     monkeypatch.setattr(rollout, "handed_off", lambda ids: set())
     monkeypatch.setattr(rollout, "_deploy_targets", lambda: {})
-    assert rollout.overlay_only() == []
+    rows = {r["id"]: r for r in rollout.overlay_only()}
+    assert rows[1]["untested"] is None
+    assert rows[2]["untested"] == rollout.UNTESTED
