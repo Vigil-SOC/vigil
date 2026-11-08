@@ -120,12 +120,19 @@ def test_a_below_floor_gap_is_not_raised(run):
     assert gap_run.GAP_FLOOR == 2
     run.store.alerts += [(T0 - timedelta(hours=1), "T1105")]
     run.store.runs += [(T0 - timedelta(hours=2), "T1021", "h1", 0)]
-    run.store.blind["auditd"] = 1
     run.store.alerts += [(T0 - timedelta(hours=h), "T1059.001") for h in (1, 2)]
     (queued,) = run(T0)
     assert "T1059.001" in queued["hypothesis"]
-    for below in ("T1105", "T1021", "auditd"):
+    for below in ("T1105", "T1021"):
         assert below not in queued["hypothesis"]
+
+
+def test_a_blind_spot_starving_one_rule_is_still_raised_once(run):
+    """A blind spot is a state, not a count of sightings: the floor does not apply."""
+    run.store.blind["auditd"] = 1
+    (queued,) = run(T0)
+    assert "auditd blind spot (data source) (1 rule starved)" in queued["hypothesis"]
+    assert run(T0 + timedelta(days=1)) == []
 
 
 def test_one_confirmed_missed_run_is_enough(run):

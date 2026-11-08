@@ -13,8 +13,10 @@ from core.storage.models import Case, SystemConfig
 
 MARKER_KEY = "detection_gaps.marker"
 # Defaults, not settings yet.
-# A gap is raised at this count or above; one analyst-confirmed missed run is enough
-# by itself, as identify_gaps lists a group with 2+ runs or 1+ confirmed.
+# A missed-runs or paper-only gap is raised at this count or above; one
+# analyst-confirmed missed run is enough by itself, as identify_gaps lists a group
+# with 2+ runs or 1+ confirmed. A blind spot is a standing state, not a count of
+# sightings: it is raised once whatever it starves, and ranked by that.
 GAP_FLOOR = 2
 # The first run, with no marker, reads this far back.
 FIRST_RUN_DAYS = 30
@@ -126,18 +128,17 @@ def to_raise(
     covered: Set[str],
     floor: int = GAP_FLOOR,
 ) -> List[Gap]:
-    """The gaps to raise, biggest first: at or above the floor (or confirmed), a
-    technique no open Case carries, a blind spot not raised before."""
+    """The gaps to raise, biggest first: a technique at or above the floor (or
+    confirmed) that no open Case carries, and a blind spot not raised before."""
     raised = []
     for gap in gaps:
         if gap.kind == BLIND:
-            if gap.subject in marker.blind_spots:
-                continue
-        elif gap.subject.upper() in covered:
-            continue
-        if gap.count < floor and not gap.confirmed:
-            continue
-        raised.append(gap)
+            if gap.subject not in marker.blind_spots:
+                raised.append(gap)
+        elif gap.subject.upper() not in covered and (
+            gap.count >= floor or gap.confirmed
+        ):
+            raised.append(gap)
     return sorted(raised, key=lambda g: (-g.count, _KIND_ORDER[g.kind], g.subject))
 
 
