@@ -114,19 +114,9 @@ def check_manifest(text: str, skills: List[Dict[str, str]]) -> str:
 # Both checks a manifest passes before it is stored or shown as a draft: the
 # parser a run loads with, then needs this deployment can bind. Returns its id.
 def vet_manifest(text: str, registry: Any = None) -> str:
-    from core.llm.system_prompt import validate_system_prompt
     from core.workflows.playbook_resolver import unknown_needs
 
     doc = read_manifest(text)
-    system = doc.get("system")
-    try:
-        # The size, control-character and injection-audit guard every operator
-        # prompt has passed since #87.
-        validate_system_prompt(
-            system if isinstance(system, str) else None, source="operator_manifest"
-        )
-    except ValueError as exc:
-        raise ManifestRefused(str(exc)) from exc
     checked = check_manifest(text, manifest_skills(doc))
     missing = unknown_needs(manifest_needs(doc), registry)
     if missing:

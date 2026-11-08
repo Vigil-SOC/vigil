@@ -8,8 +8,6 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
-import yaml
-
 from core.agents.manager import CUSTOM_AGENT_ID_PREFIX
 from core.agents.operator_manifest import (
     CheckUnavailable,
@@ -23,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 _FENCE = re.compile(r"```(?:ya?ml)?\s*\n(.*?)```", re.DOTALL)
 _ID_TAIL = re.compile(r"[^a-z0-9_-]+")
+_ID_LINE = re.compile(r"^id:.*$", re.MULTILINE)
 
 _EXAMPLE = """id: custom-phishing-triage
 description: Triages reported phishing emails and says whether the sender is malicious.
@@ -203,10 +202,14 @@ class AgentAIGenerator:
         ident = str(doc.get("id") or "")
         if ident.startswith(CUSTOM_AGENT_ID_PREFIX):
             return text
-        tail = _ID_TAIL.sub("-", ident.lower()).strip("-") or "agent"
-        doc.pop("id", None)
-        doc = {"id": f"{CUSTOM_AGENT_ID_PREFIX}{tail}", **doc}
-        return yaml.safe_dump(doc, sort_keys=False, allow_unicode=True, width=1000)
+        tail = ident.lower().removeprefix(CUSTOM_AGENT_ID_PREFIX)
+        new_id = (
+            f"{CUSTOM_AGENT_ID_PREFIX}{_ID_TAIL.sub('-', tail).strip('-') or 'agent'}"
+        )
+        # Only the id line changes, so the rest stays as the model wrote it.
+        if "id" in doc:
+            return _ID_LINE.sub(f"id: {new_id}", text, count=1)
+        return f"id: {new_id}\n{text}"
 
 
 def _failed(error: str) -> Dict[str, Any]:

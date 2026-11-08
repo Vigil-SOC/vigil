@@ -560,7 +560,7 @@ export function AgentDrawer({
                             className="vg-side-input mono"
                             value={asList(guard.guarded).join(', ')}
                             autoComplete="off"
-                            onChange={(e) => set('guard', { ...guard, guarded: e.target.value === '' ? [] : e.target.value.split(',').map((v) => v.trim()) })}
+                            onChange={(e) => set('guard', { ...guard, guarded: e.target.value === '' ? [] : e.target.value.split(/,\s*/) })}
                           />
                         </div>
                         <div className="vg-side-field">

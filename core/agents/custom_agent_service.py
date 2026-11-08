@@ -3,6 +3,8 @@
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
+from sqlalchemy.exc import IntegrityError
+
 from core.agents.manager import CUSTOM_AGENT_ID_PREFIX
 from core.agents.operator_manifest import (
     manifest_from_row,
@@ -59,7 +61,6 @@ class CustomAgentService:
         agent_id: str,
         text: str,
         changed_by: Optional[str] = None,
-        forked_from: Optional[str] = None,
     ) -> Tuple[Dict[str, Any], bool]:
         """Store a manifest under ``agent_id``; (row, created)."""
         db_manager = get_db_manager()
@@ -68,7 +69,7 @@ class CustomAgentService:
             created = agent is None
             before = None if created else agent.manifest
             if created:
-                agent = CustomAgent(id=agent_id, manifest=text, forked_from=forked_from)
+                agent = CustomAgent(id=agent_id, manifest=text)
                 principals.ensure_agent(
                     session, agent_id, agent_id.removeprefix(CUSTOM_AGENT_ID_PREFIX)
                 )
@@ -92,17 +93,28 @@ class CustomAgentService:
         ``custom-<id>[-n]``, converted the way the migration converts a row.
         ``row`` is the built-in's record with its confidence bands rendered."""
         source = row["id"]
+        base = f"{CUSTOM_AGENT_ID_PREFIX}{source}"
         db_manager = get_db_manager()
-        with db_manager.session_scope() as session:
-            base = f"{CUSTOM_AGENT_ID_PREFIX}{source}"
-            new_id, n = base, 2
-            while session.get(CustomAgent, new_id) is not None:
-                new_id, n = f"{base}-{n}", n + 1
-        text = manifest_from_row({**row, "id": new_id})
-        saved, _ = self.put_manifest(
-            new_id, text, changed_by=changed_by, forked_from=source
-        )
-        return saved
+        for n in range(1, 1000):
+            new_id = base if n == 1 else f"{base}-{n}"
+            text = manifest_from_row({**row, "id": new_id})
+            try:
+                with db_manager.session_scope() as session:
+                    # Insert only: an id taken meanwhile is skipped, never replaced.
+                    if session.get(CustomAgent, new_id) is not None:
+                        continue
+                    session.add(
+                        CustomAgent(id=new_id, manifest=text, forked_from=source)
+                    )
+                    principals.ensure_agent(
+                        session, new_id, new_id.removeprefix(CUSTOM_AGENT_ID_PREFIX)
+                    )
+                    _audit_manifest(session, new_id, "create", None, text, changed_by)
+                    session.flush()
+                    return _manifest_row(session.get(CustomAgent, new_id))
+            except IntegrityError:
+                continue
+        raise RuntimeError(f"no free id for a fork of {source}")
 
     def delete_agent(self, agent_id: str, changed_by: Optional[str] = None) -> bool:
         db_manager = get_db_manager()
