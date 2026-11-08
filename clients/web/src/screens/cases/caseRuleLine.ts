@@ -22,7 +22,7 @@ const CHECK_NAMES: Record<string, string> = {
 }
 
 export interface RuleLine {
-  /** Every check passes (Caught may be untested). */
+  /** Proven, or no failing check and at least one passed. */
   ok: boolean
   text: string
   /** The hover: the rule's name and each stored check's result. */
@@ -31,11 +31,15 @@ export interface RuleLine {
 
 /** The one line an alert's rule gets in the Case rail: proven, passing, or its worst problem. */
 export function ruleLine(card: CaseRuleCard): RuleLine {
-  const healthy = card.worst === 'caught' || card.worst === 'fires'
+  // No failing check: proven when it caught an attack, passing only when a check
+  // actually passed (a check not yet run is not a pass).
+  const noFail = card.worst === 'caught' || card.worst === 'fires'
+  const passed = Object.values(card.checks ?? {}).some((v) => (v as { result?: string })?.result === 'pass')
+  const healthy = noFail && (card.caught || passed)
   const stage = card.stage === 'shadow' ? ' · in shadow' : card.stage === 'off' ? ' · switched off' : ''
-  const text = healthy
-    ? (card.caught ? 'Proven rule · caught an attack' : 'Rule passes its checks') + stage
-    : `Rule: ${PROBLEM[card.worst] ?? card.worst.replace(/_/g, ' ')}${stage}`
+  const text = (noFail
+    ? card.caught ? 'Proven rule · caught an attack' : passed ? 'Rule passes its checks' : 'Rule fires · no check has passed yet'
+    : `Rule: ${PROBLEM[card.worst] ?? card.worst.replace(/_/g, ' ')}`) + stage
   const checks = Object.entries(card.checks ?? {})
     .filter(([k]) => k in CHECK_NAMES)
     .map(([k, v]) => `${CHECK_NAMES[k]} ${(v as { result?: string })?.result ?? '—'}`)
