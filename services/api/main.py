@@ -5,11 +5,14 @@ Main application entry point for the REST API server.
 """
 
 import asyncio
+import base64
+import hashlib
 import json
 import logging
 import os
 import sys
 from contextlib import asynccontextmanager
+from html.parser import HTMLParser
 from pathlib import Path
 
 # Add the repo root to sys.path so `core.*` and `services.*` resolve whether
@@ -24,9 +27,11 @@ from core.config import get_settings, validate_settings_or_exit
 
 validate_settings_or_exit()
 
+import fastapi_offline
 from fastapi import Depends, FastAPI, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
@@ -48,7 +53,11 @@ from services.api.errors import register_exception_handlers
 from services.api.middleware.auth import get_current_active_user
 from services.api.middleware.csrf import CSRFMiddleware
 from services.api.middleware.rate_limit import limiter
-from services.api.middleware.security_headers import SecurityHeadersMiddleware
+from services.api.middleware.security_headers import (
+    DEFAULT_CSP,
+    SecurityHeadersMiddleware,
+    _augment_csp_with_origins,
+)
 
 # Single source of truth for the "require an authenticated active user"
 # dependency. Applied to every non-public /api/* router below so that any
@@ -120,6 +129,13 @@ async def lifespan(app: FastAPI):
             await _shutdown(app)
 
 
+# Optional context path (sub-path) the whole app is served under, e.g. when
+# Vigil sits behind a reverse proxy at https://host/vigil. Empty by default
+# (served at root). All API routers, the health endpoint, the static/assets
+# mounts and the SPA catch-all are prefixed with this; the frontend learns it
+# at runtime via the <meta name="vigil-base-path"> injected into index.html below.
+_CONTEXT_PATH = get_settings().vigil_context_path.rstrip("/")
+
 # `version` is the version of the API this document describes, not the version
 # of the build serving it. Those are different things: the build moves every
 # release, and a document whose version renumbers itself every release is the
@@ -136,14 +152,12 @@ app = FastAPI(
     ),
     version="1",
     lifespan=lifespan,
+    # /docs and /redoc are registered below on assets this process serves, so
+    # they render with no route to a CDN.
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=f"{_CONTEXT_PATH}/openapi.json",
 )
-
-# Optional context path (sub-path) the whole app is served under, e.g. when
-# Vigil sits behind a reverse proxy at https://host/vigil. Empty by default
-# (served at root). All API routers, the health endpoint, the static/assets
-# mounts and the SPA catch-all are prefixed with this; the frontend learns it
-# at runtime via the <meta name="vigil-base-path"> injected into index.html below.
-_CONTEXT_PATH = get_settings().vigil_context_path.rstrip("/")
 
 # Wire the shared slowapi Limiter used by auth endpoints. The decorator-based
 # limits (@limiter.limit) read state from app.state.limiter, so both must be set.
@@ -449,9 +463,7 @@ def _build_services(app: FastAPI):
         custom_workflows=app.state.custom_workflows,
         workflow_runs=app.state.workflow_runs,
     )
-    app.state.workflow_ai = WorkflowAIGenerator(
-        workflows=app.state.workflows, mcp_registry=app.state.mcp_registry
-    )
+    app.state.workflow_ai = WorkflowAIGenerator(workflows=app.state.workflows)
     app.state.agent_ai = AgentAIGenerator(mcp_registry=app.state.mcp_registry)
 
 
@@ -888,6 +900,87 @@ async def health_ready(request: Request):
     payload = await _health_payload(request)
     degraded = payload["status"] == "degraded"
     return JSONResponse(payload, status_code=503 if degraded else 200)
+
+
+# Swagger UI and ReDoc from the pinned fastapi-offline wheel, not a CDN, so the
+# API docs work on an air-gapped install.
+_DOCS_ASSETS = Path(fastapi_offline.__file__).parent / "static"
+app.mount(
+    f"{_CONTEXT_PATH}/docs/static",
+    StaticFiles(directory=_DOCS_ASSETS),
+    name="docs-static",
+)
+
+
+class _InlineScripts(HTMLParser):
+    """The text of each ``<script>`` with no ``src``, exactly as the page carries it."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.scripts: list[str] = []
+        self._open = False
+
+    def handle_starttag(self, tag, attrs) -> None:
+        if tag == "script" and not dict(attrs).get("src"):
+            self._open = True
+            self.scripts.append("")
+
+    def handle_endtag(self, tag) -> None:
+        if tag == "script":
+            self._open = False
+
+    def handle_data(self, data) -> None:
+        if self._open:
+            self.scripts[-1] += data
+
+
+def _docs_page(page: HTMLResponse) -> HTMLResponse:
+    """Admit the page's own inline scripts by hash.
+
+    The CSP is ``script-src 'self'``, which refuses Swagger UI's inline init
+    script. Setting the header here wins: the middleware only fills it in.
+    """
+    if not get_settings().vigil_csp_enabled:
+        return page
+    parser = _InlineScripts()
+    parser.feed(page.body.decode())
+    hashes = [
+        "'sha256-%s'" % base64.b64encode(hashlib.sha256(js.encode()).digest()).decode()
+        for js in parser.scripts
+    ]
+    policy = get_settings().vigil_csp_policy or DEFAULT_CSP
+    policy, missing = _augment_csp_with_origins(policy, ("script-src",), hashes)
+    if missing and hashes:  # a custom policy with no script-src of its own
+        policy = f"{policy}; script-src 'self' {' '.join(hashes)}"
+    # ReDoc runs its search in a worker it starts from a blob.
+    page.headers["Content-Security-Policy"] = f"{policy}; worker-src 'self' blob:"
+    return page
+
+
+@app.get(f"{_CONTEXT_PATH}/docs", include_in_schema=False)
+async def swagger_ui() -> HTMLResponse:
+    return _docs_page(
+        get_swagger_ui_html(
+            openapi_url=app.openapi_url,
+            title=f"{app.title} - Swagger UI",
+            swagger_js_url=f"{_CONTEXT_PATH}/docs/static/swagger-ui-bundle.js",
+            swagger_css_url=f"{_CONTEXT_PATH}/docs/static/swagger-ui.css",
+            swagger_favicon_url=f"{_CONTEXT_PATH}/docs/static/favicon.png",
+        )
+    )
+
+
+@app.get(f"{_CONTEXT_PATH}/redoc", include_in_schema=False)
+async def redoc() -> HTMLResponse:
+    return _docs_page(
+        get_redoc_html(
+            openapi_url=app.openapi_url,
+            title=f"{app.title} - ReDoc",
+            redoc_js_url=f"{_CONTEXT_PATH}/docs/static/redoc.standalone.js",
+            redoc_favicon_url=f"{_CONTEXT_PATH}/docs/static/favicon.png",
+            with_google_fonts=False,
+        )
+    )
 
 
 # Everything this process serves itself. A 404 under one of these is a miss,

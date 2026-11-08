@@ -171,6 +171,36 @@ def _stage_row(
     }
 
 
+def _insert_stages(
+    session: Any, rows: List[dict], before: Dict[int, Optional[str]]
+) -> None:
+    """Insert stage rows, and one trail entry each in the same transaction.
+
+    ``before`` is each rule's stage until now; a rule absent from it is new.
+    """
+    from core.audit import trail
+
+    session.execute(insert(DetectionRuleStage), rows)
+    if not trail.in_use(session):
+        return
+    for row in rows:
+        # A system write: a restore's pause must not roll back the stage rows.
+        trail.append(
+            session,
+            {
+                trail.ACTION: "detections.rule_staged",
+                trail.ACTOR: row["actor"],
+                trail.OBJECT: str(row["rule_id"]),
+                "rule_id": row["rule_id"],
+                "version": row["version"],
+                "from_stage": before.get(row["rule_id"]),
+                "to_stage": row["stage"],
+                "reason": row["reason"],
+            },
+            gated=False,
+        )
+
+
 def _lint(record: RuleRecord, now: str) -> Optional[Dict[str, Any]]:
     """checks['lint'] for a staged overlay copy: its query, linted as a save lints it."""
     report = lint_record(record)
@@ -564,11 +594,12 @@ def sync_source(source: str, records: List[RuleRecord]) -> SourceReport:
             report.new = len(new)
         if versions:
             session.execute(insert(DetectionRuleVersion), versions)
-        if stages:
-            session.execute(insert(DetectionRuleStage), stages)
         _write_checks(session, checked)
         report.checked = len(checked)
         _record_changes(session, changes, now)
+        # Last: the trail lock its entries take is held until commit.
+        if stages:
+            _insert_stages(session, stages, current)
     return report
 
 
@@ -601,7 +632,7 @@ def _remove_unconfigured(configured: List[str]) -> int:
             if source == readers.OVERLAY_SOURCE and language in STAGED_LANGUAGES
         ]
         if stages:
-            session.execute(insert(DetectionRuleStage), stages)
+            _insert_stages(session, stages, _current_stages(session))
         # Every such rule with recorded checks (only overlay copies have them),
         # already removed ones too, so a check left from before is dropped.
         recorded = session.execute(

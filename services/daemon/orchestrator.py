@@ -80,6 +80,7 @@ except Exception:
     _inv_created = _inv_completed = _inv_failed = _dedup_prevented = _stuck_agents = (
         _intake_queue_depth
     ) = None  # type: ignore[assignment]
+from core.agents.operator_manifest import operator_request
 from core.agents.projections import read_projection, run_id_for
 from core.agents.queue import RUN_KINDS, build_start_job, enqueue_run
 from core.findings.exclusions import cached_active_ips, excluded_ips_of
@@ -1623,14 +1624,17 @@ class Orchestrator:
             )
             if row is not None:
                 _record_start(run_id, actor, origin, person, request)
+            # A custom agent's manifest and skills ride the job, not the trail entry.
+            workflow = self._workflows.get_workflow(inv_record["workflow_id"])
             job = build_start_job(
                 run_id,
                 run_kind,
-                request,
+                {**request, **operator_request(workflow.metadata if workflow else {})},
                 enqueued_by=started_by or "orchestrator",
                 principal=token,
                 actor=actor,
                 origin=origin,
+                case_id=inv_record.get("case_id"),
             )
             await enqueue_run(job)
         except Exception as exc:  # noqa: BLE001 — a queue that refuses is not a crash

@@ -579,6 +579,36 @@
   "nullable": true,
   "type": "text"
  },
+ "column audit_webhook_state.failing": {
+  "default": "false",
+  "nullable": false,
+  "type": "boolean"
+ },
+ "column audit_webhook_state.id": {
+  "default": "1",
+  "nullable": false,
+  "type": "smallint"
+ },
+ "column audit_webhook_state.last_delivered_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp with time zone"
+ },
+ "column audit_webhook_state.last_delivered_seq": {
+  "default": null,
+  "nullable": true,
+  "type": "bigint"
+ },
+ "column audit_webhook_state.last_error": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column audit_webhook_state.pending_through": {
+  "default": null,
+  "nullable": true,
+  "type": "bigint"
+ },
  "column case_attachments.attachment_id": {
   "default": "nextval('case_attachments_attachment_id_seq'::regclass)",
   "nullable": false,
@@ -1769,16 +1799,6 @@
   "nullable": true,
   "type": "character varying(50)"
  },
- "column custom_agents.color": {
-  "default": null,
-  "nullable": true,
-  "type": "text"
- },
- "column custom_agents.component_category": {
-  "default": "'investigation'::character varying",
-  "nullable": false,
-  "type": "character varying(32)"
- },
  "column custom_agents.created_at": {
   "default": "now()",
   "nullable": false,
@@ -1789,32 +1809,7 @@
   "nullable": true,
   "type": "character varying(100)"
  },
- "column custom_agents.description": {
-  "default": null,
-  "nullable": true,
-  "type": "text"
- },
- "column custom_agents.enable_thinking": {
-  "default": "false",
-  "nullable": false,
-  "type": "boolean"
- },
- "column custom_agents.extra_principles": {
-  "default": "''::text",
-  "nullable": false,
-  "type": "text"
- },
- "column custom_agents.fallback_model": {
-  "default": null,
-  "nullable": true,
-  "type": "text"
- },
  "column custom_agents.forked_from": {
-  "default": null,
-  "nullable": true,
-  "type": "text"
- },
- "column custom_agents.icon": {
   "default": null,
   "nullable": true,
   "type": "text"
@@ -1824,44 +1819,9 @@
   "nullable": false,
   "type": "text"
  },
- "column custom_agents.max_tokens": {
-  "default": "4096",
-  "nullable": false,
-  "type": "integer"
- },
- "column custom_agents.methodology": {
-  "default": "''::text",
-  "nullable": false,
-  "type": "text"
- },
- "column custom_agents.model": {
-  "default": null,
-  "nullable": true,
-  "type": "text"
- },
- "column custom_agents.name": {
+ "column custom_agents.manifest": {
   "default": null,
   "nullable": false,
-  "type": "text"
- },
- "column custom_agents.recommended_tools": {
-  "default": "'[]'::jsonb",
-  "nullable": false,
-  "type": "jsonb"
- },
- "column custom_agents.role": {
-  "default": null,
-  "nullable": false,
-  "type": "text"
- },
- "column custom_agents.specialization": {
-  "default": null,
-  "nullable": true,
-  "type": "text"
- },
- "column custom_agents.system_prompt_override": {
-  "default": null,
-  "nullable": true,
   "type": "text"
  },
  "column custom_agents.updated_at": {
@@ -4125,6 +4085,8 @@
  "constraint audit_trail_anchor.audit_trail_anchor_pkey": "PRIMARY KEY (id)",
  "constraint audit_trail_held.audit_trail_held_pkey": "PRIMARY KEY (id)",
  "constraint audit_trail_held.audit_trail_held_window_key_key": "UNIQUE (window_key)",
+ "constraint audit_webhook_state.audit_webhook_state_id_check": "CHECK ((id = 1))",
+ "constraint audit_webhook_state.audit_webhook_state_pkey": "PRIMARY KEY (id)",
  "constraint case_attachments.case_attachments_case_id_fkey": "FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE CASCADE",
  "constraint case_attachments.case_attachments_pkey": "PRIMARY KEY (attachment_id)",
  "constraint case_audit_logs.case_audit_logs_pkey": "PRIMARY KEY (audit_id)",
@@ -4409,6 +4371,7 @@
  "index audit_trail_held_pkey": "CREATE UNIQUE INDEX audit_trail_held_pkey ON public.audit_trail_held USING btree (id)",
  "index audit_trail_held_window_key_key": "CREATE UNIQUE INDEX audit_trail_held_window_key_key ON public.audit_trail_held USING btree (window_key)",
  "index audit_trail_pkey": "CREATE UNIQUE INDEX audit_trail_pkey ON public.audit_trail USING btree (seq)",
+ "index audit_webhook_state_pkey": "CREATE UNIQUE INDEX audit_webhook_state_pkey ON public.audit_webhook_state USING btree (id)",
  "index case_attachments_pkey": "CREATE UNIQUE INDEX case_attachments_pkey ON public.case_attachments USING btree (attachment_id)",
  "index case_audit_logs_pkey": "CREATE UNIQUE INDEX case_audit_logs_pkey ON public.case_audit_logs USING btree (audit_id)",
  "index case_closure_info_pkey": "CREATE UNIQUE INDEX case_closure_info_pkey ON public.case_closure_info USING btree (case_id)",
@@ -4934,6 +4897,26 @@
    false
   ],
   "sequence": "[\"bigint\", 1, 1, 1, 9223372036854775807, 1, false]"
+ },
+ "relation audit_webhook_state": {
+  "acl": [
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
  },
  "relation case_attachments": {
   "acl": [

@@ -1,5 +1,7 @@
 """Audit-feed setup: destination, a test send, and health (#2767).
 
+``/webhook`` is the same for the CloudEvents webhook (#4019).
+
 ``audit.forward`` and a person principal. A credential is refused first.
 Saving goes through the integration config, which writes the trail entry.
 """
@@ -47,6 +49,15 @@ class FeedIn(BaseModel):
     client_key_pem: Optional[str] = None
 
 
+class WebhookIn(BaseModel):
+    enabled: bool = False
+    url: str = ""
+    # A trail area (the action before its first dot). Blank sends everything.
+    area: Optional[str] = None
+    # whsec_<base64>. None keeps the stored one, or generates one shown once.
+    secret: Optional[str] = None
+
+
 def _call(fn):
     try:
         return fn()
@@ -84,3 +95,29 @@ def update_feed(body: FeedIn, user: User = Depends(_FORWARD)):
 def test_feed(session: UnitOfWorkSession, _: User = Depends(_FORWARD)):
     """Send one CEF test frame. Does not move the cursor or append a trail entry."""
     return _call(lambda: feed.send_test(session))
+
+
+@router.get("/webhook")
+def read_webhook(session: UnitOfWorkSession, _: User = Depends(_FORWARD)):
+    """URL, area filter and cursor. Never the signing secret."""
+    return _call(lambda: feed.webhook_health(session))
+
+
+@router.put("/webhook")
+def update_webhook(body: WebhookIn, user: User = Depends(_FORWARD)):
+    """Save URL, area and enabled. A generated secret is returned here only."""
+    return _call(
+        lambda: feed.save_webhook(
+            user.user_id,
+            enabled=body.enabled,
+            url=body.url,
+            area=body.area,
+            secret=body.secret,
+        )
+    )
+
+
+@router.post("/webhook/test")
+def test_webhook(session: UnitOfWorkSession, _: User = Depends(_FORWARD)):
+    """Send one signed test event. Does not move the cursor or append a trail entry."""
+    return _call(lambda: feed.send_webhook_test(session))

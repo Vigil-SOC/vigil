@@ -77,7 +77,7 @@ spec:
             {{- toYaml . | nindent 12 }}
             {{- end }}
           # Probes target /health on port 9091. /metrics on 9090 only serves
-          # when VIGIL_OTEL_ENABLED=true, so it's unsafe for readiness.
+          # when DAEMON_METRICS_ENABLED is on, so it's unsafe for readiness.
           # Gate liveness/readiness on a slow first boot (orchestrator + agent
           # warmup, MCP connection retries) so a slow start can't trip the
           # liveness kill-restart loop before the daemon serves /health. While

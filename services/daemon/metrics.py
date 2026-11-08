@@ -5,8 +5,8 @@ DAEMON_HEALTH_PORT (default 9091), and, when DAEMON_METRICS_ENABLED,
 Prometheus text on DAEMON_METRICS_PORT (default 9090) at /metrics. The
 Prometheus listener renders prometheus_client's default REGISTRY, which is
 where the OTEL PrometheusMetricReader from core/telemetry.init_telemetry()
-registers its collector — so the OTEL instruments appear there when the
-flag is on.
+registers its collector — so the OTEL instruments appear there whether or
+not an OTLP endpoint is set.
 """
 
 import asyncio

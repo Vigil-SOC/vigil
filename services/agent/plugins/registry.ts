@@ -28,20 +28,61 @@ export function pluginFor(id: string, root: string = ROOT, skills: string = SKIL
   return manifest;
 }
 
-export function parsePlugin(text: string, available: readonly SkillSpec[], where = "plugin.yaml"): PluginManifest {
-  const raw = parseYaml(text) as Record<string, unknown> | null;
-  if (typeof raw !== "object" || raw === null) throw new SpecError(`${where} is not a mapping`);
+// An operator's manifest, carried on a job or a check request rather than read from
+// the tree. Carried skills first: the first match by name wins, and the run should use
+// the body it journaled, not a bundled one an upgrade may since have changed. Never cached.
+export const OPERATOR_MANIFEST = "<operator manifest>";
+
+export function operatorPlugin(text: unknown, carried: unknown): PluginManifest {
+  if (typeof text !== "string" || text.trim() === "") throw new SpecError(`${OPERATOR_MANIFEST} must be non-empty YAML text`);
+  return parsePlugin(text, [...carriedSkills(carried), ...loadSkills(SKILLS)], OPERATOR_MANIFEST, { operator: true });
+}
+
+export function carriedSkills(value: unknown): SkillSpec[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new SpecError(`${OPERATOR_MANIFEST}: skills must be a list`);
+  return value.map((one: unknown, i) => {
+    if (typeof one !== "object" || one === null) throw new SpecError(`${OPERATOR_MANIFEST}: skill ${i} must be a mapping`);
+    const raw = one as Record<string, unknown>;
+    const where = `${OPERATOR_MANIFEST}: skill ${i}`;
+    return { name: text_(raw, "name", where), description: text_(raw, "description", where), body: text_(raw, "body", where) };
+  });
+}
+
+export function parsePlugin(text: string, available: readonly SkillSpec[], where = "plugin.yaml", options: { operator?: boolean } = {}): PluginManifest {
+  let raw: Record<string, unknown> | null;
+  try {
+    raw = parseYaml(text) as Record<string, unknown> | null;
+  } catch (error) {
+    throw new SpecError(`${where} is not valid YAML: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new SpecError(`${where} is not a mapping`);
 
   const id = text_(raw, "id", where);
+  // An operator's id may never shadow a built-in one, nor be taken for one.
+  if (options.operator === true && !/^custom-[a-z0-9][a-z0-9_-]*$/.test(id)) {
+    throw new SpecError(`${where}: id ${id} must start with custom- followed by lowercase letters, digits, - or _`);
+  }
   const declared = strings(raw["skills"] ?? [], `${where}: skills`);
   const skills = declared.map((name) => {
     const found = available.find((skill) => skill.name === name);
-    if (found === undefined) throw new SpecError(`${where} lists skill ${name}, which has no SKILL.md`);
+    if (found === undefined) throw new SpecError(`${where} lists skill ${name}, which ${options.operator === true ? "is neither carried with it nor bundled" : "has no SKILL.md"}`);
     return found;
   });
 
   const conclusion = conclusionOf(raw["conclusion"], where);
   const guard = raw["guard"] === undefined ? undefined : guardOf(raw["guard"], conclusion, where);
+  // A dismissal closes the case without the ceiling, so a verdict that can dismiss
+  // must pass the reviewer's second look first.
+  if (isStructured(conclusion) && conclusion.disposition_field !== undefined) {
+    const field = conclusion.disposition_field;
+    const allowed = ((conclusion.schema["properties"] as Record<string, { enum?: unknown }>)[field]?.enum ?? []) as unknown[];
+    // Both, when the enum holds both; a guard may not name a value outside the enum.
+    const dismissals = ["benign", "false_positive"].filter((one) => allowed.includes(one));
+    if (dismissals.length > 0 && (guard?.field !== field || !dismissals.every((one) => guard.guarded.includes(one)))) {
+      throw new SpecError(`${where}: ${field} can say ${dismissals.join(" or ")}, which closes a case, so it needs a guard on ${field} whose guarded holds ${dismissals.join(" and ")}`);
+    }
+  }
   const max_turns = raw["max_turns"];
   if (max_turns !== undefined && (typeof max_turns !== "number" || !Number.isInteger(max_turns) || max_turns < 1)) {
     throw new SpecError(`${where}: max_turns must be a positive integer`);

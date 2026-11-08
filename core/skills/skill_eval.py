@@ -2,7 +2,8 @@
 
 Shared by ``scripts/skill_eval.py`` (the author's CLI check) and
 ``POST /api/skills/{name}/test`` (the skill drawer). For each skill the system
-prompt is ``render_base_prompt`` for a role, a note that no tool is callable,
+prompt is a built-in agent's manifest ``system`` rendered with no grants, a
+note that no tool is callable,
 and the SKILL.md body inlined; each case's ``input`` is sent as one user turn
 through ``LLMRouter.dispatch`` and graded by substring containment against
 ``expect``.
@@ -16,7 +17,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from core.agents.prompts import render_base_prompt
+from core.agents.builtins import builtin_manifests
+from core.agents.operator_manifest import read_manifest
+from core.agents.prompts import render_system
 from core.llm.router.router import LLMRouter, ProviderSpec
 from core.skills.skill_library import Skill, as_user_turn, read_skill
 
@@ -59,10 +62,13 @@ def load_cases(skill: Skill) -> List[Dict[str, Any]]:
     return cases
 
 
-# The eval declares no tools, so the base prompt is rendered without the
-# read_skill grant and the body is inlined with a note saying so: a model told
-# to call a tool it does not hold answers with no content at all (Gemini
-# returns MALFORMED_FUNCTION_CALL), and the base prompt's static tool list
+# The agent whose prompt a skill is graded under, unless the caller names another.
+DEFAULT_AGENT = "investigator"
+
+# The eval declares no tools, so the agent's prompt is rendered with no grants
+# ($memory and $skills empty) and the body is inlined with a note saying so: a
+# model told to call a tool it does not hold answers with no content at all
+# (Gemini returns MALFORMED_FUNCTION_CALL), and the prompt's static tool list
 # still tempts it to stop mid-turn on a lookup.
 _INLINE_NOTE = (
     "The SKILL.md body of `{name}` follows, already read for you. No tool is "
@@ -71,14 +77,15 @@ _INLINE_NOTE = (
 )
 
 
-def system_prompt_for(skill: Skill, role: str, root: Path) -> str:
+def agent_system(agent_id: str) -> str:
+    """A built-in's ``system`` rendered with no grants; KeyError for an unknown id."""
+    doc = read_manifest(builtin_manifests()[agent_id])
+    return render_system(str(doc.get("system") or ""), needs=())
+
+
+def system_prompt_for(skill: Skill, agent_id: str, root: Path) -> str:
     body = read_skill(skill.name, roots=[root])["content"]
-    return (
-        render_base_prompt(role, tools=())
-        + "\n\n"
-        + _INLINE_NOTE.format(name=skill.name)
-        + body
-    )
+    return agent_system(agent_id) + "\n\n" + _INLINE_NOTE.format(name=skill.name) + body
 
 
 async def run_cases(
@@ -86,7 +93,7 @@ async def run_cases(
     provider: ProviderSpec,
     skill: Skill,
     *,
-    role: str,
+    agent_id: str = DEFAULT_AGENT,
     root: Path,
     max_tokens: int,
     model: Optional[str] = None,
@@ -97,7 +104,7 @@ async def run_cases(
 
     A dispatch failure propagates: it is not a failed case.
     """
-    system_prompt = system_prompt_for(skill, role, root)
+    system_prompt = system_prompt_for(skill, agent_id, root)
 
     async def one(case: Dict[str, Any]) -> CaseResult:
         result = await router.dispatch(

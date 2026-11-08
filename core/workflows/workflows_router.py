@@ -113,7 +113,6 @@ class WorkflowPhaseSchema(BaseModel):
     agent_id: str
     name: str
     purpose: Optional[str] = ""
-    tools: List[str] = Field(default_factory=list)
     steps: List[str] = Field(default_factory=list)
     expected_output: Optional[str] = ""
     approval_required: bool = False
