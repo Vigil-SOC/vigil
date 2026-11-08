@@ -897,6 +897,30 @@ export interface HealthEntry {
   read: boolean
 }
 
+/** Each rollout metric carries where its numbers come from and what they can't say. */
+interface MetricNotes { source: string; unknown: string[] }
+
+/** GET /detection-rules/metrics: the rollout's success metrics from stored data. */
+export interface DetectionMetrics {
+  generated_at: string
+  gap_to_shadow: MetricNotes & { gaps: number; closed: number; median_hours: number | null; within_target: number; target_hours: number }
+  shadow_to_live: MetricNotes & { promoted: number; promoted_by_vigil: number; median_hours: number | null; in_shadow: number; exit_criteria: string }
+  live_health: MetricNotes & { live_rules: number; passing: number; share: number | null; target: number; blind_spots: number; rules_starved: number }
+  first_week: MetricNotes & {
+    started_at: string | null
+    ends_at: string | null
+    week_over: boolean
+    silent: number
+    no_data: number
+    never_firing: number
+    first_found_day: Partial<Record<'silent' | 'no_data' | 'never_firing', number>>
+  }
+  search_budget: MetricNotes & {
+    integrations: Record<string, { searches_last_hour: number; max_searches_per_hour: number }>
+    throttle_errors: number
+  }
+}
+
 export interface HealthInbox {
   /** Unread entries, newest first; empty when the summary stands for them. */
   entries: HealthEntry[]
@@ -961,6 +985,10 @@ export const detectionRulesApi = {
 
   /** The open rule-health flags, newest first, read or unread for the signed-in person. */
   healthInbox: () => api.get<HealthInbox>('/detection-rules/health-inbox'),
+
+  /** The rollout's success metrics, each with its source and what it can't say. It
+   * reads 30 days of check changes, so it gets longer than the default timeout. */
+  metrics: () => api.get<DetectionMetrics>('/detection-rules/metrics', { timeout: 60_000 }),
 
   /** Marks these entries read for the signed-in person, or every open one; returns the inbox. */
   markHealthRead: (changeIds: number[] | 'all') =>
