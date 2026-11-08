@@ -113,30 +113,41 @@ def pg(monkeypatch):
                 {"i": rid},
             ).one()
 
+    from core.audit import trail
+
+    # The audit stores are never emptied, and rule ids restart: read only this test's rows.
+    with manager.session_scope() as session:
+        on_trail = trail.in_use(session)
+        newest = session.execute(
+            text(
+                "SELECT coalesce(max(seq), 0) FROM audit_trail"
+                if on_trail
+                else "SELECT coalesce(max(id), 0) FROM config_audit_log"
+            )
+        ).scalar()
+
     def audited(rid):
         """(verb, actor, old origin, new origin) of each link audit row for ``rid``."""
-        from core.audit import trail
-
         with manager.session_scope() as session:
-            if trail.in_use(session):
+            if on_trail:
                 rows = session.execute(
                     text(
                         "SELECT payload->>'verb', payload->>'actor',"
                         " payload->'old_value'->>'origin_rule_id',"
                         " payload->'new_value'->>'origin_rule_id'"
                         " FROM audit_trail WHERE payload->>'action' = 'config.change'"
-                        " AND payload->>'config_key' = :k ORDER BY seq"
+                        " AND payload->>'config_key' = :k AND seq > :n ORDER BY seq"
                     ),
-                    {"k": f"detection_rule:{rid}"},
+                    {"k": f"detection_rule:{rid}", "n": newest},
                 ).all()
             else:
                 rows = session.execute(
                     text(
                         "SELECT action, changed_by, old_value->>'origin_rule_id',"
                         " new_value->>'origin_rule_id' FROM config_audit_log"
-                        " WHERE config_key = :k ORDER BY id"
+                        " WHERE config_key = :k AND id > :n ORDER BY id"
                     ),
-                    {"k": f"detection_rule:{rid}"},
+                    {"k": f"detection_rule:{rid}", "n": newest},
                 ).all()
         return [tuple(r) for r in rows]
 
