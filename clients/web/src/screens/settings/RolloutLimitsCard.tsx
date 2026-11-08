@@ -99,15 +99,10 @@ export default function RolloutLimitsCard({ notify, canWrite }: { notify: Sectio
             </span>
             <span className="lim-row-tag">{value === d ? 'Default' : `Changed · default ${d.toLocaleString()}`}</span>
             <span className="lim-row-ctl">
-              {canWrite && b ? (
-                <ScrubField name={r.title} label={r.label} unit={r.unit} value={value} min={b.min} max={b.max} step={1} onCommit={(v) => commit(r, v)} />
-              ) : (
-                <span className="sf sf-static">
-                  <span className="sf-label">{r.label}</span>
-                  <span className="sf-num">{value.toLocaleString()}</span>
-                  <span className="sf-unit">{r.unit}</span>
-                </span>
-              )}
+              <ScrubField
+                name={r.title} label={r.label} unit={r.unit} value={value} min={b?.min ?? value} max={b?.max ?? value} step={1}
+                readOnly={!canWrite || !b} onCommit={(v) => commit(r, v)}
+              />
             </span>
           </div>
         )

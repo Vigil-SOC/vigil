@@ -217,6 +217,8 @@
 .sf-pen { flex: none; color: var(--tx3); }
 .sf.sf-static { cursor: default; }
 .sf.sf-static:hover { border-color: var(--ln1); }
+.dp-pill.dp-static { cursor: default; }
+.dp-pill.dp-static:hover { border-color: var(--ln1); }
 .sf-label { flex: 1 1 auto; text-align: left; }
 .sf-num { min-width: 34px; text-align: right; font-size: 13px; font-weight: 700; color: var(--tx0); }
 .sf-unit { color: var(--tx2); }

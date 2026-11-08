@@ -441,6 +441,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
         min={b.min}
         max={b.max}
         step={b.step}
+        readOnly={!canRaise}
         onCommit={(v) => applyAndSave({ [r.field]: v })}
       />
     )
@@ -722,6 +723,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
               minMinutes={idle.min / 60}
               maxMinutes={idle.max / 60}
               onChange={(h) => setDuration('stale_threshold', h)}
+              readOnly={!canRaise}
             />,
           )}
         {FLEET_ROWS.map((r) => row(r.title, r.hint, r.field, scrub(r)))}
@@ -849,6 +851,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                   minMinutes={runtime.min / 60}
                   maxMinutes={runtime.max / 60}
                   onChange={(h) => setDuration('max_runtime_per_investigation', h)}
+                  readOnly={!canRaise}
                 />
               ),
             )}
@@ -865,6 +868,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                   min={loop.min}
                   max={loop.max}
                   step={loop.step}
+                  readOnly={!canRaise}
                   onCommit={(v) => applyAndSave({ loop_interval: v })}
                 />,
               )}

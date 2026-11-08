@@ -17,14 +17,17 @@ interface ScrubFieldProps {
   unit?: string
   /** Called with a value inside [min, max] that differs from `value`. */
   onCommit: (value: number) => void
+  /** Show the value only, for someone who may not change it. */
+  readOnly?: boolean
 }
 
 const decimals = (step: number) => (String(step).split('.')[1] ?? '').length
 
 /** A value that is clicked (or Enter) to type a new one; arrows step (Shift x10), Enter
  * commits. Neutral at rest: no fill or bar, since its place in the range means nothing to
- * read. Bounds and step come from the caller. */
-export function ScrubField({ name, label, value, min, max, step, prefix = '', unit, onCommit }: ScrubFieldProps) {
+ * read. Bounds and step come from the caller. Read only, it is the same pill without the
+pencil, and nothing opens. */
+export function ScrubField({ name, label, value, min, max, step, prefix = '', unit, onCommit, readOnly = false }: ScrubFieldProps) {
   const [typing, setTyping] = useState<string | null>(null)
   const [shaking, setShaking] = useState(false) // set on every clamp; the animation clears it
   const root = useRef<HTMLSpanElement>(null)
@@ -111,6 +114,15 @@ export function ScrubField({ name, label, value, min, max, step, prefix = '', un
     </>
   )
 
+  if (readOnly) {
+    return (
+      <span className="sf sf-static" aria-label={`${name}: ${text}${unit ? ` ${unit}` : ''}`}>
+        <span className="sf-label">{label}</span>
+        <span className="sf-num">{text}</span>
+        {unit && <span className="sf-unit">{unit}</span>}
+      </span>
+    )
+  }
   if (typing !== null) return <span className="sf typing">{body}</span>
   return (
     <span
