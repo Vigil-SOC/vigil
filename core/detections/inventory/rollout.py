@@ -143,6 +143,8 @@ INTEGRATION = ELASTIC.id
 LANGUAGES = ("eql", "esql", "lucene")
 # Staged copies Vigil runs live; the Wazuh manager runs a live Wazuh copy.
 VIGIL_RUNS = ("splunk", "elastic")
+# How often the sweep reads a waiting live Wazuh copy's deploy PR state (#4120).
+PR_WATCH_EVERY = timedelta(hours=1)
 FIRST_WINDOW = timedelta(hours=1)
 LAG = timedelta(minutes=30)  # how late an event may be indexed and still be seen
 MAX_DOCS = 100  # documents fetched per run; the count is the full total
@@ -981,6 +983,10 @@ def sweep(now: datetime, report: RolloutReport) -> None:
     except Exception as exc:  # noqa: BLE001 -- retried next sweep
         logger.warning("detection rules: closing left-live deploy PRs failed: %s", exc)
         report.deploys.append(f"closing deploy PRs failed: {exc}")
+    try:  # its own step too: only what the listing says of a waiting copy
+        _watch_waiting_prs(copies, targets, now)
+    except Exception as exc:  # noqa: BLE001 -- read again next sweep
+        logger.warning("detection rules: reading waiting deploy PRs failed: %s", exc)
 
 
 def _linted(copy: Copy) -> bool:
@@ -1723,6 +1729,114 @@ def _withdraw(
             + (f"closed {url}" if closed else f"{url} not closed: {note}")
         )
         _record_withdrawn(w, {"withdrawn": withdrawn})
+
+
+def _watch_waiting_prs(
+    copies: List[Copy], targets: Mapping[str, Dict[str, Any]], now: datetime
+) -> None:
+    """Read the deploy PR of each live Wazuh copy the manager doesn't run yet
+    (``copies`` are the ones not handed off) from GitHub, at most once per
+    PR_WATCH_EVERY, into its checks['deploy']: ``pr_state`` (open, closed or
+    merged) and ``pr_checked_at``. The listing says a PR closed unmerged from
+    that, never calling GitHub itself (#4120). A merged PR is not read again."""
+    target = targets.get(WAZUH)
+    if not target:
+        return
+    due = []
+    for c in copies:
+        deploy = c.checks.get("deploy") or {}
+        if (
+            c.language != WAZUH
+            or c.stage != "live"
+            or deploy.get("version") != c.version
+            or not deploy.get("pr_url")
+            or deploy.get("pr_state") == "merged"
+        ):
+            continue
+        checked = _parse_at(deploy.get("pr_checked_at"))
+        if checked and now - checked < PR_WATCH_EVERY:
+            continue
+        due.append((c, str(deploy["pr_url"])))
+    if not due:
+        return
+    from core.detections.detection_rules_service import deploy_host_refused
+    from core.secrets import get_secret
+
+    token = get_secret("GITHUB_TOKEN")
+    if not token or deploy_host_refused(target):
+        return  # the deploy step already says why it can't reach the target
+    for copy, url in due:
+        if _stopped():
+            return
+        try:
+            state = _pr_state(url, target, token)
+        except Exception as exc:  # noqa: BLE001 -- read again next sweep
+            logger.warning(
+                "detection rules: reading rule %s's deploy PR %s failed: %s",
+                copy.rule_id,
+                url,
+                exc,
+            )
+            continue
+        if state:
+            _record_pr_state(copy, url, state, now)
+
+
+def _parse_at(value: Any) -> Optional[datetime]:
+    try:
+        at = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+    return at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+
+
+def _pr_state(url: str, target: Mapping[str, Any], token: str) -> Optional[str]:
+    """The PR's state (open, closed or merged); None for a URL outside the
+    deploy target's repo, which the token is never sent to."""
+    import httpx
+
+    from core.detections.detection_rules_service import _repo_key
+
+    m = re.fullmatch(r"(.+)/pull/(\d+)/?", url)
+    api, repo = _api_of(str(target.get("git_url") or ""))
+    if not m or _repo_key(m[1]) != _repo_key(str(target.get("git_url") or "")):
+        return None
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    with httpx.Client(
+        base_url=api, headers=headers, timeout=DEPLOY_TIMEOUT, follow_redirects=True
+    ) as http:
+        pr = _ok(http.get(f"/repos/{repo}/pulls/{int(m[2])}")).json()
+    if pr.get("merged_at"):
+        return "merged"
+    return "open" if pr.get("state") == "open" else "closed"
+
+
+def _record_pr_state(copy: Copy, url: str, state: str, now: datetime) -> None:
+    """``pr_state`` and ``pr_checked_at`` merged into the version's
+    checks['deploy'] as it is now, unless that records another PR since."""
+    from core.detections.inventory.sync import _write_checks
+
+    with get_db_manager().session_scope() as session:
+        checks = session.scalar(
+            select(DetectionRuleVersion.checks)
+            .where(
+                DetectionRuleVersion.rule_id == copy.rule_id,
+                DetectionRuleVersion.version == copy.version,
+            )
+            .with_for_update()
+        )
+        checks = checks or {}
+        deploy = checks.get("deploy")
+        if not isinstance(deploy, dict) or deploy.get("pr_url") != url:
+            return  # replaced since it was read: the next sweep reads it afresh
+        deploy = {**deploy, "pr_state": state, "pr_checked_at": now.isoformat()}
+        _write_checks(
+            session, [(copy.rule_id, copy.version, {**checks, "deploy": deploy})]
+        )
 
 
 def _close_pr(w: Withdrawal, target: Mapping[str, Any], token: str) -> Tuple[bool, str]:

@@ -19,7 +19,13 @@ export interface StageFields {
   held_by?: string | null
   /** A live Wazuh copy the manager hasn't loaded yet, so it runs nowhere: where its
    * deploy got (its PR, its file already on the default branch, or the error). */
-  waiting?: { pr_url?: string; in_repo?: string; error?: string } | null
+  waiting?: {
+    pr_url?: string
+    in_repo?: string
+    error?: string
+    /** Its PR as the sweep last read it from GitHub (at most hourly); absent before a read. */
+    pr_state?: 'open' | 'closed' | 'merged'
+  } | null
   /** Its shadow count came from Vigil's Wazuh sandbox replaying a sample of the archive (#4099). */
   sampled?: SampledCount | null
 }
@@ -31,6 +37,12 @@ export interface WaitingNote {
   /** The deploy PR, and how the line names it. */
   href?: string
   link?: string
+  /** The link leads the line ("PR #57 closed without merging"), not in brackets after it. */
+  linkFirst?: boolean
+  /** After the bracketed link: "(PR #57 merged)". */
+  linkSuffix?: string
+  /** Amber: it needs a person, as a PR closed unmerged does. */
+  amber?: boolean
   /** The History panel's line. */
   panel: string
 }
@@ -43,6 +55,22 @@ export function waitingNote(r: StageFields): WaitingNote | null {
   if (w.pr_url) {
     const num = /\/pull\/(\d+)/.exec(w.pr_url)?.[1]
     const link = num ? `PR #${num}` : 'its PR'
+    if (w.pr_state === 'closed') {
+      const named = num ? link : 'Its PR'
+      return {
+        text: 'closed without merging',
+        title: `It runs nowhere: the Wazuh manager won't load it. Reopen ${link} on GitHub to deploy it, or Revert it to shadow.`,
+        href: w.pr_url,
+        link: named,
+        linkFirst: true,
+        amber: true,
+        panel: `Live, but not running: ${link} was closed without merging, so the Wazuh manager won't load it. Reopen the PR on GitHub to deploy it, or Revert to shadow.`,
+      }
+    }
+    if (w.pr_state === 'merged') {
+      const why = `${until} the Wazuh manager loads its file: ${link} is merged, and the manager loads it when it restarts.`
+      return { text: 'Waiting for Wazuh to load it', title: why, href: w.pr_url, link, linkSuffix: ' merged', panel: why }
+    }
     return {
       text: 'Waiting for the PR merge',
       title: `${until} ${link} is merged and the Wazuh manager loads its file.`,

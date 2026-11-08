@@ -4,7 +4,6 @@ of that version reopens it. Run against an in-memory GitHub over httpx, with
 every call captured."""
 
 import json
-import os
 import re
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -14,6 +13,7 @@ import pytest
 
 import core.secrets
 from core.detections.inventory import rollout, rollout_approval
+from tests.pg_scratch import DSN, create_tables, scratch_engine
 
 TOKEN = "ghp_secret_never_logged"
 REPO = "acme/detections"
@@ -326,34 +326,34 @@ def test_the_sweep_closes_left_live_prs_after_its_deploys(monkeypatch, asks):
     assert calls == ["deploy", ("withdraw", left)]
 
 
-DSN = os.environ.get("VIGIL_TEST_POSTGRES_DSN")
+@pytest.fixture
+def pg_engine():
+    """An engine on a schema of its own on the VIGIL_TEST_PG_DSN database."""
+    with scratch_engine() as engine:
+        yield engine
 
 
-@pytest.mark.skipif(not DSN, reason="VIGIL_TEST_POSTGRES_DSN not set")
-def test_left_live_reads_open_prs_of_rules_no_longer_live(monkeypatch):
+@pytest.mark.skipif(not DSN, reason="VIGIL_TEST_PG_DSN not set")
+def test_left_live_reads_open_prs_of_rules_no_longer_live(monkeypatch, pg_engine):
     """On a real Postgres: which versions' PRs the sweep would close, and the
     stage row (latest by time) that says who moved the rule and why."""
-    from sqlalchemy import create_engine, text
     from sqlalchemy.orm import sessionmaker
 
     from core.detections.inventory import readers
     from core.storage.models import (
-        Base,
         DetectionRule,
         DetectionRuleStage,
         DetectionRuleVersion,
     )
 
-    engine = create_engine(DSN)
+    engine = pg_engine
     tables = [
         DetectionRule.__table__,
         DetectionRuleVersion.__table__,
         DetectionRuleStage.__table__,
     ]
-    # Works on any throwaway database, empty or a copy with rules of its own.
-    Base.metadata.create_all(engine, tables=tables)
-    with engine.begin() as conn:
-        conn.execute(text("TRUNCATE detection_rules RESTART IDENTITY CASCADE"))
+    # In a schema of its own: the database's own rules are never touched.
+    create_tables(engine, tables)
     factory = sessionmaker(bind=engine)
 
     class Manager:
