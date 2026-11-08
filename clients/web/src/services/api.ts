@@ -1202,7 +1202,13 @@ export const workflowApi = {
 export type Ceiling = Schema<'CeilingResponse'>
 export type ToolClass = Schema<'ToolClassEntry'>
 export type EffectClass = NonNullable<ToolClass['effect_class']>
+// The rule-rollout limits (#4058): promotion cap, days in shadow, hits a day. The SIEM
+// Quiet/Noisy/Silent thresholds ride along read only; they are edited on the integration.
+export type RolloutLimits = Schema<'RolloutLimitsResponse'>
 export const autonomyApi = {
+  rolloutLimits: () => api.get<RolloutLimits>('/autonomy/rollout-limits'),
+  updateRolloutLimits: (body: Schema<'RolloutLimitsBody'>) =>
+    api.put<RolloutLimits>('/autonomy/rollout-limits', body),
   get: () => api.get<Ceiling>('/autonomy'),
   update: (body: Schema<'CeilingBody'>) => api.put<Ceiling>('/autonomy', body),
   resume: () => api.post<Ceiling>('/autonomy/resume'),

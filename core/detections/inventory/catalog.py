@@ -1321,7 +1321,7 @@ def stage_moves(rows: Iterable[Any]) -> Dict[int, Dict[str, Any]]:
 
 def _with_days_in_shadow(row: Dict[str, Any], now: datetime) -> Dict[str, Any]:
     """The row with whole 24-hour days since its shadow stage began, the count
-    rollout's promotion uses (``now - stage_since`` against SHADOW_DAYS days)."""
+    rollout's promotion uses (``now - stage_since`` against the stored shadow days)."""
     if row.get("stage") != "shadow" or not row.get("stage_since"):
         return row
     since = now - datetime.fromisoformat(row["stage_since"])

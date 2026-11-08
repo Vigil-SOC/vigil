@@ -1,4 +1,5 @@
 """Set one investigate-kind workflow's own tier and floor (#3624) — console wiring.
+Also the rule-rollout limits (#4058): ``/rollout-limits``.
 
 The ceiling and the tool classes are the frozen contract in
 ``core/api/v1/autonomy_router.py``, served at ``/api/v1/autonomy`` and here at
@@ -7,15 +8,16 @@ The ceiling and the tool classes are the frozen contract in
 
 from dataclasses import replace
 from types import MappingProxyType
-from typing import Literal, Optional
+from typing import Dict, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from core.api.v1.autonomy_router import CeilingResponse, _http, _view
 from core.auth.auth_service import _is_service_account
 from core.auth.permissions import deny_unless, permission_gate
 from core.deps import provide_workflows
+from core.detections.inventory import rollout_limits
 from core.response.ceiling import (
     ACT,
     ASSIST,
@@ -127,4 +129,86 @@ def put_workflow_autonomy(
     except Exception as exc:
         raise HTTPException(
             status_code=503, detail="Could not read the autonomy ceiling"
+        ) from exc
+
+
+class RolloutLimitsBody(BaseModel):
+    """A partial edit of the rollout limits. Omitted fields stay as they are.
+
+    Whole numbers only; an unknown key is a 422. ``reason`` goes on the audit entry.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    live_per_day: Optional[StrictInt] = Field(None, ge=0, le=1000)
+    shadow_days: Optional[StrictInt] = Field(None, ge=1, le=90)
+    max_hits_per_day: Optional[StrictInt] = Field(None, ge=1, le=100000)
+    reason: Optional[str] = Field(None, max_length=500)
+
+
+class RolloutLimitsResponse(BaseModel):
+    """The limits in force, the defaults and bounds, and (read only) each SIEM
+    integration's Quiet, Noisy and Silent thresholds, which are edited on it."""
+
+    limits: Dict[str, int]
+    defaults: Dict[str, int]
+    bounds: Dict[str, Dict[str, int]]
+    siem_thresholds: Dict[str, Optional[Dict[str, int]]]
+
+
+def _limits_view() -> RolloutLimitsResponse:
+    return RolloutLimitsResponse(
+        limits=rollout_limits.dump(rollout_limits.read_stored_limits()),
+        defaults=rollout_limits.dump(rollout_limits.DEFAULTS),
+        bounds={
+            n: {"min": low, "max": high}
+            for n, (low, high) in rollout_limits.BOUNDS.items()
+        },
+        siem_thresholds=rollout_limits.siem_thresholds(),
+    )
+
+
+@router.get("/rollout-limits", dependencies=_READ, response_model=RolloutLimitsResponse)
+def get_rollout_limits() -> RolloutLimitsResponse:
+    try:
+        return _limits_view()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail="Could not read the rollout limits"
+        ) from exc
+
+
+@router.put("/rollout-limits", dependencies=_READ, response_model=RolloutLimitsResponse)
+def put_rollout_limits(
+    body: RolloutLimitsBody,
+    session: UnitOfWorkSession,
+    current_user: User = Depends(get_current_active_user),
+) -> RolloutLimitsResponse:
+    """Change the promotion cap, the days in shadow or the daily hit ceiling.
+
+    ``ai_autonomy.write``, as raising the ceiling is: these decide how fast a
+    rule reaches live. A service account may only tighten (a lower cap, more
+    days, a lower hit ceiling). The change and who made it go on the audit trail.
+    """
+    deny_unless(current_user.user_id, "ai_autonomy.write", session)
+    changes = body.model_dump(exclude={"reason"}, exclude_none=True)
+    if not changes:
+        raise HTTPException(status_code=422, detail="Nothing to change")
+    try:
+        rollout_limits.update_limits(
+            user_id=str(current_user.user_id),
+            caller_is_service=_is_service_account(current_user),
+            changes=changes,
+            reason=body.reason,
+        )
+        return _limits_view()
+    except rollout_limits.LimitsRefusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except rollout_limits.LimitsWriteError as exc:
+        raise HTTPException(
+            status_code=500, detail="Failed to save the rollout limits"
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail="Could not read the rollout limits"
         ) from exc

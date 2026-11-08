@@ -42,7 +42,8 @@ are not applied; alerts the SIEM itself raises are never filtered.
 The sweep (after ``sync_repos``) then writes a stage row (actor 'system', proof
 holding the numbers) for each move that is due: shadow -> live after a quiet,
 passing week with checks['sees'] pass and checks['lint'] pass (at most
-``LIVE_PER_DAY`` a day across all rules; a copy with no lint result yet waits
+the stored promotion cap a day across all rules (``rollout_limits``, #4058;
+its shadow days and hit ceiling are stored there too and read on every sweep); a copy with no lint result yet waits
 for the sync that lints it), live -> shadow when half its findings are judged
 not real (``accurate.verdicts``: the latest analyst determination wins), a loud
 day or a Sees fail (its data stopped), shadow -> off after
@@ -98,6 +99,11 @@ from sqlalchemy.orm import aliased
 from core.detections import exceptions
 from core.detections.inventory import accurate, kibana, readers, sees, splunk
 from core.detections.inventory.catalog import REPO_PREFIX
+from core.detections.inventory.rollout_limits import DEFAULTS as DEFAULT_LIMITS
+from core.detections.inventory.rollout_limits import (
+    RolloutLimits,
+    read_limits,
+)
 from core.integrations._base import search_budget
 from core.integrations._base.ids import EXTERNAL_ID_MAX, fit_id
 from core.integrations.elastic.descriptor import ELASTIC
@@ -120,9 +126,6 @@ MAX_DOCS = 100  # documents fetched per run; the count is the full total
 SAMPLE = 3
 SAMPLE_CHARS = 500
 KEEP_DAYS = 14
-SHADOW_DAYS = 7
-MAX_HITS_PER_DAY = 20
-LIVE_PER_DAY = 5
 REVERT_MIN_FINDINGS = 10
 REVERT_NOISE_SHARE = 0.5
 OFF_AFTER_FAILURES = 3
@@ -724,14 +727,21 @@ def _noise(session: Any, copy: Copy) -> Tuple[int, int]:
     return len(found), noise
 
 
-def _week(now: datetime) -> List[str]:
-    return [(now - timedelta(days=i)).date().isoformat() for i in range(SHADOW_DAYS)]
+def _week(now: datetime, days: int = DEFAULT_LIMITS.shadow_days) -> List[str]:
+    return [(now - timedelta(days=i)).date().isoformat() for i in range(days)]
 
 
 def _due(
-    session: Any, copy: Copy, now: datetime, live_24h: int
+    session: Any,
+    copy: Copy,
+    now: datetime,
+    live_24h: int,
+    limits: RolloutLimits = DEFAULT_LIMITS,
 ) -> Optional[Tuple[str, str, Dict[str, Any]]]:
-    """(stage, reason, proof) of the move due for ``copy``, or None."""
+    """(stage, reason, proof) of the move due for ``copy``, or None.
+
+    ``limits`` are the stored rollout limits; the sweep reads them once per run.
+    """
     runs = copy.checks.get("runs") or {}
     sees_check = copy.checks.get("sees") or {}
     seen = {
@@ -753,9 +763,9 @@ def _due(
             )
         if copy.held:  # a person's Revert stands until a person releases it
             return None
-        if now - copy.stage_at < timedelta(days=SHADOW_DAYS):
+        if now - copy.stage_at < timedelta(days=limits.shadow_days):
             return None
-        week = _week(now)
+        week = _week(now, limits.shadow_days)
         run_days = runs.get("days") or {}
         hit_days = (copy.checks.get("shadow") or {}).get("days") or {}
         days = {
@@ -768,18 +778,18 @@ def _due(
         }
         if any(v["pass"] == 0 or v["fail"] for v in days.values()):
             return None
-        if any(v["hits"] > MAX_HITS_PER_DAY for v in days.values()):
+        if any(v["hits"] > limits.max_hits_per_day for v in days.values()):
             return None
         if seen.get("result") != "pass":  # its data must be shown to arrive
             return None
         if not _linted(copy):  # no result yet: the next sync lints it
             return None
-        if live_24h >= LIVE_PER_DAY:
+        if live_24h >= limits.live_per_day:
             return None
         return (
             "live",
-            f"{SHADOW_DAYS} days in shadow, every day's runs passed, no day "
-            f"above {MAX_HITS_PER_DAY} hits, Sees and lint passed",
+            f"{limits.shadow_days} days in shadow, every day's runs passed, no day "
+            f"above {limits.max_hits_per_day} hits, Sees and lint passed",
             {
                 "shadow_since": since,
                 "days": days,
@@ -796,11 +806,11 @@ def _due(
         for d, n in ((copy.checks.get("live") or {}).get("days") or {}).items()
         if d >= start
     }
-    loud = {d: n for d, n in hit_days.items() if n > MAX_HITS_PER_DAY}
+    loud = {d: n for d, n in hit_days.items() if n > limits.max_hits_per_day}
     if loud:
         return (
             "shadow",
-            f"a live day above {MAX_HITS_PER_DAY} hits",
+            f"a live day above {limits.max_hits_per_day} hits",
             {"live_since": since, "loud_days": loud},
         )
     if seen["result"] == "fail":  # lost data; unknown changes nothing
@@ -835,6 +845,7 @@ def sweep(now: datetime, report: RolloutReport) -> None:
     skip = handed_off([c.rule_id for c in copies])
     copies = [c for c in copies if c.rule_id not in skip]
     stopped = _stopped()
+    limits = read_limits()  # every run, so an edit shows at the next sweep
     targets = _deploy_targets()
     if targets.get("splunk"):
         # Off disk before the transaction: a read must not roll back stage rows.
@@ -850,7 +861,7 @@ def sweep(now: datetime, report: RolloutReport) -> None:
         )
         rows, live = [], [c for c in copies if c.stage == "live"]
         for copy in copies:
-            due = _due(session, copy, now, live_24h)
+            due = _due(session, copy, now, live_24h, limits)
             if due is None:
                 continue
             stage, reason, proof = due
