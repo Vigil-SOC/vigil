@@ -35,8 +35,11 @@ rule version cited on a matching compose-run step or proven Verdict
 After the sources, each SIEM rule is linked to the repo rule it came from when
 that is certain: a Kibana rule by ``same_id`` (one active repo Elastic rule with
 its rule_id), a Splunk saved search by ``known_name`` ('ESCU - <name> - Rule' and
-one active repo Splunk rule named <name>). A link or decline an agent or person
-made is never touched.
+one active repo Splunk rule named <name>), a Wazuh manager rule by ``same_id``
+(one active repo or overlay Wazuh rule with its id, once a Vigil rule's PR is
+merged and the manager loads it). A link or decline an agent or person made is
+never touched. Wazuh links get no drift check: the manager's listing and the
+XML file never fingerprint alike.
 
 Every change of a check result is also appended to detection_rule_check_changes
 (``_record_changes``): a Runs result that differs from the rule's last recorded
@@ -667,7 +670,7 @@ def sync_repos() -> List[Any]:
         reports = [_sync_one(service, source) for source in sources]
         removed = _remove_unconfigured([readers.source_name(s) for s in sources])
         # Wazuh's searches go before Kibana's Sees backlog can spend the budget.
-        wazuh_report = _sync_wazuh()
+        wazuh_report = _wazuh_synced()
         reports.append(wazuh_report)
         if not (wazuh_report.error or wazuh_report.skipped):
             reports.append(quiet.sweep_wazuh())  # Quiet first, as for Kibana
@@ -920,6 +923,27 @@ def _link_same_id() -> tuple:
         lambda copy: copy.native_key,
         DetectionRule.native_key,
         "same elastic rule_id {}",
+    )
+
+
+def _wazuh_synced() -> SourceReport:
+    """The manager's rules synced, then linked by id when they were read."""
+    report = _sync_wazuh()
+    if report.error or report.skipped:
+        return report  # unread: its links stay as they were
+    return _linked(report, _link_wazuh_id)
+
+
+def _link_wazuh_id() -> tuple:
+    """Link each Wazuh manager rule to the one active repo Wazuh rule with its id:
+    a Vigil rule the customer merged and the manager now loads."""
+    return _link(
+        wazuh.SOURCE,
+        "wazuh",
+        "same_id",
+        lambda copy: copy.native_key,
+        DetectionRule.native_key,
+        "same Wazuh rule id {}",
     )
 
 

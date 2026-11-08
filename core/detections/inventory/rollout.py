@@ -96,7 +96,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import aliased
 
 from core.detections import exceptions
-from core.detections.inventory import accurate, kibana, readers, sees, splunk
+from core.detections.inventory import accurate, kibana, readers, sees, splunk, wazuh
 from core.detections.inventory.catalog import REPO_PREFIX
 from core.integrations._base import search_budget
 from core.integrations._base.ids import EXTERNAL_ID_MAX, fit_id
@@ -284,8 +284,9 @@ def _splunk_config() -> Optional[Dict[str, Any]]:
 def handed_off(rule_ids: List[int]) -> Set[int]:
     """Of these overlay rule ids, those an active SIEM copy runs instead.
 
-    That is a Splunk saved search (for a Splunk copy) or a Kibana rule (for an
-    Elastic one) linked by the sync (same_id / known_name) or an agent to the
+    That is a Splunk saved search (for a Splunk copy), a Kibana rule (for an
+    Elastic one) or a Wazuh manager rule (for a Wazuh one, by its id) linked by
+    the sync (same_id / known_name) or an agent to the
     overlay rule, or to an active repo rule of its language carrying its key
     (rule_id). A Splunk copy also matches a repo rule by name, since ESCU links
     by name (known_name); an Elastic copy matches by rule_id only.
@@ -307,7 +308,12 @@ def handed_off(rule_ids: List[int]) -> Set[int]:
         .correlate(o)
     )
     linked = exists().where(
-        s.source == case((o.language == "splunk", splunk.SOURCE), else_=kibana.SOURCE),
+        s.source
+        == case(
+            (o.language == "splunk", splunk.SOURCE),
+            (o.language == WAZUH, wazuh.SOURCE),
+            else_=kibana.SOURCE,
+        ),
         s.status == "active",
         s.link_kind.in_(HANDOFF_LINKS),
         or_(s.origin_rule_id == o.id, s.origin_rule_id.in_(same_rule)),
