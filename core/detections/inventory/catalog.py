@@ -46,7 +46,7 @@ import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
-from sqlalchemy import Text, and_, case, cast, func, select, text, tuple_
+from sqlalchemy import Text, and_, case, cast, func, or_, select, text, tuple_
 from sqlalchemy.orm import defer
 
 from core.detections.inventory.readers import OVERLAY_SOURCE
@@ -843,20 +843,29 @@ def repo_coverage() -> Dict[str, int]:
     }
 
 
-def _rule_of_copy(session: Any) -> Dict[int, Tuple[Any, ...]]:
-    """Which rule each stored copy belongs to, so one rule's copies count once.
+def _rule_of_copy(
+    session: Any, rule_ids: Optional[Set[int]] = None
+) -> Dict[int, Tuple[Any, ...]]:
+    """Which rule each stored copy (or each of these) belongs to, so one rule's
+    copies count once.
 
     A linked SIEM copy belongs to its origin. The overlay saves one rule's copies under one name.
     """
-    rows = session.execute(
-        select(
-            DetectionRule.id,
-            DetectionRule.source,
-            DetectionRule.name,
-            DetectionRule.origin_rule_id,
-            DetectionRule.link_kind,
+    query = select(
+        DetectionRule.id,
+        DetectionRule.source,
+        DetectionRule.name,
+        DetectionRule.origin_rule_id,
+        DetectionRule.link_kind,
+    )
+    if rule_ids is not None:
+        origins = select(DetectionRule.origin_rule_id).where(
+            DetectionRule.id.in_(rule_ids)
         )
-    ).all()
+        query = query.where(
+            or_(DetectionRule.id.in_(rule_ids), DetectionRule.id.in_(origins))
+        )
+    rows = session.execute(query).all()
     own = {
         r.id: (OVERLAY_SOURCE, r.name) if r.source == OVERLAY_SOURCE else (r.id,)
         for r in rows
@@ -868,6 +877,7 @@ def _rule_of_copy(session: Any) -> Dict[int, Tuple[Any, ...]]:
             else own[r.id]
         )
         for r in rows
+        if rule_ids is None or r.id in rule_ids
     }
 
 
@@ -1178,19 +1188,28 @@ def _copy_rows(session: Any, rule_ids: Optional[Set[int]] = None) -> List[Any]:
     return session.execute(query).all()
 
 
-def _copies_listed(session: Any) -> Dict[str, Any]:
-    """Every listed copy with its checks, which rule each belongs to, and the blind spots."""
-    rows = _copy_rows(session)
-    active: Dict[int, List[int]] = {}
-    for rid, eid in session.execute(
+def _active_exceptions(
+    session: Any, rule_ids: Optional[Set[int]] = None
+) -> Dict[int, List[int]]:
+    """Each rule's active exception ids (or these rules')."""
+    query = (
         select(DetectionRuleException.rule_id, DetectionRuleException.id)
         .where(DetectionRuleException.removed_at.is_(None))
         .order_by(DetectionRuleException.id)
-    ):
+    )
+    if rule_ids is not None:
+        query = query.where(DetectionRuleException.rule_id.in_(rule_ids))
+    active: Dict[int, List[int]] = {}
+    for rid, eid in session.execute(query):
         active.setdefault(rid, []).append(eid)
+    return active
+
+
+def _copies_listed(session: Any) -> Dict[str, Any]:
+    """Every listed copy with its checks, which rule each belongs to, and the blind spots."""
     return {
-        "rows": rows,
-        "exceptions": active,
+        "rows": _copy_rows(session),
+        "exceptions": _active_exceptions(session),
         "stages": {
             rid: (stage, at)
             for rid, stage, at in session.execute(select(CURRENT_STAGE))
@@ -1380,21 +1399,41 @@ def _restage(session: Any, copies: Dict[str, Any]) -> Tuple[Dict[str, Any], Set[
 
 
 def _rows_unchanged(session: Any, copies: Dict[str, Any], changed: Set[int]) -> bool:
-    """Whether the moved rules' copies (their version, checks, status and the
-    rest) are still what the listing holds: only then is patching their stage
-    fields the full rebuild's answer. Inside the scan's second, a stage row
-    written with a new version or after a run is read before the marks show it."""
+    """Whether what the listing holds for the moved rules is still current: each
+    one's copy (version, checks, status and the rest), its active exceptions,
+    and the rule it belongs to. Only then is patching their stage fields the full
+    rebuild's answer. Inside the scan's second, a stage row written with a new
+    version, after a run, or after an exception or link change is read before
+    the marks show it."""
     if not changed:
         return True
-    held = {row.id: tuple(row) for row in copies["rows"] if row.id in changed}
-    fresh = {row.id: tuple(row) for row in _copy_rows(session, changed)}
+
+    def state(rows, exceptions, rule_of):
+        return {
+            row.id: (tuple(row), tuple(exceptions.get(row.id, ())), rule_of.get(row.id))
+            for row in rows
+            if row.id in changed
+        }
+
+    held = state(copies["rows"], copies["exceptions"], copies["rule_of"])
+    fresh = state(
+        _copy_rows(session, changed),
+        _active_exceptions(session, changed),
+        _rule_of_copy(session, changed),
+    )
     return fresh == held
 
 
-def _rebuild(session: Any, stage_marks: Tuple[Any, ...]) -> None:
-    """Read every copy again. The marks are taken first, so a write that lands
-    while the copies are read moves them and is read next time."""
-    marks = tuple(session.execute(_EXACT_MARKS).one())
+def _rebuild(
+    session: Any,
+    stage_marks: Tuple[Any, ...],
+    marks: Optional[Tuple[Any, ...]] = None,
+) -> None:
+    """Read every copy again. The marks are taken first (or were, just now, by
+    the caller), so a write that lands while the copies are read moves them and
+    is read next time."""
+    if marks is None:
+        marks = tuple(session.execute(_EXACT_MARKS).one())
     _listing.clear()
     _listing["scanned"] = time.monotonic()
     _listing["copies"] = _copies_listed(session)
@@ -1453,7 +1492,7 @@ def _listing_now() -> Dict[str, Any]:
             marks = tuple(session.execute(_EXACT_MARKS).one())
             _listing["scanned"] = time.monotonic()
             if marks != _listing["marks"]:
-                _rebuild(session, stage_marks)
+                _rebuild(session, stage_marks, marks)
         if _listing["stage_marks"] != stage_marks:
             copies, changed = _restage(session, _listing["copies"])
             if _rows_unchanged(session, _listing["copies"], changed):

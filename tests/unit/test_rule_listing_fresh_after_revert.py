@@ -448,3 +448,57 @@ def test_with_a_scan_on_every_read_a_checks_write_shows_at_once(db, monkeypatch)
     )
     row = _row(rid)  # no wait
     assert (row["siem_alerts"], row["siem_days"]) == (12, 7)
+
+
+def test_an_exception_or_a_link_then_a_move_is_exact_inside_the_scan_window(
+    db, monkeypatch
+):
+    """Inside the scan's second, an exception added to a rule, or the rule linked
+    to another, then a stage move of that rule, is read as a rebuild reads it:
+    the moved rule's exceptions and the rule it belongs to are read again too."""
+    from core.detections.inventory import catalog
+    from core.storage.models import (
+        DetectionRule,
+        DetectionRuleException,
+        DetectionRuleStage,
+    )
+
+    excepted, linked = _live_rule(db), _live_rule(db, "r2")
+    origin = _siem_rule(db, "origin")
+    catalog._listing_now()  # warm: the scan is taken now
+    monkeypatch.setattr(catalog, "_SCAN_EVERY", 3600.0)  # and reused from here on
+
+    def move(rid, reason):
+        with db.session_scope() as session:
+            session.add(
+                DetectionRuleStage(
+                    rule_id=rid,
+                    version=1,
+                    stage="shadow",
+                    actor="system",
+                    proof={},
+                    reason=reason,
+                    at=datetime.now(timezone.utc),
+                )
+            )
+
+    with db.session_scope() as session:
+        session.add(
+            DetectionRuleException(
+                rule_id=excepted,
+                match={"host": "build-01"},
+                note="farm",
+                created_by="ana",
+            )
+        )
+    move(excepted, "too loud")
+    assert catalog._listing_now() == _rebuilt()
+    (row,) = catalog.health_listing(rule_ids=[excepted])["rules"]
+    assert (row["exceptions"], row["stage"]) == (1, "shadow")
+
+    catalog._listing_now()  # the rebuild took a scan; reused again from here
+    with db.session_scope() as session:
+        rule = session.get(DetectionRule, linked)
+        rule.origin_rule_id, rule.link_kind = origin, "same_id"
+    move(linked, "linked")
+    assert catalog._listing_now() == _rebuilt()
