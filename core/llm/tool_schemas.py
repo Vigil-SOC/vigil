@@ -167,7 +167,7 @@ SECURITY_DETECTION_TOOLS = [
                 "techniques": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "ATT&CK technique ids from any source, e.g. the attack patterns (x_mitre_id) a threat intel intrusion set uses or a report names. Each is listed in techniques_checked.rows with its bucket: proven (an active SIEM rule passes both Runs and Sees on the same rule), siem_unproven (SIEM rules exist, none passes both), repo_only (only repo or overlay rules declare it) or none. related_rules counts rules on its parent or subtechniques; they never make it proven. techniques_checked.gaps lists every id that is not proven. Ids that are not technique ids are in rejected and unknown.",
+                    "description": "ATT&CK technique ids from any source, e.g. the attack patterns (x_mitre_id) a threat intel intrusion set uses or a report names. Each is listed in techniques_checked.rows with its bucket: proven (an active SIEM rule passes both Runs and Sees on the same rule), siem_unproven (SIEM rules exist, none passes both), repo_only (only repo or overlay rules declare it) or none. related_rules counts rules on its parent or subtechniques; they never make it proven. techniques_checked.gaps lists every active technique that is not proven. A well-formed id that is not an active ATT&CK technique (made up, revoked or deprecated) is in techniques_checked.unknown with a reason (a revoked id names its replacement); it is never a gap and is not counted in by_bucket or answer. Ids that are not technique ids are in rejected and the report's unknown.",
                 },
             },
             "required": [],

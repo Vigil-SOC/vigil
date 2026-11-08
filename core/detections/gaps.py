@@ -31,6 +31,7 @@ from core.storage.models import (
     FindingMitrePrediction,
     case_findings,
 )
+from core.threat_intel.mitre_lookup import attack_techniques, attack_techniques_version
 
 RULE_SOURCES = ("sigma", "splunk", "elastic", "kql", "wazuh")
 # The rule formats that declare a tactic; Splunk, KQL and Wazuh rules name techniques only.
@@ -280,15 +281,26 @@ def technique_check(
 ) -> Dict[str, Any]:
     """Each named technique in one bucket: proven (a SIEM rule passes Runs and Sees),
     siem_unproven (SIEM rules, none passing both), repo_only (only repo or overlay
-    rules) or none. Every row that is not proven is a gap."""
+    rules) or none. Every row that is not proven is a gap. A well-formed id that is not
+    an active technique in the pinned ATT&CK release is listed in ``unknown`` with its
+    reason (revoked ids name their replacement; deprecated ids say so): it is never a
+    row, a gap or a count."""
     rows: List[Dict[str, Any]] = []
     rejected: List[str] = []
+    unknown: List[Dict[str, str]] = []
+    catalog_ids = attack_techniques()
     for raw in dict.fromkeys(str(t).strip() for t in techniques if str(t).strip()):
         if not TECHNIQUE_ID.match(raw):
             rejected.append(raw)
             continue
         technique = raw.upper()
-        if any(row["technique"] == technique for row in rows):
+        if any(row["technique"] == technique for row in rows) or any(
+            u["technique"] == technique for u in unknown
+        ):
+            continue
+        reason = _not_active_reason(catalog_ids.get(technique))
+        if reason:
+            unknown.append({"technique": technique, "reason": reason})
             continue
         checks = siem_checks.get(technique, {})
         rules = len(set(rules_by_technique.get(technique, ())))
@@ -319,7 +331,20 @@ def technique_check(
         "gaps": [r["technique"] for r in rows if r["bucket"] != "proven"],
         "rows": rows,
         "rejected": rejected,
+        "unknown": unknown,
     }
+
+
+def _not_active_reason(entry: Optional[Mapping[str, Any]]) -> str:
+    """Why an id is not an active ATT&CK technique; empty when it is."""
+    if entry is None:
+        return f"not an ATT&CK technique (release {attack_techniques_version()})"
+    if entry["status"] == "revoked":
+        replacement = entry.get("replaced_by")
+        return f"revoked; replaced by {replacement}" if replacement else "revoked"
+    if entry["status"] == "deprecated":
+        return "deprecated"
+    return ""
 
 
 # --- Runs rules missed -------------------------------------------------------
