@@ -128,6 +128,10 @@ REVERT_NOISE_SHARE = 0.5
 OFF_AFTER_FAILURES = 3
 # Links under which a SIEM copy runs an overlay rule in its place.
 HANDOFF_LINKS = ("same_id", "known_name", "agent")
+WAZUH = "wazuh"
+# What a Wazuh deploy says while Vigil cannot run Wazuh rules in shadow.
+UNTESTED = "not shadow-tested: Vigil can't validate Wazuh rules in shadow yet"
+NO_STAGE_AT = datetime.fromtimestamp(0, timezone.utc)
 
 
 def _budget_key(rule_id: int) -> str:
@@ -140,9 +144,9 @@ class Copy:
     rule_id: int
     version: int
     name: str
-    language: str  # "elastic" or "splunk"
-    stage: str
-    stage_at: datetime
+    language: str  # "elastic", "splunk" or "wazuh"
+    stage: str  # "" for a Wazuh copy: Vigil runs none in shadow yet
+    stage_at: datetime  # NO_STAGE_AT with no stage
     checks: Dict[str, Any]
     rule: Dict[str, Any]
     key: str = ""  # its rule_id, the overlay rule's native_key
@@ -219,12 +223,14 @@ def _copies() -> List[Copy]:
                     DetectionRuleVersion.version == DetectionRule.latest_version,
                 ),
             )
-            .join(current, current.c.rule_id == DetectionRule.id)
+            .outerjoin(current, current.c.rule_id == DetectionRule.id)
             .outerjoin(hold, hold.c.rule_id == DetectionRule.id)
             .where(
                 DetectionRule.source == readers.OVERLAY_SOURCE,
-                DetectionRule.language.in_(("elastic", "splunk")),
+                DetectionRule.language.in_(("elastic", "splunk", WAZUH)),
                 DetectionRule.status == "active",
+                # A Splunk or Elastic copy always has a stage; a Wazuh one has none.
+                or_(current.c.stage.isnot(None), DetectionRule.language == WAZUH),
             )
             .order_by(DetectionRule.id)
         ).all()
@@ -234,8 +240,8 @@ def _copies() -> List[Copy]:
             ver,
             name,
             lang,
-            stage,
-            at,
+            stage or "",
+            at or NO_STAGE_AT,
             checks or {},
             _rule_of(lang, content or {}),
             key,
@@ -1000,18 +1006,27 @@ def _deploy(
 
     with get_db_manager().session_scope() as session:
         excepted = {c.rule_id: exceptions.listed(session, c.rule_id) for c in pending}
+        refusals = {
+            c.rule_id: _wazuh_refused(session, c)
+            for c in pending
+            if c.language == WAZUH
+        }
     token = get_secret("GITHUB_TOKEN")
     for copy in pending:
         if _stopped():  # Stop set mid-pass: the rest wait for the sweep after it lifts
             return outcomes
         target = targets[copy.language]
         outcome: Dict[str, Any] = {"version": copy.version, "at": now.isoformat()}
+        if copy.language == WAZUH and copy.stage != "live":
+            outcome["note"] = UNTESTED  # in checks['deploy'] and its trail row
         try:
             # Again here, not only when the target was set: a hand-edited file
             # must not send the GitHub token to a GitLab or Bitbucket host.
             refused = deploy_host_refused(target)
             if refused:
                 raise RuntimeError(f"{target.get('git_url')}: {refused}")
+            if refusals.get(copy.rule_id):
+                raise RuntimeError(f"not deployed: {refusals[copy.rule_id]}")
             if not token:
                 raise RuntimeError(
                     "no GitHub token: set the github integration's token"
@@ -1097,12 +1112,83 @@ def _ok(resp: Any) -> Any:
     return resp
 
 
+def _deploy_file(copy: Copy) -> Tuple[str, bytes]:
+    """(file name, bytes) the deploy PR adds for ``copy``.
+
+    A Splunk or Elastic copy goes as the overlay stores it, under its overlay
+    file name. A Wazuh copy goes as ``vigil_<id>.xml``, one file per rule, inside
+    a ``<group>`` (wrapped in one only when it has none): each version's PR then
+    replaces only its own file, so PRs for different rules never conflict.
+    """
+    import posixpath
+
+    if copy.language == WAZUH:
+        text = copy.toml
+        if not re.search(r"<group\b", text):
+            text = f'<group name="vigil,">\n{text.strip()}\n</group>\n'
+        return f"vigil_{copy.key}.xml", text.encode()
+    ext = "yml" if copy.language == "splunk" else "toml"
+    name = posixpath.basename(copy.path or "") or f"vigil-rule-{copy.rule_id}.{ext}"
+    return name, copy.toml.encode()
+
+
+def _wazuh_refused(session: Any, copy: Copy) -> Optional[str]:
+    """Why a Wazuh copy must not be deployed now, or None.
+
+    Its id must still be a custom one no other rule file of the manager has
+    loaded since it was saved, and it must not set ``overwrite``: a Vigil rule
+    only adds a rule, never replaces one of the customer's.
+    """
+    from core.detections import wazuh_xml
+
+    try:
+        rule = wazuh_xml.parse(copy.toml)
+    except wazuh_xml.NotARule as exc:
+        return f"its Wazuh XML can't be read: {exc}"
+    if (rule.get("overwrite") or "").strip().lower() == "yes":
+        return (
+            'it sets overwrite="yes", which would replace a rule of the customer\'s: '
+            "a Vigil rule only adds one, under its own custom id"
+        )
+    if not copy.key.isdigit() or int(copy.key) not in wazuh_xml.CUSTOM_IDS:
+        return f"its id {copy.key} is outside Wazuh's range for custom rules"
+    own = f"vigil_{copy.key}.xml"
+    for path in session.scalars(
+        select(DetectionRule.path).where(
+            DetectionRule.source == WAZUH,
+            DetectionRule.native_key == copy.key,
+            DetectionRule.status != "removed",
+        )
+    ):
+        if not str(path or "").endswith(own):
+            return f"the Wazuh manager now loads another rule as id {copy.key} ({path})"
+    return None
+
+
 def _pr_title(copy: Copy) -> str:
     return f"Add Vigil rule {copy.name} ({copy.key})"
 
 
 def _pr_body(copy: Copy, excepted: List[Dict[str, Any]]) -> str:
     """What the rule is, and its active exceptions; the rule file has none."""
+    if copy.language == WAZUH:
+        name, _ = _deploy_file(copy)
+        state = (
+            "is live in Vigil"
+            if copy.stage == "live"
+            else f"was deployed by a person ({UNTESTED})"
+        )
+        return (
+            f"Vigil detection rule {copy.rule_id} v{copy.version}, {copy.name!r} "
+            f"(Wazuh rule id {copy.key}), {state}. This adds it as {name}, as Vigil "
+            f"stores it ({copy.path or 'its overlay file'}), wrapped in a <group> if "
+            "it had none.\n\nOne file per rule: each later version replaces only "
+            "this file, so pull requests for different rules never conflict. Its id "
+            "is in Wazuh's custom range (100000-120000) and no other rule file of "
+            "the manager loads it; it does not set overwrite, so it replaces none "
+            "of your rules. The manager loads it from its rules directory once this "
+            "is merged and the manager restarts."
+        )
     splunk = copy.language == "splunk"
     body = (
         f"Vigil detection rule {copy.rule_id} v{copy.version}, {copy.name!r} "
@@ -1148,10 +1234,8 @@ def _open_pr(
     api, repo = _api_of(str(target.get("git_url") or ""))
     owner = repo.partition("/")[0]
     branch = f"vigil/rule-{copy.rule_id}-v{copy.version}"
-    ext = "yml" if copy.language == "splunk" else "toml"
-    name = posixpath.basename(copy.path or "") or f"vigil-rule-{copy.rule_id}.{ext}"
+    name, data = _deploy_file(copy)
     path = posixpath.join(str(target.get("subdirectory") or "").strip("/"), name)
-    data = copy.toml.encode()
     r = f"/repos/{repo}"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -1379,10 +1463,12 @@ def overlay_only() -> List[Dict[str, Any]]:
     target Vigil deploys to (``target_refused``: why not, for one that isn't
     GitHub) and what its deploy PR came to (``deploy``: pr_url, in_repo, or
     error with a plain ``reason``, from checks['deploy'] on its current
-    version; None before one)."""
+    version; None before one). A Wazuh copy is listed too, whatever its stage:
+    Vigil can't run it in shadow yet, so a person may deploy it, and
+    ``untested`` says so (None for a copy that went live)."""
     from core.detections.detection_rules_service import deploy_host_refused
 
-    live = [c for c in _copies() if c.stage == "live"]
+    live = _deployable(_copies())
     gone = handed_off([c.rule_id for c in live])
     targets = _deploy_targets()
     rows = []
@@ -1403,9 +1489,16 @@ def overlay_only() -> List[Dict[str, Any]]:
                 "deploy_target": bool(target) and not refused,
                 "target_refused": refused or None,
                 "deploy": deploy,
+                "untested": UNTESTED if c.stage != "live" else None,
             }
         )
     return rows
+
+
+def _deployable(copies: List[Copy]) -> List[Copy]:
+    """The copies a person may deploy: live ones, and any Wazuh copy (until
+    Vigil can run Wazuh rules in shadow, none goes live on its own)."""
+    return [c for c in copies if c.stage == "live" or c.language == WAZUH]
 
 
 def deploy_overlay_only(
@@ -1416,10 +1509,11 @@ def deploy_overlay_only(
     with no PR opened yet; one that failed is tried again. Says what each came
     to (``opened``: pr_url or in_repo; ``failed``: error) and why each other one
     was skipped. Nothing is opened while Stop is set. Each outcome's
-    config-trail row names ``actor``."""
+    config-trail row names ``actor``. A Wazuh copy may be deployed whatever its
+    stage; its PR and trail row say it was not shadow-tested."""
     from core.detections.detection_rules_service import deploy_host_refused
 
-    live = [c for c in _copies() if c.stage == "live"]
+    live = _deployable(_copies())
     gone = handed_off([c.rule_id for c in live])
     wanted = [
         c
@@ -1433,7 +1527,11 @@ def deploy_overlay_only(
     if rule_ids is not None:
         found = {c.rule_id for c in wanted}
         skipped.update(
-            {r: "not a live rule only Vigil runs" for r in rule_ids if r not in found}
+            {
+                r: "not a live rule only Vigil runs, nor a Wazuh copy"
+                for r in rule_ids
+                if r not in found
+            }
         )
     todo = []
     for copy in wanted:

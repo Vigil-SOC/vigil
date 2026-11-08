@@ -77,7 +77,8 @@ FORMAT_EXTENSIONS = {
     "splunk": [".yml"],
     "elastic": [".toml"],
     "kql": [".yaml", ".kql", ".md"],
-    "auto": [".yml", ".yaml", ".toml", ".kql", ".md"],
+    "wazuh": [".xml"],
+    "auto": [".yml", ".yaml", ".toml", ".kql", ".md", ".xml"],
 }
 
 # MCP env var name per format
@@ -89,7 +90,7 @@ FORMAT_ENV_VARS = {
 }
 
 # Formats whose live overlay rules Vigil offers to a customer repo by pull request.
-DEPLOY_FORMATS = ("splunk", "elastic")
+DEPLOY_FORMATS = ("splunk", "elastic", "wazuh")
 
 
 _CONFIG_FILENAME = "detection_sources.json"
@@ -656,7 +657,9 @@ class DetectionRulesService:
         fmt = source.get("format")
         if source.get("type") != "git" or fmt not in DEPLOY_FORMATS:
             raise ValueError(
-                "Only a git source whose format is splunk or elastic can be a deploy target"
+                "Only a git source whose format is "
+                + ", ".join(DEPLOY_FORMATS[:-1])
+                + f" or {DEPLOY_FORMATS[-1]} can be a deploy target"
             )
         if is_vendor_repo(source.get("git_url", "")):
             raise ValueError(

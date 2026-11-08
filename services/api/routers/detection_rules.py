@@ -45,7 +45,7 @@ class AddSourceRequest(BaseModel):
 
     name: str
     source_type: str  # 'git' or 'local'
-    format: str  # 'sigma', 'splunk', 'elastic', 'kql', 'auto'
+    format: str  # 'sigma', 'splunk', 'elastic', 'kql', 'wazuh', 'auto'
     url: Optional[str] = None
     path: Optional[str] = None
     subdirectory: str = ""
