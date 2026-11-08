@@ -260,18 +260,21 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   })
   const shown = virtual.getVirtualItems()
   const last = shown.length ? shown[shown.length - 1].index : -1
-  // After a Revert or Release: the view's counts and that rule's row are read again;
-  // the list, its scroll and the open panel stay.
+  // After a Revert or Release: that rule's row is read again, then the view's counts
+  // (listing reads queue on the server, so the row goes first); the list, its scroll
+  // and the open panel stay.
   const refreshRule = (id: number) => {
-    detectionRulesApi.rules(params)
-      .then((res) => { const d = res.data as RulesReport; setReport((r) => ({ ...d, rules: r?.rules ?? d.rules })) })
-      .catch(() => {})
     detectionRulesApi.rules({ rules: String(id) })
       .then((res) => {
         const fresh = (res.data as RulesReport).rules.find((x) => x.rule_id === id)
         if (fresh) setRows((rs) => rs.map((x) => (x.rule_id === id ? fresh : x)))
       })
       .catch(() => {})
+      .finally(() => {
+        detectionRulesApi.rules(params)
+          .then((res) => { const d = res.data as RulesReport; setReport((r) => ({ ...d, rules: r?.rules ?? d.rules })) })
+          .catch(() => {})
+      })
   }
   // The next page loads as the list's end nears, inside the list's own scroll.
   useEffect(() => {
