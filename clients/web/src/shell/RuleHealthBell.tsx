@@ -5,6 +5,7 @@ import { detectionRulesApi, type HealthEntry, type HealthInbox } from '../servic
 import { Icon } from '../shared/icons'
 import { errorText } from '../shared/errorText'
 import { relativeTime } from '../screens/settings/integrationHealth'
+import { NEW_VERSION } from '../screens/detections/ruleStage'
 import type { ConsoleScreenGoOptions } from '../shared/types'
 
 /** Each check's flag as a person reads it, and its tone on the Rules page. */
@@ -23,8 +24,6 @@ const KIND: Record<string, { label: string; plural: string; why: string; tone: s
 const kindOf = (check: string) => KIND[check] ?? { label: `${check} failing`, plural: `${check} failing`, why: 'A check that passed now fails.', tone: 'poor' }
 const SIEM_NAME: Record<string, string> = { elastic: 'Elastic', splunk: 'Splunk', wazuh: 'Wazuh', overlay: 'Vigil', repo: 'Repo' }
 const POLL_MS = 60_000
-/** The reason sync writes when a live rule's new version goes back to shadow. */
-const NEW_VERSION = 'new version'
 
 /** The top bar's bell: notifications for the signed-in person, read or unread; only rule health for now. In-app only. */
 export default function RuleHealthBell({ go }: { go: (screen: string, options?: ConsoleScreenGoOptions) => void }) {
