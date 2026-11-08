@@ -87,7 +87,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional, Set
 
 from sqlalchemy import and_, bindparam, func, insert, or_, select, tuple_, update
 
@@ -120,6 +120,9 @@ SYNC_LOCK_KEY = 0x7669_6769_6C52_554C  # "vigilRUL"
 REPO_PREFIX = "repo:"
 # How ESCU names the saved search it ships for a detection.
 ESCU_NAME = re.compile(r"^ESCU - (.+) - Rule$")
+# The check and stage reason on a copy a failed skill import's undo removed.
+IMPORT_FAILED = "import_failed"
+IMPORT_FAILED_REASON = "import failed"
 STAGED_LANGUAGES = ("splunk", "elastic", "wazuh")
 # Overlay copies linted on each sync: every staged one, Wazuh's included.
 LINTED_LANGUAGES = STAGED_LANGUAGES
@@ -535,11 +538,17 @@ def _record_changes(session: Any, rows: List[dict], now: str) -> None:
 
 
 def sync_source(
-    source: str, records: List[RuleRecord], saves: Optional[Saves] = None
+    source: str,
+    records: List[RuleRecord],
+    saves: Optional[Saves] = None,
+    failed_import: Optional[Set[str]] = None,
 ) -> SourceReport:
     """Write the differences between ``records`` (all of ``source``) and the tables.
 
     ``saves`` is only ever given for the overlay, by the save that wrote it.
+    ``failed_import`` is only ever given by that save's undo: the keys of the copies
+    it wrote. Any of them this run removes is marked as removed by the failed
+    import, so a person can import the skill again: see detection_skill._held.
     """
     report = SourceReport(source=source, read=len(records))
     now = datetime.now(timezone.utc).isoformat()
@@ -600,6 +609,7 @@ def sync_source(
                 new.append((record, fp))
                 continue
             rule, latest_fp, stored = hit
+            had = stored
             staged = overlay and record.language in LINTED_LANGUAGES
             kept = (stored or {}).get("lint") or {}
             if staged:
@@ -655,6 +665,14 @@ def sync_source(
                     )
                 if rule.status == "removed":
                     report.restored += 1
+                    # Kept again, so no longer one a failed import removed.
+                    stored = {
+                        k: v for k, v in (stored or {}).items() if k != IMPORT_FAILED
+                    }
+                    if fp == latest_fp and saved_keys.get(record.native_key) == fp:
+                        # A save of a copy a failed import removed: its version
+                        # is saved again, so the trail has the save.
+                        saved.append((rule.id, rule.latest_version, record, fp))
                     if fp == latest_fp:
                         # Back unchanged: an active copy never sits at 'off'.
                         stage(
@@ -685,7 +703,7 @@ def sync_source(
                     f"disabled in {SIEM_NAMES.get(source, source)}",
                 )
                 changes += dropped
-            if checks != stored:
+            if checks != had:
                 checked.append((rule.id, rule.latest_version, checks))
             if siem:
                 runs = _runs_change(rule.id, rule.latest_version, record, last)
@@ -707,6 +725,9 @@ def sync_source(
                 f"no longer listed by {source}",
             )
             changes += dropped
+            failed = key in (failed_import or ()) and rule.status != "removed"
+            if failed:
+                checks = {**checks, IMPORT_FAILED: {"at": now}}
             if checks != (stored or {}):
                 checked.append((rule.id, rule.latest_version, checks))
             if rule.status != "removed":
@@ -723,7 +744,13 @@ def sync_source(
                     )
                 rule.status = "removed"
                 report.removed += 1
-                stage(rule.id, rule.latest_version, rule.language, "off", "removed")
+                stage(
+                    rule.id,
+                    rule.latest_version,
+                    rule.language,
+                    "off",
+                    IMPORT_FAILED_REASON if failed else "removed",
+                )
 
         if new:
             ids = session.scalars(
@@ -897,7 +924,10 @@ def _drifted(report: SourceReport) -> SourceReport:
 
 
 def _sync_one(
-    service: Any, source: Dict[str, Any], saves: Optional[Saves] = None
+    service: Any,
+    source: Dict[str, Any],
+    saves: Optional[Saves] = None,
+    failed_import: Optional[Set[str]] = None,
 ) -> SourceReport:
     name = readers.source_name(source)
     if source.get("status") != "ready":
@@ -906,7 +936,9 @@ def _sync_one(
         root = Path(
             service._under(source["local_path"], source.get("subdirectory", ""))
         )
-        report = sync_source(name, readers.read_source(source, root), saves)
+        report = sync_source(
+            name, readers.read_source(source, root), saves, failed_import
+        )
     except Exception as exc:  # noqa: BLE001 -- the other sources still sync
         logger.warning("detection rules: syncing %s failed: %s", name, exc)
         return SourceReport(source=name, error=f"{type(exc).__name__}: {exc}")

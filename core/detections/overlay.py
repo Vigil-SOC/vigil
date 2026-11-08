@@ -79,15 +79,20 @@ class NotSaved(Exception):
     def __init__(self, reason: str, undone: bool = True, removed: bool = False):
         super().__init__(reason)
         self.undone = undone
-        # The sync had committed: the copies are back out, as removed rules.
+        # Copies of the save are held as removed rules, marked as a failed import's.
         self.removed = removed
 
 
 def _undo(
-    service: Any, root: str, before: List[Tuple[str, Optional[str]]], committed: bool
-) -> bool:
-    """Put the files written back as they were and, if their sync committed, sync
-    the overlay again so the copies it added are removed. True when that worked."""
+    service: Any, root: str, before: List[Tuple[str, Optional[str]]], keys: List[str]
+) -> Tuple[bool, bool]:
+    """Put the files written back as they were and sync the overlay again, so any
+    copy of ``keys`` a sync took in (this save's own, or another run's between the
+    write and the fault) is removed, marked as removed by a failed import.
+
+    (True when that worked, True when copies of ``keys`` now sit as removed rules.)
+    """
+    ok = True
     try:
         for rel, text in reversed(before):
             path = Path(DetectionRulesService._under(root, rel))
@@ -95,14 +100,25 @@ def _undo(
                 path.unlink(missing_ok=True)
             else:
                 _write(root, rel, text)
-        if committed:
-            report = sync._sync_one(service, service.overlay_source())
-            if report.error:
-                raise RuntimeError(report.error)
-        return True
-    except Exception:  # noqa: BLE001 -- the caller says the undo failed
+        report = sync._sync_one(
+            service, service.overlay_source(), failed_import=set(keys)
+        )
+        if report.error:
+            raise RuntimeError(report.error)
+    except Exception:  # noqa: BLE001 -- judged below by what the rules say
         logger.exception("Overlay save: undoing a failed save failed")
-        return False
+        ok = False
+    with get_db_manager().session_scope() as session:
+        statuses = session.scalars(
+            select(DetectionRule.status).where(
+                DetectionRule.source == readers.OVERLAY_SOURCE,
+                DetectionRule.native_key.in_(keys),
+            )
+        ).all()
+    # A sync that faulted before it kept anything left no copy to remove: the
+    # undo worked unless a copy is still active.
+    ok = ok or (not any(st != "removed" for st in statuses))
+    return ok, bool(statuses)
 
 
 def _with_id(language: str, text: str) -> str:
@@ -493,9 +509,10 @@ def save_rule(
 
     With ``all_or_nothing``, a fault after the first file is written (a write, the
     sync, the replay record or the exceptions) is undone before it is raised as
-    ``NotSaved``: the files written are put back as they were and, if the sync had
-    committed, the overlay is synced again, so no copy is left active without its
-    exceptions."""
+    ``NotSaved``: the files written are put back as they were and the overlay is
+    synced again, so no copy is left active without its exceptions. A copy that
+    leaves is marked as removed by a failed import, and the same skill can be
+    imported again."""
     copies = {
         language: text
         for language, text in (
@@ -531,7 +548,6 @@ def save_rule(
             return {"error": str(exc), "saved": []}
         root = source["local_path"]
         before: List[Tuple[str, Optional[str]]] = []
-        committed = False
         try:
             for rel, text in targets:
                 path = Path(DetectionRulesService._under(root, rel))
@@ -548,16 +564,15 @@ def save_rule(
             if report.error and all_or_nothing:
                 # The sync is one transaction: nothing of it was kept.
                 raise NotSaved(f"the overlay sync failed: {report.error}")
-            committed = not report.error
             if sigma_key and not report.error:
                 _record_replay(sigma_key, replay)
             added = [] if report.error else _add_exceptions(prepared, wanted)
         except Exception as exc:
             if not all_or_nothing:
                 raise
-            undone = _undo(service, root, before, committed)
+            undone, removed = _undo(service, root, before, keys)
             reason = exc.args[0] if isinstance(exc, NotSaved) else type(exc).__name__
-            raise NotSaved(reason, undone=undone, removed=committed) from exc
+            raise NotSaved(reason, undone=undone, removed=removed) from exc
     result: Dict[str, Any] = {"saved": _saved(keys), "sync": asdict(report)}
     if added:
         result["exceptions"] = added
