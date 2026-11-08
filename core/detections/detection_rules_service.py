@@ -429,20 +429,23 @@ class DetectionRulesService:
             count += len(list(target.rglob(f"*{ext}")))
         return count
 
-    def _get_rules_path(self, source: Dict) -> str:
-        """Get the actual rules path for a source (base + subdirectory)."""
-        base = Path(source["local_path"])
-        subdir = source.get("subdirectory", "")
-        if subdir:
-            return str(base / subdir)
-        return str(base)
+    def _contained(self, source: Dict, rel: str) -> Optional[str]:
+        """``rel`` under the source's clone path, or None (logged) when a stored
+        value leaves it: ``..``, an absolute path or a symlink out."""
+        try:
+            return self._under(source["local_path"], rel or "")
+        except ValueError as e:
+            logger.warning("Ignoring source %r: %s", source.get("name"), e)
+            return None
+
+    def _get_rules_path(self, source: Dict) -> Optional[str]:
+        """The rules path for a source (base + subdirectory); None if it leaves the source."""
+        return self._contained(source, source.get("subdirectory", ""))
 
     def _get_story_path(self, source: Dict) -> Optional[str]:
-        """Get the story path for a source (Splunk only)."""
+        """The story path for a source (Splunk only); None if none or it leaves the source."""
         story_sub = source.get("story_subdirectory", "")
-        if story_sub:
-            return str(Path(source["local_path"]) / story_sub)
-        return None
+        return self._contained(source, story_sub) if story_sub else None
 
     # --- Public API ---
 
@@ -840,7 +843,7 @@ class DetectionRulesService:
                 continue
 
             rules_path = self._get_rules_path(source)
-            if Path(rules_path).exists():
+            if rules_path and Path(rules_path).exists():
                 fmt = source["format"]
                 if fmt in FORMAT_ENV_VARS:
                     paths_by_format[fmt].append(rules_path)
