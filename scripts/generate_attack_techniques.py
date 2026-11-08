@@ -93,7 +93,12 @@ def build(bundle: dict) -> dict:
             seen.add(new)
             new = replaced_by[new]
         techniques[old]["replaced_by"] = new
-    return {"version": ATTACK_VERSION, "techniques": techniques}
+    return {
+        "version": ATTACK_VERSION,
+        # The matrix's tactics in kill-chain order, as the heat map's columns (#4103).
+        "tactics": sorted(order, key=order.__getitem__),
+        "techniques": techniques,
+    }
 
 
 def main() -> None:

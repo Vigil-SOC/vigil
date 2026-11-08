@@ -3,6 +3,7 @@
 .de-note { margin: 0; font-size: 12px; color: var(--tx2); }
 /* Alex's tab row, on the console TabStrip; the page's one action sits at its right. */
 .de-top { display: flex; justify-content: flex-end; }
+.de-top.de-top-tabs { justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
 .poor { color: var(--poor); }
 
 /* Tones, one per health state: --t is the state's colour. */
@@ -263,3 +264,77 @@
 .de-rollout-cells .de-rollout-cant li + li { margin-top: 4px; }
 .de-rollout-err { margin: 0; display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--tx2); }
 
+
+/* The coverage heat map (#4103), Alex's 1.x matrix: one column per tactic, one cell per technique. */
+.de-cov { display: grid; gap: 12px; }
+.de-cov-head { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; justify-content: space-between; }
+.de-cov-lens { display: flex; flex-wrap: wrap; gap: 6px; }
+.de-cov-lens-b { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--ln1); background: var(--bg2); color: var(--tx1); font-size: 12px; cursor: pointer; }
+.de-cov-lens-b.on { border-color: var(--ac); color: var(--tx0); background: var(--bg3, var(--bg2)); }
+.de-cov-lens-b:focus-visible { outline: 2px solid var(--ac); outline-offset: 1px; }
+.de-cov-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--tx1); }
+.de-cov-legend > span { display: inline-flex; gap: 6px; align-items: center; }
+.de-matrix-wrap { overflow-x: auto; }
+.de-matrix { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(136px, 240px); gap: 6px; min-width: min-content; align-items: start; }
+.de-col { display: grid; gap: 5px; align-content: start; }
+.de-col h4 { margin: 0 0 2px; font-size: 11px; font-weight: 650; color: var(--tx2); }
+/* Full map: the grid is no taller than the screen, and each tactic scrolls on its own. */
+.de-matrix .de-col { max-height: max(320px, calc(100vh - 390px)); overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }
+.de-matrix .de-col h4 { position: sticky; top: 0; z-index: 1; padding: 2px 0 4px; background: var(--bg1); }
+.de-cell { display: grid; gap: 1px; text-align: left; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--ln1); background: var(--bg2); color: var(--tx1); font-size: 11.5px; cursor: pointer; min-width: 0; }
+.de-cell b { font-weight: 600; color: var(--tx0); overflow-wrap: anywhere; }
+.de-cell .x1-mono { font-size: 10.5px; color: var(--tx2); }
+.de-cell.proven, .de-swatch.proven { border-color: var(--good-ln); background: var(--good-bg); }
+.de-cell.unproven, .de-swatch.unproven { border-color: var(--fair-ln); background: var(--fair-bg); }
+.de-cell.no_rule, .de-swatch.no_rule { border-color: var(--poor-ln); background: var(--poor-bg); }
+.de-cell.on, .de-cell:focus-visible { outline: 2px solid var(--ac); outline-offset: 1px; }
+.de-swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; border: 1px solid var(--ln1); }
+.de-cov-detail { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--ln1); border-radius: 8px; background: var(--bg2); font-size: 12.5px; }
+.de-cov-detail b { color: var(--tx0); }
+.de-cov-siems { border-collapse: collapse; font-size: 12px; width: max-content; }
+.de-cov-siems th, .de-cov-siems td { padding: 3px 14px 3px 0; text-align: left; font-variant-numeric: tabular-nums; }
+.de-cov-siems th { color: var(--tx2); font-weight: 600; }
+.de-cov-siems td.proven { color: var(--good); }
+.de-cov-siems td.failing { color: var(--poor); }
+/* The tactic summary, the map's default (#4103): one row per tactic, opened for its techniques. */
+.de-cov-sep { width: 1px; align-self: stretch; background: var(--ln1); margin: 0 4px; }
+.de-tac { display: grid; gap: 4px; }
+.de-tac-row { border: 1px solid var(--ln1); border-radius: 8px; background: var(--bg1); }
+.de-tac-row.open { border-color: var(--ln2, var(--ln1)); }
+.de-tac-head { display: grid; grid-template-columns: minmax(150px, 210px) minmax(120px, 1fr) auto; gap: 14px; align-items: center; width: 100%; padding: 8px 12px; background: none; border: 0; color: var(--tx1); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
+.de-tac-head:focus-visible { outline: 2px solid var(--ac); outline-offset: -2px; border-radius: 8px; }
+.de-tac-name { color: var(--tx0); font-weight: 600; }
+.de-tac-bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--bg2); }
+.de-tac-seg.proven { background: var(--good); }
+.de-tac-seg.unproven { background: var(--fair); }
+.de-tac-seg.no_rule { background: var(--poor); opacity: .55; }
+.de-tac-counts { font-size: 12px; color: var(--tx2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.de-tac-counts .proven { color: var(--good); }
+.de-tac-counts .unproven { color: var(--fair); }
+.de-tac-body { display: grid; gap: 10px; padding: 4px 12px 12px; }
+.de-tac-groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px; align-items: start; }
+.de-tac-group { display: grid; gap: 4px; }
+.de-tac-orphan { padding: 6px 8px; font-size: 11px; color: var(--tx2); }
+.de-tac-fold { font-size: 11.5px; justify-self: start; padding-left: 2px; }
+.de-tac-subs { display: grid; gap: 4px; padding-left: 10px; border-left: 2px solid var(--ln1); }
+@media (max-width: 640px) {
+  .de-tac-head { grid-template-columns: 1fr; gap: 6px; }
+  .de-tac-counts { white-space: normal; }
+}
+/* Which tactics the map shows: All, or any chosen set. */
+.de-cov-tactics { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; font-size: 12px; }
+.de-cov-tactics > .x1-muted { margin-right: 4px; }
+.de-cov-tac-b { padding: 2px 9px; border-radius: 999px; border: 1px solid var(--ln1); background: none; color: var(--tx2); font-size: 11.5px; cursor: pointer; }
+.de-cov-tac-b.on { border-color: var(--ac); color: var(--tx0); background: var(--bg2); }
+.de-cov-tac-b:focus-visible { outline: 2px solid var(--ac); outline-offset: 1px; }
+/* Small screens: the chips give way to one "Tactics" dropdown beside the lens. */
+.de-cov-tacmenu { position: relative; display: none; }
+.de-cov-tacmenu-list { position: absolute; top: calc(100% + 6px); left: 0; z-index: 5; width: min(240px, 80vw); max-height: 60vh; overflow-y: auto; display: grid; gap: 2px; padding: 8px; border: 1px solid var(--ln1); border-radius: 9px; background: var(--bg2); box-shadow: 0 10px 30px rgba(0, 0, 0, .45); }
+.de-cov-tacmenu-list .x1-link { font-size: 12px; padding: 2px 6px 6px; }
+.de-cov-tacmenu-list label { display: flex; gap: 8px; align-items: center; padding: 4px 6px; border-radius: 6px; font-size: 12.5px; color: var(--tx1); cursor: pointer; }
+.de-cov-tacmenu-list label:hover { background: var(--bg1); }
+.de-cov-tacmenu-list input { accent-color: var(--ac); margin: 0; }
+@media (max-width: 900px) {
+  .de-cov-tacmenu { display: block; }
+  .de-cov-tactics { display: none; }
+}

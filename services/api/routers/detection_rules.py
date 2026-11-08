@@ -381,6 +381,16 @@ def get_metrics():
     return metrics.report()
 
 
+@router.get("/coverage")
+def get_coverage():
+    """ATT&CK coverage by technique and SIEM: each technique an active rule
+    declares or an alert shows, proven (an active SIEM copy passes Runs and
+    Sees), unproven or with no rule, split by SIEM. Read-only."""
+    from core.detections.inventory import coverage
+
+    return coverage.coverage()
+
+
 @router.get("/overlay-only")
 def get_overlay_only():
     """Live overlay copies no SIEM rule runs: only Vigil detects with these,
