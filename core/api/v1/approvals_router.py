@@ -6,6 +6,7 @@ containment actions). Approving a workflow-linked action auto-resumes
 the paused run; rejecting cancels it with the supplied reason.
 """
 
+import asyncio
 import logging
 from dataclasses import asdict
 from typing import Any, Dict, List, Literal, Optional
@@ -195,6 +196,23 @@ def _record_decision(
             )
 
 
+# A rule promotion or deploy PR (#4068): audit the answer; an approval does the
+# move. The decision stands if that fails: the sweep retries an approved one.
+async def _rollout_decided(
+    action: PendingAction, decided_by: str, reason: Optional[str] = None
+) -> None:
+    from core.response.approval_service import ROLLOUT_ACTION_TYPES
+
+    if action.action_type not in ROLLOUT_ACTION_TYPES:
+        return
+    from core.detections.inventory import rollout_approval
+
+    try:
+        await asyncio.to_thread(rollout_approval.on_decided, action, decided_by, reason)
+    except Exception:  # noqa: BLE001
+        logger.exception("rollout answer on %s not carried out", action.action_id)
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -311,6 +329,7 @@ async def approve_action(
     if updated is None:
         raise HTTPException(status_code=500, detail="Failed to approve action")
     _record_decision(updated, approved_by)
+    await _rollout_decided(updated, approved_by)
 
     response: Dict[str, Any] = {
         "action": asdict(updated),
@@ -361,6 +380,7 @@ async def reject_action(
     if updated is None:
         raise HTTPException(status_code=500, detail="Failed to reject action")
     _record_decision(updated, rejected_by, request.reason)
+    await _rollout_decided(updated, rejected_by, request.reason)
 
     response: Dict[str, Any] = {
         "action": asdict(updated),

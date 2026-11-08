@@ -164,6 +164,7 @@ class RolloutReport:
     written: int = 0
     moves: List[str] = field(default_factory=list)
     held: int = 0  # due moves not written: Stop set or the ceiling unread
+    asked: List[str] = field(default_factory=list)  # promotions put to a person
     deploys: List[str] = field(default_factory=list)  # "<rule> v<n>: <PR url | error>"
     findings: List[Dict[str, Any]] = field(default_factory=list, repr=False)
     error: Optional[str] = None
@@ -836,8 +837,18 @@ def _stopped() -> bool:
     return held is None or held[0].stopped
 
 
+def _asks_first() -> bool:
+    """Whether the fleet is on Assist: a promotion or deploy PR waits for a
+    person. An unreadable ceiling asks too; ``_stopped`` already holds that."""
+    from core.response.ceiling import REVERSIBLE, effective_act, try_read_stored_ceiling
+
+    held = try_read_stored_ceiling()
+    return held is None or not effective_act(held[0], REVERSIBLE)
+
+
 def sweep(now: datetime, report: RolloutReport) -> None:
-    """Write a stage row for each move due, unless Stop is set."""
+    """Write a stage row for each move due, unless Stop is set. Under Assist a
+    promotion to live is put to a person instead, and no deploy PR opens."""
     from core.detections.inventory.sync import _insert_stages, _stage_row
 
     copies = [c for c in _copies() if c.stage in ("shadow", "live")]
@@ -845,6 +856,7 @@ def sweep(now: datetime, report: RolloutReport) -> None:
     skip = handed_off([c.rule_id for c in copies])
     copies = [c for c in copies if c.rule_id not in skip]
     stopped = _stopped()
+    asks = not stopped and _asks_first()
     limits = read_limits()  # every run, so an edit shows at the next sweep
     targets = _deploy_targets()
     if targets.get("splunk"):
@@ -860,6 +872,7 @@ def sweep(now: datetime, report: RolloutReport) -> None:
             )
         )
         rows, live = [], [c for c in copies if c.stage == "live"]
+        asking: List[Tuple[Copy, str, Dict[str, Any]]] = []
         for copy in copies:
             due = _due(session, copy, now, live_24h, limits)
             if due is None:
@@ -867,6 +880,9 @@ def sweep(now: datetime, report: RolloutReport) -> None:
             stage, reason, proof = due
             if stopped:
                 report.held += 1
+                continue
+            if asks and stage == "live":
+                asking.append((copy, reason, proof))
                 continue
             rows.append(
                 {
@@ -884,11 +900,27 @@ def sweep(now: datetime, report: RolloutReport) -> None:
                 live.remove(copy)
         if rows:
             _insert_stages(session, rows, {c.rule_id: c.stage for c in copies})
+    if asking:
+        # After the transaction: a request writes the audit trail in sessions of
+        # its own, which must not wait on this one's trail lock.
+        from core.detections.inventory import rollout_approval
+
+        for copy, reason, proof in asking:
+            if rollout_approval.request_promotion(copy, reason, proof):
+                report.asked.append(f"{copy.rule_id} v{copy.version}")
     # After the stage rows commit: a PR that fails leaves the promotion standing,
     # and the next sweep is its retry.
-    if not stopped:
-        # A live copy promoted before lint gated it waits for a lint pass.
-        _deploy([c for c in live if _linted(c)], targets, now, report)
+    if stopped:
+        return
+    if asks:
+        # Only a person's yes opens a PR: approved promotions and deploys are
+        # carried out here, which also retries one that failed.
+        from core.detections.inventory import rollout_approval
+
+        rollout_approval.carry_out_approved(report)
+        return
+    # A live copy promoted before lint gated it waits for a lint pass.
+    _deploy([c for c in live if _linted(c)], targets, now, report)
 
 
 def _linted(copy: Copy) -> bool:
@@ -1428,14 +1460,18 @@ def overlay_only() -> List[Dict[str, Any]]:
 
 
 def deploy_overlay_only(
-    rule_ids: Optional[List[int]] = None, actor: str = "system"
+    rule_ids: Optional[List[int]] = None,
+    actor: str = "system",
+    approver: bool = False,
 ) -> Dict[str, Any]:
     """Open the deploy PR now, as the sweep would, for live overlay-only copies
     (these ``rule_ids``, or all) whose format has a GitHub deploy target and
     with no PR opened yet; one that failed is tried again. Says what each came
-    to (``opened``: pr_url or in_repo; ``failed``: error) and why each other one
-    was skipped. Nothing is opened while Stop is set. Each outcome's
-    config-trail row names ``actor``."""
+    to (``opened``: pr_url or in_repo; ``failed``: error), which now wait for a
+    person (``asked``) and why each other one was skipped. Nothing is opened
+    while Stop is set. Under Assist each one waits for an approval unless
+    ``approver``: the person deploying may approve, or a person already did.
+    Each outcome's config-trail row names ``actor``."""
     from core.detections.detection_rules_service import deploy_host_refused
 
     live = [c for c in _copies() if c.stage == "live"]
@@ -1479,10 +1515,23 @@ def deploy_overlay_only(
             {c.rule_id: "Vigil is stopped; it opens no pull request" for c in todo}
         )
         todo = []
+    asked: List[Dict[str, Any]] = []
+    if todo and not approver and _asks_first():
+        from core.detections.inventory import rollout_approval
+
+        asked = [
+            {
+                "rule_id": c.rule_id,
+                "action_id": rollout_approval.request_deploy(c, actor),
+            }
+            for c in todo
+        ]
+        todo = []
     outcomes = _deploy(
         todo, targets, datetime.now(timezone.utc), RolloutReport(), actor
     )
     return {
+        "asked": asked,
         "opened": [
             {
                 "rule_id": r,
