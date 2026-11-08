@@ -1102,8 +1102,7 @@ def _where(checks: Dict[str, Any], tool: str) -> Optional[str]:
 
 # The listing reads every listed copy (about 2 s on 19k copies), so it is built
 # once and reused for every page, filter and search until a table it reads is
-# written. Postgres's own write counters say when: they move on any insert,
-# update or delete, from this process or the daemon's syncs and checks.
+# written, by this process or the daemon's syncs, runs and sweeps.
 _LISTING_TABLES = (
     "detection_rules",
     "detection_rule_versions",
@@ -1111,8 +1110,29 @@ _LISTING_TABLES = (
     "detection_rule_exceptions",
     "detection_rule_stages",
 )
+# Whether those tables were written is read exactly at commit, in every process:
+# Postgres's write statistics lag a commit by seconds. A table whose rows are
+# updated in place (a run rewrites a version's checks) is marked by its row
+# count and the sum of its rows' xmin, the transaction that last wrote each row:
+# an insert, update or delete changes one or the other once it commits, not
+# before. VACUUM FREEZE keeps a row's xmin (Postgres 9.4 on), and anything that
+# did change it would only force a rebuild. Missing a write would take an update
+# by a transaction whose id equals that row's own xmin, reused after a
+# wraparound (2^32 transactions later). The append-only tables are marked by
+# their newest id. One scan of each in-place table per read: about 15 ms each
+# at 24k rows.
+_EXACT_MARKS = text(
+    "SELECT"
+    " (SELECT count(*) FROM detection_rules),"
+    " (SELECT sum(xmin::text::bigint) FROM detection_rules),"
+    " (SELECT count(*) FROM detection_rule_versions),"
+    " (SELECT sum(xmin::text::bigint) FROM detection_rule_versions),"
+    " (SELECT count(*) FROM detection_rule_exceptions),"
+    " (SELECT sum(xmin::text::bigint) FROM detection_rule_exceptions),"
+    " (SELECT max(id) FROM detection_rule_check_changes)"
+)
+_STAGE_MARKS = text("SELECT count(*), max(id) FROM detection_rule_stages")
 _FIRES_TABLES = ("findings",)
-_STAGES_TABLE = "detection_rule_stages"
 _listing_lock = threading.Lock()
 _listing: Dict[str, Any] = {}
 
@@ -1354,18 +1374,6 @@ def _restage(session: Any, copies: Dict[str, Any]) -> Tuple[Dict[str, Any], Set[
     return {**copies, "stages": stages, "moves": moves}, changed
 
 
-def _rows_unchanged(session: Any, copies: Dict[str, Any], changed: Set[int]) -> bool:
-    """Whether the moved rules' copies (their version, checks, status and the
-    rest) are still what the listing holds: only then is patching their stage
-    fields the full rebuild's answer. A stage row written with a new version or
-    after a run is read before the write statistics show the other tables moved."""
-    if not changed:
-        return True
-    held = {row.id: tuple(row) for row in copies["rows"] if row.id in changed}
-    fresh = {row.id: tuple(row) for row in _copy_rows(session, changed)}
-    return fresh == held
-
-
 def _restaged(
     health: Dict[str, Any], copies: Dict[str, Any], changed: Set[int]
 ) -> Dict[str, Any]:
@@ -1407,38 +1415,27 @@ def _listing_now() -> Dict[str, Any]:
     sweep's move) reads the stages again and patches the rows that moved, which
     takes milliseconds where reading every copy takes seconds."""
     with _listing_lock, get_db_manager().session_scope() as session:
-        written = _write_marks(session, _LISTING_TABLES + _FIRES_TABLES)
-        # The newest stage row too: write stats lag a commit by seconds, so a
-        # Revert or release read straight after would get the old row (#4053).
-        # Its id is exact at commit, in every process.
-        newest_stage = session.scalar(select(func.max(DetectionRuleStage.id)))
-        marks = tuple(
-            m for m in written if m[0] in _LISTING_TABLES and m[0] != _STAGES_TABLE
-        )
-        stage_marks = tuple(m for m in written if m[0] == _STAGES_TABLE) + (
-            (f"{_STAGES_TABLE}:newest", newest_stage),
-        )
+        written = _write_marks(session, _FIRES_TABLES)
+        marks = tuple(session.execute(_EXACT_MARKS).one())
+        # Stage rows are only ever added: their count and newest id. A Revert or
+        # release read straight after sees its own row.
+        stage_marks = tuple(session.execute(_STAGE_MARKS).one())
         if _listing.get("marks") != marks:
             _listing.clear()
             _listing["copies"] = _copies_listed(session)
             _listing["marks"] = marks
             _listing["stage_marks"] = stage_marks
         elif _listing.get("stage_marks") != stage_marks:
-            copies, changed = _restage(session, _listing["copies"])
-            if _rows_unchanged(session, _listing["copies"], changed):
-                _listing["copies"] = copies
-                _listing["stage_marks"] = stage_marks
-                if changed and "health" in _listing:
-                    _listing["health"] = _restaged(_listing["health"], copies, changed)
-            else:
-                # The move came with a new version or new checks (a sync, or a
-                # run then the sweep), which the lagging marks don't show yet.
-                _listing.clear()
-                _listing["copies"] = _copies_listed(session)
-                _listing["marks"] = marks
-                _listing["stage_marks"] = stage_marks
+            # Only stages moved: no version, check or rule row changed with them,
+            # so patching the moved rows' stage fields is a rebuild's answer.
+            _listing["copies"], changed = _restage(session, _listing["copies"])
+            _listing["stage_marks"] = stage_marks
+            if changed and "health" in _listing:
+                _listing["health"] = _restaged(
+                    _listing["health"], _listing["copies"], changed
+                )
         fires_marks = (
-            tuple(m for m in written if m[0] in _FIRES_TABLES),
+            written,
             datetime.now(timezone.utc).date(),
         )
         if _listing.get("fires_marks") != fires_marks or "health" not in _listing:

@@ -301,3 +301,74 @@ def test_a_stage_write_with_a_new_version_or_checks_is_read_fresh(db):
         "shadow",
         "its runs failed",
     )
+
+
+def _rewrite_checks(db, rid, checks):
+    """A run rewrites the version's checks in place, as sync._write_checks does."""
+    from sqlalchemy import update
+
+    from core.storage.models import DetectionRuleVersion
+
+    with db.session_scope() as session:
+        session.execute(
+            update(DetectionRuleVersion)
+            .where(
+                DetectionRuleVersion.rule_id == rid, DetectionRuleVersion.version == 1
+            )
+            .values(checks=checks)
+        )
+
+
+def test_another_rules_checks_then_a_stage_move_is_read_fresh(db):
+    """A run rewrites rule A's checks (no check-change row when the result holds,
+    one when it flips); the sweep then moves rule B only. The next read is a
+    rebuild's answer for A as well, though the write statistics lag."""
+    from core.detections.inventory import catalog
+    from core.storage.models import DetectionRuleStage
+
+    moved = _live_rule(db)
+    bystander = _siem_rule(db, "siem")
+    _settled(db)
+    catalog._listing_now()  # warm
+
+    def sweep(reason):
+        with db.session_scope() as session:
+            session.add(
+                DetectionRuleStage(
+                    rule_id=moved,
+                    version=1,
+                    stage="shadow" if reason == "back" else "off",
+                    actor="system",
+                    proof={},
+                    reason=reason,
+                    at=datetime.now(timezone.utc),
+                )
+            )
+
+    # The result holds, only the SIEM's count moved: no check-change row.
+    _rewrite_checks(
+        db, bystander, {"runs": {"result": "pass"}, "quiet": {"count": 7, "days": 3}}
+    )
+    sweep("off")
+    assert catalog._listing_now() == _rebuilt()
+    (row,) = catalog.health_listing(rule_ids=[bystander])["rules"]
+    assert (row["siem_alerts"], row["siem_days"]) == (7, 3)
+
+    # The result flips.
+    _rewrite_checks(db, bystander, {"runs": {"result": "fail", "reason": "boom"}})
+    sweep("back")
+    assert catalog._listing_now() == _rebuilt()
+    (row,) = catalog.health_listing(rule_ids=[bystander])["rules"]
+    assert (row["health"], row["raw"]) == ("fails_to_run", "boom")
+
+
+def test_a_checks_write_with_no_stage_move_is_read_fresh(db):
+    """A run that moves no stage: the next read still shows the new checks."""
+    rid = _siem_rule(db, "siem")
+    _settled(db)
+    assert _row(rid)["siem_alerts"] is None  # warms the cache
+    _rewrite_checks(
+        db, rid, {"runs": {"result": "pass"}, "quiet": {"count": 12, "days": 7}}
+    )
+    row = _row(rid)  # no wait
+    assert (row["siem_alerts"], row["siem_days"]) == (12, 7)
