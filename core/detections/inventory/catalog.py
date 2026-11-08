@@ -23,7 +23,8 @@ never-firing; a Wazuh rule below level 3 that has alerts is judged on them).
 A linked Kibana or Splunk copy also carries checks['drift']: fail when it was
 disabled, removed or edited in the SIEM while its repo rule stayed the same.
 
-A repo or overlay rule's latest version carries checks['lint'] (sync lints it).
+A repo or overlay rule's latest version carries checks['lint'] (sync lints it),
+result 'none' when there is nothing to lint, which is coverage like a pass.
 One failing lint is keyed to one environment: it is listed and searched, but
 left out of every coverage count (``CREDITED``), and analyze_coverage's by_tool
 counts it as ``lint_failing``. Lint is no flag and no rule_health entry.
@@ -1042,11 +1043,12 @@ def _first_line(reason: str) -> str:
 
 
 def _results(checks: Dict[str, Any]) -> List[Any]:
-    """Each stored check's result; drift compares copies, so it is no check of the rule."""
+    """Each stored check's result; drift compares copies, so it is no check of
+    the rule, and a lint with nothing to lint ('none') checked nothing."""
     return [
         value.get("result")
         for key, value in checks.items()
-        if key != "drift" and isinstance(value, dict)
+        if key != "drift" and isinstance(value, dict) and value.get("result") != "none"
     ]
 
 
