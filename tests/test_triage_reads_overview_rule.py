@@ -1,25 +1,25 @@
 """Triage reads Overview's rule for an alert's state (#3485).
 
-Needs a real Postgres: set ``VIGIL_TEST_POSTGRES_DSN`` to an empty database.
+Needs a real Postgres: set ``VIGIL_TEST_PG_DSN`` to a throwaway database. The
+test builds its tables in a schema of its own there (tests/pg_scratch.py).
 """
 
-import os
 from collections import Counter
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 
 import pytest
 
-DSN = os.environ.get("VIGIL_TEST_POSTGRES_DSN")
-pytestmark = pytest.mark.skipif(not DSN, reason="VIGIL_TEST_POSTGRES_DSN not set")
+from tests.pg_scratch import DSN, create_tables, scratch_engine
+
+pytestmark = pytest.mark.skipif(not DSN, reason="VIGIL_TEST_PG_DSN not set")
 
 
 @pytest.fixture
 def seeded(monkeypatch):
-    from sqlalchemy import create_engine, text
+    from sqlalchemy import text
     from sqlalchemy.orm import sessionmaker
 
     from core.storage.models import (
-        Base,
         Case,
         Finding,
         IntakeTrigger,
@@ -27,11 +27,11 @@ def seeded(monkeypatch):
     )
     from core.time import utcnow
 
-    engine = create_engine(DSN)
+    stack = ExitStack()
+    engine = stack.enter_context(scratch_engine())
     with engine.begin() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
-    Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine)
+    create_tables(engine)
     factory = sessionmaker(bind=engine)
 
     class Manager:
@@ -89,7 +89,7 @@ def seeded(monkeypatch):
             ]
         )
     yield
-    engine.dispose()
+    stack.close()
 
 
 def test_overview_counts_do_not_move(seeded):
