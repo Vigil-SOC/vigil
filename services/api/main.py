@@ -463,9 +463,7 @@ def _build_services(app: FastAPI):
         custom_workflows=app.state.custom_workflows,
         workflow_runs=app.state.workflow_runs,
     )
-    app.state.workflow_ai = WorkflowAIGenerator(
-        workflows=app.state.workflows, mcp_registry=app.state.mcp_registry
-    )
+    app.state.workflow_ai = WorkflowAIGenerator(workflows=app.state.workflows)
     app.state.agent_ai = AgentAIGenerator(mcp_registry=app.state.mcp_registry)
 
 

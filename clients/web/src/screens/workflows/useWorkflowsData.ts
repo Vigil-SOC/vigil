@@ -11,7 +11,7 @@ import {
 import { prettyHandle } from '../../data/appData'
 import type { Workflow, AgentTemplate, Skill } from '../../data/appData'
 
-interface AgentGrant {
+export interface AgentGrant {
   id: string
   recommended_tools: string[]
 }

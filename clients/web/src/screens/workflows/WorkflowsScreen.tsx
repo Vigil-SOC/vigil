@@ -126,7 +126,7 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
           ))}
         </div>
       </div>
-      {tab === 'workflows' && drafted && <WorkflowReaderPane draft={drafted.draft} onBack={() => setDrafted(null)} onSave={saveDraft} onChangeDescription={() => setDescribing(drafted.description)} />}
+      {tab === 'workflows' && drafted && <WorkflowReaderPane draft={drafted.draft} grants={agents.grants} onBack={() => setDrafted(null)} onSave={saveDraft} onChangeDescription={() => setDescribing(drafted.description)} />}
       {tab === 'workflows' && !drafted && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog feed={workflows} onCreate={() => setDescribing('')} goSettings={goSettings} />)}
       {tab === 'agents' && <AgentsTab feed={agents} onToggled={workflows.reload} />}
       {tab === 'skills' && <SkillsTab feed={skills} workflows={workflows} agents={agents} />}
