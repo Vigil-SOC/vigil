@@ -38,6 +38,24 @@ function countStates(cells: CoverageCell[], lens: Lens): Record<CoverageState, n
   return out
 }
 
+// The tactics a viewer chose to see, kept in this browser only.
+const PICKED_KEY = 'vigil.coverageTactics'
+function readPicked(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PICKED_KEY) ?? '[]')
+    return Array.isArray(raw) ? raw.filter((t): t is string => typeof t === 'string') : []
+  } catch {
+    return []
+  }
+}
+function writePicked(picked: string[]) {
+  try {
+    localStorage.setItem(PICKED_KEY, JSON.stringify(picked))
+  } catch {
+    // private window or blocked storage: the choice lasts this visit only
+  }
+}
+
 /** A technique's parent id: T1059 for T1059.001, itself for a parent. */
 const parentOf = (technique: string) => technique.split('.')[0]
 
@@ -47,6 +65,9 @@ export default function CoverageMap({ goSettings }: { goSettings: (section: 'dat
   const [lens, setLens] = useState<Lens>('all')
   const [selected, setSelected] = useState<string | null>(null)
   const [full, setFull] = useState(false)
+  // Tactics to show; none picked means all of them.
+  const [picked, setPicked] = useState<string[]>(readPicked)
+  const pick = (next: string[]) => { setPicked(next); writePicked(next) }
 
   const load = () => {
     setError(null)
@@ -73,7 +94,10 @@ export default function CoverageMap({ goSettings }: { goSettings: (section: 'dat
     )
   }
   const present = SIEMS.filter((s) => coverage.techniques.some((t) => t.siems[s.id]))
-  const total = countStates(coverage.techniques, lens)
+  const known = picked.filter((t) => coverage.tactics.includes(t))
+  const tactics = known.length ? coverage.tactics.filter((t) => known.includes(t)) : coverage.tactics
+  const total = countStates(coverage.techniques.filter((t) => tactics.includes(t.tactic)), lens)
+  const toggleTactic = (tactic: string) => pick(known.includes(tactic) ? known.filter((t) => t !== tactic) : [...known, tactic])
   const select = (technique: string) => setSelected(selected === technique ? null : technique)
   const cell = coverage.techniques.find((t) => t.technique === selected) ?? null
   return (
@@ -93,10 +117,17 @@ export default function CoverageMap({ goSettings }: { goSettings: (section: 'dat
           ))}
         </div>
       </div>
-      {!full && <TacticSummary coverage={coverage} lens={lens} selected={selected} onSelect={select} />}
+      <div className="de-cov-tactics" role="group" aria-label="Tactics shown">
+        <span className="x1-muted">Tactics</span>
+        <button type="button" className={`de-cov-tac-b${known.length === 0 ? ' on' : ''}`} aria-pressed={known.length === 0} onClick={() => pick([])}>All</button>
+        {coverage.tactics.map((tactic) => (
+          <button key={tactic} type="button" className={`de-cov-tac-b${known.includes(tactic) ? ' on' : ''}`} aria-pressed={known.includes(tactic)} onClick={() => toggleTactic(tactic)}>{tactic}</button>
+        ))}
+      </div>
+      {!full && <TacticSummary coverage={coverage} tactics={tactics} lens={lens} selected={selected} onSelect={select} />}
       {full && <div className="de-matrix-wrap">
         <div className="de-matrix">
-          {coverage.tactics.map((tactic) => (
+          {tactics.map((tactic) => (
             <div key={tactic} className="de-col">
               <h4>{tactic}</h4>
               {coverage.techniques.filter((t) => t.tactic === tactic).map((t) => (
@@ -124,11 +155,11 @@ function Cell({ cell, lens, on, onSelect, extra }: { cell: CoverageCell; lens: L
 }
 
 /** One row per tactic: a bar and counts of its techniques' states; open one for its techniques. */
-function TacticSummary({ coverage, lens, selected, onSelect }: { coverage: DetectionCoverage; lens: Lens; selected: string | null; onSelect: (technique: string) => void }) {
+function TacticSummary({ coverage, tactics, lens, selected, onSelect }: { coverage: DetectionCoverage; tactics: string[]; lens: Lens; selected: string | null; onSelect: (technique: string) => void }) {
   const [open, setOpen] = useState<string | null>(null)
   return (
     <div className="de-tac" data-testid="coverage-tactics">
-      {coverage.tactics.map((tactic) => {
+      {tactics.map((tactic) => {
         const cells = coverage.techniques.filter((t) => t.tactic === tactic)
         const n = countStates(cells, lens)
         const isOpen = open === tactic
