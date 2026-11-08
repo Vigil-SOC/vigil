@@ -409,7 +409,9 @@ def test_a_validated_week_promotes_and_an_unvalidated_one_does_not():
 
 
 def test_a_loud_rule_does_not_promote_at_the_hit_ceiling():
-    loud = _week_of_passes(_copy(1, GOOD), hits=rollout.MAX_HITS_PER_DAY + 1)
+    loud = _week_of_passes(
+        _copy(1, GOOD), hits=rollout.DEFAULT_LIMITS.max_hits_per_day + 1
+    )
     assert rollout._due(None, loud, NOW, 0) is None
 
 
