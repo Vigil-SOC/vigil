@@ -127,8 +127,8 @@ from core.detections.inventory.rollout_limits import (
 from core.integrations._base import search_budget
 from core.integrations._base.ids import EXTERNAL_ID_MAX, fit_id
 from core.integrations.elastic.descriptor import ELASTIC
-from core.integrations.wazuh.client import WazuhError
 from core.integrations.splunk.descriptor import SPLUNK, SPLUNK_SELFHOSTED_REQUIRED
+from core.integrations.wazuh.client import WazuhError
 from core.storage.connection import get_db_manager
 from core.storage.models import (
     DetectionRule,
