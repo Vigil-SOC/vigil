@@ -146,7 +146,7 @@ class CaseDetailResponse(CaseSchema):
 
 
 class CaseRuleCard(BaseModel):
-    """One rule version behind a case's alerts, and its stored checks (#4013)."""
+    """One rule version behind a case's alerts, and its stored checks."""
 
     rule_id: int
     version: int

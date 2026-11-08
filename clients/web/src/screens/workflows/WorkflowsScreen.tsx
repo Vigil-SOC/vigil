@@ -126,9 +126,9 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
           ))}
         </div>
       </div>
-      {tab === 'workflows' && drafted && <WorkflowReaderPane draft={drafted.draft} onBack={() => setDrafted(null)} onSave={saveDraft} onChangeDescription={() => setDescribing(drafted.description)} />}
+      {tab === 'workflows' && drafted && <WorkflowReaderPane draft={drafted.draft} grants={agents.grants} onBack={() => setDrafted(null)} onSave={saveDraft} onChangeDescription={() => setDescribing(drafted.description)} />}
       {tab === 'workflows' && !drafted && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog feed={workflows} onCreate={() => setDescribing('')} goSettings={goSettings} />)}
-      {tab === 'agents' && <AgentsTab feed={agents} skillCount={skills.phase === 'ready' ? skills.rows.length : null} onToggled={workflows.reload} />}
+      {tab === 'agents' && <AgentsTab feed={agents} onToggled={workflows.reload} />}
       {tab === 'skills' && <SkillsTab feed={skills} workflows={workflows} agents={agents} />}
       {tab === 'commands' && <CommandsTab />}
       {describing !== null && <DescribeDialog initial={describing} onClose={() => setDescribing(null)} onDrafted={(description, draft) => { setDescribing(null); setTab('workflows'); setDrafted({ description, draft }) }} />}
@@ -3860,11 +3860,12 @@ const SUCCESS_TIP = {
 const ASSIGNMENT_NOTE = 'Workflow runs use the investigation assignment in Settings › AI models.'
 
 /** `onToggled` runs after an agent is switched, so the workflow cards (which say when an agent they need is off) read the new state. */
-function AgentsTab({ feed, skillCount, onToggled }: { feed: Feed<AgentTemplate>; skillCount: number | null; onToggled: () => void }) {
+function AgentsTab({ feed, onToggled }: { feed: Feed<AgentTemplate>; onToggled: () => void }) {
   const { rows, phase, error, reload } = feed
-  const [busy, setBusy] = useState<string | null>(null)
   const [editId, setEditId] = useOpenItem('agent', 'agents')
   const [creating, setCreating] = useState<false | 'blank' | 'describe'>(false)
+  // a custom agent being copied: a new drawer opens on its manifest under a new id
+  const [copyOf, setCopyOf] = useState<string | null>(null)
   const [deleteAgent, setDeleteAgent] = useState<AgentTemplate | null>(null)
   const [runAgent, setRunAgent] = useState<AgentTemplate | null>(null)
   const navigate = useNavigate()
@@ -3877,18 +3878,6 @@ function AgentsTab({ feed, skillCount, onToggled }: { feed: Feed<AgentTemplate>;
   const ordered = [...builtins, ...rows.filter((a) => a.custom)]
   // by id, not by row: a fresh copy is open before the reloaded list has it
   const builtinOpen = !!editId && !editId.startsWith('custom-')
-
-  const fork = (handle: string) => {
-    setBusy(handle)
-    agentsApi
-      .forkAgent(handle)
-      .then((res) => {
-        reload()
-        const newId = res.data?.id
-        if (newId) setEditId(newId)
-      })
-      .finally(() => setBusy(null))
-  }
 
   const setEnabled = (a: AgentTemplate, on: boolean) => {
     setToggleErr(null)
@@ -3903,7 +3892,7 @@ function AgentsTab({ feed, skillCount, onToggled }: { feed: Feed<AgentTemplate>;
     <div className="ag-page">
       <div className="ag-bar">
         <span className="ag-summary">
-          {phase === 'ready' ? `${builtins.length} built-in agent${builtins.length === 1 ? '' : 's'} plus your own. Each can use its own model.` : 'Built-in agents plus your own. Each can use its own model.'}
+          {phase === 'ready' ? `${builtins.length} built-in agent${builtins.length === 1 ? '' : 's'} plus your own, each a manifest.` : 'Built-in agents plus your own, each a manifest.'}
         </span>
         <button className="ag-btn" title="Refresh" aria-label="Refresh" onClick={reload}><Icon name="refresh" /></button>
         <button className="ag-btn" onClick={() => setCreating('describe')}><Icon name="sparkle" /> Describe a new agent</button>
@@ -3925,13 +3914,13 @@ function AgentsTab({ feed, skillCount, onToggled }: { feed: Feed<AgentTemplate>;
               <span className="row-act">
                 <RunAgentButton agent={a} onRun={setRunAgent} />
                 <button title="Edit" aria-label={`Edit ${a.name}`} onClick={() => setEditId(a.handle)}><Icon name="edit" /></button>
-                <button title="Fork into a new copy" aria-label={`Fork ${a.name}`} disabled={busy !== null} onClick={() => fork(a.handle)}><Icon name={busy === a.handle ? 'refresh' : 'copy'} /></button>
+                <button title="Copy into a new agent" aria-label={`Copy ${a.name}`} onClick={() => { setEditId(null); setCopyOf(a.handle); setCreating('blank') }}><Icon name="copy" /></button>
                 <button title="Delete" aria-label={`Delete ${a.name}`} onClick={() => setDeleteAgent(a)}><Icon name="trash" /></button>
               </span>
             ) : (
               <span className="row-act">
                 <RunAgentButton agent={a} onRun={setRunAgent} />
-                <button title={`Open ${a.name}`} aria-label={`Open ${a.name}`} onClick={() => setEditId(a.handle)}><Icon name="fork" /></button>
+                <button title={`Open ${a.name} to fork it`} aria-label={`Open ${a.name}`} onClick={() => setEditId(a.handle)}><Icon name="fork" /></button>
               </span>
             )}
           />
@@ -3941,17 +3930,16 @@ function AgentsTab({ feed, skillCount, onToggled }: { feed: Feed<AgentTemplate>;
 
       {(creating || editId) && (
         <AgentDrawer
-          key={editId ?? 'new'} // a saved copy reopens as a fresh drawer
+          key={editId ?? `new:${copyOf ?? ''}`} // a fork reopens as a fresh drawer on the new agent
           agentId={editId}
           builtIn={builtinOpen}
           describe={creating === 'describe'}
+          seedFrom={editId ? null : copyOf}
           toolChanges={rows.find((a) => a.handle === editId)?.toolChanges}
-          skillCount={skillCount}
-          onClose={() => { setEditId(null); setCreating(false) }}
+          onClose={() => { setEditId(null); setCreating(false); setCopyOf(null) }}
           onSaved={(saved) => {
-            // a built-in's Save made a copy: reopen on it, in custom mode once the list has it
-            const copy = builtinOpen && saved.id ? saved.id : null
-            setEditId(copy); setCreating(false); reload()
+            // a built-in's fork reopens on the new agent; any other save closes
+            setEditId(builtinOpen && saved.id ? saved.id : null); setCreating(false); setCopyOf(null); reload()
           }}
         />
       )}
@@ -4055,7 +4043,7 @@ function AgentDeleteModal({ agent, onClose, onDeleted }: { agent: AgentTemplate;
     setBusy(true)
     setError(null)
     agentsApi
-      .deleteCustom(agent.handle)
+      .deleteManifest(agent.handle)
       .then(onDeleted)
       .catch((e) => { setError(errMsg(e)); setBusy(false) })
   }

@@ -18,7 +18,7 @@ from core.detections.gaps import (
     read_ledger,
     technique_check,
 )
-from core.detections.inventory import catalog
+from core.detections.inventory import catalog, metrics
 from core.detections.inventory.links import link_rule
 from core.detections.lint import lint_sigma
 from core.detections.overlay import save_rule
@@ -191,7 +191,9 @@ class SecurityDetectionsTools:
             context: A case id, an ATT&CK label to match, or empty for every stored alert.
             since_days: How far back Verdicts are read for runs_rules_missed.
             techniques: ATT&CK ids from any source (e.g. what threat intel names);
-                each is bucketed in ``techniques_checked``.
+                each is bucketed in ``techniques_checked``. An id that is not an
+                active ATT&CK technique (made up, revoked or deprecated) is listed in
+                ``techniques_checked.unknown`` with its reason, never as a gap.
         """
         # A model may send "30"; keep the window within what timedelta can hold.
         since_days = min(max(int(since_days), 0), 3650)
@@ -216,6 +218,13 @@ class SecurityDetectionsTools:
                 report["unknown"].append(
                     "Not ATT&CK technique ids, so not checked: "
                     + ", ".join(checked["rejected"])
+                )
+            if checked["unknown"]:
+                report["unknown"].append(
+                    "Not active ATT&CK techniques, so not checked: "
+                    + ", ".join(
+                        f"{u['technique']} ({u['reason']})" for u in checked["unknown"]
+                    )
                 )
             if report["rules_loaded"] and checked["gaps"]:
                 report["answer"] = "gaps_found"
@@ -262,6 +271,10 @@ class SecurityDetectionsTools:
             "techniques_covered": len(catalog.rules_by_technique()),
             "by_source": by_source,
         }
+
+    async def detection_metrics(self, **_kwargs: object) -> Dict:
+        """The rollout's success metrics from stored data, each with its source."""
+        return await asyncio.to_thread(metrics.report)
 
     async def lint_detections(
         self,

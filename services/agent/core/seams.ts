@@ -68,5 +68,7 @@ export interface ToolDispatch {
     signal?: AbortSignal,
     agentId?: string,
     approval?: CallApproval,
+    // The ledger's call_id, so the call's span joins its tool_call event.
+    callId?: string,
   ): Promise<ToolResult>;
 }

@@ -76,11 +76,29 @@ NEVER_FIRED = DetectionRuleVersion.checks["silent"]["days_fired"].astext == "0"
 # The per-tool tally columns _by_tool reads, in order, before the count.
 TALLIED = (TOOL, RUNS, SEES, QUIET, ACCURATE, NOISY, SILENT, CAUGHT, NEVER_FIRED)
 RUNS_RESULTS = ("pass", "fail", "unknown")
+# The rollout stages a listed copy can be in (#3995).
+STAGES = ("shadow", "live", "off")
+# Every rule's stage rows, newest first by time then id: the order CURRENT_STAGE,
+# rollout and GET /rules/{id}/stages all read them in.
+STAGE_ROWS = select(
+    DetectionRuleStage.rule_id,
+    DetectionRuleStage.stage,
+    DetectionRuleStage.actor,
+    DetectionRuleStage.proof,
+).order_by(
+    DetectionRuleStage.rule_id,
+    DetectionRuleStage.at.desc(),
+    DetectionRuleStage.id.desc(),
+)
 # Each rule's current stage: its latest stage row.
 CURRENT_STAGE = (
-    select(DetectionRuleStage.rule_id, DetectionRuleStage.stage)
+    select(DetectionRuleStage.rule_id, DetectionRuleStage.stage, DetectionRuleStage.at)
     .distinct(DetectionRuleStage.rule_id)
-    .order_by(DetectionRuleStage.rule_id, DetectionRuleStage.id.desc())
+    .order_by(
+        DetectionRuleStage.rule_id,
+        DetectionRuleStage.at.desc(),
+        DetectionRuleStage.id.desc(),
+    )
     .subquery("current_stage")
 )
 LINKED = DetectionRule.link_kind.in_(("same_id", "known_name", "agent"))
@@ -236,6 +254,74 @@ def open_flags() -> List[Dict[str, Any]]:
     for flag in flags:
         del flag["changed_at"]
     return flags
+
+
+def open_vigil_moves() -> List[Dict[str, Any]]:
+    """Each rule Vigil itself last moved live -> shadow (a Revert) or turned off from
+    live or shadow, and no one has moved since, newest first, shaped like a flag.
+    ``change_id`` is the stage row's id negated, so it never meets a check change's id.
+    """
+    s = DetectionRuleStage
+    with get_db_manager().session_scope() as session:
+        rows = session.execute(
+            select(
+                s.id,
+                s.rule_id,
+                s.version,
+                s.stage,
+                s.actor,
+                s.reason,
+                s.at,
+                DetectionRule.name,
+                DetectionRule.source,
+                DetectionRule.status,
+            )
+            .join(DetectionRule, DetectionRule.id == s.rule_id)
+            .where(s.rule_id.in_(select(s.rule_id).where(s.actor == "system")))
+            .order_by(s.rule_id, s.at, s.id)
+        ).all()
+    return vigil_moves(rows)
+
+
+def vigil_moves(rows: Iterable[Any]) -> List[Dict[str, Any]]:
+    """The bell entries in stage ``rows``: per rule, its last row in time order (at,
+    then id, as CURRENT_STAGE and rollout read them) when Vigil wrote it as a Revert
+    (live -> shadow) or as an off from live or shadow. A rule that started off, or
+    was removed, has none."""
+    last: Dict[int, Tuple[Any, Optional[str]]] = {}
+    for row in sorted(rows, key=lambda r: (r.rule_id, r.at, r.id)):
+        prev = last.get(row.rule_id)
+        last[row.rule_id] = (row, prev[0].stage if prev else None)
+    out = []
+    for row, prev in last.values():
+        if row.actor != "system":
+            continue
+        if row.stage == "shadow" and prev == "live":
+            check = "revert"
+        elif (
+            row.stage == "off"
+            and prev in ("live", "shadow")
+            and row.status != "removed"
+        ):
+            check = "off"
+        else:
+            continue
+        out.append(
+            {
+                "change_id": -row.id,
+                "rule_id": row.rule_id,
+                "name": row.name,
+                "tool": tool_of(row.source),
+                "status": row.status,
+                "check": check,
+                "old": prev,
+                "new": row.stage,
+                "version": row.version,
+                "reason": row.reason,
+                "since": row.at.isoformat(),
+            }
+        )
+    return sorted(out, key=lambda f: f["since"], reverse=True)
 
 
 def rule_health(days: int = 7) -> Dict[str, Any]:
@@ -979,6 +1065,7 @@ _LISTING_TABLES = (
     "detection_rule_versions",
     "detection_rule_check_changes",
     "detection_rule_exceptions",
+    "detection_rule_stages",
 )
 _FIRES_TABLES = ("findings",)
 _listing_lock = threading.Lock()
@@ -1024,6 +1111,11 @@ def _copies_listed(session: Any) -> Dict[str, Any]:
     return {
         "rows": rows,
         "exceptions": active,
+        "stages": {
+            rid: (stage, at)
+            for rid, stage, at in session.execute(select(CURRENT_STAGE))
+        },
+        "moves": stage_moves(session.execute(STAGE_ROWS)),
         "rule_of": _rule_of_copy(session),
         "blind_spots": [
             {
@@ -1067,6 +1159,7 @@ def _health_rows(
     rule_of = copies["rule_of"]
     since_day = _window_start(today)
     excepted = copies.get("exceptions") or {}
+    stages = copies.get("stages") or {}
     listed = []
     fired: Dict[int, List[Dict[str, Any]]] = {}
     # Each copy's counted findings per UTC day, so a shorter window than Fires'
@@ -1095,6 +1188,8 @@ def _health_rows(
         state, why, raw = _health(rule.status, checks, count)
         flags, caught = _check_flags(checks)
         results = _results(checks)
+        stage, entered = stages.get(rule.id, (None, None))
+        moves = copies.get("moves") or {}
         listed.append(
             {
                 "rule_id": rule.id,
@@ -1123,6 +1218,14 @@ def _health_rows(
                 # Its active exceptions, and the hits they silenced (#3794).
                 "exceptions": len(excepted.get(rule.id, [])),
                 "silenced": _silenced(checks, excepted.get(rule.id, []), since_day),
+                # Its overlay copy's rollout stage and when its current stage row
+                # was written (#3995); days_in_shadow is worked out when read.
+                "stage": stage,
+                "stage_since": entered.isoformat() if entered else None,
+                "days_in_shadow": None,
+                # Its stage moves and hold, as GET /rules/{id}/stages reads them
+                # (#4050); a SIEM copy has no stage rows and none of these.
+                **moves.get(rule.id, {}),
             }
         )
     listed.sort(key=lambda row: (HEALTH_ORDER.index(row["health"]), row["rule_id"]))
@@ -1131,7 +1234,13 @@ def _health_rows(
     }
     counts: Dict[Optional[str], Dict[str, int]] = {None: dict.fromkeys(HEALTH_ORDER, 0)}
     flag_counts: Dict[Optional[str], Dict[str, int]] = {None: dict.fromkeys(FLAGS, 0)}
+    stage_counts: Dict[Optional[str], Dict[str, int]] = {None: dict.fromkeys(STAGES, 0)}
     for row in listed:
+        if row["stage"] in STAGES:
+            stage_counts[None][row["stage"]] += 1
+            stage_counts.setdefault(row["tool"], dict.fromkeys(STAGES, 0))[
+                row["stage"]
+            ] += 1
         for key in _row_flags(row):
             flag_counts[None][key] += 1
             flag_counts.setdefault(row["tool"], dict.fromkeys(FLAGS, 0))[key] += 1
@@ -1146,6 +1255,7 @@ def _health_rows(
         "by_state": by_state,
         "counts": counts,
         "flag_counts": flag_counts,
+        "stage_counts": stage_counts,
         "never_fired_rules": len(
             {
                 rule_of[row["rule_id"]]
@@ -1172,7 +1282,13 @@ def _listing_now() -> Dict[str, Any]:
     new day (the window rolls)."""
     with _listing_lock, get_db_manager().session_scope() as session:
         written = _write_marks(session, _LISTING_TABLES + _FIRES_TABLES)
-        marks = tuple(m for m in written if m[0] in _LISTING_TABLES)
+        # The newest stage row too: write stats lag a commit by seconds, so a
+        # Revert or release read straight after would get the old row (#4053).
+        # Its id is exact at commit, in every process.
+        newest_stage = session.scalar(select(func.max(DetectionRuleStage.id)))
+        marks = tuple(m for m in written if m[0] in _LISTING_TABLES) + (
+            ("detection_rule_stages:newest", newest_stage),
+        )
         if _listing.get("marks") != marks:
             _listing.clear()
             _listing["copies"] = _copies_listed(session)
@@ -1187,6 +1303,37 @@ def _listing_now() -> Dict[str, Any]:
         return {**_listing["health"], "blind_spots": _listing["copies"]["blind_spots"]}
 
 
+def stage_moves(rows: Iterable[Any]) -> Dict[int, Dict[str, Any]]:
+    """Per rule, from its stage rows ``(rule_id, stage, actor, proof)`` ordered by
+    rule then newest first (``STAGE_ROWS``, ``stages.history``'s order): how many there are, the
+    latest one's actor and from-stage, and whether a person holds the rule and
+    who (the latest row with a ``hold`` key decides, as rollout reads it)."""
+    by_rule: Dict[int, List[Any]] = {}
+    for rule_id, stage, actor, proof in rows:
+        by_rule.setdefault(rule_id, []).append((stage, actor, proof or {}))
+    out: Dict[int, Dict[str, Any]] = {}
+    for rule_id, rule_rows in by_rule.items():
+        hold = next((r for r in rule_rows if "hold" in r[2]), None)
+        held = hold is not None and hold[2]["hold"] is True
+        out[rule_id] = {
+            "stage_moves": len(rule_rows),
+            "stage_from": rule_rows[1][0] if len(rule_rows) > 1 else None,
+            "stage_actor": rule_rows[0][1],
+            "held": held,
+            "held_by": hold[1] if held else None,
+        }
+    return out
+
+
+def _with_days_in_shadow(row: Dict[str, Any], now: datetime) -> Dict[str, Any]:
+    """The row with whole 24-hour days since its shadow stage began, the count
+    rollout's promotion uses (``now - stage_since`` against SHADOW_DAYS days)."""
+    if row.get("stage") != "shadow" or not row.get("stage_since"):
+        return row
+    since = now - datetime.fromisoformat(row["stage_since"])
+    return {**row, "days_in_shadow": since // timedelta(days=1)}
+
+
 def health_listing(
     health: Optional[str] = None,
     tool: Optional[str] = None,
@@ -1196,9 +1343,12 @@ def health_listing(
     flag: Optional[str] = None,
     rule_ids: Optional[Iterable[int]] = None,
     has_exceptions: bool = False,
+    stage: Optional[str] = None,
+    now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """Every listed copy's health, ``RULE_ROWS`` from ``offset``, narrowed to one
-    ``health`` (or "attention", the states to act on), one ``tool``, one ``flag``
+    ``health`` (or "attention", the states to act on), one ``tool``, one ``stage``
+    (shadow, live or off: the copy's current rollout stage), one ``flag``
     (a failing Noisy, Quiet, Accurate, Silent or drift check, or a passing
     Caught), a ``q`` over name, technique, reason and data source, and
     ``rule_ids`` (the copies a rule-health entry names) before the cap. ``sort``
@@ -1240,6 +1390,7 @@ def health_listing(
         if state in states
         for row_tool, hay, row in built["by_state"][state]
         if kept(row_tool, hay, row)
+        and (stage is None or row["stage"] == stage)
         and (flag is None or flag in _row_flags(row))
         and (not has_exceptions or row.get("exceptions"))
     ]
@@ -1271,6 +1422,9 @@ def health_listing(
         "mapped": built["mapped"],
         "counts": built["counts"].get(tool, dict.fromkeys(HEALTH_ORDER, 0)),
         "flag_counts": built["flag_counts"].get(tool, dict.fromkeys(FLAGS, 0)),
+        "stage_counts": built.get("stage_counts", {}).get(
+            tool, dict.fromkeys(STAGES, 0)
+        ),
         "never_fired_rules": built.get("never_fired_rules", 0),
         "matched": len(shown),
         "matched_elsewhere": elsewhere,
@@ -1283,7 +1437,10 @@ def health_listing(
             if kept(t, hay, row) and row["rule_id"] not in shown_ids
         ),
         "offset": offset,
-        "rules": shown[offset : offset + RULE_ROWS],
+        "rules": [
+            _with_days_in_shadow(row, now or datetime.now(timezone.utc))
+            for row in shown[offset : offset + RULE_ROWS]
+        ],
         "by_siem": built["by_siem"],
         "blind_spots": built["blind_spots"],
         "fires_window_days": FIRES_WINDOW_DAYS,
@@ -1792,49 +1949,44 @@ CARD_CHECKS = (
 
 
 def case_rules(session: Any, findings: Iterable[Any]) -> Dict[str, Any]:
-    """The proof cards of the rule versions behind a Case's alerts (#4013).
+    """The proof cards of the rule versions behind a Case's alerts.
 
     ``findings`` are the Case's finding rows (finding_id, title, timestamp,
-    data_source, entity_context). Each is traced as Fires traces it (#3972):
-    to the version ``resolve_findings`` maps it to, else by the rule name the
-    alert carries, else its title, when exactly one listed copy that fires
-    carries that name (the version is then the one live at the alert's time).
-    One version is one card, worst first; an alert traced to none is counted in
-    ``unresolved`` with the reason."""
+    data_source, entity_context). Each is traced as Fires traces it: to the
+    version ``resolve_findings`` maps it to; an alert that names no rule falls
+    back to the rule name it carries, else its title, when exactly one rule
+    (its copies counted once, as Fires counts them) carries that name, the
+    version being the one live at the alert's time. One version is one card,
+    worst first; an alert traced to none is counted in ``unresolved`` with why.
+    """
     rows = list(findings)
-    resolved = (
-        resolve_findings(
-            session,
-            {
-                r.finding_id: {
-                    "data_source": r.data_source,
-                    "entity_context": r.entity_context,
-                    "timestamp": r.timestamp,
-                }
-                for r in rows
-            },
-        )
-        if rows
-        else {}
-    )
-    untraced = {
+    alerts = {
+        r.finding_id: {
+            "data_source": r.data_source,
+            "entity_context": r.entity_context,
+            "timestamp": r.timestamp,
+        }
+        for r in rows
+    }
+    resolved = resolve_findings(session, alerts) if rows else {}
+    names = {
         r.finding_id: _alert_name(r)
         for r in rows
         if not (resolved.get(r.finding_id) or {}).get("resolved")
     }
-    named, versions = _named_copies(session, {n for n in untraced.values() if n})
+    carriers, versions = _name_carriers(session, {n for n in names.values() if n})
     cards: Dict[Tuple[int, int], Dict[str, Any]] = {}
     unresolved: List[Dict[str, Any]] = []
     for r in rows:
         found = resolved.get(r.finding_id) or _unknown("no rule could be read")
         by_name = False
-        rule = named.get(untraced.get(r.finding_id) or "")
-        if not found.get("resolved") and rule is not None:
-            fired = _when(r.timestamp)
-            if fired is not None:
-                picked = _pick(rule, versions.get(rule.id, []), fired, True)
-                if picked["resolved"]:
-                    found, by_name = picked, True
+        if not found.get("resolved"):
+            alt = _by_name(names[r.finding_id], r.timestamp, carriers, versions)
+            if alt.get("resolved"):
+                found, by_name = alt, True
+            elif _names_no_rule(alerts[r.finding_id]):
+                # Why its name traced to none; one naming a rule keeps that reason.
+                found = alt
         if not found.get("resolved"):
             unresolved.append(
                 {"finding_id": r.finding_id, "reason": found.get("reason") or ""}
@@ -1868,38 +2020,107 @@ def case_rules(session: Any, findings: Iterable[Any]) -> Dict[str, Any]:
     }
 
 
+def _names_no_rule(alert: Mapping[str, Any]) -> bool:
+    """Whether an alert names no rule by id or version, only by name if at all."""
+    return _named(alert) is None and not isinstance(_rule_ref(alert), tuple)
+
+
 def _alert_name(row: Any) -> Optional[str]:
-    """The rule name an alert carries, else its title: Fires' fallback (#3972)."""
+    """The rule name an alert carries, else its title: Fires' fallback."""
     context = row.entity_context if isinstance(row.entity_context, dict) else {}
     return context.get("rule_name") or row.title or None
 
 
-def _named_copies(
+def _by_name(
+    name: Optional[str],
+    timestamp: Any,
+    carriers: Dict[str, List[List[DetectionRule]]],
+    versions: Dict[int, List[DetectionRuleVersion]],
+) -> Dict[str, Any]:
+    """The version a name-only alert traces to, or why it traces to none."""
+    if not name:
+        return _unknown("the alert carries no rule name or title")
+    rules = carriers.get(name, [])
+    if not rules:
+        return _unknown(f"no listed rule is named {name!r}")
+    if len(rules) > 1:
+        return _unknown(
+            f"the name {name!r} is shared by {len(rules)} rules, so the alert "
+            "cannot be traced to one"
+        )
+    fired = _when(timestamp)
+    if fired is None:
+        return _unknown("the alert has no readable time to pick a rule version by")
+    rule = _firing_copy(rules[0])
+    return _pick(rule, versions.get(rule.id, []), fired, True)
+
+
+def _firing_copy(copies: List[DetectionRule]) -> DetectionRule:
+    """Of one rule's copies, the one that fires: a SIEM copy, then an overlay
+    copy Vigil runs, then any other."""
+    return min(
+        copies,
+        key=lambda c: (
+            c.source.startswith(REPO_PREFIX),
+            not (c.source == OVERLAY_SOURCE and c.language in ("elastic", "splunk")),
+            c.id,
+        ),
+    )
+
+
+def _name_carriers(
     session: Any, names: Set[str]
-) -> Tuple[Dict[str, DetectionRule], Dict[int, List[DetectionRuleVersion]]]:
-    """name -> the one listed copy that fires carrying it, and its versions,
-    newest first. A repo origin doesn't fire (its SIEM copy does); a name more
-    than one firing copy carries traces to none."""
+) -> Tuple[Dict[str, List[List[DetectionRule]]], Dict[int, List[DetectionRuleVersion]]]:
+    """name -> the listed rules carrying it, each as its copies (grouped as
+    ``_rule_of_copy`` groups them: a linked copy with its origin, an overlay
+    rule's copies by name); and each copy's versions, newest first."""
     if not names:
         return {}, {}
-    carriers: Dict[str, List[DetectionRule]] = {}
-    for rule in session.scalars(
-        select(DetectionRule).where(LISTED, DetectionRule.name.in_(names))
-    ):
-        if rule.source.startswith(REPO_PREFIX) and rule.source != OVERLAY_SOURCE:
-            continue
-        carriers.setdefault(rule.name, []).append(rule)
-    named = {name: found[0] for name, found in carriers.items() if len(found) == 1}
+    copies = list(
+        session.scalars(
+            select(DetectionRule).where(LISTED, DetectionRule.name.in_(names))
+        )
+    )
+    origin_ids = {
+        c.origin_rule_id
+        for c in copies
+        if c.origin_rule_id is not None and c.link_kind != "declined"
+    }
+    origins = (
+        {
+            r.id: r
+            for r in session.scalars(
+                select(DetectionRule).where(DetectionRule.id.in_(origin_ids))
+            )
+        }
+        if origin_ids
+        else {}
+    )
+
+    def own(rule: Any) -> Tuple[Any, ...]:
+        return (
+            (OVERLAY_SOURCE, rule.name) if rule.source == OVERLAY_SOURCE else (rule.id,)
+        )
+
+    def group(copy: Any) -> Tuple[Any, ...]:
+        origin = origins.get(copy.origin_rule_id)
+        linked = origin is not None and copy.link_kind != "declined"
+        return own(origin) if linked else own(copy)
+
+    grouped: Dict[str, Dict[Tuple[Any, ...], List[DetectionRule]]] = {}
+    for copy in copies:
+        grouped.setdefault(copy.name, {}).setdefault(group(copy), []).append(copy)
+    carriers = {name: list(rules.values()) for name, rules in grouped.items()}
     versions: Dict[int, List[DetectionRuleVersion]] = {}
-    if named:
+    if copies:
         for v in session.scalars(
             select(DetectionRuleVersion)
             .options(defer(DetectionRuleVersion.content))
-            .where(DetectionRuleVersion.rule_id.in_({r.id for r in named.values()}))
+            .where(DetectionRuleVersion.rule_id.in_({c.id for c in copies}))
             .order_by(DetectionRuleVersion.rule_id, DetectionRuleVersion.version.desc())
         ):
             versions.setdefault(v.rule_id, []).append(v)
-    return named, versions
+    return carriers, versions
 
 
 def _card(found: Dict[str, Any]) -> Dict[str, Any]:

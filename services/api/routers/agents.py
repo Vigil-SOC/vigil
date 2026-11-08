@@ -3,8 +3,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from core.agents.builtins import builtin_manifests
 from core.agents.enablement import set_agent_enabled
-from core.agents.manager import CUSTOM_AGENT_ID_PREFIX, AgentManager
+from core.agents.manager import CUSTOM_AGENT_ID_PREFIX, AgentManager, SOCAgentLibrary
 from core.auth.permissions import permission_gate
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
@@ -27,18 +28,16 @@ router.dependencies.append(permission_gate("automation.read"))
 
 
 def _resolve_agent(agent_id: str):
-    """Resolve an agent_id to an AgentProfile, lazy-loading custom agents on miss.
+    """Resolve an agent_id to an AgentProfile.
 
-    Built-in agents are served from the in-memory dict with zero DB calls.
-    Only misses for IDs prefixed with custom- trigger a refresh and retry.
+    A built-in is built from its shipped manifest, so the prompt states the
+    thresholds as they are now. A custom- id is read fresh: /api/v1/agents
+    writes its manifest without this process's cache knowing.
     """
-    agent = agent_manager.agents.get(agent_id)
-    if agent is not None:
-        return agent
     if agent_id and agent_id.startswith(CUSTOM_AGENT_ID_PREFIX):
         agent_manager.refresh_custom_agents()
         return agent_manager.agents.get(agent_id)
-    return None
+    return SOCAgentLibrary.get_agent(agent_id)
 
 
 @router.get("/agents")
@@ -67,16 +66,10 @@ async def get_agent(agent_id: str):
         "id": agent.id,
         "name": agent.name,
         "description": agent.description,
-        "icon": agent.icon,
-        "color": agent.color,
-        "specialization": agent.specialization,
         "recommended_tools": agent.recommended_tools,
-        "max_tokens": agent.max_tokens,
-        "enable_thinking": agent.enable_thinking,
         "system_prompt": agent.system_prompt,
-        "model": agent.model,
-        "fallback_model": agent.fallback_model,
-        "component_category": agent.component_category,
+        # The manifest as written, placeholders and all; a built-in's from its file.
+        "manifest": agent.manifest or builtin_manifests().get(agent.id),
     }
 
 

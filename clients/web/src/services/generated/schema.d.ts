@@ -121,24 +121,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/agents/custom": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Custom Agents */
-        get: operations["get_api_agents_custom"];
-        put?: never;
-        /** Create Custom Agent */
-        post: operations["post_api_agents_custom"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/agents/custom/_meta/tools": {
         parameters: {
             query?: never;
@@ -154,7 +136,8 @@ export interface paths {
          *     ("vigil" for Vigil's own) and the first sentence of its description.
          *     ``changes`` marks each of them read_only or asks_first from its stored
          *     effect class; a name missing there is not connected. ``tools`` lists the
-         *     connected MCP tool names.
+         *     connected MCP tool names. ``capabilities`` are the other names a manifest's
+         *     needs may hold, each with the tools that can answer it.
          *
          *     Sources, in order of preference:
          *       1. Live MCP registry (populated when MCP servers connect at startup).
@@ -182,36 +165,16 @@ export interface paths {
         put?: never;
         /**
          * Generate Custom Agent
-         * @description AI-assisted agent generation / refinement (issue #80 Phase 2).
+         * @description Draft (or refine) an operator manifest. Does not save.
          *
-         *     Does NOT save. Frontend takes the returned draft, lets the user tweak it,
-         *     and POSTs to /agents/custom to create. Pass ``current_draft`` + ``feedback``
-         *     to iteratively refine a prior draft.
+         *     ``{"manifest": <yaml>}``, checked as a PUT /api/v1/agents/{id} would be. A
+         *     draft the check refuses is a 422 carrying the reason; it is not returned.
          */
         post: operations["post_api_agents_custom_generate"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
-        trace?: never;
-    };
-    "/api/agents/custom/{agent_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Custom Agent */
-        get: operations["get_api_agents_custom_agent_id"];
-        put?: never;
-        post?: never;
-        /** Delete Custom Agent */
-        delete: operations["delete_api_agents_custom_agent_id"];
-        options?: never;
-        head?: never;
-        /** Update Custom Agent */
-        patch: operations["patch_api_agents_custom_agent_id"];
         trace?: never;
     };
     "/api/agents/{source_agent_id}/fork": {
@@ -225,11 +188,10 @@ export interface paths {
         put?: never;
         /**
          * Fork Agent
-         * @description Fork any agent (built-in or custom) into a new editable custom copy.
+         * @description Fork a built-in into an operator manifest under ``custom-<id>``.
          *
-         *     Built-ins remain static templates — the source is never modified. The
-         *     new row is a standalone custom agent that can be edited or deleted
-         *     without affecting the source.
+         *     The built-in's manifest text, with only its id rewritten: placeholders and
+         *     comments survive. The built-in itself never changes.
          */
         post: operations["post_api_agents_source_agent_id_fork"];
         delete?: never;
@@ -725,6 +687,50 @@ export interface paths {
          * @description Send one CEF test frame. Does not move the cursor or append a trail entry.
          */
         post: operations["post_api_audit_feed_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/audit/feed/webhook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Webhook
+         * @description URL, area filter and cursor. Never the signing secret.
+         */
+        get: operations["get_api_audit_feed_webhook"];
+        /**
+         * Update Webhook
+         * @description Save URL, area and enabled. A generated secret is returned here only.
+         */
+        put: operations["put_api_audit_feed_webhook"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/audit/feed/webhook/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Webhook
+         * @description Send one signed test event. Does not move the cursor or append a trail entry.
+         */
+        post: operations["post_api_audit_feed_webhook_test"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2331,7 +2337,7 @@ export interface paths {
         };
         /**
          * Get Case Rules
-         * @description The proof card of each rule version that raised the case's alerts (#4013).
+         * @description The proof card of each rule version that raised the case's alerts.
          *
          *     Each linked finding is traced to the rule version that fired it as the
          *     Detections page traces it; one version is one card, with its stored checks,
@@ -3273,6 +3279,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/detection-rules/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Metrics
+         * @description The rollout's success metrics from stored data, each with where its
+         *     numbers come from and what that data cannot say. Read-only.
+         */
+        get: operations["get_api_detection-rules_metrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/detection-rules/overlay-only": {
         parameters: {
             query?: never;
@@ -3396,7 +3423,7 @@ export interface paths {
          * Get Rules
          * @description Every listed rule copy's health with its reason and data source, capped at
          *     catalog.RULE_ROWS rows from ``offset``, narrowed by ``health`` ("attention"
-         *     is every state to act on), ``tool``, ``flag`` (a failing Noisy, Quiet,
+         *     is every state to act on), ``tool``, ``stage`` (the copy's rollout stage), ``flag`` (a failing Noisy, Quiet,
          *     Accurate, Silent or drift check, or a passing Caught), the search ``q`` and
          *     ``rules`` (comma-separated rule ids, as a rule-health entry links them), in
          *     ``sort`` order (worst first by default); with ``has_exceptions``, every copy
@@ -3470,6 +3497,70 @@ export interface paths {
          *     rules list counts them. Read-only.
          */
         get: operations["get_api_detection-rules_rules_rule_id_findings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/rules/{rule_id}/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Release Rule
+         * @description Lifts a person's hold, leaving the rule in its current stage; the normal
+         *     rollout applies again.
+         */
+        post: operations["post_api_detection-rules_rules_rule_id_release"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/rules/{rule_id}/revert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revert Rule
+         * @description Moves a live rule back to shadow and holds it there: the rollout does
+         *     not promote it again until a person releases it.
+         */
+        post: operations["post_api_detection-rules_rules_rule_id_revert"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/rules/{rule_id}/stages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Rule Stages
+         * @description A rule's stage rows, newest first: version, from and to stage, actor,
+         *     reason and time; and ``held``, whether a person's Revert holds it in shadow.
+         *     Read-only.
+         */
+        get: operations["get_api_detection-rules_rules_rule_id_stages"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6185,6 +6276,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Agents */
+        get: operations["get_api_v1_agents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/{agent_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Agent */
+        get: operations["get_api_v1_agents_agent_id"];
+        /**
+         * Put Agent
+         * @description Create or replace the operator agent ``agent_id`` with ``manifest``.
+         *
+         *     201 on create, 200 on replace. 422 carries why a manifest was refused.
+         */
+        put: operations["put_api_v1_agents_agent_id"];
+        post?: never;
+        /** Delete Agent */
+        delete: operations["delete_api_v1_agents_agent_id"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/approvals": {
         parameters: {
             query?: never;
@@ -6309,6 +6441,176 @@ export interface paths {
          *     cancelled with the supplied reason.
          */
         post: operations["post_api_v1_approvals_action_id_reject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/audit/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Entries
+         * @description The trail, oldest sequence first, under the shared filter.
+         */
+        get: operations["get_api_v1_audit_entries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/audit/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Entries
+         * @description NDJSON of the filter, closed by a checkpoint line. Writes one export entry.
+         */
+        get: operations["get_api_v1_audit_export"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/audit/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Poll Entries
+         * @description Entries after ``after``. A cursor past the tip is a reset, not an empty page.
+         */
+        get: operations["get_api_v1_audit_poll"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/audit/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Verify Range
+         * @description ``trail.verify`` over a sequence range. The first break, when there is one.
+         */
+        get: operations["get_api_v1_audit_verify"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/autonomy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Ceiling */
+        get: operations["get_api_v1_autonomy"];
+        /**
+         * Put Ceiling
+         * @description Edit the ceiling. The permission depends on the direction.
+         *
+         *     Only lowering act flags is ``ai_autonomy.stop``. Raising one, or changing
+         *     four-eyes, is ``ai_autonomy.write``.
+         */
+        put: operations["put_api_v1_autonomy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/autonomy/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Resume
+         * @description Restore the act flags minus anything lowered during the stop.
+         *
+         *     Executes nothing.
+         */
+        post: operations["post_api_v1_autonomy_resume"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/autonomy/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Tool Classes
+         * @description Every stored class, and each unclassified name a connected server exposes.
+         */
+        get: operations["get_api_v1_autonomy_tools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/autonomy/tools/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put Tool Class
+         * @description Set one tool's class. The permission depends on the direction.
+         *
+         *     Loosening, or classifying an unclassified name, is a person's
+         *     ``ai_autonomy.write`` and is refused while stopped. Tightening is
+         *     ``ai_autonomy.stop``, which a service account may hold.
+         */
+        put: operations["put_api_v1_autonomy_tools_name"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -6819,7 +7121,7 @@ export interface paths {
         };
         /**
          * Get Case Rules
-         * @description The proof card of each rule version that raised the case's alerts (#4013).
+         * @description The proof card of each rule version that raised the case's alerts.
          *
          *     Each linked finding is traced to the rule version that fired it as the
          *     Detections page traces it; one version is one card, with its stored checks,
@@ -7717,6 +8019,38 @@ export interface components {
             /** Enabled */
             enabled: boolean;
         };
+        /** AgentManifestBody */
+        AgentManifestBody: {
+            /** Manifest */
+            manifest: string;
+        };
+        /** AgentManifestListResponse */
+        AgentManifestListResponse: {
+            /** Agents */
+            agents?: components["schemas"]["AgentManifestResponse"][];
+            /** Count */
+            count: number;
+        };
+        /** AgentManifestResponse */
+        AgentManifestResponse: {
+            /** Created At */
+            created_at?: string | null;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Id */
+            id: string;
+            /** Manifest */
+            manifest: string;
+            /** Needs */
+            needs?: string[];
+            /** Skills */
+            skills?: string[];
+            /** Updated At */
+            updated_at?: string | null;
+        };
         /** ApprovalActionResult */
         ApprovalActionResult: {
             action: components["schemas"]["PendingActionResponse"];
@@ -7739,6 +8073,119 @@ export interface components {
              * @description Identity of the approving analyst. Defaults to 'analyst'.
              */
             approved_by?: string | null;
+        };
+        /**
+         * AuditEntry
+         * @description One trail entry. Columns beside the envelope pass through.
+         */
+        AuditEntry: {
+            actor?: components["schemas"]["AuditPrincipal"] | null;
+            /** Entry Hash */
+            entry_hash: string;
+            /** Late */
+            late: boolean;
+            /** Occurred At */
+            occurred_at: string;
+            payload: components["schemas"]["AuditPayload"];
+            /** Seq */
+            seq: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * AuditFeedHealth
+         * @description The feed as the Audit section sees it: no host, no certificates.
+         */
+        AuditFeedHealth: {
+            /** Behind */
+            behind?: number | null;
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Last Delivered At */
+            last_delivered_at?: string | null;
+            /** Last Delivered Seq */
+            last_delivered_seq?: number | null;
+            /** Last Error */
+            last_error?: string | null;
+            /** Paused */
+            paused?: boolean | null;
+            /** Unconfirmed */
+            unconfirmed?: number | null;
+        };
+        /** AuditPage */
+        AuditPage: {
+            /** Entries */
+            entries: components["schemas"]["AuditEntry"][];
+            feed: components["schemas"]["AuditFeedHealth"];
+            tip: components["schemas"]["AuditTip"];
+        };
+        /**
+         * AuditPayload
+         * @description The hashed record. Open per action: other keys pass through.
+         */
+        AuditPayload: {
+            /** Action */
+            action?: string | null;
+            /** Object */
+            object?: unknown | null;
+            /** Outcome */
+            outcome?: string | null;
+            /** Run Id */
+            run_id?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * AuditPollPage
+         * @description Entries after the cursor, or ``reset`` with the latest restore entry
+         *     when the cursor is past the tip. Only the keys of the case in hand are sent.
+         */
+        AuditPollPage: {
+            /** Entries */
+            entries?: components["schemas"]["AuditEntry"][] | null;
+            /** Reset */
+            reset?: boolean | null;
+            restore?: components["schemas"]["AuditEntry"] | null;
+            tip: components["schemas"]["AuditTip"];
+        };
+        /**
+         * AuditPrincipal
+         * @description A principal an entry names, read from principals when the entry is read.
+         */
+        AuditPrincipal: {
+            /** Deleted */
+            deleted: boolean;
+            /** Erased */
+            erased: boolean;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind?: string | null;
+            /** Label */
+            label?: string | null;
+        };
+        /**
+         * AuditTip
+         * @description The newest entry, or the anchor when the trail is empty.
+         */
+        AuditTip: {
+            /** Hash */
+            hash: string;
+            /** Seq */
+            seq: number;
+        };
+        /** AuditVerification */
+        AuditVerification: {
+            /** First */
+            first?: number | null;
+            /** First Bad */
+            first_bad?: number | null;
+            /** Last */
+            last?: number | null;
+            /** Ok */
+            ok: boolean;
+            /** Reason */
+            reason: string;
         };
         /** AutostartRequest */
         AutostartRequest: {
@@ -8545,7 +8992,7 @@ export interface components {
         };
         /**
          * CaseRuleCard
-         * @description One rule version behind a case's alerts, and its stored checks (#4013).
+         * @description One rule version behind a case's alerts, and its stored checks.
          */
         CaseRuleCard: {
             /**
@@ -9207,86 +9654,6 @@ export interface components {
             label: string;
         };
         /**
-         * CustomAgentCreate
-         * @description Request body for creating a custom agent.
-         */
-        CustomAgentCreate: {
-            /** Color */
-            color?: string | null;
-            /** Description */
-            description?: string | null;
-            /**
-             * Enable Thinking
-             * @default false
-             */
-            enable_thinking: boolean;
-            /**
-             * Extra Principles
-             * @default
-             */
-            extra_principles: string | null;
-            /** Fallback Model */
-            fallback_model?: string | null;
-            /** Icon */
-            icon?: string | null;
-            /**
-             * Max Tokens
-             * @default 4096
-             */
-            max_tokens: number;
-            /**
-             * Methodology
-             * @default
-             */
-            methodology: string | null;
-            /** Model */
-            model?: string | null;
-            /** Name */
-            name: string;
-            /** Recommended Tools */
-            recommended_tools?: string[];
-            /** Role */
-            role: string;
-            /** Specialization */
-            specialization?: string | null;
-            /** System Prompt Override */
-            system_prompt_override?: string | null;
-        };
-        /**
-         * CustomAgentUpdate
-         * @description Partial update for an existing custom agent. All fields optional.
-         */
-        CustomAgentUpdate: {
-            /** Color */
-            color?: string | null;
-            /** Description */
-            description?: string | null;
-            /** Enable Thinking */
-            enable_thinking?: boolean | null;
-            /** Extra Principles */
-            extra_principles?: string | null;
-            /** Fallback Model */
-            fallback_model?: string | null;
-            /** Icon */
-            icon?: string | null;
-            /** Max Tokens */
-            max_tokens?: number | null;
-            /** Methodology */
-            methodology?: string | null;
-            /** Model */
-            model?: string | null;
-            /** Name */
-            name?: string | null;
-            /** Recommended Tools */
-            recommended_tools?: string[] | null;
-            /** Role */
-            role?: string | null;
-            /** Specialization */
-            specialization?: string | null;
-            /** System Prompt Override */
-            system_prompt_override?: string | null;
-        };
-        /**
          * CustomIntegrationRequest
          * @description Request to generate a custom integration from documentation.
          */
@@ -9756,45 +10123,6 @@ export interface components {
             total: number;
         };
         /**
-         * ForkAgentRequest
-         * @description Optional payload when forking. `new_name` lets the UI set the copy's
-         *     name up front instead of taking the default "<source> (copy)". Any
-         *     editable field that is sent (even as null) replaces the source's value
-         *     in the same insert.
-         */
-        ForkAgentRequest: {
-            /** Color */
-            color?: string | null;
-            /** Description */
-            description?: string | null;
-            /** Enable Thinking */
-            enable_thinking?: boolean | null;
-            /** Extra Principles */
-            extra_principles?: string | null;
-            /** Fallback Model */
-            fallback_model?: string | null;
-            /** Icon */
-            icon?: string | null;
-            /** Max Tokens */
-            max_tokens?: number | null;
-            /** Methodology */
-            methodology?: string | null;
-            /** Model */
-            model?: string | null;
-            /** Name */
-            name?: string | null;
-            /** New Name */
-            new_name?: string | null;
-            /** Recommended Tools */
-            recommended_tools?: string[] | null;
-            /** Role */
-            role?: string | null;
-            /** Specialization */
-            specialization?: string | null;
-            /** System Prompt Override */
-            system_prompt_override?: string | null;
-        };
-        /**
          * GeneralConfig
          * @description General application settings.
          */
@@ -9812,16 +10140,12 @@ export interface components {
         };
         /**
          * GenerateAgentRequest
-         * @description Request body for AI-assisted agent generation (issue #80 Phase 2).
-         *
-         *     First call: pass ``description`` only.
-         *     Refinement: also pass ``current_draft`` and ``feedback``.
+         * @description First call: ``description`` only. Refinement: also the ``current_draft``
+         *     manifest and ``feedback``.
          */
         GenerateAgentRequest: {
             /** Current Draft */
-            current_draft?: {
-                [key: string]: unknown;
-            } | null;
+            current_draft?: string | null;
             /** Description */
             description: string;
             /** Feedback */
@@ -11518,6 +11842,14 @@ export interface components {
              */
             version: 1;
         };
+        /**
+         * StageChangeRequest
+         * @description Why a person reverts a rule, or releases it.
+         */
+        StageChangeRequest: {
+            /** Reason */
+            reason: string;
+        };
         /** StartRunRequest */
         StartRunRequest: {
             /**
@@ -12050,6 +12382,23 @@ export interface components {
             /** User Id */
             user_id: string;
         };
+        /** WebhookIn */
+        WebhookIn: {
+            /** Area */
+            area?: string | null;
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /** Secret */
+            secret?: string | null;
+            /**
+             * Url
+             * @default
+             */
+            url: string;
+        };
         /**
          * WorkflowAutonomyBody
          * @description One workflow's tier. No tier returns it to the fleet flags.
@@ -12182,8 +12531,6 @@ export interface components {
             purpose: string | null;
             /** Steps */
             steps?: string[];
-            /** Tools */
-            tools?: string[];
         };
         /**
          * WorkflowRunCancelRequest
@@ -12453,76 +12800,6 @@ export interface operations {
             };
         };
     };
-    get_api_agents_custom: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_agents_custom: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CustomAgentCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_agents_custom__meta_tools: {
         parameters: {
             query?: never;
@@ -12593,111 +12870,6 @@ export interface operations {
             };
         };
     };
-    get_api_agents_custom_agent_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                agent_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_api_agents_custom_agent_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                agent_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    patch_api_agents_custom_agent_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                agent_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CustomAgentUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     post_api_agents_source_agent_id_fork: {
         parameters: {
             query?: never;
@@ -12709,11 +12881,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["ForkAgentRequest"] | null;
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             201: {
@@ -13421,7 +13589,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AuditPage"];
                 };
             };
             /** @description Validation Error */
@@ -13492,13 +13660,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description One entry per line, then a closing `{"checkpoint": {"seq", "hash"}}` line. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/x-ndjson": unknown;
                 };
             };
             /** @description Validation Error */
@@ -13609,6 +13777,103 @@ export interface operations {
             };
         };
     };
+    get_api_audit_feed_webhook: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_audit_feed_webhook: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebhookIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_audit_feed_webhook_test: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_audit_poll: {
         parameters: {
             query?: {
@@ -13638,7 +13903,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AuditPollPage"];
                 };
             };
             /** @description Validation Error */
@@ -13738,7 +14003,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AuditVerification"];
                 };
             };
             /** @description Validation Error */
@@ -18093,6 +18358,37 @@ export interface operations {
             };
         };
     };
+    "get_api_detection-rules_metrics": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "get_api_detection-rules_overlay-only": {
         parameters: {
             query?: never;
@@ -18267,6 +18563,7 @@ export interface operations {
                 flag?: ("noisy" | "quiet" | "accurate" | "silent" | "drift" | "caught") | null;
                 rules?: string | null;
                 has_exceptions?: boolean;
+                stage?: ("shadow" | "live" | "off") | null;
             };
             header?: {
                 authorization?: string | null;
@@ -18403,6 +18700,113 @@ export interface operations {
         };
     };
     "get_api_detection-rules_rules_rule_id_findings": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                rule_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_rules_rule_id_release": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                rule_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StageChangeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_rules_rule_id_revert": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                rule_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StageChangeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_detection-rules_rules_rule_id_stages": {
         parameters: {
             query?: never;
             header?: {
@@ -23228,6 +23632,147 @@ export interface operations {
             };
         };
     };
+    get_api_v1_agents: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentManifestListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_v1_agents_agent_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentManifestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_v1_agents_agent_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentManifestBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentManifestResponse"];
+                };
+            };
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentManifestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_v1_agents_agent_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_v1_approvals: {
         parameters: {
             query?: {
@@ -23428,6 +23973,333 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApprovalActionResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_v1_audit_entries: {
+        parameters: {
+            query?: {
+                limit?: number;
+                since?: string | null;
+                until?: string | null;
+                actor?: string | null;
+                person?: string | null;
+                kind?: string | null;
+                area?: string | null;
+                object?: string | null;
+                outcome?: string | null;
+                attribution?: string | null;
+                after?: number | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_v1_audit_export: {
+        parameters: {
+            query?: {
+                since?: string | null;
+                until?: string | null;
+                actor?: string | null;
+                person?: string | null;
+                kind?: string | null;
+                area?: string | null;
+                object?: string | null;
+                outcome?: string | null;
+                attribution?: string | null;
+                after?: number | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One entry per line, then a closing `{"checkpoint": {"seq", "hash"}}` line. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-ndjson": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_v1_audit_poll: {
+        parameters: {
+            query?: {
+                limit?: number;
+                since?: string | null;
+                until?: string | null;
+                actor?: string | null;
+                person?: string | null;
+                kind?: string | null;
+                area?: string | null;
+                object?: string | null;
+                outcome?: string | null;
+                attribution?: string | null;
+                after?: number | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditPollPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_v1_audit_verify: {
+        parameters: {
+            query?: {
+                first?: number | null;
+                last?: number | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditVerification"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_v1_autonomy: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_v1_autonomy: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CeilingBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_v1_autonomy_resume: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_v1_autonomy_tools: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolClassEntry"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_v1_autonomy_tools_name: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolClassBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolClassEntry"];
                 };
             };
             /** @description Validation Error */

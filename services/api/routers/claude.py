@@ -12,8 +12,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from core.agents.builtins import blank_model
 from core.agents.enablement import disabled_agent_ids, disabled_message
+from core.agents.manager import AGENT_COMPONENT
 from core.agents.projections import agent_route
 from core.agents.prompts import _skills_section
 from core.auth import tool_principal
@@ -33,12 +33,9 @@ from core.llm.chat_layers import (
 )
 from core.llm.defaults import DEFAULT_MODEL
 from core.llm.providers.registry import get_registry
-from core.llm.router.router import get_provider_spec
 from core.llm.target import (
     component_fallback,
-    first_servable,
     model_for,
-    note_fallback,
     provider_for,
     resolve_effort,
 )
@@ -47,6 +44,11 @@ from core.routing import Auth, RouterMeta
 from core.secrets import get_secret
 from core.storage.models import User
 from core.telemetry import inject_traceparent
+from core.workflows.playbook_resolver import (
+    CAPABILITIES,
+    _bound_capabilities,
+    _tool_catalogue,
+)
 from core.workflows.workflows_service import WorkflowsService
 from services.api.errors import INTERNAL_ERROR_DETAIL
 from services.api.middleware.auth import get_current_user
@@ -157,68 +159,19 @@ def _agent_for(agent_id: Optional[str]) -> Any:
         return None
 
 
-def _resolve_provider_model_for_request(agent: Any) -> Tuple[Optional[str], str]:
-    registry = get_registry()
-    category: str = "chat_default"
-    if agent is not None:
-        category = getattr(agent, "component_category", None) or "investigation"
-
-    resolved = registry.resolve_model_for_component(category)
+def _resolve_provider_model_for_request(
+    agent: Any,
+) -> Tuple[Optional[str], str, Optional[str], str]:
+    """(provider id, model, the assignment's fallback, component). Every agent
+    runs on the investigation assignment; chat with none on chat_default."""
+    category = AGENT_COMPONENT if agent is not None else "chat_default"
+    resolved = get_registry().resolve_model_for_component(category)
     if resolved is None:
         # Hard fallback (no provider/registry hit) — centralised so Ollama-only
         # deployments can override via DEFAULT_MODEL instead of hardcoding Claude.
-        return (None, DEFAULT_MODEL)
-
+        return (None, DEFAULT_MODEL, None, category)
     provider_id, assignment_model = resolved
-    return (
-        provider_id,
-        _servable_agent_model(
-            provider_id, assignment_model, agent, category, component_fallback(category)
-        ),
-    )
-
-
-def _servable_agent_model(
-    provider_id: str,
-    assignment_model: str,
-    agent: Any,
-    component: str = "",
-    component_fb: Optional[str] = None,
-) -> str:
-    """First of the agent's model, its fallback, the assignment model and the
-    assignment's own fallback that the resolved provider can serve.
-
-    When none of them can, the assignment model is returned unchanged.
-    ``chat_stream`` still runs ``model_for``, which substitutes.
-    """
-    primary = blank_model(getattr(agent, "model", None)) if agent is not None else None
-    fallback = (
-        blank_model(getattr(agent, "fallback_model", None))
-        if agent is not None
-        else None
-    )
-    if not primary and not fallback and not component_fb:
-        return assignment_model
-
-    # The named assignment provider only. provider_for substitutes the default
-    # when this id is missing, which would accept an agent model that provider
-    # never served.
-    try:
-        provider = get_provider_spec(provider_id)
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("assignment provider lookup failed: %s", exc)
-        provider = None
-    if provider is None:
-        return assignment_model
-
-    chosen = first_servable(
-        provider, (primary, fallback, assignment_model, component_fb)
-    )
-    if chosen is None:
-        return assignment_model
-    if chosen == component_fb and chosen not in (primary, fallback, assignment_model):
-        note_fallback(component, assignment_model, chosen)
-    return chosen
+    return (provider_id, assignment_model, component_fallback(category), category)
 
 
 class ContentBlock(BaseModel):
@@ -397,27 +350,36 @@ async def chat_stream(
         agent = _agent_for(request.agent_id)
         # Resolved here because this is the side that knows what an agent is: the
         # harness is handed a prompt, a model and a tool list, never an agent id.
-        provider_id, resolved_model = _resolve_provider_model_for_request(agent)
-        tools = (
-            list(agent.recommended_tools)
-            if agent is not None and agent.recommended_tools
-            else None
+        provider_id, resolved_model, fallback, component = (
+            _resolve_provider_model_for_request(agent)
         )
+        # An agent's needs as this deployment binds them, capabilities included. A
+        # tool it names that is not here is left out before binding, which would
+        # otherwise warn about it on every turn.
+        tools = None
+        if agent is not None and agent.recommended_tools:
+            catalogue = _tool_catalogue(registry)
+            needs = [
+                n
+                for n in agent.recommended_tools
+                if n in CAPABILITIES or n in catalogue
+            ]
+            tools = [t["id"] for t in _bound_capabilities(needs, catalogue)]
 
         # Only what holds for the whole conversation, so the cache carries over.
+        # An agent's prompt is its rendered manifest, which alone decides whether
+        # it carries the skills index; chat with no agent is given it here, read
+        # per turn so a newly saved skill shows on the next message.
         system = [agent.system_prompt if agent is not None else "", LATEST_ONLY]
         if case_id:
             system.append(RULES)
-        # Chat never goes through prompt_for_row, so a granted read_skill would
-        # have no index. Read per turn so a newly saved skill shows on the next
-        # message; skipped when an agent's own prompt already carries it.
-        if "<available_skills>" not in "\n\n".join(p or "" for p in system):
+        if agent is None:
             system.append(_skills_section(granted_ids(tools), None))
 
         active_provider = provider_for(provider_id)
         if active_provider is None:
             raise HTTPException(status_code=503, detail=NO_PROVIDER_DETAIL)
-        model = model_for(active_provider, resolved_model)
+        model = model_for(active_provider, resolved_model, fallback, component)
         provider_type = active_provider.provider_type
 
         # Whatever MCP integrations are connected right now (VirusTotal, OTX,

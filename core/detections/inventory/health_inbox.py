@@ -1,5 +1,9 @@
 """The rule-health flags as each person's inbox, behind the console's bell.
 
+Vigil's own moves are entries too, until the rule's stage moves again: a Revert
+of a live rule (live -> shadow, check "revert") and turning a live or shadow rule
+off (check "off", e.g. its new version failed lint). Their ids are negative.
+
 An entry is one open flag (``catalog.open_flags``): a rule whose latest Runs,
 Sees, Quiet, Accurate, Noisy, Silent or drift change went pass -> fail. It is
 known by that change row's id, so a check that clears and breaks again comes
@@ -37,7 +41,7 @@ RULES_LINKED = 200
 
 def inbox(user_id: str) -> Dict[str, Any]:
     """The open flags, newest first, each marked read or not for ``user_id``."""
-    return _inbox(catalog.open_flags(), _read_ids(user_id))
+    return _inbox(_open(), _read_ids(user_id))
 
 
 def mark_read(
@@ -45,11 +49,16 @@ def mark_read(
 ) -> Dict[str, Any]:
     """Marks ``change_ids`` read for ``user_id``, or every open flag when None;
     returns the inbox after. An id that names no open flag is ignored."""
-    flags = catalog.open_flags()
+    flags = _open()
     open_ids = {flag["change_id"] for flag in flags}
     picked = open_ids if change_ids is None else open_ids & set(change_ids)
     read = _update_read(user_id, lambda before: (before & open_ids) | picked)
     return _inbox(flags, read)
+
+
+def _open() -> List[Dict[str, Any]]:
+    flags = catalog.open_flags() + catalog.open_vigil_moves()
+    return sorted(flags, key=lambda f: f["since"], reverse=True)
 
 
 def _inbox(flags: List[Dict[str, Any]], read: Set[int]) -> Dict[str, Any]:

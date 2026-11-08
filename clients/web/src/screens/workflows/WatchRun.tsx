@@ -570,6 +570,13 @@ function hypothesisOf(d: WfRunDetail): string | null {
   return lines.map((l) => l.trim()).filter(Boolean).join(' · ') || null
 }
 
+/** The operator manifest a run ran under: the run event's spec names its plugin, which for an operator agent is
+ *  the manifest's id (agent-serve stamps it there, and the projection reads it back as kernel.plugin). */
+function manifestIdOf(d: WfRunDetail): string | null {
+  const plugin = (d.projection as { kernel?: { plugin?: unknown } } | null | undefined)?.kernel?.plugin
+  return typeof plugin === 'string' && plugin.startsWith('custom-') ? plugin : null
+}
+
 function Header({ d, hypothesis, tail, onBack }: { d: WfRunDetail; hypothesis: string | null; tail: string | null; onBack: () => void }) {
   const name = d.workflow_name
   const caseId = d.hunt?.scope?.case_id ?? d.trigger_context?.case_id
@@ -578,7 +585,12 @@ function Header({ d, hypothesis, tail, onBack }: { d: WfRunDetail; hypothesis: s
   const about = [typeof caseId === 'string' && caseId ? `case ${caseId}` : null, huntName].filter(Boolean).join(': ')
   const workflow = name ? `${workflowTitle(name)} ${typeof d.workflow_version === 'number' ? versionText(d) : `(${versionText(d)})`}` : versionText(d)
   const lead = `${workflow}${about ? ` · ${about}` : ''}`
-  const subtitle = ['Run ', <span key="id" className="font-mono" title={d.run_id}>{d.run_id.slice(0, 8)}</span>, ` · ${lead}${tail ? `${/[.?!]$/.test(lead) ? ' ' : '. '}${tail}` : ''}`]
+  const manifest = manifestIdOf(d)
+  const subtitle = [
+    'Run ', <span key="id" className="font-mono" title={d.run_id}>{d.run_id.slice(0, 8)}</span>,
+    ...(manifest ? [' · manifest ', <span key="manifest" className="font-mono">{manifest}</span>] : []),
+    ` · ${lead}${tail ? `${/[.?!]$/.test(lead) ? ' ' : '. '}${tail}` : ''}`,
+  ]
   return (
     <div className="flex items-center gap-3">
       <button

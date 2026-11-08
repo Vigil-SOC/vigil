@@ -55,6 +55,7 @@ def build_start_job(
     *,
     actor: Optional[str] = None,
     origin: Optional[str] = None,
+    case_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     job = {
         "schema_version": JOB_SCHEMA_VERSION,
@@ -73,6 +74,9 @@ def build_start_job(
         job["actor"] = actor
     if origin:
         job["origin"] = origin
+    # Only the case a run was started on; the worker puts it on the run's span.
+    if case_id:
+        job["case_id"] = str(case_id)
     return job
 
 

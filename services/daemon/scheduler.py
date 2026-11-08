@@ -314,7 +314,8 @@ class TaskScheduler:
                 "first) read the intrusion sets and reports OpenCTI updated most "
                 "recently, pass the techniques they use or name to "
                 "identify_gaps(techniques=...), and treat each id in "
-                "techniques_checked.gaps as a gap."
+                "techniques_checked.gaps as a gap; techniques_checked.unknown lists ids "
+                "that are not active ATT&CK techniques: never a gap, never a Case."
             )
         from services.daemon.orchestrator import insert_intake_trigger
 

@@ -1,7 +1,7 @@
 # Prometheus scrape configuration for Vigil SOC
 # Scrapes Prometheus-format metrics from daemon and backend (the OTEL
-# PrometheusMetricReader registered on prometheus_client's default registry;
-# populated when VIGIL_OTEL_ENABLED=true) and from the OTEL Collector's
+# PrometheusMetricReader registered on prometheus_client's default registry,
+# always populated) and from the OTEL Collector's
 # built-in Prometheus exporter.
 
 global:

@@ -1,8 +1,8 @@
-"""A Case shows the proof card of each rule version that raised its alerts (#4013).
+"""A Case shows the proof card of each rule version that raised its alerts.
 
-Its alerts are traced as Fires traces them (#3972): to the version
-``resolve_findings`` maps each to, else by the rule name or title the alert
-carries when exactly one firing copy carries it. One version is one card, with
+Its alerts are traced as Fires traces them: to the version ``resolve_findings``
+maps each to, else by the rule name or title the alert carries when exactly one
+rule carries it (a rule's copies counted once). One version is one card, with
 its stored checks, worst problem and stage; alerts traced to none are counted.
 """
 
@@ -170,18 +170,21 @@ def test_an_alert_naming_no_rule_is_counted_with_why(resolve):
     assert len(out["rules"]) == 1
     assert out["unresolved"] == 1
     assert out["unresolved_findings"] == [
-        {"finding_id": "f2", "reason": "f2: no rule id"}
+        {"finding_id": "f2", "reason": "no listed rule is named 'Nothing carries this'"}
     ]
 
 
-def _rule(rule_id, name, source="wazuh"):
+def _rule(rule_id, name, source="wazuh", language="wazuh", origin=None):
     return SimpleNamespace(
         id=rule_id,
         name=name,
         source=source,
+        language=language,
         native_key=f"key-{rule_id}",
         status="active",
         latest_version=2,
+        origin_rule_id=origin,
+        link_kind="same_id" if origin else None,
     )
 
 
@@ -220,23 +223,93 @@ def test_the_title_is_the_last_fallback(resolve):
     assert [c["rule_id"] for c in out["rules"]] == [5]
 
 
-def test_a_repo_origin_sharing_the_name_is_not_a_second_carrier(resolve):
+def test_a_linked_copy_and_its_repo_origin_are_one_rule(resolve):
+    # The SIEM copy fires, so the card is its own.
     session = _Session(
-        [_rule(5, "Lab rule"), _rule(6, "Lab rule", source="repo:detections")],
+        [
+            _rule(5, "Lab rule", source="splunk", language="splunk", origin=6),
+            _rule(6, "Lab rule", source="repo:detections", language="splunk"),
+        ],
         [_version(5, 1, datetime(2026, 11, 1, tzinfo=timezone.utc))],
     )
     out = catalog.case_rules(session, [_finding("f1", title="Lab rule")])
     assert [c["rule_id"] for c in out["rules"]] == [5]
 
 
-def test_a_name_two_firing_copies_carry_traces_to_neither(resolve):
+def test_an_overlay_rules_copies_under_one_name_are_one_rule(resolve):
+    # The overlay saves a rule's Elastic and Sigma copies under one name; Fires
+    # counts a name-only alert on it once, and so does the Case: on the copy
+    # Vigil runs.
+    session = _Session(
+        [
+            _rule(8, "Overlay rule", source="repo:overlay", language="sigma"),
+            _rule(9, "Overlay rule", source="repo:overlay", language="elastic"),
+        ],
+        [_version(9, 1, datetime(2026, 11, 1, tzinfo=timezone.utc))],
+    )
+    out = catalog.case_rules(session, [_finding("f1", title="Overlay rule")])
+    assert [(c["rule_id"], c["by_name"]) for c in out["rules"]] == [(9, 1)]
+    assert out["unresolved"] == 0
+
+
+def test_an_unlinked_repo_rule_with_the_name_is_a_second_rule(resolve):
+    session = _Session(
+        [_rule(5, "Lab rule"), _rule(6, "Lab rule", source="repo:detections")],
+        [_version(5, 1, datetime(2026, 11, 1, tzinfo=timezone.utc))],
+    )
+    out = catalog.case_rules(session, [_finding("f1", title="Lab rule")])
+    assert out["rules"] == []
+    assert out["unresolved_findings"][0]["reason"] == (
+        "the name 'Lab rule' is shared by 2 rules, so the alert cannot be traced "
+        "to one"
+    )
+
+
+def test_a_name_two_rules_carry_traces_to_neither(resolve):
     session = _Session(
         [_rule(5, "Lab rule"), _rule(6, "Lab rule", source="splunk")],
         [_version(5, 1, datetime(2026, 11, 1, tzinfo=timezone.utc))],
     )
     out = catalog.case_rules(session, [_finding("f1", title="Lab rule")])
     assert out["rules"] == []
-    assert out["unresolved"] == 1
+    assert "shared by 2 rules" in out["unresolved_findings"][0]["reason"]
+
+
+def test_an_alert_with_no_name_says_so(resolve):
+    out = catalog.case_rules(_Session(), [_finding("f1", title=None)])
+    assert out["unresolved_findings"] == [
+        {"finding_id": "f1", "reason": "the alert carries no rule name or title"}
+    ]
+
+
+def test_an_alert_naming_a_rule_keeps_why_that_rule_is_unknown(resolve):
+    # An overlay finding names its rule and version: when that version is not
+    # stored and no rule carries its name, the reason is the version's.
+    ctx = {"detection_rule": {"rule_id": 16720, "version": 9}}
+    resolve.traced["f1"] = {
+        "resolved": False,
+        "reason": "rule 16720 v9 is not in the inventory",
+    }
+    out = catalog.case_rules(_Session(), [_finding("f1", title="Gone", ctx=ctx)])
+    assert out["unresolved_findings"][0]["reason"] == (
+        "rule 16720 v9 is not in the inventory"
+    )
+
+
+def test_an_alert_naming_an_unknown_rule_id_still_falls_back_to_its_name(resolve):
+    # As Fires: any alert that does not resolve falls back to its name.
+    alert = {
+        "rule_name": "Lab rule",
+        "source_evidence": {
+            "records": [{"_source": {"kibana.alert.rule.rule_id": "not-synced"}}]
+        },
+    }
+    session = _Session(
+        [_rule(5, "Lab rule", source="elastic", language="elastic")],
+        [_version(5, 1, datetime(2026, 11, 1, tzinfo=timezone.utc))],
+    )
+    out = catalog.case_rules(session, [_finding("f1", ctx=alert)])
+    assert [(c["rule_id"], c["by_name"]) for c in out["rules"]] == [(5, 1)]
 
 
 def test_an_alert_older_than_every_version_stays_unresolved(resolve):

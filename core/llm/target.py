@@ -9,8 +9,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Optional, Set, Tuple
 
-from core.agents.builtins import blank_model
-
 if TYPE_CHECKING:
     from core.llm.router.router import ProviderSpec
 
@@ -23,6 +21,14 @@ _fallbacks_logged: Set[Tuple[str, str, str]] = set()
 # Vertex and Bedrock resell Claude, so this is an allowlist, not a test for
 # Anthropic.
 _SERVES_CLAUDE = frozenset({"anthropic", "vertex", "bedrock"})
+
+
+def blank_model(value: object) -> Optional[str]:
+    """A model id with surrounding whitespace removed. Blank is unset."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def provider_for(provider_id: Optional[str]):

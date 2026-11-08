@@ -6,12 +6,12 @@
    ai_model_configs. Hosted-or-local is the setup wizard's rule
    (providerResidency), not a second one.
    ============================================================ */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../../shared/icons'
-import { ConfirmDialog, EmptyState, Select, SettingsCard, TextInput } from '../../shared/ui'
+import { ConfirmDialog, EmptyState, Select, SettingsCard } from '../../shared/ui'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { NotMeasured } from '../../shared/NotMeasured'
-import { agentsApi, type AIModelInfo, type ComponentAssignment } from '../../services/api'
+import { type AIModelInfo, type ComponentAssignment } from '../../services/api'
 import type { BifrostKey, BifrostProvider } from '../../services/bifrostApi'
 import { bifrostStaysOnSite, residencyCopy } from '../setup/providerResidency'
 import { useToast } from '../../shell/toast'
@@ -188,16 +188,6 @@ const rowFor = (c: string, a: ComponentAssignment | undefined): RowState =>
   a
     ? { inherit: false, providerId: a.provider_id, modelId: a.model_id, effort: savedEffort(a) }
     : { inherit: c !== CHAT_DEFAULT_KEY, providerId: '', modelId: '', effort: '' }
-
-interface CustomAgentRow {
-  id: string
-  name: string
-  model: string
-  fallback_model: string
-  saved_model: string
-  saved_fallback_model: string
-  thinking: boolean
-}
 
 function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignment> } & SectionProps) {
   const { components, assignments, models, phase, error, reload, assign, clearAssign } = ma
@@ -389,8 +379,6 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
     return list
   }
 
-  const custom = useCustomAgents(notify)
-
   return (
     <SettingsCard
       wide
@@ -515,109 +503,20 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                     </tr>
                   )
                 })}
-                {custom.rows.map((row) => (
-                  <tr key={row.id}>
-                    <td style={{ minWidth: 220, maxWidth: 300 }}>
-                      <div className="aim-who">{row.name}</div>
-                      <div className="aim-note">Custom agent · {row.id}</div>
-                    </td>
-                    <td>
-                      <TextInput
-                        value={row.model}
-                        placeholder="Assignment model"
-                        onChange={(e) => custom.edit(row.id, { model: e.target.value })}
-                        onBlur={(e) => custom.save(row, 'model', e.target.value)}
-                      />
-                    </td>
-                    <td>
-                      <TextInput
-                        value={row.fallback_model}
-                        placeholder="Stops"
-                        onChange={(e) => custom.edit(row.id, { fallback_model: e.target.value })}
-                        onBlur={(e) => custom.save(row, 'fallback_model', e.target.value)}
-                      />
-                    </td>
-                    <td>{row.thinking ? 'On' : 'Off'}</td>
-                    <td className="aim-nowrap col-low"><NotMeasured /></td>
-                    <td className="col-act" />
-                  </tr>
-                ))}
               </tbody>
             </table>
           </div>
-          {custom.phase === 'loading' && <EmptyState loading compact icon="sparkle" title="Loading custom agents…" />}
-          {custom.phase === 'error' && (
-            <EmptyState error compact icon="alert" title="Couldn’t load custom agents" body={custom.error} primary={{ label: 'Retry', onClick: custom.load, icon: 'refresh' }} />
-          )}
         </>
       )}
       <ConfirmDialog
         open={!!pending}
         danger={false}
         title="Change the default model?"
-        body="Chat (Ask Vigil) is the model every agent without its own assignment falls back to, including custom agents. The change is logged with your name."
+        body="Chat (Ask Vigil) is the model every agent without its own assignment falls back to. The change is logged with your name."
         confirmLabel="Change default"
         onConfirm={confirm}
         onClose={cancel}
       />
     </SettingsCard>
   )
-}
-
-function useCustomAgents(notify: SectionProps['notify']) {
-  const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading')
-  const [error, setError] = useState<string | null>(null)
-  const [rows, setRows] = useState<CustomAgentRow[]>([])
-
-  const load = useCallback(() => {
-    setPhase('loading')
-    agentsApi
-      .listCustom()
-      .then((res) => {
-        const agents = (res.data?.agents || []) as Array<{
-          id: string
-          name?: string
-          model?: string | null
-          fallback_model?: string | null
-          enable_thinking?: boolean | null
-        }>
-        setRows(
-          agents.map((a) => ({
-            id: a.id,
-            name: a.name || a.id,
-            model: a.model || '',
-            fallback_model: a.fallback_model || '',
-            saved_model: a.model || '',
-            saved_fallback_model: a.fallback_model || '',
-            thinking: !!a.enable_thinking,
-          })),
-        )
-        setPhase('ready')
-      })
-      .catch((e) => {
-        setError((e as { message?: string })?.message || 'Couldn’t load custom agents.')
-        setPhase('error')
-      })
-  }, [])
-
-  useEffect(() => { load() }, [load])
-
-  const edit = (id: string, patch: Partial<CustomAgentRow>) =>
-    setRows((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)))
-
-  const save = async (row: CustomAgentRow, field: 'model' | 'fallback_model', value: string) => {
-    const next = value.trim()
-    const stored = field === 'model' ? row.saved_model : row.saved_fallback_model
-    if (next === stored.trim()) return
-    const savedKey = field === 'model' ? 'saved_model' : 'saved_fallback_model'
-    try {
-      await agentsApi.updateCustom(row.id, { [field]: next || null })
-      edit(row.id, { [field]: next, [savedKey]: next })
-      notify('ok', `${row.name} saved.`)
-    } catch (e) {
-      notify('err', (e as { message?: string })?.message || `Failed to save ${row.name}.`)
-    }
-  }
-
-  return { phase, error, rows, load, edit, save }
 }

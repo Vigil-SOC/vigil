@@ -728,7 +728,7 @@ def add_evidence(
 
 @router.get("/{case_id}/rules", response_model=CaseRulesResponse)
 def get_case_rules(case_id: str, session: UnitOfWorkSession):
-    """The proof card of each rule version that raised the case's alerts (#4013).
+    """The proof card of each rule version that raised the case's alerts.
 
     Each linked finding is traced to the rule version that fired it as the
     Detections page traces it; one version is one card, with its stored checks,
