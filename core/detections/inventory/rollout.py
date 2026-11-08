@@ -42,7 +42,7 @@ are not applied; alerts the SIEM itself raises are never filtered.
 The sweep (after ``sync_repos``) then writes a stage row (actor 'system', proof
 holding the numbers) for each move that is due: shadow -> live after a quiet,
 passing week with checks['sees'] pass and checks['lint'] pass (at most
-the stored promotion cap a day across all rules (``rollout_limits``, #4058;
+the stored promotion cap a day across all rules (``rollout_limits``;
 its shadow days and hit ceiling are stored there too and read on every sweep); a copy with no lint result yet waits
 for the sync that lints it), live -> shadow when half its findings are judged
 not real (``accurate.verdicts``: the latest analyst determination wins), a loud
