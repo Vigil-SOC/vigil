@@ -3,7 +3,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { errorText } from '../../shared/errorText'
 import { utcDayClock } from '../../shared/utc'
 import { detectionRulesApi, type RuleStages as Stages } from '../../services/api'
-import { stageLine, who, type Stage, type StageFields } from './ruleStage'
+import { stageLine, waitingNote, who, type Stage, type StageFields } from './ruleStage'
 
 const STAGE_NAME: Record<Stage, string> = { shadow: 'Shadow', live: 'Live', off: 'Off' }
 
@@ -30,6 +30,7 @@ export default function RuleStages({ ruleId, row, asking: askFirst, onChanged }:
   useEffect(() => { load() }, [ruleId])
 
   const line = stageLine(row)
+  const waiting = waitingNote(row)
   const action = !canWrite || !line ? null : line.live ? 'revert' : line.held ? 'release' : null
   const changed = () => { load(); onChanged() }
   if (!data) {
@@ -63,7 +64,9 @@ export default function RuleStages({ ruleId, row, asking: askFirst, onChanged }:
         </ul>
       )}
       <p className="de-x-none">
-        {line?.live
+        {waiting
+          ? waiting.panel
+          : line?.live
           ? 'Revert takes it out of production: analysts stop getting its alerts, and Vigil keeps running it in shadow until a person releases it.'
           : line?.held
             ? 'Held in shadow: it runs but alerts nobody, and stays there until a person releases it.'

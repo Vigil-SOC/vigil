@@ -9,7 +9,7 @@ import { Empty, Failure } from '../shared/x1'
 import RuleExceptions, { KEEP_DAYS } from './RuleExceptions'
 import RuleFindings from './RuleFindings'
 import RuleStages from './RuleStages'
-import { stageLine, type Stage, type StageFields } from './ruleStage'
+import { stageLine, waitingNote, type Stage, type StageFields } from './ruleStage'
 import RolloutMetrics from './RolloutMetrics'
 import { useRolloutMetrics } from './useRolloutMetrics'
 import FindingPopup from '../dashboard/FindingPopup'
@@ -543,6 +543,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
             const fdOpen = open?.id === r.rule_id && open.what === 'findings'
             const stOpen = open?.id === r.rule_id && (open.what === 'stages' || open.what === 'revert')
             const line = stageLine(r)
+            const waiting = waitingNote(r)
             const siemOnly = r.fires === 0 && (r.siem_alerts ?? 0) > 0
             const fired = siemOnly ? `${n(r.siem_alerts ?? 0)} in SIEM` : r.health === 'no_fire_data' ? 'No data' : r.health === 'never_fired' ? 'Never' : 'None'
             return (
@@ -556,7 +557,14 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                     </div>
                   )}
                   <div className="de-meta">
-                    <span>{!r.checks_run ? 'Not checked' : r.checks_passing ? plural(r.checks_passing, 'check passes', 'checks pass') : 'No check passes'}</span>
+                    {waiting ? (
+                      <span title={waiting.title}>
+                        {waiting.text}
+                        {waiting.href && <> (<a className="de-link" href={waiting.href} target="_blank" rel="noreferrer">{waiting.link}</a>)</>}
+                      </span>
+                    ) : (
+                      <span>{!r.checks_run ? 'Not checked' : r.checks_passing ? plural(r.checks_passing, 'check passes', 'checks pass') : 'No check passes'}</span>
+                    )}
                     {line && <span className={`de-st-line${line.amber ? ' amber' : ''}`} title={line.title || undefined}>· {line.text}</span>}
                     {line?.live && canWrite && (
                       <span>· <button type="button" className="de-link de-st-revert" onClick={() => setOpen({ id: r.rule_id, what: 'revert' })}>Revert</button></span>

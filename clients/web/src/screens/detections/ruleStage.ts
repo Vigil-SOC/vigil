@@ -17,6 +17,51 @@ export interface StageFields {
   /** A person's Revert holds it in shadow until a person releases it. */
   held?: boolean
   held_by?: string | null
+  /** A live Wazuh copy the manager hasn't loaded yet, so it runs nowhere: where its
+   * deploy got (its PR, its file already on the default branch, or the error). */
+  waiting?: { pr_url?: string; in_repo?: string; error?: string } | null
+}
+
+export interface WaitingNote {
+  /** Stands in for the checks count on the rule's line: they are from its shadow runs. */
+  text: string
+  title: string
+  /** The deploy PR, and how the line names it. */
+  href?: string
+  link?: string
+  /** The History panel's line. */
+  panel: string
+}
+
+/** What a live Wazuh copy waits for before it runs anywhere; null once the manager runs it. */
+export function waitingNote(r: StageFields): WaitingNote | null {
+  const w = r.stage === 'live' ? r.waiting : null
+  if (!w) return null
+  const until = 'Live, but not running yet: it runs nowhere until'
+  if (w.pr_url) {
+    const num = /\/pull\/(\d+)/.exec(w.pr_url)?.[1]
+    const link = num ? `PR #${num}` : 'its PR'
+    return {
+      text: 'Waiting for the PR merge',
+      title: `${until} ${link} is merged and the Wazuh manager loads its file.`,
+      href: w.pr_url,
+      link,
+      panel: `${until} ${link} is merged and the Wazuh manager loads its file. Revert to shadow closes the PR.`,
+    }
+  }
+  if (w.in_repo) {
+    const why = `${until} the Wazuh manager loads its file, already in ${w.in_repo}.`
+    return { text: 'Waiting for Wazuh to load it', title: why, panel: why }
+  }
+  if (w.error) {
+    return {
+      text: 'Not running yet: its deploy PR failed',
+      title: w.error,
+      panel: `${until} a deploy PR is merged; opening it failed: ${w.error}. Vigil tries again on its next sweep.`,
+    }
+  }
+  const why = `${until} a deploy PR is merged; Vigil has opened none for this version.`
+  return { text: 'Not running yet: no deploy PR', title: why, panel: why }
 }
 
 export interface StageLine {
