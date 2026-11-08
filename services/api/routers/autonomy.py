@@ -1,5 +1,5 @@
 """Set one investigate-kind workflow's own tier and floor (#3624) — console wiring.
-Also the rule-rollout limits (#4058): ``/rollout-limits``.
+Also the rule-rollout limits: ``/rollout-limits``.
 
 The ceiling and the tool classes are the frozen contract in
 ``core/api/v1/autonomy_router.py``, served at ``/api/v1/autonomy`` and here at

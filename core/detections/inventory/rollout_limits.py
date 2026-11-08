@@ -1,4 +1,4 @@
-"""The rule-rollout limits an operator may change (#4058).
+"""The rule-rollout limits an operator may change.
 
 Three numbers decide how fast Vigil moves a rule copy from shadow to live and
 when it pulls one back: the promotion cap per day, the days a copy stays in

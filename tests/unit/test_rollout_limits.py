@@ -1,4 +1,4 @@
-"""The promotion cap and the shadow exit rules are stored settings (#4058): the
+"""The promotion cap and the shadow exit rules are stored settings: the
 sweep reads them on every run, the API changes them with validation and an audit
 entry, and an unreadable or invalid value is the default, never a crash.
 
@@ -156,6 +156,7 @@ def test_the_metrics_text_names_the_stored_numbers(store):
     store.value = {"shadow_days": 14, "max_hits_per_day": 9}
     text = metrics.shadow_to_live([], NOW)["exit_criteria"]
     assert text.startswith("14 days in shadow") and "above 9 hits" in text
+    assert text.endswith("Sees and lint passed")
 
 
 # --- an unreadable or invalid stored value is the default --------------------
@@ -376,12 +377,50 @@ def db(monkeypatch):
     connection.DatabaseManager._instance = None
 
 
-@needs_pg
-def test_a_change_stores_the_row_and_an_audit_row_with_actor_and_old_to_new(db):
-    from sqlalchemy import select
+def _audit_rows(session, after):
+    """(actor, action, old, new) of rollout.limits changes after trail seq ``after``,
+    from the store write_config_audit used: the trail once installed, else
+    config_audit_log."""
+    from sqlalchemy import select, text
 
+    from core.audit import trail
     from core.storage.models import ConfigAuditLog
 
+    if trail.in_use(session):
+        payloads = session.execute(
+            text(
+                "SELECT payload FROM audit_trail WHERE seq > :after"
+                " AND payload->>'config_key' = 'rollout.limits' ORDER BY seq"
+            ),
+            {"after": after},
+        ).scalars()
+        return [
+            (p["actor"], p["verb"], p["old_value"], p["new_value"]) for p in payloads
+        ]
+    rows = session.execute(
+        select(ConfigAuditLog)
+        .where(ConfigAuditLog.config_key == "rollout.limits")
+        .order_by(ConfigAuditLog.id)
+    ).scalars()
+    return [(r.changed_by, r.action, r.old_value, r.new_value) for r in rows]
+
+
+def _trail_tip(session):
+    from sqlalchemy import text
+
+    from core.audit import trail
+
+    if not trail.in_use(session):
+        return 0
+    return session.execute(
+        text("SELECT coalesce(max(seq), 0) FROM audit_trail")
+    ).scalar()
+
+
+@needs_pg
+def test_a_change_stores_the_row_and_an_audit_row_with_actor_and_old_to_new(db):
+    with db.session_scope() as session:
+        after = _trail_tip(session)
     rollout_limits.update_limits(
         user_id="u-ana",
         caller_is_service=False,
@@ -394,16 +433,8 @@ def test_a_change_stores_the_row_and_an_audit_row_with_actor_and_old_to_new(db):
     )
     assert rollout_limits.read_limits() == rollout_limits.RolloutLimits(2, 14, 20)
     with db.session_scope() as session:
-        rows = (
-            session.execute(
-                select(ConfigAuditLog)
-                .where(ConfigAuditLog.config_key == "rollout.limits")
-                .order_by(ConfigAuditLog.id)
-            )
-            .scalars()
-            .all()
-        )
-        got = [(r.changed_by, r.action, r.old_value, r.new_value) for r in rows]
+        got = _audit_rows(session, after)
+    assert len(got) == 2
     assert got[0][:2] == ("u-ana", "create") and got[0][3]["shadow_days"] == 14
     assert got[1][0] == "u-ben" and got[1][2]["live_per_day"] == 5
     assert got[1][3]["live_per_day"] == 2
