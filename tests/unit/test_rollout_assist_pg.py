@@ -150,14 +150,27 @@ def db(monkeypatch):
                 "WHERE action_type IN ('promote_rule', 'deploy_rule')"
             )
         )
-        session.execute(text("DELETE FROM system_config WHERE key='autonomy.ceiling'"))
+    _forget_settings(manager)
     with manager.session_scope() as session:
         # Audit rows outlive a test and ids can be reused, so each test reads
         # only what was written since it began.
         SINCE.append(session.execute(text("SELECT now()")).scalar())
     yield manager
+    _forget_settings(manager)
     manager._engine.dispose()
     connection.DatabaseManager._instance = None
+
+
+def _forget_settings(manager):
+    """The stored settings these tests change or read (the autonomy ceiling, the
+    rollout limits), gone before and after each: no test reads another's."""
+    with manager.session_scope() as session:
+        session.execute(
+            text(
+                "DELETE FROM system_config "
+                "WHERE key IN ('autonomy.ceiling', 'rollout.limits')"
+            )
+        )
 
 
 @pytest.fixture
