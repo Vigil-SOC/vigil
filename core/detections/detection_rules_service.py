@@ -164,6 +164,35 @@ def deploy_host_refused(source: Dict[str, Any]) -> str:
     return GITHUB_ONLY
 
 
+_DEPLOY_SEGMENT = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def deploy_subdirectory_refused(source: Dict[str, Any]) -> str:
+    """Why this target's subdirectory may not go into a deploy PR's file path;
+    '' when it may.
+
+    The path is sent to the Git host with the token, so a ``..`` segment would
+    write outside the target's repo. One leading and one trailing slash are
+    trimmed; every segment must be non-empty, not ``.`` or ``..``, and made of
+    letters, digits, ``.``, ``_`` and ``-``.
+    """
+    sub = str(source.get("subdirectory") or "")
+    if sub.startswith("/"):
+        sub = sub[1:]
+    if sub.endswith("/"):
+        sub = sub[:-1]
+    if not sub:
+        return ""
+    for seg in sub.split("/"):
+        if seg in (".", "..") or not _DEPLOY_SEGMENT.fullmatch(seg):
+            return (
+                f"subdirectory {source.get('subdirectory')!r} is not allowed: use "
+                "folder names of letters, digits, '.', '_' and '-' separated by '/', "
+                "with no '..'"
+            )
+    return ""
+
+
 def _deploy_target_of(sources: List[Dict[str, Any]], fmt: str) -> Optional[Dict]:
     return next(
         (
@@ -543,6 +572,7 @@ class DetectionRulesService:
                         existing
                         or {"type": source_type, "format": format, "git_url": url}
                     ),
+                    "subdirectory": subdirectory,
                     "github_enterprise": bool(github_enterprise),
                 }
             )
@@ -663,7 +693,7 @@ class DetectionRulesService:
                 f"{source.get('git_url')} is a vendor's public repo; a deploy target "
                 "must be your own repo, since Vigil opens pull requests into it"
             )
-        refused = deploy_host_refused(source)
+        refused = deploy_host_refused(source) or deploy_subdirectory_refused(source)
         if refused:
             raise ValueError(refused)
         other = self.deploy_target(fmt)
