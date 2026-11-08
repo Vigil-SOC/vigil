@@ -202,3 +202,130 @@ def test_a_sweep_promotion_alone_shows_it_waiting_at_once(db, monkeypatch):
     stages.revert(rid, ("ana", "ana"), "not yet")
     row = _rows(rid)[rid]
     assert (row["stage"], row["waiting"]) == ("shadow", None)
+
+
+# --- a waiting copy's PR closed unmerged (#4120) -------------------------------
+
+TARGET = {"git_url": "https://github.com/acme/wazuh-rules.git", "format": "wazuh"}
+
+
+class _GitHub:
+    """GET /repos/acme/wazuh-rules/pulls/57, answering ``state``; every call kept."""
+
+    def __init__(self):
+        self.state, self.merged, self.calls = "open", False, []
+
+    def handle(self, request):
+        import httpx
+
+        self.calls.append((request.method, request.url.path))
+        assert request.headers["authorization"] == "Bearer ghp_test"
+        if request.url.path != "/repos/acme/wazuh-rules/pulls/57":
+            return httpx.Response(404, json={})
+        return httpx.Response(
+            200,
+            json={
+                "number": 57,
+                "state": self.state,
+                "merged_at": "2026-11-08T00:00:00Z" if self.merged else None,
+            },
+        )
+
+
+@pytest.fixture
+def github(monkeypatch):
+    import httpx
+
+    import core.secrets
+    from core.detections import detection_rules_service
+    from core.detections.inventory import rollout
+
+    fake = _GitHub()
+    real = httpx.Client
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda **kw: real(transport=httpx.MockTransport(fake.handle), **kw),
+    )
+    monkeypatch.setattr(
+        core.secrets, "get_secret", lambda key, default=None: "ghp_test"
+    )
+    monkeypatch.setattr(detection_rules_service, "deploy_host_refused", lambda t: None)
+    monkeypatch.setattr(rollout, "_stopped", lambda: False)
+    return fake
+
+
+def _watch(at):
+    from core.detections.inventory import rollout
+
+    copies = [c for c in rollout._copies() if c.stage in ("shadow", "live")]
+    gone = rollout.handed_off([c.rule_id for c in copies])
+    rollout._watch_waiting_prs(
+        [c for c in copies if c.rule_id not in gone], {"wazuh": TARGET}, at
+    )
+
+
+def test_a_pr_closed_unmerged_reads_closed_and_is_read_at_most_hourly(
+    db, github, monkeypatch
+):
+    from core.detections.inventory import catalog
+
+    monkeypatch.setattr(catalog, "_SCAN_EVERY", 0)
+    rid = _copy(db, "100131", checks={"deploy": {"version": 1, "pr_url": PR}})
+    now = datetime.now(timezone.utc)
+
+    _watch(now)
+    assert _rows(rid)[rid]["waiting"] == {"pr_url": PR, "pr_state": "open"}
+
+    github.state = "closed"
+    _watch(now + timedelta(minutes=30))  # inside the hour: GitHub isn't asked
+    assert len(github.calls) == 1
+    assert _rows(rid)[rid]["waiting"]["pr_state"] == "open"
+
+    _watch(now + timedelta(minutes=61))
+    assert len(github.calls) == 2
+    assert _rows(rid)[rid]["waiting"] == {"pr_url": PR, "pr_state": "closed"}
+
+    # A person reopens it: the next read says so.
+    github.state = "open"
+    _watch(now + timedelta(minutes=122))
+    assert _rows(rid)[rid]["waiting"]["pr_state"] == "open"
+
+
+def test_a_merged_pr_is_not_read_again(db, github, monkeypatch):
+    from core.detections.inventory import catalog
+
+    monkeypatch.setattr(catalog, "_SCAN_EVERY", 0)
+    rid = _copy(db, "100141", checks={"deploy": {"version": 1, "pr_url": PR}})
+    github.state, github.merged = "closed", True
+    now = datetime.now(timezone.utc)
+    _watch(now)
+    assert _rows(rid)[rid]["waiting"]["pr_state"] == "merged"
+    _watch(now + timedelta(days=2))
+    assert len(github.calls) == 1
+
+
+def test_only_live_waiting_wazuh_prs_in_the_targets_repo_are_read(db, github):
+    elsewhere = "https://github.com/someone/else/pull/57"
+    _copy(db, "100151", stage="shadow", checks={"deploy": {"version": 1, "pr_url": PR}})
+    _copy(db, "s2", language="splunk", checks={"deploy": {"version": 1, "pr_url": PR}})
+    _copy(db, "100152", checks={"deploy": {"version": 2, "pr_url": PR}})  # older v
+    _copy(db, "100153", checks={"deploy": {"version": 1, "pr_url": elsewhere}})
+    _copy(db, "100154", checks={"deploy": {"version": 1, "in_repo": "on main"}})
+    handed = _copy(db, "100155", checks={"deploy": {"version": 1, "pr_url": PR}})
+    _manager_rule(db, handed, "100155", "etc/rules/vigil_100155.xml")
+    _watch(datetime.now(timezone.utc))
+    # The token never goes to another repo, and nothing else was due.
+    assert github.calls == []
+
+
+def test_a_failed_read_records_nothing_and_raises_nothing(db, github, monkeypatch):
+    import httpx
+
+    from core.detections.inventory import catalog
+
+    monkeypatch.setattr(catalog, "_SCAN_EVERY", 0)
+    rid = _copy(db, "100161", checks={"deploy": {"version": 1, "pr_url": PR}})
+    github.handle = lambda request: httpx.Response(502, json={"message": "bad"})
+    _watch(datetime.now(timezone.utc))
+    assert _rows(rid)[rid]["waiting"] == {"pr_url": PR}
