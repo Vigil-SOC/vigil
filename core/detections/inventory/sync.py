@@ -198,22 +198,38 @@ def _insert_stages(
         proof = row.get("proof")
         hold = proof.get("hold") if isinstance(proof, dict) else None
         # A system write: a restore's pause must not roll back the stage rows.
+        actor = trail_actor(row["actor"])
+        # A person's move also names them as stage rows do, like a Revert's entry.
+        person = {"username": row["actor"]} if actor != row["actor"] else {}
         trail.append(
             session,
             staged_entry(
-                row["actor"],
+                actor,
                 row["rule_id"],
                 row["version"],
                 before.get(row["rule_id"]),
                 row["stage"],
                 row["reason"],
                 hold,
+                **person,
             ),
             gated=False,
         )
 
 
 STAGED = "detections.rule_staged"
+SYSTEM_ACTOR = "system"
+
+
+def trail_actor(name: str) -> str:
+    """Who a trail entry names: a person by their principal id, as every other
+    trail entry and the audit screen's actor filter do, and Vigil as 'system'.
+    Stage and approval rows keep the username; only the trail entry maps it."""
+    if not name or name == SYSTEM_ACTOR:
+        return name
+    from core.agents.attribution import principal_id_for_username
+
+    return principal_id_for_username(name) or name
 
 
 def staged_entry(
