@@ -16,9 +16,9 @@ from core.response.ceiling import asks_first, gated_tools
 from core.workflows.playbook_resolver import (
     CAPABILITIES,
     HUNT_CAPABILITIES,
-    INVESTIGATE_CAPABILITIES,
     OPTIONAL_HUNT_CAPABILITIES,
     UnknownPlaybook,
+    lead_needs,
 )
 from core.workflows.workflows_service import (
     ADJUDICATE_RUN_KIND,
@@ -137,7 +137,7 @@ def _roles(definition: WorkflowDefinition) -> Tuple[Dict[str, Any], Optional[str
         lead = {"name": SINGLE_LEAD, "tools": list(LEAD_TOOLS[kind])}
         return {"lead": lead, "helpers": [], "reviewer": None}, None
     if kind != COMPOSE_RUN_KIND:
-        lead = {"name": SINGLE_LEAD, "tools": list(INVESTIGATE_CAPABILITIES)}
+        lead = {"name": SINGLE_LEAD, "tools": lead_needs(definition)}
         return {"lead": lead, "helpers": [], "reviewer": None}, None
 
     from core.workflows.playbook_resolver import _phases_of
@@ -302,7 +302,12 @@ def preflight(
     if hunt_like:
         report = capabilities(registry, _hunt_needs(definition.run_kind))
     elif investigate:
-        report = capabilities(registry, INVESTIGATE_CAPABILITIES)
+        needs = tuple(lead_needs(definition))
+        report = (
+            capabilities(registry, needs)
+            if needs
+            else {"bound": [], "unbound": [], "absent": []}
+        )
     else:
         report = {"bound": [], "unbound": [], "absent": []}
     roles, roles_note = _roles(definition)

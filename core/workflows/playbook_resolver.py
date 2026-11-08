@@ -181,12 +181,16 @@ CAPABILITY_BOUNDS: Dict[str, Dict[str, int]] = {
 
 # The tools that answer each capability the arch asked for, bound to what this
 # deployment reports. provides is what the agent layer matches a role's needs on.
+# A need that is not a capability but names a catalogue tool binds that tool.
 def _bound_capabilities(
     needs: List[str], catalogue: Dict[str, Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
     bound: List[Dict[str, Any]] = []
     for capability in needs:
-        for name, server in _candidates_by_name(capability):
+        candidates = _candidates_by_name(capability)
+        if capability not in CAPABILITIES:
+            candidates = ((capability, None),)
+        for name, server in candidates:
             entry = catalogue.get(name)
             if entry is None:
                 continue
@@ -215,6 +219,22 @@ def _bound_capabilities(
                 capability,
             )
     return bound
+
+
+# The needs an operator manifest may not hold: neither a capability nor a tool
+# this deployment carries. Empty when every need binds or can bind.
+def unknown_needs(
+    needs: List[str], registry: Optional["MCPRegistry"] = None
+) -> List[str]:
+    catalogue = _tool_catalogue(registry)
+    return [n for n in needs if n not in CAPABILITIES and n not in catalogue]
+
+
+# What an investigate run's lead holds: an operator manifest's needs, else the
+# investigate plugin's.
+def lead_needs(definition: Any) -> List[str]:
+    needs = definition.metadata.get("needs")
+    return list(needs) if isinstance(needs, list) else list(INVESTIGATE_CAPABILITIES)
 
 
 # Flattened once, so every caller matching the catalogue reads from one definition.
@@ -300,7 +320,24 @@ def _instructions_of(phase: Dict[str, Any]) -> str:
     return "\n\n".join(part for part in parts if part)
 
 
-def _phases_of(definition: Any) -> List[Dict[str, Any]]:
+# A custom agent's phase holds what its manifest needs, as the deployment binds
+# them; without a catalogue (a preflight read) the needs themselves.
+def _phase_tools(
+    phase: Dict[str, Any],
+    profile: Any,
+    catalogue: Optional[Dict[str, Dict[str, Any]]],
+) -> List[str]:
+    if not getattr(profile, "manifest", None):
+        return _tools_for(phase, profile.recommended_tools)
+    needs = list(profile.recommended_tools)
+    if catalogue is None:
+        return needs
+    return [tool["id"] for tool in _bound_capabilities(needs, catalogue)]
+
+
+def _phases_of(
+    definition: Any, catalogue: Optional[Dict[str, Dict[str, Any]]] = None
+) -> List[Dict[str, Any]]:
     resolved: List[Dict[str, Any]] = []
     for index, phase in enumerate(definition.phases):
         phase = phase or {}
@@ -316,7 +353,7 @@ def _phases_of(definition: Any) -> List[Dict[str, Any]]:
                 "name": phase.get("name") or f"Phase {index + 1}",
                 "instructions": _instructions_of(phase),
                 "approval_required": bool(phase.get("approval_required")),
-                "tools": _tools_for(phase, profile.recommended_tools),
+                "tools": _phase_tools(phase, profile, catalogue),
                 "prompt": profile.system_prompt,
             }
         )
@@ -400,7 +437,8 @@ def resolve(
     if definition is None:
         raise UnknownPlaybook(f"no such workflow: {workflow_id}")
 
-    phases = _phases_of(definition)
+    catalogue = _tool_catalogue(registry)
+    phases = _phases_of(definition, catalogue)
     # A lead has no steps; its playbook is the objectives and the body. Compose
     # with none completes instantly having done nothing, which reads exactly
     # like a run that worked.
@@ -409,10 +447,9 @@ def resolve(
             f"{workflow_id} declares no phases; there is nothing to run"
         )
 
-    catalogue = _tool_catalogue(registry)
     # A lead holds what it asked for; compose grants per phase and has no lead.
     lead = (
-        _bound_capabilities(list(INVESTIGATE_CAPABILITIES), catalogue)
+        _bound_capabilities(lead_needs(definition), catalogue)
         if definition.run_kind == "investigate"
         else []
     )

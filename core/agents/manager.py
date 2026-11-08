@@ -75,6 +75,27 @@ class SOCAgentLibrary:
 CUSTOM_AGENT_ID_PREFIX = "custom-"
 
 
+def profile_from_manifest(row: dict) -> AgentProfile:
+    """A custom agent as its manifest says: name is the id without its prefix,
+    description, prompt (system) and tools (needs) are the manifest's. A row the
+    migration has not reached converts the way the migration would."""
+    from core.agents.operator_manifest import (
+        manifest_from_row,
+        manifest_needs,
+        read_manifest,
+    )
+
+    text = row.get("manifest") or manifest_from_row(row)
+    doc = read_manifest(text)
+    profile = SOCAgentLibrary.build_profile(row)
+    profile.name = row["id"].removeprefix(CUSTOM_AGENT_ID_PREFIX)
+    profile.description = str(doc.get("description") or "")
+    profile.system_prompt = str(doc.get("system") or "")
+    profile.recommended_tools = manifest_needs(doc)
+    profile.manifest = text
+    return profile
+
+
 class AgentManager:
     def __init__(self):
         self.agents = SOCAgentLibrary.get_all_agents()
@@ -109,9 +130,7 @@ class AgentManager:
             with db_manager.session_scope() as session:
                 for row in session.query(CustomAgent).all():
                     try:
-                        profile = SOCAgentLibrary.build_profile(
-                            CustomAgentSchema.dump(row)
-                        )
+                        profile = profile_from_manifest(CustomAgentSchema.dump(row))
                         customs[profile.id] = profile
                     except Exception as e:
                         logger.error(f"Failed to load custom agent {row.id}: {e}")

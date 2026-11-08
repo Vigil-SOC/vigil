@@ -2,10 +2,16 @@
 
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.agents.builtins import blank_model
 from core.agents.manager import CUSTOM_AGENT_ID_PREFIX
+from core.agents.operator_manifest import (
+    is_legacy_shaped,
+    manifest_from_row,
+    manifest_needs,
+    read_manifest,
+)
 from core.agents.prompts import prompt_for_row
 from core.auth import principals
 from core.storage.config_service import write_config_audit
@@ -99,6 +105,32 @@ def _audit_model_strings(
     )
 
 
+# One entry per manifest change, on the caller's session so it commits with it.
+def _audit_manifest(
+    session: Any,
+    agent_id: str,
+    action: str,
+    before: Optional[str],
+    after: Optional[str],
+    changed_by: Optional[str],
+) -> None:
+    if not changed_by or before == after:
+        return
+    write_config_audit(
+        session,
+        config_type="custom_agent",
+        config_key=agent_id,
+        action=action,
+        old_value=None if before is None else {"manifest": before},
+        new_value=None if after is None else {"manifest": after},
+        changed_by=changed_by,
+    )
+
+
+class ManifestNotLegacy(ValueError):
+    """The stored manifest says more than the persona columns can carry."""
+
+
 class CustomAgentService:
     """CRUD service for custom SOC agents."""
 
@@ -173,10 +205,15 @@ class CustomAgentService:
             if data.get("component_category"):
                 kwargs["component_category"] = data["component_category"]
             agent = CustomAgent(**kwargs)
+            # Until the console writes manifests, its payload is rendered into one.
+            agent.manifest = manifest_from_row(kwargs)
             # The agent's principal, in the same transaction. A re-created id
             # gets its old principal back rather than a second one.
             principals.ensure_agent(session, agent_id, name)
             session.add(agent)
+            _audit_manifest(
+                session, agent_id, "create", None, agent.manifest, changed_by
+            )
             _audit_model_strings(
                 session,
                 agent_id,
@@ -273,8 +310,16 @@ class CustomAgentService:
             )
             if not agent:
                 raise CustomAgentNotFound(agent_id)
+            # A manifest PUT over /api/v1 may hold skills, a guard or a structured
+            # conclusion; re-rendering it from the columns would drop them.
+            if not is_legacy_shaped(agent.manifest):
+                raise ManifestNotLegacy(
+                    f"{agent_id} is edited through its manifest: "
+                    f"PUT /api/v1/agents/{agent_id}"
+                )
 
             before = model_pair(agent.model, agent.fallback_model)
+            manifest_before = agent.manifest
             for key, value in updates.items():
                 if key not in UPDATABLE_FIELDS:
                     continue
@@ -291,6 +336,10 @@ class CustomAgentService:
                     setattr(agent, key, blank_model(value))
                 else:
                     setattr(agent, key, value)
+            agent.manifest = manifest_from_row(CustomAgentSchema.dump(agent))
+            _audit_manifest(
+                session, agent_id, "update", manifest_before, agent.manifest, changed_by
+            )
 
             _audit_model_strings(
                 session,
@@ -321,7 +370,75 @@ class CustomAgentService:
                 None,
                 changed_by,
             )
+            _audit_manifest(
+                session, agent_id, "delete", agent.manifest, None, changed_by
+            )
             # The principal outlives the agent, so old records still name it.
             principals.mark_deleted(session, principals.agent_principal_id(agent_id))
             session.delete(agent)
             return True
+
+    def list_manifests(self) -> List[Dict[str, Any]]:
+        db_manager = get_db_manager()
+        with db_manager.session_scope() as session:
+            rows = session.query(CustomAgent).order_by(CustomAgent.id).all()
+            return [_manifest_row(row) for row in rows]
+
+    def get_manifest(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        db_manager = get_db_manager()
+        with db_manager.session_scope() as session:
+            row = session.get(CustomAgent, agent_id)
+            return _manifest_row(row) if row else None
+
+    def put_manifest(
+        self, agent_id: str, text: str, changed_by: Optional[str] = None
+    ) -> Tuple[Dict[str, Any], bool]:
+        """Store a checked manifest under ``agent_id``; (row, created).
+
+        The persona columns are kept in step with it until #4024 drops them, so
+        a reader not yet on the manifest sees the same prompt and tools.
+        """
+        doc = read_manifest(text)
+        name = agent_id.removeprefix(CUSTOM_AGENT_ID_PREFIX)
+        mirrored = {
+            "description": str(doc.get("description") or ""),
+            "system_prompt_override": str(doc.get("system") or ""),
+            "recommended_tools": manifest_needs(doc),
+        }
+        db_manager = get_db_manager()
+        with db_manager.session_scope() as session:
+            agent = session.get(CustomAgent, agent_id)
+            created = agent is None
+            before = None if created else agent.manifest
+            if created:
+                agent = CustomAgent(id=agent_id, name=name, role="", **mirrored)
+                principals.ensure_agent(session, agent_id, name)
+                session.add(agent)
+            else:
+                for key, value in mirrored.items():
+                    setattr(agent, key, value)
+            agent.manifest = text
+            _audit_manifest(
+                session,
+                agent_id,
+                "create" if created else "update",
+                before,
+                text,
+                changed_by,
+            )
+            session.flush()
+            return _manifest_row(agent), created
+
+
+def _manifest_row(row: CustomAgent) -> Dict[str, Any]:
+    text = row.manifest or manifest_from_row(CustomAgentSchema.dump(row))
+    doc = read_manifest(text)
+    return {
+        "id": row.id,
+        "description": str(doc.get("description") or ""),
+        "needs": manifest_needs(doc),
+        "skills": [str(s) for s in doc.get("skills") or [] if isinstance(s, str)],
+        "manifest": text,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }

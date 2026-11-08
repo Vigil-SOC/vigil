@@ -1854,6 +1854,11 @@
   "nullable": false,
   "type": "text"
  },
+ "column custom_agents.manifest": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
  "column custom_agents.max_tokens": {
   "default": "4096",
   "nullable": false,

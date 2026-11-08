@@ -363,6 +363,22 @@ def _agent_run_definition(workflow_id: str) -> Optional[WorkflowDefinition]:
         agent = _profile_for(workflow_id.removeprefix(AGENT_RUN_PREFIX))
     except UnknownPlaybook:
         return None
+    # A custom agent is an operator manifest, and runs as investigate under it:
+    # its conclusion reaches the case through the same bridge the built-in's does.
+    if agent.manifest:
+        return WorkflowDefinition(
+            workflow_id=workflow_id,
+            file_path=None,
+            metadata={
+                "name": f"{agent.name} on its own",
+                "description": agent.description
+                or f"Runs {agent.name} on one alert or case.",
+                "run_kind": INVESTIGATE_RUN_KIND,
+                "operator_manifest": agent.manifest,
+                "needs": list(agent.recommended_tools),
+            },
+            body="",
+        )
     return WorkflowDefinition(
         workflow_id=workflow_id,
         file_path=None,
@@ -630,6 +646,7 @@ class WorkflowsService:
         and the outcome are read back through the run record, which the
         agent layer mirrors as each phase completes.
         """
+        from core.agents.operator_manifest import operator_request
         from core.agents.queue import build_start_job, enqueue_run
 
         workflow = self.get_workflow(workflow_id)
@@ -783,7 +800,8 @@ class WorkflowsService:
             run_id=run_id,
             # The definition's run_kind, so both entry points queue the same loop.
             run_kind=workflow.run_kind,
-            request=spec,
+            # A custom agent's manifest and skills ride the job, not the trail entry.
+            request={**spec, **operator_request(workflow.metadata)},
             enqueued_by=actor or triggered_by or "api",
             principal=principal,
             actor=actor_principal,

@@ -462,6 +462,9 @@ class CustomAgent(Base):
     # another custom id). Null for agents authored from scratch. Breadcrumb
     # only — no FK, because built-ins live in code, not a table.
     forked_from: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # The operator manifest (plugin YAML) a run of this agent loads (#4023). The
+    # persona columns above stay until #4024 drops them.
+    manifest: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     created_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

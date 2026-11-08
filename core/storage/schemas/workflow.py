@@ -99,6 +99,7 @@ class CustomAgentSchema(ORMSchema):
     fallback_model: Optional[str] = None
     component_category: Optional[str] = None
     forked_from: Optional[str] = None
+    manifest: Optional[str] = None
     created_by: Optional[str] = None
     created_at: OptDateTime = None
     updated_at: OptDateTime = None
