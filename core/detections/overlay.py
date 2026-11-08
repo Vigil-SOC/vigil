@@ -126,19 +126,24 @@ def _wazuh_with_id(text: str) -> str:
     first, last = wxml.CUSTOM_IDS[0], wxml.CUSTOM_IDS[-1]
     with get_db_manager().session_scope() as session:
         loaded, own = _wazuh_ids(session)
+    # Compared as the numbers the manager reads ids as ("0100001" is 100001).
+    loaded_ids = {n for n in map(wxml.number, loaded) if n is not None}
+    own_ids = {n for n in map(wxml.number, own) if n is not None}
     given = wxml.rule_id(rule)
     if given is None:
-        taken = {int(k) for k in loaded | own if k.isdigit()}
+        taken = loaded_ids | own_ids
         free = next((i for i in wxml.CUSTOM_IDS if i not in taken), None)
         if free is None:
             raise Refused(f"no free Wazuh rule id is left in {first}-{last}")
         return wxml.with_id(text, free)
-    if not given.isdigit() or int(given) not in wxml.CUSTOM_IDS:
+    number = wxml.custom_id(given)
+    if number is None:
         raise Refused(
             f"wazuh copy's id {given} is outside Wazuh's range for custom rules "
-            f"({first}-{last}): use one in it, or leave the id out"
+            f"({first}-{last}, written in ASCII digits with no leading zero): "
+            "use one in it, or leave the id out"
         )
-    if given in loaded and given not in own:
+    if number in loaded_ids and number not in own_ids:
         raise Refused(
             f"wazuh copy's id {given} is a rule the Wazuh manager already loaded: "
             "use another, or leave the id out"
