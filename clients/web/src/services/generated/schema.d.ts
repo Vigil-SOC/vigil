@@ -12324,8 +12324,6 @@ export interface components {
             purpose: string | null;
             /** Steps */
             steps?: string[];
-            /** Tools */
-            tools?: string[];
         };
         /**
          * WorkflowRunCancelRequest
