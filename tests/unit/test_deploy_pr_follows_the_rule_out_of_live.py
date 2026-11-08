@@ -13,7 +13,7 @@ import httpx
 import pytest
 
 import core.secrets
-from core.detections.inventory import rollout
+from core.detections.inventory import rollout, rollout_approval
 
 TOKEN = "ghp_secret_never_logged"
 REPO = "acme/detections"
@@ -293,7 +293,9 @@ def test_a_retried_reopen_comments_once(github, recorded):
     )
 
 
-def test_the_sweep_closes_left_live_prs_after_its_deploys(monkeypatch):
+@pytest.mark.parametrize("asks", [False, True])
+def test_the_sweep_closes_left_live_prs_after_its_deploys(monkeypatch, asks):
+    """Under Assist too: closing a PR asks no one; the rule already left live."""
     calls = []
 
     class _S:
@@ -308,6 +310,10 @@ def test_the_sweep_closes_left_live_prs_after_its_deploys(monkeypatch):
     monkeypatch.setattr(rollout, "_copies", lambda: [])
     monkeypatch.setattr(rollout, "handed_off", lambda ids: set())
     monkeypatch.setattr(rollout, "_stopped", lambda: False)
+    monkeypatch.setattr(rollout, "_asks_first", lambda: asks)
+    monkeypatch.setattr(
+        rollout_approval, "carry_out_approved", lambda report: calls.append("deploy")
+    )
     monkeypatch.setattr(rollout, "_deploy_targets", lambda: {"elastic": TARGET})
     monkeypatch.setattr(rollout, "get_db_manager", lambda: _Db())
     monkeypatch.setattr(rollout, "_deploy", lambda *a, **k: calls.append("deploy"))

@@ -182,6 +182,7 @@ def deploy(monkeypatch):
     monkeypatch.setattr(rollout, "get_db_manager", lambda: _Db())
     monkeypatch.setattr(rollout.exceptions, "listed", lambda _s, _rid: [])
     monkeypatch.setattr(rollout, "_stopped", lambda: False)
+    monkeypatch.setattr(rollout, "_asks_first", lambda: False)  # Act
 
     def record(copy, out, actor="system"):
         seen["outcomes"].append(out)

@@ -42,7 +42,8 @@ are not applied; alerts the SIEM itself raises are never filtered.
 The sweep (after ``sync_repos``) then writes a stage row (actor 'system', proof
 holding the numbers) for each move that is due: shadow -> live after a quiet,
 passing week with checks['sees'] pass and checks['lint'] pass (at most
-``LIVE_PER_DAY`` a day across all rules; a copy with no lint result yet waits
+the stored promotion cap a day across all rules (``rollout_limits``;
+its shadow days and hit ceiling are stored there too and read on every sweep); a copy with no lint result yet waits
 for the sync that lints it), live -> shadow when half its findings are judged
 not real (``accurate.verdicts``: the latest analyst determination wins), a loud
 day or a Sees fail (its data stopped), shadow -> off after
@@ -108,6 +109,11 @@ from sqlalchemy.orm import aliased
 from core.detections import exceptions
 from core.detections.inventory import accurate, kibana, readers, sees, splunk
 from core.detections.inventory.catalog import REPO_PREFIX
+from core.detections.inventory.rollout_limits import DEFAULTS as DEFAULT_LIMITS
+from core.detections.inventory.rollout_limits import (
+    RolloutLimits,
+    read_limits,
+)
 from core.integrations._base import search_budget
 from core.integrations._base.ids import EXTERNAL_ID_MAX, fit_id
 from core.integrations.elastic.descriptor import ELASTIC
@@ -130,9 +136,6 @@ MAX_DOCS = 100  # documents fetched per run; the count is the full total
 SAMPLE = 3
 SAMPLE_CHARS = 500
 KEEP_DAYS = 14
-SHADOW_DAYS = 7
-MAX_HITS_PER_DAY = 20
-LIVE_PER_DAY = 5
 REVERT_MIN_FINDINGS = 10
 REVERT_NOISE_SHARE = 0.5
 OFF_AFTER_FAILURES = 3
@@ -171,6 +174,7 @@ class RolloutReport:
     written: int = 0
     moves: List[str] = field(default_factory=list)
     held: int = 0  # due moves not written: Stop set or the ceiling unread
+    asked: List[str] = field(default_factory=list)  # promotions put to a person
     deploys: List[str] = field(default_factory=list)  # "<rule> v<n>: <PR url | error>"
     findings: List[Dict[str, Any]] = field(default_factory=list, repr=False)
     error: Optional[str] = None
@@ -734,14 +738,21 @@ def _noise(session: Any, copy: Copy) -> Tuple[int, int]:
     return len(found), noise
 
 
-def _week(now: datetime) -> List[str]:
-    return [(now - timedelta(days=i)).date().isoformat() for i in range(SHADOW_DAYS)]
+def _week(now: datetime, days: int = DEFAULT_LIMITS.shadow_days) -> List[str]:
+    return [(now - timedelta(days=i)).date().isoformat() for i in range(days)]
 
 
 def _due(
-    session: Any, copy: Copy, now: datetime, live_24h: int
+    session: Any,
+    copy: Copy,
+    now: datetime,
+    live_24h: int,
+    limits: RolloutLimits = DEFAULT_LIMITS,
 ) -> Optional[Tuple[str, str, Dict[str, Any]]]:
-    """(stage, reason, proof) of the move due for ``copy``, or None."""
+    """(stage, reason, proof) of the move due for ``copy``, or None.
+
+    ``limits`` are the stored rollout limits; the sweep reads them once per run.
+    """
     runs = copy.checks.get("runs") or {}
     sees_check = copy.checks.get("sees") or {}
     seen = {
@@ -763,9 +774,9 @@ def _due(
             )
         if copy.held:  # a person's Revert stands until a person releases it
             return None
-        if now - copy.stage_at < timedelta(days=SHADOW_DAYS):
+        if now - copy.stage_at < timedelta(days=limits.shadow_days):
             return None
-        week = _week(now)
+        week = _week(now, limits.shadow_days)
         run_days = runs.get("days") or {}
         hit_days = (copy.checks.get("shadow") or {}).get("days") or {}
         days = {
@@ -778,18 +789,18 @@ def _due(
         }
         if any(v["pass"] == 0 or v["fail"] for v in days.values()):
             return None
-        if any(v["hits"] > MAX_HITS_PER_DAY for v in days.values()):
+        if any(v["hits"] > limits.max_hits_per_day for v in days.values()):
             return None
         if seen.get("result") != "pass":  # its data must be shown to arrive
             return None
         if not _linted(copy):  # no result yet: the next sync lints it
             return None
-        if live_24h >= LIVE_PER_DAY:
+        if live_24h >= limits.live_per_day:
             return None
         return (
             "live",
-            f"{SHADOW_DAYS} days in shadow, every day's runs passed, no day "
-            f"above {MAX_HITS_PER_DAY} hits, Sees and lint passed",
+            f"{limits.shadow_days} days in shadow, every day's runs passed, no day "
+            f"above {limits.max_hits_per_day} hits, Sees and lint passed",
             {
                 "shadow_since": since,
                 "days": days,
@@ -806,11 +817,11 @@ def _due(
         for d, n in ((copy.checks.get("live") or {}).get("days") or {}).items()
         if d >= start
     }
-    loud = {d: n for d, n in hit_days.items() if n > MAX_HITS_PER_DAY}
+    loud = {d: n for d, n in hit_days.items() if n > limits.max_hits_per_day}
     if loud:
         return (
             "shadow",
-            f"a live day above {MAX_HITS_PER_DAY} hits",
+            f"a live day above {limits.max_hits_per_day} hits",
             {"live_since": since, "loud_days": loud},
         )
     if seen["result"] == "fail":  # lost data; unknown changes nothing
@@ -836,8 +847,18 @@ def _stopped() -> bool:
     return held is None or held[0].stopped
 
 
+def _asks_first() -> bool:
+    """Whether the fleet is on Assist: a promotion or deploy PR waits for a
+    person. An unreadable ceiling asks too; ``_stopped`` already holds that."""
+    from core.response.ceiling import REVERSIBLE, effective_act, try_read_stored_ceiling
+
+    held = try_read_stored_ceiling()
+    return held is None or not effective_act(held[0], REVERSIBLE)
+
+
 def sweep(now: datetime, report: RolloutReport) -> None:
-    """Write a stage row for each move due, unless Stop is set."""
+    """Write a stage row for each move due, unless Stop is set. Under Assist a
+    promotion to live is put to a person instead, and no deploy PR opens."""
     from core.detections.inventory.sync import _insert_stages, _stage_row
 
     copies = [c for c in _copies() if c.stage in ("shadow", "live")]
@@ -845,6 +866,8 @@ def sweep(now: datetime, report: RolloutReport) -> None:
     skip = handed_off([c.rule_id for c in copies])
     copies = [c for c in copies if c.rule_id not in skip]
     stopped = _stopped()
+    asks = not stopped and _asks_first()
+    limits = read_limits()  # every run, so an edit shows at the next sweep
     targets = _deploy_targets()
     if targets.get("splunk"):
         # Off disk before the transaction: a read must not roll back stage rows.
@@ -859,13 +882,17 @@ def sweep(now: datetime, report: RolloutReport) -> None:
             )
         )
         rows, live = [], [c for c in copies if c.stage == "live"]
+        asking: List[Tuple[Copy, str, Dict[str, Any]]] = []
         for copy in copies:
-            due = _due(session, copy, now, live_24h)
+            due = _due(session, copy, now, live_24h, limits)
             if due is None:
                 continue
             stage, reason, proof = due
             if stopped:
                 report.held += 1
+                continue
+            if asks and stage == "live":
+                asking.append((copy, reason, proof))
                 continue
             rows.append(
                 {
@@ -883,18 +910,32 @@ def sweep(now: datetime, report: RolloutReport) -> None:
                 live.remove(copy)
         if rows:
             _insert_stages(session, rows, {c.rule_id: c.stage for c in copies})
+    if asking:
+        # After the transaction: a request writes the audit trail in sessions of
+        # its own, which must not wait on this one's trail lock.
+        from core.detections.inventory import rollout_approval
+
+        for copy, reason, proof in asking:
+            if rollout_approval.request_promotion(copy, reason, proof):
+                report.asked.append(f"{copy.rule_id} v{copy.version}")
     # After the stage rows commit: a PR that fails leaves the promotion standing,
     # and the next sweep is its retry.
-    if not stopped:
+    if stopped:
+        return
+    if asks:
+        # Only a person's yes opens a PR: approved promotions and deploys are
+        # carried out here, which also retries one that failed.
+        from core.detections.inventory import rollout_approval
+
+        rollout_approval.carry_out_approved(report)
+    else:
         # A live copy promoted before lint gated it waits for a lint pass.
         _deploy([c for c in live if _linted(c)], targets, now, report)
-        try:  # its own step: a failure here leaves the promotions and deploys
-            _withdraw(_left_live(), targets, now, report)
-        except Exception as exc:  # noqa: BLE001 -- retried next sweep
-            logger.warning(
-                "detection rules: closing left-live deploy PRs failed: %s", exc
-            )
-            report.deploys.append(f"closing deploy PRs failed: {exc}")
+    try:  # its own step: a failure here leaves the promotions and deploys
+        _withdraw(_left_live(), targets, now, report)
+    except Exception as exc:  # noqa: BLE001 -- retried next sweep
+        logger.warning("detection rules: closing left-live deploy PRs failed: %s", exc)
+        report.deploys.append(f"closing deploy PRs failed: {exc}")
 
 
 def _linted(copy: Copy) -> bool:
@@ -1012,7 +1053,10 @@ def _deploy(
     outcomes: Dict[int, Dict[str, Any]] = {}
     if not pending:
         return outcomes
-    from core.detections.detection_rules_service import deploy_host_refused
+    from core.detections.detection_rules_service import (
+        deploy_host_refused,
+        deploy_subdirectory_refused,
+    )
     from core.secrets import get_secret
 
     with get_db_manager().session_scope() as session:
@@ -1025,8 +1069,9 @@ def _deploy(
         outcome: Dict[str, Any] = {"version": copy.version, "at": now.isoformat()}
         try:
             # Again here, not only when the target was set: a hand-edited file
-            # must not send the GitHub token to a GitLab or Bitbucket host.
-            refused = deploy_host_refused(target)
+            # must not send the GitHub token to a GitLab or Bitbucket host, nor
+            # write outside the repo through a '..' subdirectory.
+            refused = deploy_host_refused(target) or deploy_subdirectory_refused(target)
             if refused:
                 raise RuntimeError(f"{target.get('git_url')}: {refused}")
             if not token:
@@ -1179,11 +1224,15 @@ def _open_pr(
 
     import httpx
 
-    from core.detections.detection_rules_service import deploy_host_refused
+    from core.detections.detection_rules_service import (
+        deploy_host_refused,
+        deploy_subdirectory_refused,
+    )
 
     # Last guard before the token leaves: whoever calls this, an unmarked
-    # non-github.com host gets no request at all.
-    refused = deploy_host_refused(target)
+    # non-github.com host, or a subdirectory that climbs out of the repo, gets
+    # no request at all.
+    refused = deploy_host_refused(target) or deploy_subdirectory_refused(target)
     if refused:
         raise RuntimeError(f"{target.get('git_url')}: {refused}")
     api, repo = _api_of(str(target.get("git_url") or ""))
@@ -1665,14 +1714,18 @@ def overlay_only() -> List[Dict[str, Any]]:
 
 
 def deploy_overlay_only(
-    rule_ids: Optional[List[int]] = None, actor: str = "system"
+    rule_ids: Optional[List[int]] = None,
+    actor: str = "system",
+    approver: bool = False,
 ) -> Dict[str, Any]:
     """Open the deploy PR now, as the sweep would, for live overlay-only copies
     (these ``rule_ids``, or all) whose format has a GitHub deploy target and
     with no PR opened yet; one that failed is tried again. Says what each came
-    to (``opened``: pr_url or in_repo; ``failed``: error) and why each other one
-    was skipped. Nothing is opened while Stop is set. Each outcome's
-    config-trail row names ``actor``."""
+    to (``opened``: pr_url or in_repo; ``failed``: error), which now wait for a
+    person (``asked``) and why each other one was skipped. Nothing is opened
+    while Stop is set. Under Assist each one waits for an approval unless
+    ``approver``: the person deploying may approve, or a person already did.
+    Each outcome's config-trail row names ``actor``."""
     from core.detections.detection_rules_service import deploy_host_refused
 
     live = [c for c in _copies() if c.stage == "live"]
@@ -1716,10 +1769,23 @@ def deploy_overlay_only(
             {c.rule_id: "Vigil is stopped; it opens no pull request" for c in todo}
         )
         todo = []
+    asked: List[Dict[str, Any]] = []
+    if todo and not approver and _asks_first():
+        from core.detections.inventory import rollout_approval
+
+        asked = [
+            {
+                "rule_id": c.rule_id,
+                "action_id": rollout_approval.request_deploy(c, actor),
+            }
+            for c in todo
+        ]
+        todo = []
     outcomes = _deploy(
         todo, targets, datetime.now(timezone.utc), RolloutReport(), actor
     )
     return {
+        "asked": asked,
         "opened": [
             {
                 "rule_id": r,

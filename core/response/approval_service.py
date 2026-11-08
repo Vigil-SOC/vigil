@@ -46,6 +46,8 @@ _pending_gauge: Any = None
 # Action types something executes once approved (AutonomousResponseService). A
 # pending row of any other type, outside a run or checkpoint, is a recommendation.
 EXECUTABLE_ACTION_TYPES = frozenset({"waf_block", "gateway_block", "access_revoke"})
+# Rollout acts on these once approved (rollout_approval), not the executor above.
+ROLLOUT_ACTION_TYPES = frozenset({"promote_rule", "deploy_rule"})
 
 
 class AlreadyDecided(Exception):
@@ -112,6 +114,8 @@ class ActionType(Enum):
     DISABLE_USER = "disable_user"
     EXECUTE_SPL_QUERY = "execute_spl_query"
     WORKFLOW_PHASE = "workflow_phase"  # #128 — phase with approval_required=True
+    PROMOTE_RULE = "promote_rule"  # shadow -> live under Assist (#4068)
+    DEPLOY_RULE = "deploy_rule"  # open a live rule's deploy PR under Assist (#4068)
     WAF_BLOCK = "waf_block"  # Cloudflare WAF IP Access Rule
     GATEWAY_BLOCK = "gateway_block"  # Cloudflare Zero Trust Gateway DNS/HTTP rule
     ACCESS_REVOKE = "access_revoke"  # Cloudflare Zero Trust Access session revoke
@@ -1012,7 +1016,9 @@ def _kind_for_action(action: PendingAction) -> str:
     if checkpoint:
         return "checkpoint"
     # Nothing executes it once approved, so it is advice, not a decision.
-    if not action.workflow_run_id and action.action_type not in EXECUTABLE_ACTION_TYPES:
+    if not action.workflow_run_id and action.action_type not in (
+        EXECUTABLE_ACTION_TYPES | ROLLOUT_ACTION_TYPES
+    ):
         return "recommendation"
     return "approval"
 
