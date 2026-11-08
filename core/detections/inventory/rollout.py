@@ -64,6 +64,16 @@ version. The outcome (PR url, the file already on the default branch, or an
 error) lands in checks['deploy']; a failed one is retried next sweep. None is
 opened while Stop is set.
 
+A rule that leaves live (a person's Revert, Vigil's own move back to shadow, or
+Vigil turning it off) takes its deploy PR with it: the sweep closes each PR
+recorded open on any of its versions, with a comment naming where the rule went,
+who moved it and why (its current stage row), and records that on the version as
+``withdrawn``. A merged PR, or one already closed (a person's answer), is left
+as it is and recorded so. When that version goes live again its PR is reopened,
+not replaced: same branch, same file, and the review thread with Vigil's close
+comment stays in one place. A failed close is retried next sweep; none is closed
+while Stop is set.
+
 While Stop is set (or the ceiling cannot be read) no copy is run: no search,
 no checks written, no findings. Its last successful run stays put, so the stopped
 period is searched on the first run after Stop lifts.
@@ -97,7 +107,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import aliased
 
 from core.detections import exceptions
-from core.detections.inventory import accurate, kibana, readers, sees, splunk
+from core.detections.inventory import accurate, kibana, readers, sees, splunk, wazuh
 from core.detections.inventory.catalog import REPO_PREFIX
 from core.detections.inventory.rollout_limits import DEFAULTS as DEFAULT_LIMITS
 from core.detections.inventory.rollout_limits import (
@@ -131,6 +141,10 @@ REVERT_NOISE_SHARE = 0.5
 OFF_AFTER_FAILURES = 3
 # Links under which a SIEM copy runs an overlay rule in its place.
 HANDOFF_LINKS = ("same_id", "known_name", "agent")
+WAZUH = "wazuh"
+# What a Wazuh deploy says while Vigil cannot run Wazuh rules in shadow.
+UNTESTED = "not shadow-tested: Vigil can't validate Wazuh rules in shadow yet (#4061)"
+NO_STAGE_AT = datetime.fromtimestamp(0, timezone.utc)
 
 
 def _budget_key(rule_id: int) -> str:
@@ -143,9 +157,9 @@ class Copy:
     rule_id: int
     version: int
     name: str
-    language: str  # "elastic" or "splunk"
-    stage: str
-    stage_at: datetime
+    language: str  # "elastic", "splunk" or "wazuh"
+    stage: str  # "" for a Wazuh copy: Vigil runs none in shadow yet
+    stage_at: datetime  # NO_STAGE_AT with no stage
     checks: Dict[str, Any]
     rule: Dict[str, Any]
     key: str = ""  # its rule_id, the overlay rule's native_key
@@ -223,12 +237,14 @@ def _copies() -> List[Copy]:
                     DetectionRuleVersion.version == DetectionRule.latest_version,
                 ),
             )
-            .join(current, current.c.rule_id == DetectionRule.id)
+            .outerjoin(current, current.c.rule_id == DetectionRule.id)
             .outerjoin(hold, hold.c.rule_id == DetectionRule.id)
             .where(
                 DetectionRule.source == readers.OVERLAY_SOURCE,
-                DetectionRule.language.in_(("elastic", "splunk")),
+                DetectionRule.language.in_(("elastic", "splunk", WAZUH)),
                 DetectionRule.status == "active",
+                # A Splunk or Elastic copy always has a stage; a Wazuh one has none.
+                or_(current.c.stage.isnot(None), DetectionRule.language == WAZUH),
             )
             .order_by(DetectionRule.id)
         ).all()
@@ -238,8 +254,8 @@ def _copies() -> List[Copy]:
             ver,
             name,
             lang,
-            stage,
-            at,
+            stage or "",
+            at or NO_STAGE_AT,
             checks or {},
             _rule_of(lang, content or {}),
             key,
@@ -282,15 +298,19 @@ def _splunk_config() -> Optional[Dict[str, Any]]:
 def handed_off(rule_ids: List[int]) -> Set[int]:
     """Of these overlay rule ids, those an active SIEM copy runs instead.
 
-    That is a Splunk saved search (for a Splunk copy) or a Kibana rule (for an
-    Elastic one) linked by the sync (same_id / known_name) or an agent to the
+    That is a Splunk saved search (for a Splunk copy), a Kibana rule (for an
+    Elastic one) or a Wazuh manager rule (for a Wazuh one, by its id) linked by
+    the sync (same_id / known_name) or an agent to the
     overlay rule, or to an active repo rule of its language carrying its key
     (rule_id). A Splunk copy also matches a repo rule by name, since ESCU links
-    by name (known_name); an Elastic copy matches by rule_id only.
+    by name (known_name); an Elastic copy matches by rule_id only. A Wazuh
+    manager rule takes a Wazuh copy over only when it is loaded from Vigil's own
+    file for it (vigil_<id>.xml): a customer's file with that id is another rule.
     """
     if not rule_ids:
         return set()
     o, r, s = aliased(DetectionRule), aliased(DetectionRule), aliased(DetectionRule)
+    vigil_file = func.concat("vigil_", o.native_key, ".xml")
     same_rule = (
         select(r.id)
         .where(
@@ -305,10 +325,21 @@ def handed_off(rule_ids: List[int]) -> Set[int]:
         .correlate(o)
     )
     linked = exists().where(
-        s.source == case((o.language == "splunk", splunk.SOURCE), else_=kibana.SOURCE),
+        s.source
+        == case(
+            (o.language == "splunk", splunk.SOURCE),
+            (o.language == WAZUH, wazuh.SOURCE),
+            else_=kibana.SOURCE,
+        ),
         s.status == "active",
         s.link_kind.in_(HANDOFF_LINKS),
         or_(s.origin_rule_id == o.id, s.origin_rule_id.in_(same_rule)),
+        # Vigil's own file by its exact name, alone or after a directory, as
+        # sync.vigil_wazuh_file reads it (no LIKE: "_" would match any one char).
+        or_(
+            o.language != WAZUH,
+            func.regexp_replace(s.path, "^.*/", "") == vigil_file,
+        ),
     )
     with get_db_manager().session_scope() as session:
         ids = session.scalars(
@@ -918,9 +949,14 @@ def sweep(now: datetime, report: RolloutReport) -> None:
         from core.detections.inventory import rollout_approval
 
         rollout_approval.carry_out_approved(report)
-        return
-    # A live copy promoted before lint gated it waits for a lint pass.
-    _deploy([c for c in live if _linted(c)], targets, now, report)
+    else:
+        # A live copy promoted before lint gated it waits for a lint pass.
+        _deploy([c for c in live if _linted(c)], targets, now, report)
+    try:  # its own step: a failure here leaves the promotions and deploys
+        _withdraw(_left_live(), targets, now, report)
+    except Exception as exc:  # noqa: BLE001 -- retried next sweep
+        logger.warning("detection rules: closing left-live deploy PRs failed: %s", exc)
+        report.deploys.append(f"closing deploy PRs failed: {exc}")
 
 
 def _linted(copy: Copy) -> bool:
@@ -1046,12 +1082,19 @@ def _deploy(
 
     with get_db_manager().session_scope() as session:
         excepted = {c.rule_id: exceptions.listed(session, c.rule_id) for c in pending}
+        refusals = {
+            c.rule_id: _wazuh_refused(session, c)
+            for c in pending
+            if c.language == WAZUH
+        }
     token = get_secret("GITHUB_TOKEN")
     for copy in pending:
         if _stopped():  # Stop set mid-pass: the rest wait for the sweep after it lifts
             return outcomes
         target = targets[copy.language]
         outcome: Dict[str, Any] = {"version": copy.version, "at": now.isoformat()}
+        if copy.language == WAZUH and copy.stage != "live":
+            outcome["note"] = UNTESTED  # in checks['deploy'] and its trail row
         try:
             # Again here, not only when the target was set: a hand-edited file
             # must not send the GitHub token to a GitLab or Bitbucket host, nor
@@ -1059,11 +1102,19 @@ def _deploy(
             refused = deploy_host_refused(target) or deploy_subdirectory_refused(target)
             if refused:
                 raise RuntimeError(f"{target.get('git_url')}: {refused}")
+            if refusals.get(copy.rule_id):
+                raise RuntimeError(f"not deployed: {refusals[copy.rule_id]}")
             if not token:
                 raise RuntimeError(
                     "no GitHub token: set the github integration's token"
                 )
-            done = _open_pr(copy, target, _pr_body(copy, excepted[copy.rule_id]), token)
+            done = _open_pr(
+                copy,
+                target,
+                _pr_body(copy, excepted[copy.rule_id]),
+                token,
+                reopen=_withdrawn_by_vigil(_deployed(copy)),
+            )
             superseded = done.pop("superseded", [])
             outcome.update(done)
             landed = done.get("pr_url") or done.get("in_repo")
@@ -1109,9 +1160,20 @@ def _deploy(
 def _deploy_due(copy: Copy) -> bool:
     """Whether the sweep still has work for this copy's current version: no PR
     or in_repo recorded yet (one recorded for an earlier version doesn't count;
-    the new one gets its own), or closing an older version's PR failed."""
+    the new one gets its own), closing an older version's PR failed, or Vigil
+    closed this version's PR when it left live and it is live again."""
     done = _deployed(copy) or {}
-    return not {"pr_url", "in_repo"} & set(done) or bool(done.get("supersede_error"))
+    return (
+        not {"pr_url", "in_repo"} & set(done)
+        or bool(done.get("supersede_error"))
+        or _withdrawn_by_vigil(done)
+    )
+
+
+def _withdrawn_by_vigil(deploy: Optional[Mapping[str, Any]]) -> bool:
+    """Whether Vigil itself closed this deploy record's PR when the rule left live."""
+    withdrawn = (deploy or {}).get("withdrawn")
+    return isinstance(withdrawn, dict) and withdrawn.get("closed") is True
 
 
 def _api_of(git_url: str) -> Tuple[str, str]:
@@ -1144,12 +1206,90 @@ def _ok(resp: Any) -> Any:
     return resp
 
 
+def _deploy_file(copy: Copy) -> Tuple[str, bytes]:
+    """(file name, bytes) the deploy PR adds for ``copy``.
+
+    A Splunk or Elastic copy goes as the overlay stores it, under its overlay
+    file name. A Wazuh copy goes as ``vigil_<id>.xml``, one file per rule, inside
+    a ``<group>`` (wrapped in one only when it has none): each version's PR then
+    replaces only its own file, so PRs for different rules never conflict.
+    """
+    import posixpath
+
+    if copy.language == WAZUH:
+        from core.detections import wazuh_xml
+
+        text = copy.toml
+        if not wazuh_xml.grouped(text):
+            # An XML declaration must open the file, so it can't go inside.
+            body = wazuh_xml.without_declaration(text).strip()
+            text = f'<group name="vigil,">\n{body}\n</group>\n'
+        return f"vigil_{copy.key}.xml", text.encode()
+    ext = "yml" if copy.language == "splunk" else "toml"
+    name = posixpath.basename(copy.path or "") or f"vigil-rule-{copy.rule_id}.{ext}"
+    return name, copy.toml.encode()
+
+
+def _wazuh_refused(session: Any, copy: Copy) -> Optional[str]:
+    """Why a Wazuh copy must not be deployed now, or None.
+
+    Its id must still be a custom one no other rule file of the manager has
+    loaded since it was saved, and it must not set ``overwrite``: a Vigil rule
+    only adds a rule, never replaces one of the customer's.
+    """
+    import posixpath
+
+    from core.detections import wazuh_xml
+
+    try:
+        rule = wazuh_xml.parse(copy.toml)
+    except wazuh_xml.NotARule as exc:
+        return f"its Wazuh XML can't be read: {exc}"
+    if (rule.get("overwrite") or "").strip().lower() == "yes":
+        return (
+            'it sets overwrite="yes", which would replace a rule of the customer\'s: '
+            "a Vigil rule only adds one, under its own custom id"
+        )
+    # The key names the file, so it must be the id exactly as written.
+    if str(wazuh_xml.custom_id(copy.key)) != copy.key:
+        return f"its id {copy.key} is outside Wazuh's range for custom rules"
+    own = f"vigil_{copy.key}.xml"
+    for path in session.scalars(
+        select(DetectionRule.path).where(
+            DetectionRule.source == WAZUH,
+            DetectionRule.native_key == copy.key,
+            DetectionRule.status != "removed",
+        )
+    ):
+        if posixpath.basename(str(path or "")) != own:
+            return f"the Wazuh manager now loads another rule as id {copy.key} ({path})"
+    return None
+
+
 def _pr_title(copy: Copy) -> str:
     return f"Add Vigil rule {copy.name} ({copy.key})"
 
 
 def _pr_body(copy: Copy, excepted: List[Dict[str, Any]]) -> str:
     """What the rule is, and its active exceptions; the rule file has none."""
+    if copy.language == WAZUH:
+        name, _ = _deploy_file(copy)
+        state = (
+            "is live in Vigil"
+            if copy.stage == "live"
+            else f"was deployed by a person ({UNTESTED})"
+        )
+        return (
+            f"Vigil detection rule {copy.rule_id} v{copy.version}, {copy.name!r} "
+            f"(Wazuh rule id {copy.key}), {state}. This adds it as {name}, as Vigil "
+            f"stores it ({copy.path or 'its overlay file'}), wrapped in a <group> if "
+            "it had none.\n\nOne file per rule: each later version replaces only "
+            "this file, so pull requests for different rules never conflict. Its id "
+            "is in Wazuh's custom range (100000-120000) and no other rule file of "
+            "the manager loads it; it does not set overwrite, so it replaces none "
+            "of your rules. The manager loads it from its rules directory once this "
+            "is merged and the manager restarts."
+        )
     splunk = copy.language == "splunk"
     body = (
         f"Vigil detection rule {copy.rule_id} v{copy.version}, {copy.name!r} "
@@ -1172,13 +1312,20 @@ def _pr_body(copy: Copy, excepted: List[Dict[str, Any]]) -> str:
 
 
 def _open_pr(
-    copy: Copy, target: Mapping[str, Any], body: str, token: str
+    copy: Copy,
+    target: Mapping[str, Any],
+    body: str,
+    token: str,
+    reopen: bool = False,
 ) -> Dict[str, Any]:
     """{"pr_url"} of the pull request adding ``copy``'s file to ``target``, or
     {"in_repo"} when the default branch already holds it byte for byte. Reuses
     the branch or PR an earlier attempt left, so a crash between calls opens no
     duplicate. Either way older versions' open PRs are closed (``superseded``);
-    a failure there is ``supersede_error`` beside the result, not instead of it."""
+    a failure there is ``supersede_error`` beside the result, not instead of it.
+    ``reopen``: Vigil closed this version's PR when the rule left live, so a
+    closed, unmerged one is reopened ({"reopened": True}) rather than left as a
+    person's answer."""
     import base64
     import posixpath
     from urllib.parse import quote
@@ -1199,10 +1346,8 @@ def _open_pr(
     api, repo = _api_of(str(target.get("git_url") or ""))
     owner = repo.partition("/")[0]
     branch = f"vigil/rule-{copy.rule_id}-v{copy.version}"
-    ext = "yml" if copy.language == "splunk" else "toml"
-    name = posixpath.basename(copy.path or "") or f"vigil-rule-{copy.rule_id}.{ext}"
+    name, data = _deploy_file(copy)
     path = posixpath.join(str(target.get("subdirectory") or "").strip("/"), name)
-    data = copy.toml.encode()
     r = f"/repos/{repo}"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -1218,6 +1363,19 @@ def _open_pr(
         ).json()
         if pulls:
             pr = pulls[0]
+            if pr.get("state") != "open" and reopen and not pr.get("merged_at"):
+                note = f"Reopened by Vigil: rule {copy.name} v{copy.version} is live again."
+                comments = f"{r}/issues/{pr['number']}/comments"
+                said = _ok(http.get(comments, params={"per_page": 100})).json()
+                # Once per reopening: a retry finds it already the latest comment.
+                if not said or said[-1].get("body") != note:
+                    _ok(http.post(comments, json={"body": note}))
+                _ok(http.patch(f"{r}/pulls/{pr['number']}", json={"state": "open"}))
+                return {
+                    "pr_url": pr["html_url"],
+                    "reopened": True,
+                    **_supersede(http, r, owner, copy, _by_pr(copy, pr)),
+                }
             # A PR a person closed stays their answer: nothing older is closed for it.
             if pr.get("state") != "open":
                 return {"pr_url": pr["html_url"]}
@@ -1354,7 +1512,7 @@ def _record_deploy(
     records neither, so the next sweep re-finds the PR and records both. Returns
     the outcome left recorded: a PR a racing attempt recorded is not replaced by
     this one's error."""
-    from core.detections.inventory.sync import _write_checks
+    from core.detections.inventory.sync import _write_checks, trail_actor
     from core.storage.config_service import write_config_audit
 
     with get_db_manager().session_scope() as session:
@@ -1386,7 +1544,7 @@ def _record_deploy(
                 action="update",
                 old_value=None,
                 new_value={"rule_id": copy.rule_id, **new},
-                changed_by=actor,
+                changed_by=trail_actor(actor),
             )
     return outcome
 
@@ -1418,6 +1576,208 @@ def _record_superseded(
         )
 
 
+@dataclass
+class Withdrawal:
+    """A version's deploy PR, recorded open, of a rule that is no longer live."""
+
+    rule_id: int
+    version: int
+    name: str
+    language: str
+    deploy: Dict[str, Any]  # the version's checks['deploy'] as recorded
+    stage: str  # where the rule is now
+    actor: str  # who moved it there: 'system' is Vigil
+    reason: str
+
+
+def _left_live() -> List[Withdrawal]:
+    """Each overlay copy version whose deploy PR is recorded open (not
+    superseded, not withdrawn) while the copy's current stage is not live,
+    with the current stage row's stage, actor and reason."""
+    s = DetectionRuleStage
+    current = (
+        select(s.rule_id, s.stage, s.actor, s.reason)
+        .distinct(s.rule_id)
+        .order_by(s.rule_id, s.at.desc(), s.id.desc())
+        .subquery()
+    )
+    with get_db_manager().session_scope() as session:
+        rows = session.execute(
+            select(
+                DetectionRule.id,
+                DetectionRule.name,
+                DetectionRule.language,
+                DetectionRuleVersion.version,
+                DetectionRuleVersion.checks["deploy"],
+                current.c.stage,
+                current.c.actor,
+                current.c.reason,
+            )
+            .join(
+                DetectionRuleVersion, DetectionRuleVersion.rule_id == DetectionRule.id
+            )
+            .join(current, current.c.rule_id == DetectionRule.id)
+            .where(
+                DetectionRule.source == readers.OVERLAY_SOURCE,
+                DetectionRule.language.in_(("elastic", "splunk")),
+                current.c.stage != "live",
+                DetectionRuleVersion.checks.has_key("deploy"),
+            )
+            .order_by(DetectionRule.id, DetectionRuleVersion.version)
+        ).all()
+    return [
+        Withdrawal(rid, version, name, lang, deploy, stage, actor, reason or "")
+        for rid, name, lang, version, deploy, stage, actor, reason in rows
+        if isinstance(deploy, dict)
+        and deploy.get("version") == version
+        and deploy.get("pr_url")
+        and not {"superseded_by", "withdrawn"} & set(deploy)
+    ]
+
+
+def _withdraw_note(w: Withdrawal) -> str:
+    who = "Vigil" if w.actor == "system" else w.actor
+    return (
+        f"Closed by Vigil: rule {w.name} v{w.version} is no longer live. "
+        f"{who} moved it to {w.stage}: {w.reason or 'no reason given'}"
+    )
+
+
+def _withdraw(
+    items: List[Withdrawal],
+    targets: Mapping[str, Dict[str, Any]],
+    now: datetime,
+    report: RolloutReport,
+) -> None:
+    """Close each left-live version's deploy PR, and record what came of it."""
+    pending = [w for w in items if targets.get(w.language)]
+    if not pending:
+        return
+    from core.detections.detection_rules_service import deploy_host_refused
+    from core.secrets import get_secret
+
+    token = get_secret("GITHUB_TOKEN")
+    for w in pending:
+        if _stopped():  # Stop set mid-pass: the rest wait for the sweep after it lifts
+            return
+        target = targets[w.language]
+        url = w.deploy["pr_url"]
+        try:
+            refused = deploy_host_refused(target)
+            if refused:
+                raise RuntimeError(f"{target.get('git_url')}: {refused}")
+            if not token:
+                raise RuntimeError(
+                    "no GitHub token: set the github integration's token"
+                )
+            closed, note = _close_pr(w, target, token)
+        except Exception as exc:  # noqa: BLE001 -- retried next sweep
+            error = (str(exc) or type(exc).__name__)[:500]
+            report.deploys.append(
+                f"{w.rule_id} v{w.version}: closing {url} failed: {error}"
+            )
+            logger.warning(
+                "detection rules: closing rule %s v%s's deploy PR %s failed: %s",
+                w.rule_id,
+                w.version,
+                url,
+                error,
+            )
+            _record_withdrawn(w, {"withdraw_error": error})
+            continue
+        withdrawn = {
+            "at": now.isoformat(),
+            "stage": w.stage,
+            "actor": w.actor,
+            "reason": w.reason,
+            "closed": closed,
+        }
+        if note:
+            withdrawn["note"] = note
+        report.deploys.append(
+            f"{w.rule_id} v{w.version}: "
+            + (f"closed {url}" if closed else f"{url} not closed: {note}")
+        )
+        _record_withdrawn(w, {"withdrawn": withdrawn})
+
+
+def _close_pr(w: Withdrawal, target: Mapping[str, Any], token: str) -> Tuple[bool, str]:
+    """(True, "") once the PR is closed with the note; (False, why) for a PR
+    left as it is: merged, already closed, or not in the target's repo."""
+    import httpx
+
+    from core.detections.detection_rules_service import _repo_key
+
+    url = str(w.deploy["pr_url"])
+    m = re.fullmatch(r"(.+)/pull/(\d+)/?", url)
+    api, repo = _api_of(str(target.get("git_url") or ""))
+    if not m or _repo_key(m[1]) != _repo_key(str(target.get("git_url") or "")):
+        # The token goes only to the target's repo, never wherever a URL points.
+        return False, "not in the deploy target's repo"
+    r, number = f"/repos/{repo}", int(m[2])
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    with httpx.Client(
+        base_url=api, headers=headers, timeout=DEPLOY_TIMEOUT, follow_redirects=True
+    ) as http:
+        pr = _ok(http.get(f"{r}/pulls/{number}")).json()
+        if pr.get("merged_at"):
+            return False, "merged before the rule left live"
+        if pr.get("state") != "open":
+            return False, "already closed"  # a person's answer: never reopened
+        note = _withdraw_note(w)
+        comments = f"{r}/issues/{number}/comments"
+        said = _ok(http.get(comments, params={"per_page": 100})).json()
+        if not any(c.get("body") == note for c in said):  # once, across retries
+            _ok(http.post(comments, json={"body": note}))
+        _ok(http.patch(f"{r}/pulls/{number}", json={"state": "closed"}))
+    return True, ""
+
+
+def _record_withdrawn(w: Withdrawal, change: Dict[str, Any]) -> None:
+    """``change`` (withdrawn, or withdraw_error) merged into the version's
+    checks['deploy'] as it is now, with a config-trail row for a close."""
+    from core.detections.inventory.sync import _write_checks
+    from core.storage.config_service import write_config_audit
+
+    with get_db_manager().session_scope() as session:
+        checks = session.scalar(
+            select(DetectionRuleVersion.checks)
+            .where(
+                DetectionRuleVersion.rule_id == w.rule_id,
+                DetectionRuleVersion.version == w.version,
+            )
+            .with_for_update()
+        )
+        checks = checks or {}
+        deploy = checks.get("deploy")
+        if not isinstance(deploy, dict) or deploy.get("pr_url") != w.deploy["pr_url"]:
+            return  # replaced since it was read: the next sweep reads it afresh
+        deploy = {k: v for k, v in deploy.items() if k != "withdraw_error"}
+        _write_checks(
+            session,
+            [(w.rule_id, w.version, {**checks, "deploy": {**deploy, **change}})],
+        )
+        if "withdrawn" in change:
+            write_config_audit(
+                session,
+                config_type="detection_rules",
+                config_key="overlay_deploy",
+                action="update",
+                old_value=None,
+                new_value={
+                    "rule_id": w.rule_id,
+                    "version": w.version,
+                    "pr_url": w.deploy["pr_url"],
+                    "withdrawn": change["withdrawn"],
+                },
+                changed_by="system",
+            )
+
+
 def _deployed(copy: Copy) -> Optional[Dict[str, Any]]:
     """The deploy outcome recorded on the copy's current version, if any."""
     out = copy.checks.get("deploy")
@@ -1430,10 +1790,12 @@ def overlay_only() -> List[Dict[str, Any]]:
     target Vigil deploys to (``target_refused``: why not, for one that isn't
     GitHub) and what its deploy PR came to (``deploy``: pr_url, in_repo, or
     error with a plain ``reason``, from checks['deploy'] on its current
-    version; None before one)."""
+    version; None before one). A Wazuh copy is listed too, whatever its stage:
+    Vigil can't run it in shadow yet, so a person may deploy it, and
+    ``untested`` says so (None for a copy that went live)."""
     from core.detections.detection_rules_service import deploy_host_refused
 
-    live = [c for c in _copies() if c.stage == "live"]
+    live = _deployable(_copies())
     gone = handed_off([c.rule_id for c in live])
     targets = _deploy_targets()
     rows = []
@@ -1454,9 +1816,16 @@ def overlay_only() -> List[Dict[str, Any]]:
                 "deploy_target": bool(target) and not refused,
                 "target_refused": refused or None,
                 "deploy": deploy,
+                "untested": UNTESTED if c.stage != "live" else None,
             }
         )
     return rows
+
+
+def _deployable(copies: List[Copy]) -> List[Copy]:
+    """The copies a person may deploy: live ones, and any Wazuh copy (until
+    Vigil can run Wazuh rules in shadow, none goes live on its own)."""
+    return [c for c in copies if c.stage == "live" or c.language == WAZUH]
 
 
 def deploy_overlay_only(
@@ -1466,15 +1835,17 @@ def deploy_overlay_only(
 ) -> Dict[str, Any]:
     """Open the deploy PR now, as the sweep would, for live overlay-only copies
     (these ``rule_ids``, or all) whose format has a GitHub deploy target and
-    with no PR opened yet; one that failed is tried again. Says what each came
-    to (``opened``: pr_url or in_repo; ``failed``: error), which now wait for a
-    person (``asked``) and why each other one was skipped. Nothing is opened
-    while Stop is set. Under Assist each one waits for an approval unless
-    ``approver``: the person deploying may approve, or a person already did.
-    Each outcome's config-trail row names ``actor``."""
+    with no PR opened yet; one that failed, or could not close an older
+    version's PR, is tried again. Says what each came to (``opened``: pr_url or
+    in_repo; ``failed``: error), which now wait for a person (``asked``) and why
+    each other one was skipped. Nothing is opened while Stop is set. Under Assist
+    each one waits for an approval unless ``approver``: the person deploying may
+    approve, or a person already did. Each outcome's config-trail row names
+    ``actor``. A Wazuh copy may be deployed whatever its stage; its PR and trail
+    row say it was not shadow-tested."""
     from core.detections.detection_rules_service import deploy_host_refused
 
-    live = [c for c in _copies() if c.stage == "live"]
+    live = _deployable(_copies())
     gone = handed_off([c.rule_id for c in live])
     wanted = [
         c
@@ -1488,7 +1859,11 @@ def deploy_overlay_only(
     if rule_ids is not None:
         found = {c.rule_id for c in wanted}
         skipped.update(
-            {r: "not a live rule only Vigil runs" for r in rule_ids if r not in found}
+            {
+                r: "not a live rule only Vigil runs, nor a Wazuh copy"
+                for r in rule_ids
+                if r not in found
+            }
         )
     todo = []
     for copy in wanted:
@@ -1498,11 +1873,11 @@ def deploy_overlay_only(
             skipped[copy.rule_id] = f"no {copy.language} deploy target is set"
         elif deploy_host_refused(target):
             skipped[copy.rule_id] = deploy_host_refused(target)
-        elif done.get("pr_url"):
+        elif done.get("pr_url") and not done.get("supersede_error"):
             skipped[copy.rule_id] = (
                 f"its pull request is already open: {done['pr_url']}"
             )
-        elif done.get("in_repo"):
+        elif done.get("in_repo") and not done.get("supersede_error"):
             skipped[copy.rule_id] = f"it is already in the repo: {done['in_repo']}"
         elif not copy.toml:
             skipped[copy.rule_id] = "its overlay file could not be read"

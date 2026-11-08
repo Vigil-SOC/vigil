@@ -42,6 +42,8 @@ PR_LEASE = timedelta(minutes=10)
 def _audit(
     event: str, rule_id: int, who: str, reason: Optional[str], **more: Any
 ) -> None:
+    from core.detections.inventory.sync import trail_actor
+
     with get_db_manager().session_scope() as session:
         write_config_audit(
             session,
@@ -50,7 +52,7 @@ def _audit(
             action=event,
             old_value=None,
             new_value={"rule_id": rule_id, **more},
-            changed_by=who,
+            changed_by=trail_actor(who),
             change_reason=reason,
         )
 
@@ -109,11 +111,18 @@ def request_deploy(copy: Any, requested_by: str) -> str:
             and params.get("version") == copy.version
         ):
             return open_one.action_id
+    from core.detections.inventory import rollout
+
     reason = "Vigil asks before it opens a pull request while it is on Assist"
+    state = (
+        f"is a Wazuh rule ({rollout.UNTESTED})"
+        if copy.language == rollout.WAZUH and copy.stage != "live"
+        else "is live"
+    )
     action = service.create_action(
         action_type=ActionType.DEPLOY_RULE,
         title=f"Open the deploy PR for {copy.name}",
-        description=f"Rule {copy.rule_id} v{copy.version} is live and has no deploy PR.",
+        description=f"Rule {copy.rule_id} v{copy.version} {state} and has no deploy PR.",
         target=str(copy.rule_id),
         confidence=0.0,
         reason=reason,
@@ -277,7 +286,8 @@ def carry_out(action: PendingAction, report: Any) -> bool:
             and _latest_stage(session, rule_id) == "shadow"
         ):
             _promote(session, copy, row, who, report)
-        elif copy.stage != "live":
+        elif copy.stage != "live" and (promote or copy.language != rollout.WAZUH):
+            # A person may deploy a Wazuh copy whatever its stage (#4062).
             _close(row, ActionStatus.FAILED, {"error": f"rule {rule_id} is not live"})
             return False
         holder = _lease(row)

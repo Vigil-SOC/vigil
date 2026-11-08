@@ -70,7 +70,7 @@ def estate(monkeypatch):
         def session_scope(self):
             yield object()
 
-    def open_pr(copy, target, body, token):
+    def open_pr(copy, target, body, token, reopen=False):
         state["opened"].append((copy.rule_id, target["git_url"], token))
         if copy.rule_id in state["fail"]:
             raise RuntimeError("POST /repos/acme/detections/pulls: 502 bad gateway")

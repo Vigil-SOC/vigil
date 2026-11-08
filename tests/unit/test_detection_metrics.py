@@ -84,6 +84,8 @@ def test_shadow_to_live_per_version_with_who_promoted_it():
     assert [(w["name"], w["version"]) for w in out["waiting"]] == [("A", 2)]
     assert out["in_shadow"] == 1
     assert "7 days in shadow" in out["exit_criteria"]
+    # The sweep promotes only on a lint pass too, and says so in its reason.
+    assert out["exit_criteria"].endswith("Sees and lint passed")
 
 
 # 3. Live rules passing Runs and Sees everywhere they run
