@@ -23,6 +23,12 @@ never-firing; a Wazuh rule below level 3 that has alerts is judged on them).
 A linked Kibana or Splunk copy also carries checks['drift']: fail when it was
 disabled, removed or edited in the SIEM while its repo rule stayed the same.
 
+A repo or overlay rule's latest version carries checks['lint'] (sync lints it),
+result 'none' when there is nothing to lint, which is coverage like a pass.
+One failing lint is keyed to one environment: it is listed and searched, but
+left out of every coverage count (``CREDITED``), and analyze_coverage's by_tool
+counts it as ``lint_failing``. Lint is no flag and no rule_health entry.
+
 A flag is a (rule, check) whose latest recorded change went pass -> fail, on a
 rule not removed (a drift flag stays on a removed copy). Nothing to fail, or a
 change to unknown, is no flag; a later change back to pass clears it. It is a
@@ -71,10 +77,26 @@ ACCURATE = DetectionRuleVersion.checks["accurate"]["result"].astext
 NOISY = DetectionRuleVersion.checks["noisy"]["result"].astext
 SILENT = DetectionRuleVersion.checks["silent"]["result"].astext
 CAUGHT = DetectionRuleVersion.checks["caught"]["result"].astext
+# A repo or overlay rule whose latest version failed lint (keyed to one
+# environment): listed and searched, never counted as coverage.
+LINT = DetectionRuleVersion.checks["lint"]["result"].astext
+LINT_FAILS = LINT == "fail"
+CREDITED = LINT.is_distinct_from("fail")
 # No alert across Quiet's whole 30-day search: a never-firing rule.
 NEVER_FIRED = DetectionRuleVersion.checks["silent"]["days_fired"].astext == "0"
 # The per-tool tally columns _by_tool reads, in order, before the count.
-TALLIED = (TOOL, RUNS, SEES, QUIET, ACCURATE, NOISY, SILENT, CAUGHT, NEVER_FIRED)
+TALLIED = (
+    TOOL,
+    RUNS,
+    SEES,
+    QUIET,
+    ACCURATE,
+    NOISY,
+    SILENT,
+    CAUGHT,
+    NEVER_FIRED,
+    LINT_FAILS,
+)
 RUNS_RESULTS = ("pass", "fail", "unknown")
 # The rollout stages a listed copy can be in (#3995).
 STAGES = ("shadow", "live", "off")
@@ -85,6 +107,7 @@ STAGE_ROWS = select(
     DetectionRuleStage.stage,
     DetectionRuleStage.actor,
     DetectionRuleStage.proof,
+    DetectionRuleStage.reason,
 ).order_by(
     DetectionRuleStage.rule_id,
     DetectionRuleStage.at.desc(),
@@ -144,6 +167,8 @@ WORST_ORDER = (
     "fires",
     CAUGHT_CHECK,
     "disabled",
+    # Only a Case's card can name a removed rule: the listing shows none.
+    "removed",
     "no_fire_data",
 )
 # The listing's orders besides worst first (HEALTH_ORDER, then rule id). Each
@@ -459,12 +484,20 @@ def _with_links(session: Any, hits: List[Dict], rules: List[DetectionRule]) -> N
 def _by_tool(rows: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
     """(TALLIED..., count) rows as rules per tool, and for a SIEM's its Runs, Sees,
     Quiet, Accurate, Noisy, Silent and Caught, and (where Noisy and Silent run)
-    its never-firing rules."""
+    its never-firing rules. A repo or overlay entry counts its rules failing lint
+    (``lint_failing``), which are not coverage."""
     out: Dict[str, Dict[str, Any]] = {}
-    for tool, runs, sees, quiet, accurate, noisy, silent, caught, never, count in rows:
+    for *tallied, count in rows:
+        tool, runs, sees, quiet, accurate, noisy, silent, caught, never, lint_fails = (
+            tallied
+        )
         entry = out.setdefault(tool, {"rules": 0})
         entry["rules"] += count
-        if tool not in ("repo", OVERLAY):
+        if tool in ("repo", OVERLAY):
+            entry["lint_failing"] = entry.get("lint_failing", 0) + (
+                count if lint_fails else 0
+            )
+        else:
             for check, result in (
                 ("runs", runs),
                 ("sees", sees),
@@ -497,55 +530,63 @@ def rule_counts() -> Dict[str, int]:
 
 
 def rules_by_technique() -> Dict[str, Set[int]]:
-    """Each technique an active rule declares, and the ids of those rules."""
+    """Each technique an active rule declares, and the ids of those rules; a rule
+    failing lint is no coverage and left out."""
     technique = func.unnest(DetectionRule.techniques).table_valued("t").alias("t")
     with get_db_manager().session_scope() as session:
         rows = session.execute(
             select(technique.c.t, func.array_agg(DetectionRule.id))
             .select_from(DetectionRule)
+            .join(DetectionRuleVersion, _latest_join())
             .join(technique, technique.c.t.isnot(None))
-            .where(ACTIVE)
+            .where(ACTIVE, CREDITED)
             .group_by(technique.c.t)
         ).all()
     return {t: set(ids) for t, ids in rows}
 
 
 def rules_by_tactic() -> Dict[str, int]:
-    """How many active rules declare each tactic (only Sigma and Elastic do)."""
+    """How many active rules declare each tactic (only Sigma and Elastic do),
+    leaving out rules failing lint."""
     tactic = func.unnest(DetectionRule.tactics).table_valued("t").alias("t")
     with get_db_manager().session_scope() as session:
         rows = session.execute(
             select(tactic.c.t, func.count())
             .select_from(DetectionRule)
+            .join(DetectionRuleVersion, _latest_join())
             .join(tactic, tactic.c.t.isnot(None))
-            .where(ACTIVE)
+            .where(ACTIVE, CREDITED)
             .group_by(tactic.c.t)
         ).all()
     return {t: count for t, count in rows}
 
 
 def techniques_per_language() -> Dict[str, int]:
-    """Distinct techniques the active rules of each format declare."""
+    """Distinct techniques the active rules of each format declare, leaving out
+    rules failing lint."""
     technique = func.unnest(DetectionRule.techniques).table_valued("t").alias("t")
     with get_db_manager().session_scope() as session:
         rows = session.execute(
             select(DetectionRule.language, func.count(func.distinct(technique.c.t)))
             .select_from(DetectionRule)
+            .join(DetectionRuleVersion, _latest_join())
             .join(technique, technique.c.t.isnot(None))
-            .where(ACTIVE)
+            .where(ACTIVE, CREDITED)
             .group_by(DetectionRule.language)
         ).all()
     return {language: count for language, count in rows}
 
 
 def rules_for_technique(technique: str, top: int = 5) -> Dict[str, Any]:
-    """Active rules declaring ``technique``: the count by format and the first ``top``."""
+    """Active rules declaring ``technique``: the count by format (rules failing lint
+    left out, as they are no coverage) and the first ``top``."""
     declares = DetectionRule.techniques.contains([technique])
     with get_db_manager().session_scope() as session:
         by_source = dict(
             session.execute(
                 select(DetectionRule.language, func.count())
-                .where(ACTIVE, declares)
+                .join(DetectionRuleVersion, _latest_join())
+                .where(ACTIVE, declares, CREDITED)
                 .group_by(DetectionRule.language)
             ).all()
         )
@@ -928,6 +969,8 @@ def _health(
     silent = checks.get("silent") or {}
     if status == "disabled":
         return "disabled", "Switched off in the SIEM.", None
+    if status == "removed":
+        return "removed", "Removed from its SIEM or repo: it fires nowhere now.", None
     if runs.get("result") == "fail":
         raw = str(runs.get("reason") or "")
         return "fails_to_run", _first_line(raw) or "Its last run failed.", raw or None
@@ -976,9 +1019,9 @@ def _check_flags(checks: Dict[str, Any]) -> Tuple[List[str], bool]:
 
 
 def _worst(health: str, flags: List[str], caught: bool) -> str:
-    """The row's worst problem: a rule that can't fire, or is off, stays so; else
-    its worst failing flag; else Caught over Fires; else its health."""
-    if health in CANT_FIRE or health == "disabled":
+    """The row's worst problem: a rule that can't fire, or is off or removed,
+    stays so; else its worst failing flag; else Caught over Fires; else its health."""
+    if health in CANT_FIRE or health in ("disabled", "removed"):
         return health
     if flags:
         return flags[0]
@@ -1004,11 +1047,12 @@ def _first_line(reason: str) -> str:
 
 
 def _results(checks: Dict[str, Any]) -> List[Any]:
-    """Each stored check's result; drift compares copies, so it is no check of the rule."""
+    """Each stored check's result; drift compares copies, so it is no check of
+    the rule, and a lint with nothing to lint ('none') checked nothing."""
     return [
         value.get("result")
         for key, value in checks.items()
-        if key != "drift" and isinstance(value, dict)
+        if key != "drift" and isinstance(value, dict) and value.get("result") != "none"
     ]
 
 
@@ -1282,7 +1326,13 @@ def _listing_now() -> Dict[str, Any]:
     new day (the window rolls)."""
     with _listing_lock, get_db_manager().session_scope() as session:
         written = _write_marks(session, _LISTING_TABLES + _FIRES_TABLES)
-        marks = tuple(m for m in written if m[0] in _LISTING_TABLES)
+        # The newest stage row too: write stats lag a commit by seconds, so a
+        # Revert or release read straight after would get the old row (#4053).
+        # Its id is exact at commit, in every process.
+        newest_stage = session.scalar(select(func.max(DetectionRuleStage.id)))
+        marks = tuple(m for m in written if m[0] in _LISTING_TABLES) + (
+            ("detection_rule_stages:newest", newest_stage),
+        )
         if _listing.get("marks") != marks:
             _listing.clear()
             _listing["copies"] = _copies_listed(session)
@@ -1298,13 +1348,15 @@ def _listing_now() -> Dict[str, Any]:
 
 
 def stage_moves(rows: Iterable[Any]) -> Dict[int, Dict[str, Any]]:
-    """Per rule, from its stage rows ``(rule_id, stage, actor, proof)`` ordered by
+    """Per rule, from its stage rows ``(rule_id, stage, actor, proof, reason)`` ordered by
     rule then newest first (``STAGE_ROWS``, ``stages.history``'s order): how many there are, the
-    latest one's actor and from-stage, and whether a person holds the rule and
+    latest one's actor, reason and from-stage, and whether a person holds the rule and
     who (the latest row with a ``hold`` key decides, as rollout reads it)."""
     by_rule: Dict[int, List[Any]] = {}
-    for rule_id, stage, actor, proof in rows:
-        by_rule.setdefault(rule_id, []).append((stage, actor, proof or {}))
+    for rule_id, stage, actor, proof, reason in rows:
+        by_rule.setdefault(rule_id, []).append(
+            (stage, actor, proof or {}, reason or "")
+        )
     out: Dict[int, Dict[str, Any]] = {}
     for rule_id, rule_rows in by_rule.items():
         hold = next((r for r in rule_rows if "hold" in r[2]), None)
@@ -1313,6 +1365,8 @@ def stage_moves(rows: Iterable[Any]) -> Dict[int, Dict[str, Any]]:
             "stage_moves": len(rule_rows),
             "stage_from": rule_rows[1][0] if len(rule_rows) > 1 else None,
             "stage_actor": rule_rows[0][1],
+            # Why the latest move: a new version going back to shadow is not a Revert.
+            "stage_reason": rule_rows[0][3],
             "held": held,
             "held_by": hold[1] if held else None,
         }

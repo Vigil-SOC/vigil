@@ -142,6 +142,17 @@ def test_a_disabled_rule_is_shown_as_off(resolve):
     assert card["worst"] == "disabled"
 
 
+def test_a_removed_rule_is_shown_as_removed_not_firing(resolve):
+    # Its findings and Caught pass came while it ran; it runs nowhere now.
+    resolve.traced["f1"] = _found(7, 2, {"caught": PASS}, status="removed")
+    (card,) = catalog.case_rules(_Session(), [_finding("f1")])["rules"]
+    assert (card["status"], card["health"], card["worst"]) == (
+        "removed",
+        "removed",
+        "removed",
+    )
+
+
 def test_cards_are_worst_first(resolve):
     resolve.traced.update(
         f1=_found(1, 1, {"caught": PASS}),
