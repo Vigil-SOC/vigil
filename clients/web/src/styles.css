@@ -4622,6 +4622,11 @@
       background: var(--ac-bg);
    }
 
+   /* Without ai_autonomy.write: the active profile still shows, nothing to pick */
+   .lim-profile:disabled {
+      cursor: default;
+   }
+
    .lim-profile:focus-visible {
       outline: 2px solid var(--ac);
       outline-offset: 2px;
