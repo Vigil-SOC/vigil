@@ -126,6 +126,17 @@ class World:
         monkeypatch.setattr(rollout, "_copies", lambda: self.copies)
         monkeypatch.setattr(rollout, "_deploy", self.deploy)
         monkeypatch.setattr(rollout_approval, "ApprovalService", FakeApprovals)
+
+        @contextmanager
+        def claimed(action_id):
+            row = FakeApprovals.rows[action_id]
+            ok = row.status == "approved"
+            yield (object(), row) if ok else (None, None)
+
+        monkeypatch.setattr(rollout_approval, "_claimed", claimed)
+        monkeypatch.setattr(
+            rollout_approval, "_latest_stage", lambda s, rid: self.copies[0].stage
+        )
         monkeypatch.setattr(
             rollout_approval,
             "_audit",
