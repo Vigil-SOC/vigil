@@ -263,3 +263,25 @@ def test_a_wazuh_copy_that_has_not_passed_lint_is_not_deployed(overlay, monkeypa
     assert out["skipped"] == [
         {"rule_id": 16735, "reason": "its current version has not passed lint"}
     ]
+
+
+def test_a_rule_whose_only_group_is_its_own_child_is_still_wrapped(github, deploy):
+    own = BARE.replace("  <if_sid>", "  <group>sysmon,</group>\n  <if_sid>")
+    deploy(_copy(text="<!-- not a <group> -->\n" + own))
+    data = github.files[("vigil/rule-16735-v1", "etc/rules/vigil_100100.xml")]
+    assert data.decode().startswith('<group name="vigil,">\n<!-- not a <group> -->')
+
+
+def test_an_xml_declaration_is_dropped_when_the_rule_is_wrapped(github, deploy):
+    deploy(_copy(text='<?xml version="1.0"?>\n' + BARE))
+    data = github.files[("vigil/rule-16735-v1", "etc/rules/vigil_100100.xml")]
+    assert data.decode() == f'<group name="vigil,">\n{BARE.strip()}\n</group>\n'
+
+
+def test_a_key_with_a_leading_zero_is_refused(github, deploy):
+    out = deploy(_copy(text=BARE.replace("100100", "0100100"), key="0100100"))
+    assert "outside Wazuh's range" in out["error"] and github.calls == []
+
+
+def test_the_untested_note_names_the_issue_that_lifts_it():
+    assert rollout.UNTESTED.endswith("(#4061)")
