@@ -309,6 +309,80 @@ async def test_a_busy_managers_timeout_is_asked_again(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "first",
+    [
+        httpx.Response(
+            500,
+            json={
+                "title": "Wazuh Internal Error",
+                "detail": "Some Wazuh daemons are not ready yet in node "
+                '"node01" (wazuh-analysisd->restarting)',
+            },
+        ),
+        httpx.ConnectError("refused"),
+    ],
+    ids=["login-500-then-daemons", "api-unreachable"],
+)
+async def test_a_restarting_manager_is_waited_out(monkeypatch, first):
+    slept, answers = [], [first, first]
+
+    async def sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr(wazuh_sandbox.asyncio, "sleep", sleep)
+
+    def handler(request):
+        if answers:
+            answer = answers.pop(0)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+        if request.url.path.endswith("/authenticate"):
+            return _ok({"token": "t"})
+        return _ok({"hostname": "wazuh-sandbox"})
+
+    box = _sandbox(handler)
+    box.restart_waits = (5.0, 10.0)
+    assert (await box._request("GET", "/"))["hostname"] == "wazuh-sandbox"
+    assert [s for s in slept if s in (5.0, 10.0)] == [5.0, 10.0]
+
+
+@pytest.mark.asyncio
+async def test_a_manager_that_stays_down_fails_after_the_restart_waits(monkeypatch):
+    slept = []
+
+    async def sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr(wazuh_sandbox.asyncio, "sleep", sleep)
+
+    def handler(request):
+        raise httpx.ConnectError("refused")
+
+    box = _sandbox(handler)
+    box.restart_waits = (5.0, 10.0)
+    with pytest.raises(wazuh_sandbox.WazuhError, match="could not be reached"):
+        await box._request("GET", "/")
+    assert [s for s in slept if s in (5.0, 10.0)] == [5.0, 10.0]
+
+
+@pytest.mark.asyncio
+async def test_restart_asks_the_manager_to_restart_and_does_not_wait(monkeypatch):
+    calls = []
+
+    def handler(request):
+        if request.url.path.endswith("/authenticate"):
+            return _ok({"token": "t"})
+        calls.append((request.method, request.url.path))
+        return _ok({})
+
+    box = _sandbox(handler)
+    await box.restart()
+    assert calls == [("PUT", "/manager/restart")]
+
+
+@pytest.mark.asyncio
 async def test_a_refused_file_is_deleted_and_reported_and_the_rest_still_load(
     tmp_path, monkeypatch
 ):
@@ -522,12 +596,15 @@ class _Service:
 class _Box:
     """The sandbox, faked: what it lacks, and the final rule per event line."""
 
-    def __init__(self, finals=None, lacks=(), fails=None, matches=None):
+    def __init__(
+        self, finals=None, lacks=(), fails=None, matches=None, restart_fails=None
+    ):
         self.finals, self.lacks, self.fails = finals or {}, list(lacks), fails
         self.loaded, self.closed = None, False
         # event line -> the copy keys whose rule matches it, in Wazuh's order:
         # the first one loaded ends the event, as siblings do on a manager.
         self.matches, self.loads = matches or {}, []
+        self.restart_fails, self.restarts = restart_fails, 0
 
     wrong = None
 
@@ -572,6 +649,12 @@ class _Box:
         if self.refuses in {c.key for c in self.loaded}:
             return [], f"copy {self.refuses}: XML syntax error"
         return await self.replay(events), None
+
+    async def restart(self):
+        assert not self.closed, "restarted after close"
+        self.restarts += 1
+        if self.restart_fails:
+            raise wazuh_sandbox.WazuhError(self.restart_fails)
 
     async def close(self):
         self.closed = True
@@ -1000,3 +1083,56 @@ def test_a_copy_that_cant_be_counted_alone_reads_why_not_zero(run):
         "events: the Wazuh sandbox refused copy 100002: XML syntax error"
     )
     assert run.wrote["sees"][2][0] == "unknown"
+
+
+def test_every_sandbox_run_restarts_it_after_and_never_the_customers(run):
+    # After a counted run, and after one whose load failed: the guard passed.
+    box = _Box(finals={"zzmarker": "100001"})
+    run([_copy(1, MATCH)], _Service([_doc("zzmarker")]), box)
+    assert box.restarts == 1 and box.closed
+    failed = _Box(fails="Wazuh PUT /rules/files failed (HTTP 500)")
+    run([_copy(2, MATCH)], _Service([_doc("x")]), failed)
+    assert failed.restarts == 1
+    # The customer's manager, or one the guard can't confirm: never restarted.
+    theirs = _Box()
+    theirs.wrong = "the Wazuh sandbox is your Wazuh manager (the same host and port)"
+    run([_copy(3, MATCH)], _Service([_doc("x")]), theirs)
+    assert theirs.restarts == 0
+    # Not due yet: the sandbox isn't touched at all.
+    idle = _Box()
+    run([_copy(4, MATCH, ran=True)], _Service([_doc("x")]), idle)
+    assert idle.restarts == 0
+
+
+def test_a_failed_restart_keeps_the_runs_counts(run):
+    box = _Box(finals={"zzmarker": "100001"}, restart_fails="could not be reached")
+    run([_copy(1, MATCH)], _Service([_doc("zzmarker")]), box)
+    assert box.restarts == 1 and 1 in run.wrote["runs"]
+    assert run.wrote["unrunnable"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_call_whose_daemons_are_not_ready_is_asked_again(monkeypatch):
+    slept, answers = [], [500]
+
+    async def sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr(wazuh_sandbox.asyncio, "sleep", sleep)
+
+    def handler(request):
+        if request.url.path.endswith("/authenticate"):
+            return _ok({"token": "t"})
+        if answers and answers.pop(0) == 500:
+            return httpx.Response(
+                500,
+                json={
+                    "detail": 'Some Wazuh daemons are not ready yet in node "node01"'
+                },
+            )
+        return _ok({"hostname": "wazuh-sandbox"})
+
+    box = _sandbox(handler)
+    box.restart_waits = (5.0,)
+    assert (await box._request("GET", "/"))["hostname"] == "wazuh-sandbox"
+    assert 5.0 in slept
