@@ -94,8 +94,17 @@ const KEYS: readonly [EntityType, RegExp][] = [
   ["process", /process|image|command|parent|exe\b/i],
   ["user", /user|account|identity|principal|subject/i],
   ["ip", /(?:^|_)ip(?:_|$)|addr|src$|dst$|dest$/i],
-  ["domain", /domain|fqdn|host|hostname|query|site|referer/i],
+  ["host", /hostname/i],
+  ["domain", /domain|fqdn|host|query|site|referer/i],
 ];
+
+// A `host` field holds a machine as often as a website: a bare or unregistered
+// name is the machine, memory's `host:` (#4158). An address stays an address.
+function refine(type: EntityType, name: string, value: string): EntityType {
+  if (type !== "host" && !(type === "domain" && /host/i.test(name))) return type;
+  if (isIP(value) !== 0) return "ip";
+  return type === "domain" && !(value.includes(".") && hasKnownTld(value)) ? "host" : type;
+}
 
 function typeForKey(name: string): EntityType | undefined {
   return KEYS.find(([, pattern]) => pattern.test(name))?.[0];
@@ -113,13 +122,18 @@ export function fromPayload(payload: unknown, name = ""): Entity[] {
   if (type === undefined) return fromText(raw);
 
   const value = normalize(type, raw);
-  return wellFormed(type, value) ? [{ type, value }] : [];
+  const refined = refine(type, name, value);
+  return wellFormed(refined, value) ? [{ type: refined, value }] : [];
 }
 
 export function entitiesOf(record: Pick<EvidenceRecord, "summary" | "payload">): Entity[] {
   const found = new Map<string, Entity>();
   for (const entity of [...fromPayload(record.payload), ...fromText(record.summary)]) {
     if (!found.has(key(entity))) found.set(key(entity), entity);
+  }
+  // A machine the payload names as a host is not also a domain because prose repeats it.
+  for (const entity of found.values()) {
+    if (entity.type === "host") found.delete(key({ type: "domain", value: entity.value }));
   }
   return [...found.values()].slice(0, PER_RECORD_CAP);
 }

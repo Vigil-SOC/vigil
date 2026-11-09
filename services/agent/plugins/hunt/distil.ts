@@ -1,5 +1,5 @@
 import { forModelsDeep } from "../../core/guards.js";
-import { fromText } from "./entities.js";
+import { entitiesOf, fromText } from "./entities.js";
 import { fold, type HuntEvent, type Projection } from "./ledger.js";
 import { evidenceStrength, isGap, NULL_CHECK_PROVENANCE } from "./strength.js";
 import type { Entity, EvidenceRecord, HuntOutcome, HypothesisStatus, LinkRelation } from "./types.js";
@@ -110,12 +110,15 @@ interface Group {
 // One row per entity, investigation and source, so growth tracks hunts and not
 // telemetry volume. A record naming the same entity twice counts once: the hit
 // count means records, and the extractor already deduped within one of them.
+// Entities are re-extracted from the stored payload rather than read from
+// `record.entities`, so a hunt captured under older rules distils under today's
+// (#4158); the stored ones stay what the live graph was decided against.
 function sightingsIn(projection: Projection): DistilSighting[] {
   const groups = new Map<string, Group>();
 
   for (const record of projection.evidence.values()) {
     if (!observed(record)) continue;
-    for (const entity of dedupe(record.entities)) {
+    for (const entity of dedupe(entitiesOf(record))) {
       const id = `${entity.type}:${entity.value} ${record.source_system}`;
       const group = groups.get(id);
       if (group === undefined) {
