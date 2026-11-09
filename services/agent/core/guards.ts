@@ -172,10 +172,12 @@ export function render(tool: string, ref: string, result: ToolResult, wrapped: W
         if (value.length >= 4) hidden.push(value);
         return `  - ${one.field} = ${handles.put(key, value)} (${one.authored === "subject" ? "written by the subject" : "withheld"}; put the handle in a query to search for this value)`;
       }
-      return `  - ${one.field} = ${value} (${one.authored})`;
+      return `  - ${one.field} = ${scrub(value, Infinity)} (${one.authored})`;
     });
     let summary = finding.summary.trim().slice(0, SUMMARY_CAP);
     for (const value of hidden) summary = summary.split(value).join("[a withheld value]");
+    // The reader's summary is written from the rows, so it is scrubbed like them.
+    summary = scrub(summary, Infinity);
     if (steering(summary)) summary = "[summary not shown; rely on the values]";
     const source = finding.source_system ?? (result.ok ? result.sourceSystem : "");
     lines.push(`[${ref}.${n}] ${source}: ${summary}`);
