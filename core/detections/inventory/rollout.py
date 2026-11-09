@@ -120,10 +120,7 @@ from core.detections.inventory import (
 )
 from core.detections.inventory.catalog import REPO_PREFIX
 from core.detections.inventory.rollout_limits import DEFAULTS as DEFAULT_LIMITS
-from core.detections.inventory.rollout_limits import (
-    RolloutLimits,
-    read_limits,
-)
+from core.detections.inventory.rollout_limits import RolloutLimits, read_limits
 from core.integrations._base import search_budget
 from core.integrations._base.ids import EXTERNAL_ID_MAX, fit_id
 from core.integrations.elastic.descriptor import ELASTIC

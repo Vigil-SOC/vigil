@@ -84,7 +84,7 @@ docstring-parser==0.18.0
     # via anthropic
 email-validator==2.3.0
     # via -r requirements.txt
-fastapi==0.141.1
+fastapi==0.162.2
     # via
     #   -r requirements.txt
     #   fastapi-offline
@@ -175,6 +175,7 @@ openai==3.3.1
 opentelemetry-api==1.45.1
     # via
     #   -r requirements.txt
+    #   fastapi
     #   mcp
     #   opentelemetry-exporter-http-transport
     #   opentelemetry-exporter-otlp-proto-grpc
@@ -371,13 +372,13 @@ sniffio==1.3.1
     #   openai
 socksio==1.0.0
     # via -r requirements.txt
-sqlalchemy==2.1.3
+sqlalchemy==2.1.8
     # via
     #   -r requirements.txt
     #   alembic
 sse-starlette==3.4.8
     # via mcp
-sshtunnel==0.4.0
+sshtunnel==0.5.1
     # via -r requirements.txt
 starlette==1.6.0
     # via
