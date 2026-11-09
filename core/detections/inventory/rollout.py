@@ -2359,12 +2359,14 @@ async def _sandboxed(
         config["url"], config["username"], config["password"], verify_ssl=False
     )
     whys: Dict[int, str] = {}
+    ours = False  # the guard passed: the sandbox, not the customer's manager
     try:
         # Never write to the customer's manager, however the URL is set.
         wrong = await box.guard(wazuh_sandbox.customer())
         if wrong:
             why = f"{wazuh_shadow.CANT}{wrong}"
             return "ran", {}, {c.rule_id: why for c in counted}, None
+        ours = True
         others = [c for c in loaded if c not in counted]
         done = await box.load(
             counted, wazuh_sandbox.read_repos(wazuh_sandbox.repo_roots(), others)
@@ -2417,6 +2419,13 @@ async def _sandboxed(
         why = f"{wazuh_sandbox.FAILED}{exc}"
         return "ran", {}, {**{c.rule_id: why for c in counted}, **whys}, None
     finally:
+        if ours:
+            # Frees what this run's uploads took; the next run (hours later)
+            # finds it fresh. Not waited for, so it adds no time to the run.
+            try:
+                await box.restart()
+            except WazuhError as exc:
+                logger.warning("Wazuh sandbox: restart after a run failed: %s", exc)
         await box.close()
 
 

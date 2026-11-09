@@ -41,6 +41,11 @@ sandbox decodes with another decoder than the customer's manager did is left out
 of the count, and the run says how many. So a count is hits in the sample, not
 in the window, and the run records how big the sample was.
 
+After each run Vigil restarts the sandbox, without waiting for it
+(``Sandbox.restart``): wazuh-analysisd keeps the memory every file upload takes
+and never gives it back, so without a restart it reaches the container's 1 GB
+within a few runs. The next run's first calls wait out a restart still under way.
+
 Rules that need what a sample breaks are not counted: ``frequency`` /
 ``timeframe``, ``ignore``, ``if_matched_*`` and ``same_*`` / ``different_*``
 (each needs the events before it, in order), and ``<list>`` (CDB lists are not
@@ -312,6 +317,16 @@ def repo_roots() -> List[Path]:
     return roots
 
 
+# What the sandbox answers while it restarts, in order on 4.9.2: a login fails
+# with HTTP 500, then its API can't be reached, then a call reads that its
+# daemons are not ready yet.
+RESTARTING = (
+    "Wazuh login failed (HTTP 500)",
+    "could not be reached",
+    "daemons are not ready",
+)
+
+
 class Sandbox(WazuhService):
     """Vigil's own Wazuh manager. Unlike the customer's (``WazuhService``,
     read-only), Vigil writes its rule and decoder files."""
@@ -320,6 +335,9 @@ class Sandbox(WazuhService):
     # A busy manager (a fresh one's first minutes, a big listing) answers 500
     # "Timeout executing API request": wait and ask again, this long each time.
     retry_waits: Tuple[float, ...] = (10.0, 30.0)
+    # While the manager restarts (``restart``: 24-36 s on 4.9.2) a call reads
+    # one of ``RESTARTING``: wait and ask again, this long each time (2 min in all).
+    restart_waits: Tuple[float, ...] = (5.0, 10.0, 15.0, 30.0, 60.0)
     _next = 0.0  # monotonic time the next call may go
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -327,7 +345,8 @@ class Sandbox(WazuhService):
         super().__init__(*args, **kwargs)
 
     async def _request(self, method: str, path: str, **kwargs) -> Dict[str, Any]:
-        for wait_after in (*self.retry_waits, None):
+        busy, restarting = iter(self.retry_waits), iter(self.restart_waits)
+        while True:
             wait = self._next - time.monotonic()
             if wait > 0:
                 await asyncio.sleep(wait)
@@ -335,12 +354,24 @@ class Sandbox(WazuhService):
             try:
                 return await super()._request(method, path, **kwargs)
             except WazuhError as exc:
-                if wait_after is None or "Timeout executing API request" not in str(
-                    exc
-                ):
+                text = str(exc)
+                if "Timeout executing API request" in text:
+                    wait_after = next(busy, None)
+                elif any(sign in text for sign in RESTARTING):
+                    wait_after = next(restarting, None)
+                else:
+                    wait_after = None
+                if wait_after is None:
                     raise
                 await asyncio.sleep(wait_after)
-        raise AssertionError("unreachable")  # pragma: no cover
+
+    async def restart(self) -> None:
+        """Restart the manager, and return without waiting for it. wazuh-analysisd
+        keeps the memory every file upload takes (11-18 MB a file on 4.9.2) and
+        never gives it back, near the container's 1 GB after one 50-file load;
+        a restart is what frees it (52 MB after). The uploaded files stay. The
+        next run's first calls wait out the restart (``restart_waits``)."""
+        await self._request("PUT", "/manager/restart")
 
     async def guard(self, theirs: Optional[Mapping[str, Any]]) -> Optional[str]:
         """Why Vigil may not write to this sandbox, or None: it is the customer's
