@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Findings yield these five types; case_iocs.ioc_type is free text and spells
 # several of them differently. Folding the aliases is what lets a row written
 # on case close join a key written at investigation start.
-_TYPE_ALIASES = {
+TYPE_ALIASES = {
     "filehash": "hash",
     "file_hash": "hash",
     "md5": "hash",
@@ -52,7 +52,7 @@ _MAX_VALUE_LEN = 500
 
 def make_key(ioc_type: Optional[str], value: Optional[str]) -> Optional[str]:
     ioc_type = (ioc_type or "").strip().lower()
-    ioc_type = _TYPE_ALIASES.get(ioc_type, ioc_type)
+    ioc_type = TYPE_ALIASES.get(ioc_type, ioc_type)
     value = (value or "").strip().lower()
     if not ioc_type or not value:
         return None
