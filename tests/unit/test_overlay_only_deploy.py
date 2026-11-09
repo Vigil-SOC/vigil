@@ -247,7 +247,13 @@ class _RacedGitHub:
             self.lists += 1
             if self.lists > self.opened_after:
                 return httpx.Response(
-                    200, json=[{"html_url": "https://github.com/acme/d/pull/9"}]
+                    200,
+                    json=[
+                        {
+                            "html_url": "https://github.com/acme/d/pull/9",
+                            "state": "open",
+                        }
+                    ],
                 )
             return httpx.Response(200, json=[])
         if method == "GET" and path == "/repos/acme/detections":
