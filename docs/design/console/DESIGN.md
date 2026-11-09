@@ -56,7 +56,7 @@ Content layout follows the width the page actually gets, not the window: the sid
 - **Columns never hide with nothing docked.** Tables narrow, then scroll inside their card.
 - **Low-priority columns step aside only while Ask Vigil is docked** and the content is under 1400px. Their `th` and `td` carry `col-low` (`ColumnDef.className` in `DataTable`); a `col-low-note` in the table header says they are hidden. They come back when Ask Vigil closes. Drawers overlay the page, so they hide nothing.
 - **The main column and the column with the row's link never hide.** The main column never narrows below `--col-main-min` (200px): a table's minimum width is its fixed tracks plus that, lowered by the hidden columns while they are hidden.
-- **Reading pages** (Settings, the case Summary, workflow detail, setup) cap at `--page-max` (1280px). **Data pages** keep the full width; their free text caps at `--text-max` (75ch).
+- **Reading pages** (Settings, workflow detail, setup) cap at `--page-max` (1280px). **Data pages** keep the full width, as does the case (side panel and full page), whose layout uses the whole width; their free text caps at `--text-max` (75ch).
 - **Fixed overlays portal out.** As a container, `.main` would trap `position: fixed` descendants, so dialogs and side drawers render through `OverlayPortal`, outside `.main`.
 
 ### Screen rules
