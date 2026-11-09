@@ -197,6 +197,95 @@ async def test_if_group_loads_only_the_groups_rules_the_stock_ruleset_lacks(
     assert asked == [["100060", "5710", "5711"]]  # one listing for the group
 
 
+def _overwriting_repo(tmp_path):
+    root = tmp_path / "corp"
+    (root / "rules").mkdir(parents=True)
+    # A copy of Wazuh's stock file: its rules are the image's own, never loaded.
+    (root / "rules" / "0095-sshd_rules.xml").write_text(
+        '<group name="syslog,sshd,"><rule id="5710" level="5"><if_sid>5700</if_sid>'
+        "<match>illegal user|invalid user</match>"
+        "<group>invalid_login,</group><description>s</description></rule></group>"
+    )
+    # The customer's own 5710, which their manager runs in place of Wazuh's;
+    # 100070 hangs off a repository rule the stock ruleset lacks.
+    (root / "rules" / "local_rules.xml").write_text(
+        '<group name="local,sshd,"><rule id="5710" level="10" overwrite="yes">'
+        "<if_sid>5700</if_sid><match>illegal user|invalid user|unknown login</match>"
+        "<group>invalid_login,</group><description>c</description></rule>"
+        '<rule id="100070" level="5"><if_sid>100060</if_sid><match>v</match>'
+        "<description>v</description></rule></group>"
+    )
+    (root / "rules" / "corp_vpn.xml").write_text(
+        '<group name="corp,"><rule id="100060" level="3"><match>corp-vpn</match>'
+        "<description>c</description></rule>"
+        # Overwrites a rule the stock ruleset lacks: loaded only when needed.
+        '<rule id="100061" level="3" overwrite="yes"><match>corp-x</match>'
+        "<description>x</description></rule></group>"
+    )
+    return wazuh_sandbox.read_repos([root])
+
+
+def test_a_rule_that_overwrites_is_indexed(tmp_path):
+    repo = _overwriting_repo(tmp_path)
+    assert repo.overwrites == {
+        "5710": "corp/rules/local_rules.xml",
+        "100061": "corp/rules/corp_vpn.xml",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        "<if_sid>5710</if_sid><match>zzmarker</match>",
+        "<if_group>invalid_login</if_group><match>zzmarker</match>",
+        "<if_sid>5700</if_sid><match>zzmarker</match>",  # beside the overwrite
+    ],
+)
+async def test_a_customers_overwrite_of_a_stock_rule_is_loaded(
+    tmp_path, monkeypatch, body
+):
+    repo = _overwriting_repo(tmp_path)
+    box = _sandbox(lambda r: _ok({}))
+    stock = {"5700", "5710"}
+
+    async def loaded(ids):
+        return stock & set(ids)
+
+    async def has(kind, name):
+        return kind == "rule" and name in stock
+
+    monkeypatch.setattr(box, "_loaded", loaded)
+    monkeypatch.setattr(box, "_has", has)
+    copy = _Copy("100300", _rule(body, rid="100300"))
+    rules, _ = await box.plan([copy], repo)
+    # The overwrite's file, and the file its other rule needs (100060); never
+    # the stock copy, nor corp_vpn.xml's overwrite for its own sake.
+    assert rules == ["corp/rules/local_rules.xml", "corp/rules/corp_vpn.xml"]
+    assert await box.plan([], repo) == ([], [])  # a load that only clears
+
+
+@pytest.mark.asyncio
+async def test_a_copy_of_the_overwritten_rule_is_not_doubled(tmp_path, monkeypatch):
+    repo = _overwriting_repo(tmp_path)
+    box = _sandbox(lambda r: _ok({}))
+    asked = []
+
+    async def loaded(ids):
+        asked.append(sorted(ids))
+        return {"5710"} & set(ids)
+
+    async def has(kind, name):
+        return name == "5700"
+
+    monkeypatch.setattr(box, "_loaded", loaded)
+    monkeypatch.setattr(box, "_has", has)
+    # The overlay's copy of 5710 is the newer text: it is the copy, not a parent.
+    copy = _Copy("5710", _rule("<if_sid>5700</if_sid><match>m</match>", rid="5710"))
+    assert await box.plan([copy], repo) == ([], [])
+    assert asked == [["100061"]]
+
+
 @pytest.mark.asyncio
 async def test_a_busy_managers_timeout_is_asked_again(monkeypatch):
     slept, answers = [], [500, 200]

@@ -21,7 +21,11 @@ Each run clears the files it loaded last time, then loads:
   other copies, only the files those copies need: the rules their ``if_sid`` /
   ``if_group`` name and the decoders their ``decoded_as`` names, and those
   files' own parents, that Wazuh's stock ruleset (the image's own) lacks. A
-  repository carrying the whole stock ruleset would otherwise double it.
+  repository carrying the whole stock ruleset would otherwise double it;
+- every repository file that overwrites a stock rule (``overwrite="yes"``),
+  and its parents: the customer's manager runs that rule in place of Wazuh's,
+  so a copy under it (or under a rule beside or above it) is counted on the
+  customer's logic, not the stock one (#4142).
 
 A file the manager refuses is deleted again at once (the manager keeps it, and
 every later upload would fail) and reported; the rest still load. A copy whose
@@ -197,6 +201,8 @@ class Repo:
     rule_file: Dict[str, str] = field(default_factory=dict)  # rule id -> file
     # group -> (rule id, file) for each rule in it
     group_rules: Dict[str, List[Tuple[str, str]]] = field(default_factory=dict)
+    # rule id -> file, for each rule that sets overwrite="yes"
+    overwrites: Dict[str, str] = field(default_factory=dict)
     decoder_file: Dict[str, str] = field(default_factory=dict)  # name -> file
     needs: Dict[str, Dict[str, List[str]]] = field(default_factory=dict)
     unreadable: List[str] = field(default_factory=list)  # "file: why"
@@ -209,6 +215,8 @@ class Repo:
             rid = wazuh_xml.rule_id(rule)
             if rid:
                 self.rule_file.setdefault(rid, name)
+                if (rule.get("overwrite") or "").strip().lower() == "yes":
+                    self.overwrites[rid] = name
             for group in wazuh_xml.groups(rule, enclosing):
                 if rid:
                     self.group_rules.setdefault(group, []).append((rid, name))
@@ -409,12 +417,20 @@ class Sandbox(WazuhService):
         """The repository rule and decoder files the copies need: their parents'
         files, and those files' parents, that Wazuh's stock ruleset (the
         image's) does not already hold. Only these are loaded: a repository
-        that carries the whole ruleset would otherwise double the manager's."""
+        that carries the whole ruleset would otherwise double the manager's.
+        Every file that overwrites a stock rule is loaded too, with its parents:
+        the customer's manager runs that rule, not Wazuh's."""
         keys = {c.key for c in copies}
         rules: List[str] = []
         decoders: List[str] = []
         queue = [parents(c.toml) for c in copies]
         seen: set = set()
+        overwrites = {r: f for r, f in repo.overwrites.items() if r not in keys}
+        if copies and overwrites:
+            stock = await self._loaded(list(overwrites))
+            for file in dict.fromkeys(f for r, f in overwrites.items() if r in stock):
+                rules.append(file)
+                queue.append(repo.needs[file])
         while queue:
             needs = queue.pop()
             for sid in needs.get("if_sid", ()):
