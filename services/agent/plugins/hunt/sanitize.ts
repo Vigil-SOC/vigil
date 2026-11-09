@@ -1,3 +1,5 @@
+// The digest wraps evidence in <vigil:evidence>; core scrub keeps a record from closing it.
+import { clamp, scrub } from "../../core/security.js";
 import type { WorkerEvidence } from "./types.js";
 
 const SUMMARY_CAP = 2000;
@@ -10,10 +12,6 @@ const KEY_CAP = 200;
 // strength.ts rests a verdict on whether the critic argued against everything linked.
 export const DROPPED = "_dropped";
 export const OMITTED = "fields_omitted";
-
-// The digest wraps evidence in <vigil:evidence> so its content cannot read as
-// direction. A record that carries the delimiter itself would close that block.
-const DELIMITER = /<\/?vigil:/gi;
 
 // ponytail: keyword heuristic, not a classifier — it will miss paraphrase. It
 // only ever raises salience (see salienceFloor), so a miss costs the lead
@@ -29,21 +27,6 @@ const INSTRUCTION_LIKE = [
 
 export function looksLikeInstruction(text: string): boolean {
   return INSTRUCTION_LIKE.some((pattern) => pattern.test(text));
-}
-
-// Truncation is marked rather than silent: a summary that just stops is
-// indistinguishable from a finding that was genuinely that short.
-function clamp(text: string, cap: number): string {
-  return text.length <= cap ? text : `${text.slice(0, cap)} [truncated ${text.length - cap} chars]`;
-}
-
-// Exported for the tool boundary: retrieved web content reaches a worker's
-// context before any of this runs on the evidence it emits.
-export function scrub(text: string, cap: number): string {
-  // Control characters other than tab and newline render as nothing, which is
-  // exactly what makes them useful for hiding text from a human reviewer.
-  const stripped = text.replace(/[\x00-\x08\x0B-\x1F\x7F]/g, "");
-  return clamp(stripped.replace(DELIMITER, "<vigil-"), cap);
 }
 
 // Questions render as bare markdown under a heading, with no delimiters around

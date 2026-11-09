@@ -1,8 +1,13 @@
 import type { ToolFailure, ToolResult } from "../contracts/tool.js";
 
 // Tool output reaches a model inside a delimited block so it cannot read as
-// direction. A result carrying the delimiter would close that block early.
-const DELIMITER = /<\/?vigil:/gi;
+// direction. A result carrying the delimiter would close that block early, and a
+// model reads a near-miss (`</ vigil:`, a fullwidth `＜`) as the delimiter too.
+const DELIMITER = /[<\uFF1C\uFE64][\s/\uFF0F]*vigil\s*[:\uFF1A]?/giu;
+
+// Format characters (zero-width, bidi controls, Unicode tag characters) render as
+// nothing, yet reach the model, and can split a delimiter so the pattern misses it.
+const INVISIBLE = /[\x00-\x08\x0B-\x1F\x7F\p{Cf}]/gu;
 
 // Truncation is marked rather than silent: output that just stops is
 // indistinguishable from output that was genuinely that short.
@@ -11,9 +16,9 @@ export function clamp(text: string, cap: number): string {
 }
 
 export function scrub(text: string, cap: number): string {
-  // Control characters other than tab and newline render as nothing, which is
-  // exactly what makes them useful for hiding text from a human reviewer.
-  const stripped = text.replace(/[\x00-\x08\x0B-\x1F\x7F]/g, "");
+  // Control and format characters render as nothing, which is exactly what makes
+  // them useful for hiding text from a human reviewer.
+  const stripped = text.replace(INVISIBLE, "");
   return clamp(stripped.replace(DELIMITER, "<vigil-"), cap);
 }
 

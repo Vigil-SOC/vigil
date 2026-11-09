@@ -388,14 +388,18 @@ def _blank_beside(session, principal_id: str) -> None:
 
 
 def _revoke(session, principal_id: str) -> None:
-    """Revoke MCP credentials and end sign-ins, and keep those rows.
+    """Deactivate the account, revoke MCP credentials and end sign-ins, and keep those rows.
 
-    The user row stays, and the principal is not marked deleted.
+    The user row stays, and the principal is not marked deleted. Deactivating
+    is what stops the password signing in again and the role being honoured.
     """
     if not _table(session, "users"):
         return
     user_id = session.execute(
-        text("SELECT user_id FROM public.users WHERE principal_id = :id"),
+        text(
+            "UPDATE public.users SET is_active = false"
+            " WHERE principal_id = :id RETURNING user_id"
+        ),
         {"id": principal_id},
     ).scalar()
     if not user_id:
@@ -501,8 +505,8 @@ def _managers(session, *, active_only: bool) -> set[str]:
     ).scalars()
     found = set(rows)
     if active_only:
-        # Blanked on an earlier commit. The user row is unchanged, so
-        # is_active still says yes; the erasure file is what records that
+        # Blanked on an earlier commit. Erasure deactivates the account, but
+        # an admin may reactivate it; the erasure file is what records that
         # they no longer count as a remaining audit manager.
         found.difference_update(read_ids(outside_path()))
     return found
