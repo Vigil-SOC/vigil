@@ -1159,14 +1159,18 @@ services:
     mem_limit: 1g
     environment:
       # The image makes this its one API user and disables its default ones
-      # (wazuh, wazuh-wui). No default password: it refuses to start without
-      # one (not "${VAR:?}", which would fail every compose command).
+      # (wazuh, wazuh-wui). No default password: without one the manager
+      # never starts (not "${VAR:?}", which would fail every compose command).
       API_USERNAME: ${WAZUH_SANDBOX_USERNAME:-vigil}
       API_PASSWORD: ${WAZUH_SANDBOX_PASSWORD:-}
+    # Without a password it says so once and idles, never starting the manager.
+    # Exiting instead would loop: unless-stopped restarts a container on any
+    # exit, and it is kept so that, with a password, the manager comes back
+    # after a crash or a host reboot. A stop ends the idle at once.
     entrypoint:
       - /bin/sh
       - -c
-      - '[ -n "$$API_PASSWORD" ] || { echo "wazuh-sandbox: set WAZUH_SANDBOX_PASSWORD" >&2; exit 1; }; exec /init'
+      - 'if [ -z "$$API_PASSWORD" ]; then echo "wazuh-sandbox: set WAZUH_SANDBOX_PASSWORD and recreate this container; the manager is not started until then" >&2; trap "exit 0" TERM INT; sleep 2147483647 & wait $$!; exit 0; fi; exec /init'
     restart: unless-stopped
     # No host port: only the backend and daemon reach it.
     networks:
