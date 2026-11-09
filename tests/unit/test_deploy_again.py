@@ -36,6 +36,9 @@ class FakeGitHub:
         self.files = {"main": {}}  # branch -> path -> bytes
         self.pulls = []
         self.calls = []
+        self.bodies = {}  # PR number -> body
+        self.newest_first = True  # how GitHub lists PRs
+        self.refuse_create = False  # 422, as if another click opened it first
 
     def pr(self, branch, state="open", merged=False):
         self.files.setdefault(branch, dict(self.files["main"]))
@@ -62,21 +65,22 @@ class FakeGitHub:
         if path == f"{base}/pulls" and method == "GET":
             branch = request.url.params["head"].partition(":")[2]
             want = request.url.params.get("state", "open")
-            return httpx.Response(
-                200,
-                json=[
-                    p
-                    for p in self.pulls
-                    if p["head"]["ref"] == branch and want in ("all", p["state"])
-                ],
-            )
+            found = [
+                p
+                for p in self.pulls
+                if p["head"]["ref"] == branch and want in ("all", p["state"])
+            ]
+            return httpx.Response(200, json=found[::-1] if self.newest_first else found)
         if path == f"{base}/pulls" and method == "POST":
+            if self.refuse_create:
+                return httpx.Response(422, json={"message": "A pull request exists"})
             if any(
                 p["head"]["ref"] == body["head"] and p["state"] == "open"
                 for p in self.pulls
             ):
                 return httpx.Response(422, json={"message": "A pull request exists"})
             self.pr(body["head"])
+            self.bodies[self.pulls[-1]["number"]] = body["body"]
             return httpx.Response(201, json=self.pulls[-1])
         m = re.fullmatch(rf"{base}/pulls/(\d+)", path)
         if m and method == "GET":
@@ -197,6 +201,8 @@ def test_a_pr_closed_unmerged_is_deployed_again_as_a_new_pr(github, inventory):
     )
     assert inventory["states"][copy.rule_id] == "closed"  # read from GitHub now
     assert github.files[_branch(copy)]["rules/vigil_100777.xml"] == XML.encode()
+    # A GitHub reviewer can tell it's a redeploy, and of which PR.
+    assert github.bodies[2].startswith(f"Deployed again by a person in Vigil: {closed}")
 
 
 def test_a_deleted_branch_is_made_again(github, inventory):
@@ -264,9 +270,15 @@ def test_under_assist_deploying_again_waits_for_an_approval(
     }
     inventory["copies"] = [copy]
     monkeypatch.setattr(rollout, "_asks_first", lambda: True)
-    monkeypatch.setattr(rollout_approval, "request_deploy", lambda c, who: "act-1")
+    asked = []
+    monkeypatch.setattr(
+        rollout_approval,
+        "request_deploy",
+        lambda c, who, again_after=None: asked.append(again_after) or "act-1",
+    )
     out = rollout.deploy_overlay_only([copy.rule_id], actor="bob")
     assert out["asked"] == [{"rule_id": copy.rule_id, "action_id": "act-1"}]
+    assert asked == [copy.checks["deploy"]["pr_url"]]  # the request names the closed PR
     assert len(github.pulls) == 1  # nothing opened before the approval
 
 
@@ -304,6 +316,7 @@ def pg(monkeypatch):
     monkeypatch.setattr(connection, "_db_manager", None)
     manager = connection.get_db_manager()
     manager.initialize(force=True)
+    manager.create_tables()  # a create_tables DB has no audit_trail: the legacy log
     made = []
     yield manager, made
     with manager.session_scope() as session:
@@ -314,11 +327,28 @@ def pg(monkeypatch):
     connection.DatabaseManager._instance = None
 
 
-def _audit_rows(session, rule_id, after):
-    """The overlay_deploy trail rows for the rule after ``after``: the audit
-    trail when in use, else the legacy config_audit_log."""
+def _has_trail(session):
     from sqlalchemy import text
 
+    return bool(session.execute(text("select to_regclass('audit_trail')")).scalar())
+
+
+def _audit_rows(session, rule_id, after):
+    """The overlay_deploy trail rows for the rule after ``after``: the audit
+    trail when in use (an upgraded DB), else the legacy config_audit_log (a
+    create_tables one), each read as the trail's payload."""
+    from sqlalchemy import text
+
+    if not _has_trail(session):
+        rows = session.execute(
+            text(
+                "select new_value, changed_by from config_audit_log "
+                "where id > :after and config_key = 'overlay_deploy' "
+                "and (new_value->>'rule_id')::int = :rid order by id"
+            ),
+            {"after": after, "rid": rule_id},
+        ).all()
+        return [{"new_value": v, "actor": who} for v, who in rows]
     trail = (
         session.execute(
             text(
@@ -346,7 +376,11 @@ def test_deploying_again_records_the_new_pr_and_the_person_on_the_trail(pg, gith
     manager, made = pg
     with manager.session_scope() as session:
         after = session.execute(
-            text("select coalesce(max(seq), 0) from audit_trail")
+            text(
+                "select coalesce(max(seq), 0) from audit_trail"
+                if _has_trail(session)
+                else "select coalesce(max(id), 0) from config_audit_log"
+            )
         ).scalar()
         rule = DetectionRule(
             source="repo:overlay",
@@ -401,3 +435,87 @@ def test_deploying_again_records_the_new_pr_and_the_person_on_the_trail(pg, gith
     assert row["new_value"]["again_after"] == closed
     assert row["new_value"]["pr_url"] == new
     assert "alice" in json.dumps(row)  # the trail names the person
+
+
+def test_the_race_fallback_takes_only_a_standing_pr_whatever_the_order(
+    github, inventory, monkeypatch
+):
+    # Another click opens PR #2 just as this one posts; GitHub lists oldest first.
+    copy = _copy()
+    closed = github.pr(_branch(copy), state="closed")
+    copy.checks["deploy"] = {"version": 1, "pr_url": closed}
+    inventory["copies"] = [copy]
+    github.newest_first = False
+    handle = github.handle
+
+    def raced(request):
+        if request.method == "POST" and request.url.path.endswith("/pulls"):
+            github.pr(_branch(copy))  # the other click's PR lands now
+            github.refuse_create = True
+        return handle(request)
+
+    github.handle = raced
+    monkeypatch.setattr(rollout.time, "sleep", lambda s: None)
+    out = rollout.deploy_overlay_only([copy.rule_id], actor="alice")
+    assert out["opened"][0]["pr_url"].endswith("/pull/2")  # not the closed #1
+
+
+@pytest.mark.parametrize(
+    "merged, reason",
+    [
+        (True, "its pull request was merged"),
+        (False, "its pull request is already open"),
+    ],
+)
+def test_a_stale_closed_reading_with_a_pr_standing_opens_nothing(
+    github, inventory, merged, reason
+):
+    # The record names closed PR #1; the branch has since got PR #2, merged or open.
+    copy = _copy()
+    closed = github.pr(_branch(copy), state="closed")
+    copy.checks["deploy"] = {"version": 1, "pr_url": closed}
+    inventory["copies"] = [copy]
+    handle = github.handle
+    standing = []
+
+    def later(request):
+        # GitHub's state of #1 is read as closed; #2 lands before the deploy looks.
+        if request.method == "GET" and request.url.path.endswith("/pulls/1"):
+            response = handle(request)
+            standing.append(github.pr(_branch(copy), state="open", merged=merged))
+            return response
+        return handle(request)
+
+    github.handle = later
+    out = rollout.deploy_overlay_only([copy.rule_id], actor="alice")
+    assert out["opened"] == [] and len(github.pulls) == 2
+    assert out["skipped"] == [
+        {"rule_id": copy.rule_id, "reason": f"{reason}: {standing[0]}"}
+    ]
+    outcome, _ = inventory["recorded"][copy.rule_id]
+    assert outcome["pr_url"] == standing[0] and "again_after" not in outcome
+    assert outcome["pr_state"] == ("merged" if merged else "open")
+
+
+def test_the_approval_for_a_redeploy_names_the_closed_pr(monkeypatch):
+    from core.detections.inventory import rollout_approval
+
+    made = {}
+
+    class _Service:
+        def list_actions(self, **kw):
+            return []
+
+        def create_action(self, **kw):
+            made.update(kw)
+            return SimpleNamespace(action_id="act-9")
+
+    monkeypatch.setattr(rollout_approval, "ApprovalService", _Service)
+    monkeypatch.setattr(rollout_approval, "_audit", lambda *a, **k: None)
+    url = f"https://github.com/{REPO}/pull/57"
+    assert rollout_approval.request_deploy(_copy(), "bob", again_after=url) == "act-9"
+    assert made["title"] == "Deploy Canary login again"
+    assert url in made["description"]
+    assert "closed without merging" in made["description"]
+    assert "has no deploy PR" not in made["description"]
+    assert made["parameters"]["again_after"] == url

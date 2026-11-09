@@ -1144,13 +1144,15 @@ def _deploy(
             done = _open_pr(
                 copy,
                 target,
-                _pr_body(copy, excepted[copy.rule_id]),
+                _pr_body(copy, excepted[copy.rule_id], again.get(copy.rule_id)),
                 token,
                 reopen=_withdrawn_by_vigil(_deployed(copy)),
                 again=copy.rule_id in again,
             )
             superseded = done.pop("superseded", [])
             outcome.update(done)
+            if done.get("pr_state"):
+                outcome.pop("again_after", None)  # it found a PR standing: no redeploy
             landed = done.get("pr_url") or done.get("in_repo")
             for old in superseded:
                 _record_superseded(copy, old, landed, now)
@@ -1304,8 +1306,17 @@ def _pr_title(copy: Copy) -> str:
     return f"Add Vigil rule {copy.name} ({copy.key})"
 
 
-def _pr_body(copy: Copy, excepted: List[Dict[str, Any]]) -> str:
-    """What the rule is, and its active exceptions; the rule file has none."""
+def _pr_body(
+    copy: Copy, excepted: List[Dict[str, Any]], again_after: Optional[str] = None
+) -> str:
+    """What the rule is, and its active exceptions; the rule file has none. A
+    redeploy says first which closed PR it replaces (#4123)."""
+    if again_after:
+        return (
+            f"Deployed again by a person in Vigil: {again_after} was closed "
+            "without merging, and this opens the same version anew.\n\n"
+            + _pr_body(copy, excepted)
+        )
     if copy.language == WAZUH:
         name, _ = _deploy_file(copy)
         state = (
@@ -1418,9 +1429,14 @@ def _open_pr(
                 }
             # A PR a person closed stays their answer: nothing older is closed for it.
             if pr.get("state") != "open":
-                return {"pr_url": pr["html_url"]}
+                # Deploying again found it merged meanwhile: say so, open nothing.
+                return {
+                    "pr_url": pr["html_url"],
+                    **({"pr_state": "merged"} if again else {}),
+                }
             return {
                 "pr_url": pr["html_url"],
+                **({"pr_state": "open"} if again else {}),
                 **_supersede(http, r, owner, copy, _by_pr(copy, pr)),
             }
         base = _ok(http.get(r)).json()["default_branch"]
@@ -1473,8 +1489,22 @@ def _open_pr(
                 found = http.get(
                     f"{r}/pulls", params={"head": f"{owner}:{branch}", "state": "all"}
                 )
-                if not found.is_error and found.json():
-                    return {"pr_url": found.json()[0]["html_url"]}
+                # Only one that stands, open or merged, whatever order GitHub lists
+                # them in: a closed one is no answer to this click.
+                standing = (
+                    []
+                    if found.is_error
+                    else [
+                        p
+                        for p in found.json()
+                        if p.get("state") == "open" or p.get("merged_at")
+                    ]
+                )
+                if standing:
+                    pr = next(
+                        (p for p in standing if p.get("state") == "open"), standing[0]
+                    )
+                    return {"pr_url": pr["html_url"]}
             raise
         return {
             "pr_url": pr["html_url"],
@@ -2085,7 +2115,9 @@ def deploy_overlay_only(
         asked = [
             {
                 "rule_id": c.rule_id,
-                "action_id": rollout_approval.request_deploy(c, actor),
+                "action_id": rollout_approval.request_deploy(
+                    c, actor, again_after=again.get(c.rule_id)
+                ),
             }
             for c in todo
         ]
@@ -2098,6 +2130,14 @@ def deploy_overlay_only(
         actor,
         {r: u for r, u in again.items() if r in {c.rule_id for c in todo}},
     )
+    # Deploying again found a PR already standing (a stale reading): nothing opened.
+    for r, o in outcomes.items():
+        if "error" not in o and o.get("pr_state") in ("open", "merged"):
+            skipped[r] = (
+                f"its pull request was merged: {o['pr_url']}"
+                if o["pr_state"] == "merged"
+                else f"its pull request is already open: {o['pr_url']}"
+            )
     return {
         "asked": asked,
         "opened": [
@@ -2106,7 +2146,7 @@ def deploy_overlay_only(
                 **{k: o[k] for k in ("pr_url", "in_repo", "supersede_error") if k in o},
             }
             for r, o in outcomes.items()
-            if "error" not in o
+            if "error" not in o and r not in skipped
         ],
         "failed": [
             {
