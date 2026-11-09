@@ -353,6 +353,7 @@ async def test_a_refused_file_is_deleted_and_reported_and_the_rest_still_load(
     assert "XML syntax error" in done.refused["100400"]
     assert ("DELETE", "/rules/files/vigil_sandbox_3.xml") in seen
     assert any(s.startswith("acme/rules/0910-proxylogon.xml") for s in done.skipped)
+    assert box.copy_files == {"100300": "vigil_sandbox_2.xml"}  # only those loaded
 
 
 # --- the sandbox's API ----------------------------------------------------------
@@ -521,9 +522,12 @@ class _Service:
 class _Box:
     """The sandbox, faked: what it lacks, and the final rule per event line."""
 
-    def __init__(self, finals=None, lacks=(), fails=None):
+    def __init__(self, finals=None, lacks=(), fails=None, matches=None):
         self.finals, self.lacks, self.fails = finals or {}, list(lacks), fails
         self.loaded, self.closed = None, False
+        # event line -> the copy keys whose rule matches it, in Wazuh's order:
+        # the first one loaded ends the event, as siblings do on a manager.
+        self.matches, self.loads = matches or {}, []
 
     wrong = None
 
@@ -536,19 +540,34 @@ class _Box:
         if self.fails:
             raise wazuh_sandbox.WazuhError(self.fails)
         self.loaded = list(copies)
+        self.loads.append(
+            ([c.key for c in copies], sorted(n for n in repo.rules if "overlay" in n))
+        )
         return wazuh_sandbox.Loaded(refused=dict(self.refused), files=len(copies))
 
     async def missing(self, needs):
         return [f"if_sid {s}" for s in needs.get("if_sid", ()) if s in self.lacks]
 
     async def replay(self, events):
+        loaded = {c.key for c in self.loaded}
+        self.replayed = getattr(self, "replayed", []) + [[e["event"] for e in events]]
         return [
             {
-                "rule": {"id": self.finals.get(e["event"], "5710")},
+                "rule": {
+                    "id": next(
+                        (k for k in self.matches.get(e["event"], ()) if k in loaded),
+                        self.finals.get(e["event"], "5710"),
+                    )
+                },
                 "decoder": {"name": "sshd"},
             }
             for e in events
         ]
+
+    async def alone(self, copy, keep, events):
+        self.loaded = [copy, *keep]
+        self.loads.append(([c.key for c in self.loaded], "alone"))
+        return await self.replay(events)
 
     async def close(self):
         self.closed = True
@@ -827,3 +846,119 @@ def test_a_loud_rule_counted_on_a_sample_cannot_promote():
         > rollout.DEFAULT_LIMITS.max_hits_per_day
     )
     assert checks["runs"]["sampled"]["hits"] == 1
+
+
+# --- copies counted together (#4145) ----------------------------------------------
+
+
+def test_events_another_copy_ended_are_the_ones_counted_again():
+    outputs = [
+        {"rule": {"id": "100001"}},
+        {"rule": {"id": "5710"}},
+        None,
+        {"rule": {"id": "100002"}},
+    ]
+    assert wazuh_sandbox.won_by_another(outputs, ["100001", "100002", "100003"]) == {
+        "100001": [3],
+        "100002": [0],
+        "100003": [0, 3],
+    }
+    assert wazuh_sandbox.won_by_another(outputs, ["100001"]) == {}
+
+
+def test_counted_alone_a_copy_keeps_the_copies_it_hangs_off_by_if_sid():
+    top = _Copy("100001", _rule("<if_sid>5710</if_sid><match>a</match>", "100001"))
+    mid = _Copy("100002", _rule("<if_sid>100001</if_sid><match>b</match>", "100002"))
+    low = _Copy("100003", _rule("<if_sid>100002, 5700</if_sid>", "100003"))
+    grouped = _Copy("100004", _rule("<if_group>sshd</if_group>", "100004"))
+    copies = [top, mid, low, grouped]
+    assert wazuh_sandbox.chain(low, copies) == [mid, top]
+    assert wazuh_sandbox.chain(top, copies) == []
+    assert wazuh_sandbox.chain(grouped, copies) == []
+
+
+def test_two_copies_under_one_parent_are_each_counted_as_if_alone(run):
+    # Both copies match a, b and c; Wazuh ends each on the first, 100001.
+    lines = ["a", "b", "c", "d"]
+    group = _rule("<if_group>invalid_login</if_group><match>zz</match>", "100001")
+    sid = _rule("<if_sid>5710</if_sid><match>zz</match>", "100002")
+    box = _Box(matches={x: ["100001", "100002"] for x in "abc"})
+    run(
+        [_copy(1, group), _copy(2, sid)],
+        _Service([_doc(x) for x in lines]),
+        box,
+    )
+    # 3 hits each in the 4 replayed of 1,200: 900 each, as alone, not 900 and 0.
+    assert run.wrote["runs"][1][0] == run.wrote["runs"][2][0] == 900
+    assert run.wrote["sampled"][2]["hits"] == 3
+    assert run.wrote["sampled"][2]["events"] == 4
+    # One load for both, then 100002 alone on the 3 events 100001 ended; 100001
+    # took no event of 100002's, so it is not loaded again.
+    assert [keys for keys, _ in box.loads] == [["100001", "100002"], ["100002"]]
+    assert box.replayed == [lines, ["a", "b", "c"]]
+
+
+def test_copies_on_different_events_keep_their_own_counts(run):
+    box = _Box(finals={"a": "100001", "b": "100002"})
+    run(
+        [_copy(1, MATCH), _copy(2, _rule("<match>b</match>", "100002"))],
+        _Service([_doc("a"), _doc("b")]),
+        box,
+    )
+    # Each ended an event the other is counted on again alone, where it still
+    # isn't theirs: one load together, then one alone each.
+    assert run.wrote["runs"][1][0] == run.wrote["runs"][2][0] == 600
+    assert len(box.loads) == 3
+
+
+def test_a_copy_counted_alone_keeps_its_parent_copy_loaded(run):
+    parent = _rule("<if_sid>5710</if_sid><match>zz</match>", "100001")
+    child = _rule("<if_sid>100001</if_sid><match>zz</match>", "100002")
+    sibling = _rule("<if_sid>100001</if_sid><match>z</match>", "100003")
+    box = _Box(matches={"zz": ["100003", "100002", "100001"]})
+    run(
+        [_copy(1, parent), _copy(2, child), _copy(3, sibling)],
+        _Service([_doc("zz")]),
+        box,
+    )
+    alone = {keys[0]: keys[1:] for keys, _ in box.loads[1:]}
+    # The child alone keeps its parent copy; not its sibling, which won the
+    # event and so isn't counted again.
+    assert alone == {"100001": [], "100002": ["100001"]}
+    assert [run.wrote["runs"][n][0] for n in (1, 2, 3)] == [1200, 1200, 1200]
+
+
+@pytest.mark.asyncio
+async def test_alone_swaps_copy_files_and_never_uploads_the_repository_again():
+    seen = []
+
+    def handler(request):
+        seen.append((request.method, request.url.path))
+        if request.url.path.endswith("/authenticate"):
+            return _ok({"token": "t"})
+        if request.url.path == "/logtest":
+            return _ok({"token": "s", "output": {"rule": {"id": "100002"}}})
+        return _ok({})
+
+    box = _sandbox(handler)
+    box.copy_files = {
+        "100001": "vigil_sandbox_3.xml",
+        "100002": "vigil_sandbox_4.xml",
+        "100003": "vigil_sandbox_5.xml",
+    }
+    me = _Copy("100002", _rule("<if_sid>100009</if_sid>", rid="100002"))
+    parent = _Copy("100009", _rule("<if_sid>5710</if_sid>", rid="100009"))
+    outs = await box.alone(me, [parent], [{"event": "x"}, {"event": "y"}])
+    assert [wazuh_sandbox.final(o) for o in outs] == ["100002", "100002"]
+    writes = [(m, p) for m, p in seen if m in ("PUT", "DELETE") and p != "/logtest"]
+    # The siblings' files go, the missing parent copy comes up; nothing else.
+    assert writes == [
+        ("DELETE", "/rules/files/vigil_sandbox_3.xml"),
+        ("DELETE", "/rules/files/vigil_sandbox_5.xml"),
+        ("PUT", "/rules/files/vigil_sandbox_copy_100009.xml"),
+        ("DELETE", "/logtest/sessions/s"),
+    ]
+    assert box.copy_files == {
+        "100002": "vigil_sandbox_4.xml",
+        "100009": "vigil_sandbox_copy_100009.xml",
+    }
