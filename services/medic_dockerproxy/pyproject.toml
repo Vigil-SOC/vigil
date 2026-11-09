@@ -14,7 +14,7 @@ dependencies = []
 dev = [
     "import-linter==2.15",
     "pytest>=8",
-    "ruff==0.17.3",
+    "ruff==0.17.4",
 ]
 
 [tool.uv]
