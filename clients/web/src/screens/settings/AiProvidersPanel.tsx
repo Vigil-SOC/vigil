@@ -606,7 +606,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
             }
             // A disabled key and an unresolved seed are stored, not usable. Only a
             // key the gateway did not refuse is worth asking to assign.
-            let usable = false
+            let usable: boolean
             try {
               const { data: verdictsNow } = await bifrostApi.routability()
               usable = keyCanTakeModel(saved?.id ? verdictsNow.keys?.[saved.id] : undefined)
