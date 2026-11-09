@@ -77,7 +77,7 @@ logger = logging.getLogger(__name__)
 # Re-deriving is delete-then-insert, so a bump that now yields fewer rows leaves
 # none behind. Stamped on the marker, and the poll re-offers everything stamped
 # with any other value.
-DISTIL_MAPPING_VERSION = 2
+DISTIL_MAPPING_VERSION = 3
 
 # The other side's version: the wire schema of the payload this understands,
 # which `DISTIL_SCHEMA_VERSION` in services/agent/plugins/hunt/distil.ts
