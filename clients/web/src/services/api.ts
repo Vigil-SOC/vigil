@@ -945,7 +945,7 @@ export interface DetectionMetrics {
   generated_at: string
   gap_to_shadow: MetricNotes & { gaps: number; closed: number; median_hours: number | null; within_target: number; target_hours: number }
   shadow_to_live: MetricNotes & { promoted: number; promoted_by_vigil: number; median_hours: number | null; in_shadow: number; exit_criteria: string }
-  live_health: MetricNotes & { live_rules: number; passing: number; share: number | null; target: number; blind_spots: number; rules_starved: number }
+  live_health: MetricNotes & { live_rules: number; passing: number; proven: number; not_seen: number; broken: number; share: number | null; target: number; blind_spots: number; rules_starved: number }
   first_week: MetricNotes & {
     started_at: string | null
     ends_at: string | null
