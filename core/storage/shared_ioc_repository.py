@@ -1,6 +1,7 @@
 """Repository for ``shared_iocs`` — the cross-investigation IOC index.
 
-An indicator is keyed as ``"<ioc_type>:<value>"``, stripped and lower-cased.
+An indicator is keyed as ``"<ioc_type>:<value>"``, stripped, defanged and
+lower-cased — the rule memory's Entity Keys use, so the two agree.
 Operates on a caller-provided ``Session``; it never opens or closes one.
 """
 
@@ -10,6 +11,7 @@ from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Set, Tuple
 from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.orm import Session
 
+from core.storage.defang import defang
 from core.storage.models import (
     Case,
     CaseIOC,
@@ -53,7 +55,7 @@ _MAX_VALUE_LEN = 500
 def make_key(ioc_type: Optional[str], value: Optional[str]) -> Optional[str]:
     ioc_type = (ioc_type or "").strip().lower()
     ioc_type = _TYPE_ALIASES.get(ioc_type, ioc_type)
-    value = (value or "").strip().lower()
+    value = defang((value or "").strip()).lower()
     if not ioc_type or not value:
         return None
     # Dropped rather than truncated: a truncated indicator joins against
