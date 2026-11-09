@@ -49,8 +49,9 @@ export interface WaitingNote {
   panel: string
 }
 
-/** What a live Wazuh copy waits for before it runs anywhere; null once the manager runs it. */
-export function waitingNote(r: StageFields): WaitingNote | null {
+/** What a live Wazuh copy waits for before it runs anywhere; null once the manager runs it.
+ * ``canWrite`` false (a viewer): no step they can't take is offered. */
+export function waitingNote(r: StageFields, canWrite = true): WaitingNote | null {
   const w = r.stage === 'live' ? r.waiting : null
   if (!w) return null
   const until = 'Live, but not running yet: it runs nowhere until'
@@ -61,13 +62,15 @@ export function waitingNote(r: StageFields): WaitingNote | null {
       const named = num ? link : 'Its PR'
       return {
         text: 'closed without merging',
-        title: `It runs nowhere: the Wazuh manager won't load it. Deploy it again (a new PR), reopen ${link} on GitHub, or Revert it to shadow.`,
+        title: canWrite
+          ? `It runs nowhere: the Wazuh manager won't load it. Deploy it again (a new PR), reopen ${link} on GitHub, or Revert it to shadow.`
+          : `It runs nowhere: the Wazuh manager won't load it.`,
         href: w.pr_url,
         link: named,
         linkFirst: true,
         amber: true,
         again: true,
-        panel: `Live, but not running: ${link} was closed without merging, so the Wazuh manager won't load it. Deploy again opens a new PR for this version; or reopen the PR on GitHub, or Revert to shadow.`,
+        panel: `Live, but not running: ${link} was closed without merging, so the Wazuh manager won't load it.${canWrite ? ' Deploy again opens a new PR for this version; or reopen the PR on GitHub, or Revert to shadow.' : ''}`,
       }
     }
     if (w.pr_state === 'merged') {
@@ -79,7 +82,7 @@ export function waitingNote(r: StageFields): WaitingNote | null {
       title: `${until} ${link} is merged and the Wazuh manager loads its file.`,
       href: w.pr_url,
       link,
-      panel: `${until} ${link} is merged and the Wazuh manager loads its file. Revert to shadow closes the PR.`,
+      panel: `${until} ${link} is merged and the Wazuh manager loads its file.${canWrite ? ' Revert to shadow closes the PR.' : ''}`,
     }
   }
   if (w.in_repo) {
