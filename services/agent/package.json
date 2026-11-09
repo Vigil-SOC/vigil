@@ -16,14 +16,14 @@
   },
   "dependencies": {
     "@opentelemetry/api": "^1.10.0",
-    "@opentelemetry/context-async-hooks": "^3.0.0",
-    "@opentelemetry/core": "^3.0.0",
-    "@opentelemetry/exporter-trace-otlp-grpc": "^0.300.0",
+    "@opentelemetry/context-async-hooks": "^3.1.0",
+    "@opentelemetry/core": "^3.1.0",
+    "@opentelemetry/exporter-trace-otlp-grpc": "^0.301.0",
     "@opentelemetry/resources": "^3.0.0",
     "@opentelemetry/sdk-trace": "^3.0.0",
     "ajv": "^8.20.0",
     "bullmq": "5.81.3",
-    "openai": "^7.45.1",
+    "openai": "^7.52.0",
     "p-limit": "^7.3.3",
     "pg": "^8.23.1",
     "yaml": "^2.9.1"

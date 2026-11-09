@@ -12,7 +12,7 @@ repos:
         exclude: ^services/medic/contracts/
 
   - repo: https://github.com/PyCQA/isort
-    rev: 8.0.1
+    rev: 9.0.2
     hooks:
       - id: isort
         files: ^(services|core)/
