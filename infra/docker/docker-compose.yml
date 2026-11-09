@@ -1159,14 +1159,32 @@ services:
     mem_limit: 1g
     environment:
       # The image makes this its one API user and disables its default ones
-      # (wazuh, wazuh-wui). No default password: it refuses to start without
-      # one (not "${VAR:?}", which would fail every compose command).
+      # (wazuh, wazuh-wui). No default password: without one the manager
+      # never starts (not "${VAR:?}", which would fail every compose command).
       API_USERNAME: ${WAZUH_SANDBOX_USERNAME:-vigil}
       API_PASSWORD: ${WAZUH_SANDBOX_PASSWORD:-}
+    # Without a password it says so once and idles, never starting the manager.
+    # Exiting instead would loop: unless-stopped restarts a container on any
+    # exit, and it is kept so that, with a password, the manager comes back
+    # after a crash or a host reboot. A stop ends the idle at once.
     entrypoint:
       - /bin/sh
       - -c
-      - '[ -n "$$API_PASSWORD" ] || { echo "wazuh-sandbox: set WAZUH_SANDBOX_PASSWORD" >&2; exit 1; }; exec /init'
+      - 'if [ -z "$$API_PASSWORD" ]; then echo "wazuh-sandbox: set WAZUH_SANDBOX_PASSWORD and recreate this container; the manager is not started until then" >&2; trap "exit 0" TERM INT; sleep 2147483647 & wait $$!; exit 0; fi; exec /init'
+    # Healthy once the manager's API answers (401 to no token). Without a
+    # password it never does, so the idle container reads unhealthy, never
+    # healthy. A check during start_period that fails isn't counted, so the
+    # API's boot (~30-70 s) doesn't mark it unhealthy; without a password it
+    # turns unhealthy after start_period plus three failed checks (~90 s).
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - '[ -n "$$API_PASSWORD" ] && curl -sk -o /dev/null -m 4 -w "%{http_code}" https://localhost:55000/ | grep -qE "^(200|401)$$"'
+      start_period: 60s
+      start_interval: 5s
+      interval: 10s
+      timeout: 5s
+      retries: 3
     restart: unless-stopped
     # No host port: only the backend and daemon reach it.
     networks:
