@@ -43,7 +43,7 @@ liteparse>=2.15.1
 sqlalchemy>=2.1.8
 psycopg2-binary>=2.9.12
 # Schema revisions (core/upgrade): runs SQL files, no autogenerate.
-alembic>=1.16
+alembic>=1.20.1
 
 # Optional proxy hops in front of the metadata DB and DB-shaped
 # integrations (Settings → System → Database, plus per-integration
