@@ -2408,16 +2408,21 @@ async def _sandboxed(
         for c in live:
             mine = list(outputs)
             if contested.get(c.key):
-                again = await box.alone(
+                again, refused = await box.alone(
                     c,
                     wazuh_sandbox.chain(c, live),
                     [events[n][1] for n in contested[c.key]],
                 )
+                if refused:
+                    # Not a 0: the copy may have matched every event it lost.
+                    whys[c.rule_id] = f"{wazuh_sandbox.UNCHECKED}{refused}"
+                    continue
                 for n, output in zip(contested[c.key], again):
                     mine[n] = output
             tallies[c.key] = wazuh_sandbox.count(
                 [d for d, _ in events], mine, {c.key: windows[c.rule_id][0]}, total
             )
+        live = [c for c in live if c.key in tallies]
         # The shadow count is the estimate across the window, not the sample's.
         results = {
             c.rule_id: (

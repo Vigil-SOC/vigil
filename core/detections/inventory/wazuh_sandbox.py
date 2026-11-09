@@ -91,6 +91,10 @@ EVERY = timedelta(hours=6)
 NOT_IN_REPO = f"{CANT}not in repo: "
 REFUSED = f"{CANT}the Wazuh sandbox refused it: "
 FAILED = f"{CANT}Wazuh sandbox: "
+UNCHECKED = (
+    f"{CANT}couldn't count it apart from the copies that took its events: "
+    "the Wazuh sandbox refused "
+)
 NO_SANDBOX = (
     "no Wazuh sandbox is configured to count it (the wazuh-sandbox compose profile)"
 )
@@ -573,12 +577,13 @@ class Sandbox(WazuhService):
 
     async def alone(
         self, copy: Any, keep: Sequence[Any], events: Sequence[Mapping[str, str]]
-    ) -> List[Optional[Dict[str, Any]]]:
-        """Each event's logtest ``output`` with ``copy`` the only counted copy
-        loaded, beside the copies in ``keep`` (those it hangs off): what the copy
-        alone ends, without the siblings that won those events. The last load's
-        other copy files are deleted and only missing copy files uploaded: the
-        repository files stay, since each upload grows the manager (#4146)."""
+    ) -> Tuple[List[Optional[Dict[str, Any]]], Optional[str]]:
+        """(each event's logtest ``output``, None) with ``copy`` the only counted
+        copy loaded, beside the copies in ``keep`` (those it hangs off): what the
+        copy alone ends, without the siblings that won those events. The last
+        load's other copy files are deleted and only missing copy files uploaded:
+        the repository files stay, since each upload grows the manager (#4146).
+        When the manager refuses a copy file: ([], why), and nothing replayed."""
         wanted = {c.key: c for c in (copy, *keep)}
         for key, name in list(self.copy_files.items()):
             if key not in wanted:
@@ -588,10 +593,11 @@ class Sandbox(WazuhService):
             if key in self.copy_files:
                 continue
             name = f"{FILE_PREFIX}copy_{key}.xml"
-            if await self._put("rules", name, wrapped(c.toml)) is not None:
-                return [None] * len(events)
+            why = await self._put("rules", name, wrapped(c.toml))
+            if why is not None:
+                return [], f"copy {key}: {why}"
             self.copy_files[key] = name
-        return await self.replay(events)
+        return await self.replay(events), None
 
 
 def chain(copy: Any, copies: Sequence[Any]) -> List[Any]:

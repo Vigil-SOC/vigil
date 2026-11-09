@@ -564,10 +564,14 @@ class _Box:
             for e in events
         ]
 
+    refuses = None  # a copy key whose file the manager refuses when counted alone
+
     async def alone(self, copy, keep, events):
         self.loaded = [copy, *keep]
         self.loads.append(([c.key for c in self.loaded], "alone"))
-        return await self.replay(events)
+        if self.refuses in {c.key for c in self.loaded}:
+            return [], f"copy {self.refuses}: XML syntax error"
+        return await self.replay(events), None
 
     async def close(self):
         self.closed = True
@@ -948,7 +952,8 @@ async def test_alone_swaps_copy_files_and_never_uploads_the_repository_again():
     }
     me = _Copy("100002", _rule("<if_sid>100009</if_sid>", rid="100002"))
     parent = _Copy("100009", _rule("<if_sid>5710</if_sid>", rid="100009"))
-    outs = await box.alone(me, [parent], [{"event": "x"}, {"event": "y"}])
+    outs, why = await box.alone(me, [parent], [{"event": "x"}, {"event": "y"}])
+    assert why is None
     assert [wazuh_sandbox.final(o) for o in outs] == ["100002", "100002"]
     writes = [(m, p) for m, p in seen if m in ("PUT", "DELETE") and p != "/logtest"]
     # The siblings' files go, the missing parent copy comes up; nothing else.
@@ -962,3 +967,36 @@ async def test_alone_swaps_copy_files_and_never_uploads_the_repository_again():
         "100002": "vigil_sandbox_4.xml",
         "100009": "vigil_sandbox_copy_100009.xml",
     }
+
+
+@pytest.mark.asyncio
+async def test_alone_says_which_copy_file_the_manager_refused():
+    def handler(request):
+        if request.url.path.endswith("/authenticate"):
+            return _ok({"token": "t"})
+        if request.method == "PUT" and request.url.path.startswith("/rules/files/"):
+            return httpx.Response(400, json={"title": "XML syntax error"})
+        return _ok({})
+
+    box = _sandbox(handler)
+    me = _Copy("100002", _rule("<if_sid>5710</if_sid>", rid="100002"))
+    outs, why = await box.alone(me, [], [{"event": "x"}])
+    assert outs == [] and why.startswith("copy 100002: ") and "XML syntax" in why
+    assert box.copy_files == {}
+
+
+def test_a_copy_that_cant_be_counted_alone_reads_why_not_zero(run):
+    group = _rule("<if_group>invalid_login</if_group><match>zz</match>", "100001")
+    sid = _rule("<if_sid>5710</if_sid><match>zz</match>", "100002")
+    box = _Box(matches={x: ["100001", "100002"] for x in "abc"})
+    box.refuses = "100002"
+    run([_copy(1, group), _copy(2, sid)], _Service([_doc(x) for x in "abcd"]), box)
+    # The copy that won keeps its count; the one that lost reads why, not 0.
+    assert run.wrote["runs"][1][0] == 900 and 2 not in run.wrote["runs"]
+    ((copy, why),) = run.wrote["unrunnable"]
+    assert copy.rule_id == 2
+    assert why == (
+        "can't validate: couldn't count it apart from the copies that took its "
+        "events: the Wazuh sandbox refused copy 100002: XML syntax error"
+    )
+    assert run.wrote["sees"][2][0] == "unknown"
