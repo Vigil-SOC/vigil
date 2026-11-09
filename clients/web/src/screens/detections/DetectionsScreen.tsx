@@ -554,7 +554,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
             const fdOpen = open?.id === r.rule_id && open.what === 'findings'
             const stOpen = open?.id === r.rule_id && (open.what === 'stages' || open.what === 'revert')
             const line = stageLine(r)
-            const waiting = waitingNote(r)
+            const waiting = waitingNote(r, canWrite)
             const siemOnly = r.fires === 0 && (r.siem_alerts ?? 0) > 0
             const fired = siemOnly ? `${n(r.siem_alerts ?? 0)} in SIEM` : r.health === 'no_fire_data' ? 'No data' : r.health === 'never_fired' ? 'Never' : 'None'
             return (
