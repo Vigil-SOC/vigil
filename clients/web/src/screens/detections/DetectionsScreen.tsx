@@ -10,6 +10,7 @@ import { TabStrip } from '../../shared/TabStrip'
 import RuleExceptions, { KEEP_DAYS } from './RuleExceptions'
 import RuleFindings from './RuleFindings'
 import RuleStages from './RuleStages'
+import DeployAgain from './DeployAgain'
 import { stageLine, waitingNote, type Stage, type StageFields } from './ruleStage'
 import CoverageMap from './CoverageMap'
 import RolloutMetrics from './RolloutMetrics'
@@ -584,6 +585,9 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                     {line && <span className={`de-st-line${line.amber ? ' amber' : ''}`} title={line.title || undefined}>· {line.text}</span>}
                     {line?.live && canWrite && (
                       <span>· <button type="button" className="de-link de-st-revert" onClick={() => setOpen({ id: r.rule_id, what: 'revert' })}>Revert</button></span>
+                    )}
+                    {waiting?.again && canWrite && (
+                      <span>· <DeployAgain ruleId={r.rule_id} className="de-st-revert" onDone={() => refreshRule(r.rule_id)} /></span>
                     )}
                   </div>
                   <div className="de-toggles">

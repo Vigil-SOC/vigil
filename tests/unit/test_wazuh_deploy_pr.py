@@ -243,7 +243,7 @@ def test_a_person_can_deploy_a_wazuh_copy_whatever_its_stage(overlay, monkeypatc
     monkeypatch.setattr(
         rollout,
         "_deploy",
-        lambda todo, targets, now, report, actor: sent.append((todo, actor))
+        lambda todo, targets, now, report, actor, again=None: sent.append((todo, actor))
         or {c.rule_id: {"pr_url": "u", "note": rollout.UNTESTED} for c in todo},
     )
     out = rollout.deploy_overlay_only([16735, 16720], actor="ana")

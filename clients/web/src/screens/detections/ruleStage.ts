@@ -43,6 +43,8 @@ export interface WaitingNote {
   linkSuffix?: string
   /** Amber: it needs a person, as a PR closed unmerged does. */
   amber?: boolean
+  /** Its PR was closed unmerged: a person may deploy it again (#4123). */
+  again?: boolean
   /** The History panel's line. */
   panel: string
 }
@@ -59,12 +61,13 @@ export function waitingNote(r: StageFields): WaitingNote | null {
       const named = num ? link : 'Its PR'
       return {
         text: 'closed without merging',
-        title: `It runs nowhere: the Wazuh manager won't load it. Reopen ${link} on GitHub to deploy it, or Revert it to shadow.`,
+        title: `It runs nowhere: the Wazuh manager won't load it. Deploy it again (a new PR), reopen ${link} on GitHub, or Revert it to shadow.`,
         href: w.pr_url,
         link: named,
         linkFirst: true,
         amber: true,
-        panel: `Live, but not running: ${link} was closed without merging, so the Wazuh manager won't load it. Reopen the PR on GitHub to deploy it, or Revert to shadow.`,
+        again: true,
+        panel: `Live, but not running: ${link} was closed without merging, so the Wazuh manager won't load it. Deploy again opens a new PR for this version; or reopen the PR on GitHub, or Revert to shadow.`,
       }
     }
     if (w.pr_state === 'merged') {

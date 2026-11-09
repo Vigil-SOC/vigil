@@ -151,7 +151,7 @@ class World:
             ),
         )
 
-    def deploy(self, copies, targets, now, report, actor="system"):
+    def deploy(self, copies, targets, now, report, actor="system", again=None):
         self.deploys.extend((c.rule_id, actor) for c in copies)
         return {c.rule_id: {"version": c.version, "pr_url": "pr"} for c in copies}
 

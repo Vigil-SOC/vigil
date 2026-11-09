@@ -70,7 +70,7 @@ def estate(monkeypatch):
         def session_scope(self):
             yield object()
 
-    def open_pr(copy, target, body, token, reopen=False):
+    def open_pr(copy, target, body, token, reopen=False, again=False):
         state["opened"].append((copy.rule_id, target["git_url"], token))
         if copy.rule_id in state["fail"]:
             raise RuntimeError("POST /repos/acme/detections/pulls: 502 bad gateway")
@@ -91,6 +91,9 @@ def estate(monkeypatch):
     monkeypatch.setattr(rollout, "_record_deploy", record)
     monkeypatch.setattr(rollout.exceptions, "listed", lambda _s, _rid: [])
     monkeypatch.setattr(core.secrets, "get_secret", lambda key, default=None: "ghp_x")
+    # A recorded PR's state is GitHub's to say (#4123): here every one is open.
+    monkeypatch.setattr(rollout, "_pr_state", lambda url, target, token: "open")
+    monkeypatch.setattr(rollout, "_record_pr_state", lambda *a: None)
     return state
 
 
