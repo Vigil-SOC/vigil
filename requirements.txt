@@ -27,7 +27,7 @@ PyYAML>=6.0.3
 # Web Backend
 # 0.129.0 is the first release with Depends(scope=...), which the per-request
 # unit-of-work boundary needs — see core/routing.py.
-fastapi>=0.141.1
+fastapi>=0.162.0
 # Swagger UI and ReDoc assets for /docs and /redoc, served from the image so
 # both work without a CDN. Only its static files are used.
 fastapi-offline==1.7.7
