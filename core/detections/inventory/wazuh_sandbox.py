@@ -41,6 +41,16 @@ sandbox decodes with another decoder than the customer's manager did is left out
 of the count, and the run says how many. So a count is hits in the sample, not
 in the window, and the run records how big the sample was.
 
+Wazuh ends an event on one rule: the first child of a parent that matches wins,
+and its siblings never see it. So copies counted in one load would take each
+other's hits (#4145). An event whose final rule is another counted copy is
+replayed again for each copy with that copy as the only counted one loaded (the
+overlay's live copies stay, as on the customer's manager, and so do the counted
+copies it hangs off by ``if_sid``). Only those events are replayed again, and
+only copy files are deleted or uploaded for it: the repository files stay, since
+each upload grows the manager (#4146). A run with a single copy, or where no
+event ends on a copy, changes nothing.
+
 After each run Vigil restarts the sandbox, without waiting for it
 (``Sandbox.restart``): wazuh-analysisd keeps the memory every file upload takes
 and never gives it back, so without a restart it reaches the container's 1 GB
@@ -86,6 +96,10 @@ EVERY = timedelta(hours=6)
 NOT_IN_REPO = f"{CANT}not in repo: "
 REFUSED = f"{CANT}the Wazuh sandbox refused it: "
 FAILED = f"{CANT}Wazuh sandbox: "
+UNCHECKED = (
+    f"{CANT}couldn't count it apart from the copies that took its events: "
+    "the Wazuh sandbox refused "
+)
 NO_SANDBOX = (
     "no Wazuh sandbox is configured to count it (the wazuh-sandbox compose profile)"
 )
@@ -343,6 +357,7 @@ class Sandbox(WazuhService):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         kwargs.setdefault("timeout", 120.0)  # GET /rules takes seconds on 4.9.2
         super().__init__(*args, **kwargs)
+        self.copy_files: Dict[str, str] = {}  # copy key -> its file, as loaded
 
     async def _request(self, method: str, path: str, **kwargs) -> Dict[str, Any]:
         busy, restarting = iter(self.retry_waits), iter(self.restart_waits)
@@ -537,10 +552,13 @@ class Sandbox(WazuhService):
         uploads += [
             ("rules", f"overlay/{c.key}", wrapped(c.toml), c.key) for c in copies
         ]
+        self.copy_files = {}
         for n, (kind, source, text, key) in enumerate(uploads):
             why = await self._put(kind, f"{FILE_PREFIX}{n}.xml", text)
             if why is None:
                 out.files += 1
+                if key is not None:
+                    self.copy_files[key] = f"{FILE_PREFIX}{n}.xml"
             elif key is not None:
                 out.refused[key] = why
             else:
@@ -587,6 +605,64 @@ class Sandbox(WazuhService):
                 except WazuhError as exc:
                     logger.warning("Wazuh sandbox session not closed: %s", exc)
         return outputs
+
+    async def alone(
+        self, copy: Any, keep: Sequence[Any], events: Sequence[Mapping[str, str]]
+    ) -> Tuple[List[Optional[Dict[str, Any]]], Optional[str]]:
+        """(each event's logtest ``output``, None) with ``copy`` the only counted
+        copy loaded, beside the copies in ``keep`` (those it hangs off): what the
+        copy alone ends, without the siblings that won those events. The last
+        load's other copy files are deleted and only missing copy files uploaded:
+        the repository files stay, since each upload grows the manager (#4146).
+        When the manager refuses a copy file: ([], why), and nothing replayed."""
+        wanted = {c.key: c for c in (copy, *keep)}
+        for key, name in list(self.copy_files.items()):
+            if key not in wanted:
+                await self._request("DELETE", f"/rules/files/{name}")
+                del self.copy_files[key]
+        for key, c in wanted.items():
+            if key in self.copy_files:
+                continue
+            name = f"{FILE_PREFIX}copy_{key}.xml"
+            why = await self._put("rules", name, wrapped(c.toml))
+            if why is not None:
+                return [], f"copy {key}: {why}"
+            self.copy_files[key] = name
+        return await self.replay(events), None
+
+
+def chain(copy: Any, copies: Sequence[Any]) -> List[Any]:
+    """The other copies ``copy`` hangs off by ``if_sid``, and theirs: parents it
+    needs loaded when counted alone. A copy only in a group it names is left
+    out: it may be the sibling that took its hits."""
+    by_key = {c.key: c for c in copies if c is not copy}
+    found: List[Any] = []
+    queue = [copy]
+    while queue:
+        for sid in parents(queue.pop().toml)["if_sid"]:
+            parent = by_key.pop(sid, None)
+            if parent is not None:
+                found.append(parent)
+                queue.append(parent)
+    return found
+
+
+def final(output: Optional[Mapping[str, Any]]) -> str:
+    """The rule id an event ended on, "" when logtest refused it."""
+    return str(((output or {}).get("rule") or {}).get("id") or "")
+
+
+def won_by_another(
+    outputs: Sequence[Optional[Mapping[str, Any]]], keys: Iterable[str]
+) -> Dict[str, List[int]]:
+    """For each copy key, the events (by index) another counted copy ended,
+    which the copy may have matched too: those it is counted on again alone."""
+    keys = set(keys)
+    ended = [(n, final(o)) for n, o in enumerate(outputs)]
+    contested = {
+        key: [n for n, rule in ended if rule in keys and rule != key] for key in keys
+    }
+    return {key: found for key, found in contested.items() if found}
 
 
 def event(doc: Mapping[str, Any]) -> Optional[Dict[str, str]]:
@@ -674,7 +750,7 @@ def count(
             tally.decoded_differently += 1
             continue
         tally.replayed += 1
-        rule = str((output.get("rule") or {}).get("id") or "")
+        rule = final(output)
         start = starts.get(rule)
         if start is None:
             continue

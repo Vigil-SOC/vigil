@@ -2403,18 +2403,39 @@ async def _sandboxed(
         )
         events = [(d, e) for d in docs if (e := wazuh_sandbox.event(d))]
         outputs = await box.replay([e for _, e in events])
-        tally = wazuh_sandbox.count(
-            [d for d, _ in events],
-            outputs,
-            {c.key: windows[c.rule_id][0] for c in live},
-            total,
-        )
+        # Copies loaded together take each other's hits (Wazuh ends an event on
+        # one rule): an event another copy ended is replayed for each copy alone.
+        contested = wazuh_sandbox.won_by_another(outputs, [c.key for c in live])
+        tallies = {}
+        for c in live:
+            mine = list(outputs)
+            if contested.get(c.key):
+                again, refused = await box.alone(
+                    c,
+                    wazuh_sandbox.chain(c, live),
+                    [events[n][1] for n in contested[c.key]],
+                )
+                if refused:
+                    # Not a 0: the copy may have matched every event it lost.
+                    whys[c.rule_id] = f"{wazuh_sandbox.UNCHECKED}{refused}"
+                    continue
+                for n, output in zip(contested[c.key], again):
+                    mine[n] = output
+            tallies[c.key] = wazuh_sandbox.count(
+                [d for d, _ in events], mine, {c.key: windows[c.rule_id][0]}, total
+            )
+        live = [c for c in live if c.key in tallies]
         # The shadow count is the estimate across the window, not the sample's.
         results = {
-            c.rule_id: (tally.estimate(c.key), tally.hits.get(c.key, []), None)
+            c.rule_id: (
+                tallies[c.key].estimate(c.key),
+                tallies[c.key].hits.get(c.key, []),
+                None,
+            )
             for c in live
         }
-        return "ran", results, whys, {c.rule_id: tally.sampled(c.key) for c in live}
+        sampled = {c.rule_id: tallies[c.key].sampled(c.key) for c in live}
+        return "ran", results, whys, sampled
     except WazuhError as exc:
         why = f"{wazuh_sandbox.FAILED}{exc}"
         return "ran", {}, {**{c.rule_id: why for c in counted}, **whys}, None
