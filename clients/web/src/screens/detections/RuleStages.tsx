@@ -31,7 +31,7 @@ export default function RuleStages({ ruleId, row, asking: askFirst, onChanged }:
   useEffect(() => { load() }, [ruleId])
 
   const line = stageLine(row)
-  const waiting = waitingNote(row)
+  const waiting = waitingNote(row, canWrite)
   const action = !canWrite || !line ? null : line.live ? 'revert' : line.held ? 'release' : null
   const changed = () => { load(); onChanged() }
   if (!data) {
@@ -70,7 +70,9 @@ export default function RuleStages({ ruleId, row, asking: askFirst, onChanged }:
         {waiting
           ? waiting.panel
           : line?.live
-          ? 'Revert takes it out of production: analysts stop getting its alerts, and Vigil keeps running it in shadow until a person releases it.'
+          ? canWrite
+            ? 'Revert takes it out of production: analysts stop getting its alerts, and Vigil keeps running it in shadow until a person releases it.'
+            : 'Live: analysts get its alerts. A person who can edit detections can move it back to shadow.'
           : line?.held
             ? 'Held in shadow: it runs but alerts nobody, and stays there until a person releases it.'
             : 'In shadow it runs but alerts nobody. Vigil moves it live after 7 quiet days with its data arriving.'}
