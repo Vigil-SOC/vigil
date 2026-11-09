@@ -99,8 +99,11 @@ def request_promotion(copy: Any, reason: str, proof: Mapping[str, Any]) -> bool:
     return inserted
 
 
-def request_deploy(copy: Any, requested_by: str) -> str:
-    """Ask a person to open ``copy``'s deploy PR; the open request if there is one."""
+def request_deploy(
+    copy: Any, requested_by: str, again_after: Optional[str] = None
+) -> str:
+    """Ask a person to open ``copy``'s deploy PR; the open request if there is one.
+    ``again_after``: the closed, unmerged PR a redeploy replaces (#4123)."""
     service = ApprovalService()
     for open_one in service.list_actions(
         status=ActionStatus.PENDING, action_type=ActionType.DEPLOY_RULE
@@ -119,16 +122,28 @@ def request_deploy(copy: Any, requested_by: str) -> str:
         if copy.language == rollout.WAZUH and copy.stage != "live"
         else "is live"
     )
+    title = f"Open the deploy PR for {copy.name}"
+    description = f"Rule {copy.rule_id} v{copy.version} {state} and has no deploy PR."
+    if again_after:
+        title = f"Deploy {copy.name} again"
+        description = (
+            f"Rule {copy.rule_id} v{copy.version} {state}, but its deploy PR "
+            f"{again_after} was closed without merging: open a new PR for it."
+        )
     action = service.create_action(
         action_type=ActionType.DEPLOY_RULE,
-        title=f"Open the deploy PR for {copy.name}",
-        description=f"Rule {copy.rule_id} v{copy.version} {state} and has no deploy PR.",
+        title=title,
+        description=description,
         target=str(copy.rule_id),
         confidence=0.0,
         reason=reason,
         evidence=[],
         created_by=requested_by,
-        parameters={"rule_id": copy.rule_id, "version": copy.version},
+        parameters={
+            "rule_id": copy.rule_id,
+            "version": copy.version,
+            **({"again_after": again_after} if again_after else {}),
+        },
         effect_class=REVERSIBLE,
         human_only=True,
         annotate_rule=False,

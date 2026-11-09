@@ -4,6 +4,7 @@ import { errorText } from '../../shared/errorText'
 import { utcDayClock } from '../../shared/utc'
 import { detectionRulesApi, type RuleStages as Stages } from '../../services/api'
 import { sampledText, stageLine, waitingNote, who, type Stage, type StageFields } from './ruleStage'
+import DeployAgain from './DeployAgain'
 
 const STAGE_NAME: Record<Stage, string> = { shadow: 'Shadow', live: 'Live', off: 'Off' }
 
@@ -45,8 +46,9 @@ export default function RuleStages({ ruleId, row, asking: askFirst, onChanged }:
     <div className="de-x">
       <div className="de-x-head">
         <b>Rollout <span>· {plural(rows.length, 'move', 'moves')}</span></b>
+        {waiting?.again && canWrite && <DeployAgain ruleId={ruleId} className="de-x-add" onDone={changed} />}
         {action && !asking && (
-          <button type="button" className="x1-link de-x-add" onClick={() => setAsking(true)}>{action === 'revert' ? 'Revert to shadow' : 'Release'}</button>
+          <button type="button" className={`x1-link ${waiting?.again && canWrite ? 'de-x-also' : 'de-x-add'}`} onClick={() => setAsking(true)}>{action === 'revert' ? 'Revert to shadow' : 'Release'}</button>
         )}
       </div>
       {action && asking && <Ask ruleId={ruleId} action={action} onDone={(done) => { setAsking(false); if (done) changed() }} />}

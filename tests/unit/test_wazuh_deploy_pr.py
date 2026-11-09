@@ -126,7 +126,9 @@ def test_a_person_deploying_an_untested_rule_is_told_in_the_pr_and_the_record(
     bodies = []
     real = rollout._pr_body
     monkeypatch.setattr(
-        rollout, "_pr_body", lambda c, e: bodies.append(real(c, e)) or bodies[-1]
+        rollout,
+        "_pr_body",
+        lambda c, e, again=None: bodies.append(real(c, e, again)) or bodies[-1],
     )
     out = deploy(_copy(stage=""))
     assert out["note"] == rollout.UNTESTED
@@ -140,7 +142,9 @@ def test_a_live_wazuh_rule_says_it_is_live_and_carries_no_note(
     bodies = []
     real = rollout._pr_body
     monkeypatch.setattr(
-        rollout, "_pr_body", lambda c, e: bodies.append(real(c, e)) or bodies[-1]
+        rollout,
+        "_pr_body",
+        lambda c, e, again=None: bodies.append(real(c, e, again)) or bodies[-1],
     )
     out = deploy(_copy(stage="live"))
     assert "note" not in out
@@ -243,7 +247,7 @@ def test_a_person_can_deploy_a_wazuh_copy_whatever_its_stage(overlay, monkeypatc
     monkeypatch.setattr(
         rollout,
         "_deploy",
-        lambda todo, targets, now, report, actor: sent.append((todo, actor))
+        lambda todo, targets, now, report, actor, again=None: sent.append((todo, actor))
         or {c.rule_id: {"pr_url": "u", "note": rollout.UNTESTED} for c in todo},
     )
     out = rollout.deploy_overlay_only([16735, 16720], actor="ana")

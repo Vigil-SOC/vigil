@@ -1087,6 +1087,8 @@ export const detectionRulesApi = {
   /** Queue a deploy pull request for these live overlay-only rules (all when none given). */
   deployOverlayOnly: (ruleIds?: number[]) =>
     api.post<{
+      /** Under Assist, the ones now waiting for a person's approval. */
+      asked?: { rule_id: number; action_id: string }[]
       opened: { rule_id: number; pr_url?: string; in_repo?: string; supersede_error?: string }[]
       failed: { rule_id: number; error: string; reason: string }[]
       skipped: { rule_id: number; reason: string }[]

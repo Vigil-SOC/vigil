@@ -1086,17 +1086,21 @@ def _deploy(
     now: datetime,
     report: RolloutReport,
     actor: str = "system",
+    again: Optional[Mapping[int, str]] = None,
 ) -> Dict[int, Dict[str, Any]]:
     """Open a PR for each live copy whose format has a target and whose current
     version has none recorded yet (nor its file already on the default branch);
     record each outcome in checks['deploy'], with a config-trail row as
-    ``actor``, and return them by rule id."""
+    ``actor``, and return them by rule id. ``again``: copies a person deploys
+    again because the PR recorded for this version (the value) was closed
+    unmerged; each gets a new PR, and its trail row names the closed one."""
+    again = again or {}
     pending = [
         c
         for c in copies
         if targets.get(c.language)
         and c.toml  # a Splunk copy whose file went unread has nothing to add
-        and _deploy_due(c)
+        and (_deploy_due(c) or c.rule_id in again)
     ]
     outcomes: Dict[int, Dict[str, Any]] = {}
     if not pending:
@@ -1122,6 +1126,8 @@ def _deploy(
         outcome: Dict[str, Any] = {"version": copy.version, "at": now.isoformat()}
         if copy.language == WAZUH and copy.stage != "live":
             outcome["note"] = UNTESTED  # in checks['deploy'] and its trail row
+        if copy.rule_id in again:
+            outcome["again_after"] = again[copy.rule_id]  # the PR closed unmerged
         try:
             # Again here, not only when the target was set: a hand-edited file
             # must not send the GitHub token to a GitLab or Bitbucket host, nor
@@ -1138,12 +1144,15 @@ def _deploy(
             done = _open_pr(
                 copy,
                 target,
-                _pr_body(copy, excepted[copy.rule_id]),
+                _pr_body(copy, excepted[copy.rule_id], again.get(copy.rule_id)),
                 token,
                 reopen=_withdrawn_by_vigil(_deployed(copy)),
+                again=copy.rule_id in again,
             )
             superseded = done.pop("superseded", [])
             outcome.update(done)
+            if done.get("pr_state"):
+                outcome.pop("again_after", None)  # it found a PR standing: no redeploy
             landed = done.get("pr_url") or done.get("in_repo")
             for old in superseded:
                 _record_superseded(copy, old, landed, now)
@@ -1297,8 +1306,17 @@ def _pr_title(copy: Copy) -> str:
     return f"Add Vigil rule {copy.name} ({copy.key})"
 
 
-def _pr_body(copy: Copy, excepted: List[Dict[str, Any]]) -> str:
-    """What the rule is, and its active exceptions; the rule file has none."""
+def _pr_body(
+    copy: Copy, excepted: List[Dict[str, Any]], again_after: Optional[str] = None
+) -> str:
+    """What the rule is, and its active exceptions; the rule file has none. A
+    redeploy says first which closed PR it replaces (#4123)."""
+    if again_after:
+        return (
+            f"Deployed again by a person in Vigil: {again_after} was closed "
+            "without merging, and this opens the same version anew.\n\n"
+            + _pr_body(copy, excepted)
+        )
     if copy.language == WAZUH:
         name, _ = _deploy_file(copy)
         state = (
@@ -1344,6 +1362,7 @@ def _open_pr(
     body: str,
     token: str,
     reopen: bool = False,
+    again: bool = False,
 ) -> Dict[str, Any]:
     """{"pr_url"} of the pull request adding ``copy``'s file to ``target``, or
     {"in_repo"} when the default branch already holds it byte for byte. Reuses
@@ -1352,7 +1371,9 @@ def _open_pr(
     a failure there is ``supersede_error`` beside the result, not instead of it.
     ``reopen``: Vigil closed this version's PR when the rule left live, so a
     closed, unmerged one is reopened ({"reopened": True}) rather than left as a
-    person's answer."""
+    person's answer. ``again``: a person deploys this version again after its
+    PR was closed unmerged (#4123), so such a PR is passed over and a new one
+    opened, on the same branch (made again if it was deleted)."""
     import base64
     import posixpath
     from urllib.parse import quote
@@ -1388,6 +1409,9 @@ def _open_pr(
         pulls = _ok(
             http.get(f"{r}/pulls", params={"head": f"{owner}:{branch}", "state": "all"})
         ).json()
+        if again:
+            # Only an open or merged one still stands; a closed one is why we're here.
+            pulls = [p for p in pulls if p.get("state") == "open" or p.get("merged_at")]
         if pulls:
             pr = pulls[0]
             if pr.get("state") != "open" and reopen and not pr.get("merged_at"):
@@ -1405,9 +1429,14 @@ def _open_pr(
                 }
             # A PR a person closed stays their answer: nothing older is closed for it.
             if pr.get("state") != "open":
-                return {"pr_url": pr["html_url"]}
+                # Deploying again found it merged meanwhile: say so, open nothing.
+                return {
+                    "pr_url": pr["html_url"],
+                    **({"pr_state": "merged"} if again else {}),
+                }
             return {
                 "pr_url": pr["html_url"],
+                **({"pr_state": "open"} if again else {}),
                 **_supersede(http, r, owner, copy, _by_pr(copy, pr)),
             }
         base = _ok(http.get(r)).json()["default_branch"]
@@ -1460,8 +1489,22 @@ def _open_pr(
                 found = http.get(
                     f"{r}/pulls", params={"head": f"{owner}:{branch}", "state": "all"}
                 )
-                if not found.is_error and found.json():
-                    return {"pr_url": found.json()[0]["html_url"]}
+                # Only one that stands, open or merged, whatever order GitHub lists
+                # them in: a closed one is no answer to this click.
+                standing = (
+                    []
+                    if found.is_error
+                    else [
+                        p
+                        for p in found.json()
+                        if p.get("state") == "open" or p.get("merged_at")
+                    ]
+                )
+                if standing:
+                    pr = next(
+                        (p for p in standing if p.get("state") == "open"), standing[0]
+                    )
+                    return {"pr_url": pr["html_url"]}
             raise
         return {
             "pr_url": pr["html_url"],
@@ -1957,6 +2000,37 @@ def overlay_only() -> List[Dict[str, Any]]:
     return rows
 
 
+def _recorded_pr_stands(
+    copy: Copy, url: str, target: Mapping[str, Any]
+) -> Optional[str]:
+    """Why the PR recorded for the copy's version still stands, so no new one is
+    opened: it is open or merged, or its state couldn't be read. None when it
+    was closed unmerged: a person may deploy again. Read from GitHub now, not
+    the sweep's last reading, and recorded as that reading."""
+    from core.secrets import get_secret
+
+    token = get_secret("GITHUB_TOKEN")
+    if not token:
+        return f"its pull request {url} could not be checked: no GitHub token"
+    try:
+        state = _pr_state(url, target, token)
+    except Exception as exc:  # noqa: BLE001 -- nothing opened on a guess
+        return f"its pull request {url} could not be checked: {exc}"[:500]
+    if state is None:
+        return f"its pull request is already open: {url}"  # outside the target's repo
+    try:
+        _record_pr_state(copy, url, state, datetime.now(timezone.utc))
+    except Exception as exc:  # noqa: BLE001 -- the reading still decides
+        logger.warning(
+            "detection rules: rule %s's PR state not recorded: %s", copy.rule_id, exc
+        )
+    if state == "open":
+        return f"its pull request is already open: {url}"
+    if state == "merged":
+        return f"its pull request was merged: {url}"
+    return None
+
+
 def _deployable(copies: List[Copy]) -> List[Copy]:
     """The copies a person may deploy: live ones, and any Wazuh copy, which Vigil
     may not be able to validate in shadow (archives off, or a rule it can't
@@ -1972,7 +2046,8 @@ def deploy_overlay_only(
     """Open the deploy PR now, as the sweep would, for live overlay-only copies
     (these ``rule_ids``, or all) whose format has a GitHub deploy target and
     with no PR opened yet; one that failed, or could not close an older
-    version's PR, is tried again. Says what each came to (``opened``: pr_url or
+    version's PR, is tried again. One whose PR GitHub says was closed unmerged
+    gets a new PR (#4123); an open or merged one is still skipped. Says what each came to (``opened``: pr_url or
     in_repo; ``failed``: error), which now wait for a person (``asked``) and why
     each other one was skipped. Nothing is opened while Stop is set. Under Assist
     each one waits for an approval unless ``approver``: the person deploying may
@@ -2002,6 +2077,7 @@ def deploy_overlay_only(
             }
         )
     todo = []
+    again: Dict[int, str] = {}
     for copy in wanted:
         target = targets.get(copy.language)
         done = _deployed(copy) or {}
@@ -2010,9 +2086,15 @@ def deploy_overlay_only(
         elif deploy_host_refused(target):
             skipped[copy.rule_id] = deploy_host_refused(target)
         elif done.get("pr_url") and not done.get("supersede_error"):
-            skipped[copy.rule_id] = (
-                f"its pull request is already open: {done['pr_url']}"
-            )
+            # The PR's state on GitHub, not that one is recorded (#4123).
+            why = _recorded_pr_stands(copy, str(done["pr_url"]), target)
+            if why:
+                skipped[copy.rule_id] = why
+            elif not _linted(copy):
+                skipped[copy.rule_id] = "its current version has not passed lint"
+            else:
+                again[copy.rule_id] = str(done["pr_url"])
+                todo.append(copy)
         elif done.get("in_repo") and not done.get("supersede_error"):
             skipped[copy.rule_id] = f"it is already in the repo: {done['in_repo']}"
         elif not copy.toml:
@@ -2033,14 +2115,29 @@ def deploy_overlay_only(
         asked = [
             {
                 "rule_id": c.rule_id,
-                "action_id": rollout_approval.request_deploy(c, actor),
+                "action_id": rollout_approval.request_deploy(
+                    c, actor, again_after=again.get(c.rule_id)
+                ),
             }
             for c in todo
         ]
         todo = []
     outcomes = _deploy(
-        todo, targets, datetime.now(timezone.utc), RolloutReport(), actor
+        todo,
+        targets,
+        datetime.now(timezone.utc),
+        RolloutReport(),
+        actor,
+        {r: u for r, u in again.items() if r in {c.rule_id for c in todo}},
     )
+    # Deploying again found a PR already standing (a stale reading): nothing opened.
+    for r, o in outcomes.items():
+        if "error" not in o and o.get("pr_state") in ("open", "merged"):
+            skipped[r] = (
+                f"its pull request was merged: {o['pr_url']}"
+                if o["pr_state"] == "merged"
+                else f"its pull request is already open: {o['pr_url']}"
+            )
     return {
         "asked": asked,
         "opened": [
@@ -2049,7 +2146,7 @@ def deploy_overlay_only(
                 **{k: o[k] for k in ("pr_url", "in_repo", "supersede_error") if k in o},
             }
             for r, o in outcomes.items()
-            if "error" not in o
+            if "error" not in o and r not in skipped
         ],
         "failed": [
             {
