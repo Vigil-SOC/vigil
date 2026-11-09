@@ -326,18 +326,28 @@ def live_health(
 ) -> Dict[str, Any]:
     """``copies``: each copy that runs, with its rule (the group it counts in),
     tool, runs and sees results."""
-    rules: Dict[Any, bool] = {}
+    rules: Dict[Any, Dict[str, bool]] = {}
     by_tool: Dict[str, Dict[str, int]] = {}
     for copy in copies:
         passing = copy["runs"] == "pass" and copy["sees"] == "pass"
-        rules[copy["rule"]] = rules.get(copy["rule"], True) and passing
+        rule = rules.setdefault(copy["rule"], {"passing": True, "broken": False})
+        rule["passing"] = rule["passing"] and passing
+        if copy["runs"] == "fail":
+            rule["broken"] = True
         tally = by_tool.setdefault(copy["tool"], {"copies": 0, "passing": 0})
         tally["copies"] += 1
         tally["passing"] += passing
-    passing = sum(rules.values())
+    passing = sum(1 for r in rules.values() if r["passing"])
+    # A rule is broken if a copy fails to run; not_seen is the rest: it runs but
+    # has not yet seen matching traffic (freshly loaded or quiet stock rules).
+    broken = sum(1 for r in rules.values() if r["broken"] and not r["passing"])
+    not_seen = len(rules) - passing - broken
     return {
         "live_rules": len(rules),
         "passing": passing,
+        "proven": passing,
+        "not_seen": not_seen,
+        "broken": broken,
         "share": round(passing / len(rules), 3) if rules else None,
         "target": LIVE_TARGET,
         "by_tool": by_tool,

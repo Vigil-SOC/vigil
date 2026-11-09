@@ -37,11 +37,11 @@ function rows(m: DetectionMetrics): Row[] {
       unknown: s.unknown,
     },
     {
-      name: 'Live rules passing',
+      name: 'Live rules proven',
       value: h.share != null ? pct(h.share) : '—',
-      tone: h.share == null ? undefined : h.share >= h.target ? 'good' : 'poor',
-      line: `${n(h.passing)} of ${n(h.live_rules)} live rules pass Runs and Sees`,
-      target: `Target: ${pct(h.target)} · ${n(h.blind_spots)} blind spots`,
+      tone: h.share == null ? undefined : h.share >= h.target ? 'good' : 'fair',
+      line: `${n(h.proven)} proven (run + seen traffic) · ${n(h.not_seen)} live, no traffic yet · ${n(h.broken)} can’t run`,
+      target: `Target: ${pct(h.target)} proven · ${n(h.blind_spots)} blind spots`,
       unknown: h.unknown,
     },
     {
