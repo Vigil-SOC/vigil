@@ -21,14 +21,18 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Collection, Dict, List, Mapping, Optional, Tuple
 
+from sqlalchemy import String, cast
+
 from core.detections.reconstruction import _entities_from_context, reconstruct
 from core.memory.entity_keys import normalise_keys
 from core.storage.connection import get_db_manager
 from core.storage.models import (
     Case,
+    EpisodicDistilMarker,
     EpisodicVerdict,
     Finding,
     FindingMitrePrediction,
+    WorkflowRun,
     case_findings,
 )
 from core.threat_intel.mitre_lookup import attack_techniques, attack_techniques_version
@@ -388,7 +392,9 @@ def read_ledger(since_days: int = 30) -> List[Dict[str, Any]]:
     """Hunt and Case Verdicts concluded in the window, Case gaps filled from its Findings.
 
     A Case Verdict carries no techniques and usually no subjects, so both are read
-    from the Case's own Findings here; nothing is written back to the Verdict.
+    from the Case's own Findings here, and techniques also from the hunt Verdicts
+    that ran on the Case; nothing is written back to the Verdict. A ``handed_off``
+    outcome reads as ``proven``: a hunt can only hand off a proven hypothesis.
     """
     since = datetime.now(timezone.utc) - timedelta(days=since_days)
     with get_db_manager().session_scope() as session:
@@ -401,7 +407,7 @@ def read_ledger(since_days: int = 30) -> List[Dict[str, Any]]:
                 "investigation_kind": v.investigation_kind,
                 "investigation_id": v.investigation_id,
                 "hypothesis_id": v.hypothesis_id,
-                "outcome": v.outcome,
+                "outcome": "proven" if v.outcome == "handed_off" else v.outcome,
                 "trust": v.trust,
                 "techniques": {t.strip().upper() for t in v.techniques or []},
                 "subjects": list(v.subject_entities or []),
@@ -436,6 +442,35 @@ def read_ledger(since_days: int = 30) -> List[Dict[str, Any]]:
             ):
                 if isinstance(entity_context, dict):
                     contexts.setdefault(case_id, []).append(entity_context)
+            # A hunt run on the Case (trigger_context.case_id) lends its techniques,
+            # whenever it concluded; a ruled-out one lends none.
+            run_case_id = WorkflowRun.trigger_context["case_id"].astext
+            for case_id, techniques in (
+                session.query(run_case_id, EpisodicVerdict.techniques)
+                .join(
+                    EpisodicDistilMarker,
+                    (
+                        EpisodicDistilMarker.investigation_kind
+                        == EpisodicVerdict.investigation_kind
+                    )
+                    & (
+                        EpisodicDistilMarker.investigation_id
+                        == EpisodicVerdict.investigation_id
+                    ),
+                )
+                .join(
+                    WorkflowRun,
+                    WorkflowRun.run_id
+                    == cast(EpisodicDistilMarker.origin_run_id, String),
+                )
+                .filter(
+                    EpisodicVerdict.investigation_kind == "hunt",
+                    EpisodicVerdict.outcome.notin_(RULED_OUT),
+                    run_case_id.in_(case_ids),
+                )
+            ):
+                for t in techniques or []:
+                    labels.setdefault(case_id, set()).add(t.strip().upper())
 
     for v in verdicts:
         if v["investigation_kind"] != "case":
