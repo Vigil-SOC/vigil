@@ -100,31 +100,12 @@ def _stop(runs: dict[str, str]) -> dict[str, str]:
     return stopped
 
 
-def _managers(person: str) -> list[str]:
-    """Active people, other than this one, who hold users.write."""
-    from core.auth.auth_service import AuthService
-    from core.storage.connection import get_db_session
-    from core.storage.models import User
-
-    with get_db_session() as session:
-        users = (
-            session.query(User.user_id, User.principal_id)
-            .filter(User.is_active.is_(True), User.service_account.isnot(True))
-            .all()
-        )
-        return [
-            principal
-            for user_id, principal in users
-            if principal != person
-            and AuthService.check_permission(user_id, "users.write", session=session)
-        ]
-
-
 def _tell(
     person: str, name: str, reason: str, stopped: dict[str, str], credentials: int
 ) -> None:
     """One notice per ending event, to the person and to managers. After an erasure
     to managers only: nobody is left to read it as the person."""
+    from core.auth.auth_service import managers
     from core.platform.notices import notify
 
     why = sign_ins.REASON_WORDS.get(reason, sign_ins.UNNAMED_REASON)
@@ -139,7 +120,7 @@ def _tell(
         "do not recognise in Settings."
     )
     title = "Agent runs stopped: a sign-in ended"
-    to = _managers(person)
+    to = managers(person)
     if reason != sign_ins.ERASED:
         to.append(person)
     for principal in to:

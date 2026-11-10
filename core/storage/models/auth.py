@@ -159,7 +159,11 @@ class User(Base):
     failed_login_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
+    # Locked while locked_until is in the future, or, with locked_at set and
+    # locked_until empty, until an Unlock or a password reset.
     locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    locked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    locked_from: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Password history — list of prior bcrypt hashes, newest first. Used
     # to reject reuse of the last N passwords. Capped in application code.

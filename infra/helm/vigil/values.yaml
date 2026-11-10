@@ -288,6 +288,25 @@ mcpRunner:
   # HTTPS_PROXY/NO_PROXY etc. set here are forwarded to every server it starts.
   extraEnv: []
 
+# -----------------------------------------------------------------------------
+# Read-only case shell (#4199): the agent image's `node dist/shell.js`, behind
+# the backend's read_case_shell tool (SHELL_URL). Its NetworkPolicy (backend in on
+# 6992, no egress) renders whenever it does, whatever networkPolicies.enabled says.
+# Runs as root with SETUID/SETGID/KILL only: `baseline` Pod Security admits it,
+# `restricted` does not. The image is agentWorker's.
+# -----------------------------------------------------------------------------
+agentShell:
+  enabled: true
+  replicas: 1
+  # The memory limit also bounds /work, a 512Mi in-memory emptyDir. Compose: 1g.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
 # Detection rule repositories (Settings → security-detections). A volume spec,
 # mounted read-write on the backend (which clones into it) and read-only on the
 # MCP runner, both at /home/vigil/security-detections. Unset mounts nothing.
@@ -774,8 +793,6 @@ config:
 
   # Secrets / auth policy
   ENABLE_KEYRING: "false"
-  AUTH_LOCKOUT_THRESHOLD: "5"
-  AUTH_LOCKOUT_DURATION_MINUTES: "15"
   # Ingress / load-balancer addresses allowed to set X-Forwarded-For.
   # Empty trusts the TCP peer. Set the ingress controller's pod CIDR when
   # ingress terminates TLS. "*" is ignored by the API.

@@ -25,9 +25,15 @@ metadata:
   labels:
     {{- include "vigil.labels" . | nindent 4 }}
 spec:
+  {{- /* Not the agent shell: policies add up, so this one's open egress would
+         undo the shell's own deny-all (agent-shell-networkpolicy.yaml). */}}
   podSelector:
     matchLabels:
       {{- include "vigil.selectorLabels" . | nindent 6 }}
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: NotIn
+        values: [agent-shell]
   policyTypes:
     - Ingress
     - Egress

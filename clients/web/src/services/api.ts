@@ -1845,6 +1845,11 @@ export const signInsApi = {
     api.post<Schema<'EndedSignIns'>>(`/users/${encodeURIComponent(userId)}/sign-ins/end`, {
       reason,
     } satisfies Schema<'EndSignInsRequest'>),
+  // End a lock; how the manager confirmed the person's identity goes to the audit trail.
+  unlock: (userId: string, identityConfirmedBy: string) =>
+    api.post(`/users/${encodeURIComponent(userId)}/unlock`, {
+      identity_confirmed_by: identityConfirmedBy as Schema<'UnlockRequest'>['identity_confirmed_by'],
+    }),
   // The whole install, the caller's own sign-in included.
   endEveryone: (reason: string) =>
     api.post<Schema<'EndedSignIns'>>('/users/sign-ins/end-all', {
