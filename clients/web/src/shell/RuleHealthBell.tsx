@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { createPortal } from 'react-dom'
-import { detectionRulesApi, type HealthEntry, type HealthInbox } from '../services/api'
+import { detectionRulesApi, noticesApi, type HealthEntry, type HealthInbox, type Notice, type Notices } from '../services/api'
 import { Icon } from '../shared/icons'
 import { errorText } from '../shared/errorText'
 import { relativeTime } from '../screens/settings/integrationHealth'
@@ -25,15 +25,26 @@ const kindOf = (check: string) => KIND[check] ?? { label: `${check} failing`, pl
 const SIEM_NAME: Record<string, string> = { elastic: 'Elastic', splunk: 'Splunk', wazuh: 'Wazuh', overlay: 'Vigil', repo: 'Repo' }
 const POLL_MS = 60_000
 
-/** The top bar's bell: notifications for the signed-in person, read or unread; only rule health for now. In-app only. */
+/** An in-app path a notice or condition carries ('/cases?x=1'): the screen and its query. Anything else is not a link. */
+const inApp = (link?: string | null) => {
+  if (!link || !/^\/[a-z]/i.test(link)) return null
+  const [screen, query] = link.slice(1).split('?')
+  return { screen, search: query ? `?${query}` : '' }
+}
+
+/** The top bar's bell: the signed-in person's notifications, read or unread, from two sources: rule health and notices addressed to them. Live conditions sit on top. In-app only. */
 export default function RuleHealthBell({ go }: { go: (screen: string, options?: ConsoleScreenGoOptions) => void }) {
   const [box, setBox] = useState<HealthInbox | null>(null)
+  const [notes, setNotes] = useState<Notices | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
   // Read entries sit under a closed "Earlier" row; it closes again with the panel.
   const [earlierOpen, setEarlierOpen] = useState(false)
   const [busy, setBusy] = useState(false)
-  const canWrite = useAuth().hasPermission('detections.write')
+  const { hasPermission } = useAuth()
+  const canWrite = hasPermission('detections.write')
+  // Rule health is for those who may read detections; notices and conditions are for everyone.
+  const canHealth = hasPermission('detections.read')
   // A Vigil rule's Revert to shadow, asked in place: the entry asking why, and the ones reverted from here.
   const [asking, setAsking] = useState<number | null>(null)
   const [reverted, setReverted] = useState<Set<number>>(new Set())
@@ -43,10 +54,15 @@ export default function RuleHealthBell({ go }: { go: (screen: string, options?: 
   const popRef = useRef<HTMLDivElement>(null)
 
   const load = useCallback(() => {
-    detectionRulesApi.healthInbox()
-      .then((res) => { setBox(res.data); setError(null) })
-      .catch((e) => setError(errorText(e, 'Rule health did not load.')))
-  }, [])
+    if (canHealth) {
+      detectionRulesApi.healthInbox()
+        .then((res) => { setBox(res.data); setError(null) })
+        .catch((e) => setError(errorText(e, 'Rule health did not load.')))
+    }
+    noticesApi.list()
+      .then((res) => { setNotes(res.data); setError(null) })
+      .catch((e) => setError(errorText(e, 'Notices did not load.')))
+  }, [canHealth])
 
   useEffect(() => {
     load()
@@ -56,7 +72,8 @@ export default function RuleHealthBell({ go }: { go: (screen: string, options?: 
 
   const place = useCallback(() => {
     const r = ref.current?.getBoundingClientRect()
-    if (r) setPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) })
+    // Anchored under the bell, but never past the left edge on a narrow screen (the panel is 380px, at most the viewport less 16px).
+    if (r) setPos({ top: r.bottom + 6, right: Math.max(8, Math.min(window.innerWidth - r.right, window.innerWidth - Math.min(380, window.innerWidth - 16) - 8)) })
   }, [])
 
   useEffect(() => {
@@ -91,6 +108,26 @@ export default function RuleHealthBell({ go }: { go: (screen: string, options?: 
       .finally(() => setBusy(false))
   }
 
+  // Marks every unread entry of both sources, or one notice.
+  const markNotices = (ids: number[] | 'all') => {
+    setBusy(true)
+    noticesApi.markRead(ids)
+      .then((res) => { setNotes(res.data); setError(null) })
+      .catch((e) => setError(errorText(e, 'Could not mark it read.')))
+      .finally(() => setBusy(false))
+  }
+  const markAll = () => {
+    if (canHealth && (box?.unread ?? 0) > 0) markRead('all')
+    if ((notes?.unread ?? 0) > 0) markNotices('all')
+  }
+
+  const openLink = (link?: string | null) => {
+    const to = inApp(link)
+    if (!to) return
+    setOpen(false)
+    go(to.screen, { search: to.search })
+  }
+
   const openRules = (ruleIds: number[]) => {
     setOpen(false)
     go('detections', { search: `?rules=${ruleIds.join(',')}` })
@@ -101,13 +138,18 @@ export default function RuleHealthBell({ go }: { go: (screen: string, options?: 
     openRules([entry.rule_id])
   }
 
-  const unread = box?.unread ?? 0
+  const conditions = notes?.conditions ?? []
+  const noticeUnread = notes?.unread ?? 0
+  // Both sources' unread, and each live condition, which has no read state.
+  const unread = (box?.unread ?? 0) + noticeUnread + conditions.length
+  const total = (box?.total ?? 0) + (notes?.total ?? 0) + conditions.length
   const summary = box?.summary ?? null
   // With a summary, the unread entries fold into it; read ones still list.
   // The server lists unread entries only (none when the summary stands for them).
   const listed = box?.entries ?? []
   const earlier = box?.earlier ?? []
-  const earlierTotal = box?.earlier_total ?? 0
+  const noticesEarlier = notes?.earlier ?? []
+  const earlierTotal = (box?.earlier_total ?? 0) + (notes ? notes.total - notes.unread : 0)
   const breakdown = summary
     ? Object.entries(summary.by_check)
       .sort((a, b) => b[1] - a[1])
@@ -115,6 +157,26 @@ export default function RuleHealthBell({ go }: { go: (screen: string, options?: 
       .join(' · ')
     : ''
   const label = unread ? `Notifications, ${unread} unread` : 'Notifications'
+
+  const noticeRow = (n: Notice) => {
+    const link = inApp(n.link)
+    return (
+      <li key={`n${n.id}`} className={`rh-item${n.read ? '' : ' unread'}`}>
+        <span className={`rh-dot ${n.priority === 'high' || n.priority === 'critical' ? 'high' : 'ac'}`} aria-hidden="true" />
+        <div className="rh-body">
+          <div className="rh-kind">{n.title}{n.read ? '' : <span className="rh-sr"> (unread)</span>}</div>
+          <div className="rh-why">{n.message}</div>
+          <div className="rh-meta">
+            <span>{relativeTime(n.created_at)}</span>
+            {link && <button type="button" className="rh-link" onClick={() => { if (!n.read) markNotices([n.id]); openLink(n.link) }}>Open</button>}
+            {!n.read && (
+              <button type="button" className="rh-link" disabled={busy} onClick={() => markNotices([n.id])}>Mark read</button>
+            )}
+          </div>
+        </div>
+      </li>
+    )
+  }
 
   const entryRow = (e: HealthEntry) => {
     const k = kindOf(e.check)
@@ -168,14 +230,33 @@ export default function RuleHealthBell({ go }: { go: (screen: string, options?: 
       <div className="rh-head">
         <span className="rh-titles">
           <span className="rh-title">Notifications{unread ? <span className="rh-count"> · {unread.toLocaleString()} unread</span> : null}</span>
-          <span className="rh-sub">Only rule health for now</span>
         </span>
-        <button type="button" className="rh-link" disabled={!unread || busy} onClick={() => markRead('all')}>Mark all read</button>
+        <button type="button" className="rh-link" disabled={!(unread - conditions.length) || busy} onClick={markAll}>Mark all read</button>
       </div>
       {error && <p className="rh-error" role="alert">{error}</p>}
-      {!box && !error && <p className="rh-empty">Reading rule health…</p>}
-      {box && box.total === 0 && (
-        <p className="rh-empty">No rule needs attention. A live rule that stops running, loses its data, goes noisy or silent, or changes outside its repo shows here.</p>
+      {!notes && !(canHealth && box) && !error && <p className="rh-empty">Reading notifications…</p>}
+      {notes && (box || !canHealth) && total === 0 && (
+        <p className="rh-empty">Nothing needs you. Notices addressed to you, a warning about the system, and a live rule that stops running, loses its data, goes noisy or silent, or changes outside its repo show here.</p>
+      )}
+      {conditions.length > 0 && (
+        <>
+          <div className="rh-section">Needs attention now</div>
+          <ul className="rh-list">
+            {conditions.map((c, i) => (
+              <li key={i} className="rh-item unread">
+                <span className="rh-dot fair" aria-hidden="true" />
+                <div className="rh-body">
+                  <div className="rh-why">{c.message}</div>
+                  {inApp(c.link) && (
+                    <div className="rh-meta">
+                      <button type="button" className="rh-link strong" onClick={() => openLink(c.link)}>Open</button>
+                    </div>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
       <ul className="rh-list">
         {summary && (
@@ -194,9 +275,10 @@ export default function RuleHealthBell({ go }: { go: (screen: string, options?: 
             </div>
           </li>
         )}
+        {(notes?.notices ?? []).map((n) => noticeRow(n))}
         {listed.map((e) => entryRow(e))}
       </ul>
-      {box && box.total > 0 && !unread && <p className="rh-empty">Nothing unread.</p>}
+      {total > 0 && !unread && <p className="rh-empty">Nothing unread.</p>}
       {earlierTotal > 0 && (
         <div className="rh-earlier">
           <button type="button" className="rh-earlier-toggle" aria-expanded={earlierOpen} onClick={() => setEarlierOpen((o) => !o)}>
@@ -205,15 +287,18 @@ export default function RuleHealthBell({ go }: { go: (screen: string, options?: 
           </button>
           {earlierOpen && (
             <ul className="rh-list">
+              {noticesEarlier.map((n) => noticeRow(n))}
               {earlier.map((e) => entryRow(e))}
-              {earlierTotal > earlier.length && <li className="rh-more">and {(earlierTotal - earlier.length).toLocaleString()} more, on Rules</li>}
+              {(box?.earlier_total ?? 0) > earlier.length && <li className="rh-more">and {((box?.earlier_total ?? 0) - earlier.length).toLocaleString()} more, on Rules</li>}
             </ul>
           )}
         </div>
       )}
-      <div className="rh-foot">
-        <button type="button" className="rh-link strong" onClick={() => { setOpen(false); go('detections') }}>All rules needing attention</button>
-      </div>
+      {canHealth && (
+        <div className="rh-foot">
+          <button type="button" className="rh-link strong" onClick={() => { setOpen(false); go('detections') }}>All rules needing attention</button>
+        </div>
+      )}
     </div>
   ) : null
 

@@ -976,6 +976,30 @@ export interface HealthInbox {
   summary: { count: number; by_check: Record<string, number>; rules: number; rule_ids: number[]; since: string } | null
 }
 
+/** One notice addressed to the signed-in person. */
+export interface Notice {
+  id: number
+  kind: string
+  title: string
+  message: string
+  /** An in-app path ('/cases?x=1'), when the notice has one. */
+  link: string | null
+  priority: string
+  read: boolean
+  created_at: string
+}
+
+/** GET /notices: the person's notices and the live warnings computed on this request. */
+export interface Notices {
+  /** Unread, newest first. */
+  notices: Notice[]
+  /** The newest few read ones, for the panel's Earlier row. */
+  earlier: Notice[]
+  unread: number
+  total: number
+  conditions: { message: string; link?: string | null }[]
+}
+
 /** One stage row of an overlay rule: a move between stages, by Vigil or a person. */
 export interface RuleStageRow {
   stage_id: number
@@ -1003,6 +1027,15 @@ export interface RuleStageChange {
   rule_id: number
   stage: 'shadow' | 'live' | 'off'
   hold: boolean
+}
+
+/** The signed-in person's notices and live conditions (the bell's second source). */
+export const noticesApi = {
+  list: () => api.get<Notices>('/notices'),
+
+  /** Marks these of the person's own notices read, or all of them; returns the list. */
+  markRead: (ids: number[] | 'all') =>
+    api.post<Notices>('/notices/read', ids === 'all' ? { all: true } : { ids }),
 }
 
 export const detectionRulesApi = {

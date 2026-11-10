@@ -2,10 +2,9 @@
 Password reset tokens.
 
 Design:
-- Tokens are HMAC-signed with itsdangerous.URLSafeTimedSerializer. The
-  secret is reused from JWT_SECRET_KEY so we don't have yet another key
-  to rotate; it's fine because the salt (purpose tag) keeps the two
-  token spaces separate.
+- Tokens are HMAC-signed with itsdangerous.URLSafeTimedSerializer under the
+  key ring's reset key. It signs with the newest key and verifies under every
+  live one, so a rotation leaves outstanding links valid for their hour.
 - Tokens are **single-use** by binding them to the account's password
   state: the payload carries the user_id and the user's
   ``password_changed_at`` at issue time (null if never changed). Every
@@ -28,6 +27,7 @@ from typing import NamedTuple, Optional
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
+from core.auth import key_ring
 from core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -47,10 +47,9 @@ def _ttl_seconds() -> int:
 
 
 def _get_serializer() -> URLSafeTimedSerializer:
-    # Import lazily so tests can stub JWT_SECRET_KEY via env before auth_service loads.
-    from core.auth.auth_service import JWT_SECRET_KEY
-
-    return URLSafeTimedSerializer(JWT_SECRET_KEY, salt=RESET_TOKEN_PURPOSE)
+    # Oldest first: itsdangerous signs with the last key and verifies with all.
+    keys = [k.secret for k in key_ring.live("reset")]
+    return URLSafeTimedSerializer(keys, salt=RESET_TOKEN_PURPOSE)
 
 
 def _stamp(changed_at: Optional[datetime]) -> Optional[str]:

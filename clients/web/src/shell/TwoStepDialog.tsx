@@ -14,7 +14,7 @@ function errText(e: unknown, fallback: string): string {
   return typeof detail === 'string' ? detail : fallback
 }
 
-function RecoveryCodes({ codes }: { codes: string[] }) {
+export function RecoveryCodes({ codes }: { codes: string[] }) {
   const [copied, setCopied] = useState(false)
 
   const copy = () => {

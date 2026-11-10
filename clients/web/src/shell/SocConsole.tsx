@@ -656,7 +656,7 @@ function SocConsoleInner() {
                 />
               </div>
             )}
-            {hasPermission('detections.read') && <RuleHealthBell go={go} />}
+            <RuleHealthBell go={go} />
             <UserMenu
               onShowTour={startTour}
               setupLeft={setupLeft}

@@ -350,7 +350,6 @@ BEGIN {
     nsuffix = 9
     # Credential-shaped names that are settings, not secrets.
     allow["auth_min_password_length"] = 1
-    allow["auth_max_password_bytes"] = 1
     allow["password_reset_ttl_seconds"] = 1
     # Helm values that name a Secret or a key inside it, not a value; support
     # needs to see which Secret an install points at.

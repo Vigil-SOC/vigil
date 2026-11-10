@@ -230,9 +230,6 @@ class Settings(BaseSettings):
     vigil_trusted_proxies: str = ""
     auth_password_history_limit: int = 5
     auth_min_password_length: int = 12
-    # bcrypt raises above 72 bytes rather than truncating, so a higher ceiling
-    # here means a long password validates and then 500s at hash time.
-    auth_max_password_bytes: int = 72
     auth_min_zxcvbn_score: int = 3
     password_reset_ttl_seconds: int = 3600
 

@@ -50,10 +50,10 @@ from core.time import utcnow
 VIEWER_ROLE_ID = "role-viewer"
 USERNAME_PATTERN = r"^medic-[a-z0-9]{12}$"
 _USERNAME = re.compile(USERNAME_PATTERN)
-# 32 bytes floor (D2-17); 72 is bcrypt's ceiling (core/config.py
-# auth_max_password_bytes). Printable ASCII without spaces survives every
-# login form and file the shapes pass it through.
-_PASSWORD = re.compile(r"^[!-~]{32,72}$")
+# 32 characters floor (D2-17); 128 is the password ceiling
+# (core.auth.password_hash.MAX_PASSWORD_LENGTH). Printable ASCII without spaces
+# survives every login form and file the shapes pass it through.
+_PASSWORD = re.compile(r"^[!-~]{32,128}$")
 
 EX_OK = 0
 EX_USAGE = 64
@@ -93,7 +93,7 @@ def ensure(username: str, password: str) -> tuple[str, int]:
         raise ValueError(f"username must match {USERNAME_PATTERN}")
     if not _PASSWORD.fullmatch(password):
         raise ValueError(
-            "password must be 32-72 printable ASCII characters with no spaces"
+            "password must be 32-128 printable ASCII characters with no spaces"
         )
 
     with get_db_manager().engine.connect() as conn:

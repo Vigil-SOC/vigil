@@ -4,26 +4,25 @@ Authentication Service - User authentication and authorization.
 Handles password hashing, JWT generation/validation, MFA, and session management.
 """
 
-import base64
 import hashlib
 import logging
+import re
 import secrets
 import time
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-import bcrypt
 import jwt
 import pyotp
-from cryptography.fernet import Fernet
+from cryptography.fernet import MultiFernet
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
-from core.auth import principals
+from core.auth import key_ring, password_hash, principals
 from core.auth.identity import claim_sign_in_names, identifier_in_use, matching_accounts
 from core.config import get_settings
 from core.exceptions import default_on_error
-from core.secrets import get_secret
 from core.storage.models import Principal, Role, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -58,32 +57,11 @@ _last_undecryptable_log = float("-inf")
 
 
 class MFASecretDecryptionError(Exception):
-    """A stored MFA secret is encrypted but not under the current JWT_SECRET_KEY."""
+    """A stored MFA secret is encrypted but not under a key in the ring."""
 
 
 def _is_dev_mode() -> bool:
     return get_settings().dev_mode
-
-
-def _load_jwt_secret() -> str:
-    # Resolved at import time. DEV_MODE falls back to a deterministic dev secret
-    # so tokens survive restarts; production fails closed when unset.
-    value = get_secret("JWT_SECRET_KEY")
-
-    if value:
-        return value
-
-    if _is_dev_mode():
-        logger.warning(
-            "JWT_SECRET_KEY not set; using deterministic DEV_MODE fallback. "
-            "Tokens issued in dev are not portable to production."
-        )
-        return "dev-mode-insecure-jwt-secret-do-not-use-in-production"
-
-    raise RuntimeError(
-        "JWT_SECRET_KEY is required when DEV_MODE=false. "
-        "Set it in the environment or .env before starting the backend."
-    )
 
 
 def _refuse_dev_mode_in_production() -> None:
@@ -100,8 +78,11 @@ def _refuse_dev_mode_in_production() -> None:
 
 _refuse_dev_mode_in_production()
 
+# Fails closed at import when the secret that wraps the key ring is unset
+# (DEV_MODE generates one); every process that loads auth gets the check.
+key_ring.wrapping_secret()
+
 # JWT Configuration
-JWT_SECRET_KEY = _load_jwt_secret()
 JWT_ALGORITHM = "HS256"
 JWT_ACCESS_EXPIRATION_MINUTES = get_settings().jwt_access_expiration_minutes
 JWT_REFRESH_EXPIRATION_DAYS = get_settings().jwt_refresh_expiration_days
@@ -109,6 +90,9 @@ JWT_REFRESH_EXPIRATION_DAYS = get_settings().jwt_refresh_expiration_days
 # Account lockout configuration
 LOCKOUT_THRESHOLD = get_settings().auth_lockout_threshold
 LOCKOUT_DURATION_MINUTES = get_settings().auth_lockout_duration_minutes
+
+# Old codes were 8 hex characters, new ones 16
+_RECOVERY_CODE = re.compile(r"[0-9A-F]{8}|[0-9A-F]{16}")
 
 # Number of prior password hashes to remember and reject on reuse
 PASSWORD_HISTORY_LIMIT = get_settings().auth_password_history_limit
@@ -143,19 +127,8 @@ def raise_if_locked(user: User) -> None:
 
 
 def password_matches_any(plaintext: str, hashes) -> bool:
-    """Return True if `plaintext` matches any bcrypt hash in the iterable."""
-    if not hashes:
-        return False
-    encoded = plaintext.encode("utf-8")
-    for h in hashes:
-        if not h:
-            continue
-        try:
-            if bcrypt.checkpw(encoded, h.encode("utf-8")):
-                return True
-        except Exception as exc:
-            logger.warning("Password history compare failed for one entry: %s", exc)
-    return False
+    """Return True if `plaintext` matches any hash in the iterable (either scheme)."""
+    return password_hash.find(plaintext, list(hashes or [])) is not None
 
 
 class AuthService:
@@ -163,33 +136,14 @@ class AuthService:
 
     @staticmethod
     def hash_password(password: str) -> str:
-        """
-        Hash a password using bcrypt.
-
-        Args:
-            password: Plain text password
-
-        Returns:
-            Hashed password
-        """
-        salt = bcrypt.gensalt()
-        hashed = bcrypt.hashpw(password.encode("utf-8"), salt)
-        return hashed.decode("utf-8")
+        """Hash a password with PBKDF2-HMAC-SHA-256 (core.auth.password_hash)."""
+        return password_hash.hash(password)
 
     @staticmethod
     @default_on_error(False)
-    def verify_password(password: str, password_hash: str) -> bool:
-        """
-        Verify a password against its hash.
-
-        Args:
-            password: Plain text password
-            password_hash: Hashed password
-
-        Returns:
-            True if password matches
-        """
-        return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+    def verify_password(password: str, stored_hash: str) -> bool:
+        """Verify a password against its hash (PBKDF2, or a bcrypt from before)."""
+        return password_hash.verify(password, stored_hash)
 
     @staticmethod
     def generate_jwt_token(
@@ -228,8 +182,7 @@ class AuthService:
         if generation is not None:
             payload["gen"] = generation
 
-        token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
-        return token
+        return key_ring.sign("signin", payload, JWT_ALGORITHM)
 
     @staticmethod
     def verify_jwt_token(token: str) -> Optional[Dict[str, Any]]:
@@ -243,7 +196,11 @@ class AuthService:
             Decoded payload or None if invalid
         """
         try:
-            payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+            payload = jwt.decode(
+                token,
+                key_ring.token_key("signin", token),
+                algorithms=[JWT_ALGORITHM],
+            )
             return payload
         except jwt.ExpiredSignatureError:
             logger.warning("JWT token expired")
@@ -259,7 +216,7 @@ class AuthService:
         try:
             payload = jwt.decode(
                 token,
-                JWT_SECRET_KEY,
+                key_ring.token_key("signin", token),
                 algorithms=[JWT_ALGORITHM],
                 options={"verify_exp": False},
             )
@@ -324,6 +281,22 @@ class AuthService:
                     logger.warning("Invalid password for user: %s", user.username)
                     refusal["reason"] = "bad_password"
                     return None
+
+                # A bcrypt hash is replaced now that the password is known. Not a
+                # change: no history entry, password_changed_at untouched.
+                if password_hash.needs_rewrite(user.password_hash):
+                    # Only over the hash just verified: a reset or change that
+                    # committed meanwhile is not undone.
+                    session.execute(
+                        update(User)
+                        .where(
+                            User.user_id == user.user_id,
+                            User.password_hash == user.password_hash,
+                        )
+                        .values(password_hash=password_hash.hash(password))
+                        .execution_options(synchronize_session=False)
+                    )
+                    session.expire(user, ["password_hash"])
 
                 # Success — reset lockout state and update session tracking
                 user.failed_login_count = 0
@@ -498,7 +471,7 @@ class AuthService:
                     return False
 
                 # Try TOTP first. An undecryptable secret must not block recovery
-                # codes: they are bcrypt hashes and do not depend on the key.
+                # codes: they are hashes and do not depend on the key.
                 try:
                     totp_ok = AuthService._accept_totp(user, code)
                 except MFASecretDecryptionError:
@@ -507,21 +480,24 @@ class AuthService:
                     accepted = True
                 else:
                     recovery_codes = list(user.mfa_recovery_codes or [])
-                    code_bytes = code.strip().upper().encode()
-                    for i, hashed in enumerate(recovery_codes):
-                        try:
-                            if bcrypt.checkpw(code_bytes, hashed.encode()):
-                                recovery_codes.pop(i)
-                                user.mfa_recovery_codes = recovery_codes
-                                logger.info(
-                                    "Recovery code used for user: %s (%d remaining)",
-                                    user.username,
-                                    len(recovery_codes),
-                                )
-                                accepted = True
-                                break
-                        except Exception:
-                            continue
+                    candidate = code.strip().upper()
+                    # Only a code-shaped string costs hashes; a wrong 6-digit
+                    # TOTP is refused without one.
+                    # One PBKDF2 derivation covers the whole set (shared salt).
+                    found = (
+                        password_hash.find(candidate, recovery_codes)
+                        if _RECOVERY_CODE.fullmatch(candidate)
+                        else None
+                    )
+                    if found is not None:
+                        recovery_codes.pop(found)
+                        user.mfa_recovery_codes = recovery_codes
+                        logger.info(
+                            "Recovery code used for user: %s (%d remaining)",
+                            user.username,
+                            len(recovery_codes),
+                        )
+                        accepted = True
                     if not accepted:
                         failed = (user.user_id, user.username)
             finally:
@@ -559,20 +535,32 @@ class AuthService:
 
     @staticmethod
     def _generate_recovery_codes() -> tuple[list[str], list[str]]:
-        """Return (plaintext, bcrypt-hashed) lists of 10 one-time recovery codes."""
-        codes = [secrets.token_hex(4).upper() for _ in range(10)]
-        hashed = [bcrypt.hashpw(c.encode(), bcrypt.gensalt()).decode() for c in codes]
-        return codes, hashed
+        """Return (plaintext, hashed) lists of 10 one-time recovery codes."""
+        codes = [secrets.token_hex(8).upper() for _ in range(10)]  # 64 bits each
+        return codes, password_hash.hash_set(codes)
 
     @staticmethod
-    def _fernet() -> Fernet:
-        """Fernet cipher keyed off JWT_SECRET_KEY (SHA-256 -> base64 32-byte key)."""
-        key = base64.urlsafe_b64encode(hashlib.sha256(JWT_SECRET_KEY.encode()).digest())
-        return Fernet(key)
+    def upgrade_recovery_codes(user: User) -> Optional[List[str]]:
+        """After a good MFA step: if the stored set is from the bcrypt era, void
+        it and return a fresh plaintext set. The caller holds the user's row
+        lock, so an old code can't be spent twice. None when there is nothing
+        to replace."""
+        if not any(
+            password_hash.needs_rewrite(h) for h in user.mfa_recovery_codes or []
+        ):
+            return None
+        codes, user.mfa_recovery_codes = AuthService._generate_recovery_codes()
+        logger.info("Recovery codes replaced after upgrade for user: %s", user.username)
+        return codes
+
+    @staticmethod
+    def _fernet(force: bool = False) -> MultiFernet:
+        """The ring's MFA keys: encrypts under the current, decrypts under any."""
+        return key_ring.encryptor("mfa", force=force)
 
     @staticmethod
     def _encrypt_mfa_secret(secret: str) -> str:
-        """Encrypt an MFA secret at rest with Fernet (JWT-key-derived)."""
+        """Encrypt an MFA secret at rest under the ring's current MFA key."""
         return AuthService._fernet().encrypt(secret.encode()).decode()
 
     @staticmethod
@@ -581,16 +569,23 @@ class AuthService:
 
         Raises:
             MFASecretDecryptionError: the value is a Fernet token that the
-                current JWT_SECRET_KEY cannot decrypt.
+                ring's MFA keys cannot decrypt.
         """
+        fernet = AuthService._fernet()  # an unreadable ring raises, never plaintext
         try:
-            return AuthService._fernet().decrypt(encrypted.encode()).decode()
+            return fernet.decrypt(encrypted.encode()).decode()
         except Exception as exc:
             if not encrypted.startswith(_FERNET_TOKEN_PREFIX):
                 return encrypted  # legacy plaintext (pre-migration rows)
+            try:  # a rotation on another replica: read the ring again
+                return (
+                    AuthService._fernet(force=True).decrypt(encrypted.encode()).decode()
+                )
+            except Exception:  # noqa: BLE001 - reported below as undecryptable
+                pass
             AuthService._log_undecryptable_secret()
             raise MFASecretDecryptionError(
-                "MFA secret cannot be decrypted with the current JWT_SECRET_KEY"
+                "MFA secret cannot be decrypted with the ring's MFA keys"
             ) from exc
 
     @staticmethod
@@ -602,9 +597,9 @@ class AuthService:
             return
         _last_undecryptable_log = now
         logger.error(
-            "MFA secret cannot be decrypted with the current JWT_SECRET_KEY; "
-            "the key has changed since MFA was set up. TOTP codes are rejected "
-            "until the original key is restored; recovery codes still work."
+            "MFA secret cannot be decrypted with the ring's MFA keys; "
+            "the ring has changed since MFA was set up. TOTP codes are rejected "
+            "until the original ring is restored; recovery codes still work."
         )
 
     @staticmethod

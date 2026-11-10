@@ -1,9 +1,9 @@
-"""Sign-ins the server enforces: the row is the revocation record (#4169)."""
+"""The key ring's table (#4180). The first app start fills it."""
 
 from core.upgrade.revision import run_sql
 
-revision = "0040_server_enforced_sign_ins"
-down_revision = "0039_custom_agent_persona_drop"
+revision = "0041_auth_keys"
+down_revision = "0040_password_scheme_stamp"
 
 
 def upgrade() -> None:
