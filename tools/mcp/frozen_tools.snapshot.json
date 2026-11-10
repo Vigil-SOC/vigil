@@ -843,6 +843,42 @@
     "title": "remove_finding_from_caseArguments",
     "type": "object"
   },
+  "send_directive": {
+    "properties": {
+      "fields": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Fields"
+      },
+      "kind": {
+        "title": "Kind",
+        "type": "string"
+      },
+      "run_id": {
+        "title": "Run Id",
+        "type": "string"
+      },
+      "text": {
+        "default": "",
+        "title": "Text",
+        "type": "string"
+      }
+    },
+    "required": [
+      "run_id",
+      "kind"
+    ],
+    "title": "send_directiveArguments",
+    "type": "object"
+  },
   "update_case": {
     "properties": {
       "add_note": {

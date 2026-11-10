@@ -63,6 +63,7 @@ FROZEN_TOOLS = frozenset(
         "get_operator_agent",
         "get_autonomy_ceiling",
         "list_audit_entries",
+        "send_directive",
     }
 )
 
@@ -1403,12 +1404,12 @@ def approve_action(action_id: str) -> str:
 
 @mcp.tool()
 @requires("ai_decisions.approve")
-def reject_action(
+async def reject_action(
     action_id: str,
     reason: str,
 ) -> str:
     """Reject a pending action. The actor is the caller, not an argument."""
-    return _call(tool_registry.reject_action, action_id=action_id, reason=reason)
+    return await _acall(tool_registry.reject_action, action_id=action_id, reason=reason)
 
 
 # Catalog and oversight reads (#4249): each mirrors a frozen /api/v1 GET and
@@ -1532,3 +1533,242 @@ def list_audit_entries(
     except Exception as e:
         logger.error("list_audit_entries failed: %s", e)
         return jdump({"error": str(e)})
+
+
+# --- Run lifecycle, for a caller outside Vigil (#4248) ------------------------
+
+# A run's own agent keeps its handoff path; starting and steering are for a
+# person's client, so a call made inside a Vigil run is refused.
+_OUTSIDE_ONLY = {
+    "error": "A Vigil run cannot do this: it is for a caller outside Vigil"
+}
+
+
+def _person() -> tuple[Optional[str], str]:
+    from core.cases.agent_closure import actor_identity
+
+    return actor_identity()
+
+
+@mcp.tool()
+@requires("ai_chat.use")
+async def start_run(
+    workflow_id: str,
+    case_id: str,
+    context: Optional[str] = None,
+    hypothesis: Optional[str] = None,
+    finding_id: Optional[str] = None,
+) -> str:
+    """Start a workflow or operator agent (``agent-run-<id>``) on a case. Returns
+    ``run_id``, ``case_id`` and ``status``; re-read the run with ``get_run``."""
+    from core.auth import tool_principal
+    from core.workflows.workflows_service import WorkflowsService
+
+    if tool_principal.current_claims() is not None:
+        return jdump(_OUTSIDE_ONLY)
+
+    async def start() -> dict:
+        principal, username = _person()
+        params = {
+            k: v
+            for k, v in {
+                "case_id": case_id,
+                "context": context,
+                "hypothesis": hypothesis,
+                "finding_id": finding_id,
+            }.items()
+            if v
+        }
+        # No session to tie the run to, as a scheduled start has none.
+        result = await WorkflowsService().execute_workflow(
+            workflow_id,
+            params,
+            triggered_by=username,
+            principal=tool_principal.mint(
+                username,
+                person_id=principal,
+                origin="person",
+                ttl=tool_principal.RUN_TTL,
+            ),
+        )
+        if not result.get("success"):
+            return {"error": result.get("error", "the run was not started")}
+        return {
+            "run_id": result.get("run_id"),
+            "case_id": case_id,
+            "status": result.get("status"),
+        }
+
+    return await _acall(start)
+
+
+@mcp.tool()
+@requires("ai_chat.use")
+def list_runs(
+    case_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 20,
+) -> str:
+    """List runs of every source, newest first, optionally on one case.
+    ``status`` is one of running, paused, completed, failed, cancelled."""
+    from core.workflows.workflow_run_service import WorkflowRunService
+
+    def runs() -> dict:
+        rows = WorkflowRunService().list_runs(
+            case_id=case_id, status=status, limit=max(1, min(limit, 100))
+        )
+        return {
+            "count": len(rows),
+            "runs": [
+                {
+                    "run_id": r.get("run_id"),
+                    "workflow_id": r.get("workflow_id"),
+                    "workflow_name": r.get("workflow_name"),
+                    "status": r.get("status"),
+                    "outcome": r.get("outcome"),
+                    "case_id": (r.get("trigger_context") or {}).get("case_id"),
+                    "triggered_by": r.get("triggered_by"),
+                    "started_at": r.get("started_at"),
+                    "finished_at": r.get("finished_at"),
+                }
+                for r in rows
+            ],
+        }
+
+    return _call(runs)
+
+
+@mcp.tool()
+@requires("ai_chat.use")
+async def get_run(run_id: str) -> str:
+    """A run's status. While paused, the pending approval ids it waits on; once
+    ended, its conclusion, citation refs and declared gaps."""
+    from core.agents.projections import read_projection
+    from core.workflows.workflow_run_service import (
+        IN_FLIGHT_STATUSES,
+        WorkflowRunService,
+    )
+
+    async def read() -> dict:
+        row = WorkflowRunService().get_run(run_id)
+        if row is None:
+            return {"error": f"Run not found: {run_id}"}
+        out = {
+            "run_id": row.get("run_id"),
+            "workflow_id": row.get("workflow_id"),
+            "case_id": (row.get("trigger_context") or {}).get("case_id"),
+            "status": row.get("status"),
+            "outcome": row.get("outcome"),
+            "reason": row.get("reason"),
+        }
+        if row.get("status") == "paused":
+            out["pending_approvals"] = [
+                a.action_id
+                for a in ApprovalService().list_actions(
+                    status=ActionStatus.PENDING, workflow_run_id=row.get("run_id")
+                )
+            ]
+        if row.get("status") in IN_FLIGHT_STATUSES:
+            return out
+        folded = await read_projection(run_id) or {}
+        # Plugin views nest the kernel fold; compose returns it bare.
+        kernel = folded.get("kernel") or folded
+        conclusion = kernel.get("conclusion") or {}
+        value = conclusion.get("value") or {}
+        summary = (
+            kernel.get("summary")
+            or next(
+                (value[k] for k in ("summary", "text", "note") if value.get(k)), None
+            )
+            or row.get("error")
+        )
+        out.update(
+            outcome=row.get("outcome") or folded.get("outcome"),
+            conclusion=str(summary)[:2000] if summary else None,
+            disposition=folded.get("disposition") or value.get("disposition"),
+            citations=[c for c in value.get("citations") or [] if isinstance(c, str)],
+            declared_gaps=conclusion.get("declared_gaps"),
+        )
+        if out["reason"] == out["conclusion"]:
+            del out["reason"]
+        return out
+
+    return await _acall(read)
+
+
+@mcp.tool()
+@requires("ai_chat.use")
+def send_directive(
+    run_id: str,
+    kind: str,
+    text: str = "",
+    fields: Optional[dict] = None,
+) -> str:
+    """Steer a running run. ``kind`` is note, lead, abort, extend, conclude, gap or
+    boost; approve, reject and benign answer a checkpoint and are confirmed in
+    Approvals. ``fields`` holds any of checkpoint_id, entity_key, question_id,
+    hypothesis_id, tenant, revoke, grant."""
+    import uuid
+
+    from fastapi import HTTPException
+
+    from core.agents.attribution import TrailWriteError
+    from core.agents.directives import (
+        DECISION_KINDS,
+        InvalidDirective,
+        RunAlreadyEnded,
+        UnknownRun,
+        enqueue_directive,
+        refuse_unpermitted,
+    )
+    from core.auth.tool_principal import current_claims
+    from core.storage.models import User
+
+    # Before anything else: a checkpoint is answered on the Approvals screen.
+    if kind in DECISION_KINDS:
+        return jdump(
+            {
+                "run_id": run_id,
+                "kind": kind,
+                "message": "Confirm this in Approvals. Chat cannot answer a checkpoint.",
+            }
+        )
+    if current_claims() is not None:
+        return jdump(_OUTSIDE_ONLY)
+    try:
+        run_id = str(uuid.UUID(run_id))
+    except ValueError:
+        return jdump({"error": f"not a run id: {run_id}"})
+
+    def steer() -> dict:
+        principal, username = _person()
+        with service_session() as session:
+            user_id = (
+                session.query(User.user_id).filter(User.username == username).scalar()
+            )
+            try:
+                refuse_unpermitted(session, run_id, kind, fields, user_id, principal)
+                directive = enqueue_directive(
+                    session,
+                    run_id=run_id,
+                    kind=kind,
+                    body=text,
+                    actor=username,
+                    fields=fields,
+                    actor_principal_id=principal,
+                )
+            except HTTPException as exc:
+                return {"error": exc.detail}
+            except (UnknownRun, RunAlreadyEnded, InvalidDirective) as exc:
+                return {"error": str(exc)}
+            except TrailWriteError:
+                # The directive row is already written: it must not commit.
+                session.rollback()
+                return {"error": "the action could not be recorded"}
+        return {
+            "directive_id": directive["directive_id"],
+            "kind": directive["kind"],
+            "created_at": directive["created_at"],
+        }
+
+    return _call(steer)

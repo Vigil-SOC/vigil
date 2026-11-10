@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     text,
@@ -109,6 +110,44 @@ class SignIn(Base):
             name="sign_ins_end_reason_check",
         ),
         Index("idx_sign_ins_principal", "principal_id"),
+    )
+
+
+class SecurityKey(Base):
+    """A security key (WebAuthn credential) a person registered (#4234).
+
+    Holds what verifying an assertion needs and nothing else: no attestation, no
+    authenticator model. Belongs to the principal's account like ``sign_ins``;
+    ``core/auth/security_keys.py`` owns it.
+    """
+
+    __tablename__ = "security_keys"
+
+    key_id: Mapped[str] = mapped_column(String(50), primary_key=True)
+    principal_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("principals.principal_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    credential_id: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    # The COSE-encoded public key and its COSE algorithm number.
+    public_key: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    algorithm: Mapped[int] = mapped_column(Integer, nullable=False)
+    sign_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    # The person's name for it.
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
+    )
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Replay guard for an authenticator whose counter never moves.
+    last_challenge: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
+
+    __table_args__ = (
+        Index("idx_security_keys_principal", "principal_id"),
+        Index("uq_security_keys_credential", "credential_id", unique=True),
     )
 
 
