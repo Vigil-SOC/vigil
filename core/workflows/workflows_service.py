@@ -918,7 +918,7 @@ class WorkflowsService:
                     )
             except Exception:
                 parts.append(
-                    f"**Target Case ID:** {case_id} (use get_case to retrieve details)"
+                    f"**Target Case ID:** {case_id} (use read_case_shell to retrieve details)"
                 )
 
         if hypothesis:

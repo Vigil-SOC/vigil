@@ -67,7 +67,7 @@ phases:
   - id: contain
     agent: responder
     name: "Contain"
-    tools: [get_case, update_case]
+    tools: [shell, update_case]
     approval_required: true
     instructions: |
       If confirmed malicious: block the sender domain, quarantine matching emails,

@@ -68,7 +68,6 @@ TOOL_PERMISSIONS: Dict[str, str] = {
     "get_finding": "findings.read",
     "dismiss_finding": "findings.write",
     "list_cases": "cases.read",
-    "get_case": "cases.read",
     "read_case_shell": "cases.read",
     "create_case": "cases.write",
     "add_finding_to_case": "cases.write",
@@ -972,6 +971,8 @@ def get_approval_stats(**_args: Any) -> Any:
 
 # Names executed by the function of the same name in this module. Looked up
 # when called, so the MCP wrappers and this door share that function.
+# get_case is not here: agents read a case through read_case_shell, and
+# get_case is kept only for the MCP tool that calls it.
 _OWNED = frozenset(
     {
         "list_findings",
@@ -980,7 +981,6 @@ _OWNED = frozenset(
         "get_finding",
         "dismiss_finding",
         "list_cases",
-        "get_case",
         "create_case",
         "add_finding_to_case",
         "update_case",

@@ -1945,19 +1945,25 @@ export const breachedListApi = {
 // Self-service two-step sign-in (TOTP + recovery codes) for the signed-in user.
 export const mfaApi = {
   setup: () => api.post<Schema<'MFASetupResponse'>>('/auth/mfa/setup'),
-  verify: (code: string) =>
+  // the first method needs the password; a change to one that exists, the password and a code
+  verify: (code: string, password: string) =>
     api.post<Schema<'RecoveryCodesResponse'>>('/auth/mfa/verify', {
       code,
+      password,
     } satisfies Schema<'MFAVerifyRequest'>),
-  regenerateRecoveryCodes: (code: string) =>
+  regenerateRecoveryCodes: (code: string, password: string) =>
     api.post<Schema<'RecoveryCodesResponse'>>('/auth/mfa/recovery-codes', {
       code,
+      password,
     } satisfies Schema<'MFAVerifyRequest'>),
   // axios sends a DELETE body only through `data`
-  disable: (code: string) =>
+  disable: (code: string, password: string) =>
     api.delete<{ message: string }>('/auth/mfa', {
-      data: { code } satisfies Schema<'MFAVerifyRequest'>,
+      data: { code, password } satisfies Schema<'MFAVerifyRequest'>,
     }),
+  methods: () => api.get<Schema<'MfaMethod'>[]>('/auth/mfa-methods'),
+  // Another person's, read-only, for managers (users.write over the account).
+  ofUser: (userId: string) => api.get<Schema<'MfaMethod'>[]>(`/users/${encodeURIComponent(userId)}/mfa-methods`),
 }
 
 export default api

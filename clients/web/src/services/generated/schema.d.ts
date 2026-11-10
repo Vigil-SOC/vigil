@@ -1021,6 +1021,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/mfa-methods": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List My Mfa Methods
+         * @description Your own sign-in methods: type, name, added and last used. Never a secret.
+         */
+        get: operations["get_api_auth_mfa-methods"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/mfa/recovery-codes": {
         parameters: {
             query?: never;
@@ -6773,6 +6793,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/{user_id}/mfa-methods": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List User Mfa Methods
+         * @description A person's sign-in methods, read-only: type, name, added, last used and the
+         *     recovery codes left, never a secret or a code. users.write over the account,
+         *     and a role the caller covers.
+         */
+        get: operations["get_api_users_user_id_mfa-methods"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users/{user_id}/reactivate": {
         parameters: {
             query?: never;
@@ -11479,6 +11521,11 @@ export interface components {
         LoginResponse: {
             /** Access Token */
             access_token: string;
+            /**
+             * Mfa Removed
+             * @default false
+             */
+            mfa_removed: boolean;
             /** Recovery Codes */
             recovery_codes?: string[] | null;
             /** Refresh Token */
@@ -11515,11 +11562,15 @@ export interface components {
         };
         /**
          * MFAVerifyRequest
-         * @description MFA verification request.
+         * @description A method change: the code and, for the strong check, the password. Body
+         *     fields so neither is written to access logs. Optional so a missing password
+         *     is the check's own "Enter your password.", not a 422.
          */
         MFAVerifyRequest: {
             /** Code */
             code: string;
+            /** Password */
+            password?: string | null;
         };
         /**
          * MergeRequest
@@ -11533,6 +11584,19 @@ export interface components {
             merged_by: string;
             /** Source Case Id */
             source_case_id: string;
+        };
+        /** MfaMethod */
+        MfaMethod: {
+            /** Added At */
+            added_at?: string | null;
+            /** Last Used At */
+            last_used_at?: string | null;
+            /** Name */
+            name: string;
+            /** Remaining */
+            remaining?: number | null;
+            /** Type */
+            type: string;
         };
         /** MintRequest */
         MintRequest: {
@@ -15464,6 +15528,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_auth_mfa-methods": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MfaMethod"][];
                 };
             };
             /** @description Validation Error */
@@ -25763,6 +25858,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_users_user_id_mfa-methods": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MfaMethod"][];
                 };
             };
             /** @description Validation Error */
