@@ -270,7 +270,7 @@ class AccountLink(Base):
 
     Only the SHA-256 of the link's value is stored. ``used_at`` is set by the
     submission that completes it, ``revoked_at`` by a revoke or a newer link.
-    Built by ``core/upgrade/versions/0051_account_links.sql``.
+    Built by ``core/upgrade/versions/0052_account_links.sql``.
     """
 
     __tablename__ = "account_links"

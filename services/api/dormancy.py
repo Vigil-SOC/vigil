@@ -75,7 +75,7 @@ def sweep() -> None:
 
 def _handle(user_id: str, days: int, now) -> None:
     # Imported here: the router imports this package's clock, not the other way.
-    from services.api.routers.users import _role_managers
+    from services.api.routers.users import _leaves_no_manager
 
     with unit_of_work() as session:
         # One at a time across replicas, so two idle role managers cannot each
@@ -101,9 +101,7 @@ def _handle(user_id: str, days: int, now) -> None:
             return
         if now < max(dormancy.deadline(last, days), warned + dormancy.window(days)):
             return
-        sole = _role_managers(session) and not _role_managers(
-            session, users={user_id: (user.role_id, False)}
-        )
+        sole = _leaves_no_manager(session, users={user_id: (user.role_id, False)})
         if sole:
             # The last person who can manage roles stays; managers are told once.
             if user.dormancy_held_at is None or user.dormancy_held_at < start:

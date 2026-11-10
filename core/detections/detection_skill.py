@@ -414,7 +414,7 @@ def _held(keys: List[str]) -> List[str]:
 def _save(
     skill: Dict[str, Any],
     username: str,
-    proven_events: Optional[list],
+    proven_event_ids: Optional[dict],
     ruled_out_events: Optional[list],
 ) -> Dict[str, Any]:
     """Save the skill's copies as one new rule, all or nothing; Refused when held
@@ -430,7 +430,7 @@ def _save(
     given = {c["language"]: c["exceptions"] for c in skill["copies"] if c["exceptions"]}
     with acting_as(username):
         saved = overlay.save_rule(
-            proven_events=proven_events,
+            proven_event_ids=proven_event_ids,
             ruled_out_events=ruled_out_events,
             exceptions=given or None,
             all_or_nothing=True,
@@ -446,7 +446,7 @@ def import_skill(
     public_key_pem: str,
     actor: str,
     username: str,
-    proven_events: Optional[list] = None,
+    proven_event_ids: Optional[dict] = None,
     ruled_out_events: Optional[list] = None,
 ) -> Dict[str, Any]:
     """Save a verified skill's copies as a new rule, in shadow, as ``username``
@@ -467,7 +467,7 @@ def import_skill(
                 f"The skill could not be read ({type(exc).__name__})"
             ) from exc
         try:
-            saved = _save(skill, username, proven_events, ruled_out_events)
+            saved = _save(skill, username, proven_event_ids, ruled_out_events)
         except Refused:
             raise
         except overlay.NotSaved as exc:

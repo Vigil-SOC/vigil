@@ -2,8 +2,8 @@
 
 from core.upgrade.revision import run_sql
 
-revision = "0051_account_links"
-down_revision = "0050_step_up"
+revision = "0052_account_links"
+down_revision = "0051_erased_identifiers"
 
 
 def upgrade() -> None:

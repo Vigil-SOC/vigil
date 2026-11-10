@@ -303,6 +303,8 @@
 .state-pill.live { color: var(--ac); background: var(--ac-bg); }
 .state-pill.needs { color: var(--poor); background: var(--poor-bg); }
 .state-pill.needs .state-dot { animation: kit-blink 1.6s infinite; }
+.state-pill.good { color: var(--good); background: var(--good-bg); }
+.state-pill.fair { color: var(--fair); background: var(--fair-bg); }
 
 /* A detection rule's check result: fail is a risk (severity critical), the rest neutral. */
 .check-pill {

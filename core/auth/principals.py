@@ -56,9 +56,14 @@ def ensure_agent(session: Session, key: str, label: Optional[str]) -> Principal:
         )
         session.add(principal)
     else:
-        principal.deleted_at = None
+        restore(principal)
         principal.label = label
     return principal
+
+
+def restore(principal: Principal) -> None:
+    """Brought back: no longer deleted."""
+    principal.deleted_at = None
 
 
 def mark_deleted(session: Session, principal_id: str) -> None:

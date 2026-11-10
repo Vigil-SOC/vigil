@@ -13,13 +13,15 @@ from typing import Annotated, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
+from core.audit import retention
 from core.auth import current_user as current_user_module
 from core.auth import (
     dormancy,
     invites,
+    mcp_credential_service,
     principals,
     session_policy,
     sign_ins,
@@ -33,7 +35,7 @@ from core.auth.auth_service import (
     _account_is_locked,
     clear_lock,
 )
-from core.auth.deactivation import deactivate_account
+from core.auth.deactivation import deactivate_account, when_committed
 from core.auth.identity import claim_sign_in_names, identifier_in_use
 from core.auth.permissions import (
     CATALOG,
@@ -48,7 +50,7 @@ from core.auth.service_account import USERNAME_PATTERN as MEDIC_USERNAME_PATTERN
 from core.platform.email_service import get_email_backend
 from core.platform.notices import notify
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.storage.models import AccountLink, Principal, Role, User
+from core.storage.models import AccountLink, Case, Principal, Role, User
 from core.storage.schemas import RoleSchema, UserSchema
 from core.storage.schemas.base import IsoDateTime
 from core.storage.unit_of_work import unit_of_work
@@ -76,12 +78,11 @@ ROUTER_META = RouterMeta(
 
 # Request/Response Models
 class UpdateUserRequest(BaseModel):
-    """Update user request."""
+    """Update user request: profile and role. Status changes have their own routes."""
 
     full_name: Optional[str] = None
     email: Optional[EmailStr] = None
     role_id: Optional[str] = None
-    is_active: Optional[bool] = None
 
 
 class CreateRoleRequest(BaseModel):
@@ -209,26 +210,49 @@ def _refuse_audit_read_to_machine(current_user: User, session: Session) -> None:
         )
 
 
-def _role_managers(
+def _manager_accounts(
     session: Session,
     roles: Optional[dict[str, Optional[dict]]] = None,
     users: Optional[dict[str, tuple[str, bool]]] = None,
-) -> int:
-    """Active people who can manage roles, with ``roles`` ({id: permissions})
-    and ``users`` ({id: (role_id, is_active)}) applied as if saved."""
+) -> list[User]:
+    """Active people with a password whose role holds roles.manage, with
+    ``roles`` ({id: permissions}) and ``users`` ({id: (role_id, is_active)})
+    applied as if saved. Locked ones included."""
     held = {role.role_id: role.permissions for role in session.query(Role)}
     held.update(roles or {})
     people = (
-        _not_deleted(session.query(User.user_id, User.role_id, User.is_active))
-        .filter(Principal.kind == principals.PERSON)
-        .all()
+        _not_deleted(session.query(User)).filter(Principal.kind == principals.PERSON)
+    ).all()
+    found = []
+    for user in people:
+        role_id, active = (users or {}).get(
+            user.user_id, (user.role_id, user.is_active)
+        )
+        if (
+            active
+            and user.password_hash
+            and (held.get(role_id) or {}).get(ROLES_MANAGE)
+        ):
+            found.append(user)
+    return found
+
+
+def _role_managers(session: Session, **change) -> int:
+    """Role managers who can sign in now: _manager_accounts less the locked."""
+    return sum(
+        1
+        for user in _manager_accounts(session, **change)
+        if not _account_is_locked(user)
     )
-    count = 0
-    for user_id, role_id, active in people:
-        role_id, active = (users or {}).get(user_id, (role_id, active))
-        if active and (held.get(role_id) or {}).get(ROLES_MANAGE):
-            count += 1
-    return count
+
+
+def _leaves_no_manager(session: Session, **change) -> bool:
+    """Whether ``change`` takes roles.manage from someone and leaves nobody who
+    can sign in holding it. Counted when all are locked too: removing a locked
+    manager still narrows who could be unlocked."""
+    before = {user.user_id for user in _manager_accounts(session)}
+    after = {user.user_id for user in _manager_accounts(session, **change)}
+    return bool(before - after) and not _role_managers(session, **change)
 
 
 def _refuse_lockout(current_user: User, session: Session, **change) -> None:
@@ -236,11 +260,16 @@ def _refuse_lockout(current_user: User, session: Session, **change) -> None:
     narrowing is containment and stands; the roles list then says so."""
     if not _acts_as_person(current_user, session):
         return
-    if _role_managers(session) and not _role_managers(session, **change):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"This would leave no active person holding {ROLES_MANAGE}",
+    if _leaves_no_manager(session, **change):
+        locked = sorted(
+            user.username
+            for user in _manager_accounts(session, **change)
+            if _account_is_locked(user)
         )
+        detail = f"This would leave no person holding {ROLES_MANAGE} who can sign in"
+        if locked:
+            detail += f". Locked, and would count once unlocked: {', '.join(locked)}"
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
 
 def _require_privileges_cover_target(
@@ -310,16 +339,89 @@ def _live_user(session: Session, user_id: str) -> User:
     return user
 
 
+def _is_erased(user: User) -> bool:
+    return retention.is_erased(user.username, user.principal_id)
+
+
+def _refuse_erased(user: User) -> None:
+    if _is_erased(user):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This account was erased; it can't be reactivated or restored",
+        )
+
+
+def _account_status(user: User, deleted: bool) -> str:
+    if _is_erased(user):
+        return "erased"
+    if deleted:
+        return "deleted"
+    if not user.is_active:
+        return "deactivated"
+    return "locked" if _account_is_locked(user) else "active"
+
+
+AccountStatus = Literal[
+    "current", "all", "active", "locked", "deactivated", "deleted", "erased"
+]
+
+
+def _filter_status(query, wanted: AccountStatus):
+    """``query`` (joined to Principal) narrowed to one status. "current" is
+    every account not deleted or erased; "all" is every account."""
+    erased = User.username == func.concat(retention.ERASED_PREFIX, User.principal_id)
+    deleted = Principal.deleted_at.isnot(None)
+    if wanted == "all":
+        return query
+    if wanted == "erased":
+        return query.filter(erased)
+    if wanted == "deleted":
+        return query.filter(deleted, ~erased)
+    query = query.filter(~deleted, ~erased)
+    # As _account_is_locked: a timed lock until it ends, else until cleared.
+    now = utcnow()
+    locked = and_(
+        User.service_account.isnot(True),
+        or_(
+            User.locked_until > now,
+            and_(User.locked_until.is_(None), User.locked_at.isnot(None)),
+        ),
+    )
+    if wanted == "deactivated":
+        return query.filter(User.is_active.is_(False))
+    if wanted == "locked":
+        return query.filter(User.is_active.is_(True), locked)
+    if wanted == "active":
+        return query.filter(User.is_active.is_(True), ~locked)
+    return query
+
+
 def _dump_accounts(session: Session, users: list[User]) -> list[dict]:
-    """Each account, with what kind of principal it is and which of its
-    role's permissions have no effect for it."""
+    """Each account, with its status, what kind of principal it is and which
+    of its role's permissions have no effect for it."""
     held = {role.role_id: role.permissions for role in session.query(Role)}
     days = session_policy.policy().dormancy_days
     last = dormancy.activity(session, [u.user_id for u in users]) if days else {}
+    ids = [u.principal_id for u in users]
+    deleted = {
+        pid
+        for (pid,) in session.query(Principal.principal_id).filter(
+            Principal.principal_id.in_(ids), Principal.deleted_at.isnot(None)
+        )
+    }
+    # Shown before a deactivate or delete, as deactivation tells managers.
+    open_cases = dict(
+        session.query(Case.assignee, func.count())
+        .filter(Case.assignee.in_([u.username for u in users]), Case.status != "closed")
+        .group_by(Case.assignee)
+        .all()
+    )
     now = utcnow()
     dumped = []
     for user in users:
         entry = UserSchema.dump(user)
+        entry["status"] = _account_status(user, user.principal_id in deleted)
+        entry["open_cases"] = open_cases.get(user.username, 0)
         machine = _is_service_account(user)
         entry["principal_kind"] = (
             principals.SERVICE_ACCOUNT if machine else principals.PERSON
@@ -356,6 +458,7 @@ def list_users(
     role_id: Optional[str] = None,
     is_active: Optional[bool] = None,
     search: Optional[str] = None,
+    account_status: AccountStatus = Query("current", alias="status"),
     *,
     current_user: Annotated[User, Depends(get_current_user)],
     session: UnitOfWorkSession,
@@ -369,6 +472,7 @@ def list_users(
         role_id: Filter by role ID
         is_active: Filter by active status
         search: Search in username, email, or full name
+        account_status: "current" (not deleted or erased), "all", or one status
         current_user: Current authenticated user
         session: Database session
 
@@ -380,7 +484,12 @@ def list_users(
         deny_unless(current_user.user_id, "users.read")
 
     try:
-        query = _not_deleted(session.query(User))
+        query = _filter_status(
+            session.query(User).join(
+                Principal, Principal.principal_id == User.principal_id
+            ),
+            account_status,
+        )
 
         # Apply filters
         if role_id:
@@ -401,7 +510,7 @@ def list_users(
         total = query.count()
 
         # Apply pagination
-        users = query.offset(skip).limit(limit).all()
+        users = query.order_by(User.username).offset(skip).limit(limit).all()
 
         return {
             "total": total,
@@ -984,8 +1093,8 @@ def unlock_user(
 
 
 def _disable_alone(user_id: str, actor: str, by_person: bool) -> list[str]:
-    """Commit a disable on its own: it stands whatever else the PUT does. Returns
-    the credentials it revoked, for the caller to put on the trail."""
+    """Commit a disable on its own: it stands whatever else the request does.
+    Returns the credentials it revoked, for the caller to put on the trail."""
     with unit_of_work() as session:
         user = session.get(User, user_id)
         return deactivate_account(
@@ -1003,7 +1112,6 @@ def _apply_user_update(
     user = _live_user(session, user_id)
     _require_privileges_cover_target(current_user, user, session, action="update")
 
-    # Every check before any write: a disable commits ahead of the rest.
     if request.email is not None and request.email.casefold() != user.email.casefold():
         if _is_service_account(user):
             # A reachable address is the first step to a password reset.
@@ -1043,38 +1151,14 @@ def _apply_user_update(
                 sorted(_granted(role.permissions)),
             )
 
-    role_id = request.role_id if request.role_id is not None else user.role_id
-    is_active = request.is_active if request.is_active is not None else user.is_active
-    if is_active and not user.is_active:
-        # Re-enabling restores the account's whole role: a widening.
-        current = session.query(Role).filter(Role.role_id == role_id).first()
-        _refuse_machine_widening(
-            current_user, session, None, current.permissions if current else {}
-        )
-    if (role_id, is_active) != (user.role_id, user.is_active):
+    if request.role_id is not None and request.role_id != user.role_id:
         _refuse_lockout(
-            current_user, session, users={user.user_id: (role_id, is_active)}
+            current_user,
+            session,
+            users={user.user_id: (request.role_id, user.is_active)},
         )
 
     actor, principal = current_user.principal_id, user.principal_id
-    # A safety action: committed on its own and recorded, or held to record
-    # late, so a trail failure on the rest of this PUT leaves it in place.
-    if request.is_active is False and user.is_active:
-        by_person = _acts_as_person(current_user, session)
-        if trail_events.ready(session):
-            revoked = _disable_alone(user_id, actor, by_person)
-            trail_events.safety("user.disabled", actor=actor, principal=principal)
-            for credential_id in revoked:
-                trail_events.safety(
-                    "credential.revoked",
-                    actor=actor,
-                    principal=principal,
-                    credential_id=credential_id,
-                )
-            session.refresh(user)
-        else:
-            deactivate_account(session, user, actor=actor, by_person=by_person)
-
     entries = []
     stale_reason = None
     changed = []
@@ -1109,14 +1193,6 @@ def _apply_user_update(
             )
         user.role_id = request.role_id
 
-    if request.is_active is not None:
-        if request.is_active and not user.is_active:
-            entries.append(("user.enabled", None, {}))
-            # Back in use: the idle clock starts again and a lock ends.
-            user.dormancy_floor = utcnow()
-            clear_lock(user)
-        user.is_active = request.is_active
-
     # Flush so the read-back sees server defaults; the request's unit
     # of work commits, entries included: a trail failure rolls this back.
     session.flush()
@@ -1136,7 +1212,8 @@ async def update_user(
     session: UnitOfWorkSession,
 ):
     """
-    Update user information (requires users.write permission).
+    Update a user's profile and role (requires users.write permission).
+    Deactivate, reactivate and restore have their own routes.
 
     The caller's permissions must also cover the target account's current
     role. Holding users.write is not enough to edit an account whose role
@@ -1180,6 +1257,171 @@ async def update_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update user",
         )
+
+
+def _tell_person(session: Session, user: User, kind: str, title: str, message: str):
+    """A notice to the account's holder once ``session`` commits. A service
+    account has nobody to tell. Nothing secret: notices are emailed."""
+    if _is_service_account(user):
+        return
+    about = user.principal_id
+    when_committed(
+        session, lambda: notify(about, kind, title, message, priority="high")
+    )
+
+
+@router.post("/{user_id}/deactivate", dependencies=[_step_up("users.write")])
+def deactivate_user(
+    user_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """End the account's sign-ins and revoke every credential it holds.
+    users.write over the account; a service account or playbook may, as containment."""
+    with _denials(current_user, "user.deactivate"):
+        deny_unless(current_user.user_id, "users.write")
+        user = _live_user(session, user_id)
+        _require_privileges_cover_target(
+            current_user, user, session, action="deactivate"
+        )
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This account is already deactivated",
+            )
+        _refuse_lockout(
+            current_user, session, users={user.user_id: (user.role_id, False)}
+        )
+    actor, principal = current_user.principal_id, user.principal_id
+    by_person = _acts_as_person(current_user, session)
+    # A safety action: committed on its own and recorded, or held to record
+    # late, so a trail failure leaves it in place.
+    if trail_events.ready(session):
+        revoked = _disable_alone(user_id, actor, by_person)
+        trail_events.safety("user.disabled", actor=actor, principal=principal)
+        for credential_id in revoked:
+            trail_events.safety(
+                "credential.revoked",
+                actor=actor,
+                principal=principal,
+                credential_id=credential_id,
+            )
+        session.refresh(user)
+    else:
+        deactivate_account(session, user, actor=actor, by_person=by_person)
+    logger.info(f"User deactivated by {current_user.username}: {user.username}")
+    return _dump_accounts(session, [user])[0]
+
+
+@router.post("/{user_id}/reactivate", dependencies=[_step_up("users.write")])
+def reactivate_user(
+    user_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Let a deactivated account sign in again with its password and MFA. Its
+    tokens stay revoked. Restores the whole role, so a person's own act."""
+    with _denials(current_user, "user.reactivate"):
+        deny_unless(current_user.user_id, "users.write")
+        user = _live_user(session, user_id)
+        _require_privileges_cover_target(
+            current_user, user, session, action="reactivate"
+        )
+        _refuse_erased(user)
+        if user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This account is already active",
+            )
+        role = session.get(Role, user.role_id)
+        _refuse_machine_widening(
+            current_user, session, None, role.permissions if role else {}
+        )
+    user.is_active = True
+    # Back in use: the idle clock starts again and a lock ends.
+    user.dormancy_floor = utcnow()
+    clear_lock(user)
+    session.flush()
+    trail_events.record(
+        session,
+        "user.enabled",
+        actor=current_user.principal_id,
+        principal=user.principal_id,
+    )
+    who = current_user.full_name or current_user.username
+    _tell_person(
+        session,
+        user,
+        "account_reactivated",
+        "Your account was reactivated",
+        f"{who} reactivated your account. Sign in with your password and two-step "
+        "sign-in as before. MCP tokens from before stay revoked: mint new ones.",
+    )
+    logger.info(f"User reactivated by {current_user.username}: {user.username}")
+    entry = _dump_accounts(session, [user])[0]
+    entry["new_tokens_required"] = True
+    return entry
+
+
+@router.post("/{user_id}/restore", dependencies=[_step_up("users.delete")])
+def restore_user(
+    user_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Bring a deleted account back, Deactivated: password and MFA kept, tokens
+    revoked. users.delete, and a person's own act."""
+    with _denials(current_user, "user.restore"):
+        deny_unless(current_user.user_id, "users.delete")
+        if not _acts_as_person(current_user, session):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Restoring an account needs a person's own sign-in",
+            )
+        # _live_user skips deleted accounts; this one is looked up as it is.
+        user = session.get(User, user_id)
+        principal = user and session.get(Principal, user.principal_id)
+        if principal is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+            )
+        _refuse_erased(user)
+        if principal.deleted_at is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This account is not deleted",
+            )
+        _require_privileges_cover_target(current_user, user, session, action="restore")
+    actor = current_user.principal_id
+    principals.restore(principal)
+    user.is_active = False
+    session.flush()
+    trail_events.record(
+        session, "user.restored", actor=actor, principal=user.principal_id
+    )
+    # Deleting revoked them; one left live (an older delete) is revoked now.
+    for credential in mcp_credential_service.list_for_user(
+        user.user_id, session=session
+    ):
+        if mcp_credential_service.revoke(credential.credential_id, session=session):
+            trail_events.record(
+                session,
+                "credential.revoked",
+                actor=actor,
+                principal=user.principal_id,
+                credential_id=credential.credential_id,
+            )
+    who = current_user.full_name or current_user.username
+    _tell_person(
+        session,
+        user,
+        "account_restored",
+        "Your account was restored",
+        f"{who} restored your deleted account. It stays deactivated until an "
+        "administrator reactivates it; MCP tokens from before stay revoked.",
+    )
+    logger.info(f"User restored by {current_user.username}: {user.username}")
+    return _dump_accounts(session, [user])[0]
 
 
 def _delete_user(session: Session, current_user: User, user_id: str) -> User:

@@ -266,6 +266,7 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "user.deleted": "Deleted an account",
     "user.disabled": "Disabled an account",
     "user.enabled": "Enabled an account",
+    "user.restored": "Restored a deleted account",
     "user.role_changed": lambda p: "Changed an account's role"
     + (f" to {p['role_id']}" if p.get("role_id") else ""),
     "role.created": _role("Created"),
