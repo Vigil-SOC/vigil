@@ -15,7 +15,14 @@ from core.storage.models.ai import (
     LLMInteractionLog,
     LLMProviderConfig,
 )
-from core.storage.models.auth import McpCredential, Principal, Role, SignIn, User
+from core.storage.models.auth import (
+    BreachedPassword,
+    McpCredential,
+    Principal,
+    Role,
+    SignIn,
+    User,
+)
 from core.storage.models.autonomy import ToolEffectClass
 from core.storage.models.base import Base, JSONBList, case_findings
 from core.storage.models.case import Case
@@ -147,6 +154,7 @@ __all__ = [
     "RUN_LIVE_STATE",
     "LLMInteractionLog",
     "LLMProviderConfig",
+    "BreachedPassword",
     "McpCredential",
     "Principal",
     "SiemSearch",

@@ -644,6 +644,16 @@
   "nullable": true,
   "type": "text"
  },
+ "column breached_passwords.added_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
+ "column breached_passwords.entry": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
  "column case_attachments.attachment_id": {
   "default": "nextval('case_attachments_attachment_id_seq'::regclass)",
   "nullable": false,
@@ -4314,6 +4324,7 @@
  "constraint audit_webhook_state.audit_webhook_state_pkey": "PRIMARY KEY (id)",
  "constraint auth_keys.auth_keys_pkey": "PRIMARY KEY (purpose, version)",
  "constraint auth_keys.auth_keys_state_check": "CHECK ((state = ANY (ARRAY['current'::text, 'verify_only'::text, 'decrypt_only'::text, 'retired'::text])))",
+ "constraint breached_passwords.breached_passwords_pkey": "PRIMARY KEY (entry)",
  "constraint case_attachments.case_attachments_case_id_fkey": "FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE CASCADE",
  "constraint case_attachments.case_attachments_pkey": "PRIMARY KEY (attachment_id)",
  "constraint case_audit_logs.case_audit_logs_pkey": "PRIMARY KEY (audit_id)",
@@ -4622,6 +4633,7 @@
  "index audit_webhook_state_pkey": "CREATE UNIQUE INDEX audit_webhook_state_pkey ON public.audit_webhook_state USING btree (id)",
  "index auth_keys_one_current": "CREATE UNIQUE INDEX auth_keys_one_current ON public.auth_keys USING btree (purpose) WHERE (state = 'current'::text)",
  "index auth_keys_pkey": "CREATE UNIQUE INDEX auth_keys_pkey ON public.auth_keys USING btree (purpose, version)",
+ "index breached_passwords_pkey": "CREATE UNIQUE INDEX breached_passwords_pkey ON public.breached_passwords USING btree (entry)",
  "index case_attachments_pkey": "CREATE UNIQUE INDEX case_attachments_pkey ON public.case_attachments USING btree (attachment_id)",
  "index case_audit_logs_pkey": "CREATE UNIQUE INDEX case_audit_logs_pkey ON public.case_audit_logs USING btree (audit_id)",
  "index case_closure_info_pkey": "CREATE UNIQUE INDEX case_closure_info_pkey ON public.case_closure_info USING btree (case_id)",
@@ -5180,6 +5192,26 @@
    "app:INSERT",
    "app:SELECT",
    "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation breached_passwords": {
+  "acl": [
+   "app:INSERT",
+   "app:SELECT",
    "owner:DELETE",
    "owner:INSERT",
    "owner:REFERENCES",

@@ -334,3 +334,16 @@ class McpCredential(Base):
             "successor_id": self.successor_id,
             "status": self.status(),
         }
+
+
+class BreachedPassword(Base):
+    """A breached-list entry an administrator imported, lowercased (#4175).
+
+    Imports only add: nothing deletes a row. The shipped list stays a file."""
+
+    __tablename__ = "breached_passwords"
+
+    entry: Mapped[str] = mapped_column(Text, primary_key=True)
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
+    )

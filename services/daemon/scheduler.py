@@ -150,6 +150,15 @@ class TaskScheduler:
             )
         )
 
+        # Same shape: the once-per-stale-period check is inside (#4175).
+        self._tasks.append(
+            ScheduledTask(
+                name="breached_list",
+                func=self._run_breached_list,
+                interval=3600,
+            )
+        )
+
         self._tasks.append(
             ScheduledTask(
                 name="threat_feed_poll",
@@ -424,6 +433,13 @@ class TaskScheduler:
 
         if await asyncio.to_thread(record_daily):
             logger.info("Recorded today's count of people without MFA")
+
+    async def _run_breached_list(self):
+        """Record, once per stale period, that the breached-password list is over 90 days old."""
+        from core.auth.breached_list import record_daily
+
+        if await asyncio.to_thread(record_daily):
+            logger.info("Recorded that the breached-password list is stale")
 
     async def _run_probe_sweep(self):
         """Score the probes past their hour (#924), then queue today's (#923)."""
