@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { authApi, bootstrapApi } from '../../services/api'
 import { Icon } from '../../shared/icons'
-import { RecoveryCodes } from '../../shell/TwoStepDialog'
+import TwoStepDialog, { RecoveryCodes } from '../../shell/TwoStepDialog'
 import AuthLayout from './AuthLayout'
 import { requestErrorMessage } from './requestErrorMessage'
 
@@ -22,6 +22,10 @@ export default function LoginScreen() {
   const [newCodes, setNewCodes] = useState<string[] | null>(null)
   const [showPassword, setShowPassword] = useState(false)
   const [showMfa, setShowMfa] = useState(false)
+  // the "Use a recovery code" screen, in place of the authenticator code
+  const [recovery, setRecovery] = useState(false)
+  // a recovery code removed this person's methods: setup opens over this screen
+  const [setupOpen, setSetupOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   // the reset screen hands off a "password updated" notice, or asks to open
@@ -82,8 +86,9 @@ export default function LoginScreen() {
     setError('')
     setLoading(true)
     try {
-      const codes = await login(usernameOrEmail, password, showMfa ? mfaCode : undefined)
-      if (codes?.length) setNewCodes(codes)
+      const { recoveryCodes, mfaRemoved } = await login(usernameOrEmail, password, showMfa ? mfaCode : undefined)
+      if (mfaRemoved) setSetupOpen(true)
+      else if (recoveryCodes?.length) setNewCodes(recoveryCodes)
       else goBack()
     } catch (err: any) {
       if (err?.message === 'PASSWORD_CHANGE_REQUIRED') {
@@ -112,6 +117,7 @@ export default function LoginScreen() {
 
   const backToCredentials = () => {
     setShowMfa(false)
+    setRecovery(false)
     setMfaCode('')
     setError('')
   }
@@ -147,6 +153,12 @@ export default function LoginScreen() {
     }
   }
 
+  const toggleRecovery = (on: boolean) => {
+    setRecovery(on)
+    setMfaCode('')
+    setError('')
+  }
+
   const title = newCodes
     ? 'New recovery codes'
     : needsBootstrap
@@ -154,7 +166,9 @@ export default function LoginScreen() {
     : forgot
       ? 'Reset your password'
       : showMfa
-        ? 'Two-factor authentication'
+        ? recovery
+          ? 'Use a recovery code'
+          : 'Two-factor authentication'
         : 'Sign in'
   const subtitle = newCodes
     ? 'Your old recovery codes no longer work. Keep these instead.'
@@ -163,12 +177,23 @@ export default function LoginScreen() {
     : forgot
       ? 'Enter the email on your account to request a reset link.'
       : showMfa
-        ? 'Confirm your identity to finish signing in.'
+        ? recovery
+          ? 'This removes your authenticator app and signs you out everywhere else.'
+          : 'Confirm your identity to finish signing in.'
         : 'Authenticate to access the operations console.'
 
   return (
     <AuthLayout
       screenLabel={forgot ? 'Forgot password' : 'Sign in'}
+      overlay={
+        setupOpen && (
+          <TwoStepDialog
+            open
+            onClose={goBack}
+            note="You signed in with a recovery code, so your authenticator app and recovery codes were removed."
+          />
+        )
+      }
       title={title}
       subtitle={subtitle}
       message={
@@ -385,7 +410,7 @@ export default function LoginScreen() {
           </>
         ) : (
           <div className="field">
-            <label htmlFor="auth-mfa">Authentication code</label>
+            <label htmlFor="auth-mfa">{recovery ? 'Recovery code' : 'Authentication code'}</label>
             <div className="ctrl">
               <Icon name="shield" className="lead" />
               <input
@@ -394,7 +419,7 @@ export default function LoginScreen() {
                 type="text"
                 autoComplete="one-time-code"
                 maxLength={16}
-                placeholder="000000"
+                placeholder={recovery ? '0000000000000000' : '000000'}
                 ref={mfaInputRef}
                 disabled={loading}
                 value={mfaCode}
@@ -406,9 +431,20 @@ export default function LoginScreen() {
                 }}
               />
             </div>
+            {recovery && (
+              <p className="field-hint">
+                The code is spent. You will set up two-step sign-in again next, and get a new set of
+                recovery codes.
+              </p>
+            )}
             <div className="mfa-back">
               <button type="button" className="link" onClick={backToCredentials}>
                 ← Back to sign in
+              </button>
+            </div>
+            <div className="mfa-back">
+              <button type="button" className="link" onClick={() => toggleRecovery(!recovery)}>
+                {recovery ? 'Use my authenticator app instead' : 'Use a recovery code'}
               </button>
             </div>
           </div>
@@ -417,13 +453,13 @@ export default function LoginScreen() {
         <button
           className="btn-signin"
           type="submit"
-          disabled={loading || (showMfa && ![6, 8, 16].includes(mfaCode.length))}
+          disabled={loading || (showMfa && !(recovery ? [16] : [6, 8, 16]).includes(mfaCode.length))}
         >
           {loading ? (
             <span className="spin" aria-hidden="true" />
           ) : (
             <>
-              {showMfa ? 'Verify & sign in' : 'Sign in'}
+              {showMfa ? (recovery ? 'Remove my methods & sign in' : 'Verify & sign in') : 'Sign in'}
               <Icon name="arrowR" />
             </>
           )}

@@ -50,6 +50,51 @@ DIRECTIVE_FIELDS = (
 GRANT_ARMS = ("iterations", "cost_usd", "wall_ms")
 
 
+# Answering a checkpoint is the Approvals screen's decision by another door.
+# Stopping or growing a run someone else started is the same call as cancelling
+# it. Notes and leads only steer, so ai_chat.use is enough for them.
+DECISION_KINDS = frozenset({"approve", "reject", "benign"})
+RUN_CONTROL_KINDS = frozenset({"abort", "conclude", "extend"})
+
+
+def started_by(session: Session, run_id: str) -> Optional[str]:
+    return session.execute(
+        text(
+            "SELECT triggered_by_principal_id FROM workflow_runs WHERE run_id = :run_id"
+        ),
+        {"run_id": run_id},
+    ).scalar_one_or_none()
+
+
+# Raises the 403 the route answers; the MCP tool turns it into its refusal.
+def refuse_unpermitted(
+    session: Session,
+    run_id: str,
+    kind: str,
+    fields: Optional[Dict[str, Any]],
+    user_id: str,
+    principal: Optional[str],
+) -> None:
+    from fastapi import HTTPException
+
+    from core.auth.permissions import APPROVE_PERMISSION, deny_unless
+
+    if kind in DECISION_KINDS:
+        deny_unless(user_id, APPROVE_PERMISSION, session)
+        if kind == "approve":
+            from core.response.approval_service import four_eyes_refuses
+
+            checkpoint = (fields or {}).get("checkpoint_id")
+            if four_eyes_refuses(session, run_id, checkpoint, principal):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Four-eyes: someone else must approve this checkpoint",
+                )
+    elif kind in RUN_CONTROL_KINDS:
+        if principal is None or started_by(session, run_id) != principal:
+            deny_unless(user_id, APPROVE_PERMISSION, session)
+
+
 # Malformed, so it is refused before it reaches the queue.
 class InvalidDirective(ValueError):
     pass

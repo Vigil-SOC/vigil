@@ -71,6 +71,8 @@ bcrypt>=5.0.0
 pyjwt>=2.15.1
 pyotp>=2.10.0
 cryptography>=50.0.2
+# Security keys (WebAuthn): BSD-3-Clause, server side only.
+webauthn>=3.0.1
 slowapi>=0.1.10
 # Signed URL-safe tokens for password reset (also a Starlette transitive
 # dep; listed explicitly so pip show it and it doesn't quietly disappear).

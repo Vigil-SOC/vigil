@@ -68,7 +68,6 @@ TOOL_PERMISSIONS: Dict[str, str] = {
     "get_finding": "findings.read",
     "dismiss_finding": "findings.write",
     "list_cases": "cases.read",
-    "get_case": "cases.read",
     "read_case_shell": "cases.read",
     "create_case": "cases.write",
     "add_finding_to_case": "cases.write",
@@ -940,8 +939,9 @@ def approve_action(*, action_id: str) -> Args:
     }
 
 
-def reject_action(*, action_id: str, reason: str) -> Args:
-    from core.cases.agent_closure import actor
+async def reject_action(*, action_id: str, reason: str) -> Args:
+    from core.cases.agent_closure import actor, actor_identity
+    from core.response.approval_decisions import ActionNotFound, decide_reject
     from core.response.approval_service import AlreadyDecided
 
     if refusal := permission_refusal(APPROVE_PERMISSION):
@@ -956,14 +956,20 @@ def reject_action(*, action_id: str, reason: str) -> Args:
         origin = action.workflow_run_id or (action.parameters or {}).get("run_id")
         if not origin or origin != claims.run_id:
             return {"error": f"Action {action_id} was not raised by this run"}
-    principal = None if claims is None else (claims.person_id or claims.agent_id)
+    # Inside a run, its signed claims name who; over /mcp, the bound caller does.
+    if claims is not None:
+        principal = claims.person_id or claims.agent_id
+    else:
+        principal = actor_identity()[0]
     try:
-        action = _approvals().reject_action(
-            action_id, reason, actor(), approved_by_principal_id=principal
+        decided = await decide_reject(
+            _approvals(), action_id, reason, actor(), principal
         )
+    except ActionNotFound:
+        decided = None
     except AlreadyDecided as e:
         return {"error": str(e)}
-    return _decided(action, "rejected")
+    return _decided(decided and decided[0], "rejected")
 
 
 def get_approval_stats(**_args: Any) -> Any:
@@ -972,6 +978,8 @@ def get_approval_stats(**_args: Any) -> Any:
 
 # Names executed by the function of the same name in this module. Looked up
 # when called, so the MCP wrappers and this door share that function.
+# get_case is not here: agents read a case through read_case_shell, and
+# get_case is kept only for the MCP tool that calls it.
 _OWNED = frozenset(
     {
         "list_findings",
@@ -980,7 +988,6 @@ _OWNED = frozenset(
         "get_finding",
         "dismiss_finding",
         "list_cases",
-        "get_case",
         "create_case",
         "add_finding_to_case",
         "update_case",

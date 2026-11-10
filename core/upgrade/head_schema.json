@@ -3576,6 +3576,56 @@
   "nullable": false,
   "type": "timestamp without time zone"
  },
+ "column security_keys.algorithm": {
+  "default": null,
+  "nullable": false,
+  "type": "integer"
+ },
+ "column security_keys.created_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
+ "column security_keys.credential_id": {
+  "default": null,
+  "nullable": false,
+  "type": "bytea"
+ },
+ "column security_keys.key_id": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(50)"
+ },
+ "column security_keys.last_challenge": {
+  "default": null,
+  "nullable": true,
+  "type": "bytea"
+ },
+ "column security_keys.last_used_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
+ "column security_keys.name": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(100)"
+ },
+ "column security_keys.principal_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column security_keys.public_key": {
+  "default": null,
+  "nullable": false,
+  "type": "bytea"
+ },
+ "column security_keys.sign_count": {
+  "default": "0",
+  "nullable": false,
+  "type": "bigint"
+ },
  "column shared_iocs.created_at": {
   "default": "now()",
   "nullable": false,
@@ -4453,6 +4503,8 @@
  "constraint principals.principals_pkey": "PRIMARY KEY (principal_id)",
  "constraint roles.roles_name_key": "UNIQUE (name)",
  "constraint roles.roles_pkey": "PRIMARY KEY (role_id)",
+ "constraint security_keys.security_keys_pkey": "PRIMARY KEY (key_id)",
+ "constraint security_keys.security_keys_principal_id_fkey": "FOREIGN KEY (principal_id) REFERENCES principals(principal_id) ON DELETE RESTRICT",
  "constraint shared_iocs.shared_iocs_investigation_id_fkey": "FOREIGN KEY (investigation_id) REFERENCES investigations(investigation_id) ON DELETE CASCADE",
  "constraint shared_iocs.shared_iocs_pkey": "PRIMARY KEY (id)",
  "constraint siem_searches.siem_searches_pkey": "PRIMARY KEY (id)",
@@ -4809,6 +4861,7 @@
  "index idx_mcp_credentials_token_hash": "CREATE INDEX idx_mcp_credentials_token_hash ON public.mcp_credentials USING btree (token_hash)",
  "index idx_mcp_credentials_user": "CREATE INDEX idx_mcp_credentials_user ON public.mcp_credentials USING btree (user_id)",
  "index idx_role_name": "CREATE INDEX idx_role_name ON public.roles USING btree (name)",
+ "index idx_security_keys_principal": "CREATE INDEX idx_security_keys_principal ON public.security_keys USING btree (principal_id)",
  "index idx_shared_ioc_investigation": "CREATE INDEX idx_shared_ioc_investigation ON public.shared_iocs USING btree (investigation_id)",
  "index idx_shared_ioc_type": "CREATE INDEX idx_shared_ioc_type ON public.shared_iocs USING btree (ioc_type)",
  "index idx_shared_ioc_value": "CREATE INDEX idx_shared_ioc_value ON public.shared_iocs USING btree (value)",
@@ -4855,6 +4908,7 @@
  "index principals_pkey": "CREATE UNIQUE INDEX principals_pkey ON public.principals USING btree (principal_id)",
  "index roles_name_key": "CREATE UNIQUE INDEX roles_name_key ON public.roles USING btree (name)",
  "index roles_pkey": "CREATE UNIQUE INDEX roles_pkey ON public.roles USING btree (role_id)",
+ "index security_keys_pkey": "CREATE UNIQUE INDEX security_keys_pkey ON public.security_keys USING btree (key_id)",
  "index shared_iocs_pkey": "CREATE UNIQUE INDEX shared_iocs_pkey ON public.shared_iocs USING btree (id)",
  "index siem_searches_pkey": "CREATE UNIQUE INDEX siem_searches_pkey ON public.siem_searches USING btree (id)",
  "index sign_ins_pkey": "CREATE UNIQUE INDEX sign_ins_pkey ON public.sign_ins USING btree (sign_in_id)",
@@ -4870,6 +4924,7 @@
  "index uq_approval_actions_idempotency_key": "CREATE UNIQUE INDEX uq_approval_actions_idempotency_key ON public.approval_actions USING btree (idempotency_key) WHERE ((idempotency_key IS NOT NULL) AND ((status)::text <> 'failed'::text))",
  "index uq_chat_messages_conv_seq": "CREATE UNIQUE INDEX uq_chat_messages_conv_seq ON public.chat_messages USING btree (conversation_id, seq)",
  "index uq_intake_triggers_queued_finding": "CREATE UNIQUE INDEX uq_intake_triggers_queued_finding ON public.intake_triggers USING btree (finding_id) WHERE (((state)::text = 'queued'::text) AND (finding_id IS NOT NULL))",
+ "index uq_security_keys_credential": "CREATE UNIQUE INDEX uq_security_keys_credential ON public.security_keys USING btree (credential_id)",
  "index user_preferences_pkey": "CREATE UNIQUE INDEX user_preferences_pkey ON public.user_preferences USING btree (user_id)",
  "index users_email_key": "CREATE UNIQUE INDEX users_email_key ON public.users USING btree (email)",
  "index users_pkey": "CREATE UNIQUE INDEX users_pkey ON public.users USING btree (user_id)",
@@ -6724,6 +6779,28 @@
   "sequence": null
  },
  "relation roles": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation security_keys": {
   "acl": [
    "app:DELETE",
    "app:INSERT",

@@ -43,6 +43,9 @@ def _server():
 
 _cached_tools: Optional[List[Dict[str, Any]]] = None
 
+# Tools /mcp still serves that are not offered to Vigil's own agents (#4239).
+_MCP_ONLY = frozenset({"get_case"})
+
 
 def list_tools() -> List[Dict[str, Any]]:
     """Vigil's tools, shaped the way ``MCPRegistry`` stores a connected server's.
@@ -146,5 +149,8 @@ def register(registry) -> int:
         logger.exception("Could not list Vigil's own tools")
         return 0
 
+    # External /mcp callers keep these; agents read a case through
+    # read_case_shell, so the registry (what agents are offered) leaves them out.
+    tools = [t for t in tools if t["name"] not in _MCP_ONLY]
     registry.register_server(VIGIL_SERVER, tools=tools)
     return len(tools)
