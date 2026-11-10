@@ -271,6 +271,8 @@ export interface User {
   locked_until: string | null
   locked_at: string | null
   locked_from: string | null
+  /** when an idle account will be deactivated, once inside the warning window */
+  deactivating_at: string | null
   /** person-only keys the role holds; stored, no effect for a non-person */
   no_effect: string[]
 }

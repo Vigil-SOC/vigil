@@ -34,7 +34,7 @@ def inherited_sid(run_id: str) -> Optional[str]:
         ).scalar()
 
 
-def _live_runs(sign_in_ids: Iterable[str]) -> dict[str, str]:
+def live_runs(sign_in_ids: Iterable[str]) -> dict[str, str]:
     """Run id to a label, for the in-flight runs of these sign-ins and every child
     run below them. A child has a ledger of its own and no row of its own."""
     from core.storage.connection import get_db_session
@@ -147,7 +147,7 @@ def stop(pending: list[tuple[str, str, str]]) -> None:
         for sid, person, reason in pending:
             by_person[person].append((sid, reason))
         for person, ended in by_person.items():
-            stopped = _stop(_live_runs(sid for sid, _ in ended))
+            stopped = _stop(live_runs(sid for sid, _ in ended))
             if not stopped:
                 continue
             owner, name = _account(person)
