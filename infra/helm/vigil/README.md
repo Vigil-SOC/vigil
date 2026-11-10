@@ -74,6 +74,27 @@ their image's revision. See [docs/upgrading.md](../../../docs/upgrading.md#helm)
   as Medic does. Set the CIDRs where `lookup` can't run (`helm template`, Argo
   CD, Flux).
 
+## Agent shell
+
+`agentShell` (on by default) runs the read-only case shell behind the backend's
+`read_case_shell` tool: the agent image's `node dist/shell.js`, on port 6992. The
+backend gets `SHELL_URL`; with the shell off the tool leaves the catalogue.
+
+| Value | Default | |
+|---|---|---|
+| `agentShell.enabled` | `true` | Render the shell Deployment, Service and NetworkPolicy. |
+| `agentShell.replicas` | `1` | Each replica runs up to 8 calls at once. |
+| `agentShell.resources` | 50m / 128Mi requests, 1Gi limit | The limit also bounds `/work`, an in-memory emptyDir. |
+
+- **No network but the backend's calls.** Its NetworkPolicy admits backend pods
+  on 6992 and denies all egress, and renders whatever `networkPolicies.enabled`
+  says; the chart's `-deny-all` policy leaves the shell out, as its open egress
+  would undo that. Only a network plugin that enforces NetworkPolicy makes this
+  real.
+- **Runs as root** with only SETUID, SETGID and KILL, to drop each call to its
+  own uid: `baseline` Pod Security admits it, `restricted` does not. No
+  credentials, secrets or service account token are mounted.
+
 ## MCP runner
 
 `mcpRunner` (on by default) runs the catalog's MCP servers in their own pod,

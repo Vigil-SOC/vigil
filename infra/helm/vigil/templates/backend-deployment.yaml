@@ -66,6 +66,11 @@ spec:
             {{- include "vigil.stateEnv" . | nindent 12 }}
             {{- include "vigil.caBundleEnv" . | nindent 12 }}
             {{- include "vigil.mcpRunnerEnv" . | nindent 12 }}
+            {{- if .Values.agentShell.enabled }}
+            # read_case_shell's sidecar; unset, the tool leaves the catalogue.
+            - name: SHELL_URL
+              value: {{ printf "http://%s:6992" (include "vigil.agentShell.fullname" .) | quote }}
+            {{- end }}
             {{- range $k, $v := .Values.backend.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}

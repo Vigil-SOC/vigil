@@ -1,0 +1,114 @@
+{{- /*
+The read-only case shell (#4199): the agent image's third command. The backend's
+read_case_shell posts one case's view and one command to it on TCP 6992 (its
+SHELL_URL); each call runs as a pool uid that can read the view and write only
+its scratch directory. Mirrors the agent-shell service in docker-compose.yml.
+
+No credentials: no envFrom, no secrets, no service account token. No network but
+the backend's calls in: agent-shell-networkpolicy.yaml, rendered whenever this is.
+*/ -}}
+{{- if .Values.agentShell.enabled }}
+{{- /* Exec, not httpGet: the kubelet never dials the port, so the policy admits
+       the backend alone. */}}
+{{- $probe := list "node" "-e" "require('http').get('http://127.0.0.1:6992/healthz', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vigil.agentShell.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.componentLabels" (dict "context" . "component" "agent-shell") | nindent 4 }}
+spec:
+  replicas: {{ .Values.agentShell.replicas }}
+  selector:
+    matchLabels:
+      {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "agent-shell") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vigil.componentLabels" (dict "context" . "component" "agent-shell") | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- include "vigil.imagePullSecrets" . | nindent 6 }}
+      {{- /* The pause container is PID 1 and reaps what a killed command's
+             children leave re-parented; compose uses init: true for this. */}}
+      shareProcessNamespace: true
+      {{- /* Root, for setpriv; the image's USER is 1000. */}}
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        runAsNonRoot: false
+        seccompProfile:
+          type: RuntimeDefault
+      {{- /* An emptyDir comes up root:root 0777. shell.ts wants what the compose
+             tmpfs gives: only owners (gid 60999) create, nobody lists. */}}
+      initContainers:
+        - name: work-mode
+          image: {{ include "vigil.image" (dict "context" . "component" "agentWorker") | quote }}
+          imagePullPolicy: {{ include "vigil.imagePullPolicy" (dict "context" . "component" "agentWorker") }}
+          command: ["sh", "-c", "chown 0:60999 /work && chmod 1731 /work"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+              add: [CHOWN, FOWNER]
+          volumeMounts:
+            - name: work
+              mountPath: /work
+      containers:
+        - name: agent-shell
+          image: {{ include "vigil.image" (dict "context" . "component" "agentWorker") | quote }}
+          imagePullPolicy: {{ include "vigil.imagePullPolicy" (dict "context" . "component" "agentWorker") }}
+          {{- /* No SHELL_SOCKET, so it listens on SHELL_PORT's default, 6992. */}}
+          command: ["node", "dist/shell.js"]
+          ports:
+            - name: http
+              containerPort: 6992
+              protocol: TCP
+          startupProbe:
+            exec:
+              command: {{ toJson $probe }}
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 24
+          livenessProbe:
+            exec:
+              command: {{ toJson $probe }}
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: {{ toJson $probe }}
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.agentShell.resources | nindent 12 }}
+          {{- /* SETUID/SETGID to drop each call to a pool uid, KILL to end its
+                 processes. Nothing else, as in compose. */}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+              add: [SETUID, SETGID, KILL]
+          volumeMounts:
+            - name: work
+              mountPath: /work
+            {{- /* Compose's ipc: none: a file left in /dev/shm would outlive the call. */}}
+            - name: no-shm
+              mountPath: /dev/shm
+              readOnly: true
+      volumes:
+        {{- /* Counts against the memory limit, as the compose tmpfs does. */}}
+        - name: work
+          emptyDir:
+            medium: Memory
+            sizeLimit: 512Mi
+        - name: no-shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+{{- end }}
