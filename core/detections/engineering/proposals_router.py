@@ -4,7 +4,8 @@ Every step is a person's or a tool's event on the proposal. A proposal is reject
 deleted. Nothing here writes to a SIEM.
 
 Ported from 1.x's ``services/api/routers/detection_engineering.py``: its proposal routes
-only. The program view, drafting with the model, and shadow and live are not here yet.
+only, and Draft with Vigil from a Case (``drafting``). The program view, and shadow and
+live, are not here yet.
 """
 
 from contextlib import contextmanager
@@ -15,8 +16,9 @@ from pydantic import BaseModel, Field
 
 from core.auth.current_user import get_current_user
 from core.auth.permissions import deny_unless, missing_permission, permission_gate
-from core.detections.engineering import proposals, siem_replay, sigma_text
+from core.detections.engineering import drafting, proposals, siem_replay, sigma_text
 from core.detections.overlay import Refused
+from core.llm import oneshot
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
 from core.storage.models.detection_proposal import InvalidProposalMove, ProposalState
@@ -92,6 +94,12 @@ class FromRuleRequest(BaseModel):
     rule_id: int
 
 
+class DraftRequest(BaseModel):
+    case_id: str = Field(min_length=1, max_length=50)
+    notes: str = Field(default="", max_length=2000)
+    days: int = Field(default=siem_replay.WINDOW_DAYS, ge=1, le=LONGEST_WINDOW_DAYS)
+
+
 class EditRequest(BaseModel):
     sigma: str = Field(min_length=1, max_length=100_000)
     reason: str = Field(default="", max_length=2000)
@@ -152,6 +160,22 @@ def paste_proposal(body: PasteRequest, current_user: User = Depends(get_current_
                 origin=origin,
             ),
         )
+
+
+@router.post("/proposals/draft-with-vigil", dependencies=_WRITE)
+async def draft_with_vigil(
+    body: DraftRequest, current_user: User = Depends(get_current_user)
+):
+    # The model is shown the Case and its SIEM events.
+    _require(current_user, _READ_CASES, _READ_FINDINGS)
+    with _answers():
+        try:
+            view = await drafting.draft(
+                body.case_id, current_user.username, notes=body.notes, days=body.days
+            )
+        except oneshot.NoProviderConfigured as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return _shown(current_user, view)
 
 
 @router.post("/proposals/from-rule", dependencies=_WRITE)

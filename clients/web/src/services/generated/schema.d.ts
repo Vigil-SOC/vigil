@@ -3334,6 +3334,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/detection-engineering/proposals/draft-with-vigil": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Draft With Vigil */
+        post: operations["post_api_detection-engineering_proposals_draft-with-vigil"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/detection-engineering/proposals/from-rule": {
         parameters: {
             query?: never;
@@ -10354,6 +10371,21 @@ export interface components {
             directive_id: string;
             /** Kind */
             kind: string;
+        };
+        /** DraftRequest */
+        DraftRequest: {
+            /** Case Id */
+            case_id: string;
+            /**
+             * Days
+             * @default 30
+             */
+            days: number;
+            /**
+             * Notes
+             * @default
+             */
+            notes: string;
         };
         /** EditRequest */
         EditRequest: {
@@ -19346,6 +19378,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["PasteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-engineering_proposals_draft-with-vigil": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DraftRequest"];
             };
         };
         responses: {

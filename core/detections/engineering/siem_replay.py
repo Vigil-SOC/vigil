@@ -400,6 +400,13 @@ class Source:
     ) -> Read:
         raise NotImplementedError
 
+    async def case_events(
+        self, claim: Claim, start: datetime, end: datetime, size: int
+    ) -> Read:
+        """The newest of the Case's events, whatever fields they hold: what a rule
+        drafted from the Case gets to see."""
+        raise NotImplementedError
+
     async def close(self) -> None:
         close = getattr(self.service, "close", None)
         done = close() if close is not None else None
@@ -473,10 +480,7 @@ class ElasticSource(Source):
         elif claim is not None:
             # Only the Case's events a rule field is on: a busy host holds many.
             start, end = max(start, claim.start), min(end, claim.end)
-            entity = {
-                "bool": {"should": _entity_should(claim), "minimum_should_match": 1}
-            }
-            query = {"bool": {"filter": [entity, _holding(fields)]}}
+            query = {"bool": {"filter": [_entity(claim), _holding(fields)]}}
         else:
             return Read()
         return await self._search(query, start, end, MAX_ATTACK)
@@ -485,6 +489,17 @@ class ElasticSource(Source):
         self, fields: Sequence[str], start: datetime, end: datetime
     ) -> Read:
         return await self._search(_holding(fields), start, end, MAX_BENIGN)
+
+    async def case_events(
+        self, claim: Claim, start: datetime, end: datetime, size: int
+    ) -> Read:
+        return await self._search(
+            _entity(claim), max(start, claim.start), min(end, claim.end), size
+        )
+
+
+def _entity(claim: Claim) -> Dict[str, Any]:
+    return {"bool": {"should": _entity_should(claim), "minimum_should_match": 1}}
 
 
 NEWEST_FIRST = [{"@timestamp": {"order": "desc", "unmapped_type": "date"}}]
@@ -554,15 +569,10 @@ class SplunkSource(Source):
             return await self._search(spl, start, end, MAX_ATTACK)
         if claim is None:
             return Read()
-        terms = [f"host={_spl_value(h)}" for h in claim.hosts]
-        terms += [f"Computer={_spl_value(h)}" for h in claim.hosts]
-        terms += [f"user={_spl_value(u)}" for u in claim.users]
-        terms += [
-            f"src_ip={_spl_value(i)} OR dest_ip={_spl_value(i)}" for i in claim.ips
-        ]
+        terms = _claim_terms(claim)
         if not terms:
             return Read()
-        spl = f"search index={self.index} ({' OR '.join(terms)}){_spl_holding(fields)}"
+        spl = f"search index={self.index} ({terms}){_spl_holding(fields)}"
         return await self._search(
             spl, max(start, claim.start), min(end, claim.end), MAX_ATTACK
         )
@@ -573,6 +583,27 @@ class SplunkSource(Source):
         return await self._search(
             f"search index={self.index}{_spl_holding(fields)}", start, end, MAX_BENIGN
         )
+
+    async def case_events(
+        self, claim: Claim, start: datetime, end: datetime, size: int
+    ) -> Read:
+        terms = _claim_terms(claim)
+        if not terms:
+            return Read()
+        return await self._search(
+            f"search index={self.index} ({terms})",
+            max(start, claim.start),
+            min(end, claim.end),
+            size,
+        )
+
+
+def _claim_terms(claim: Claim) -> str:
+    terms = [f"host={_spl_value(h)}" for h in claim.hosts]
+    terms += [f"Computer={_spl_value(h)}" for h in claim.hosts]
+    terms += [f"user={_spl_value(u)}" for u in claim.users]
+    terms += [f"src_ip={_spl_value(i)} OR dest_ip={_spl_value(i)}" for i in claim.ips]
+    return " OR ".join(terms)
 
 
 def configured_sources(
