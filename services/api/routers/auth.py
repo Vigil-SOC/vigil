@@ -1318,9 +1318,7 @@ def _tell_managers_of_leak(session: Session, user: User) -> None:
     def send() -> None:
         for to in managers(principal):
             try:
-                notify(
-                    to, "password_leak", title, message, USERS_LINK, priority="high"
-                )
+                notify(to, "password_leak", title, message, USERS_LINK, priority="high")
             except Exception:  # noqa: BLE001 - the rest are still told
                 logger.exception("could not send a password-leak notice for %s", name)
 
