@@ -1,6 +1,7 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
+import '../../shared/kit.css'
 import {
   ConfirmDialog,
   Field,
@@ -8,13 +9,14 @@ import {
   Select,
   SettingsCard,
   TextInput,
-  Toggle,
 } from '../../shared/ui'
 import { useAuth } from '../../contexts/AuthContext'
 import { signInsApi } from '../../services/api'
 import UserSignInsDialog from './UserSignInsDialog'
 import {
   useUsers,
+  type AccountFilter,
+  type AccountStatus,
   type Role,
   type RolePayload,
   type RolesMeta,
@@ -52,8 +54,21 @@ function errText(e: unknown, fallback: string): string {
 export default function UsersSection({ notify }: SectionProps) {
   const { user: me, hasPermission, logout } = useAuth()
   const navigate = useNavigate()
+  const [search, setSearch] = useState('')
+  const [typed, setTyped] = useState('')
+  const [statusFilter, setStatusFilter] = useState<AccountFilter>('current')
+  const [page, setPage] = useState(0)
+  // the server searches; wait for a pause in typing before asking it
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setSearch(typed)
+      setPage(0)
+    }, 300)
+    return () => clearTimeout(t)
+  }, [typed])
   const {
     users,
+    total,
     roles,
     rolesMeta,
     phase,
@@ -62,10 +77,15 @@ export default function UsersSection({ notify }: SectionProps) {
     createUser,
     updateUser,
     deleteUser,
+    changeStatus,
     createRole,
     updateRole,
     deleteRole,
-  } = useUsers()
+  } = useUsers({ search, status: statusFilter, skip: page * PAGE, limit: PAGE })
+  // an act can empty the last page: step back to the last one with rows
+  useEffect(() => {
+    if (phase === 'ready' && page > 0 && page * PAGE >= total) setPage(Math.max(0, Math.ceil(total / PAGE) - 1))
+  }, [phase, page, total])
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<User | null>(null)
@@ -81,6 +101,8 @@ export default function UsersSection({ notify }: SectionProps) {
   const [unlockOf, setUnlockOf] = useState<User | null>(null)
   const [confirmedBy, setConfirmedBy] = useState('')
   const [unlocking, setUnlocking] = useState(false)
+  const [statusAct, setStatusAct] = useState<{ user: User; act: StatusAct } | null>(null)
+  const [acting, setActing] = useState(false)
 
   const canWrite = hasPermission('users.write')
   const canDelete = hasPermission('users.delete')
@@ -231,11 +253,25 @@ export default function UsersSection({ notify }: SectionProps) {
     }
   }
 
-  const handleToggleActive = async (u: User) => {
+  const handleStatusAct = async () => {
+    if (!statusAct) return
+    const { user: u, act } = statusAct
+    setActing(true)
     try {
-      await updateUser(u.user_id, { is_active: !u.is_active })
+      const data = await changeStatus(u.user_id, act)
+      notify(
+        'ok',
+        act === 'deactivate'
+          ? `Deactivated ${u.username}. Their sign-ins ended and their tokens were revoked.`
+          : act === 'reactivate'
+            ? `Reactivated ${u.username}.${data.new_tokens_required ? ' New tokens must be minted.' : ''}`
+            : `Restored ${u.username}. The account is deactivated until you reactivate it.`,
+      )
+      setStatusAct(null)
     } catch (e) {
-      notify('err', errText(e, 'Failed to update user'))
+      notify('err', errText(e, `Failed to ${act} ${u.username}`))
+    } finally {
+      setActing(false)
     }
   }
 
@@ -257,8 +293,8 @@ export default function UsersSection({ notify }: SectionProps) {
     <>
       <SettingsCard
         wide
-        title="User Management"
-        desc="Manage system users and their roles."
+        title="Team & access"
+        desc="Who can sign in, with which role, and the status of each account."
         actions={
           <>
             <button className="btn ghost" onClick={reload}>
@@ -277,6 +313,27 @@ export default function UsersSection({ notify }: SectionProps) {
           </>
         }
       >
+        <div className="flex items-center gap-2.5 flex-wrap mb-3">
+          <div className="search">
+            <Icon name="search" />
+            <input
+              aria-label="Search accounts"
+              placeholder="Search accounts…"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+            />
+          </div>
+          <div style={{ width: 220 }}>
+            <Select
+              value={statusFilter}
+              options={STATUS_FILTERS}
+              onSelect={(v) => {
+                setStatusFilter(v as AccountFilter)
+                setPage(0)
+              }}
+            />
+          </div>
+        </div>
         <div className="table-wrap">
           <table className="tbl">
             <thead>
@@ -298,7 +355,7 @@ export default function UsersSection({ notify }: SectionProps) {
               {users.length === 0 && (
                 <tr>
                   <td colSpan={8} className="muted" style={{ textAlign: 'center', padding: '28px 0' }}>
-                    No users found.
+                    {search.trim() || statusFilter !== 'current' ? 'No accounts match.' : 'No users found.'}
                   </td>
                 </tr>
               )}
@@ -310,7 +367,8 @@ export default function UsersSection({ notify }: SectionProps) {
                       {u.full_name}
                     </span>
                   </td>
-                  <td className="muted">{u.email}</td>
+                  {/* an erased account's email is an opaque placeholder */}
+                  <td className="muted">{u.status === 'erased' ? '—' : u.email}</td>
                   <td>
                     <div className="flex flex-col items-start gap-1">
                       <span className="chip">{roleName(u.role_id)}</span>
@@ -322,20 +380,16 @@ export default function UsersSection({ notify }: SectionProps) {
                     </div>
                   </td>
                   <td>
-                    <div className="flex items-center gap-2">
-                      <Toggle
-                        checked={u.is_active}
-                        disabled={!canWrite}
-                        onChange={() => handleToggleActive(u)}
-                      />
-                      <span className="text-xs text-tx-3">{u.is_active ? 'Active' : 'Inactive'}</span>
-                    </div>
-                    {u.locked && (
+                    <span className={`state-pill ${STATUS_TONE[u.status]}`}>
+                      <span className="state-dot" aria-hidden="true" />
+                      {STATUS_LABEL[u.status]}
+                    </span>
+                    {u.status === 'locked' && (
                       <div className="text-xs text-tx-3 mt-1" title={lockedFrom(u)}>
-                        <Icon name="lock" size={11} /> {u.locked_until ? 'Locked until ' + new Date(u.locked_until).toLocaleString() : 'Locked until unlocked'}
+                        <Icon name="lock" size={11} /> {u.locked_until ? 'Until ' + new Date(u.locked_until).toLocaleString() : 'Until unlocked'}
                       </div>
                     )}
-                    {u.deactivating_at && (
+                    {u.status === 'active' && u.deactivating_at && (
                       <div className="text-xs text-tx-3 mt-1" title={`No sign-in or personal MCP token use; deactivates on ${new Date(u.deactivating_at).toLocaleString()}.`}>
                         <Icon name="clock" size={11} /> Deactivating soon
                       </div>
@@ -351,22 +405,37 @@ export default function UsersSection({ notify }: SectionProps) {
                   </td>
                   <td className="col-act" style={{ textAlign: 'right' }}>
                     <div className="inline-flex gap-1.5">
-                      {canWrite && covers(u.role_id) && u.user_id !== me?.user_id && (
+                      {canWrite && live(u) && covers(u.role_id) && u.user_id !== me?.user_id && (
                         <button className="btn ghost icon" title="Sign-ins" onClick={() => setSignInsOf(u)}>
                           <Icon name="clock" size={15} />
                         </button>
                       )}
-                      {canWrite && u.locked && covers(u.role_id) && u.user_id !== me?.user_id && (
+                      {canWrite && u.status === 'locked' && covers(u.role_id) && u.user_id !== me?.user_id && (
                         <button className="btn ghost icon" title="Unlock" onClick={() => setUnlockOf(u)}>
                           <Icon name="lock" size={15} />
                         </button>
                       )}
-                      {canWrite && (
+                      {canWrite && (live(u) || u.status === 'deactivated') && (
                         <button className="btn ghost icon" title="Edit" onClick={() => openEdit(u)}>
                           <Icon name="edit" size={15} />
                         </button>
                       )}
-                      {canDelete && (
+                      {canWrite && live(u) && covers(u.role_id) && u.user_id !== me?.user_id && (
+                        <button className="btn ghost icon" title="Deactivate" onClick={() => setStatusAct({ user: u, act: 'deactivate' })}>
+                          <Icon name="pause" size={15} />
+                        </button>
+                      )}
+                      {canWrite && u.status === 'deactivated' && covers(u.role_id) && (
+                        <button className="btn ghost icon" title="Reactivate" onClick={() => setStatusAct({ user: u, act: 'reactivate' })}>
+                          <Icon name="play" size={15} />
+                        </button>
+                      )}
+                      {canDelete && u.status === 'deleted' && covers(u.role_id) && (
+                        <button className="btn ghost icon" title="Restore" onClick={() => setStatusAct({ user: u, act: 'restore' })}>
+                          <Icon name="refresh" size={15} />
+                        </button>
+                      )}
+                      {canDelete && (live(u) || u.status === 'deactivated') && (
                         <button
                           className="btn ghost icon"
                           title="Delete"
@@ -382,6 +451,19 @@ export default function UsersSection({ notify }: SectionProps) {
             </tbody>
           </table>
         </div>
+        {total > PAGE && (
+          <div className="flex items-center justify-end gap-2.5 mt-3 text-xs text-tx-3">
+            <span className="font-mono">
+              {page * PAGE + 1}–{Math.min(total, (page + 1) * PAGE)} of {total}
+            </span>
+            <button className="btn ghost" disabled={page === 0} onClick={() => setPage(page - 1)}>
+              Previous
+            </button>
+            <button className="btn ghost" disabled={(page + 1) * PAGE >= total} onClick={() => setPage(page + 1)}>
+              Next
+            </button>
+          </div>
+        )}
 
         <Popup
           open={dialogOpen}
@@ -512,9 +594,37 @@ export default function UsersSection({ notify }: SectionProps) {
         />
 
         <ConfirmDialog
+          open={!!statusAct}
+          title={statusAct ? `${ACT_LABEL[statusAct.act]} ${statusAct.user.username}?` : ''}
+          danger={statusAct?.act === 'deactivate'}
+          body={
+            statusAct && (
+              <div className="flex flex-col gap-2.5">
+                <span>{ACT_BODY[statusAct.act]}</span>
+                {statusAct.act === 'deactivate' && <OpenCases user={statusAct.user} />}
+              </div>
+            )
+          }
+          confirmLabel={statusAct ? ACT_LABEL[statusAct.act] : ''}
+          busy={acting}
+          onConfirm={handleStatusAct}
+          onClose={() => !acting && setStatusAct(null)}
+        />
+
+        <ConfirmDialog
           open={!!confirmDelete}
           title="Delete user?"
-          body={`Permanently delete ${confirmDelete?.username ?? 'this user'}? This cannot be undone.`}
+          body={
+            confirmDelete && (
+              <div className="flex flex-col gap-2.5">
+                <span>
+                  Delete {confirmDelete.username}? Their sign-ins end and their tokens are revoked. The account is kept
+                  for the record, and someone with permission to delete accounts can restore it, deactivated.
+                </span>
+                <OpenCases user={confirmDelete} />
+              </div>
+            )
+          }
           confirmLabel="Delete"
           busy={deleting}
           onConfirm={handleDelete}
@@ -532,6 +642,67 @@ export default function UsersSection({ notify }: SectionProps) {
         deleteRole={deleteRole}
       />
     </>
+  )
+}
+
+const PAGE = 50
+
+type StatusAct = 'deactivate' | 'reactivate' | 'restore'
+
+const ACT_LABEL: Record<StatusAct, string> = {
+  deactivate: 'Deactivate',
+  reactivate: 'Reactivate',
+  restore: 'Restore',
+}
+
+const ACT_BODY: Record<StatusAct, string> = {
+  deactivate: 'Their sign-ins end and every token they hold is revoked. Reactivating later keeps their password and two-step sign-in, but not the tokens.',
+  reactivate: 'They can sign in again with their password and two-step sign-in, and are told. Their old tokens stay revoked: new tokens must be minted.',
+  restore: 'The account comes back deactivated, with its password and two-step sign-in, and they are told. Its tokens stay revoked. Reactivate it to let them sign in.',
+}
+
+const STATUS_LABEL: Record<AccountStatus, string> = {
+  active: 'Active',
+  locked: 'Locked',
+  deactivated: 'Deactivated',
+  deleted: 'Deleted',
+  erased: 'Erased',
+}
+
+// state-pill tones: only Active and Locked carry a level
+const STATUS_TONE: Record<AccountStatus, string> = {
+  active: 'good',
+  locked: 'fair',
+  deactivated: '',
+  deleted: '',
+  erased: '',
+}
+
+const STATUS_FILTERS = [
+  { value: 'current', label: 'Current accounts' },
+  { value: 'active', label: 'Active' },
+  { value: 'locked', label: 'Locked' },
+  { value: 'deactivated', label: 'Deactivated' },
+  { value: 'deleted', label: 'Deleted' },
+  { value: 'erased', label: 'Erased' },
+  { value: 'all', label: 'All, with deleted and erased' },
+]
+
+// can sign in, or could but for a lock
+const live = (u: User) => u.status === 'active' || u.status === 'locked'
+
+/** What the account owns that someone has to pick up, linked to Cases filtered to it. */
+function OpenCases({ user }: { user: User }) {
+  if (!user.open_cases) return <span className="text-tx-3">They own no open cases.</span>
+  const n = user.open_cases
+  return (
+    <span>
+      They own{' '}
+      <Link className="underline" to={`/cases?owner=${encodeURIComponent(user.username)}`}>
+        {n} open case{n === 1 ? '' : 's'}
+      </Link>
+      . Reassign {n === 1 ? 'it' : 'them'}.
+    </span>
   )
 }
 
