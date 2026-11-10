@@ -354,6 +354,7 @@ def _perform(session, principal_id: str) -> None:
     # rows first deadlocks with the tick.
     _blank_label(session, principal_id)
     _revoke(session, principal_id)
+    _drop_notices(session, principal_id)
     trail._lock(session)
     _blank_beside(session, principal_id)
     _queue_append(session, [principal_id])
@@ -383,6 +384,15 @@ def _blank_beside(session, principal_id: str) -> None:
             text(
                 f"UPDATE public.audit_trail_held SET beside = '{{}}'::jsonb WHERE {_NAMES}"
             ),
+            {"id": principal_id},
+        )
+
+
+def _drop_notices(session, principal_id: str) -> None:
+    """Delete the notices addressed to this person: their text can name them."""
+    if _table(session, "case_notifications"):
+        session.execute(
+            text("DELETE FROM public.case_notifications WHERE user_id = :id"),
             {"id": principal_id},
         )
 
