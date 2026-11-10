@@ -3506,6 +3506,21 @@
   "nullable": false,
   "type": "timestamp with time zone"
  },
+ "column sign_ins.address": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column sign_ins.auth_method": {
+  "default": "'password'::character varying",
+  "nullable": false,
+  "type": "character varying(20)"
+ },
+ "column sign_ins.device": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(20)"
+ },
  "column sign_ins.end_reason": {
   "default": null,
   "nullable": true,
@@ -3521,10 +3536,25 @@
   "nullable": true,
   "type": "timestamp without time zone"
  },
+ "column sign_ins.last_action_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
  "column sign_ins.principal_id": {
   "default": null,
   "nullable": false,
   "type": "text"
+ },
+ "column sign_ins.refresh_generation": {
+  "default": "0",
+  "nullable": false,
+  "type": "integer"
+ },
+ "column sign_ins.refresh_rotated_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
  },
  "column sign_ins.sign_in_id": {
   "default": null,
@@ -3535,6 +3565,11 @@
   "default": "now()",
   "nullable": false,
   "type": "timestamp without time zone"
+ },
+ "column sign_ins.user_agent": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
  },
  "column sketch_mappings.case_id": {
   "default": null,
@@ -4253,7 +4288,7 @@
  "constraint shared_iocs.shared_iocs_investigation_id_fkey": "FOREIGN KEY (investigation_id) REFERENCES investigations(investigation_id) ON DELETE CASCADE",
  "constraint shared_iocs.shared_iocs_pkey": "PRIMARY KEY (id)",
  "constraint siem_searches.siem_searches_pkey": "PRIMARY KEY (id)",
- "constraint sign_ins.sign_ins_end_reason_check": "CHECK (((end_reason)::text = ANY ((ARRAY['sign_out'::character varying, 'expiry'::character varying, 'revoked'::character varying])::text[])))",
+ "constraint sign_ins.sign_ins_end_reason_check": "CHECK (((end_reason)::text = ANY ((ARRAY['sign_out'::character varying, 'expiry'::character varying, 'revoked'::character varying, 'idle'::character varying, 'length_limit'::character varying, 'token_reuse'::character varying, 'upgrade'::character varying, 'account_changed'::character varying, 'deactivated'::character varying, 'erased'::character varying])::text[])))",
  "constraint sign_ins.sign_ins_pkey": "PRIMARY KEY (sign_in_id)",
  "constraint sign_ins.sign_ins_principal_id_fkey": "FOREIGN KEY (principal_id) REFERENCES principals(principal_id) ON DELETE RESTRICT",
  "constraint sketch_mappings.sketch_mappings_case_id_fkey": "FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE CASCADE",

@@ -41,7 +41,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from core.auth.auth_cookies import warn_if_cookie_insecure_in_production
 from core.auth.bootstrap_code import announce_setup_code
 from core.auth.key_ring import adopt_when_ready
-from core.auth.token_blacklist import warn_if_redis_evicts
 from core.platform.monitoring import (
     get_metrics_response,
     init_sentry,
@@ -209,6 +208,7 @@ app.add_middleware(
         "Authorization",
         "Content-Type",
         "X-CSRF-Token",
+        "X-Vigil-User-Action",
         "X-MFA-Required",
         "X-Requested-With",
     ],
@@ -516,9 +516,6 @@ async def _startup(app: FastAPI):
         init_sentry()
     except Exception as e:
         logger.warning("Sentry initialization failed (non-fatal): %s", e)
-
-    if not _testing:
-        await warn_if_redis_evicts()
 
     # Probe the secrets manager singleton at a known time, after all
     # third-party imports have settled. The singleton picks its write

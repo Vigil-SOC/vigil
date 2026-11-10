@@ -56,10 +56,10 @@ else:
     print("null")
 """
 # What an admin's Disable plus the sign-out-everywhere the backend does on a role or
-# email change or a delete: the account is off and its open tokens end (Redis cutoff).
+# email change or a delete: the account is off and its open sign-ins end.
 SIGN_OUT = (
-    "import asyncio, sys; from core.auth.token_blacklist import revoke_all_for_user; "
-    "asyncio.run(revoke_all_for_user(sys.argv[1]))"
+    "import sys; from core.auth import sign_ins; "
+    "sign_ins.end_all_for_user(sys.argv[1], sign_ins.ACCOUNT_CHANGED)"
 )
 # Refused whatever the Viewer session's state: every write, and reads off the list.
 REFUSED = (

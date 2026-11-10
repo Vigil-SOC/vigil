@@ -1,36 +1,82 @@
-"""Sign-ins: one id per login, carried as ``sid`` on both tokens through every
-refresh, and ended by sign-out, expiry or revocation.
+"""Sign-ins: one row per login, and the only record of whether a token is good.
 
-The id is a reference for the record, never a credential: a token is checked
-by its signature and ``jti``, and nothing looks a user up by ``sid``.
+The id rides as ``sid`` on both tokens through every refresh. A token is
+honoured only while its row is open and inside the session policy
+(``core/auth/session_policy.py``), so ending the row refuses it at the next
+request whatever the browser holds.
 """
 
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from core.storage.models import SignIn, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
+# End reasons. 'revoked' stays valid in the table's check for rows that
+# already carry it; nothing ends for it now.
 SIGN_OUT = "sign_out"
 EXPIRY = "expiry"
-REVOKED = "revoked"
+IDLE = "idle"
+LENGTH_LIMIT = "length_limit"
+TOKEN_REUSE = "token_reuse"
+UPGRADE = "upgrade"
+# Role, password or email changed, or a password reset: sign in again.
+ACCOUNT_CHANGED = "account_changed"
+DEACTIVATED = "deactivated"
+ERASED = "erased"
+
+# A person's own action stamps the row at most this often.
+STAMP_EVERY = timedelta(seconds=30)
+# A refresh token one generation behind still works this long after a rotation:
+# a second tab refreshing at the same moment.
+REFRESH_GRACE = timedelta(seconds=10)
 
 
 def new_id() -> str:
     return f"si-{uuid.uuid4().hex}"
 
 
+def device_of(user_agent: Optional[str]) -> str:
+    """A coarse device class from a user agent, for the sign-in's record."""
+    ua = (user_agent or "").lower()
+    if "ipad" in ua or "tablet" in ua:
+        return "tablet"
+    if "mobile" in ua or "iphone" in ua or "android" in ua:
+        return "mobile"
+    if any(os_ in ua for os_ in ("windows", "macintosh", "linux", "x11", "cros")):
+        return "desktop"
+    return "other"
+
+
 def start(
-    session: Session, sign_in_id: str, principal_id: str, expires_at: Optional[datetime]
+    session: Session,
+    sign_in_id: str,
+    principal_id: str,
+    expires_at: Optional[datetime],
+    *,
+    auth_method: str = "password",
+    user_agent: Optional[str] = None,
+    address: Optional[str] = None,
 ) -> SignIn:
+    now = utcnow()
     row = SignIn(
-        sign_in_id=sign_in_id, principal_id=principal_id, expires_at=expires_at
+        sign_in_id=sign_in_id,
+        principal_id=principal_id,
+        started_at=now,
+        last_action_at=now,
+        expires_at=expires_at,
+        auth_method=auth_method,
+        user_agent=user_agent,
+        device=device_of(user_agent),
+        address=address,
+        refresh_generation=0,
     )
     session.add(row)
     return row
@@ -43,7 +89,10 @@ def end(sign_in_id: str, reason: str, session: Optional[Session] = None) -> bool
     rotated token expires first and must not end a sign-in still in use.
     """
     with unit_of_work(session) as session:
-        row = session.get(SignIn, sign_in_id, with_for_update=True)
+        # Re-read under the lock: a row the caller already loaded may have ended since.
+        row = session.get(
+            SignIn, sign_in_id, with_for_update=True, populate_existing=True
+        )
         if row is None or row.ended_at is not None:
             return False
         now = utcnow()
@@ -72,3 +121,19 @@ def end_all_for_user(
                 synchronize_session=False,
             )
         )
+
+
+def stamp_action(sign_in_id: str, session: Session) -> None:
+    """Record a person's own action now, unless the last stamp is under 30 s old.
+
+    One conditional UPDATE: a burst of requests costs one write.
+    """
+    now = utcnow()
+    session.query(SignIn).filter(
+        SignIn.sign_in_id == sign_in_id,
+        SignIn.ended_at.is_(None),
+        or_(
+            SignIn.last_action_at.is_(None),
+            SignIn.last_action_at < now - STAMP_EVERY,
+        ),
+    ).update({SignIn.last_action_at: now}, synchronize_session=False)

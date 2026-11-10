@@ -29,8 +29,6 @@ from core.auth.permissions import (
     deny_unless,
 )
 from core.auth.service_account import USERNAME_PATTERN as MEDIC_USERNAME_PATTERN
-from core.auth.session_cutoff import stamp_session_cutoff
-from core.auth.token_blacklist import revoke_all_for_user
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import Principal, Role, User
 from core.storage.schemas import RoleSchema, UserSchema
@@ -661,21 +659,15 @@ async def update_user(
             )
 
         # Sign the user out everywhere so their next session carries the new
-        # email or role, not the claims and permissions cached at login.
+        # email or role, not the claims and permissions cached at login. In
+        # this transaction: the change does not commit without it.
         if stale_reason:
-            try:
-                await revoke_all_for_user(user.user_id)
-            except Exception as exc:
-                logger.error(
-                    "%s for %s; session cutoff is stored but the Redis copy "
-                    "failed: %s",
-                    stale_reason,
-                    user.username,
-                    exc,
-                )
-            # After the Redis round-trip. A refresh during that wait must
-            # still be older than the cutoff this request commits.
-            stamp_session_cutoff(user)
+            await asyncio.to_thread(
+                sign_ins.end_all_for_user,
+                user.user_id,
+                sign_ins.ACCOUNT_CHANGED,
+                session,
+            )
 
         logger.info(f"User updated by {current_user.username}: {user.username}")
         return payload
@@ -722,7 +714,7 @@ def _delete_user(session: Session, current_user: User, user_id: str) -> User:
                 principal=user.principal_id,
                 credential_id=credential.credential_id,
             )
-    sign_ins.end_all_for_user(user_id, sign_ins.REVOKED, session=session)
+    sign_ins.end_all_for_user(user_id, sign_ins.DEACTIVATED, session=session)
     session.flush()
     return user
 
@@ -751,13 +743,6 @@ async def delete_user(
         await asyncio.to_thread(deny_unless, current_user.user_id, "users.delete")
 
         user = await asyncio.to_thread(_delete_user, session, current_user, user_id)
-    try:
-        await revoke_all_for_user(user.user_id, session=session)
-    except Exception as exc:
-        # The account is inactive and its sign-ins ended, so no refresh and no
-        # new login succeeds; an access token already out lives until expiry.
-        logger.error("User %s deleted but revoke_all_for_user failed: %s", user_id, exc)
-
     logger.info(f"User deleted by {current_user.username}: {user.username}")
     return {"message": "User deleted successfully"}
 
