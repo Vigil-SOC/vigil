@@ -9,7 +9,8 @@ The link opens the console's /reset-password screen, so the strength policy,
 reuse check, lockout clear and session revocation all happen in the existing
 /password-reset/confirm route; this script never handles a password.
 
-It signs with JWT_SECRET_KEY, which must be the running backend's. Natively,
+It signs with the key ring's reset key, which opens only under the running
+backend's JWT_SECRET_KEY. Natively,
 run it through scripts/reset-password.sh; on compose, use
 ``docker exec deeptempo-backend python scripts/reset_password.py``.
 """

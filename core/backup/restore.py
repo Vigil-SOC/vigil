@@ -18,6 +18,7 @@ Bifrost starts a fresh, empty log. Copy it back from there to keep the history.
 
 from __future__ import annotations
 
+import base64
 import getpass
 import json
 import os
@@ -26,17 +27,19 @@ import secrets
 import shutil
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
 
 import psycopg2
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from psycopg2 import sql
 from sqlalchemy import create_engine
+from sqlalchemy import text as sa_text
 from sqlalchemy.pool import NullPool
 
 from core.audit import feed, retention, trail
+from core.auth import key_ring
 from core.backup.connection import backup_database_config
 from core.backup.create import (
     PRE_RESTORE_PREFIX,
@@ -1030,6 +1033,7 @@ def _settle_restored(
     failure: BackupError | None = None
     expired = 0
     rotated = False
+    new_secret = False
     from_env = False
     # True once settle has reached the point where today's audit row is written.
     # An earlier failure on a pre-trail snapshot still writes nothing.
@@ -1044,13 +1048,14 @@ def _settle_restored(
         if from_env:
             old_key = env_key
         new_key = secrets.token_urlsafe(48)
-        expired = _reencrypt_and_expire(
+        expired, new_secret = _reencrypt_and_expire(
             old_key, new_key, snapshot_id, created_at, actor
         )
         # With no key anywhere, a deployment outside this install sets it. A
         # jwt_secret written here would never be read.
         if old_key is not None:
-            _write_jwt_stores(new_key, secrets_only=from_env)
+            if new_secret:
+                _write_jwt_stores(new_key, secrets_only=from_env)
             rotated = True
         legacy = True
         if not rotated:
@@ -1089,7 +1094,7 @@ def _settle_restored(
         f"approvals expired: {expired}",
         "integration credentials and user accounts date from the backup",
     ]
-    if from_env:
+    if from_env and new_secret:
         lines.append(
             "the new JWT_SECRET_KEY is in "
             f"{EncryptedFileBackend(data_dir=vigil_path()).secrets_path}; clear or "
@@ -1144,38 +1149,39 @@ def _reencrypt_and_expire(
     snapshot_id: str,
     created_at: str,
     actor: str,
-) -> int:
+) -> tuple[int, bool]:
+    """Expire pending approvals and sign everyone out; returns the count and
+    whether JWT_SECRET_KEY must change (a database from before the key ring).
+
+    With a ring, the wrapping secret stays: new sign-in and run-token keys are
+    written with no overlap, so old sessions and run tokens stop verifying, and
+    MFA secrets stay under their key. Without one, as before the ring: the
+    secret rotates and MFA secrets move to a key derived from the new one.
+    """
     reason = f"expired: restored from backup {snapshot_id} taken {created_at}"
     decided_at = utcnow()
+    legacy = False
     try:
-        # auth_service reads JWT_SECRET_KEY at import and raises when it is
-        # unset, which would stop `create` and `restore --test`.
-        auth_service, auth_cls = _load_auth_service()
         with get_db_manager().session_scope() as session:
-            users = session.query(User).filter(User.mfa_secret.isnot(None)).all()
-            # Without the old key there is no rotation, so MFA stays as it is.
-            if old_key:
-                original_key = auth_service.JWT_SECRET_KEY
+            if old_key and _ring_present(session):
                 try:
-                    auth_service.JWT_SECRET_KEY = old_key
-                    plaintext = []
-                    for user in users:
-                        try:
-                            plaintext.append(
-                                auth_cls._decrypt_mfa_secret(user.mfa_secret)
-                            )
-                        except auth_service.MFASecretDecryptionError as exc:
-                            # Nothing is written yet; the session rolls back.
-                            raise BackupError(
-                                "cannot rotate JWT_SECRET_KEY: the old key does not "
-                                f"decrypt the MFA secret of user {user.user_id}"
-                            ) from exc
-                    auth_service.JWT_SECRET_KEY = new_key
-                    for user, secret in zip(users, plaintext):
-                        user.mfa_secret = auth_cls._encrypt_mfa_secret(secret)
-                except BaseException:
-                    auth_service.JWT_SECRET_KEY = original_key
-                    raise
+                    key_ring._read(session, old_key)  # the ring must open first
+                except key_ring.KeyRingError as exc:
+                    raise BackupError(
+                        f"cannot sign people out: {exc}; the restored key ring "
+                        "was wrapped under a different secret"
+                    ) from exc
+                for purpose in ("signin", "run"):
+                    key_ring.rotate(
+                        purpose,
+                        session=session,
+                        secret=old_key,
+                        overlap=timedelta(0),
+                        operator=actor,
+                    )
+            elif old_key:
+                legacy = True
+                _rewrap_mfa(session, old_key, new_key)
             pending = (
                 session.query(ApprovalAction)
                 .filter(ApprovalAction.status == ActionStatus.PENDING.value)
@@ -1186,28 +1192,43 @@ def _reencrypt_and_expire(
                 row.rejection_reason = reason
                 row.approved_by = actor
                 row.approved_at = decided_at
-            return len(pending)
+            return len(pending), legacy
     except BackupError:
         raise
     except Exception as exc:
         raise BackupError(f"could not settle the restored database: {exc}") from exc
 
 
-def _load_auth_service():
-    # A secret that lives only in jwt_secret is invisible to get_secret, and
-    # this process's env is the wrong key to keep. The placeholder exists so
-    # the import can finish; it is gone before the database work.
-    placeholder_set = False
-    if not os.environ.get("JWT_SECRET_KEY"):  # noqa: ENV001 - auth import boundary
-        os.environ["JWT_SECRET_KEY"] = "restore-import-placeholder"  # noqa: ENV001
-        placeholder_set = True
-    try:
-        import core.auth.auth_service as auth_service
-        from core.auth.auth_service import AuthService
-    finally:
-        if placeholder_set:
-            os.environ.pop("JWT_SECRET_KEY", None)  # noqa: ENV001
-    return auth_service, AuthService
+def _ring_present(session) -> bool:
+    from core.storage.connection import table_present
+
+    return table_present(session, "auth_keys") and (
+        session.execute(sa_text("SELECT 1 FROM public.auth_keys LIMIT 1")).first()
+        is not None
+    )
+
+
+def _rewrap_mfa(session, old_key: str, new_key: str) -> None:
+    """Pre-ring databases: MFA secrets sit under a key derived from the secret."""
+    derive = key_ring.PURPOSES["mfa"].derive
+    old = Fernet(base64.urlsafe_b64encode(derive(old_key)))
+    new = Fernet(base64.urlsafe_b64encode(derive(new_key)))
+    users = session.query(User).filter(User.mfa_secret.isnot(None)).all()
+    plaintext = []
+    for user in users:
+        try:
+            plaintext.append(old.decrypt(user.mfa_secret.encode()).decode())
+        except InvalidToken as exc:
+            if not user.mfa_secret.startswith("gAAAAA"):
+                plaintext.append(user.mfa_secret)  # legacy plaintext row
+                continue
+            # Nothing is written yet; the session rolls back.
+            raise BackupError(
+                "cannot rotate JWT_SECRET_KEY: the old key does not "
+                f"decrypt the MFA secret of user {user.user_id}"
+            ) from exc
+    for user, secret in zip(users, plaintext):
+        user.mfa_secret = new.encrypt(secret.encode()).decode()
 
 
 def _write_jwt_stores(new_key: str, *, secrets_only: bool = False) -> None:

@@ -39,6 +39,7 @@ from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from core.auth.bootstrap_code import announce_setup_code
+from core.auth.key_ring import adopt_when_ready
 from core.auth.token_blacklist import warn_if_redis_evicts
 from core.platform.monitoring import (
     get_metrics_response,
@@ -653,9 +654,11 @@ async def _startup(app: FastAPI):
     except Exception as e:
         logger.error(f"Error during storage initialization: {e}")
 
-    # Background: a failed query retries until the schema exists (Helm applies
-    # it after the pods start); startup does not wait. POST /api/auth/bootstrap
-    # requires the code either way.
+    # Background, both: a failed query retries until the schema exists (Helm
+    # applies it after the pods start); startup does not wait. The first start
+    # adopts the key ring (one replica does, under a lock); the setup code is
+    # read from it. POST /api/auth/bootstrap requires the code either way.
+    app.state.key_ring_task = asyncio.create_task(adopt_when_ready())
     app.state.setup_code_task = asyncio.create_task(announce_setup_code())
 
     if _testing:
@@ -689,14 +692,15 @@ def _start_audit_feed(app) -> None:
 
 
 async def _stop_setup_code(app) -> None:
-    task = getattr(app.state, "setup_code_task", None)
-    if task is None:
-        return
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+    for name in ("key_ring_task", "setup_code_task"):
+        task = getattr(app.state, name, None)
+        if task is None:
+            continue
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 async def _stop_audit_feed(app) -> None:

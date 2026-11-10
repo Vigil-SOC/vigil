@@ -1,27 +1,26 @@
 """First-account setup code.
 
-Derived from ``JWT_SECRET_KEY`` with its own purpose tag, the same way
-password-reset tokens are, so every API replica computes the same value and
-nothing is stored. Anyone who can read the signing key can already forge
-sessions, which is the same trust. The tag is not ``vigil-password-reset``.
+Read from the key ring's setup key, so every API replica computes the same
+value and nothing is stored. Anyone who can read the ring's keys can already
+forge sessions, which is the same trust. A key from before a rotation still
+matches for its overlap, so a code logged by an older replica works.
 """
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import hmac
 import logging
 
 from sqlalchemy.orm import Session
 
+from core.auth import key_ring
 from core.storage.models import User
 
 logger = logging.getLogger(__name__)
 
-# Distinct from password_reset.RESET_TOKEN_PURPOSE. The formatted log line
-# starts with SETUP_CODE_LOG_MARK; scripts grep that and do not recompute it.
-SETUP_CODE_PURPOSE = "vigil-bootstrap-setup"
+# The formatted log line starts with SETUP_CODE_LOG_MARK; scripts grep that and
+# do not recompute it.
 SETUP_CODE_LOG_TEMPLATE = "First-run setup code: %s"
 SETUP_CODE_LOG_MARK = "First-run setup code:"
 
@@ -30,17 +29,12 @@ SETUP_CODE_LOG_MARK = "First-run setup code:"
 _SETUP_CODE_HEX_CHARS = 32
 
 
-def setup_code() -> str:
-    # Imported at call time so tests can still patch JWT_SECRET_KEY, matching
-    # password_reset._get_serializer.
-    from core.auth.auth_service import JWT_SECRET_KEY
+def _code(key: key_ring.Key) -> str:
+    return key.secret.hex()[:_SETUP_CODE_HEX_CHARS]
 
-    digest = hmac.new(
-        JWT_SECRET_KEY.encode("utf-8"),
-        SETUP_CODE_PURPOSE.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-    return digest[:_SETUP_CODE_HEX_CHARS]
+
+def setup_code() -> str:
+    return _code(key_ring.current("setup"))
 
 
 def setup_code_matches(submitted: str | None) -> bool:
@@ -50,10 +44,14 @@ def setup_code_matches(submitted: str | None) -> bool:
     candidate = submitted.strip()
     if not candidate:
         return False
-    expected = setup_code()
-    if len(candidate) != len(expected):
-        return False
-    return hmac.compare_digest(candidate, expected)
+    # No early exit: every live key is compared, so timing says nothing.
+    matched = False
+    for key in key_ring.live("setup"):
+        expected = _code(key)
+        matched |= len(candidate) == len(expected) and hmac.compare_digest(
+            candidate, expected
+        )
+    return matched
 
 
 def has_human_user(session: Session) -> bool:
