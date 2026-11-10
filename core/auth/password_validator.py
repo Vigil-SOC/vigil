@@ -1,7 +1,9 @@
 """Password strength validation using zxcvbn entropy scoring (NIST 800-63B)."""
 
 import logging
+import math
 import unicodedata
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterable, List, Optional
 
@@ -10,6 +12,10 @@ from zxcvbn import zxcvbn
 from core.auth import session_policy
 from core.auth.password_hash import MAX_PASSWORD_LENGTH
 from core.config import get_settings
+from core.platform import notices
+from core.storage.models import User
+from core.storage.unit_of_work import unit_of_work
+from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -182,3 +188,93 @@ def validate_password_strength(
         f"Password too weak (strength {result['score']}/4, need {threshold}/4)",
         suggestions=hints,
     )
+
+
+# --- Password age (max / min) ---
+
+WARN_DAYS = 7
+CHANGE_LINK = "/overview?change_password=1"
+USERS_LINK = "/settings?section=users"
+
+
+def _age_start(user: User) -> datetime:
+    return user.password_changed_at or user.created_at
+
+
+def expires_at(user: User, max_age_days: Optional[int]) -> Optional[datetime]:
+    """When ``user``'s password passes the maximum age; None when it has none."""
+    if max_age_days is None:
+        return None
+    return _age_start(user) + timedelta(days=max_age_days)
+
+
+def changeable_at(user: User, min_age_days: int) -> Optional[datetime]:
+    """When a voluntary change is next allowed; None when it is now."""
+    if not min_age_days or user.password_changed_at is None:
+        return None
+    at = user.password_changed_at + timedelta(days=min_age_days)
+    return at if at > utcnow() else None
+
+
+def check_not_expired(user: User) -> None:
+    """Raise PasswordPolicyError when ``user``'s password is past the maximum age."""
+    due = expires_at(user, session_policy.policy().password_max_age_days)
+    if due is not None and due <= utcnow():
+        raise PasswordPolicyError(
+            f"Password is older than the maximum age and expired on {due:%Y-%m-%d}"
+        )
+
+
+def _days(n: int) -> str:
+    return f"{n} day" if n == 1 else f"{n} days"
+
+
+def expiry_warning(user: User) -> list[dict[str, str]]:
+    """The bell's condition for a person whose password expires within a week."""
+    due = expires_at(user, session_policy.policy().password_max_age_days)
+    if due is None or user.service_account is True:
+        return []
+    left = math.ceil((due - utcnow()).total_seconds() / 86400)
+    if left > WARN_DAYS:
+        return []
+    message = (
+        f"Your password expires in {_days(left)}"
+        if left > 0
+        else "Your password has expired"
+    )
+    return [{"message": message, "link": CHANGE_LINK}]
+
+
+def stale_service_accounts(user: User) -> list[dict[str, str]]:
+    """For a holder of ``users.write``: service accounts past the maximum age."""
+    from core.auth.permissions import missing_permission
+
+    if missing_permission(user.user_id, "users.write") is not None:
+        return []
+    max_age = session_policy.policy().password_max_age_days
+    if max_age is None:
+        return []
+    with unit_of_work() as session:
+        accounts = (
+            session.query(User)
+            .filter(User.is_active.is_(True), User.service_account.is_(True))
+            .all()
+        )
+        names = sorted(
+            a.username for a in accounts if expires_at(a, max_age) <= utcnow()
+        )
+    if not names:
+        return []
+    many = len(names) > 1
+    noun = (
+        "service accounts' passwords are" if many else "service account's password is"
+    )
+    message = (
+        f"{len(names)} {noun} past the maximum age: {', '.join(names)}. "
+        f"Rotate {'them' if many else 'it'}."
+    )
+    return [{"message": message, "link": USERS_LINK}]
+
+
+def register() -> None:
+    notices.CONDITIONS.extend([expiry_warning, stale_service_accounts])

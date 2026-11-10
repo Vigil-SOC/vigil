@@ -51,12 +51,17 @@ class SessionPolicy(BaseModel):
     absolute_hours: int = Field(12, ge=1, le=24)
     # Most open sign-ins one account may hold; None: no limit.
     sign_in_limit: Optional[int] = Field(None, ge=1, le=10)
-    # Characters (code points). 15 is the floor until Require MFA (#4177) lets
-    # an install with MFA for everyone go down to 12.
-    password_min_length: int = Field(16, ge=15, le=64)
+    # Characters (code points). Under 15 only with MFA for everyone (see
+    # _short_needs_mfa_for_everyone).
+    password_min_length: int = Field(16, ge=12, le=64)
     password_character_rules: Literal["none", "letters_digits", "four_classes"] = "none"
     # Previous passwords kept, and refused on reuse.
     password_history: int = Field(5, ge=4, le=24)
+    # Days a password lasts before its person must change it; None: no expiry.
+    # Any change to it is a person's act.
+    password_max_age_days: Optional[int] = Field(None, ge=1, le=365)
+    # Days after a change before a voluntary one is allowed; 0: off.
+    password_min_age_days: int = Field(0, ge=0, le=7)
     # Failures in a row that lock an account. Off, the lock holds until an
     # administrator's Unlock or the person's reset link; on, it ends after
     # lockout_minutes. LOCK_UNTIL_UNLOCKED failures lock until unlocked either way.
@@ -76,6 +81,29 @@ class SessionPolicy(BaseModel):
             raise ValueError(
                 f"idle_privileged_minutes ({self.idle_privileged_minutes}) cannot "
                 f"exceed idle_standard_minutes ({self.idle_standard_minutes})"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _min_age_before_max_age(self):
+        # Else the bell would send a person to a change the minimum age refuses.
+        if (
+            self.password_max_age_days is not None
+            and self.password_min_age_days >= self.password_max_age_days
+        ):
+            raise ValueError(
+                f"password_min_age_days ({self.password_min_age_days}) must be "
+                f"less than password_max_age_days ({self.password_max_age_days})"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _short_needs_mfa_for_everyone(self):
+        # Refused, never adjusted: either field may be the one that moved.
+        if self.password_min_length < 15 and self.require_mfa != "everyone":
+            raise ValueError(
+                f"password_min_length ({self.password_min_length}) is under 15, "
+                f"which needs require_mfa to be 'everyone' (it is '{self.require_mfa}')"
             )
         return self
 
@@ -106,7 +134,7 @@ def mfa_covered(
 def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
     """Whether ``new`` lets a sign-in last longer, an account hold more, a
     guesser have more tries or a shorter lock, an idle account stay longer, or a
-    password be shorter, simpler or reused sooner."""
+    password be shorter, simpler, reused sooner, older or changed sooner."""
     weaker_rules = (
         _RULE_STRENGTH[new.password_character_rules]
         < _RULE_STRENGTH[old.password_character_rules]
@@ -128,8 +156,14 @@ def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
         new.dormancy_days is None or new.dormancy_days > old.dormancy_days
     )
     lower_mfa = MFA_LEVELS.index(new.require_mfa) < MFA_LEVELS.index(old.require_mfa)
+    longer_max_age = old.password_max_age_days is not None and (
+        new.password_max_age_days is None
+        or new.password_max_age_days > old.password_max_age_days
+    )
     return (
         lower_mfa
+        or longer_max_age
+        or new.password_min_age_days < old.password_min_age_days
         or new.idle_standard_minutes > old.idle_standard_minutes
         or new.idle_privileged_minutes > old.idle_privileged_minutes
         or new.absolute_hours > old.absolute_hours

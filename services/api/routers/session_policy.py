@@ -2,7 +2,8 @@
 
 One row, versioned. GET returns it with its version as the ETag; PUT needs that
 version in ``If-Match`` and refuses a stale one with 412. A machine caller (a
-service account) may only tighten the policy, and may not change the dormancy period.
+service account) may only tighten the policy, and may not change the dormancy period
+or the maximum password age.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ _MANAGE = require_permission("sessions.manage")
 
 MACHINE_LOOSENING = "A machine caller may only tighten the session policy"
 MACHINE_DORMANCY = "Changing the dormancy period needs a person's own sign-in"
+MACHINE_MAX_AGE = "Changing the maximum password age needs a person's own sign-in"
 
 
 class Range(BaseModel):
@@ -165,10 +167,16 @@ def put_policy(
         return LooseningOut(loosening=loosening, without_mfa=count)
     actor = request.state.vigil_http_actor
     changes = {"old": old.policy.model_dump(), "new": body.model_dump()}
-    # Any change to dormancy, tightening too, is a person's act.
+    # Any change to dormancy or the maximum password age, tightening too, is a
+    # person's act.
     dormancy = old.policy.dormancy_days != body.dormancy_days
-    if (loosening or dormancy) and not actor.person:
-        reason = MACHINE_LOOSENING if loosening else MACHINE_DORMANCY
+    max_age = old.policy.password_max_age_days != body.password_max_age_days
+    if (loosening or dormancy or max_age) and not actor.person:
+        reason = (
+            MACHINE_LOOSENING
+            if loosening
+            else MACHINE_DORMANCY if dormancy else MACHINE_MAX_AGE
+        )
         trail_events.refused(
             "session_policy.refused",
             actor=user.principal_id,

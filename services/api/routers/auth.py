@@ -27,8 +27,10 @@ from core.auth.auth_service import (
     CODE_RECOVERY,
     AccountLockedError,
     AuthService,
+    _account_is_locked,
     _is_service_account,
     clear_lock,
+    managers,
     password_matches_any,
     raise_if_locked,
 )
@@ -45,7 +47,10 @@ from core.auth.password_reset import (
     reset_link,
 )
 from core.auth.password_validator import (
+    USERS_LINK,
     PasswordPolicyError,
+    changeable_at,
+    check_not_expired,
     check_not_listed,
     validate_password_strength,
 )
@@ -76,6 +81,8 @@ logger = logging.getLogger(__name__)
 SERVICE_ACCOUNT_DETAIL = "Service accounts can't use this endpoint"
 _INVALID_REFRESH_TOKEN = "Invalid refresh token"
 _INVALID_RESET_TOKEN = "Invalid or expired reset token"
+# The 400 body's code when the minimum password age refuses a change.
+PASSWORD_MIN_AGE = "password_min_age"
 # Login's 403 detail.code when the password must change before sign-in.
 PASSWORD_CHANGE_REQUIRED = "password_change_required"
 # A password under this many characters is not enough on its own, without MFA.
@@ -224,6 +231,9 @@ class ChangePasswordRequest(BaseModel):
 
     current_password: str
     new_password: str
+    # The person suspects the current password has leaked: the minimum age is
+    # waived, the trail records it and the managers are told.
+    suspected_leak: bool = False
 
 
 class ProfileUpdateRequest(BaseModel):
@@ -313,6 +323,24 @@ def _apply_new_password(user: User, plaintext: str) -> None:
     user.password_history = previous[:keep]
     user.password_hash = new_hash
     user.password_changed_at = utcnow()
+
+
+def _min_age_refusal(user: User) -> Optional[JSONResponse]:
+    """The 400 that says when a voluntary change is next allowed, or None now."""
+    at = changeable_at(user, session_policy.policy().password_min_age_days)
+    if at is None:
+        return None
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={
+            "code": PASSWORD_MIN_AGE,
+            "detail": (
+                "Your password was changed too recently. Another change is allowed "
+                f"from {at:%Y-%m-%d %H:%M} UTC."
+            ),
+            "changeable_at": at.isoformat() + "Z",
+        },
+    )
 
 
 def _session_sid(request: Request) -> Optional[str]:
@@ -685,13 +713,15 @@ def login(
         new_recovery_codes = AuthService.upgrade_recovery_codes(user)
 
     # The password and any MFA code are good; the password may have joined the
-    # breached list since it was set, or be too short for one factor. No tokens, cookies or sign-in row: a reset
+    # breached list since it was set, be too short for one factor, or be past the
+    # maximum age. No tokens, cookies or sign-in row: a reset
     # token takes the person to /password-reset/confirm, the one forced-change
     # path. Returned, not raised, so a spent MFA code stays spent. A service
     # account's password is generated and it cannot reset.
     if not service_account:
         try:
             check_not_listed(payload.password, user_inputs=[user.username, user.email])
+            check_not_expired(user)
             if not had_mfa and len(payload.password) < SINGLE_FACTOR_MIN:
                 raise PasswordPolicyError(
                     f"Password is under {SINGLE_FACTOR_MIN} characters, too short "
@@ -705,7 +735,7 @@ def login(
                     "detail": {
                         "code": PASSWORD_CHANGE_REQUIRED,
                         "message": f"{exc}. Choose a new password to sign in.",
-                        "reset_token": generate_reset_token(user),
+                        "reset_token": generate_reset_token(user, forced=True),
                     }
                 },
             )
@@ -1309,6 +1339,12 @@ async def change_password(
             detail="Current password is incorrect",
         )
 
+    # current_user is detached; write through this session's own row.
+    user = session.get(User, current_user.user_id)
+    # The leak flag waives the minimum age, and only that.
+    if not body.suspected_leak and (refused := _min_age_refusal(user)):
+        return refused
+
     # Validate new password against the strength policy. Penalize passwords
     # built from the account's own identifiers.
     try:
@@ -1323,10 +1359,8 @@ async def change_password(
             detail=exc.as_detail(),
         )
 
-    # current_user is detached; write through this session's own row.
-    user = session.get(User, current_user.user_id)
-
     try:
+        waived = body.suspected_leak and _min_age_refusal(user) is not None
         # Enforce no-reuse + hash + history rotation
         await asyncio.to_thread(_apply_new_password, user, body.new_password)
         await asyncio.to_thread(
@@ -1336,7 +1370,11 @@ async def change_password(
             actor=current_user.principal_id,
             principal=current_user.principal_id,
             sign_in=_session_sid(request),
+            suspected_leak=body.suspected_leak,
+            min_age_waived=waived,
         )
+        if body.suspected_leak:
+            _tell_managers_of_leak(session, user)
 
         # End every sign-in, this one included; the client should re-login.
         # In this transaction: the change does not commit without it.
@@ -1359,6 +1397,25 @@ async def change_password(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to change password",
         )
+
+
+def _tell_managers_of_leak(session: Session, user: User) -> None:
+    """After the change commits, tell the holders of users.write. No password in it."""
+    principal, name = user.principal_id, user.username
+    title = f"{name} reported a suspected password leak"
+    message = (
+        f"{name} changed their password and reported that the old one may have "
+        "leaked. The minimum password age did not apply to the change."
+    )
+
+    def send() -> None:
+        for to in managers(principal):
+            try:
+                notify(to, "password_leak", title, message, USERS_LINK, priority="high")
+            except Exception:  # noqa: BLE001 - the rest are still told
+                logger.exception("could not send a password-leak notice for %s", name)
+
+    when_committed(session, send)
 
 
 def _record_mfa(session: Session, request: Request, user: User, action: str) -> None:
@@ -1668,6 +1725,12 @@ async def password_reset_confirm(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=_INVALID_RESET_TOKEN,
         )
+
+    # The minimum age limits a voluntary change only: not the reset sign-in
+    # forced, nor one that unlocks a locked account.
+    if not claim.forced and not _account_is_locked(user):
+        if refused := _min_age_refusal(user):
+            return refused
 
     try:
         await asyncio.to_thread(
