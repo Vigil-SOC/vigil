@@ -89,7 +89,10 @@ def end(sign_in_id: str, reason: str, session: Optional[Session] = None) -> bool
     rotated token expires first and must not end a sign-in still in use.
     """
     with unit_of_work(session) as session:
-        row = session.get(SignIn, sign_in_id, with_for_update=True)
+        # Re-read under the lock: a row the caller already loaded may have ended since.
+        row = session.get(
+            SignIn, sign_in_id, with_for_update=True, populate_existing=True
+        )
         if row is None or row.ended_at is not None:
             return False
         now = utcnow()
