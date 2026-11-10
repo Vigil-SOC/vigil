@@ -838,6 +838,10 @@ config:
   # people who hold platform.write.
   VIGIL_COOKIE_SECURE: "true"
   VIGIL_COOKIE_SAMESITE: "strict"
+  # The hostname the console is reached at, no scheme or port: the security keys
+  # (WebAuthn) relying-party id. Keys need it set with VIGIL_COOKIE_SECURE "true",
+  # or "localhost". Empty leaves keys off.
+  VIGIL_CONSOLE_HOSTNAME: ""
 
   # Integrations — non-secret URLs/usernames
   SPLUNK_URL: ""

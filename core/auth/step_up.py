@@ -18,7 +18,7 @@ from typing import NoReturn, Optional
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from core.auth import session_policy, sign_ins, trail_events
+from core.auth import security_keys, session_policy, sign_ins, trail_events
 from core.auth.auth_service import AuthService
 from core.auth.current_user import get_current_user
 from core.storage.models import SignIn, User
@@ -173,6 +173,8 @@ def confirm(
     *,
     password: Optional[str] = None,
     code: Optional[str] = None,
+    assertion: Optional[dict] = None,
+    challenge: Optional[str] = None,
     strong: bool = False,
     source: Optional[str] = None,
 ) -> None:
@@ -180,7 +182,8 @@ def confirm(
 
     One-factor: the authenticator or recovery code with MFA, the password
     without it. Strong: the password and, with MFA, a current code, on every call
-    whatever the window. A success opens the window; a failure counts, and the
+    whatever the window. A person with security keys may answer with an
+    ``assertion`` (and the ``challenge`` it signed) in place of the code. A success opens the window; a failure counts, and the
     third ends the sign-in (401). 400, not 401, for a wrong answer: a 401 would
     make the web client refresh and retry. An empty field is asked for, not counted.
     """
@@ -188,13 +191,20 @@ def confirm(
     needs_code = user.mfa_enabled
     if needs_password and not password:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Enter your password.")
-    if needs_code and not code:
+    if needs_code and not code and not assertion:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, BAD_CODE)
 
     problem = None
     if needs_password and not AuthService.verify_password(password, user.password_hash):
         problem = BAD_STRONG if strong else BAD_PASSWORD
     # The code is only spent once the password is right.
+    elif needs_code and assertion:
+        try:
+            security_keys.verify_assertion(
+                session, user, assertion, challenge, security_keys.CONFIRM
+            )
+        except security_keys.KeyRefused as exc:
+            problem = BAD_STRONG if strong else str(exc)
     elif needs_code and not AuthService.verify_mfa_code(user.user_id, code, session):
         problem = BAD_STRONG if strong else BAD_CODE
 

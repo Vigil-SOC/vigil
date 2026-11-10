@@ -122,6 +122,8 @@ Then open http://localhost:6988 and create the admin account on the bootstrap sc
 
 Sign-in cookies are `Secure` by default (`VIGIL_COOKIE_SECURE=true`), so the console needs HTTPS: Chromium accepts them on `http://localhost`, but reached by IP or hostname over plain HTTP (or in Safari, even on localhost) sign-in fails. Set `VIGIL_COOKIE_SECURE=false` only for loopback or SSH-tunnel access (see `env.example`).
 
+Security keys (WebAuthn) are tied to the hostname the console is reached at: set `VIGIL_CONSOLE_HOSTNAME` (no scheme or port) and keep `VIGIL_COOKIE_SECURE=true`, or use `localhost`; otherwise keys stay off and sign-in by password and authenticator app is unchanged.
+
 `start.sh` provisions the pinned Python with [uv](https://docs.astral.sh/uv/), installs dependencies, starts PostgreSQL, Redis, and the Bifrost LLM gateway in Docker, starts a host Ollama if one is installed (optional), initializes the schema and reference data, and launches the API, the agent layer, and the frontend. No LogLM or cloud API key is needed to reach a running UI.
 
 - **`AGENT_INTERNAL_TOKEN`** lets the agent layer talk to the API. `start.sh` (and `setup_dev.sh`) creates `.env` from `env.example` and fills an empty token with a random one; a value already set is kept. Without it the agent layer does not start: workflow runs stay queued and chat answers 503.
