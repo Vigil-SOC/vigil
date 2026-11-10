@@ -38,6 +38,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from core.auth.auth_cookies import warn_if_cookie_insecure_in_production
 from core.auth.bootstrap_code import announce_setup_code
 from core.auth.key_ring import adopt_when_ready
 from core.auth.token_blacklist import warn_if_redis_evicts
@@ -52,7 +53,10 @@ from core.version import __version__
 from services.api.discovery import mount_routers
 from services.api.errors import register_exception_handlers
 from services.api.middleware.auth import get_current_active_user
-from services.api.middleware.csrf import CSRFMiddleware
+from services.api.middleware.csrf import (
+    CSRFMiddleware,
+    refuse_unsafe_csrf_in_production,
+)
 from services.api.middleware.rate_limit import limiter
 from services.api.middleware.security_headers import (
     DEFAULT_CSP,
@@ -217,6 +221,9 @@ app.add_middleware(
 # Registered between CORS and SecurityHeaders so:
 #   - SecurityHeaders (outermost) applies to any 403 CSRF rejection.
 #   - CORS (innermost of these three) still short-circuits OPTIONS preflight.
+# ENVIRONMENT=production refuses CSRF off, report-only, or a wider exempt list.
+refuse_unsafe_csrf_in_production()
+warn_if_cookie_insecure_in_production()
 app.add_middleware(CSRFMiddleware)
 
 # Security headers added AFTER CORS so it is the outermost middleware on the
