@@ -194,6 +194,9 @@ class LoginResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     user: dict
+    # Set once, at the first MFA sign-in after the upgrade: the old recovery
+    # codes are void and these replace them.
+    recovery_codes: Optional[List[str]] = None
 
 
 class ChangePasswordRequest(BaseModel):
@@ -476,6 +479,7 @@ def login(
         failed("service_account_console")
         raise _invalid_credentials()
 
+    new_recovery_codes = None
     # Check MFA if enabled
     if user.mfa_enabled:
         if not payload.mfa_code:
@@ -492,6 +496,8 @@ def login(
         # failure count on the other connection would wait out the request.
         # Drop the pending reset first. Put it back only if the code is good.
         pending_reset = user in session
+        # The rewritten hash (a bcrypt replaced at verify) is pending too.
+        pending_hash = user.password_hash
         if pending_reset:
             session.expire(user)
         if not AuthService.verify_mfa_code(user.user_id, payload.mfa_code, session):
@@ -505,6 +511,9 @@ def login(
             user.locked_until = None
             user.last_login = utcnow()
             user.login_count = (user.login_count or 0) + 1
+            user.password_hash = pending_hash
+        # Whether TOTP or an old code got in, an old-scheme set ends here.
+        new_recovery_codes = AuthService.upgrade_recovery_codes(user)
 
     # Generate tokens. One sign-in, named on both, kept through every refresh.
     _ua = request.headers.get("user-agent")
@@ -537,6 +546,7 @@ def login(
         access_token=access_token,
         refresh_token=refresh_token,
         user=_user_payload(user, session),
+        recovery_codes=new_recovery_codes,
     )
 
 

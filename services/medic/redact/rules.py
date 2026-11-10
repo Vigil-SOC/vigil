@@ -89,7 +89,6 @@ _SUFFIXES = (
 _ALLOW = frozenset(
     {
         "auth_min_password_length",
-        "auth_max_password_bytes",
         "password_reset_ttl_seconds",
         "existing_secret",
         "existing_secret_key",

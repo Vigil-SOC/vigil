@@ -6,6 +6,7 @@ from typing import Iterable, List, Optional
 
 from zxcvbn import zxcvbn
 
+from core.auth.password_hash import MAX_PASSWORD_LENGTH
 from core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,6 @@ def validate_password_strength(
     *,
     blocklist: Optional[Iterable[str]] = None,
     min_length: Optional[int] = None,
-    max_bytes: Optional[int] = None,
     min_score: Optional[int] = None,
     user_inputs: Optional[List[str]] = None,
 ) -> None:
@@ -68,9 +68,6 @@ def validate_password_strength(
         min_length
         if min_length is not None
         else get_settings().auth_min_password_length
-    )
-    byte_ceiling = (
-        max_bytes if max_bytes is not None else get_settings().auth_max_password_bytes
     )
     threshold = (
         min_score if min_score is not None else get_settings().auth_min_zxcvbn_score
@@ -85,9 +82,9 @@ def validate_password_strength(
             suggestions=[f"Add {limit - len(password)} more characters."],
         )
 
-    if len(password.encode("utf-8")) > byte_ceiling:  # before the costly zxcvbn pass
+    if len(password) > MAX_PASSWORD_LENGTH:  # before the costly zxcvbn pass
         raise PasswordPolicyError(
-            f"Password must be at most {byte_ceiling} bytes long",
+            f"Password must be at most {MAX_PASSWORD_LENGTH} characters long",
             suggestions=["Use a shorter passphrase."],
         )
 
@@ -102,7 +99,9 @@ def validate_password_strength(
             suggestions=["Avoid passwords from known breach lists."],
         )
 
-    result = zxcvbn(password, user_inputs=user_inputs or [])
+    result = zxcvbn(
+        password, user_inputs=user_inputs or [], max_length=MAX_PASSWORD_LENGTH
+    )
     if result["score"] >= threshold:
         return
 

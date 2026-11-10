@@ -46,7 +46,8 @@ interface AuthContextType {
   retryLoadUser: () => Promise<void>;
   /** Re-reads /auth/me in place, without the loading screen that unmounts the console. */
   refreshUser: () => Promise<void>;
-  login: (usernameOrEmail: string, password: string, mfaCode?: string) => Promise<void>;
+  /** Resolves to fresh recovery codes when the sign-in replaced an old set; show them once. */
+  login: (usernameOrEmail: string, password: string, mfaCode?: string) => Promise<string[] | undefined>;
   logout: () => Promise<void>;
   hasPermission: (permission: string) => boolean;
 }
@@ -115,12 +116,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
     loadUser();
   }, [loadUser]);
 
-  const login = async (usernameOrEmail: string, password: string, mfaCode?: string) => {
+  const login = async (usernameOrEmail: string, password: string, mfaCode?: string): Promise<string[] | undefined> => {
     if (DEV_MODE) {
       console.log('DEV_MODE: Bypassing login, using mock user');
       retainChatCache(DEV_USER.user_id);
       setUser(DEV_USER);
-      return;
+      return undefined;
     }
 
     // the backend sets the HttpOnly cookies; only the user comes back in the body
@@ -133,6 +134,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       if (response.data.user?.user_id) retainChatCache(response.data.user.user_id);
       setUser(response.data.user);
+      return response.data.recovery_codes ?? undefined;
     } catch (error: any) {
       const isMfaRequired =
         error.response?.headers?.['x-mfa-required'] === 'true' ||
