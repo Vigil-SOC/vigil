@@ -135,6 +135,7 @@ def _verdict(
             "result": "fail",
             "reason": f"fail: {', '.join(missing)} not in the mapping of {index}",
             "data_source": index,
+            "missing_fields": missing,
         }
     reason = (
         None

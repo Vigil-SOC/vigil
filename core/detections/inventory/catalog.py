@@ -987,7 +987,8 @@ def _health(
         return "fails_to_run", _first_line(raw) or "Its last run failed.", raw or None
     if sees.get("result") == "fail":
         raw = str(sees.get("reason") or "")
-        state = "missing_field" if "not in the mapping" in raw else "data_silent"
+        missing = sees.get("missing_fields") or "not in the mapping" in raw
+        state = "missing_field" if missing else "data_silent"
         return state, _first_line(raw) or "Its data is not arriving.", raw or None
     if fires:
         return "fires", f"Fired {fires} times in {FIRES_WINDOW_DAYS} days.", None
