@@ -64,6 +64,7 @@ def _copy(rule_id, days_in=8, hits=3):
             "runs": {"days": {d: {"pass": 4, "fail": 0} for d in WEEK(30)}},
             "shadow": {"days": {d: hits for d in WEEK(30)}},
             "sees": {"result": "pass"},
+            "replay": {"result": "pass", "source": "siem"},
             "lint": {"result": "pass", "findings": []},
         },
         rule={},
@@ -156,7 +157,7 @@ def test_the_metrics_text_names_the_stored_numbers(store):
     store.value = {"shadow_days": 14, "max_hits_per_day": 9}
     text = metrics.shadow_to_live([], NOW)["exit_criteria"]
     assert text.startswith("14 days in shadow") and "above 9 hits" in text
-    assert text.endswith("Sees and lint passed")
+    assert "Sees and lint passed, and shown to fire" in text
 
 
 # --- an unreadable or invalid stored value is the default --------------------

@@ -19,6 +19,7 @@ def _copy(rule_id=1, stage="shadow", lint=None, days_in=8):
         "runs": {"days": {d: {"pass": 4, "fail": 0} for d in week}},
         "shadow": {"days": {d: 3 for d in week}},
         "sees": {"result": "pass"},
+        "replay": {"result": "pass", "source": "siem"},
     }
     if lint is not None:
         checks["lint"] = lint

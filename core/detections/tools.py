@@ -339,6 +339,9 @@ class SecurityDetectionsTools:
         ruled_out_events: Optional[List[Dict]] = None,
         exceptions: Optional[Dict[str, List[Dict]]] = None,
         wazuh_xml: Optional[str] = None,
+        proven_event_ids: Optional[Dict[str, List[str]]] = None,
+        attack_started_at: Optional[str] = None,
+        attack_ended_at: Optional[str] = None,
         **_kwargs: object,
     ) -> Dict:
         """Save one rule's copies into Vigil's overlay; each Splunk and Elastic
@@ -346,7 +349,9 @@ class SecurityDetectionsTools:
 
         With events, the Sigma form is replayed on them first and the save is
         refused unless a proven event matches and no ruled-out one does (a
-        ruled-out event a Sigma exception matches is excluded).
+        ruled-out event a Sigma exception matches is excluded). With
+        ``proven_event_ids``, Vigil reads the events from the SIEM and proves the
+        Sigma form and each Splunk and Elastic copy on them (``save_proof``).
         """
         return await asyncio.to_thread(
             save_rule,
@@ -357,6 +362,9 @@ class SecurityDetectionsTools:
             ruled_out_events,
             exceptions,
             wazuh_xml,
+            proven_event_ids=proven_event_ids,
+            attack_started_at=attack_started_at,
+            attack_ended_at=attack_ended_at,
         )
 
     async def detection_rule_exception(

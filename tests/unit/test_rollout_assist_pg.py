@@ -228,6 +228,7 @@ def _seed(db, mine, stage="shadow"):
                     "runs": {"days": {d: {"pass": 4, "fail": 0} for d in week}},
                     "shadow": {"days": {d: 3 for d in week}},
                     "sees": {"result": "pass"},
+                    "replay": {"result": "pass", "source": "siem"},
                     "lint": {"result": "pass", "findings": []},
                 },
             )

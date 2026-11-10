@@ -41,7 +41,10 @@ are not applied; alerts the SIEM itself raises are never filtered.
 
 The sweep (after ``sync_repos``) then writes a stage row (actor 'system', proof
 holding the numbers) for each move that is due: shadow -> live after a quiet,
-passing week with checks['sees'] pass and checks['lint'] pass (at most
+passing week with checks['sees'] pass and checks['lint'] pass, once the
+version was shown to fire (``shown_to_fire``: a save-time run in its SIEM caught
+the named attack events, or checks['caught'] pass, or for a Wazuh copy a hit in
+its archive searches; a quiet week alone may be a rule that matches nothing) (at most
 the stored promotion cap a day across all rules (``rollout_limits``;
 its shadow days and hit ceiling are stored there too and read on every sweep); a copy with no lint result yet waits
 for the sync that lints it), live -> shadow when half its findings are judged
@@ -786,6 +789,23 @@ def _week(now: datetime, days: int = DEFAULT_LIMITS.shadow_days) -> List[str]:
     return [(now - timedelta(days=i)).date().isoformat() for i in range(days)]
 
 
+def shown_to_fire(
+    checks: Mapping[str, Any], language: str, shadow_hits: int = 0
+) -> Optional[str]:
+    """How the version was shown to fire, or None when it never was: its save-time
+    run in its SIEM returned a named attack event (``save_proof``), or it alerted
+    on a proven attack step (``caught``). A Wazuh copy has no save-time run, so
+    a hit in Vigil's own archive searches in shadow counts for it."""
+    replay = checks.get("replay") or {}
+    if replay.get("result") == "pass" and replay.get("source") == "siem":
+        return "caught the named attack events in its SIEM at save"
+    if (checks.get("caught") or {}).get("result") == "pass":
+        return "alerted on a proven attack step"
+    if language == WAZUH and shadow_hits > 0:
+        return "matched archived events in shadow"
+    return None
+
+
 def _due(
     session: Any,
     copy: Copy,
@@ -839,12 +859,18 @@ def _due(
             return None
         if not _linted(copy):  # no result yet: the next sync lints it
             return None
+        fired = shown_to_fire(
+            copy.checks, copy.language, sum(v["hits"] for v in days.values())
+        )
+        if fired is None:  # quiet is not proof: it may match nothing at all
+            return None
         if live_24h >= limits.live_per_day:
             return None
         return (
             "live",
             f"{limits.shadow_days} days in shadow, every day's runs passed, no day "
-            f"above {limits.max_hits_per_day} hits, Sees and lint passed",
+            f"above {limits.max_hits_per_day} hits, Sees and lint passed, "
+            f"and it {fired}",
             {
                 "shadow_since": since,
                 "days": days,
@@ -852,6 +878,7 @@ def _due(
                 "live_rows_last_24h": live_24h,
                 "sees": seen,
                 "lint": lint,
+                "fired": fired,
             },
         )
     # live: only what happened since it went live counts.

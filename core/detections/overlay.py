@@ -14,6 +14,9 @@ with no such entry was first seen by the sync alone: a file put in the folder.
 
 Evidence passed with the save is replayed on the Sigma form before anything is
 written (#3755); the result lands as ``checks.replay`` on the Sigma version.
+Events named by id are read from the SIEM instead, and each Splunk and Elastic
+copy is run on them too (#4212, ``save_proof``); each copy's own result lands as
+its version's ``checks.replay``, with ``source: siem``.
 
 Exceptions passed per copy (#3794) are stored apart from the files once the
 sync has the copies; the replay counts a ruled-out event that a Sigma exception
@@ -36,6 +39,7 @@ import yaml
 from sqlalchemy import select, update
 
 from core.detections import exceptions as excepts
+from core.detections import save_proof
 from core.detections import wazuh_xml as wxml
 from core.detections.detection_rules_service import DetectionRulesService
 from core.detections.inventory import readers, rollout, sync
@@ -339,13 +343,13 @@ def _evidence(
     }
 
 
-def _record_replay(sigma_key: str, replay: Dict[str, Any]) -> None:
-    """Merge ``replay`` into the checks of the Sigma copy's latest version."""
+def _record_replay(key: str, replay: Dict[str, Any]) -> None:
+    """Merge ``replay`` into the checks of the copy's latest version."""
     with get_db_manager().session_scope() as session:
         rule = session.execute(
             select(DetectionRule.id, DetectionRule.latest_version).where(
                 DetectionRule.source == readers.OVERLAY_SOURCE,
-                DetectionRule.native_key == sigma_key,
+                DetectionRule.native_key == key,
             )
         ).first()
         if rule is None:
@@ -526,8 +530,15 @@ def save_rule(
     exceptions: Optional[Dict[str, Any]] = None,
     wazuh_xml: Optional[str] = None,
     all_or_nothing: bool = False,
+    proven_event_ids: Optional[Dict[str, Any]] = None,
+    attack_started_at: Optional[str] = None,
+    attack_ended_at: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Write each copy into the overlay and sync it; refuse the lot if any part fails.
+
+    With ``proven_event_ids``, Vigil reads those events from the SIEM and proves
+    the Sigma form and each Splunk and Elastic copy on them first (``save_proof``);
+    each copy's result is its version's ``checks.replay``.
 
     With ``all_or_nothing``, a fault after the first file is written (a write, the
     sync, the replay record or the exceptions) is undone before it is raised as
@@ -551,13 +562,26 @@ def save_rule(
         sigma_key = next(
             (r.native_key for lang, _, r in prepared if lang == "sigma"), None
         )
+        sigma_excepted = _sigma_matches(sigma_key, wanted.get("sigma", []))
         replay = _evidence(
             copies.get("sigma"),
             proven_events,
             ruled_out_events,
-            _sigma_matches(sigma_key, wanted.get("sigma", [])),
+            sigma_excepted,
         )
-    except Refused as exc:
+        proof = (
+            save_proof.prove(
+                prepared,
+                copies.get("sigma"),
+                proven_event_ids,
+                attack_started_at,
+                attack_ended_at,
+                sigma_excepted,
+            )
+            if proven_event_ids is not None
+            else {}
+        )
+    except (Refused, save_proof.Refused) as exc:
         return {"error": str(exc), "saved": [], **exc.detail}
     keys = [record.native_key for _, _, record in prepared]
     # Under the sync lock: a running sync must not read a half-saved overlay.
@@ -586,8 +610,11 @@ def save_rule(
             if report.error and all_or_nothing:
                 # The sync is one transaction: nothing of it was kept.
                 raise NotSaved(f"the overlay sync failed: {report.error}")
-            if sigma_key and not report.error:
-                _record_replay(sigma_key, replay)
+            if not report.error:
+                if sigma_key and sigma_key not in proof:
+                    _record_replay(sigma_key, replay)
+                for key, check in proof.items():
+                    _record_replay(key, check)
             added = [] if report.error else _add_exceptions(prepared, wanted)
         except Exception as exc:
             if not all_or_nothing:

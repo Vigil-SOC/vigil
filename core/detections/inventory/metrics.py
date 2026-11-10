@@ -286,7 +286,10 @@ def shadow_to_live(
         "in_shadow": len(waiting),
         "exit_criteria": (
             f"{limits.shadow_days} days in shadow, every day's runs passed, no day "
-            f"above {limits.max_hits_per_day} hits, Sees and lint passed"
+            f"above {limits.max_hits_per_day} hits, Sees and lint passed, and shown "
+            "to fire: caught the named attack events in its SIEM at save, "
+            "alerted on a proven attack step, or (a Wazuh copy) matched archived "
+            "events in shadow"
         ),
         "rows": promoted,
         "waiting": waiting,

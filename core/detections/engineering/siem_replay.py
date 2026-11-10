@@ -638,7 +638,10 @@ async def _replay_one(
     claims: Sequence[Claim],
     start: datetime,
     end: datetime,
+    excepted: Sequence[Mapping[str, Any]] = (),
 ) -> Dict[str, Any]:
+    from core.detections import exceptions as excepts
+
     out: Dict[str, Any] = {"siem": source.siem, "index": source.index}
     if not source.spend("attack") or not source.spend("benign"):
         out["deferred"] = "its search budget for this hour is spent"
@@ -661,13 +664,16 @@ async def _replay_one(
     if attack_claim is not None and not named:
         claimed.append(attack_claim)
     benign: List[Event] = []
-    left_out = 0
+    left_out = excepted_out = 0
     for doc in benign_read.docs:
         event = event_of(source.siem, doc)
         if event.id in attack_ids:
             continue
         if any(c.holds(event) for c in claimed):
             left_out += 1
+            continue
+        if any(excepts.matches(m, event.view) for m in excepted):
+            excepted_out += 1
             continue
         benign.append(event)
     holding = [e for e in benign if any(f in e.view for f in fields)]
@@ -683,6 +689,7 @@ async def _replay_one(
         benign_cut_short=benign_read.cut_short,
         benign_total=benign_read.total,
         claimed_left_out=left_out,
+        excepted_left_out=excepted_out,
         false_positives=len(false),
         false_positive_samples=[e.sample(fields) for e in false[:SAMPLES]],
     )
@@ -760,8 +767,11 @@ async def replay(
     start: datetime,
     end: datetime,
     skipped: Sequence[str] = (),
+    excepted: Sequence[Mapping[str, Any]] = (),
 ) -> Dict[str, Any]:
-    """The replay's evidence, as the step record stores it."""
+    """The replay's evidence, as the step record stores it. A normal event one of
+    ``excepted`` (a Sigma exception's match) matches is left out, as the runner
+    drops it."""
     evidence: Dict[str, Any] = {
         "step": "replay",
         "tool": "core.detections.engineering.siem_replay.replay",
@@ -801,6 +811,7 @@ async def replay(
             claims,
             start,
             end,
+            excepted,
         )
         for source in sources
     ]
