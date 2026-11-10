@@ -568,7 +568,14 @@ def _detail(entry: Mapping[str, Any], text: str) -> str:
         "case.journal",
     ):
         return text
-    return f"{text} to {beside}" if action == "case.assign" else _join(text, beside)
+    if action != "case.assign":
+        return _join(text, beside)
+    # The new holder, then "previously <old>" (case_trail.holder_text); either
+    # may be old free text over several lines, so split once.
+    raw = "\n" + str(entry["operator_text"])
+    now, _, was = raw.partition("\npreviously ")
+    said = f"{text} to {_short(now)}" if now.strip() else text
+    return _short(f"{said}, previously {was}" if was.strip() else said)
 
 
 def _legacy_id(entry: Mapping[str, Any]) -> Optional[str]:
