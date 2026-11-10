@@ -254,6 +254,7 @@ class WorkflowRunService:
         workflow_source: Optional[str] = None,
         status: Optional[str] = None,
         run_kind: Optional[str] = None,
+        case_id: Optional[str] = None,
         started_at: Optional[datetime] = None,
         finished_at: Optional[datetime] = None,
         finished_after: Optional[datetime] = None,
@@ -265,7 +266,8 @@ class WorkflowRunService:
 
         ``workflow_source`` filters by how the run was started (e.g. "agent"
         for runs enqueued through the agent-runs API). ``run_kind`` matches
-        the ``run_kind`` key of ``trigger_context``. ``started_at`` is an
+        the ``run_kind`` key of ``trigger_context``, ``case_id`` its ``case_id``
+        key. ``started_at`` is an
         inclusive lower bound on when the run started. ``finished_after`` /
         ``finished_at`` bound when it finished (inclusive).
         """
@@ -284,6 +286,10 @@ class WorkflowRunService:
                 if run_kind:
                     stmt = stmt.where(
                         WorkflowRun.trigger_context["run_kind"].astext == run_kind
+                    )
+                if case_id:
+                    stmt = stmt.where(
+                        WorkflowRun.trigger_context["case_id"].astext == case_id
                     )
                 if started_at is not None:
                     stmt = stmt.where(
