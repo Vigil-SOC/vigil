@@ -6,9 +6,10 @@ them (a Splunk row's ``_bkt:_cd``, or ``_cd`` alone; an Elasticsearch hit's
 
 - **Sigma form**: replayed with ``siem_replay`` on the named events and on the
   window's normal events (events no Case or hunt claims, less those a Sigma
-  exception matches). Refused when it hits none of the named events or matches
-  a normal one. A normal read cut short, or one with no event holding a field
-  the rule reads, is kept as a caveat: there is no person here to give a reason.
+  exception matches). Refused when it hits none of the named events. A match on
+  a normal event, a normal read cut short, or none holding a field the rule
+  reads, is kept as a caveat with its counts and samples: shadow's hit ceiling
+  is where an agent's rule is judged for noise.
 - **Each Splunk and Elastic copy**: run in its SIEM as shadow runs it
   (``rollout._splunk_query`` / ``rollout._query``), over the hits' own window.
   Refused when it returns events but none of the named ones. A search whose rows
@@ -217,13 +218,6 @@ async def _prove_sigma(
         raise Refused(
             f"sigma form matched none of the {evidence['attack_rows']} named events "
             "read from the SIEM: write it on the fields those events carry",
-            replay=evidence,
-        )
-    if evidence["false_positives"]:
-        raise Refused(
-            f"sigma form matched {evidence['false_positives']} event(s) in the window "
-            "that no Case or hunt claims: narrow it, add an exception for what is "
-            "expected here, or name them too if they are the attack",
             replay=evidence,
         )
     return {
