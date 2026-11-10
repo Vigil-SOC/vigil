@@ -9,7 +9,7 @@ the paused run; rejecting cancels it with the supplied reason.
 import asyncio
 import logging
 from dataclasses import asdict
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -213,6 +213,43 @@ async def _rollout_decided(
         logger.exception("rollout answer on %s not carried out", action.action_id)
 
 
+class ActionNotFound(LookupError):
+    pass
+
+
+# The whole of a rejection, for the route and the chat/MCP tool alike: the row,
+# the case trail, a rollout's answer, and the paused run it was holding.
+# ActionNotFound for no such action; AlreadyDecided passes through; None when the
+# row would not update. Returns (action, resume_result).
+async def decide_reject(
+    service: ApprovalService,
+    action_id: str,
+    reason: str,
+    rejected_by: str,
+    principal_id: Optional[str],
+) -> Optional[Tuple[PendingAction, Optional[Dict[str, Any]]]]:
+    from core.workflows.run_resume import resume_run
+
+    if service.get_action(action_id) is None:
+        raise ActionNotFound(action_id)
+    updated = service.reject_action(
+        action_id,
+        reason=reason,
+        rejected_by=rejected_by,
+        approved_by_principal_id=principal_id,
+    )
+    if updated is None:
+        return None
+    _record_decision(updated, rejected_by, reason)
+    await _rollout_decided(updated, rejected_by, reason)
+    resume_result = None
+    if updated.workflow_run_id:
+        resume_result = await resume_run(
+            updated.workflow_run_id, action_id, rejected_by
+        )
+    return updated, resume_result
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -360,36 +397,20 @@ async def reject_action(
     If the action is linked to a paused workflow run, the run is
     cancelled with the supplied reason.
     """
-    from core.workflows.run_resume import resume_run
-
-    action = service.get_action(action_id)
-    if action is None:
-        raise HTTPException(status_code=404, detail=f"Approval not found: {action_id}")
-
-    rejected_by = current_user.username
     try:
-        updated = service.reject_action(
+        decided = await decide_reject(
+            service,
             action_id,
-            reason=request.reason,
-            rejected_by=rejected_by,
-            approved_by_principal_id=getattr(current_user, "principal_id", None)
+            request.reason,
+            current_user.username,
+            getattr(current_user, "principal_id", None)
             or getattr(current_user, "user_id", None),
         )
     except AlreadyDecided as e:
         raise HTTPException(status_code=409, detail=str(e))
-    if updated is None:
+    except ActionNotFound:
+        raise HTTPException(status_code=404, detail=f"Approval not found: {action_id}")
+    if decided is None:
         raise HTTPException(status_code=500, detail="Failed to reject action")
-    _record_decision(updated, rejected_by, request.reason)
-    await _rollout_decided(updated, rejected_by, request.reason)
-
-    response: Dict[str, Any] = {
-        "action": asdict(updated),
-        "resume_result": None,
-    }
-
-    if updated.workflow_run_id:
-        response["resume_result"] = await resume_run(
-            updated.workflow_run_id, action_id, rejected_by
-        )
-
-    return response
+    updated, resume_result = decided
+    return {"action": asdict(updated), "resume_result": resume_result}
