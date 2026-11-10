@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { DetectionMetrics } from '../../services/api'
+import { RolloutLoading } from './DetectionsLoading'
 
 const n = (v: number) => v.toLocaleString()
 const pct = (v: number) => `${(100 * v).toFixed(v > 0 && v < 0.1 ? 1 : 0)}%`
@@ -88,7 +89,7 @@ export default function RolloutMetrics({ data, error, onRetry }: { data: Detecti
           <button type="button" className="x1-link" onClick={onRetry}>Retry</button>
         </p>
       )}
-      {!data && !error && <p className="x1-muted de-card-sub">Reading the rollout metrics…</p>}
+      {!data && !error && <RolloutLoading />}
       {data && (
         <ul className="de-rollout-cells">
           {rows(data).map((r) => (
