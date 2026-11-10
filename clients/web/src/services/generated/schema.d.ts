@@ -11803,7 +11803,7 @@ export interface components {
              * Dormancy Days
              * @default 35
              */
-            dormancy_days?: number | null;
+            dormancy_days: number | null;
             /**
              * Idle Privileged Minutes
              * @default 10
@@ -12359,7 +12359,7 @@ export interface components {
              * Dormancy Days
              * @default 35
              */
-            dormancy_days?: number | null;
+            dormancy_days: number | null;
             /**
              * Idle Privileged Minutes
              * @default 10

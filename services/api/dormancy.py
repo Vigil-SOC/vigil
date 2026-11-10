@@ -82,7 +82,10 @@ def _handle(user_id: str, days: int, now) -> None:
         # be deactivated on the strength of the other still being active.
         session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": LOCK})
         user = (
-            session.query(User).filter(User.user_id == user_id).with_for_update().first()
+            session.query(User)
+            .filter(User.user_id == user_id)
+            .with_for_update()
+            .first()
         )
         if user is None or not user.is_active or user.service_account is True:
             return
