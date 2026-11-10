@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 import jwt
 import pyotp
 from cryptography.fernet import Fernet
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from core.auth import password_hash, principals
@@ -327,7 +328,18 @@ class AuthService:
                 # A bcrypt hash is replaced now that the password is known. Not a
                 # change: no history entry, password_changed_at untouched.
                 if password_hash.needs_rewrite(user.password_hash):
-                    user.password_hash = password_hash.hash(password)
+                    # Only over the hash just verified: a reset or change that
+                    # committed meanwhile is not undone.
+                    session.execute(
+                        update(User)
+                        .where(
+                            User.user_id == user.user_id,
+                            User.password_hash == user.password_hash,
+                        )
+                        .values(password_hash=password_hash.hash(password))
+                        .execution_options(synchronize_session=False)
+                    )
+                    session.expire(user, ["password_hash"])
 
                 # Success — reset lockout state and update session tracking
                 user.failed_login_count = 0

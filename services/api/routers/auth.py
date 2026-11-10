@@ -496,8 +496,6 @@ def login(
         # failure count on the other connection would wait out the request.
         # Drop the pending reset first. Put it back only if the code is good.
         pending_reset = user in session
-        # The rewritten hash (a bcrypt replaced at verify) is pending too.
-        pending_hash = user.password_hash
         if pending_reset:
             session.expire(user)
         if not AuthService.verify_mfa_code(user.user_id, payload.mfa_code, session):
@@ -511,7 +509,6 @@ def login(
             user.locked_until = None
             user.last_login = utcnow()
             user.login_count = (user.login_count or 0) + 1
-            user.password_hash = pending_hash
         # Whether TOTP or an old code got in, an old-scheme set ends here.
         new_recovery_codes = AuthService.upgrade_recovery_codes(user)
 

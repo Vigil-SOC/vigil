@@ -60,6 +60,13 @@ def _is_bcrypt(stored: str) -> bool:
     return stored.startswith("$2")
 
 
+def _bcrypt_ok(candidate: bytes, entry: str) -> bool:
+    try:
+        return bcrypt.checkpw(candidate, entry.encode("utf-8"))
+    except ValueError:
+        return False  # over bcrypt's 72 bytes (NFKC can grow a string): not a match
+
+
 def find(secret: str, stored: list[str]) -> int | None:
     """Index of the first hash in ``stored`` that matches ``secret``, else None.
     PBKDF2 hashes sharing a salt and count cost one derivation between them.
@@ -76,8 +83,8 @@ def find(secret: str, stored: list[str]) -> int | None:
                 # A bcrypt hash was made from the raw string before NFKC; accept
                 # either form so no existing password stops working.
                 raw = secret.encode("utf-8")
-                if bcrypt.checkpw(normal, entry.encode("utf-8")) or (
-                    raw != normal and bcrypt.checkpw(raw, entry.encode("utf-8"))
+                if _bcrypt_ok(normal, entry) or (
+                    raw != normal and _bcrypt_ok(raw, entry)
                 ):
                     return i
                 continue
@@ -92,8 +99,8 @@ def find(secret: str, stored: list[str]) -> int | None:
                 derived[(salt, int(iterations))], base64.b64decode(key)
             ):
                 return i
-        except (ValueError, TypeError):
-            continue  # malformed hash, or bcrypt refusing an over-long input
+        except (ValueError, TypeError, AttributeError):
+            continue  # malformed entry
     return None
 
 
