@@ -352,16 +352,22 @@ def end(sign_in_id: str, reason: str, session: Optional[Session] = None) -> bool
 
 
 def end_all_for_user(
-    user_id: str, reason: str, session: Optional[Session] = None
+    user_id: str,
+    reason: str,
+    session: Optional[Session] = None,
+    except_sign_in_id: Optional[str] = None,
 ) -> int:
-    """End every open sign-in of that user's principal. Returns how many."""
+    """End every open sign-in of that user's principal, but ``except_sign_in_id``
+    (left open, no stop queued for it). Returns how many."""
     with unit_of_work(session) as session:
         principal_id = (
             session.query(User.principal_id).filter(User.user_id == user_id).scalar()
         )
         if principal_id is None:
             return 0
-        open_rows = SignIn.principal_id == principal_id, SignIn.ended_at.is_(None)
+        open_rows = [SignIn.principal_id == principal_id, SignIn.ended_at.is_(None)]
+        if except_sign_in_id:
+            open_rows.append(SignIn.sign_in_id != except_sign_in_id)
         if reason in STOPS_RUNS:
             # Locked, so a sign-out committing now cannot be stopped for.
             for (sid,) in (

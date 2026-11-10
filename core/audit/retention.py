@@ -43,12 +43,14 @@ _ARMED = "erasure_file_armed"
 
 # A row names a principal when its hashed payload carries that id. The columns
 # beside the hash are what erasure clears; the payload stays so the chain does.
+# A case assignment or edit keeps the new assignee's username beside it.
 _NAMES = """
     payload->>'actor' = :id
     OR payload->>'on_behalf_of' = :id
     OR payload->>'principal' = :id
     OR payload->>'object' = :id
     OR payload #>> '{object,id}' = :id
+    OR payload->>'assignee' = :id
 """
 
 
