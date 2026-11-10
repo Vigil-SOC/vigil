@@ -1839,6 +1839,27 @@ export const authApi = {
     api.post<{ message: string }>('/auth/change-password', body),
 }
 
+export type Invite = Schema<'InviteEntry'>
+export type InviteChannel = Schema<'InviteRequest'>['channel']
+export type InviteIssued = Schema<'InviteIssued'>
+
+// Invites (users.write; each write asks "Confirm it's you"). A copied link
+// comes back once, in full or as a path for this console's own address.
+export const invitesApi = {
+  list: () => api.get<Schema<'InviteList'>>('/users/invites'),
+  create: (body: Schema<'InviteRequest'>) => api.post<InviteIssued>('/users/invites', body),
+  resend: (linkId: string, channel: InviteChannel) =>
+    api.post<InviteIssued>(`/users/invites/${encodeURIComponent(linkId)}/resend`, {
+      channel,
+    } satisfies Schema<'ResendRequest'>),
+  revoke: (linkId: string) => api.delete(`/users/invites/${encodeURIComponent(linkId)}`),
+  // Public: the link's value is the credential. Reading it uses nothing up.
+  details: (token: string) =>
+    api.get<Schema<'InviteDetails'>>('/auth/invite', { headers: { 'X-Invite-Token': token } }),
+  accept: (body: Schema<'InviteAccept'>) =>
+    api.post<{ message: string }>('/auth/invite/accept', body),
+}
+
 // Confirm it's you: opens the window the privileged changes read.
 export const confirmApi = {
   confirm: (body: Schema<'ConfirmItRequest'>) => api.post<Schema<'ConfirmedResponse'>>('/auth/confirm', body),

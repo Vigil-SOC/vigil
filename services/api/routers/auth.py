@@ -11,12 +11,12 @@ from typing import Annotated, List, NamedTuple, Optional, Union
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from core.audit.trail import SYSTEM
-from core.auth import session_policy, sign_ins, step_up, trail_events
+from core.auth import invites, session_policy, sign_ins, step_up, trail_events
 from core.auth.auth_cookies import (
     ACCESS_COOKIE_NAME,
     REFRESH_COOKIE_NAME,
@@ -34,6 +34,7 @@ from core.auth.auth_service import (
 from core.auth.bootstrap_code import has_human_user, setup_code_matches
 from core.auth.current_user import DEV_MODE, _detached, mfa_setup_route
 from core.auth.identity import claim_sign_in_names, identifier_in_use
+from core.auth.invites import NOT_USABLE
 from core.auth.password_reset import (
     decode_reset_token,
     default_base_url,
@@ -48,14 +49,17 @@ from core.auth.password_validator import (
 )
 from core.config import get_settings
 from core.platform.email_service import mail_is_configured, send_email
+from core.platform.notices import notify
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.storage.models import SignIn, User
+from core.storage.models import Role, SignIn, User
 from core.storage.schemas import UserSchema
 from core.storage.schemas.base import IsoDateTime
+from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 from services.api.middleware.auth import get_current_active_user
 from services.api.middleware.auth_rate_key import (
     bootstrap_rate_key,
+    invite_rate_key,
     login_rate_key,
     refresh_rate_key,
     reset_confirm_rate_key,
@@ -437,7 +441,7 @@ def bootstrap_admin(
     if has_human_user(session):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="An account already exists. Ask an administrator to create yours.",
+            detail="An account already exists. Ask an administrator to invite you.",
         )
 
     # Inside the advisory lock, before any user row is written. The submitted
@@ -1414,9 +1418,9 @@ def disable_mfa(
     return {"message": "MFA disabled successfully"}
 
 
-# Public self-registration was removed intentionally. All user creation
-# goes through the admin-gated POST /api/users/ endpoint (services/api/routers/users.py)
-# which validates the requested role against the caller's privileges.
+# Public self-registration was removed intentionally. Accounts come from an
+# invite (POST /api/users/invites, users.write, a role the inviter covers),
+# accepted through its link at POST /api/auth/invite/accept below.
 
 
 @router.post("/password-reset/request")
@@ -1560,6 +1564,184 @@ async def password_reset_confirm(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to reset password",
         )
+
+
+class InviteDetails(BaseModel):
+    """What an invite link is for. Reading it uses nothing up."""
+
+    email: str
+    # A suggestion: the email's local part.
+    username: str
+
+
+class InviteAccept(BaseModel):
+    token: str
+    username: str = Field(max_length=100)
+    password: str
+
+
+class _InviteRefused(Exception):
+    """Raised inside the acceptance transaction, so it rolls back first."""
+
+    def __init__(self, detail: str, reason: str, counts: bool = False):
+        super().__init__(detail)
+        self.detail, self.reason, self.counts = detail, reason, counts
+
+
+def _not_usable() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=NOT_USABLE)
+
+
+@router.get("/invite", response_model=InviteDetails)
+@limiter.limit("60/hour", key_func=invite_rate_key)
+def invite_details(
+    request: Request,
+    x_invite_token: Annotated[str, Header()],
+):
+    """The fixed email and a suggested username for an invite link. Public:
+    the link's value is the credential, sent in a header to stay out of URLs
+    and their logs."""
+    with unit_of_work() as session:
+        link = invites.find(session, x_invite_token)
+        if invites.usable(link):
+            # Said now, so nobody fills in the form for a refusal.
+            problem = invites.inviter_problem(session, link)
+            if problem:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"{problem} Ask for a new invite.",
+                )
+            return InviteDetails(
+                email=link.email, username=invites.suggested_username(link.email)
+            )
+        expired_id = link.link_id if link and invites.expired(link) else None
+    if expired_id:
+        invites.record_expiry_alone(expired_id)
+    raise _not_usable()
+
+
+def _accept_invite(body: InviteAccept) -> Optional[tuple[User, str, str, str]]:
+    """Create the account in one transaction, with the link locked. Returns the
+    account, the role's name, the inviter and the link's id; None for an
+    expired link, whose expiry it records."""
+    username = body.username.strip()
+    with unit_of_work() as session:
+        link = invites.find(session, body.token, lock=True)
+        if link is None:
+            raise _not_usable()
+        if invites.expired(link):
+            invites.record_expiry(session, link)  # commits with the return
+            return None
+        if not invites.usable(link):
+            raise _InviteRefused(NOT_USABLE, "not_usable")
+        problem = invites.inviter_problem(session, link)
+        if problem:
+            raise _InviteRefused(f"{problem} Ask for a new invite.", "inviter")
+        if not username or any(ch.isspace() for ch in username):
+            raise _InviteRefused("Choose a username without spaces.", "username")
+        claim_sign_in_names(session, username, link.email)
+        if identifier_in_use(session, username, except_link_id=link.link_id):
+            raise _InviteRefused(
+                "That username is taken. Choose another.", "username", counts=True
+            )
+        try:
+            validate_password_strength(
+                body.password, user_inputs=[username, link.email]
+            )
+        except PasswordPolicyError as exc:
+            raise _InviteRefused(exc.as_detail(), "password", counts=True)
+        role = session.get(Role, link.role_id)
+        user = AuthService.create_user(
+            username=username,
+            email=link.email,
+            password=body.password,
+            full_name=username,
+            role_id=role.role_id,
+            session=session,
+            except_link_id=link.link_id,
+        )
+        if not user:
+            # The names were free under the lock just taken, so this is a fault,
+            # not a guess: it doesn't count against the link.
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Could not create the account. Try again.",
+            )
+        link.used_at = utcnow()
+        link.user_id = user.user_id
+        trail_events.record(
+            session,
+            "user.created",
+            {"personal": trail_events.personal(user)},
+            actor=user.principal_id,
+            principal=user.principal_id,
+            role_id=user.role_id,
+            invited_by=link.invited_by,
+        )
+        trail_events.record(
+            session,
+            "invite.accepted",
+            {"personal": {"email": link.email}},
+            actor=user.principal_id,
+            principal=user.principal_id,
+            link_id=link.link_id,
+        )
+        session.expunge(user)
+        return user, role.name, link.invited_by, link.link_id
+
+
+def _record_refusal(token: str, refused: _InviteRefused, source_ip) -> None:
+    """After the acceptance rolled back: count the try and put it on the trail."""
+    with unit_of_work() as session:
+        link = invites.find(session, token, lock=True)
+        if link is None:
+            return
+        if refused.counts:
+            link.attempts += 1
+        trail_events.record(
+            session,
+            "invite.refused",
+            {"source_ip": source_ip, "personal": {"email": link.email}},
+            actor=SYSTEM,
+            link_id=link.link_id,
+            reason=refused.reason,
+            attempts=link.attempts,
+        )
+
+
+@router.post("/invite/accept", status_code=status.HTTP_201_CREATED)
+@limiter.limit("20/hour", key_func=invite_rate_key)
+def accept_invite(request: Request, body: InviteAccept):
+    """Create the invited account with the username and password its holder
+    chose. Public: the link is the credential, and it is used up only when the
+    account is created. A taken username or refused password counts against
+    the link; past the limit it stops working. The person then signs in."""
+    try:
+        accepted = _accept_invite(body)
+    except _InviteRefused as refused:
+        try:
+            _record_refusal(body.token, refused, client_host(request))
+        except Exception:  # noqa: BLE001 - refused regardless
+            logger.exception("could not record a refused invite")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=refused.detail
+        )
+    if accepted is None:
+        raise _not_usable()
+    user, role_name, inviter, link_id = accepted
+    try:
+        notify(
+            inviter,
+            "invite_accepted",
+            "Your invite was accepted",
+            f"{user.email} accepted your invite and joined as {role_name}, "
+            f"username {user.username}.",
+            metadata={"link_id": link_id, "user_id": user.user_id},
+        )
+    except Exception:  # noqa: BLE001 - the account stands
+        logger.exception("could not notify the inviter of %s", link_id)
+    logger.info("Invite %s accepted: %s", link_id, user.username)
+    return {"message": "Your account is ready. Sign in to continue."}
 
 
 # Read by _refuse_service_account at request time; the endpoints are defined above.

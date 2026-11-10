@@ -7,6 +7,7 @@ import api, {
   configApi,
   detectionRulesApi,
   federationApi,
+  invitesApi,
   ingestionApi,
   kafkaApi,
   localServicesApi,
@@ -22,6 +23,7 @@ import api, {
   type ComponentAssignment,
   type EffectClass,
   type FederationSourceView,
+  type Invite,
   type IngestionJob,
   type PlatformDatabaseProxyConfig,
   type ToolClass,
@@ -321,7 +323,6 @@ const EMPTY_ROLES_META: RolesMeta = {
 export interface UserPayload {
   username: string
   email: string
-  password: string
   full_name: string
   role_id: string
 }
@@ -330,6 +331,8 @@ export function useUsers() {
   const [users, setUsers] = useState<User[]>([])
   const [roles, setRoles] = useState<Role[]>([])
   const [rolesMeta, setRolesMeta] = useState<RolesMeta>(EMPTY_ROLES_META)
+  const [invites, setInvites] = useState<Invite[]>([])
+  const [emailUnavailable, setEmailUnavailable] = useState<string | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
@@ -339,14 +342,16 @@ export function useUsers() {
     let cancelled = false
     setPhase('loading')
     setError(null)
-    Promise.all([api.get('/users/'), api.get('/users/roles/list')])
-      .then(([usersRes, rolesRes]) => {
+    Promise.all([api.get('/users/'), api.get('/users/roles/list'), invitesApi.list()])
+      .then(([usersRes, rolesRes, invitesRes]) => {
         if (cancelled) return
         const u = usersRes.data?.users
         const r = rolesRes.data?.roles
         if (!Array.isArray(u) || !Array.isArray(r)) throw new Error('Invalid users/roles data')
         setUsers(u)
         setRoles(r)
+        setInvites(invitesRes.data.invites)
+        setEmailUnavailable(invitesRes.data.email_unavailable ?? null)
         const d = rolesRes.data
         setRolesMeta({
           presets: d.presets ?? [],
@@ -366,10 +371,6 @@ export function useUsers() {
     }
   }, [reloadKey])
 
-  const createUser = useCallback(
-    (payload: UserPayload) => api.post('/users/', payload).then(() => reload()),
-    [reload],
-  )
   const updateUser = useCallback(
     (userId: string, patch: Partial<UserPayload & { is_active: boolean }>) =>
       api.put(`/users/${userId}`, patch).then(() => reload()),
@@ -401,7 +402,8 @@ export function useUsers() {
     phase,
     error,
     reload,
-    createUser,
+    invites,
+    emailUnavailable,
     updateUser,
     deleteUser,
     createRole,

@@ -1,0 +1,14 @@
+/* Settings → Users: the invite dialog's channel choice and the copied link. */
+.invite-channel { margin: 0; padding: 0; border: 0; display: flex; flex-direction: column; gap: 8px; }
+.invite-channel legend { padding: 0; margin-bottom: 6px; font-size: 12px; font-weight: 600; color: var(--tx2); }
+.invite-channel label { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--ln1); border-radius: 10px; cursor: pointer; }
+.invite-channel label:has(input:checked) { border-color: var(--ac-ln); background: var(--ac-bg); }
+.invite-channel label:has(input:disabled) { cursor: default; opacity: 0.6; }
+.invite-channel input { margin-top: 3px; accent-color: var(--ac); }
+.invite-channel label > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.invite-channel label > span > span { color: var(--tx2); font-size: 12.5px; overflow-wrap: anywhere; }
+.invite-link { display: flex; gap: 8px; align-items: flex-start; }
+/* the whole link, wrapped: it is shown once and must be readable in full */
+.invite-link code { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--ln1); border-radius: 10px; background: var(--bg2); font-family: var(--mono); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; user-select: all; }
+.invite-link .btn { flex: none; }
+.invite-email { overflow-wrap: anywhere; white-space: normal; }

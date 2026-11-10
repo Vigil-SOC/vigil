@@ -9,7 +9,8 @@ from typing import Optional
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
-from core.storage.models import User
+from core.storage.models import AccountLink, User
+from core.time import utcnow
 
 
 def claim_sign_in_names(session: Session, *values: str) -> None:
@@ -43,12 +44,17 @@ def matching_accounts(session: Session, identifier: str) -> list[User]:
 
 
 def identifier_in_use(
-    session: Session, value: str, except_user_id: Optional[str] = None
+    session: Session,
+    value: str,
+    except_user_id: Optional[str] = None,
+    except_link_id: Optional[str] = None,
 ) -> bool:
-    """Whether another account already uses ``value`` as a username or email.
+    """Whether another account, or a pending invite's email, already uses
+    ``value`` as a username or email.
 
     Case-insensitive, so ``Ada@Example.com`` collides with ``ada@example.com``.
-    An account may use one string for both of its own columns.
+    An account may use one string for both of its own columns; acceptance
+    passes its own invite as ``except_link_id``.
     """
     key = value.casefold()
     clauses = [
@@ -61,4 +67,21 @@ def identifier_in_use(
     ]
     if except_user_id is not None:
         clauses.append(User.user_id != except_user_id)
-    return session.query(User.user_id).filter(*clauses).first() is not None
+    if session.query(User.user_id).filter(*clauses).first() is not None:
+        return True
+    invite = pending_invites(session).filter(
+        or_(AccountLink.email == value, func.lower(AccountLink.email) == key)
+    )
+    if except_link_id is not None:
+        invite = invite.filter(AccountLink.link_id != except_link_id)
+    return invite.first() is not None
+
+
+def pending_invites(session: Session):
+    """Invites not used, revoked or expired."""
+    return session.query(AccountLink).filter(
+        AccountLink.kind == "invite",
+        AccountLink.used_at.is_(None),
+        AccountLink.revoked_at.is_(None),
+        AccountLink.expires_at > utcnow(),
+    )

@@ -11,6 +11,7 @@ import Loader from './routing/Loader'
 const SocConsole = lazy(() => import('./shell/SocConsole'))
 const SocLogin = lazy(() => import('./screens/login/LoginScreen'))
 const ResetPassword = lazy(() => import('./screens/login/ResetPasswordScreen'))
+const AcceptInvite = lazy(() => import('./screens/login/AcceptInviteScreen'))
 const SetupScreen = lazy(() => import('./screens/setup/SetupScreen'))
 
 function App() {
@@ -27,6 +28,8 @@ function App() {
           <Route path="/login" element={<SocLogin />} />
           {/* Public — the emailed password-reset link lands here. */}
           <Route path="/reset-password" element={<ResetPassword />} />
+          {/* Public — an invite link lands here; the person sets their own password. */}
+          <Route path="/accept-invite" element={<AcceptInvite />} />
 
           {/* OUTSIDE SetupGate so it stays reachable while unconfigured (no redirect loop). */}
           <Route

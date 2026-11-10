@@ -115,3 +115,12 @@ def bootstrap_rate_key(request: Request) -> str:
     if username:
         return f"bootstrap:{username}"
     return f"bootstrap:missing:{client_host(request)}"
+
+
+def invite_rate_key(request: Request) -> str:
+    """By the link, hashed: from the body on accept, the header on the check."""
+    token = _body(request).get("token") or request.headers.get("x-invite-token")
+    if isinstance(token, str) and token.strip():
+        digest = hashlib.sha256(token.strip().encode()).hexdigest()
+        return f"invite:{digest}"
+    return f"invite:missing:{client_host(request)}"

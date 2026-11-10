@@ -265,6 +265,59 @@ class Role(Base):
     __table_args__ = (Index("idx_role_name", "name"),)
 
 
+class AccountLink(Base):
+    """A single-use link: an invite (#4226), later a password reset.
+
+    Only the SHA-256 of the link's value is stored. ``used_at`` is set by the
+    submission that completes it, ``revoked_at`` by a revoke or a newer link.
+    Built by ``core/upgrade/versions/0051_account_links.sql``.
+    """
+
+    __tablename__ = "account_links"
+
+    link_id: Mapped[str] = mapped_column(String(50), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(10), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    email: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    # The account: a reset's target, or the one an invite created.
+    user_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    role_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    invited_by: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # 'email' or 'copy'
+    channel: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    issued_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # When its expiry went on the trail; there is no scheduler, so it is
+    # written the first time an expired link is seen.
+    expiry_recorded_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
+    # Rejected submissions; past the limit the link is refused.
+    attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('invite', 'reset')", name="account_links_kind_check"),
+        CheckConstraint(
+            "channel IN ('email', 'copy')", name="account_links_channel_check"
+        ),
+        Index("idx_account_links_token", "token_hash", unique=True),
+        Index(
+            "idx_account_links_pending_invite",
+            text("lower(email)"),
+            unique=True,
+            postgresql_where=text(
+                "kind = 'invite' AND used_at IS NULL AND revoked_at IS NULL"
+            ),
+        ),
+    )
+
+
 class McpCredential(Base):
     """A credential a program holds, to reach Vigil's MCP surface.
 
