@@ -11433,6 +11433,8 @@ export interface components {
         LooseningOut: {
             /** Loosening */
             loosening: boolean;
+            /** Without Mfa */
+            without_mfa?: number | null;
         };
         /**
          * MFASetupResponse
@@ -12047,6 +12049,10 @@ export interface components {
              * @default 16
              */
             password_min_length: number;
+            /** Ranges */
+            ranges: {
+                [key: string]: components["schemas"]["Range"];
+            };
             /**
              * Require Mfa
              * @default privileged
@@ -12137,6 +12143,13 @@ export interface components {
          * @enum {string}
          */
         ProposalState: "draft" | "linted" | "replayed" | "converted" | "shadow" | "live" | "rejected";
+        /** Range */
+        Range: {
+            /** Max */
+            max: number;
+            /** Min */
+            min: number;
+        };
         /** ReasonRequest */
         ReasonRequest: {
             /**
