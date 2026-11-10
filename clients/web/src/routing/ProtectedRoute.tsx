@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Loader from './Loader';
 import { useColorScheme } from '../contexts/ColorSchemeContext';
 import { VigilMark } from '../shared/VigilLogo';
 import { Icon } from '../shared/icons';
+
+const SignedOutScreen = lazy(() => import('../screens/login/SignedOutScreen'))
 
 // Same look as Loader, with a retry in place of the progress track.
 function BackendUnreachable({ onRetry }: { onRetry: () => void }) {
@@ -31,7 +33,7 @@ function BackendUnreachable({ onRetry }: { onRetry: () => void }) {
 
 // Auth only. Per-screen permissions live in SocConsole's SCREEN_PERMS.
 export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading, backendUnreachable, retryLoadUser } = useAuth();
+  const { isAuthenticated, isLoading, backendUnreachable, signedOut, retryLoadUser } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -41,6 +43,15 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
   // Session state is unknown, not signed out: stay on the requested URL.
   if (!isAuthenticated && backendUnreachable) {
     return <BackendUnreachable onRetry={retryLoadUser} />;
+  }
+
+  // The server ended the sign-in: say why, at the address the person was on.
+  if (!isAuthenticated && signedOut) {
+    return (
+      <Suspense fallback={<Loader />}>
+        <SignedOutScreen reason={signedOut.reason} from={location} />
+      </Suspense>
+    )
   }
 
   if (!isAuthenticated) {

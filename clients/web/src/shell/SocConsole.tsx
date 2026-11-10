@@ -28,6 +28,7 @@ import ConsoleTour, { type TourStopId } from './ConsoleTour'
 import { markConsoleTourSeen, readConsoleTourSeen } from './consoleTourSeen'
 import ErrorBoundary from './ErrorBoundary'
 import { ToastProvider } from './toast'
+import SignInWatch from './SignInWatch'
 import { useDesktopNotifications } from './useDesktopNotifications'
 import { useNavPrefs, writeNavPrefs } from './navPrefs'
 import { SCREEN_PERMS, splitNav, useConsoleNav, type NavItem } from './consoleNav'
@@ -832,6 +833,7 @@ function SocConsoleInner() {
           onDismiss={dismissTour}
         />
       )}
+      <SignInWatch />
       </ToastProvider>
       </OverlayHost.Provider>
     </div>

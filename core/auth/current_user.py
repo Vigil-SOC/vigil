@@ -35,6 +35,8 @@ ACCESS_TOKEN_TYPE = "access"
 USER_ACTION_HEADER = "x-vigil-user-action"
 
 _SIGN_IN_ENDED = "Sign-in has ended"
+# A refusal is (status, detail, end reason); the reason is set only for an ended sign-in.
+_Refusal = tuple[int, str, Optional[str]]
 
 # Dev mode flag - ONLY for development, never in production!
 DEV_MODE = get_settings().dev_mode
@@ -112,29 +114,34 @@ def _detached(lookup: Callable[[Session], Optional[User]]) -> Optional[User]:
 
 def _check_sign_in(
     user_id: str, sid: str, user_agent: Optional[str], own_action: bool
-) -> tuple[Optional[User], Optional[tuple[int, str]]]:
+) -> tuple[Optional[User], Optional[_Refusal]]:
     """Load the user with the sign-in row and judge the row, in one short session.
 
-    Returns the detached user, or the refusal as (status, detail). A sign-in
-    found past a limit is ended here, with its reason, and commits with the 401.
+    Returns the detached user, or the refusal as (status, detail, end reason). A
+    sign-in found past a limit is ended here, with its reason, and commits with the 401.
     """
     with unit_of_work() as db:
         user = db.query(User).filter(User.user_id == user_id).first()
         if not user:
-            return None, (status.HTTP_401_UNAUTHORIZED, "User not found")
+            return None, (status.HTTP_401_UNAUTHORIZED, "User not found", None)
         if not user.is_active:
-            return None, (status.HTTP_403_FORBIDDEN, "User account is inactive")
+            return None, (status.HTTP_403_FORBIDDEN, "User account is inactive", None)
         row = db.get(SignIn, sid)
         if (
             row is None
             or row.ended_at is not None
             or row.principal_id != user.principal_id
         ):
-            return None, (status.HTTP_401_UNAUTHORIZED, _SIGN_IN_ENDED)
+            ended = row.end_reason if row is not None else None
+            return None, (status.HTTP_401_UNAUTHORIZED, _SIGN_IN_ENDED, ended)
         # The browser the sign-in began in. A mismatch refuses this request and
         # ends nothing: the real browser still holds the same tokens.
         if row.user_agent and row.user_agent != (user_agent or ""):
-            return None, (status.HTTP_401_UNAUTHORIZED, "Session fingerprint mismatch")
+            return None, (
+                status.HTTP_401_UNAUTHORIZED,
+                "Session fingerprint mismatch",
+                None,
+            )
 
         machine = user.service_account is True
         role = db.get(Role, user.role_id)
@@ -148,7 +155,7 @@ def _check_sign_in(
             over = sign_ins.IDLE
         if over:
             sign_ins.end(sid, over, db)
-            return None, (status.HTTP_401_UNAUTHORIZED, _SIGN_IN_ENDED)
+            return None, (status.HTTP_401_UNAUTHORIZED, _SIGN_IN_ENDED, over)
 
         if own_action and not machine:
             sign_ins.stamp_action(sid, db)
@@ -266,7 +273,14 @@ async def get_current_user(
         raise HTTPException(
             status_code=refusal[0],
             detail=refusal[1],
-            headers={"WWW-Authenticate": "Bearer"} if refusal[0] == 401 else None,
+            headers=(
+                {
+                    "WWW-Authenticate": "Bearer",
+                    **({sign_ins.END_REASON_HEADER: refusal[2]} if refusal[2] else {}),
+                }
+                if refusal[0] == 401
+                else None
+            ),
         )
 
     # The audit poll reads this to require a person sign-in before the role check.

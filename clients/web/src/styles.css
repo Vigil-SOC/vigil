@@ -2091,6 +2091,24 @@
       pointer-events: none;
    }
 
+   /* idle countdown and sign-in end notice: toasts that stay until they clear */
+   .signin-watch {
+      position: fixed;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: 22px;
+      z-index: 91;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      width: max-content;
+      max-width: min(420px, calc(100vw - 44px));
+   }
+
+   .signin-watch b {
+      white-space: nowrap;
+   }
+
    .toast {
       pointer-events: auto;
       display: flex;

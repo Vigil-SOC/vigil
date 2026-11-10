@@ -7,7 +7,7 @@ Handles login, logout, token refresh, password management, and MFA.
 import asyncio
 import logging
 from datetime import datetime
-from typing import Annotated, List, Optional, Union
+from typing import Annotated, List, NamedTuple, Optional, Union
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
@@ -300,13 +300,28 @@ def _limits(user: User, session: Session) -> session_policy.Limits:
     )
 
 
+class _Ended(NamedTuple):
+    """A refresh refused because its sign-in has ended, and why."""
+
+    reason: Optional[str]
+
+
+def _ended(reason: Optional[str]) -> JSONResponse:
+    """The 401 for an ended sign-in; the reason rides in a header the console reads."""
+    return JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content={"detail": "Sign-in has ended"},
+        headers={sign_ins.END_REASON_HEADER: reason} if reason else None,
+    )
+
+
 def _continue_sign_in(
     session: Session,
     sid: str,
     generation: int,
     user: User,
     user_agent: Optional[str],
-) -> Union[tuple[str, str, dict], str]:
+) -> Union[tuple[str, str, dict], str, _Ended]:
     """Continue the sign-in a refresh names: new tokens and the user payload,
     or the reason it is refused. Synchronous end to end: see the caller.
 
@@ -317,7 +332,7 @@ def _continue_sign_in(
     """
     row = session.get(SignIn, sid, with_for_update=True)
     if row is None or row.ended_at is not None or row.principal_id != user.principal_id:
-        return "Sign-in has ended"
+        return _Ended(row.end_reason if row is not None else None)
     # A browser mismatch refuses this request and ends nothing.
     if row.user_agent and row.user_agent != (user_agent or ""):
         return _INVALID_REFRESH_TOKEN
@@ -325,10 +340,10 @@ def _continue_sign_in(
     now = utcnow()
     if row.started_at + limit.absolute <= now:
         sign_ins.end(sid, sign_ins.LENGTH_LIMIT, session)
-        return "Sign-in has ended"
+        return _Ended(sign_ins.LENGTH_LIMIT)
     if limit.idle and row.last_action_at + limit.idle <= now:
         sign_ins.end(sid, sign_ins.IDLE, session)
-        return "Sign-in has ended"
+        return _Ended(sign_ins.IDLE)
 
     current = row.refresh_generation
     if generation == current:
@@ -663,6 +678,8 @@ async def logout(
             )
 
     clear_auth_cookies(response)
+    # The browser drops what it holds for this origin (the cookies are cleared above).
+    response.headers["Clear-Site-Data"] = '"cache", "storage"'
 
     logger.info(f"User logged out: {current_user.username}")
     return {"message": "Logged out successfully"}
@@ -830,7 +847,10 @@ async def refresh_token(
         expired = AuthService.expired_refresh_payload(raw_refresh)
         if expired and expired.get("sid"):
             try:
-                await asyncio.to_thread(sign_ins.end, expired["sid"], sign_ins.EXPIRY)
+                if await asyncio.to_thread(
+                    sign_ins.end, expired["sid"], sign_ins.EXPIRY
+                ):
+                    return _ended(sign_ins.EXPIRY)
             except Exception as exc:
                 logger.error("Failed to end an expired sign-in: %s", exc)
     if not payload or payload.get("token_type") != "refresh":
@@ -878,8 +898,10 @@ async def refresh_token(
         user,
         request.headers.get("user-agent"),
     )
-    if isinstance(outcome, str):
+    if isinstance(outcome, _Ended):
         # Returned, not raised: a sign-in ended on the way commits with it.
+        return _ended(outcome.reason)
+    if isinstance(outcome, str):
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": outcome}
         )
@@ -895,8 +917,29 @@ async def refresh_token(
     )
 
 
+def _sign_in_timing(request: Request, user: User, session: Session) -> Optional[dict]:
+    """Seconds until this sign-in goes idle (None: no idle limit) and reaches its
+    absolute end, as the server counts them. Relative, so the browser's clock
+    does not matter. None when the request has no sign-in (dev mode)."""
+    sid = _session_sid(request)
+    row = session.get(SignIn, sid) if sid else None
+    if row is None:
+        return None
+    limit = _limits(user, session)
+    now = utcnow()
+    return {
+        "idle_in_seconds": (
+            int((row.last_action_at + limit.idle - now).total_seconds())
+            if limit.idle
+            else None
+        ),
+        "ends_in_seconds": int((row.started_at + limit.absolute - now).total_seconds()),
+    }
+
+
 @router.get("/me")
 def get_current_user_info(
+    request: Request,
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: UnitOfWorkSession,
 ):
@@ -908,9 +951,12 @@ def get_current_user_info(
         session: Database session
 
     Returns:
-        User information with permissions
+        User information with permissions, and when the sign-in goes idle and ends
     """
-    return _user_payload(current_user, session)
+    return {
+        **_user_payload(current_user, session),
+        "sign_in": _sign_in_timing(request, current_user, session),
+    }
 
 
 def _apply_profile_update(

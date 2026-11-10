@@ -8,6 +8,7 @@ import GeneralSection from './GeneralSection'
 import SystemSection from './SystemSection'
 import FederationSection from './FederationSection'
 import UsersSection from './UsersSection'
+import SessionsSection from './SessionsSection'
 import AutoInvestigateSection from './AutoInvestigateSection'
 import DeveloperSection from './DeveloperSection'
 import AiConfigSection from './AiConfigSection'
@@ -35,7 +36,7 @@ type NavKey =
   | 'audit'
   | 'system'
 
-type SystemTabKey = 'services' | 'system' | 'general' | 'dev' | 'users' | 'appearance'
+type SystemTabKey = 'services' | 'system' | 'general' | 'dev' | 'users' | 'sessions' | 'appearance'
 
 interface NavDef {
   key: NavKey
@@ -64,6 +65,7 @@ const SYSTEM_TAB_DEFS: SystemTabDef[] = [
   { key: 'general', label: 'General', perm: 'platform.read', Component: GeneralSection },
   { key: 'dev', label: 'Developer', devOnly: true, perm: 'platform.read', Component: DeveloperSection },
   { key: 'users', label: 'Users', perm: 'platform.read', Component: UsersSection },
+  { key: 'sessions', label: 'Sessions', perm: 'sessions.manage', Component: SessionsSection },
   // a person's own view of the console, not the platform's: ungated
   { key: 'appearance', label: 'Appearance', Component: NavigationSection },
 ]

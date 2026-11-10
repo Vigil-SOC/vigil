@@ -58,6 +58,9 @@ REASON_WORDS = {
 }
 UNNAMED_REASON = "Ended by a security event"
 
+# On a 401 for a sign-in that has ended: the reason, for the console's signed-out state.
+END_REASON_HEADER = "X-Sign-In-End-Reason"
+
 # Ended rows stay in a list this long, and a list holds at most this many.
 LISTED_FOR = timedelta(days=30)
 LISTED = 50

@@ -7,10 +7,13 @@ export const USER_ACTION_HEADER = 'X-Vigil-User-Action'
 const WINDOW_MS = 5_000
 let lastInput = 0
 
+/** Counts the request sent next as the person's own, for an action that is not a DOM event. */
+export const noteInput = () => {
+  lastInput = Date.now()
+}
+
 if (typeof document !== 'undefined') {
-  const note = () => {
-    lastInput = Date.now()
-  }
+  const note = noteInput
   document.addEventListener('pointerdown', note, { capture: true, passive: true })
   document.addEventListener('keydown', note, { capture: true, passive: true })
   window.addEventListener('popstate', note)
