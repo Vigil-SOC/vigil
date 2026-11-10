@@ -3,7 +3,7 @@
 from core.upgrade.revision import run_sql
 
 revision = "0045_detection_proposals"
-down_revision = "0044_sign_in_end_reasons"
+down_revision = "0045_run_sign_in"
 
 
 def upgrade() -> None:

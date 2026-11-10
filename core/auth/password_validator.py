@@ -63,7 +63,7 @@ def check_not_listed(
     folded = password.lower()
     if folded == "vigil":
         raise PasswordPolicyError(
-            "Password can't be \"Vigil\"",
+            'Password can\'t be "Vigil"',
             suggestions=["Choose something unrelated to this product."],
         )
     if any(t and folded == t.lower() for t in user_inputs or ()):
