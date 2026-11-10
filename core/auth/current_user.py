@@ -10,7 +10,7 @@ are unaffected.
 """
 
 import logging
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from fastapi import Header, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
@@ -36,7 +36,20 @@ USER_ACTION_HEADER = "x-vigil-user-action"
 
 _SIGN_IN_ENDED = "Sign-in has ended"
 # A refusal is (status, detail, end reason); the reason is set only for an ended sign-in.
-_Refusal = tuple[int, str, Optional[str]]
+_Refusal = tuple[int, Any, Optional[str]]
+
+# The 403 detail.code of a covered account with no MFA, on every route but the setup ones.
+MFA_SETUP_REQUIRED = "mfa_setup_required"
+
+
+def mfa_setup_route(endpoint: Callable) -> Callable:
+    """Mark a route the MFA requirement lets through, so a person can set MFA up.
+
+    Put it directly under the route decorator: the route's own function is read.
+    """
+    endpoint.mfa_setup_route = True  # type: ignore[attr-defined]
+    return endpoint
+
 
 # Dev mode flag - ONLY for development, never in production!
 DEV_MODE = get_settings().dev_mode
@@ -113,12 +126,19 @@ def _detached(lookup: Callable[[Session], Optional[User]]) -> Optional[User]:
 
 
 def _check_sign_in(
-    user_id: str, sid: str, user_agent: Optional[str], own_action: bool
+    user_id: str,
+    sid: str,
+    user_agent: Optional[str],
+    own_action: bool,
+    setup_route: bool = False,
 ) -> tuple[Optional[User], Optional[_Refusal]]:
     """Load the user with the sign-in row and judge the row, in one short session.
 
     Returns the detached user, or the refusal as (status, detail, end reason). A
     sign-in found past a limit is ended here, with its reason, and commits with the 401.
+    An account the MFA requirement covers, with no MFA yet, is refused with 403
+    ``mfa_setup_required`` unless the route is a setup route. Judged on every
+    request, so a role edit or a raised setting applies at the next one.
     """
     with unit_of_work() as db:
         user = db.query(User).filter(User.user_id == user_id).first()
@@ -146,7 +166,8 @@ def _check_sign_in(
         machine = user.service_account is True
         role = db.get(Role, user.role_id)
         held = [name for name, on in ((role and role.permissions) or {}).items() if on]
-        limit = session_policy.limits(held, machine)
+        current = session_policy.policy()
+        limit = session_policy.limits(held, machine, current)
         now = utcnow()
         over = None
         if row.started_at + limit.absolute <= now:
@@ -156,6 +177,20 @@ def _check_sign_in(
         if over:
             sign_ins.end(sid, over, db)
             return None, (status.HTTP_401_UNAUTHORIZED, _SIGN_IN_ENDED, over)
+
+        if (
+            not user.mfa_enabled
+            and not setup_route
+            and session_policy.mfa_covered(held, machine, current.require_mfa)
+        ):
+            return None, (
+                status.HTTP_403_FORBIDDEN,
+                {
+                    "code": MFA_SETUP_REQUIRED,
+                    "message": "Set up two-step sign-in to continue",
+                },
+                None,
+            )
 
         if own_action and not machine:
             sign_ins.stamp_action(sid, db)
@@ -268,6 +303,7 @@ async def get_current_user(
         sid,
         request.headers.get("user-agent"),
         own_action,
+        getattr(request.scope.get("endpoint"), "mfa_setup_route", False),
     )
     if refusal:
         raise HTTPException(

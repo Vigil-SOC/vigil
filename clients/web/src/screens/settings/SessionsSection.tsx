@@ -6,8 +6,11 @@ import { utcDayClock } from '../../shared/utc'
 import { ConfirmDialog, NumberInput, SettingsCard } from '../../shared/ui'
 import type { SectionProps } from './types'
 
-// The lockout and dormancy fields have no control here: a save sends the saved ones back unchanged.
-type Key = Exclude<keyof SessionPolicyBody, 'lockout_threshold' | 'lockout_timed' | 'lockout_minutes' | 'dormancy_days'>
+// The lockout, dormancy and MFA fields have no control here: a save sends the saved ones back unchanged.
+type Key = Exclude<
+  keyof SessionPolicyBody,
+  'lockout_threshold' | 'lockout_timed' | 'lockout_minutes' | 'dormancy_days' | 'require_mfa'
+>
 
 interface FieldDef {
   key: Key
@@ -101,8 +104,8 @@ export default function SessionsSection({ notify }: SectionProps) {
     else if (/^\d+$/.test(raw)) parsed[f.key] = Number(raw)
     else valid = false
   }
-  const { lockout_threshold, lockout_timed, lockout_minutes, dormancy_days } = saved
-  const body = { ...parsed, lockout_threshold, lockout_timed, lockout_minutes, dormancy_days } as SessionPolicyBody
+  const { lockout_threshold, lockout_timed, lockout_minutes, dormancy_days, require_mfa } = saved
+  const body = { ...parsed, lockout_threshold, lockout_timed, lockout_minutes, dormancy_days, require_mfa } as SessionPolicyBody
   const dirty = FIELDS.some((f) => form[f.key] !== toForm(saved)[f.key])
 
   const save = async (next: SessionPolicyBody) => {
