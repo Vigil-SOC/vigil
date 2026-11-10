@@ -18,7 +18,13 @@ from cryptography.fernet import MultiFernet
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
-from core.auth import key_ring, password_hash, principals, session_policy
+from core.auth import (
+    key_ring,
+    password_hash,
+    principals,
+    security_keys,
+    session_policy,
+)
 from core.auth.identity import claim_sign_in_names, identifier_in_use, matching_accounts
 from core.config import get_settings
 from core.exceptions import default_on_error
@@ -94,6 +100,8 @@ _RECOVERY_CODE = re.compile(r"[0-9A-F]{8}|[0-9A-F]{16}")
 CODE_APP = "app"
 CODE_RECOVERY = "recovery"
 CODE_OLD_RECOVERY = "old_recovery"
+# An assertion of a security key was accepted at login (#4234).
+CODE_KEY = "security_key"
 
 
 def _is_service_account(user: User) -> bool:
@@ -490,10 +498,13 @@ class AuthService:
 
             secret = pyotp.random_base32()
             user.mfa_secret = AuthService._encrypt_mfa_secret(secret)
-            user.mfa_enabled = False
-            # Clear any stale codes from a prior setup attempt; fresh codes
-            # are issued at enable time.
-            user.mfa_recovery_codes = []
+            # A person with security keys keeps MFA on, and the codes issued with
+            # their first method, while the app is set up beside them.
+            if not security_keys.has_keys(session, user.principal_id):
+                user.mfa_enabled = False
+                # Clear any stale codes from a prior setup attempt; fresh codes
+                # are issued at enable time.
+                user.mfa_recovery_codes = []
             user.mfa_last_totp_step = None  # the old secret's steps don't apply
 
             logger.info(f"MFA setup initiated for user: {user.username}")
@@ -600,6 +611,12 @@ class AuthService:
                 user = AuthService._lock_user(session, user_id)
                 if not user or not user.mfa_secret or _account_is_locked(user):
                     return None
+                # With keys, a secret no code has confirmed yet (no TOTP step) is a
+                # setup in progress, not a method: it answers no login or check.
+                if user.mfa_last_totp_step is None and security_keys.has_keys(
+                    session, user.principal_id
+                ):
+                    return None
 
                 # Try TOTP first. An undecryptable secret must not block recovery
                 # codes: they are hashes and do not depend on the key.
@@ -646,18 +663,37 @@ class AuthService:
         return accepted
 
     @staticmethod
+    def turn_on_with_key(user: User) -> list[str]:
+        """A person's first method is a security key: MFA is on, with the one-time
+        recovery codes returned here, as for the app. ``user`` is a locked row.
+        A secret left by an abandoned app setup goes."""
+        user.mfa_secret = None
+        user.mfa_last_totp_step = None
+        user.mfa_enabled = True
+        codes, user.mfa_recovery_codes = AuthService._generate_recovery_codes()
+        return codes
+
+    @staticmethod
     @default_on_error(False)
     def disable_mfa(user_id: str, session: Optional[Session] = None) -> bool:
-        """Turn MFA off. The caller has run the strong check (``step_up.confirm``).
+        """Remove the authenticator app. The caller has run the strong check
+        (``step_up.confirm``).
 
-        Clears the secret and any remaining recovery codes. Returns False
-        (leaving MFA untouched) if MFA is not enabled.
+        With no security key that turns MFA off: the secret and the remaining
+        recovery codes go too. A person with keys keeps MFA, the codes and the
+        keys. Returns False, leaving MFA untouched, if there is no app to remove.
         """
         with unit_of_work(session) as session:
             user = AuthService._lock_user(session, user_id)
             if not user or not user.mfa_enabled:
                 return False
-            AuthService.clear_mfa(user)
+            if security_keys.has_keys(session, user.principal_id):
+                if not user.mfa_secret:
+                    return False
+                user.mfa_secret = None
+                user.mfa_last_totp_step = None
+            else:
+                AuthService.clear_mfa(user)
             logger.info(f"MFA disabled for user: {user.username}")
             return True
 
