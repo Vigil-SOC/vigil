@@ -399,6 +399,11 @@
     "title": "get_approval_actionArguments",
     "type": "object"
   },
+  "get_autonomy_ceiling": {
+    "properties": {},
+    "title": "get_autonomy_ceilingArguments",
+    "type": "object"
+  },
   "get_case": {
     "properties": {
       "case_id": {
@@ -450,6 +455,32 @@
     "title": "get_findingArguments",
     "type": "object"
   },
+  "get_operator_agent": {
+    "properties": {
+      "agent_id": {
+        "title": "Agent Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "agent_id"
+    ],
+    "title": "get_operator_agentArguments",
+    "type": "object"
+  },
+  "get_workflow": {
+    "properties": {
+      "workflow_id": {
+        "title": "Workflow Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "workflow_id"
+    ],
+    "title": "get_workflowArguments",
+    "type": "object"
+  },
   "list_approval_actions": {
     "properties": {
       "action_type": {
@@ -478,6 +509,154 @@
       }
     },
     "title": "list_approval_actionsArguments",
+    "type": "object"
+  },
+  "list_audit_entries": {
+    "properties": {
+      "actor": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Actor"
+      },
+      "after": {
+        "anyOf": [
+          {
+            "minimum": 0,
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "After"
+      },
+      "area": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Area"
+      },
+      "attribution": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Attribution"
+      },
+      "kind": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Kind"
+      },
+      "limit": {
+        "default": 100,
+        "maximum": 500,
+        "minimum": 1,
+        "title": "Limit",
+        "type": "integer"
+      },
+      "object": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Object"
+      },
+      "outcome": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Outcome"
+      },
+      "person": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Person"
+      },
+      "sign_in": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Sign In"
+      },
+      "since": {
+        "anyOf": [
+          {
+            "format": "date-time",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Since"
+      },
+      "until": {
+        "anyOf": [
+          {
+            "format": "date-time",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Until"
+      }
+    },
+    "title": "list_audit_entriesArguments",
     "type": "object"
   },
   "list_cases": {
@@ -616,6 +795,16 @@
       }
     },
     "title": "list_findingsArguments",
+    "type": "object"
+  },
+  "list_operator_agents": {
+    "properties": {},
+    "title": "list_operator_agentsArguments",
+    "type": "object"
+  },
+  "list_workflows": {
+    "properties": {},
+    "title": "list_workflowsArguments",
     "type": "object"
   },
   "reject_action": {

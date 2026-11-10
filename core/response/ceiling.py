@@ -26,10 +26,11 @@ from datetime import timedelta
 from types import MappingProxyType
 from typing import Any, Callable, Iterable, Mapping, Optional
 
-from sqlalchemy import event, select
+from sqlalchemy import event, select, text
 
 from core.config import Settings, get_settings
 from core.storage import config_service as config_store
+from core.storage.connection import get_db_session
 from core.storage.models import SystemConfig, ToolEffectClass, WorkflowRun
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -214,6 +215,43 @@ def ceiling_view(stored: Ceiling, settings: Optional[Settings] = None) -> Ceilin
         environment_locked=environment_locks_act(settings),
         four_eyes=stored.four_eyes,
     )
+
+
+def _labels(ids: set) -> dict[str, str]:
+    """Principal id to its label; blank or erased labels are left out."""
+    if not ids:
+        return {}
+    with get_db_session() as session:
+        rows = session.execute(
+            text(
+                "SELECT principal_id, label FROM public.principals "
+                "WHERE principal_id = ANY(:ids)"
+            ),
+            {"ids": list(ids)},
+        ).all()
+    return {pid: label.strip() for pid, label in rows if label and label.strip()}
+
+
+def ceiling_read() -> dict[str, Any]:
+    """The ceiling as ``GET /api/v1/autonomy`` and the MCP tool return it.
+
+    Each workflow entry gains ``by_label``, the principal's name read now (#3642).
+    """
+    stored = read_ceiling()
+    labels = _labels(
+        {
+            e.get("by")
+            for e in stored.workflows.values()
+            if e.get("by") not in (None, "system")
+        }
+    )
+    return {
+        **vars(ceiling_view(stored)),
+        "workflows": {
+            wid: {**entry, "by_label": labels.get(entry.get("by"))}
+            for wid, entry in stored.workflows.items()
+        },
+    }
 
 
 def execution_held() -> bool:

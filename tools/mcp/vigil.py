@@ -3,16 +3,21 @@ import inspect
 import json
 import logging
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 
 from mcp.server.mcpserver import MCPServer
+from pydantic import Field
 
 from core.agents import tool_registry
+from core.agents.custom_agent_service import CustomAgentService
+from core.audit import reads, trail
 from core.auth.permissions import permission_refusal
 from core.cases.agent_closure import actor, service_session
 from core.cases.assignee import resolve_assignee, resolve_escalation_target
 from core.cases.case_status import CaseStatus
 from core.response.approval_service import ActionStatus, ActionType, ApprovalService
+from core.response.ceiling import ceiling_read
+from core.storage.connection import get_db_session
 from core.storage.schemas.case_entities import (
     CaseClosureInfoSchema,
     CaseCommentSchema,
@@ -23,6 +28,8 @@ from core.storage.schemas.case_entities import (
     CaseTaskSchema,
 )
 from core.time import utcnow
+from core.workflows import catalog
+from core.workflows.workflows_service import WorkflowsService
 
 logger = logging.getLogger(__name__)
 mcp = MCPServer("vigil")
@@ -50,6 +57,12 @@ FROZEN_TOOLS = frozenset(
         "get_approval_action",
         "approve_action",
         "reject_action",
+        "list_workflows",
+        "get_workflow",
+        "list_operator_agents",
+        "get_operator_agent",
+        "get_autonomy_ceiling",
+        "list_audit_entries",
     }
 )
 
@@ -1396,3 +1409,126 @@ def reject_action(
 ) -> str:
     """Reject a pending action. The actor is the caller, not an argument."""
     return _call(tool_registry.reject_action, action_id=action_id, reason=reason)
+
+
+# Catalog and oversight reads (#4249): each mirrors a frozen /api/v1 GET and
+# checks the permission that route checks.
+
+
+@mcp.tool()
+@requires("automation.read")
+def list_workflows() -> str:
+    """List the workflows, file-based and custom, as GET /api/v1/workflows does:
+    ``{workflows, count}``."""
+    return _call(catalog.listing, service=WorkflowsService())
+
+
+@mcp.tool()
+@requires("automation.read")
+def get_workflow(workflow_id: str) -> str:
+    """Get one workflow in full, as GET /api/v1/workflows/{workflow_id} does."""
+    try:
+        workflow = catalog.detail(WorkflowsService(), workflow_id)
+    except Exception as e:
+        logger.error("get_workflow failed: %s", e)
+        return jdump({"error": str(e)})
+    if workflow is None:
+        return jdump({"error": f"Workflow not found: {workflow_id}"})
+    return jdump(workflow)
+
+
+# The keys GET /api/v1/agents serves (AgentManifestResponse).
+_AGENT_KEYS = ("id", "description", "needs", "skills", "manifest")
+_AGENT_TIMES = ("created_at", "updated_at")
+
+
+def _agent(row: dict) -> dict:
+    return {
+        **{k: row.get(k) for k in _AGENT_KEYS},
+        **{k: row[k].isoformat() if row.get(k) else None for k in _AGENT_TIMES},
+    }
+
+
+@mcp.tool()
+@requires("automation.read")
+def list_operator_agents() -> str:
+    """List the operator agents (stored plugin manifests), as GET /api/v1/agents
+    does: ``{agents, count}``. Read only."""
+
+    def listing():
+        agents = [_agent(row) for row in CustomAgentService().list_manifests()]
+        return {"agents": agents, "count": len(agents)}
+
+    return _call(listing)
+
+
+@mcp.tool()
+@requires("automation.read")
+def get_operator_agent(agent_id: str) -> str:
+    """Get one operator agent's manifest, as GET /api/v1/agents/{agent_id} does."""
+    try:
+        row = CustomAgentService().get_manifest(agent_id)
+    except Exception as e:
+        logger.error("get_operator_agent failed: %s", e)
+        return jdump({"error": str(e)})
+    if row is None:
+        return jdump({"error": f"Agent not found: {agent_id}"})
+    return jdump(_agent(row))
+
+
+@mcp.tool()
+@requires("ai_autonomy.read")
+def get_autonomy_ceiling() -> str:
+    """Read the autonomy ceiling, as GET /api/v1/autonomy does: the stored act
+    flags, the effective read/write/propose state, environment_locked, four_eyes
+    and each workflow's own tier. Read only."""
+    try:
+        return jdump(ceiling_read())
+    except Exception as e:
+        logger.error("get_autonomy_ceiling failed: %s", e)
+        return jdump({"error": "Could not read the autonomy ceiling"})
+
+
+@mcp.tool()
+@requires("audit.read")
+def list_audit_entries(
+    since: Optional[datetime] = None,
+    until: Optional[datetime] = None,
+    actor: Optional[str] = None,
+    person: Optional[str] = None,
+    kind: Optional[str] = None,
+    area: Optional[str] = None,
+    object: Optional[str] = None,
+    outcome: Optional[str] = None,
+    attribution: Optional[str] = None,
+    after: Annotated[Optional[int], Field(ge=0)] = None,
+    sign_in: Optional[str] = None,
+    limit: Annotated[int, Field(ge=1, le=trail.POLL_LIMIT)] = 100,
+) -> str:
+    """Read the audit trail, oldest sequence first, as GET /api/v1/audit/entries
+    does: ``{entries, tip, feed}``. Page on ``after``: pass the last ``seq`` read.
+    A plain read: it is not the forwarder's poll and moves no feed or retention
+    state."""
+    try:
+        q = reads.query(
+            since=since,
+            until=until,
+            actor=actor,
+            person=person,
+            kind=kind,
+            area=area,
+            object_=object,
+            outcome=outcome,
+            attribution=attribution,
+            after=after,
+            sign_in=sign_in,
+        )
+    except ValueError as e:
+        return jdump({"error": str(e)})
+    try:
+        # Read only: the session closes without a commit.
+        with get_db_session() as session:
+            return jdump(reads.page(session, q, limit))
+    except Exception as e:
+        logger.error("list_audit_entries failed: %s", e)
+        return jdump({"error": str(e)})
