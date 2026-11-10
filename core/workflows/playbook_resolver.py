@@ -41,6 +41,7 @@ REMOTE = "remote"
 INVESTIGATE_CAPABILITIES = (
     "case_records",
     "case_evidence",
+    "shell",
     "entity_recall",
     "get_finding",
     "telemetry_search",
@@ -50,9 +51,14 @@ INVESTIGATE_CAPABILITIES = (
 
 
 def _tool_catalogue(registry: Optional["MCPRegistry"]) -> Dict[str, Dict[str, Any]]:
+    from core.cases.case_view import shell_address
     from core.llm.tool_schemas import ALL_TOOLS
 
     catalogue = {tool["name"]: tool for tool in ALL_TOOLS if tool.get("name")}
+    # No sidecar here (Helm, until #4200): the shell binds nothing, and the run
+    # reports it as a blind spot rather than holding a tool that always fails.
+    if shell_address() == (None, None):
+        catalogue.pop("read_case_shell", None)
     # The integrations this deployment carries, as tools with the same shape. A
     # server that is not connected reports nothing, so it binds nothing.
     for tool in _mcp_catalogue(registry):
@@ -133,6 +139,9 @@ CAPABILITIES: Dict[str, Tuple[Candidate, ...]] = {
     "entity_recall": (Candidate(None, ("recall_entity",)),),
     "case_records": (Candidate(None, ("case_records",)),),
     "case_evidence": (Candidate(None, ("read_case_evidence",)),),
+    # The case shell (#4199). Bound wherever the backend carries the tool; a
+    # deployment with no sidecar answers each call unavailable.
+    "shell": (Candidate(None, ("read_case_shell",)),),
     "get_finding": (Candidate(None, ("get_finding",)),),
     # A threat-intel platform's own graph, one tool each: an observable's indicators,
     # one indicator, named actors and malware, and what an entity links to. OpenCTI is
@@ -162,6 +171,10 @@ CAPABILITY_BOUNDS: Dict[str, Dict[str, int]] = {
     # Extraction may take PARSE_TIMEOUT_S (60s) on a PDF or Office file. The row
     # cap is the bounds model's shape; the evidence list is not under a key it cuts.
     "case_evidence": {"timeout_ms": 90_000, "max_rows": 200},
+    # A first render extracts every attachment (PARSE_TIMEOUT_S, 60s, in
+    # parallel), then the command runs to the sidecar's own 30s limit. One
+    # answer, so the row cap is only the bounds model's shape.
+    "shell": {"timeout_ms": 120_000, "max_rows": 1},
     # One row of our own Postgres. Its size is the record behind the alert, which
     # result_cap bounds, so the row cap is only the shape the bounds model asks for.
     "get_finding": {"timeout_ms": 15_000, "max_rows": 1},
