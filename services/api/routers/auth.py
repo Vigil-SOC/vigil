@@ -16,7 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from core.audit.trail import SYSTEM
-from core.auth import session_policy, sign_ins, step_up, trail_events
+from core.auth import mfa_methods, session_policy, sign_ins, step_up, trail_events
 from core.auth.auth_cookies import (
     ACCESS_COOKIE_NAME,
     REFRESH_COOKIE_NAME,
@@ -24,6 +24,7 @@ from core.auth.auth_cookies import (
     set_auth_cookies,
 )
 from core.auth.auth_service import (
+    CODE_RECOVERY,
     AccountLockedError,
     AuthService,
     _account_is_locked,
@@ -220,6 +221,9 @@ class LoginResponse(BaseModel):
     # Set once, at the first MFA sign-in after the upgrade: the old recovery
     # codes are void and these replace them.
     recovery_codes: Optional[List[str]] = None
+    # A recovery code got this sign-in in: every method is gone, and the console
+    # goes straight to setting one up.
+    mfa_removed: bool = False
 
 
 class ChangePasswordRequest(BaseModel):
@@ -272,9 +276,12 @@ class RecoveryCodesResponse(BaseModel):
 
 
 class MFAVerifyRequest(BaseModel):
-    """MFA verification request."""
+    """A method change: the code and, for the strong check, the password. Body
+    fields so neither is written to access logs. Optional so a missing password
+    is the check's own "Enter your password.", not a 422."""
 
     code: str
+    password: Optional[str] = None
 
 
 class PasswordResetRequest(BaseModel):
@@ -530,6 +537,65 @@ def bootstrap_admin(
     return UserSchema.dump(user)
 
 
+def _end_others_after_change(
+    session: Session, user: User, keep: Optional[str], source: Optional[str]
+) -> None:
+    """A method change ends the person's other sign-ins and stops their runs;
+    ``keep``, the one making the change, stays open with its runs."""
+    ids = [sid for sid, _ in sign_ins.open_ids(session, user.principal_id, keep=keep)]
+    sign_ins.end_all_for_user(
+        user.user_id,
+        sign_ins.ACCOUNT_CHANGED,
+        session,
+        except_sign_in_id=keep,
+    )
+    for sid in ids:
+        trail_events.record(
+            session,
+            "auth.sign_in_ended",
+            {"source_ip": source},
+            actor=user.principal_id,
+            principal=user.principal_id,
+            sign_in=sid,
+            end_reason=sign_ins.ACCOUNT_CHANGED,
+        )
+
+
+def _tell_person(session: Session, user: User, title: str, message: str) -> None:
+    """Tell the person once the change commits. Never a code: notices are emailed."""
+    principal = user.principal_id
+
+    def send() -> None:
+        notify(
+            principal, "mfa_change", title, message, link="/settings", priority="high"
+        )
+
+    when_committed(session, send)
+
+
+def _recover(session: Session, user: User, source: Optional[str]) -> None:
+    """A recovery code was accepted at login: take every method, end the other
+    sign-ins, and tell the person."""
+    AuthService.clear_mfa(user)
+    trail_events.record(
+        session,
+        "auth.mfa_recovered",
+        {"source_ip": source},
+        actor=user.principal_id,
+        principal=user.principal_id,
+    )
+    _end_others_after_change(session, user, None, source)
+    _tell_person(
+        session,
+        user,
+        "A recovery code was used to sign in",
+        "A recovery code was used to sign in to your account. Your authenticator "
+        "app and remaining recovery codes were removed and your other sign-ins "
+        "ended; two-step sign-in has to be set up again. If this wasn't you, "
+        "change your password and tell an admin.",
+    )
+
+
 @router.post("/login", response_model=LoginResponse)
 @limiter.limit("5/minute", key_func=login_rate_key)
 def login(
@@ -597,6 +663,10 @@ def login(
         raise _invalid_credentials()
 
     new_recovery_codes = None
+    recovered = False
+    # Whether the account had MFA when the password was given: a recovery below
+    # clears it, and the length rule must still be the one the account signed in under.
+    had_mfa = user.mfa_enabled
     # Check MFA if enabled
     if user.mfa_enabled:
         if not payload.mfa_code:
@@ -616,13 +686,14 @@ def login(
         if pending_reset:
             session.expire(user)
         # The login step is the one place a wrong code counts toward a lock.
-        if not AuthService.verify_mfa_code(
+        accepted = AuthService.verify_mfa_code(
             user.user_id,
             payload.mfa_code,
             session,
             count_failures=True,
             source=source,
-        ):
+        )
+        if not accepted:
             failed("bad_mfa_code")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -632,6 +703,12 @@ def login(
             clear_lock(user)
             user.last_login = utcnow()
             user.login_count = (user.login_count or 0) + 1
+        if accepted == CODE_RECOVERY:
+            # Recovery (#4233): the code is spent, every method and the rest of
+            # the codes go, the other sign-ins end with their runs, and this one
+            # carries on into setup. An old-scheme code only upgrades the set.
+            _recover(session, user, source)
+            recovered = True
         # Whether TOTP or an old code got in, an old-scheme set ends here.
         new_recovery_codes = AuthService.upgrade_recovery_codes(user)
 
@@ -645,7 +722,7 @@ def login(
         try:
             check_not_listed(payload.password, user_inputs=[user.username, user.email])
             check_not_expired(user)
-            if not user.mfa_enabled and len(payload.password) < SINGLE_FACTOR_MIN:
+            if not had_mfa and len(payload.password) < SINGLE_FACTOR_MIN:
                 raise PasswordPolicyError(
                     f"Password is under {SINGLE_FACTOR_MIN} characters, too short "
                     "without a second factor"
@@ -707,6 +784,7 @@ def login(
         refresh_token=refresh_token,
         user=_user_payload(user, session),
         recovery_codes=new_recovery_codes,
+        mfa_removed=recovered,
     )
 
 
@@ -1414,19 +1492,67 @@ def verify_mfa(
         Success message and one-time recovery codes (shown only once).
     """
     raise_if_locked(current_user)
+    if not current_user.mfa_enabled:
+        # The first method needs only the password; a wrong one counts toward
+        # the three that end this sign-in.
+        step_up.confirm(
+            current_user,
+            session,
+            _session_sid(request),
+            password=body.password,
+            source=client_host(request),
+        )
     codes = AuthService.enable_mfa(current_user.user_id, body.code, session)
 
     if codes is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid MFA code"
         )
+    # Read before this entry: "again" means an earlier on or off.
+    again = mfa_methods.enabled_before(session, current_user.principal_id)
     _record_mfa(session, request, current_user, "auth.mfa_enabled")
+    if again and codes:
+        _tell_person(
+            session,
+            current_user,
+            "Two-step sign-in was turned on again",
+            "Two-step sign-in was turned on again for your account. If this "
+            "wasn't you, change your password and tell an admin.",
+        )
     # Setting it up proved the person holds the factor: the window starts.
     step_up.open_window(session, _session_sid(request))
 
     return RecoveryCodesResponse(
         recovery_codes=codes, message="MFA enabled successfully"
     )
+
+
+def _strong_check(
+    request: Request, user: User, body: MFAVerifyRequest, session: Session
+) -> None:
+    """The password and a current code, every time, inside the window too. 400 if
+    MFA is off (nothing to change); a wrong answer counts, and the third ends
+    this sign-in."""
+    if not user.mfa_enabled:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "MFA is not enabled")
+    step_up.confirm(
+        user,
+        session,
+        _session_sid(request),
+        password=body.password,
+        code=body.code,
+        strong=True,
+        source=client_host(request),
+    )
+
+
+@router.get("/mfa-methods", response_model=List[mfa_methods.MfaMethod])
+def list_my_mfa_methods(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    session: UnitOfWorkSession,
+):
+    """Your own sign-in methods: type, name, added and last used. Never a secret."""
+    return mfa_methods.methods(session, current_user)
 
 
 @router.post("/mfa/recovery-codes", response_model=RecoveryCodesResponse)
@@ -1446,13 +1572,16 @@ def regenerate_recovery_codes(
         The new plaintext recovery codes, shown only once.
     """
     raise_if_locked(current_user)
-    codes = AuthService.get_mfa_recovery_codes(current_user.user_id, body.code, session)
+    _strong_check(request, current_user, body, session)
+    codes = AuthService.get_mfa_recovery_codes(current_user.user_id, session)
     if codes is None:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid MFA code or MFA is not enabled",
+            status_code=status.HTTP_400_BAD_REQUEST, detail="MFA is not enabled"
         )
     _record_mfa(session, request, current_user, "auth.recovery_codes_regenerated")
+    _end_others_after_change(
+        session, current_user, _session_sid(request), client_host(request)
+    )
 
     return RecoveryCodesResponse(recovery_codes=codes)
 
@@ -1478,12 +1607,15 @@ def disable_mfa(
         Success message
     """
     raise_if_locked(current_user)
-    if not AuthService.disable_mfa(current_user.user_id, body.code, session):
+    _strong_check(request, current_user, body, session)
+    if not AuthService.disable_mfa(current_user.user_id, session):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid MFA code or MFA is not enabled",
+            status_code=status.HTTP_400_BAD_REQUEST, detail="MFA is not enabled"
         )
     _record_mfa(session, request, current_user, "auth.mfa_disabled")
+    _end_others_after_change(
+        session, current_user, _session_sid(request), client_host(request)
+    )
 
     return {"message": "MFA disabled successfully"}
 
