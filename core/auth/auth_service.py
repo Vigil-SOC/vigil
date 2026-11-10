@@ -609,19 +609,24 @@ class AuthService:
                 # Locked so two requests carrying the same code are serialised:
                 # the second sees the consumed recovery code / stored TOTP step.
                 user = AuthService._lock_user(session, user_id)
-                if not user or not user.mfa_secret or _account_is_locked(user):
+                if not user or _account_is_locked(user):
                     return None
+                keyed = security_keys.has_keys(session, user.principal_id)
                 # With keys, a secret no code has confirmed yet (no TOTP step) is a
                 # setup in progress, not a method: it answers no login or check.
-                if user.mfa_last_totp_step is None and security_keys.has_keys(
-                    session, user.principal_id
-                ):
+                app = bool(user.mfa_secret) and not (
+                    user.mfa_last_totp_step is None and keyed
+                )
+                # A person with keys and no app has only the recovery codes to
+                # give, and only at the login step (count_failures): a check
+                # that needs a key never takes a code in its place.
+                if not app and not (keyed and count_failures):
                     return None
 
                 # Try TOTP first. An undecryptable secret must not block recovery
                 # codes: they are hashes and do not depend on the key.
                 try:
-                    totp_ok = AuthService._accept_totp(user, code)
+                    totp_ok = app and AuthService._accept_totp(user, code)
                 except MFASecretDecryptionError:
                     totp_ok = False  # already logged at ERROR with the cause
                 if totp_ok:

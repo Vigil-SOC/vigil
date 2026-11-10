@@ -31,6 +31,7 @@ from core.auth.auth_cookies import (
     set_auth_cookies,
 )
 from core.auth.auth_service import (
+    CODE_APP,
     CODE_KEY,
     CODE_RECOVERY,
     AccountLockedError,
@@ -43,7 +44,7 @@ from core.auth.auth_service import (
     raise_if_locked,
 )
 from core.auth.bootstrap_code import has_human_user, setup_code_matches
-from core.auth.current_user import DEV_MODE, _detached, mfa_setup_route
+from core.auth.current_user import DEV_MODE, _detached, mfa_setup_route, setup_needed
 from core.auth.deactivation import when_committed
 from core.auth.identity import claim_sign_in_names, identifier_in_use
 from core.auth.mcp_credential_service import looks_like_api_token
@@ -457,13 +458,12 @@ def _user_payload(user: User, session: Session) -> dict:
     payload["permissions"] = AuthService.get_user_permissions(user.user_id, session)
     # The console holds this person at MFA setup until it is done.
     # (Not in dev mode, which has no gate and no user row to set MFA up on.)
-    payload["mfa_setup_required"] = (
-        not DEV_MODE
-        and not user.mfa_enabled
-        and session_policy.mfa_covered(
+    payload["mfa_setup_required"] = not DEV_MODE and bool(
+        setup_needed(
+            session,
+            user,
             [name for name, on in payload["permissions"].items() if on],
-            _is_service_account(user),
-            session_policy.policy().require_mfa,
+            session_policy.policy(),
         )
     )
     # Whether this install has security keys, and why not when it has none.
@@ -615,7 +615,48 @@ def _recover(session: Session, user: User, source: Optional[str]) -> None:
     )
 
 
-def _mfa_required(session: Session, user: User) -> JSONResponse:
+def _recovery_step_down(session: Session, user: User, source: Optional[str]) -> None:
+    """A key-only person gave a recovery code while keys are unavailable: nothing is
+    removed and no other sign-in ends. They are told, and so are the managers."""
+    trail_events.record(
+        session,
+        "auth.recovery_code_used",
+        {"source_ip": source},
+        actor=user.principal_id,
+        principal=user.principal_id,
+        step_down="recovery_code",
+    )
+    _tell_person(
+        session,
+        user,
+        "A recovery code was used to sign in",
+        "A recovery code was used to sign in to your account because security keys "
+        "are unavailable. The code is spent; nothing else was removed. If this "
+        "wasn't you, change your password and tell an admin.",
+    )
+    principal, name = user.principal_id, user.username
+
+    def tell_managers() -> None:
+        for to in managers(principal):
+            try:
+                notify(
+                    to,
+                    "mfa_change",
+                    f"{name} signed in with a recovery code",
+                    f"{name} has only security keys and signed in with a recovery "
+                    "code because keys are unavailable on this install.",
+                    USERS_LINK,
+                    priority="high",
+                )
+            except Exception:  # noqa: BLE001 - the rest are still told
+                logger.exception("could not send a recovery notice for %s", name)
+
+    when_committed(session, tell_managers)
+
+
+def _mfa_required(
+    session: Session, user: User, key_required: bool = False
+) -> JSONResponse:
     """The first login call's 401 for a person with MFA: ``X-MFA-Required`` as
     ever, and with security keys the request options and signed challenge for the
     second call. Nothing of this attempt is kept: it is not a sign-in yet."""
@@ -623,6 +664,9 @@ def _mfa_required(session: Session, user: User) -> JSONResponse:
         session.expire(user)
     keyed = security_keys.has_keys(session, user.principal_id)
     methods = ["authenticator_app"] if mfa_methods.has_app(user, keyed) else []
+    # Where keys are required and work, the app no longer counts for a person with one.
+    if keyed and key_required and security_keys.availability().available:
+        methods = []
     detail, challenge = "MFA code required", None
     if keyed:
         methods.append("security_key")
@@ -708,13 +752,26 @@ def login(
 
     new_recovery_codes = None
     recovered = False
+    # Set when security keys are required of this person: how their sign-in got in
+    # while keys are unavailable (a step-down), or that the app alone did not count.
+    step_down: Optional[str] = None
+    app_not_counted = False
+    # No flush: authenticate_user's pending lockout reset would lock the row the
+    # failed-code count below must update from its own transaction.
+    with session.no_autoflush:
+        held = AuthService.get_user_permissions(user.user_id, session)
+    key_required = session_policy.mfa_covered(
+        [name for name, on in held.items() if on],
+        service_account,
+        session_policy.policy().require_phishing_resistant,
+    )
     # Whether the account had MFA when the password was given: a recovery below
     # clears it, and the length rule must still be the one the account signed in under.
     had_mfa = user.mfa_enabled
     # Check MFA if enabled (a method of any kind: app, recovery codes or a key)
     if user.mfa_enabled:
         if not payload.mfa_code and not payload.webauthn:
-            return _mfa_required(session, user)
+            return _mfa_required(session, user, key_required)
 
         # authenticate_user clears the lockout counter on this session before
         # the code is checked. verify_mfa_code opens a savepoint, and
@@ -760,11 +817,32 @@ def login(
                     "Invalid security key" if payload.webauthn else "Invalid MFA code"
                 ),
             )
+        keyed = security_keys.has_keys(session, user.principal_id)
+        keys_up = security_keys.availability().available
+        if key_required and accepted == CODE_APP:
+            if keyed and keys_up:
+                failed("security_key_required")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="A security key is required to sign in",
+                )
+            # Keys down: the app stands in, marked. Keys up and none held: the
+            # sign-in goes on to setup, but the app does not open the window.
+            if keys_up:
+                app_not_counted = True
+            else:
+                step_down = "app"
         if pending_reset:
             clear_lock(user)
             user.last_login = utcnow()
             user.login_count = (user.login_count or 0) + 1
-        if accepted == CODE_RECOVERY:
+        key_only = keyed and not mfa_methods.has_app(user, keyed)
+        if accepted == CODE_RECOVERY and key_required and key_only and not keys_up:
+            # The one exception to recovery: with keys unavailable the code is
+            # spent and nothing else changes, so the person can add the app.
+            step_down = "recovery_code"
+            _recovery_step_down(session, user, source)
+        elif accepted == CODE_RECOVERY:
             # Recovery (#4233): the code is spent, every method and the rest of
             # the codes go, the other sign-ins end with their runs, and this one
             # carries on into setup. An old-scheme code only upgrades the set.
@@ -818,12 +896,17 @@ def login(
     # Past the account's sign-in limit, the oldest open sign-in ends (a service
     # account has none).
     sign_ins.make_room(session, user.principal_id, limit.sign_in_limit)
+    auth_method = "mfa" if user.mfa_enabled and not app_not_counted else "password"
+    if step_down:
+        auth_method = (
+            sign_ins.MFA_STEP_DOWN if step_down == "app" else sign_ins.RECOVERY_STEP_DOWN
+        )
     sign_ins.start(
         session,
         sid,
         user.principal_id,
         _exp_datetime(refresh_payload.get("exp")),
-        auth_method="mfa" if user.mfa_enabled else "password",
+        auth_method=auth_method,
         user_agent=_ua,
         address=source,
     )
@@ -833,6 +916,7 @@ def login(
         {"source_ip": source},
         actor=user.principal_id,
         sign_in=sid,
+        **({"step_down": step_down} if step_down else {}),
     )
     # A service account gets body tokens only: a cookie is a console session.
     if not service_account:
@@ -1577,6 +1661,7 @@ def verify_mfa(
             assertion=body.assertion,
             challenge=body.challenge,
             strong=True,
+            signed_in=_recovery_window(request, session),
             source=client_host(request),
         )
     elif not current_user.mfa_enabled:
@@ -1621,6 +1706,19 @@ def verify_mfa(
     )
 
 
+def _recovery_window(request: Request, session: Session) -> bool:
+    """Whether this is a key-only person's recovery sign-in, still inside its
+    privileged window and with keys still unavailable: the sign-in stands in for the code."""
+    row = session.get(SignIn, _session_sid(request) or "")
+    return bool(
+        row
+        and row.auth_method == sign_ins.RECOVERY_STEP_DOWN
+        and step_up.window_end(row.confirmed_at)
+        # Once keys are back a key is asked for again.
+        and not security_keys.availability().available
+    )
+
+
 def _strong_check(
     request: Request, user: User, body: MFAVerifyRequest, session: Session
 ) -> None:
@@ -1638,6 +1736,7 @@ def _strong_check(
         assertion=body.assertion,
         challenge=body.challenge,
         strong=True,
+        signed_in=_recovery_window(request, session),
         source=client_host(request),
     )
 

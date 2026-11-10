@@ -85,7 +85,7 @@ class SignIn(Base):
     last_action_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
-    # 'password' or 'mfa'
+    # 'password', 'mfa', 'mfa_step_down' or 'recovery_step_down'
     auth_method: Mapped[str] = mapped_column(
         String(20), nullable=False, default="password", server_default="password"
     )

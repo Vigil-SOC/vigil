@@ -17,7 +17,7 @@ from fastapi import Header, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
-from core.auth import session_policy, sign_ins
+from core.auth import security_keys, session_policy, sign_ins
 from core.auth.auth_cookies import ACCESS_COOKIE_NAME
 from core.auth.auth_service import AuthService
 from core.auth.mcp_credential_service import (
@@ -62,6 +62,31 @@ def mfa_setup_route(endpoint: Callable) -> Callable:
     """
     endpoint.mfa_setup_route = True  # type: ignore[attr-defined]
     return endpoint
+
+
+NEEDS_MFA = "Set up two-step sign-in to continue"
+NEEDS_KEY = "Add a security key to continue"
+
+
+def setup_needed(
+    db: Session, user: User, held: list[str], current: session_policy.SessionPolicy
+) -> Optional[str]:
+    """Why the requirement holds this account at setup, or None: it is covered and
+    has no MFA, or it is covered by require_phishing_resistant, holds no key and
+    keys are available (unavailable, the app still counts: a step-down). The one
+    check behind the gate and the console's setup screen."""
+    machine = user.service_account is True
+    if not user.mfa_enabled and session_policy.mfa_covered(
+        held, machine, current.require_mfa
+    ):
+        return NEEDS_MFA
+    if (
+        session_policy.mfa_covered(held, machine, current.require_phishing_resistant)
+        and not security_keys.has_keys(db, user.principal_id)
+        and security_keys.availability().available
+    ):
+        return NEEDS_KEY
+    return None
 
 
 # Dev mode flag - ONLY for development, never in production!
@@ -149,8 +174,8 @@ def _check_sign_in(
 
     Returns the detached user, or the refusal as (status, detail, end reason). A
     sign-in found past a limit is ended here, with its reason, and commits with the 401.
-    An account the MFA requirement covers, with no MFA yet, is refused with 403
-    ``mfa_setup_required`` unless the route is a setup route. Judged on every
+    An account the MFA requirement covers, with no MFA yet (or the key requirement,
+    with no key), is refused with 403 ``mfa_setup_required`` unless the route is a setup route. Judged on every
     request, so a role edit or a raised setting applies at the next one.
     """
     with unit_of_work() as db:
@@ -191,17 +216,11 @@ def _check_sign_in(
             sign_ins.end(sid, over, db)
             return None, (status.HTTP_401_UNAUTHORIZED, _SIGN_IN_ENDED, over)
 
-        if (
-            not user.mfa_enabled
-            and not setup_route
-            and session_policy.mfa_covered(held, machine, current.require_mfa)
-        ):
+        needed = None if setup_route else setup_needed(db, user, held, current)
+        if needed:
             return None, (
                 status.HTTP_403_FORBIDDEN,
-                {
-                    "code": MFA_SETUP_REQUIRED,
-                    "message": "Set up two-step sign-in to continue",
-                },
+                {"code": MFA_SETUP_REQUIRED, "message": needed},
                 None,
             )
 

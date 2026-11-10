@@ -74,6 +74,9 @@ class SessionPolicy(BaseModel):
     # Whose sign-in needs MFA: nobody, accounts holding a privileged permission,
     # or every person. A service account is never covered.
     require_mfa: Literal["off", "privileged", "everyone"] = "privileged"
+    # Whose sign-in needs a security key: the app no longer counts for them. Never
+    # above require_mfa. Raising it is a person's act, and needs the person to hold a key.
+    require_phishing_resistant: Literal["nobody", "privileged", "everyone"] = "nobody"
 
     @model_validator(mode="after")
     def _privileged_within_standard(self):
@@ -107,6 +110,16 @@ class SessionPolicy(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _keys_within_mfa(self):
+        # Refused, never adjusted: either field may be the one that moved.
+        if _rank(self.require_phishing_resistant) > _rank(self.require_mfa):
+            raise ValueError(
+                f"require_phishing_resistant ('{self.require_phishing_resistant}') "
+                f"cannot be above require_mfa ('{self.require_mfa}')"
+            )
+        return self
+
 
 # Failures in a row that lock until unlocked, even in timed mode.
 LOCK_UNTIL_UNLOCKED = 100
@@ -114,19 +127,25 @@ LOCK_UNTIL_UNLOCKED = 100
 _RULE_STRENGTH = {"none": 0, "letters_digits": 1, "four_classes": 2}
 
 
-# Weakest first: a lower level is a loosening.
+# Weakest first: a lower level is a loosening. "off" and "nobody" are the same rank.
 MFA_LEVELS = ("off", "privileged", "everyone")
+KEY_LEVELS = ("nobody", "privileged", "everyone")
+
+
+def _rank(level: str) -> int:
+    return (KEY_LEVELS if level in KEY_LEVELS else MFA_LEVELS).index(level)
 
 
 def mfa_covered(
     permissions: Iterable[str], service_account: bool, level: str = "privileged"
 ) -> bool:
-    """Whether an account holding ``permissions`` must have MFA at ``level``.
+    """Whether an account holding ``permissions`` is covered at ``level``: of
+    ``require_mfa``, or of ``require_phishing_resistant`` (needing a security key).
 
-    The one coverage check: the sign-in gate, the daily count and the warning all
-    ask it. Privileged is judged by permissions held, never by role name.
+    The one coverage check: the sign-in gate, the counts and the warning all ask
+    it. Privileged is judged by permissions held, never by role name.
     """
-    if service_account or level == "off":
+    if service_account or level in ("off", "nobody"):
         return False
     return level == "everyone" or not PRIVILEGED_PERMISSIONS.isdisjoint(permissions)
 
@@ -156,12 +175,16 @@ def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
         new.dormancy_days is None or new.dormancy_days > old.dormancy_days
     )
     lower_mfa = MFA_LEVELS.index(new.require_mfa) < MFA_LEVELS.index(old.require_mfa)
+    lower_keys = _rank(new.require_phishing_resistant) < _rank(
+        old.require_phishing_resistant
+    )
     longer_max_age = old.password_max_age_days is not None and (
         new.password_max_age_days is None
         or new.password_max_age_days > old.password_max_age_days
     )
     return (
         lower_mfa
+        or lower_keys
         or longer_max_age
         or new.password_min_age_days < old.password_min_age_days
         or new.idle_standard_minutes > old.idle_standard_minutes
