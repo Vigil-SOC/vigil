@@ -3991,6 +3991,16 @@
   "nullable": true,
   "type": "timestamp without time zone"
  },
+ "column users.locked_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
+ "column users.locked_from": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
  "column users.locked_until": {
   "default": null,
   "nullable": true,

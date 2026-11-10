@@ -78,6 +78,9 @@ export default function UsersSection({ notify }: SectionProps) {
   const [everyoneOpen, setEveryoneOpen] = useState(false)
   const [everyoneReason, setEveryoneReason] = useState('')
   const [signingOut, setSigningOut] = useState(false)
+  const [unlockOf, setUnlockOf] = useState<User | null>(null)
+  const [confirmedBy, setConfirmedBy] = useState('')
+  const [unlocking, setUnlocking] = useState(false)
 
   const canWrite = hasPermission('users.write')
   const canDelete = hasPermission('users.delete')
@@ -141,6 +144,22 @@ export default function UsersSection({ notify }: SectionProps) {
       notify('err', errText(e, 'Failed to sign everyone out'))
     } finally {
       setSigningOut(false)
+    }
+  }
+
+  const handleUnlock = async () => {
+    if (!unlockOf || !confirmedBy) return
+    setUnlocking(true)
+    try {
+      await signInsApi.unlock(unlockOf.user_id, confirmedBy)
+      notify('ok', `Unlocked ${unlockOf.username}.`)
+      setUnlockOf(null)
+      setConfirmedBy('')
+      reload()
+    } catch (e) {
+      notify('err', errText(e, 'Failed to unlock'))
+    } finally {
+      setUnlocking(false)
     }
   }
 
@@ -311,6 +330,11 @@ export default function UsersSection({ notify }: SectionProps) {
                       />
                       <span className="text-xs text-tx-3">{u.is_active ? 'Active' : 'Inactive'}</span>
                     </div>
+                    {u.locked && (
+                      <div className="text-xs text-tx-3 mt-1" title={lockedFrom(u)}>
+                        <Icon name="lock" size={11} /> {u.locked_until ? 'Locked until ' + new Date(u.locked_until).toLocaleString() : 'Locked until unlocked'}
+                      </div>
+                    )}
                   </td>
                   <td className="col-low">
                     <span className={`status ${u.mfa_enabled ? 'closed' : 'open'}`}>
@@ -325,6 +349,11 @@ export default function UsersSection({ notify }: SectionProps) {
                       {canWrite && covers(u.role_id) && u.user_id !== me?.user_id && (
                         <button className="btn ghost icon" title="Sign-ins" onClick={() => setSignInsOf(u)}>
                           <Icon name="clock" size={15} />
+                        </button>
+                      )}
+                      {canWrite && u.locked && covers(u.role_id) && u.user_id !== me?.user_id && (
+                        <button className="btn ghost icon" title="Unlock" onClick={() => setUnlockOf(u)}>
+                          <Icon name="lock" size={15} />
                         </button>
                       )}
                       {canWrite && (
@@ -450,6 +479,34 @@ export default function UsersSection({ notify }: SectionProps) {
         />
 
         <ConfirmDialog
+          open={!!unlockOf}
+          title="Unlock account?"
+          danger={false}
+          body={
+            <div className="flex flex-col gap-3.5">
+              <span>
+                {unlockOf?.username} {unlockOf?.locked_at ? lockedFrom(unlockOf) : 'is locked.'} Unlocking lets them
+                sign in again and starts their failure count over. Confirm it is them first.
+              </span>
+              <Field label="How you confirmed it is them" hint="Kept in the audit trail.">
+                <Select
+                  value={confirmedBy}
+                  options={CONFIRMED_BY}
+                  placeholder="Choose…"
+                  disabled={unlocking}
+                  onSelect={setConfirmedBy}
+                />
+              </Field>
+            </div>
+          }
+          confirmLabel="Unlock"
+          busy={unlocking}
+          confirmDisabled={!confirmedBy}
+          onConfirm={handleUnlock}
+          onClose={() => !unlocking && setUnlockOf(null)}
+        />
+
+        <ConfirmDialog
           open={!!confirmDelete}
           title="Delete user?"
           body={`Permanently delete ${confirmDelete?.username ?? 'this user'}? This cannot be undone.`}
@@ -471,6 +528,19 @@ export default function UsersSection({ notify }: SectionProps) {
       />
     </>
   )
+}
+
+const CONFIRMED_BY = [
+  { value: 'in_person', label: 'In person' },
+  { value: 'video_call', label: 'On a video call' },
+  { value: 'phone_call_back', label: 'By calling them back on a known number' },
+  { value: 'other_verified_channel', label: 'Another verified channel' },
+]
+
+// when and where the lock was set, as a sentence
+function lockedFrom(u: User): string {
+  const at = u.locked_at ? ` on ${new Date(u.locked_at).toLocaleString()}` : ''
+  return `was locked${at}${u.locked_from ? ` from ${u.locked_from}` : ''}.`
 }
 
 function roleLabel(r: Role): string {

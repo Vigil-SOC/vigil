@@ -1,4 +1,4 @@
-"""How long a sign-in lasts: idle and absolute limits, in one validated model.
+"""How long a sign-in lasts and when failed sign-ins lock an account, in one validated model.
 
 One ``system_config`` row holds the document: the fields of ``SessionPolicy``
 plus its ``version``. A later setting joins by adding a field to the model.
@@ -42,6 +42,12 @@ class SessionPolicy(BaseModel):
     absolute_hours: int = Field(12, ge=1, le=24)
     # Most open sign-ins one account may hold; None: no limit.
     sign_in_limit: Optional[int] = Field(None, ge=1, le=10)
+    # Failures in a row that lock an account. Off, the lock holds until an
+    # administrator's Unlock or the person's reset link; on, it ends after
+    # lockout_minutes. LOCK_UNTIL_UNLOCKED failures lock until unlocked either way.
+    lockout_threshold: int = Field(3, ge=1, le=20)
+    lockout_timed: bool = False
+    lockout_minutes: int = Field(30, ge=30, le=1440)
 
     @model_validator(mode="after")
     def _privileged_within_standard(self):
@@ -53,8 +59,23 @@ class SessionPolicy(BaseModel):
         return self
 
 
+# Failures in a row that lock until unlocked, even in timed mode.
+LOCK_UNTIL_UNLOCKED = 100
+
+
 def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
-    """Whether ``new`` lets a sign-in last longer or an account hold more."""
+    """Whether ``new`` lets a sign-in last longer, an account hold more, or a
+    guesser have more tries or a shorter lock."""
+    easier_lock = (
+        new.lockout_threshold > old.lockout_threshold
+        or (new.lockout_timed and not old.lockout_timed)
+        # A shorter timed lock is a weaker one.
+        or (
+            new.lockout_timed
+            and old.lockout_timed
+            and new.lockout_minutes < old.lockout_minutes
+        )
+    )
     more_sign_ins = old.sign_in_limit is not None and (
         new.sign_in_limit is None or new.sign_in_limit > old.sign_in_limit
     )
@@ -63,6 +84,7 @@ def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
         or new.idle_privileged_minutes > old.idle_privileged_minutes
         or new.absolute_hours > old.absolute_hours
         or more_sign_ins
+        or easier_lock
     )
 
 
@@ -95,7 +117,7 @@ class Limits(NamedTuple):
     sign_in_limit: Optional[int] = None
 
 
-def _policy() -> SessionPolicy:
+def policy() -> SessionPolicy:
     with unit_of_work() as session:
         try:
             return read_row(session)[0].policy
@@ -110,12 +132,12 @@ def limits(permissions: Iterable[str], service_account: bool = False) -> Limits:
     A service account is bound by the absolute limit only: it has no person
     whose idleness could end it, and no sign-in limit.
     """
-    policy = _policy()
-    absolute = timedelta(hours=policy.absolute_hours)
+    current = policy()
+    absolute = timedelta(hours=current.absolute_hours)
     if service_account:
         return Limits(None, absolute)
     privileged = not PRIVILEGED_PERMISSIONS.isdisjoint(permissions)
     minutes = (
-        policy.idle_privileged_minutes if privileged else policy.idle_standard_minutes
+        current.idle_privileged_minutes if privileged else current.idle_standard_minutes
     )
-    return Limits(timedelta(minutes=minutes), absolute, policy.sign_in_limit)
+    return Limits(timedelta(minutes=minutes), absolute, current.sign_in_limit)
