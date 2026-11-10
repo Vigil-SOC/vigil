@@ -15,8 +15,8 @@ from typing import Optional
 import jwt
 from starlette.requests import Request
 
-from core.auth.auth_cookies import ACCESS_COOKIE_NAME, REFRESH_COOKIE_NAME
 from core.auth import key_ring
+from core.auth.auth_cookies import ACCESS_COOKIE_NAME, REFRESH_COOKIE_NAME
 from core.auth.auth_service import JWT_ALGORITHM
 from services.api.middleware.client_address import client_host
 
