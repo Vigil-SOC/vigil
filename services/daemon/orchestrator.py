@@ -1605,7 +1605,12 @@ class Orchestrator:
         started_by, principal = _caller(inv_id)
         # A Human Ask whose sign-in ended for a stopping reason starts nothing.
         sid = _sid_of(principal)
-        if sid and sign_ins.ended_for_compromise(sid):
+        try:
+            refused = bool(sid) and sign_ins.ended_for_compromise(sid)
+        except Exception:  # noqa: BLE001 - an unreadable row is not a refusal
+            logger.warning("could not read the sign-in of %s", inv_id)
+            refused = False
+        if refused:
             self._update_investigation_status(inv_id, "failed", sign_ins.STOP_REASON)
             return
         try:

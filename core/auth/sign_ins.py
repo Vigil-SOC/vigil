@@ -290,6 +290,9 @@ def _queue_stop(session: Session, sign_in_id: str, principal_id: str, reason: st
 
 @event.listens_for(Session, "after_commit")
 def _stop_runs(session: Session) -> None:
+    # A SAVEPOINT release fires this too; only the outermost commit counts.
+    if session.in_nested_transaction():
+        return
     pending = session.info.pop(_PENDING, None)
     if pending:
         from core.auth import sign_in_runs
@@ -299,6 +302,8 @@ def _stop_runs(session: Session) -> None:
 
 @event.listens_for(Session, "after_rollback")
 def _drop_stops(session: Session) -> None:
+    if session.in_nested_transaction():
+        return
     session.info.pop(_PENDING, None)
 
 
@@ -348,7 +353,10 @@ def end_all_for_user(
             return 0
         open_rows = SignIn.principal_id == principal_id, SignIn.ended_at.is_(None)
         if reason in STOPS_RUNS:
-            for (sid,) in session.query(SignIn.sign_in_id).filter(*open_rows):
+            # Locked, so a sign-out committing now cannot be stopped for.
+            for (sid,) in (
+                session.query(SignIn.sign_in_id).filter(*open_rows).with_for_update()
+            ):
                 _queue_stop(session, sid, principal_id, reason)
         return (
             session.query(SignIn)
