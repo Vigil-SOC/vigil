@@ -39,8 +39,6 @@ REMOTE = "remote"
 # integration; the rest are native tools. Naming them as capabilities is what lets
 # a missing one reach the run as a blind spot rather than a log line.
 INVESTIGATE_CAPABILITIES = (
-    "case_records",
-    "case_evidence",
     "shell",
     "entity_recall",
     "get_finding",
@@ -137,8 +135,6 @@ CAPABILITIES: Dict[str, Tuple[Candidate, ...]] = {
     # One candidate and no fallback: episodic memory is Vigil's own tier, so a
     # deployment either carries it or has no history to offer.
     "entity_recall": (Candidate(None, ("recall_entity",)),),
-    "case_records": (Candidate(None, ("case_records",)),),
-    "case_evidence": (Candidate(None, ("read_case_evidence",)),),
     # The case shell (#4199). Bound wherever the backend carries the tool; a
     # deployment with no sidecar answers each call unavailable.
     "shell": (Candidate(None, ("read_case_shell",)),),
@@ -167,10 +163,6 @@ CAPABILITY_BOUNDS: Dict[str, Dict[str, int]] = {
     # recall answers with one envelope, and the injected `limit` is in
     # RECALL_IGNORED_ARGS because memory caps each list itself.
     "entity_recall": {"timeout_ms": 30_000, "max_rows": 200},
-    "case_records": {"max_rows": 100, "timeout_ms": 15_000},
-    # Extraction may take PARSE_TIMEOUT_S (60s) on a PDF or Office file. The row
-    # cap is the bounds model's shape; the evidence list is not under a key it cuts.
-    "case_evidence": {"timeout_ms": 90_000, "max_rows": 200},
     # A first render extracts every attachment (PARSE_TIMEOUT_S, 60s, in
     # parallel), then the command runs to the sidecar's own 30s limit. One
     # answer, so the row cap is only the bounds model's shape.

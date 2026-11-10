@@ -11,7 +11,7 @@
     get_finding:
       - rows:
           - { finding_id: f-1001, host: ws-0142, user: user0007, detection: "Office application spawned PowerShell with -EncodedCommand", severity: high, parent: winword.exe, child: powershell.exe, command_line: "powershell.exe -nop -w hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQA...", time: "2026-09-14T09:12:03Z" }
-    case_records:
+    read_case_shell:
       - rows:
           - { case_id: c-1001, opened: "2026-09-14T09:13:00Z", note: "user0007 is in Finance; reported an invoice email from an unknown sender this morning" }
     splunk_search:
@@ -59,7 +59,7 @@
       - match: ["203.0.113.45"]
         rows:
           - { indicator: "203.0.113.45", type: ip, verdict: suspicious, tags: [vpn-exit, spray-source], reports: 37 }
-    case_records:
+    read_case_shell:
       - rows:
           - { case_id: c-1101, note: "user0031 is on leave this week" }
 
@@ -85,7 +85,7 @@
       - match: [svc-deploy]
         rows:
           - { time: "2026-09-16T23:39:58Z", user: svc-deploy, host: srv-app-03, source: windows, event: logon, detail: "type 10 (RDP) from 192.0.2.77, first RDP logon for this account in 90 days" }
-    case_records:
+    read_case_shell:
       - rows:
           - { case_id: c-1201, note: "svc-deploy runs the nightly deployment job; it does not log on interactively" }
 
@@ -158,7 +158,7 @@
       - match: [ws-0311]
         rows:
           - { time: "2026-09-19T02:50:00Z", host: ws-0311, source: edr, event: alert, detail: "browser download of 'invoice_viewer.exe', executed by user0019" }
-    case_records:
+    read_case_shell:
       - rows:
           - { case_id: c-1501, note: "user0019 is a helpdesk technician on the day shift (08:00-17:00)" }
 
@@ -204,7 +204,7 @@
         rows:
           - { time: "2026-09-21T01:40:00Z", host: fs-02, source: windows, event: process_create, detail: "vssadmin delete shadows /all /quiet" }
           - { time: "2026-09-21T01:41:30Z", host: fs-02, source: windows, event: service_stop, detail: "backup agent service stopped by adm-temp01" }
-    case_records:
+    read_case_shell:
       - rows:
           - { case_id: c-1701, note: "No change ticket covers fs-02 this week" }
 

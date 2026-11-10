@@ -137,7 +137,7 @@ def generate_initial_context(
     held = case_finding_count(case_id) if case_id else None
     if held is not None and held > len(listed):
         lines.append(
-            f"This case holds {held} findings; list them all with case_records."
+            f"This case holds {held} findings; read them all in findings/index.tsv with read_case_shell."
         )
         lines.append("")
 

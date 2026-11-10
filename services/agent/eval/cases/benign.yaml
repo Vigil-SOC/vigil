@@ -13,7 +13,7 @@
     get_finding:
       - rows:
           - { finding_id: f-4001, host: ws-0901, user: user0201, detection: "lsass access by known hacktool", severity: high }
-    case_records:
+    read_case_shell:
       - rows:
           - { case_id: c-4001, note: "Red-team engagement RT-2026-09 runs 2026-09-28 to 2026-10-03. Registered operator accounts: user0201. Registered hosts: ws-0901. Contact: security engineering." }
     splunk_search:
@@ -46,7 +46,7 @@
       - match: ["192.0.2.50"]
         rows:
           - { indicator: "192.0.2.50", type: ip, verdict: benign, tags: [backup-vendor-heartbeat] }
-    case_records:
+    read_case_shell:
       - rows:
           - { case_id: c-4101, note: "Asset inventory: srv-db-02 runs the vendor backup agent, heartbeat endpoint 192.0.2.50" }
 
@@ -60,7 +60,7 @@
     get_finding:
       - rows:
           - { finding_id: f-4201, user: svc-patch, detection: "Remote service creation across many hosts", hosts: 40 }
-    case_records:
+    read_case_shell:
       - rows:
           - { case_id: c-4201, note: "Change CHG-4412 approved: monthly patching of the app server pool, 2026-10-03 01:00-03:00, executed by svc-patch from the patch server patch-01." }
     splunk_search:
@@ -91,7 +91,7 @@
         rows:
           - { time: "2026-10-04T08:00:00Z", user: user0230, source: idp, event: sign_in_success, detail: "same device id, compliant managed laptop, MFA by the user's registered phone, from 192.0.2.10 (corporate VPN egress, located in country A)" }
           - { time: "2026-10-04T08:50:00Z", user: user0230, source: idp, event: sign_in_success, detail: "same device id, from 198.51.100.10 (user's home ISP, country B, where user0230 is based)" }
-    case_records:
+    read_case_shell:
       - rows:
           - { case_id: c-4301, note: "user0230 works remotely from country B; the corporate VPN egresses in country A" }
 
@@ -146,7 +146,7 @@
     get_finding:
       - rows:
           - { finding_id: f-4601, user: user0250, detection: "Mass download from cloud storage", size_gb: 38 }
-    case_records:
+    read_case_shell:
       - rows:
           - { case_id: c-4601, note: "Project MIG-07: migration of the legal team's sites to the new tenant, owner user0250 (IT), window 2026-10-06 to 2026-10-10, approved by the CIO." }
     splunk_search:
@@ -169,7 +169,7 @@
         rows:
           - { time: "2026-10-08T06:00:00Z", user: svc-report, source: ad, event: password_changed, detail: "password rotated by the vault at 05:58" }
           - { time: "2026-10-08T06:01:00Z", user: svc-report, source: windows, event: logon_failure, detail: "340 failures from srv-bi-01 only, every 10s, status bad password; no successes from any other host" }
-    case_records:
+    read_case_shell:
       - rows:
           - { case_id: c-4701, note: "svc-report is the BI dashboard refresh service on srv-bi-01" }
 
@@ -183,7 +183,7 @@
     get_finding:
       - rows:
           - { finding_id: f-4801, user: adm-user0260, detection: "New member of a privileged group" }
-    case_records:
+    read_case_shell:
       - rows:
           - { case_id: c-4801, note: "Access request AR-9921: admin account for user0260 (new sysadmin hire), approved by their manager and the platform lead on 2026-10-07, provisioned by the identity workflow." }
     splunk_search:

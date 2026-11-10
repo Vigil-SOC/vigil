@@ -17,7 +17,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from core.auth import current_user as current_user_module
-from core.auth import mcp_credential_service, principals, sign_ins, trail_events
+from core.auth import dormancy, principals, session_policy, sign_ins, trail_events
 from core.auth.auth_cookies import clear_auth_cookies
 from core.auth.auth_service import (
     PERSON_ONLY,
@@ -25,6 +25,7 @@ from core.auth.auth_service import (
     _account_is_locked,
     clear_lock,
 )
+from core.auth.deactivation import deactivate_account
 from core.auth.password_validator import PasswordPolicyError, validate_password_strength
 from core.auth.permissions import (
     CATALOG,
@@ -40,6 +41,7 @@ from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import Principal, Role, User
 from core.storage.schemas import RoleSchema, UserSchema
 from core.storage.unit_of_work import unit_of_work
+from core.time import utcnow
 from core.upgrade.adopt import LEGACY_ROLE_IDS
 from services.api.middleware.auth import get_current_user
 from services.api.middleware.client_address import client_host
@@ -305,6 +307,9 @@ def _dump_accounts(session: Session, users: list[User]) -> list[dict]:
     """Each account, with what kind of principal it is and which of its
     role's permissions have no effect for it."""
     held = {role.role_id: role.permissions for role in session.query(Role)}
+    days = session_policy.policy().dormancy_days
+    last = dormancy.activity(session, [u.user_id for u in users]) if days else {}
+    now = utcnow()
     dumped = []
     for user in users:
         entry = UserSchema.dump(user)
@@ -326,6 +331,13 @@ def _dump_accounts(session: Session, users: list[User]) -> list[dict]:
         )
         entry["locked_at"] = user.locked_at and user.locked_at.isoformat() + "Z"
         entry["locked_from"] = user.locked_from
+        # When an idle account will be deactivated, once it is inside the warning window.
+        entry["deactivating_at"] = None
+        if days and user.is_active and not machine and user.user_id in last:
+            if now >= dormancy.warning_start(last[user.user_id], days):
+                entry["deactivating_at"] = (
+                    dormancy.deadline(last[user.user_id], days).isoformat() + "Z"
+                )
         dumped.append(entry)
     return dumped
 
@@ -769,14 +781,14 @@ def _create_user(request: CreateUserRequest, current_user: User, session: Sessio
     return UserSchema.dump(user)
 
 
-def _disable_alone(user_id: str) -> None:
-    """Commit a disable on its own: it stands whatever else the PUT does."""
+def _disable_alone(user_id: str, actor: str, by_person: bool) -> list[str]:
+    """Commit a disable on its own: it stands whatever else the PUT does. Returns
+    the credentials it revoked, for the caller to put on the trail."""
     with unit_of_work() as session:
-        session.query(User).filter(User.user_id == user_id).update(
-            {User.is_active: False}, synchronize_session=False
+        user = session.get(User, user_id)
+        return deactivate_account(
+            session, user, actor=actor, by_person=by_person, record_trail=False
         )
-        # Its open sign-ins end with it, so their agent runs stop.
-        sign_ins.end_all_for_user(user_id, sign_ins.DEACTIVATED, session)
 
 
 def _apply_user_update(
@@ -845,10 +857,21 @@ def _apply_user_update(
     actor, principal = current_user.principal_id, user.principal_id
     # A safety action: committed on its own and recorded, or held to record
     # late, so a trail failure on the rest of this PUT leaves it in place.
-    if request.is_active is False and user.is_active and trail_events.ready(session):
-        _disable_alone(user_id)
-        trail_events.safety("user.disabled", actor=actor, principal=principal)
-        session.refresh(user)
+    if request.is_active is False and user.is_active:
+        by_person = _acts_as_person(current_user, session)
+        if trail_events.ready(session):
+            revoked = _disable_alone(user_id, actor, by_person)
+            trail_events.safety("user.disabled", actor=actor, principal=principal)
+            for credential_id in revoked:
+                trail_events.safety(
+                    "credential.revoked",
+                    actor=actor,
+                    principal=principal,
+                    credential_id=credential_id,
+                )
+            session.refresh(user)
+        else:
+            deactivate_account(session, user, actor=actor, by_person=by_person)
 
     entries = []
     stale_reason = None
@@ -887,6 +910,9 @@ def _apply_user_update(
     if request.is_active is not None:
         if request.is_active and not user.is_active:
             entries.append(("user.enabled", None, {}))
+            # Back in use: the idle clock starts again and a lock ends.
+            user.dormancy_floor = utcnow()
+            clear_lock(user)
         user.is_active = request.is_active
 
     # Flush so the read-back sees server defaults; the request's unit
@@ -970,23 +996,16 @@ def _delete_user(session: Session, current_user: User, user_id: str) -> User:
 
     actor = current_user.principal_id
     principals.mark_deleted(session, user.principal_id)
-    user.is_active = False
-    # Row before trail lock, the order every other path takes them in.
-    session.flush()
+    deactivate_account(
+        session,
+        user,
+        actor=actor,
+        by_person=_acts_as_person(current_user, session),
+    )
     # In this transaction: the delete does not happen without its entries.
     trail_events.record(
         session, "user.deleted", actor=actor, principal=user.principal_id
     )
-    for credential in mcp_credential_service.list_for_user(user_id, session=session):
-        if mcp_credential_service.revoke(credential.credential_id, session=session):
-            trail_events.record(
-                session,
-                "credential.revoked",
-                actor=actor,
-                principal=user.principal_id,
-                credential_id=credential.credential_id,
-            )
-    sign_ins.end_all_for_user(user_id, sign_ins.DEACTIVATED, session=session)
     session.flush()
     return user
 

@@ -1,4 +1,4 @@
-"""How long a sign-in lasts and when failed sign-ins lock an account, in one validated model.
+"""How long a sign-in lasts, when failed sign-ins lock an account and when an idle one is deactivated, in one validated model.
 
 One ``system_config`` row holds the document: the fields of ``SessionPolicy``
 plus its ``version``. A later setting joins by adding a field to the model.
@@ -8,7 +8,7 @@ through ``limits``.
 """
 
 from datetime import datetime, timedelta
-from typing import Iterable, NamedTuple, Optional
+from typing import Iterable, Literal, NamedTuple, Optional
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 from sqlalchemy.orm import Session
@@ -48,6 +48,12 @@ class SessionPolicy(BaseModel):
     lockout_threshold: int = Field(3, ge=1, le=20)
     lockout_timed: bool = False
     lockout_minutes: int = Field(30, ge=30, le=1440)
+    # Days without a sign-in or a personal MCP token's use before an account is
+    # deactivated; None: never. Any change to it is a person's act.
+    dormancy_days: Optional[int] = Field(35, ge=7, le=90)
+    # Whose sign-in needs MFA: nobody, accounts holding a privileged permission,
+    # or every person. A service account is never covered.
+    require_mfa: Literal["off", "privileged", "everyone"] = "privileged"
 
     @model_validator(mode="after")
     def _privileged_within_standard(self):
@@ -63,9 +69,26 @@ class SessionPolicy(BaseModel):
 LOCK_UNTIL_UNLOCKED = 100
 
 
+# Weakest first: a lower level is a loosening.
+MFA_LEVELS = ("off", "privileged", "everyone")
+
+
+def mfa_covered(
+    permissions: Iterable[str], service_account: bool, level: str = "privileged"
+) -> bool:
+    """Whether an account holding ``permissions`` must have MFA at ``level``.
+
+    The one coverage check: the sign-in gate, the daily count and the warning all
+    ask it. Privileged is judged by permissions held, never by role name.
+    """
+    if service_account or level == "off":
+        return False
+    return level == "everyone" or not PRIVILEGED_PERMISSIONS.isdisjoint(permissions)
+
+
 def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
     """Whether ``new`` lets a sign-in last longer, an account hold more, or a
-    guesser have more tries or a shorter lock."""
+    guesser have more tries or a shorter lock, or an idle account stay longer."""
     easier_lock = (
         new.lockout_threshold > old.lockout_threshold
         or (new.lockout_timed and not old.lockout_timed)
@@ -79,12 +102,18 @@ def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
     more_sign_ins = old.sign_in_limit is not None and (
         new.sign_in_limit is None or new.sign_in_limit > old.sign_in_limit
     )
+    longer_dormancy = old.dormancy_days is not None and (
+        new.dormancy_days is None or new.dormancy_days > old.dormancy_days
+    )
+    lower_mfa = MFA_LEVELS.index(new.require_mfa) < MFA_LEVELS.index(old.require_mfa)
     return (
-        new.idle_standard_minutes > old.idle_standard_minutes
+        lower_mfa
+        or new.idle_standard_minutes > old.idle_standard_minutes
         or new.idle_privileged_minutes > old.idle_privileged_minutes
         or new.absolute_hours > old.absolute_hours
         or more_sign_ins
         or easier_lock
+        or longer_dormancy
     )
 
 
@@ -126,13 +155,18 @@ def policy() -> SessionPolicy:
             return SessionPolicy()
 
 
-def limits(permissions: Iterable[str], service_account: bool = False) -> Limits:
+def limits(
+    permissions: Iterable[str],
+    service_account: bool = False,
+    current: Optional[SessionPolicy] = None,
+) -> Limits:
     """The limits for an account holding ``permissions``.
 
     A service account is bound by the absolute limit only: it has no person
-    whose idleness could end it, and no sign-in limit.
+    whose idleness could end it, and no sign-in limit. ``current`` is the policy
+    when the caller has read it already.
     """
-    current = policy()
+    current = current or policy()
     absolute = timedelta(hours=current.absolute_hours)
     if service_account:
         return Limits(None, absolute)

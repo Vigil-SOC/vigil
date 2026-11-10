@@ -17,7 +17,7 @@
       - failure: timeout
     search_findings:
       - failure: unavailable
-    case_records:
+    read_case_shell:
       - rows:
           - { case_id: c-2001, note: "fs-04 hosts the finance department share" }
 
@@ -45,7 +45,7 @@
       - match: [ws-0418, process]
         failure: unavailable
       - rows: []
-    case_records:
+    read_case_shell:
       - rows:
           - { case_id: c-2101, note: "Proxy and firewall log collectors for building 4 (where ws-0418 sits) were offline 07:00-09:30 on 2026-09-24" }
 
@@ -65,7 +65,7 @@
           - { indicator: "203.0.113.66", type: ip, verdict: suspicious, tags: [tor-exit] }
     splunk_search:
       - failure: timeout
-    case_records:
+    read_case_shell:
       - rows:
           - { case_id: c-2201, note: "user0002 is based in the head office and is not travelling" }
 
@@ -79,7 +79,7 @@
     get_finding:
       - rows:
           - { finding_id: f-2301, user: user0088, host: ws-0702, detection: "Upload of classified data to personal cloud storage blocked", file: customers_full_export.csv, size_gb: 2.1, destination: "personal storage, consumer account" }
-    case_records:
+    read_case_shell:
       - rows:
           - { case_id: c-2301, note: "user0088 resigned on 2026-09-20; last day is 2026-09-30. HR flagged them as a departing employee with access to the CRM export." }
     splunk_search:
@@ -108,7 +108,7 @@
       - match: [srv-hr-01]
         failure: unavailable
       - rows: []
-    case_records:
+    read_case_shell:
       - rows:
           - { case_id: c-2401, note: "Log forwarder on srv-hr-01 stopped reporting at 14:02; the EDR alert is at 14:09." }
 
@@ -127,6 +127,6 @@
         rows:
           - { time: "2026-09-27T06:31:00Z", user: user0101, source: idp, event: sign_in_success, detail: "from 198.51.100.201, country never seen for this user, MFA satisfied by push approval" }
       - rows: []
-    case_records:
+    read_case_shell:
       - rows:
           - { case_id: c-2501, note: "user0101 approves supplier payments. Mailbox auditing was not enabled for this mailbox." }

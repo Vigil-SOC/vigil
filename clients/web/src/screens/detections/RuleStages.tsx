@@ -78,7 +78,7 @@ export default function RuleStages({ ruleId, row, asking: askFirst, onChanged }:
             ? 'Held in shadow: it runs but alerts nobody, and stays there until a person releases it.'
             : unproven
               ? `In shadow it runs but alerts nobody. ${unproven}`
-              : 'In shadow it runs but alerts nobody. Vigil moves it live after 7 quiet days with its data arriving, once it is shown to fire.'}
+              : 'In shadow it runs but alerts nobody. Vigil moves it live after 7 quiet days with its data arriving, once it has been shown to catch the attack it was written for.'}
       </p>
     </div>
   )

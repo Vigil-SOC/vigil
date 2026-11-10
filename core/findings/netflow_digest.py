@@ -217,7 +217,7 @@ def _stored_pair(pair: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # Readers of a stored digest: JSONB may hold anything, so a bad value reads
-# as nothing rather than failing the whole case_records call.
+# as nothing rather than failing the whole case view.
 def _n(value: Any) -> int:
     return _count(value) or 0
 

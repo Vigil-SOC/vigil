@@ -153,7 +153,8 @@ export default function CasesScreen({ setViewFull, viewFull, openCase, caseSeed,
   const [searchParams, setSearchParams] = useSearchParams()
   const selected = searchParams.get('case')
   // ?state=closed, ?needs_you=1 and ?working=1 open the list on that chip, and ?closed_by and
-  // ?alerts_from narrow it, so an Overview count can link to the cases its alerts are in
+  // ?alerts_from narrow it, so an Overview count can link to the cases its alerts are in; ?owner opens
+  // it on one assignee's cases, as a notice about an account's open work links
   const [filters, setFilters] = useState<CaseFilters>(() => {
     const closedBy = searchParams.get('closed_by')
     const alertsFrom = searchParams.get('alerts_from')
@@ -164,6 +165,7 @@ export default function CasesScreen({ setViewFull, viewFull, openCase, caseSeed,
       working: searchParams.get('working') === '1',
       closedBy: closedBy === 'agent' || closedBy === 'person' ? closedBy : '',
       alertsFrom: alertsFrom === 'today' || alertsFrom === 'all' ? alertsFrom : '',
+      assignee: searchParams.get('owner') ?? '',
     }
   })
   const backToList = useCallback(() => setSearchParams({}), [setSearchParams])

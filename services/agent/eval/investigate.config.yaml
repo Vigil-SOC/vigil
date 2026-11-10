@@ -18,16 +18,17 @@ runtime:
 
 # Answered from the case file by eval/estate.ts, never by a real system.
 tools:
-  - id: case_records
+  - id: read_case_shell
     kind: remote
-    provides: case_records
-    description: Read the case records held for an investigation.
+    provides: shell
+    description: Run one bash command over a case's files, read-only, and get its exit code, stdout and stderr. The working directory holds the case record and its notes (case.json); README.txt lists it. Use ls, cat, head, sed -n, grep -n, wc and jq. Output past about 8,000 bytes is cut and truncated is true.
     parameters:
       type: object
       properties:
-        case_id: { type: string, description: The case whose records to read. }
-      required: [case_id]
-    max_rows: 100
+        case_id: { type: string, description: The case whose files to read. }
+        command: { type: string, description: "One bash command, run with the case's files as its working directory." }
+      required: [case_id, command]
+    max_rows: 1
     timeout_ms: 15000
   - id: get_finding
     kind: remote

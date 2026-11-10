@@ -206,9 +206,6 @@
 @container main (max-width: 699px) {
   .de-inv-tools { flex: 1 1 100%; }
   .de-search { flex: 1 1 100%; width: auto; }
-  /* A rollout move's reason takes its own line, not a zero-width third column. */
-  .de .de-st-list li { grid-template-columns: auto minmax(0, 1fr); }
-  .de .de-st-list .de-st-why { grid-column: 1 / -1; }
 }
 /* An overlay rule's hits over the days its exception matches are counted for */
 .de-x-win { margin: 10px 0 4px; padding: 10px 12px; border-radius: 8px; background: var(--bg2); }
@@ -254,6 +251,11 @@
 .de-st-why { min-width: 0; color: var(--tx1); overflow-wrap: anywhere; }
 .de-st-why b { font-weight: 600; color: var(--ac); }
 .de-st-why b.vigil { color: var(--tx0); }
+/* reflow tier: when and move on one line, who and why under them */
+@container main (max-width: 699px) {
+  .de-st-list li { grid-template-columns: auto minmax(0, 1fr); }
+  .de-st-why { grid-column: 1 / -1; }
+}
 
 /* The rollout's success metrics: a card under the stats strip, one cell per metric. */
 .de-rollout { display: grid; gap: 12px; }

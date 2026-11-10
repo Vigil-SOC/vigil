@@ -35,6 +35,7 @@ def _copy(rule_id=1, stage="shadow", days_in=8):
             "runs": {"days": {d: {"pass": 4, "fail": 0} for d in _week(30)}},
             "shadow": {"days": {d: 3 for d in _week(30)}},
             "sees": {"result": "pass"},
+            "replay": {"result": "pass", "source": "siem"},
             "lint": {"result": "pass", "findings": []},
         },
         rule={},

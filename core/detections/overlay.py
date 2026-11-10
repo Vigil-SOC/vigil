@@ -12,13 +12,11 @@ without one gets a fresh uuid. The sync appends the 'shadow' stage rows, and for
 transaction. A copy saved unchanged makes no version and no entry. A version
 with no such entry was first seen by the sync alone: a file put in the folder.
 
-Attack events named by their SIEM ids (``proven_event_ids``) prove the save
-before anything is written (#4212): Vigil reads them from the SIEM, replays the
-Sigma form on them (``siem_replay``), and runs each Splunk and Elastic copy over
-their window the way shadow does; each must hit a named event. Each copy's
-result lands as ``checks.replay`` (source siem) on its version, and a Splunk or
-Elastic copy leaves shadow only with a passed one (``rollout.unproven``).
-Events a caller writes are never proof.
+Evidence passed with the save is replayed on the Sigma form before anything is
+written (#3755); the result lands as ``checks.replay`` on the Sigma version.
+Events named by id are read from the SIEM instead, and each Splunk and Elastic
+copy is run on them too (#4212, ``save_proof``); each copy's own result lands as
+its version's ``checks.replay``, with ``source: siem``.
 
 Exceptions passed per copy (#3794) are stored apart from the files once the
 sync has the copies; the replay counts a ruled-out event that a Sigma exception
@@ -27,14 +25,13 @@ sync has the copies; the replay counts a ruled-out event that a Sigma exception
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import re
 import tomllib
 import uuid
 from dataclasses import asdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -42,17 +39,13 @@ import yaml
 from sqlalchemy import select, update
 
 from core.detections import exceptions as excepts
+from core.detections import save_proof
 from core.detections import wazuh_xml as wxml
 from core.detections.detection_rules_service import DetectionRulesService
-from core.detections.engineering import siem_replay
-from core.detections.inventory import kibana, readers, rollout, sees
-from core.detections.inventory import splunk as splunk_inv
-from core.detections.inventory import sync
+from core.detections.inventory import readers, rollout, sync
 from core.detections.inventory.record import RuleRecord, fingerprint
 from core.detections.lint import lint_record, lint_sigma
 from core.detections.replay import replay_sigma
-from core.integrations._base import search_budget
-from core.integrations.splunk.descriptor import SPLUNK
 from core.storage.connection import get_db_manager
 from core.storage.models import (
     DetectionRule,
@@ -74,15 +67,6 @@ _RULE_TABLE = re.compile(r"^[ \t]*\[[ \t]*rule[ \t]*\][^\n]*$", re.MULTILINE)
 # A leading YAML document marker: the id goes under it, not above.
 _YAML_START = re.compile(r"\A(?:[ \t]*(?:#[^\n]*)?\n)*---[^\n]*\n")
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]")
-NAMED_SIEMS = ("splunk", "elastic", "wazuh")
-MAX_NAMED = 50
-# A native copy runs over the named events' own times, widened this little: its
-# page holds rollout.MAX_DOCS rows, and a wide window could push them off it.
-PROOF_PAD = timedelta(minutes=1)
-WAZUH_NOT_RUN = (
-    "a Wazuh copy has no on-demand run: a hit in its shadow runs over "
-    "wazuh-archives-* is its proof"
-)
 
 
 class Refused(ValueError):
@@ -300,8 +284,8 @@ def _wanted(
     return out
 
 
-def _copy_matches(key: Optional[str], given: List[Tuple[Dict, str]]) -> List[Dict]:
-    """A copy's active exceptions, stored and given."""
+def _sigma_matches(key: Optional[str], given: List[Tuple[Dict, str]]) -> List[Dict]:
+    """The Sigma copy's active exceptions, stored and given."""
     stored: List[Dict] = []
     if key:
         with get_db_manager().session_scope() as session:
@@ -316,357 +300,72 @@ def _copy_matches(key: Optional[str], given: List[Tuple[Dict, str]]) -> List[Dic
     return stored + [m for m, _ in given]
 
 
-def _named(ids: Any) -> Dict[str, List[str]]:
-    """``proven_event_ids`` checked: SIEM -> its event ids, each named once."""
-    if not ids:
-        return {}
-    if not isinstance(ids, dict):
-        raise Refused("proven_event_ids must map a SIEM to a list of its event ids")
-    out: Dict[str, List[str]] = {}
-    for siem, values in ids.items():
-        if siem not in NAMED_SIEMS:
-            raise Refused(
-                f"proven_event_ids names {siem!r}: name splunk, elastic or wazuh"
-            )
-        if not isinstance(values, list) or not all(
-            isinstance(v, (str, int)) and not isinstance(v, bool) and str(v).strip()
-            for v in values
-        ):
-            raise Refused(f"proven_event_ids.{siem} must be a list of event ids")
-        clean = list(dict.fromkeys(str(v).strip() for v in values))
-        if len(clean) > MAX_NAMED:
-            raise Refused(f"name at most {MAX_NAMED} {siem} events")
-        # _cd alone is unique only within its bucket: it could name another event.
-        bare = [v for v in clean if siem == "splunk" and "~" not in v]
-        if bare:
-            raise Refused(
-                f"name each Splunk event as _bkt:_cd, as its row gives them: "
-                f"{', '.join(bare[:3])} has no bucket"
-            )
-        if clean:
-            out[siem] = clean
-    return out
-
-
-def _sigma_proof(
+def _evidence(
     sigma: Optional[str],
-    named: Dict[str, List[str]],
+    proven: Optional[list],
     ruled_out: Optional[list],
-    excepted: List[Dict],
-    elastic_index: Optional[str] = None,
+    excepted: Optional[List[Dict]] = None,
 ) -> Dict[str, Any]:
-    """``checks.replay`` for the Sigma form, replayed on the named events as the
-    SIEMs hold them; Refused when it hits none of them or matches a ruled-out event.
-    False positives and a cut-short normal read are recorded, never refused."""
+    """``checks.replay`` for the Sigma form; Refused when the evidence does not hold it up."""
+    if not proven and not ruled_out:
+        return {"result": "not_run"}
     if not sigma:
         raise Refused(
-            "proven_event_ids were passed, but there is no sigma form to replay them on"
+            "events were passed, but there is no sigma form to replay them on"
         )
-    if ruled_out is not None and not isinstance(ruled_out, list):
-        raise Refused("ruled_out_events must be a list")
-    # A ruled-out event a Sigma exception matches is left out, as before.
-    left_out = [
-        e for e in ruled_out or [] if any(excepts.matches(m, e) for m in excepted)
-    ]
-    kept_out = [e for e in ruled_out or [] if not any(e is x for x in left_out)]
-    if kept_out:
-        local = replay_sigma(sigma, [], kept_out)
-        if not local["evaluated"]:
-            raise Refused(
-                f"sigma form could not be replayed: {local['reason']}", replay=local
-            )
-        if local["ruled_out_matched"]:
-            raise Refused("sigma form matched a ruled-out event", replay=local)
-    evidence = asyncio.run(
-        siem_replay.run(
-            sigma, named=named, excepted=excepted, elastic_index=elastic_index
-        )
-    )
-    if evidence.get("siems") is None:  # never compiled: nothing was read
+    excepted = excepted or []
+
+    def hit(e: Any) -> bool:
+        return any(excepts.matches(m, e) for m in excepted)
+
+    if any(hit(e) for e in proven or []):
         raise Refused(
-            f"sigma form could not be replayed: {evidence['unproven_because']}",
-            replay=evidence,
+            "a proven event matches an exception: the rule would never alert on it"
         )
-    by_siem = {s["siem"]: s for s in evidence["siems"]}
-    for siem in named:
-        s = by_siem.get(siem)
-        why = (
-            "Vigil does not read it ("
-            + "; ".join(evidence.get("skipped") or ["not configured"])
-            + ")"
-            if s is None
-            else s.get("deferred") or s.get("error")
-        )
-        if why:
-            raise Refused(
-                f"the named {siem.title()} events could not be read: {why}",
-                replay=evidence,
-            )
-    missing = {
-        siem: by_siem[siem]["named_missing"]
-        for siem in named
-        if by_siem[siem].get("named_missing")
-    }
-    if not evidence.get("hits"):
+    left_out = [e for e in ruled_out or [] if hit(e)]
+    ruled_out = [e for e in ruled_out or [] if not hit(e)]
+    replay = replay_sigma(sigma, proven or [], ruled_out)
+    replay["ruled_out_excepted"] = len(left_out)
+    if not replay["evaluated"]:
         raise Refused(
-            "sigma form matched none of the named events" + _missing_text(missing),
-            replay=evidence,
-            missed=True,
+            f"sigma form could not be replayed: {replay['reason']}", replay=replay
         )
+    if replay["ruled_out_matched"]:
+        raise Refused("sigma form matched a ruled-out event", replay=replay)
+    if not replay["matched"]:
+        raise Refused("sigma form matched no proven event", replay=replay)
     return {
-        **evidence,
-        "source": "siem",
         "result": "pass",
-        "attack_basis": "named in proven_event_ids",
+        **replay,
         "checked_at": datetime.now(timezone.utc).isoformat(),
-        "named": named,
-        "missing": missing,
-        "ruled_out_events": len(kept_out),
-        "ruled_out_excepted": len(left_out),
+        "proven_events": len(proven or []),
+        "ruled_out_events": len(ruled_out or []),
     }
 
 
-def _missing_text(missing: Dict[str, List[str]]) -> str:
-    if not missing:
-        return ""
-    parts = [
-        f"{siem.title()} has no event {', '.join(ids)}" for siem, ids in missing.items()
-    ]
-    return f" ({'; '.join(parts)}: a named id the SIEM does not return proves nothing)"
-
-
-async def _run_native(
-    language: str, rule: Dict[str, Any], key: str, start: datetime, end: datetime
-) -> Tuple[int, List[Dict[str, Any]]]:
-    """Run a native copy over [start, end) the way shadow does, on its SIEM's budget."""
-    copy = rollout.Copy(0, 0, key, language, "shadow", rollout.NO_STAGE_AT, {}, rule)
-    if language == "splunk":
-        config = rollout._splunk_config()
-        if config is None:
-            raise Refused(
-                "the splunk copy cannot be run: splunk is not enabled or missing its login"
-            )
-        integration, per_hour = SPLUNK.id, splunk_inv.per_hour_of(config)
-        service, query = splunk_inv.service_of(config), rollout._splunk_query
-    else:
-        config = rollout._elastic_config()
-        if config is None:
-            raise Refused(
-                "the elastic copy cannot be run: elastic-siem is not enabled or has no elasticsearch_url"
-            )
-        cap = config.get("max_searches_per_hour")
-        per_hour = sees.DEFAULT_PER_HOUR if cap is None else max(int(cap), 0)
-        integration = rollout.INTEGRATION
-        service, query = kibana.service_of(config), rollout._query
-    try:
-        if not search_budget.spend(integration, per_hour, f"overlay-save:{key}"):
-            raise Refused(
-                f"the {language} copy was not run: {language.title()}'s search budget "
-                "for this hour is spent; save again later"
-            )
-        return await query(service, copy, start, end)
-    finally:
-        close = getattr(service, "close", None)
-        done = close() if close is not None else None
-        if asyncio.iscoroutine(done):
-            await done
-
-
-def _native_proof(
-    language: str,
-    text: str,
-    key: str,
-    named: Dict[str, List[str]],
-    sigma: Dict[str, Any],
-    excepted: List[Dict],
-) -> Dict[str, Any]:
-    """``checks.replay`` for a Splunk or Elastic copy: run in its SIEM over the
-    named events' own window, it must return one of them. A copy with no event
-    named for its SIEM is recorded not_run, and stays in shadow."""
-    ids = named.get(language) or []
-    if not ids:
-        return {
-            "source": "siem",
-            "result": "not_run",
-            "reason": f"no {language} event was named in proven_event_ids",
-        }
-    read = next(s for s in sigma["siems"] if s["siem"] == language)
-    found = read.get("named_found") or []
-    times = [datetime.fromisoformat(f["at"]) for f in found if f.get("at")]
-    if not times:
-        raise Refused(
-            f"the {language} copy cannot be checked: {language.title()} returned none "
-            "of the named events" + ("" if not found else " with a time")
-        )
-    rule = (
-        yaml.safe_load(text)
-        if language == "splunk"
-        else tomllib.loads(text).get("rule")
-    ) or {}
-    start, end = min(times) - PROOF_PAD, max(times) + PROOF_PAD
-    if rule.get("timestamp_override"):
-        # The copy's window is on its own field (event.ingested): an event lands
-        # there after its @timestamp, by up to the lag shadow allows for.
-        end += rollout.LAG
-    try:
-        total, docs = asyncio.run(_run_native(language, rule, key, start, end))
-    except Refused:
-        raise
-    except (
-        Exception
-    ) as exc:  # noqa: BLE001 -- the SIEM's own error, named in the refusal
-        raise Refused(
-            f"the {language} copy failed to run: {str(exc)[:500] or type(exc).__name__}"
-        )
-    kept, _, _ = excepts.split(docs, list(enumerate(excepted)))
-    # An EQL sequence is one row whose id joins its events' ids with "+".
-    returned = [part for d in kept for part in rollout._doc_id(d).split("+")]
-    hits = [n for n in ids if any(siem_replay.same_id(r, n) for r in returned)]
-    window = {"start": start.isoformat(), "end": end.isoformat()}
-    if not hits:
-        why = f"the {language.title()} copy returned 0 of the {len(found)} named events"
-        if len(kept) < len(docs):
-            why += f" ({len(docs) - len(kept)} rows dropped by its exceptions)"
-        if kept and not any(_has_id(language, d) for d in kept):
-            why += (
-                f"; its {len(kept)} rows carry no event id, so none can be matched to "
-                "a named event: "
-                + (
-                    "a Splunk search must return events (with _bkt and _cd), not a "
-                    "stats table"
-                    if language == "splunk"
-                    else "an ES|QL query must keep METADATA _id"
-                )
-            )
-        if len(docs) >= rollout.MAX_DOCS:
-            why += (
-                f"; its page of {rollout.MAX_DOCS} rows was full, so a named event "
-                "may have fallen off it: make the search narrower"
-            )
-        raise Refused(
-            why,
-            replay={
-                "siem": language,
-                "window": window,
-                "returned": total,
-                "named": ids,
-            },
-        )
-    return {
-        "source": "siem",
-        "result": "pass",
-        "siem": language,
-        "checked_at": datetime.now(timezone.utc).isoformat(),
-        "window": window,
-        "named": ids,
-        "missing": read.get("named_missing") or [],
-        "hits": hits,
-        "returned": total,
-        "samples": [
-            rollout._sample(d)
-            for d in kept
-            if any(siem_replay.same_id(rollout._doc_id(d), n) for n in hits)
-        ][: rollout.SAMPLE],
-    }
-
-
-def _has_id(language: str, doc: Dict[str, Any]) -> bool:
-    if language == "splunk":
-        return bool((doc.get("_source") or {}).get("_cd"))
-    return bool(doc.get("_id"))
-
-
-def _evidence(
-    copies: Dict[str, str],
-    keys: Dict[str, str],
-    proven_event_ids: Any,
-    ruled_out: Optional[list],
-    wanted: Dict[str, List[Tuple[Dict, str]]],
-) -> Dict[str, Dict[str, Any]]:
-    """``checks.replay`` per copy language; Refused when the SIEM does not hold the rule up."""
-    named = _named(proven_event_ids)
-    if not named:
-        if ruled_out:
-            raise Refused(
-                "ruled_out_events were passed without proven_event_ids: name the "
-                "attack events by their SIEM ids"
-            )
-        return {language: {"result": "not_run"} for language in copies}
-    refused: List[Refused] = []
-    try:
-        sigma = _sigma_proof(
-            copies.get("sigma"),
-            named,
-            ruled_out,
-            _copy_matches(keys.get("sigma"), wanted.get("sigma", [])),
-            _elastic_index(copies.get("elastic")),
-        )
-    except Refused as exc:
-        # Once the named events were read, each native copy is still run, so the
-        # refusal names every copy that misses them.
-        if not exc.detail.pop("missed", False):
-            raise
-        sigma = exc.detail["replay"]
-        refused.append(exc)
-    out: Dict[str, Dict[str, Any]] = {"sigma": sigma}
-    for language in ("splunk", "elastic"):
-        if language in copies:
-            try:
-                out[language] = _native_proof(
-                    language,
-                    copies[language],
-                    keys[language],
-                    named,
-                    sigma,
-                    _copy_matches(keys[language], wanted.get(language, [])),
-                )
-            except Refused as exc:
-                refused.append(exc)
-    if refused:
-        raise Refused(
-            "; ".join(str(r) for r in refused),
-            replay=refused[0].detail.get("replay"),
-            more=[r.detail.get("replay") for r in refused[1:]],
-        )
-    if "wazuh" in copies:
-        out["wazuh"] = {"source": "siem", "result": "not_run", "reason": WAZUH_NOT_RUN}
-    return out
-
-
-def _elastic_index(text: Optional[str]) -> Optional[str]:
-    """The Elastic copy's own index with the replay's default ones, so a named
-    event in its index is read."""
-    if not text:
-        return None
-    own = rollout._index(tomllib.loads(text).get("rule") or {})
-    return f"{siem_replay.ELASTIC_INDICES},{own}" if own else None
-
-
-def _record_replays(replays: Dict[str, Dict[str, Any]]) -> None:
-    """Set ``checks.replay`` on each copy's latest version, by native key. A new
-    version starts with no checks, so it carries no earlier proof."""
+def _record_replay(key: str, replay: Dict[str, Any]) -> None:
+    """Merge ``replay`` into the checks of the copy's latest version."""
     with get_db_manager().session_scope() as session:
-        for key, replay in replays.items():
-            rule = session.execute(
-                select(DetectionRule.id, DetectionRule.latest_version).where(
-                    DetectionRule.source == readers.OVERLAY_SOURCE,
-                    DetectionRule.native_key == key,
-                )
-            ).first()
-            if rule is None:
-                continue
-            version = (DetectionRuleVersion.rule_id == rule.id) & (
-                DetectionRuleVersion.version == rule.latest_version
+        rule = session.execute(
+            select(DetectionRule.id, DetectionRule.latest_version).where(
+                DetectionRule.source == readers.OVERLAY_SOURCE,
+                DetectionRule.native_key == key,
             )
-            checks = session.scalar(select(DetectionRuleVersion.checks).where(version))
-            # A re-save without ids leaves an unchanged version's earlier proof standing.
-            if replay["result"] == "not_run" and (checks or {}).get("replay"):
-                continue
-            session.execute(
-                update(DetectionRuleVersion)
-                .where(version)
-                .values(checks={**(checks or {}), "replay": replay})
-            )
+        ).first()
+        if rule is None:
+            return
+        version = (DetectionRuleVersion.rule_id == rule.id) & (
+            DetectionRuleVersion.version == rule.latest_version
+        )
+        checks = session.scalar(select(DetectionRuleVersion.checks).where(version))
+        # A re-save without events leaves an unchanged version's earlier replay standing.
+        if replay["result"] == "not_run" and (checks or {}).get("replay"):
+            return
+        session.execute(
+            update(DetectionRuleVersion)
+            .where(version)
+            .values(checks={**(checks or {}), "replay": replay})
+        )
 
 
 def _prepare(copies: Dict[str, str]) -> List[Tuple[str, str, RuleRecord]]:
@@ -826,13 +525,20 @@ def save_rule(
     splunk_yaml: Optional[str] = None,
     elastic_toml: Optional[str] = None,
     sigma_yaml: Optional[str] = None,
-    proven_event_ids: Optional[Dict[str, List[str]]] = None,
+    proven_events: Optional[list] = None,
     ruled_out_events: Optional[list] = None,
     exceptions: Optional[Dict[str, Any]] = None,
     wazuh_xml: Optional[str] = None,
     all_or_nothing: bool = False,
+    proven_event_ids: Optional[Dict[str, Any]] = None,
+    attack_started_at: Optional[str] = None,
+    attack_ended_at: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Write each copy into the overlay and sync it; refuse the lot if any part fails.
+
+    With ``proven_event_ids``, Vigil reads those events from the SIEM and proves
+    the Sigma form and each Splunk and Elastic copy on them first (``save_proof``);
+    each copy's result is its version's ``checks.replay``.
 
     With ``all_or_nothing``, a fault after the first file is written (a write, the
     sync, the replay record or the exceptions) is undone before it is raised as
@@ -853,15 +559,29 @@ def save_rule(
     try:
         prepared = _prepare(copies)
         wanted = _wanted(exceptions, copies)
-        by_language = {lang: r.native_key for lang, _, r in prepared}
-        replays = _evidence(
-            {lang: text for lang, text, _ in prepared},
-            by_language,
-            proven_event_ids,
-            ruled_out_events,
-            wanted,
+        sigma_key = next(
+            (r.native_key for lang, _, r in prepared if lang == "sigma"), None
         )
-    except Refused as exc:
+        sigma_excepted = _sigma_matches(sigma_key, wanted.get("sigma", []))
+        replay = _evidence(
+            copies.get("sigma"),
+            proven_events,
+            ruled_out_events,
+            sigma_excepted,
+        )
+        proof = (
+            save_proof.prove(
+                prepared,
+                copies.get("sigma"),
+                proven_event_ids,
+                attack_started_at,
+                attack_ended_at,
+                sigma_excepted,
+            )
+            if proven_event_ids is not None
+            else {}
+        )
+    except (Refused, save_proof.Refused) as exc:
         return {"error": str(exc), "saved": [], **exc.detail}
     keys = [record.native_key for _, _, record in prepared]
     # Under the sync lock: a running sync must not read a half-saved overlay.
@@ -891,7 +611,10 @@ def save_rule(
                 # The sync is one transaction: nothing of it was kept.
                 raise NotSaved(f"the overlay sync failed: {report.error}")
             if not report.error:
-                _record_replays({by_language[lang]: r for lang, r in replays.items()})
+                if sigma_key and sigma_key not in proof:
+                    _record_replay(sigma_key, replay)
+                for key, check in proof.items():
+                    _record_replay(key, check)
             added = [] if report.error else _add_exceptions(prepared, wanted)
         except Exception as exc:
             if not all_or_nothing:

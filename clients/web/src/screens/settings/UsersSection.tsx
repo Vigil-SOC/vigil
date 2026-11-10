@@ -335,6 +335,11 @@ export default function UsersSection({ notify }: SectionProps) {
                         <Icon name="lock" size={11} /> {u.locked_until ? 'Locked until ' + new Date(u.locked_until).toLocaleString() : 'Locked until unlocked'}
                       </div>
                     )}
+                    {u.deactivating_at && (
+                      <div className="text-xs text-tx-3 mt-1" title={`No sign-in or personal MCP token use; deactivates on ${new Date(u.deactivating_at).toLocaleString()}.`}>
+                        <Icon name="clock" size={11} /> Deactivating soon
+                      </div>
+                    )}
                   </td>
                   <td className="col-low">
                     <span className={`status ${u.mfa_enabled ? 'closed' : 'open'}`}>

@@ -55,10 +55,18 @@ def db(monkeypatch):
         box.session = _Session(box.rows)
         yield box.session
 
-    monkeypatch.setattr(stages, "get_db_manager", lambda: SimpleNamespace(session_scope=scope))
-    monkeypatch.setattr(stages, "_state", lambda s, rid: (
-        (s.get(None, rid), box.rows[0] if box.rows else None) if rid == 7 else (None, None)
-    ))
+    monkeypatch.setattr(
+        stages, "get_db_manager", lambda: SimpleNamespace(session_scope=scope)
+    )
+    monkeypatch.setattr(
+        stages,
+        "_state",
+        lambda s, rid: (
+            (s.get(None, rid), box.rows[0] if box.rows else None)
+            if rid == 7
+            else (None, None)
+        ),
+    )
 
     def held(session, rule_id):
         # Rows the session added count too, as autoflush would make them.
@@ -106,8 +114,20 @@ def test_stages_are_the_rows_newest_first_with_from_and_to(db):
         ([], False),
         ([_stage(2, "shadow", "ana", "too loud", hold=True)], True),
         # A new version's system row after the Revert doesn't lift the hold.
-        ([_stage(3, "shadow", "system", "v3"), _stage(2, "shadow", "ana", "x", hold=True)], True),
-        ([_stage(3, "shadow", "ana", "ok", hold=False), _stage(2, "shadow", "ana", "x", hold=True)], False),
+        (
+            [
+                _stage(3, "shadow", "system", "v3"),
+                _stage(2, "shadow", "ana", "x", hold=True),
+            ],
+            True,
+        ),
+        (
+            [
+                _stage(3, "shadow", "ana", "ok", hold=False),
+                _stage(2, "shadow", "ana", "x", hold=True),
+            ],
+            False,
+        ),
     ],
 )
 def test_stages_say_whether_a_person_holds_the_rule(db, rows, held):
@@ -134,14 +154,21 @@ def test_revert_writes_a_held_shadow_row_by_the_person_and_an_audit_row(db):
     assert out["stage"] == "shadow" and out["hold"] is True
     (row,) = db.session.added
     assert (row.rule_id, row.version, row.stage, row.actor, row.reason) == (
-        7, 2, "shadow", "ana", "noisy",
+        7,
+        2,
+        "shadow",
+        "ana",
+        "noisy",
     )
     assert row.proof == {"hold": True}
     (audit,) = db.audits
     assert audit["user_id"] == "p-ana"
     assert audit["config_key"] == "detection_rule:7"
     assert audit["change_reason"] == "noisy"
-    assert audit["old_value"]["stage"] == "live" and audit["new_value"]["stage"] == "shadow"
+    assert (
+        audit["old_value"]["stage"] == "live"
+        and audit["new_value"]["stage"] == "shadow"
+    )
 
 
 @pytest.mark.parametrize("stage", ["shadow", "off"])
@@ -176,8 +203,14 @@ def test_revert_release_and_stages_routes_are_gated_as_documented():
         )
         return {d.dependency.permission for d in route.dependencies}
 
-    assert gates("/rules/{rule_id}/revert", "POST") == {"detections.read", "detections.write"}
-    assert gates("/rules/{rule_id}/release", "POST") == {"detections.read", "detections.write"}
+    assert gates("/rules/{rule_id}/revert", "POST") == {
+        "detections.read",
+        "detections.write",
+    }
+    assert gates("/rules/{rule_id}/release", "POST") == {
+        "detections.read",
+        "detections.write",
+    }
     assert gates("/rules/{rule_id}/stages", "GET") == {"detections.read"}
 
 
@@ -227,6 +260,8 @@ HEALTHY_WEEK = {
         },
     },
     "sees": {"result": "pass"},
+    # Shown to fire: its save-time run in its SIEM caught the attack (#4212).
+    "replay": {"result": "pass", "source": "siem"},
     # Promotion also needs the version's lint pass (#4011).
     "lint": {"result": "pass", "findings": []},
 }
@@ -283,9 +318,16 @@ def test_the_sweep_writes_no_live_row_for_a_held_rule(monkeypatch):
 
 def test_vigils_revert_is_a_bell_entry_for_everyone(monkeypatch):
     revert = {
-        "change_id": -9, "rule_id": 7, "name": "Rule 7", "tool": "overlay",
-        "status": "active", "check": "revert", "old": "live", "new": "shadow",
-        "version": 2, "reason": "Sees: lab: data stopped",
+        "change_id": -9,
+        "rule_id": 7,
+        "name": "Rule 7",
+        "tool": "overlay",
+        "status": "active",
+        "check": "revert",
+        "old": "live",
+        "new": "shadow",
+        "version": 2,
+        "reason": "Sees: lab: data stopped",
         "since": "2026-11-07T09:00:00+00:00",
     }
     monkeypatch.setattr(catalog, "open_flags", lambda: [])

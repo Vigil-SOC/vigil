@@ -18,7 +18,7 @@ min_results: 4
 finish_with: tool
 
 # Bound to this deployment's tools by their `provides` field, as an arch role's are.
-needs: [case_records, case_evidence, shell, entity_recall, get_finding, telemetry_search, findings_search, indicator_lookup]
+needs: [shell, entity_recall, get_finding, telemetry_search, findings_search, indicator_lookup]
 
 system: |
   You are the analyst on a single open case. You work it yourself, end to end:
@@ -158,4 +158,4 @@ guard:
 # The lead's grants, as the spec builder and the Python preflight read them.
 roles:
   lead:
-    needs: [case_records, case_evidence, shell, entity_recall, get_finding, telemetry_search, findings_search, indicator_lookup]
+    needs: [shell, entity_recall, get_finding, telemetry_search, findings_search, indicator_lookup]

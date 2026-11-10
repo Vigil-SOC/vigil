@@ -36,7 +36,7 @@ Skills are not in the plugin. They live in the repo's one library, `core/skills/
 ```yaml
 id: investigate
 description: Work one open case to a conclusion a reader can act on.
-needs: [case_records, get_finding, telemetry_search]   # capabilities, bound by each tool's `provides`
+needs: [shell, get_finding, telemetry_search]            # capabilities, bound by each tool's `provides`
 system: |
   Who the agent is and how it works.
 skills: [investigate-case]          # core/skills/library/<name>/SKILL.md, loaded on demand

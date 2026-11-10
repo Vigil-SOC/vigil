@@ -38,6 +38,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from core.auth import mfa_coverage
 from core.auth.auth_cookies import warn_if_cookie_insecure_in_production
 from core.auth.bootstrap_code import announce_setup_code
 from core.auth.key_ring import adopt_when_ready
@@ -224,6 +225,7 @@ app.add_middleware(
 # ENVIRONMENT=production refuses CSRF off, report-only, or a wider exempt list.
 refuse_unsafe_csrf_in_production()
 warn_if_cookie_insecure_in_production()
+mfa_coverage.register()
 app.add_middleware(CSRFMiddleware)
 
 # Security headers added AFTER CORS so it is the outermost middleware on the
@@ -664,6 +666,10 @@ async def _startup(app: FastAPI):
     # read from it. POST /api/auth/bootstrap requires the code either way.
     app.state.key_ring_task = asyncio.create_task(adopt_when_ready())
     app.state.setup_code_task = asyncio.create_task(announce_setup_code())
+    if not _testing:
+        from services.api.dormancy import run as dormancy_sweeper
+
+        app.state.dormancy_task = asyncio.create_task(dormancy_sweeper())
 
     if _testing:
         logger.info(
@@ -696,7 +702,7 @@ def _start_audit_feed(app) -> None:
 
 
 async def _stop_setup_code(app) -> None:
-    for name in ("key_ring_task", "setup_code_task"):
+    for name in ("key_ring_task", "setup_code_task", "dormancy_task"):
         task = getattr(app.state, name, None)
         if task is None:
             continue

@@ -7,6 +7,7 @@ import { VigilMark } from '../shared/VigilLogo';
 import { Icon } from '../shared/icons';
 
 const SignedOutScreen = lazy(() => import('../screens/login/SignedOutScreen'))
+const MfaSetupScreen = lazy(() => import('../screens/login/MfaSetupScreen'))
 
 // Same look as Loader, with a retry in place of the progress track.
 function BackendUnreachable({ onRetry }: { onRetry: () => void }) {
@@ -33,7 +34,7 @@ function BackendUnreachable({ onRetry }: { onRetry: () => void }) {
 
 // Auth only. Per-screen permissions live in SocConsole's SCREEN_PERMS.
 export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading, backendUnreachable, signedOut, retryLoadUser } = useAuth();
+  const { isAuthenticated, isLoading, backendUnreachable, signedOut, retryLoadUser, user } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -56,6 +57,15 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
 
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  // The MFA requirement covers this person and they have none: setup, then the console.
+  if (user?.mfa_setup_required) {
+    return (
+      <Suspense fallback={<Loader />}>
+        <MfaSetupScreen />
+      </Suspense>
+    );
   }
 
   return <>{children}</>;
