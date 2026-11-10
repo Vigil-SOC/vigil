@@ -3542,8 +3542,9 @@ export interface paths {
         /**
          * Import Detection Skill
          * @description Import a Detection Skill zip as a new rule, in shadow. ``public_key_pem``
-         *     is the exporting Vigil's key (its GET /proof-card/key); the events, JSON
-         *     lists, are replayed on the Sigma form as a new rule's are. Refused, with
+         *     is the exporting Vigil's key (its GET /proof-card/key); ``proven_event_ids``
+         *     (a JSON object of SIEM -> event ids) and ``ruled_out_events`` (a JSON list)
+         *     prove the copies on the SIEM as a new rule's save does. Refused, with
          *     the reason, on a failed signature, hash, lint or replay. The trail records
          *     the import, or its refusal, as this user.
          */
@@ -8742,8 +8743,8 @@ export interface components {
         Body_import_detection_skill_api_detection_rules_detection_skill_import_post: {
             /** File */
             file: string;
-            /** Proven Events */
-            proven_events?: string | null;
+            /** Proven Event Ids */
+            proven_event_ids?: string | null;
             /**
              * Public Key Pem
              * @default
