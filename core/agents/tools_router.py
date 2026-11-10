@@ -29,7 +29,7 @@ from core.agents.tool_registry import (
     execute_backend_tool,
     required_permission,
 )
-from core.auth import tool_principal
+from core.auth import sign_ins, tool_principal
 from core.auth.permissions import permission_refusal
 from core.auth.principals import SYSTEM_PRINCIPAL_ID
 from core.auth.tool_principal import Claims
@@ -429,6 +429,12 @@ async def invoke(
         claims = tool_principal.read(body.principal)
     except tool_principal.InvalidPrincipal:
         raise HTTPException(status_code=401, detail="bad or expired principal")
+    # A run whose sign-in ended for a stopping reason calls nothing more, whether
+    # or not its worker has been told to stop yet. Other endings keep it working.
+    if claims.sid and await asyncio.to_thread(
+        sign_ins.ended_for_compromise, claims.sid
+    ):
+        return _failure("refused", detail=sign_ins.STOP_REASON)
     bound: ContextManager[None] = nullcontext()
     if claims.username:
         bound = acting_as(claims.username)

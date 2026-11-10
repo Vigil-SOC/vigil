@@ -4186,6 +4186,11 @@
   "nullable": false,
   "type": "character varying(80)"
  },
+ "column workflow_runs.sign_in_id": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
  "column workflow_runs.started_at": {
   "default": "now()",
   "nullable": false,
@@ -4789,6 +4794,7 @@
  "index idx_workflow_run_phases_run_id": "CREATE INDEX idx_workflow_run_phases_run_id ON public.workflow_run_phases USING btree (run_id, phase_order)",
  "index idx_workflow_runs_case_id": "CREATE INDEX idx_workflow_runs_case_id ON public.workflow_runs USING btree (((trigger_context ->> 'case_id'::text))) WHERE (deleted_at IS NULL)",
  "index idx_workflow_runs_live": "CREATE INDEX idx_workflow_runs_live ON public.workflow_runs USING btree (workflow_id, started_at DESC) WHERE (deleted_at IS NULL)",
+ "index idx_workflow_runs_sign_in": "CREATE INDEX idx_workflow_runs_sign_in ON public.workflow_runs USING btree (sign_in_id) WHERE (sign_in_id IS NOT NULL)",
  "index idx_workflow_runs_started_at": "CREATE INDEX idx_workflow_runs_started_at ON public.workflow_runs USING btree (started_at DESC)",
  "index idx_workflow_runs_status": "CREATE INDEX idx_workflow_runs_status ON public.workflow_runs USING btree (status) WHERE ((status)::text = ANY ((ARRAY['running'::character varying, 'failed'::character varying])::text[]))",
  "index idx_workflow_runs_triggered_by": "CREATE INDEX idx_workflow_runs_triggered_by ON public.workflow_runs USING btree (triggered_by, started_at)",

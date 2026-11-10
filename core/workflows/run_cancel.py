@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 import uuid
 from typing import Any, Dict, Optional, Set
 
@@ -111,7 +112,12 @@ def escalate_later(
     try:
         task = asyncio.get_running_loop().create_task(_escalate(run_id, reason, delay))
     except RuntimeError:
-        logger.debug("no running loop; %s will not be escalated", run_id)
+        # A sync caller (a request thread) has no loop: the backstop is a timer.
+        timer = threading.Timer(
+            delay, force_terminal, (run_id, f"{reason} (did not stop on request)")
+        )
+        timer.daemon = True
+        timer.start()
         return None
     _pending.add(task)
     task.add_done_callback(_pending.discard)

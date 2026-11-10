@@ -64,6 +64,7 @@ class WorkflowRunService:
         triggered_by: Optional[str] = None,
         triggered_by_principal_id: Optional[str] = None,
         run_id: Optional[str] = None,
+        sign_in_id: Optional[str] = None,
     ) -> Optional[str]:
         """Create a ``workflow_runs`` row with ``status='running'``.
 
@@ -88,6 +89,7 @@ class WorkflowRunService:
                     triggered_by=triggered_by,
                     triggered_by_principal_id=triggered_by_principal_id,
                     trigger_context=trigger_context or {},
+                    sign_in_id=sign_in_id,
                     started_at=utcnow(),
                 )
                 session.add(row)

@@ -7,7 +7,7 @@ import logging
 import uuid
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
@@ -149,7 +149,9 @@ def list_runs(
     "", dependencies=_RUN_AGENTS, response_model=StartRunResponse, status_code=202
 )
 async def start_run(
-    request: StartRunRequest, user: User = Depends(get_current_user)
+    request: StartRunRequest,
+    http_request: Request,
+    user: User = Depends(get_current_user),
 ) -> StartRunResponse:
     if request.run_kind not in RUN_KINDS:
         raise HTTPException(
@@ -191,7 +193,8 @@ async def start_run(
     actor = plugin_actor(request.run_kind)
     # Best-effort: without a workflow_runs row a parked run cannot raise an
     # answerable checkpoint. Like every write to that table, the ledger is truth.
-    _begin_run_row(run_id, request, user.username, person_id)
+    sid = tool_principal.sid_of(http_request)
+    _begin_run_row(run_id, request, user.username, person_id, sid)
 
     try:
         note_run_start(
@@ -222,6 +225,7 @@ async def start_run(
             run_id=run_id,
             origin="person",
             ttl=tool_principal.RUN_TTL,
+            sid=sid,
         ),
         actor=actor,
         origin="person",
@@ -246,6 +250,7 @@ def _begin_run_row(
     request: StartRunRequest,
     triggered_by: str,
     person_id: Optional[str] = None,
+    sign_in_id: Optional[str] = None,
 ) -> None:
     from core.workflows.workflow_run_service import WorkflowRunService
     from core.workflows.workflows_service import WorkflowsService
@@ -274,6 +279,7 @@ def _begin_run_row(
         triggered_by=triggered_by,
         triggered_by_principal_id=person_id,
         run_id=run_id,
+        sign_in_id=sign_in_id,
     )
 
 
