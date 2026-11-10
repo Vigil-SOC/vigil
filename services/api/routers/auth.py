@@ -35,6 +35,7 @@ from core.auth.auth_service import (
 )
 from core.auth.bootstrap_code import has_human_user, setup_code_matches
 from core.auth.current_user import DEV_MODE, _detached, mfa_setup_route
+from core.auth.deactivation import when_committed
 from core.auth.identity import claim_sign_in_names, identifier_in_use
 from core.auth.password_reset import (
     decode_reset_token,
@@ -43,7 +44,6 @@ from core.auth.password_reset import (
     is_current,
     reset_link,
 )
-from core.auth.deactivation import when_committed
 from core.auth.password_validator import (
     USERS_LINK,
     PasswordPolicyError,
