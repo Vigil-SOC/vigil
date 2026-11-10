@@ -11,8 +11,8 @@ from alembic import op
 from core.audit import retention, trail
 from core.upgrade.revision import stash_report
 
-revision = "0052_erased_assignees"
-down_revision = "0051_erased_identifiers"
+revision = "0053_erased_assignees"
+down_revision = "0052_api_tokens"
 
 
 def upgrade() -> None:
