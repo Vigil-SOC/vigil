@@ -1,6 +1,6 @@
 """A proposed detection on its way from a missed attack step to a rule in the SIEM (#4157).
 
-The schema is core/upgrade/versions/0040_detection_proposals.sql, ported from 1.x's
+The schema is core/upgrade/versions/0045_detection_proposals.sql, ported from 1.x's
 0037. ``state`` changes only through ``move_to``, and every step tried, failed ones
 included, goes through ``record`` or ``move_to``: each appends one
 ``DetectionProposalEvent``, so the state and its record cannot disagree.

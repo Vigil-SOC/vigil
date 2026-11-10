@@ -2,8 +2,8 @@
 
 from core.upgrade.revision import run_sql
 
-revision = "0040_detection_proposals"
-down_revision = "0039_custom_agent_persona_drop"
+revision = "0045_detection_proposals"
+down_revision = "0044_sign_in_end_reasons"
 
 
 def upgrade() -> None:

@@ -171,7 +171,7 @@ def pg(monkeypatch):
             ).scalar()
             is None
         ):
-            pytest.skip("the database is not upgraded to 0040_detection_proposals")
+            pytest.skip("the database is not upgraded to 0045_detection_proposals")
         assert session.execute(
             text("select current_database()")
         ).scalar() == url.path.lstrip("/")
