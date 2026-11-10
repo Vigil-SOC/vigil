@@ -3,7 +3,8 @@ import QRCode from 'qrcode'
 import { useAuth } from '../contexts/AuthContext'
 import { mfaApi } from '../services/api'
 import { Icon } from '../shared/icons'
-import { Field, Popup, TextInput } from '../shared/ui'
+import MfaMethodsList, { type MfaMethod } from '../shared/MfaMethodsList'
+import { Field, PasswordInput, Popup, TextInput } from '../shared/ui'
 
 type View = 'main' | 'enrol' | 'codes' | 'regenerate' | 'disable'
 
@@ -76,8 +77,20 @@ export default function TwoStepDialog({
   const [qr, setQr] = useState('')
   const [codes, setCodes] = useState<string[]>([])
   const [code, setCode] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // your own methods, listed on the "on" screen
+  const [methods, setMethods] = useState<MfaMethod[]>([])
+
+  useEffect(() => {
+    if (open && enabled && view === 'main') {
+      mfaApi
+        .methods()
+        .then((res) => setMethods(res.data))
+        .catch(() => setMethods([]))
+    }
+  }, [open, enabled, view])
 
   useEffect(() => {
     if (!open) {
@@ -86,6 +99,7 @@ export default function TwoStepDialog({
       setQr('')
       setCodes([])
       setCode('')
+      setPassword('')
       setError(null)
     }
   }, [open])
@@ -93,6 +107,7 @@ export default function TwoStepDialog({
   const go = (next: View) => {
     setView(next)
     setCode('')
+    setPassword('')
     setError(null)
   }
 
@@ -122,7 +137,7 @@ export default function TwoStepDialog({
 
   const verify = async (e: FormEvent) => {
     e.preventDefault()
-    const res = await run(() => mfaApi.verify(code.trim()), 'Invalid MFA code')
+    const res = await run(() => mfaApi.verify(code.trim(), password), 'Invalid MFA code')
     if (!res) return
     setCodes(res.data.recovery_codes)
     go('codes')
@@ -132,7 +147,7 @@ export default function TwoStepDialog({
 
   const regenerate = async (e: FormEvent) => {
     e.preventDefault()
-    const res = await run(() => mfaApi.regenerateRecoveryCodes(code.trim()), 'Invalid MFA code')
+    const res = await run(() => mfaApi.regenerateRecoveryCodes(code.trim(), password), 'Invalid MFA code')
     if (!res) return
     setCodes(res.data.recovery_codes)
     go('codes')
@@ -140,11 +155,22 @@ export default function TwoStepDialog({
 
   const disable = async (e: FormEvent) => {
     e.preventDefault()
-    const res = await run(() => mfaApi.disable(code.trim()), 'Invalid MFA code')
+    const res = await run(() => mfaApi.disable(code.trim(), password), 'Invalid MFA code')
     if (!res) return
     await refreshUser()
     go('main')
   }
+
+  const passwordField = (
+    <Field label="Password">
+      <PasswordInput
+        autoComplete="current-password"
+        value={password}
+        disabled={busy}
+        onChange={(e) => setPassword(e.target.value)}
+      />
+    </Field>
+  )
 
   const banner = error && (
     <div className="settings-banner err" role="alert">
@@ -195,6 +221,7 @@ export default function TwoStepDialog({
             <div className="settings-banner ok">
               <Icon name="shield" size={14} /> Two-step sign-in is on.
             </div>
+            <MfaMethodsList methods={methods} />
             <p className="m-0 text-sm text-tx-2 leading-relaxed">
               If you lose your authenticator, a recovery code lets you sign in once. Regenerating makes
               the old codes stop working.
@@ -243,6 +270,7 @@ export default function TwoStepDialog({
                 autoFocus
               />
             </Field>
+            {passwordField}
             <div className="flex justify-end gap-2.5">
               <button
                 type="button"
@@ -252,7 +280,7 @@ export default function TwoStepDialog({
               >
                 {required ? 'Sign out' : 'Cancel'}
               </button>
-              <button type="submit" className="btn primary" disabled={busy || code.trim().length < 6}>
+              <button type="submit" className="btn primary" disabled={busy || code.trim().length < 6 || !password}>
                 {busy ? 'Verifying…' : 'Turn on'}
               </button>
             </div>
@@ -272,11 +300,14 @@ export default function TwoStepDialog({
 
         {(view === 'regenerate' || view === 'disable') && (
           <form className="flex flex-col gap-3.5" onSubmit={view === 'regenerate' ? regenerate : disable}>
-            {view === 'regenerate' && (
-              <p className="m-0 text-sm text-tx-2 leading-relaxed">
-                Your current recovery codes will stop working. New codes are shown once.
-              </p>
-            )}
+            <p className="m-0 text-sm text-tx-2 leading-relaxed">
+              Changes to your sign-in methods always ask for your password and a second step.
+              {view === 'regenerate'
+                ? ' Your current recovery codes will stop working; new codes are shown once.'
+                : ''}{' '}
+              Your other sign-ins end.
+            </p>
+            {passwordField}
             <Field
               label="Authentication or recovery code"
               hint="Enter a current code from your authenticator app, or an unused recovery code."
@@ -295,7 +326,7 @@ export default function TwoStepDialog({
               <button
                 type="submit"
                 className={view === 'regenerate' ? 'btn primary' : 'btn danger'}
-                disabled={busy || !code.trim()}
+                disabled={busy || !code.trim() || !password}
               >
                 {busy ? 'Working…' : view === 'regenerate' ? 'Regenerate' : 'Turn off'}
               </button>

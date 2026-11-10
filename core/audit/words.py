@@ -254,6 +254,7 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "auth.mfa_enabled": "Turned on two-step sign-in",
     "auth.mfa_disabled": "Turned off two-step sign-in",
     "auth.recovery_codes_regenerated": "Made new recovery codes",
+    "auth.mfa_recovered": "Signed in with a recovery code, which removed their methods",
     "auth.keys_adopted": "Adopted the signing and encryption key ring",
     "auth.key_rotated": lambda p: f"Rotated the {_key_purpose(p)} key",
     "auth.key_retired": lambda p: f"Retired the {_key_purpose(p)} key",
