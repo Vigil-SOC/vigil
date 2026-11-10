@@ -18,8 +18,9 @@ so the map lists every technique the Rules page counts as declared (``mapped``).
 Ported from Alex Margaris's heat map on the 1.x line (vigil-1.x d0a56ef6 and
 7ee99b3f, ``core/detections/engineering/program.py::coverage``), without its
 threat model and proposal replays, which main does not have: "proven" here is
-main's Runs-and-Sees meaning, and a passing Sigma replay (``checks.replay``) is
-a detail on the row. Read-only.
+main's Runs-and-Sees meaning, and a Sigma replay that passed on events Vigil
+read from the SIEM (``checks.replay``, source ``siem``, #4212) is a detail on
+the row; one on events the caller wrote is not counted. Read-only.
 """
 
 from __future__ import annotations
@@ -58,6 +59,9 @@ def _copies(session: Any) -> List[Any]:
             catalog.RUNS.label("runs"),
             catalog.SEES.label("sees"),
             DetectionRuleVersion.checks["replay"]["result"].astext.label("replay"),
+            DetectionRuleVersion.checks["replay"]["source"].astext.label(
+                "replay_source"
+            ),
         )
         .join(DetectionRuleVersion, catalog._latest_join())
         .where(catalog.LISTED)
@@ -132,7 +136,11 @@ def coverage() -> Dict[str, Any]:
                 disabled.setdefault(technique, set()).add(rule)
                 continue
             rules.setdefault(technique, set()).add(rule)
-            if copy.language == "sigma" and copy.replay == "pass":
+            if (
+                copy.language == "sigma"
+                and copy.replay == "pass"
+                and copy.replay_source == "siem"
+            ):
                 replayed.setdefault(technique, set()).add(rule)
             if siem is None:
                 continue
