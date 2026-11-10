@@ -165,6 +165,18 @@ class User(Base):
     locked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     locked_from: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # Dormancy (#4176). The activity clock starts no earlier than this (the upgrade,
+    # or the account's last reactivation); dormancy_warned_at is when its holder
+    # and managers were last warned, dormancy_held_at when managers were last told
+    # it was kept as the last role manager. See core/auth/dormancy.py.
+    dormancy_floor: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    dormancy_warned_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
+    dormancy_held_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
+
     # Password history — list of prior bcrypt hashes, newest first. Used
     # to reject reuse of the last N passwords. Capped in application code.
     password_history: Mapped[List[str]] = mapped_column(

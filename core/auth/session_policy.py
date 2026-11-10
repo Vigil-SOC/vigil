@@ -1,4 +1,4 @@
-"""How long a sign-in lasts, when failed sign-ins lock an account and what a
+"""How long a sign-in lasts, when failed sign-ins lock an account, when an idle one is deactivated and what a
 password must be, in one validated model.
 
 One ``system_config`` row holds the document: the fields of ``SessionPolicy``
@@ -63,6 +63,9 @@ class SessionPolicy(BaseModel):
     lockout_threshold: int = Field(3, ge=1, le=20)
     lockout_timed: bool = False
     lockout_minutes: int = Field(30, ge=30, le=1440)
+    # Days without a sign-in or a personal MCP token's use before an account is
+    # deactivated; None: never. Any change to it is a person's act.
+    dormancy_days: Optional[int] = Field(35, ge=7, le=90)
 
     @model_validator(mode="after")
     def _privileged_within_standard(self):
@@ -82,8 +85,8 @@ _RULE_STRENGTH = {"none": 0, "letters_digits": 1, "four_classes": 2}
 
 def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
     """Whether ``new`` lets a sign-in last longer, an account hold more, a
-    guesser have more tries or a shorter lock, or a password be shorter,
-    simpler or reused sooner."""
+    guesser have more tries or a shorter lock, an idle account stay longer, or a
+    password be shorter, simpler or reused sooner."""
     weaker_rules = (
         _RULE_STRENGTH[new.password_character_rules]
         < _RULE_STRENGTH[old.password_character_rules]
@@ -101,6 +104,9 @@ def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
     more_sign_ins = old.sign_in_limit is not None and (
         new.sign_in_limit is None or new.sign_in_limit > old.sign_in_limit
     )
+    longer_dormancy = old.dormancy_days is not None and (
+        new.dormancy_days is None or new.dormancy_days > old.dormancy_days
+    )
     return (
         new.idle_standard_minutes > old.idle_standard_minutes
         or new.idle_privileged_minutes > old.idle_privileged_minutes
@@ -110,6 +116,7 @@ def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
         or weaker_rules
         or new.password_history < old.password_history
         or easier_lock
+        or longer_dormancy
     )
 
 

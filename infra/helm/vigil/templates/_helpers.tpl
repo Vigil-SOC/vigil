@@ -73,6 +73,10 @@ Per-component names and labels.
 {{- printf "%s-agent-serve" (include "vigil.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "vigil.agentShell.fullname" -}}
+{{- printf "%s-agent-shell" (include "vigil.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
 {{- define "vigil.mcpRunner.fullname" -}}
 {{- printf "%s-mcp-runner" (include "vigil.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}

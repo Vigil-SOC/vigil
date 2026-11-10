@@ -11800,6 +11800,11 @@ export interface components {
              */
             absolute_hours: number;
             /**
+             * Dormancy Days
+             * @default 35
+             */
+            dormancy_days: number | null;
+            /**
              * Idle Privileged Minutes
              * @default 10
              */
@@ -12366,6 +12371,11 @@ export interface components {
              * @default 12
              */
             absolute_hours: number;
+            /**
+             * Dormancy Days
+             * @default 35
+             */
+            dormancy_days: number | null;
             /**
              * Idle Privileged Minutes
              * @default 10

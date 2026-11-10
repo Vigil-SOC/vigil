@@ -14,6 +14,7 @@ needs:
   - analyze_coverage
   - list_findings
   - search_findings
+  - telemetry_search
   - reconstruct_run
   - check_detection_candidate
   - save_detection_rule

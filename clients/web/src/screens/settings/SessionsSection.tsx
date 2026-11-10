@@ -6,8 +6,8 @@ import { utcDayClock } from '../../shared/utc'
 import { ConfirmDialog, NumberInput, Select, SettingsCard } from '../../shared/ui'
 import type { SectionProps } from './types'
 
-// The lockout fields have no control here: a save sends the saved ones back unchanged.
-type Key = Exclude<keyof SessionPolicyBody, 'lockout_threshold' | 'lockout_timed' | 'lockout_minutes'>
+// The lockout and dormancy fields have no control here: a save sends the saved ones back unchanged.
+type Key = Exclude<keyof SessionPolicyBody, 'lockout_threshold' | 'lockout_timed' | 'lockout_minutes' | 'dormancy_days'>
 type NumKey = Exclude<Key, 'password_character_rules'>
 type Rules = SessionPolicyBody['password_character_rules']
 
@@ -123,13 +123,14 @@ export default function SessionsSection({ notify }: SectionProps) {
     else if (/^\d+$/.test(raw)) parsed[f.key] = Number(raw)
     else valid = false
   }
-  const { lockout_threshold, lockout_timed, lockout_minutes } = saved
+  const { lockout_threshold, lockout_timed, lockout_minutes, dormancy_days } = saved
   const body = {
     ...parsed,
     password_character_rules: form.password_character_rules as Rules,
     lockout_threshold,
     lockout_timed,
     lockout_minutes,
+    dormancy_days,
   } as SessionPolicyBody
   const dirty = FIELDS.some((f) => form[f.key] !== toForm(saved)[f.key])
 
