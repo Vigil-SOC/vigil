@@ -53,9 +53,7 @@ class SessionPolicy(BaseModel):
     # Characters (code points). 15 is the floor until Require MFA (#4177) lets
     # an install with MFA for everyone go down to 12.
     password_min_length: int = Field(16, ge=15, le=64)
-    password_character_rules: Literal["none", "letters_digits", "four_classes"] = (
-        "none"
-    )
+    password_character_rules: Literal["none", "letters_digits", "four_classes"] = "none"
     # Previous passwords kept, and refused on reuse.
     password_history: int = Field(5, ge=4, le=24)
 

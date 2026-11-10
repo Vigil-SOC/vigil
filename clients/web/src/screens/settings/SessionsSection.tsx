@@ -3,13 +3,15 @@ import { sessionPolicyApi, type SessionPolicy, type SessionPolicyBody } from '..
 import { errorText } from '../../shared/errorText'
 import { Icon } from '../../shared/icons'
 import { utcDayClock } from '../../shared/utc'
-import { ConfirmDialog, NumberInput, SettingsCard } from '../../shared/ui'
+import { ConfirmDialog, NumberInput, Select, SettingsCard } from '../../shared/ui'
 import type { SectionProps } from './types'
 
 type Key = keyof SessionPolicyBody
+type NumKey = Exclude<Key, 'password_character_rules'>
+type Rules = SessionPolicyBody['password_character_rules']
 
 interface FieldDef {
-  key: Key
+  key: NumKey
   title: string
   hint: string
   unit: string
@@ -36,13 +38,33 @@ const FIELDS: FieldDef[] = [
     key: 'sign_in_limit', title: 'Open sign-ins per account', unit: 'sign-ins', min: 1, max: 10, optional: true,
     hint: 'The most sign-ins one account holds at once. At the limit, a new sign-in ends the oldest. Empty: no limit.',
   },
+  {
+    key: 'password_min_length', title: 'Password length', unit: 'characters', min: 15, max: 64,
+    hint: 'The fewest characters a new password has. Applies when a password is set or changed; existing passwords are not rechecked.',
+  },
+  {
+    key: 'password_history', title: 'Password history', unit: 'passwords', min: 4, max: 24,
+    hint: 'How many previous passwords are kept. A new password cannot match any of them.',
+  },
 ]
+
+const RULES: { value: Rules; label: string; text: string }[] = [
+  { value: 'none', label: 'Length only', text: 'length only' },
+  { value: 'letters_digits', label: 'Letters and digits', text: 'letters and digits' },
+  { value: 'four_classes', label: 'Four character classes', text: 'four character classes' },
+]
+const RULES_TITLE = 'Password character rules'
+const RULES_HINT = 'What a new password must contain besides its length.'
+const rulesText = (v: string | null | undefined) => RULES.find((r) => r.value === v)?.text ?? String(v)
 
 const toForm = (p: SessionPolicy): Record<Key, string> => ({
   idle_standard_minutes: String(p.idle_standard_minutes),
   idle_privileged_minutes: String(p.idle_privileged_minutes),
   absolute_hours: String(p.absolute_hours),
   sign_in_limit: p.sign_in_limit == null ? '' : String(p.sign_in_limit),
+  password_min_length: String(p.password_min_length),
+  password_character_rules: p.password_character_rules,
+  password_history: String(p.password_history),
 })
 
 const shown = (f: FieldDef, v: number | null | undefined) => (v == null ? 'No limit' : `${v} ${f.unit}`)
@@ -92,7 +114,7 @@ export default function SessionsSection({ notify }: SectionProps) {
   }
   if (!saved || !form) return <div className="text-sm text-tx-3 py-16 text-center">Loading session policy…</div>
 
-  const parsed: Partial<Record<Key, number | null>> = {}
+  const parsed: Partial<Record<NumKey, number | null>> = {}
   let valid = true
   for (const f of FIELDS) {
     const raw = form[f.key].trim()
@@ -100,7 +122,7 @@ export default function SessionsSection({ notify }: SectionProps) {
     else if (/^\d+$/.test(raw)) parsed[f.key] = Number(raw)
     else valid = false
   }
-  const body = parsed as SessionPolicyBody
+  const body = { ...parsed, password_character_rules: form.password_character_rules as Rules } as SessionPolicyBody
   const dirty = FIELDS.some((f) => form[f.key] !== toForm(saved)[f.key])
 
   const save = async (next: SessionPolicyBody) => {
@@ -142,10 +164,11 @@ export default function SessionsSection({ notify }: SectionProps) {
   }
 
   const changes = confirm ? FIELDS.filter((f) => confirm[f.key] !== saved[f.key]) : []
+  const rulesChanged = !!confirm && confirm.password_character_rules !== saved.password_character_rules
   return (
     <SettingsCard
-      title="Sign-in limits"
-      desc="How long a sign-in lasts. A saved change applies to every open sign-in at its next request."
+      title="Sign-in limits and password rules"
+      desc="How long a sign-in lasts and what a new password must be. A saved change applies to every open sign-in at its next request."
     >
       {stale && (
         <div className="settings-banner err mb-3" role="alert" style={{ alignItems: 'flex-start' }}>
@@ -155,7 +178,10 @@ export default function SessionsSection({ notify }: SectionProps) {
               The policy changed after you opened it, so nothing was saved. {who(stale)}
             </span>
             <span>
-              Now: {FIELDS.map((f) => `${f.title.toLowerCase()} ${shown(f, stale[f.key])}`).join(' · ')}.
+              Now: {[
+                ...FIELDS.map((f) => `${f.title.toLowerCase()} ${shown(f, stale[f.key])}`),
+                `${RULES_TITLE.toLowerCase()} ${rulesText(stale.password_character_rules)}`,
+              ].join(' · ')}.
             </span>
             <span>
               <button className="btn ghost" onClick={() => { setSaved(stale); setForm(toForm(stale)); setStale(null) }}>
@@ -194,6 +220,21 @@ export default function SessionsSection({ notify }: SectionProps) {
           </span>
         </div>
       ))}
+      <div className="lim-row">
+        <label className="lim-row-title" id="sp-rules-label">
+          {RULES_TITLE}
+          <span>{RULES_HINT}</span>
+        </label>
+        <span className="lim-row-tag">Saved: {rulesText(saved.password_character_rules)}</span>
+        <span className="lim-row-ctl flex items-center gap-2">
+          <Select
+            value={form.password_character_rules}
+            options={RULES.map(({ value, label }) => ({ value, label }))}
+            disabled={busy}
+            onSelect={(v) => setForm({ ...form, password_character_rules: v })}
+          />
+        </span>
+      </div>
       <div className="flex flex-wrap items-center gap-2.5 mt-3.5">
         <button className="btn primary" disabled={busy || !dirty || !valid} onClick={submit}>
           {busy ? 'Saving…' : 'Save'}
@@ -206,18 +247,21 @@ export default function SessionsSection({ notify }: SectionProps) {
       <ConfirmDialog
         open={!!confirm}
         danger={false}
-        title="Let sign-ins last longer?"
+        title="Loosen the policy?"
         confirmLabel="Save change"
         busy={busy}
         onConfirm={() => confirm && save(confirm)}
         onClose={() => setConfirm(null)}
         body={
           <>
-            <p>This change lets a sign-in last longer or an account hold more sign-ins:</p>
+            <p>This change lets a sign-in last longer, an account hold more sign-ins, or a password be shorter, simpler or reused sooner:</p>
             <ul className="my-2 pl-5 list-disc">
               {changes.map((f) => (
                 <li key={f.key}>{f.title}: {shown(f, saved[f.key])} → {shown(f, confirm?.[f.key])}</li>
               ))}
+              {rulesChanged && (
+                <li>{RULES_TITLE}: {rulesText(saved.password_character_rules)} → {rulesText(confirm?.password_character_rules)}</li>
+              )}
             </ul>
             <p>It is recorded in the audit trail with your name and the old and new values.</p>
           </>
