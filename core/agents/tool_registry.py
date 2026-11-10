@@ -69,8 +69,6 @@ TOOL_PERMISSIONS: Dict[str, str] = {
     "dismiss_finding": "findings.write",
     "list_cases": "cases.read",
     "get_case": "cases.read",
-    "case_records": "cases.read",
-    "read_case_evidence": "cases.read",
     "read_case_shell": "cases.read",
     "create_case": "cases.write",
     "add_finding_to_case": "cases.write",
@@ -570,130 +568,6 @@ def update_case(
     return {"success": True, "case_id": case_id}
 
 
-# The case's findings ride beside its tasks and escalations, paged: under
-# "findings", not an envelope key tools_router would unwrap and drop siblings of.
-# The reads are core.cases.case_view's, which the case shell renders from too.
-def _case_records(args: Args) -> Args:
-    from sqlalchemy import func
-
-    from core.cases.case_view import findings_on_case, newest_first, side_records
-    from core.storage.schemas import FindingSchema
-    from core.storage.unit_of_work import unit_of_work
-
-    case_id = str(args.get("case_id") or "")
-    offset = max(int(args.get("offset") or 0), 0)
-    limit = max(int(args.get("limit") or 100), 1)
-    with unit_of_work() as session:
-        on_case = findings_on_case(session, case_id)
-        total = on_case.with_entities(func.count()).scalar() or 0
-        page = newest_first(on_case).offset(offset).limit(limit).all()
-        # Flows ahead of the findings page, so a cut at result_cap takes findings.
-        records = side_records(session, case_id, on_case)
-        findings = FindingSchema.dump_many(page)
-    return {
-        **records,
-        "total": total,
-        **_page(_data(), findings, offset=offset, limit=limit, total=total),
-    }
-
-
-# A case's evidence, read by id and never by path (#3778). Text comes from
-# core.cases.case_view, extracted once per file hash; no list under an envelope
-# key tools_router would unwrap.
-EVIDENCE_WINDOW = 8_000
-EVIDENCE_WINDOW_MAX = 16_000
-EVIDENCE_MATCHES_MAX = 50
-EVIDENCE_LINE_MAX = 300
-
-
-def _whole_int(args: Args, name: str, default: int) -> int:
-    value = args.get(name)
-    if value is None or value == "":
-        return default
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        raise MCPFailure(
-            "invalid_args", f"read_case_evidence {name} must be a whole number"
-        ) from None
-
-
-async def _read_case_evidence(args: Args) -> Args:
-    from core.cases.case_evidence_service import CaseEvidenceService
-    from core.cases.case_view import (
-        EvidenceUnreadable,
-        evidence_summary,
-        evidence_text,
-    )
-    from core.storage.models import CaseEvidence
-    from core.storage.unit_of_work import unit_of_work
-
-    case_id = str(args.get("case_id") or "")
-    if not case_id:
-        raise MCPFailure("invalid_args", "read_case_evidence needs a case_id")
-    if args.get("evidence_id") in (None, ""):
-        with unit_of_work() as session:
-            rows = CaseEvidenceService().get_case_evidence(case_id, session=session)
-            evidence = [evidence_summary(row) for row in rows]
-        return {"case_id": case_id, "total": len(evidence), "evidence": evidence}
-
-    evidence_id = _whole_int(args, "evidence_id", 0)
-    with unit_of_work() as session:
-        row = session.get(CaseEvidence, evidence_id)
-        if row is None or row.case_id != case_id:
-            # Refused before any file is touched: the id is not this case's.
-            raise MCPFailure(
-                "invalid_args",
-                f"evidence {evidence_id} is not attached to case {case_id}",
-            )
-        summary = evidence_summary(row)
-        file_path = row.file_path
-    try:
-        text = await evidence_text(evidence_id, file_path, summary["description"])
-    except EvidenceUnreadable as exc:
-        raise MCPFailure("unavailable", str(exc)) from None
-
-    result: Args = {
-        **summary,
-        "source": "file" if file_path else "description",
-        "total_chars": len(text),
-        "total_lines": text.count("\n") + 1,
-    }
-    query = str(args.get("query") or "")
-    if query:
-        needle, at, found = query.casefold(), 0, 0
-        matches: list[Args] = []
-        for number, line in enumerate(text.split("\n"), start=1):
-            if needle in line.casefold():
-                found += 1
-                if len(matches) < EVIDENCE_MATCHES_MAX:
-                    # offset opens a window on this line.
-                    matches.append(
-                        {"line": number, "offset": at, "text": line[:EVIDENCE_LINE_MAX]}
-                    )
-            at += len(line) + 1
-        result.update(
-            query=query,
-            match_count=found,
-            matches=matches,
-            omitted=found - len(matches),
-        )
-        return result
-
-    offset = min(max(_whole_int(args, "offset", 0), 0), len(text))
-    # "length", not "limit": tools_router lowers a limit to the row cap.
-    length = _whole_int(args, "length", EVIDENCE_WINDOW)
-    end = min(offset + min(max(length, 1), EVIDENCE_WINDOW_MAX), len(text))
-    result["window"] = {
-        "offset": offset,
-        "end": end,
-        "text": text[offset:end],
-        "remaining_chars": len(text) - end,
-        "next_offset": end if end < len(text) else None,
-    }
-    return result
-
-
 # One read-only bash command over a case's view, run in the agent-shell sidecar
 # (#4199). Named for its lead verb: attribution.effectful reads it as a read.
 # A non-zero exit is an answer; a sidecar that is down or a command past its
@@ -1141,12 +1015,6 @@ async def execute_backend_tool(
         from core.agents.integration_tools import find_integration_tools
 
         return find_integration_tools(registry, **args), True
-
-    if tool_name == "case_records":
-        return _case_records(args), True
-
-    if tool_name == "read_case_evidence":
-        return await _read_case_evidence(args), True
 
     if tool_name == "read_case_shell":
         return await _read_case_shell(args), True
