@@ -4,7 +4,6 @@ Authentication Service - User authentication and authorization.
 Handles password hashing, JWT generation/validation, MFA, and session management.
 """
 
-import hashlib
 import logging
 import re
 import secrets
@@ -146,28 +145,19 @@ class AuthService:
         return password_hash.verify(password, stored_hash)
 
     @staticmethod
-    def _session_fingerprint(user_agent: Optional[str]) -> str:
-        """Short SHA-256 fingerprint binding a token to its user-agent.
-
-        Deliberately excludes the client IP: NAT, VPNs and mobile roaming
-        change a client's IP within a token's lifetime (forcing spurious
-        re-logins), and behind a reverse proxy every client presents the
-        proxy's IP, so it adds no signal. The user-agent is a stable,
-        defense-in-depth check on top of the JWT signature.
-        """
-        return hashlib.sha256((user_agent or "").encode()).hexdigest()[:16]
-
-    @staticmethod
     def generate_jwt_token(
         user: User,
         token_type: str = "access",
-        user_agent: Optional[str] = None,
         sid: Optional[str] = None,
+        generation: Optional[int] = None,
+        not_after: Optional[datetime] = None,
     ) -> str:
-        """Generate a JWT token for a user with optional session binding.
+        """Generate a JWT token for a user.
 
         ``sid`` names the sign-in the token belongs to; every token gets a
-        fresh ``jti`` either way."""
+        fresh ``jti`` either way. A refresh token carries the sign-in's refresh
+        ``generation``. ``not_after`` caps the expiry: nothing outlives the
+        sign-in's absolute limit."""
         expiration = (
             timedelta(minutes=JWT_ACCESS_EXPIRATION_MINUTES)
             if token_type == "access"
@@ -182,33 +172,16 @@ class AuthService:
             "role_id": user.role_id,
             "token_type": token_type,
             "jti": uuid.uuid4().hex,
-            "exp": now + expiration,
+            "exp": min(now + expiration, not_after) if not_after else now + expiration,
             "iat": now,
         }
 
         if sid:
             payload["sid"] = sid
-
-        # Bind token to session context when available
-        if user_agent:
-            payload["sfp"] = AuthService._session_fingerprint(user_agent)
+        if generation is not None:
+            payload["gen"] = generation
 
         return key_ring.sign("signin", payload, JWT_ALGORITHM)
-
-    @staticmethod
-    def verify_session_fingerprint(
-        payload: Dict[str, Any],
-        user_agent: Optional[str] = None,
-    ) -> bool:
-        """Check that a token's session fingerprint matches the request context.
-
-        Returns True if no fingerprint is bound (backwards compat) or if it matches.
-        """
-        sfp = payload.get("sfp")
-        if not sfp:
-            return True
-        expected = AuthService._session_fingerprint(user_agent)
-        return secrets.compare_digest(sfp, expected)
 
     @staticmethod
     def verify_jwt_token(token: str) -> Optional[Dict[str, Any]]:

@@ -2,6 +2,7 @@ import axios from 'axios'
 import { basePath } from '../config/basePath'
 import type { Schema } from './apiTypes'
 import type { operations } from './generated/schema'
+import { USER_ACTION_HEADER, justActed } from './userAction'
 
 // Auth is cookie-based; withCredentials sends the HttpOnly cookies on every
 // request, including through the Vite dev proxy.
@@ -44,6 +45,7 @@ api.interceptors.request.use(
         config.headers['X-CSRF-Token'] = csrf
       }
     }
+    if (justActed()) config.headers[USER_ACTION_HEADER] = '1'
     return config
   },
   (error) => Promise.reject(error)
@@ -101,6 +103,7 @@ export async function streamFetch(path: string, init: RequestInit = {}): Promise
     const headers = new Headers(init.headers || {})
     const csrf = readCookie('csrf_token')
     if (csrf) headers.set('X-CSRF-Token', csrf)
+    if (justActed()) headers.set(USER_ACTION_HEADER, '1')
     return { ...init, headers, credentials: 'include' }
   }
   let res = await fetch(url, build())
