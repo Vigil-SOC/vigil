@@ -2,7 +2,7 @@
 
 One row, versioned. GET returns it with its version as the ETag; PUT needs that
 version in ``If-Match`` and refuses a stale one with 412. A machine caller (a
-service account) may only tighten the policy.
+service account) may only tighten the policy, and may not change the dormancy period.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ ROUTER_META = RouterMeta(
 _MANAGE = require_permission("sessions.manage")
 
 MACHINE_LOOSENING = "A machine caller may only tighten the session policy"
+MACHINE_DORMANCY = "Changing the dormancy period needs a person's own sign-in"
 
 
 class PolicyOut(session_policy.SessionPolicy):
@@ -133,15 +134,18 @@ def put_policy(
         return LooseningOut(loosening=loosening)
     actor = request.state.vigil_http_actor
     changes = {"old": old.policy.model_dump(), "new": body.model_dump()}
-    if loosening and not actor.person:
+    # Any change to dormancy, tightening too, is a person's act.
+    dormancy = old.policy.dormancy_days != body.dormancy_days
+    if (loosening or dormancy) and not actor.person:
+        reason = MACHINE_LOOSENING if loosening else MACHINE_DORMANCY
         trail_events.refused(
             "session_policy.refused",
             actor=user.principal_id,
-            reason=MACHINE_LOOSENING,
-            loosening=True,
+            reason=reason,
+            loosening=loosening,
             **changes,
         )
-        raise HTTPException(status_code=403, detail=MACHINE_LOOSENING)
+        raise HTTPException(status_code=403, detail=reason)
 
     value = {**body.model_dump(), "version": old.version + 1}
     if found:

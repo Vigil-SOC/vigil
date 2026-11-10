@@ -3961,6 +3961,21 @@
   "nullable": false,
   "type": "timestamp without time zone"
  },
+ "column users.dormancy_floor": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
+ "column users.dormancy_held_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
+ "column users.dormancy_warned_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
  "column users.email": {
   "default": null,
   "nullable": false,

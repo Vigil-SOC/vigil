@@ -1,4 +1,4 @@
-"""How long a sign-in lasts and when failed sign-ins lock an account, in one validated model.
+"""How long a sign-in lasts, when failed sign-ins lock an account and when an idle one is deactivated, in one validated model.
 
 One ``system_config`` row holds the document: the fields of ``SessionPolicy``
 plus its ``version``. A later setting joins by adding a field to the model.
@@ -48,6 +48,9 @@ class SessionPolicy(BaseModel):
     lockout_threshold: int = Field(3, ge=1, le=20)
     lockout_timed: bool = False
     lockout_minutes: int = Field(30, ge=30, le=1440)
+    # Days without a sign-in or a personal MCP token's use before an account is
+    # deactivated; None: never. Any change to it is a person's act.
+    dormancy_days: Optional[int] = Field(35, ge=7, le=90)
 
     @model_validator(mode="after")
     def _privileged_within_standard(self):
@@ -65,7 +68,7 @@ LOCK_UNTIL_UNLOCKED = 100
 
 def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
     """Whether ``new`` lets a sign-in last longer, an account hold more, or a
-    guesser have more tries or a shorter lock."""
+    guesser have more tries or a shorter lock, or an idle account stay longer."""
     easier_lock = (
         new.lockout_threshold > old.lockout_threshold
         or (new.lockout_timed and not old.lockout_timed)
@@ -79,12 +82,16 @@ def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
     more_sign_ins = old.sign_in_limit is not None and (
         new.sign_in_limit is None or new.sign_in_limit > old.sign_in_limit
     )
+    longer_dormancy = old.dormancy_days is not None and (
+        new.dormancy_days is None or new.dormancy_days > old.dormancy_days
+    )
     return (
         new.idle_standard_minutes > old.idle_standard_minutes
         or new.idle_privileged_minutes > old.idle_privileged_minutes
         or new.absolute_hours > old.absolute_hours
         or more_sign_ins
         or easier_lock
+        or longer_dormancy
     )
 
 

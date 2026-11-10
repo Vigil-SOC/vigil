@@ -664,6 +664,10 @@ async def _startup(app: FastAPI):
     # read from it. POST /api/auth/bootstrap requires the code either way.
     app.state.key_ring_task = asyncio.create_task(adopt_when_ready())
     app.state.setup_code_task = asyncio.create_task(announce_setup_code())
+    if not _testing:
+        from services.api.dormancy import run as dormancy_sweeper
+
+        app.state.dormancy_task = asyncio.create_task(dormancy_sweeper())
 
     if _testing:
         logger.info(
@@ -696,7 +700,7 @@ def _start_audit_feed(app) -> None:
 
 
 async def _stop_setup_code(app) -> None:
-    for name in ("key_ring_task", "setup_code_task"):
+    for name in ("key_ring_task", "setup_code_task", "dormancy_task"):
         task = getattr(app.state, name, None)
         if task is None:
             continue
