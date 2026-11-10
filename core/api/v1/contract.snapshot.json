@@ -930,6 +930,21 @@
             "title": "Notes",
             "type": "array"
           },
+          "owner_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "current",
+                  "not_current"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner State"
+          },
           "priority": {
             "anyOf": [
               {
@@ -996,7 +1011,8 @@
           }
         },
         "required": [
-          "combined_state"
+          "combined_state",
+          "owner_state"
         ],
         "title": "CaseDetailResponse",
         "type": "object"
@@ -1934,6 +1950,21 @@
             "title": "Needs You",
             "type": "boolean"
           },
+          "owner_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "current",
+                  "not_current"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner State"
+          },
           "priority": {
             "anyOf": [
               {
@@ -1981,7 +2012,8 @@
           "case_id",
           "title",
           "combined_state",
-          "age_seconds"
+          "age_seconds",
+          "owner_state"
         ],
         "title": "CaseQueueItem",
         "type": "object"
@@ -2021,6 +2053,145 @@
           "needs_you"
         ],
         "title": "CaseQueueStrip",
+        "type": "object"
+      },
+      "CaseRuleCard": {
+        "description": "One rule version behind a case's alerts, and its stored checks.",
+        "properties": {
+          "by_name": {
+            "default": 0,
+            "title": "By Name",
+            "type": "integer"
+          },
+          "caught": {
+            "default": false,
+            "title": "Caught",
+            "type": "boolean"
+          },
+          "checks": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "default": {},
+            "title": "Checks",
+            "type": "object"
+          },
+          "findings": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
+          "flags": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Flags",
+            "type": "array"
+          },
+          "health": {
+            "title": "Health",
+            "type": "string"
+          },
+          "latest_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Version"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "native_key": {
+            "title": "Native Key",
+            "type": "string"
+          },
+          "rule_id": {
+            "title": "Rule Id",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tool": {
+            "title": "Tool",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          },
+          "worst": {
+            "title": "Worst",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule_id",
+          "version",
+          "name",
+          "source",
+          "tool",
+          "native_key",
+          "status",
+          "health",
+          "worst"
+        ],
+        "title": "CaseRuleCard",
+        "type": "object"
+      },
+      "CaseRulesResponse": {
+        "description": "``GET /cases/{id}/rules`` \u2014 worst first; alerts traced to no rule apart.",
+        "properties": {
+          "rules": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CaseRuleCard"
+            },
+            "title": "Rules",
+            "type": "array"
+          },
+          "unresolved": {
+            "default": 0,
+            "title": "Unresolved",
+            "type": "integer"
+          },
+          "unresolved_findings": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CaseUnresolvedFinding"
+            },
+            "title": "Unresolved Findings",
+            "type": "array"
+          }
+        },
+        "title": "CaseRulesResponse",
         "type": "object"
       },
       "CaseSchema": {
@@ -2181,7 +2352,7 @@
           },
           "results": {
             "items": {
-              "$ref": "#/components/schemas/CaseSchema"
+              "$ref": "#/components/schemas/CaseSearchResult"
             },
             "title": "Results",
             "type": "array"
@@ -2199,6 +2370,165 @@
           "has_more"
         ],
         "title": "CaseSearchResponse",
+        "type": "object"
+      },
+      "CaseSearchResult": {
+        "properties": {
+          "activities": {
+            "default": [],
+            "items": {},
+            "title": "Activities",
+            "type": "array"
+          },
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee"
+          },
+          "case_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Id"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "finding_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Finding Ids",
+            "type": "array"
+          },
+          "mitre_techniques": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Mitre Techniques",
+            "type": "array"
+          },
+          "notes": {
+            "default": [],
+            "items": {},
+            "title": "Notes",
+            "type": "array"
+          },
+          "owner_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "current",
+                  "not_current"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner State"
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority"
+          },
+          "resolution_steps": {
+            "default": [],
+            "items": {},
+            "title": "Resolution Steps",
+            "type": "array"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "tags": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "timeline": {
+            "default": [],
+            "items": {},
+            "title": "Timeline",
+            "type": "array"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "owner_state"
+        ],
+        "title": "CaseSearchResult",
         "type": "object"
       },
       "CaseSuccessResponse": {
@@ -2242,6 +2572,24 @@
           "by_priority"
         ],
         "title": "CaseSummaryResponse",
+        "type": "object"
+      },
+      "CaseUnresolvedFinding": {
+        "properties": {
+          "finding_id": {
+            "title": "Finding Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "finding_id",
+          "reason"
+        ],
+        "title": "CaseUnresolvedFinding",
         "type": "object"
       },
       "CaseUpdate": {
@@ -5638,6 +5986,22 @@
             }
           },
           {
+            "in": "query",
+            "name": "sign_in",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sign In"
+            }
+          },
+          {
             "in": "header",
             "name": "authorization",
             "required": false,
@@ -5847,6 +6211,22 @@
                 }
               ],
               "title": "After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sign_in",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sign In"
             }
           },
           {
@@ -6067,6 +6447,22 @@
                 }
               ],
               "title": "After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sign_in",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sign In"
             }
           },
           {
@@ -8227,6 +8623,64 @@
           }
         },
         "summary": "Merge Cases",
+        "tags": [
+          "cases"
+        ]
+      }
+    },
+    "/api/v1/cases/{case_id}/rules": {
+      "get": {
+        "operationId": "get_api_v1_cases_case_id_rules",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseRulesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Case Rules",
         "tags": [
           "cases"
         ]

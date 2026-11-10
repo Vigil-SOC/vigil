@@ -17,6 +17,7 @@ from core.auth.permissions import APPROVE_PERMISSION, permission_refusal
 from core.cases.case_sla_service import open_case
 from core.cases.case_status import (
     CASE_STATUSES,
+    CLOSED,
     CaseStatus,
     record_status_change,
     status_change,
@@ -425,11 +426,24 @@ def list_cases(
     # filters, and the cap, run in SQL. Two different priorities match nothing.
     if severity and priority and severity != priority:
         return []
-    return _data().get_cases(limit=limit, status=status, priority=priority or severity)
+    cases = _data().get_cases(limit=limit, status=status, priority=priority or severity)
+    return _with_owner_state([dict(case) for case in cases])
 
 
 def get_case(*, case_id: str) -> Any:
-    return _data().get_case(case_id)
+    case = _data().get_case(case_id)
+    return _with_owner_state([dict(case)])[0] if case else case
+
+
+def _with_owner_state(cases: list) -> list:
+    """Copies of ``cases`` with ``owner_state``, from one lookup. Demo has no accounts."""
+    from core.cases.agent_closure import service_session
+    from core.cases.assignee import with_owner_state
+
+    if not _data().is_using_database():
+        return with_owner_state(None, cases)
+    with service_session() as session:
+        return with_owner_state(session, cases)
 
 
 def _status_refusal(status: str) -> Optional[Args]:
@@ -550,6 +564,22 @@ def update_case(
         notes = list(case.get("notes") or [])
         notes.append({"timestamp": utcnow().isoformat() + "Z", "content": add_note})
         updates["notes"] = notes
+
+    # Open work keeps a current owner or none, refused before anything is
+    # written. Demo mode has no accounts to judge against.
+    from core.cases.assignee import OwnerNotCurrent, require_current_owner
+
+    owner = updates["assignee"] if "assignee" in updates else case.get("assignee")
+    if data.is_using_database():
+        try:
+            with service_session() as session:
+                require_current_owner(
+                    session,
+                    owner,
+                    is_open=updates.get("status", case.get("status")) != CLOSED,
+                )
+        except OwnerNotCurrent as exc:
+            return {"error": exc.message, "code": exc.code}
 
     change = status_change(case.get("status"), status)
     # The write and a close share one session, so a refused close leaves the

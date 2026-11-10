@@ -3,16 +3,31 @@
 Every writer that sets a case's or a case task's assignee, or escalates a
 case, resolves what it was given here. Username or email, ignoring case, and
 stored as that account's username, so "Assigned to me" (an exact match on the
-username) finds it. Rows already stored are left as they are.
+username) finds it.
+
+A stored owner is judged exactly: current only when it is the username of one
+active, non-service person whose account is not deleted. Open work may be saved
+only with a current owner or none (#4263).
 """
 
-from typing import Optional
+from typing import Iterable, Literal, Optional
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from core.exceptions import SOCError
-from core.storage.models import User
+from core.storage.models import Principal, User
+
+OwnerState = Literal["current", "not_current"]
+CURRENT: OwnerState = "current"
+NOT_CURRENT: OwnerState = "not_current"
+
+# A task is open unless done; its status is free text, so open fails safe.
+TASK_DONE = ("completed", "cancelled")
+
+
+def task_is_open(status: Optional[str]) -> bool:
+    return status not in TASK_DONE
 
 
 class AssigneeRefused(SOCError):
@@ -25,6 +40,67 @@ class AssigneeRefused(SOCError):
             "Assignee must be the username or email of an active person.",
             "ASSIGNEE_REFUSED",
         )
+
+
+class OwnerNotCurrent(SOCError):
+    """An open save whose resulting owner is not current. One message for every caller."""
+
+    status_code = 400
+
+    def __init__(self, owner: str) -> None:
+        super().__init__(
+            f"The owner {owner!r} is not a current account: set a current person "
+            "or Unassigned in the same update (changing a case owner needs "
+            "cases.assign).",
+            "OWNER_NOT_CURRENT",
+        )
+
+
+def owner_states(
+    session: Optional[Session], owners: Iterable[Optional[str]]
+) -> dict[str, OwnerState]:
+    """Each non-blank stored owner in ``owners`` to its state, in one query.
+
+    Look a row up with ``.get(owner or "")``: a blank owner (Unassigned) has no
+    state. With no session (demo mode, no database) nothing is current.
+    """
+    names = {o for o in owners if o and o.strip()}
+    current: set[str] = set()
+    if names and session is not None:
+        current = set(
+            session.scalars(
+                select(User.username)
+                .join(Principal, Principal.principal_id == User.principal_id)
+                .where(
+                    User.username.in_(names),
+                    User.is_active.is_(True),
+                    User.service_account.is_not(True),
+                    Principal.deleted_at.is_(None),
+                )
+            )
+        )
+    return {name: CURRENT if name in current else NOT_CURRENT for name in names}
+
+
+def with_owner_state(
+    session: Optional[Session], rows: list[dict], *, key: str = "assignee"
+) -> list[dict]:
+    """Set ``owner_state`` on each case or task dict, from one lookup."""
+    states = owner_states(session, (row.get(key) for row in rows))
+    for row in rows:
+        row["owner_state"] = states.get(row.get(key) or "")
+    return rows
+
+
+def require_current_owner(
+    session: Session, owner: Optional[str], *, is_open: bool
+) -> None:
+    """Refuse a save that leaves work open with a stale owner.
+
+    Judges the resulting owner and status, whether or not the save sent an owner.
+    """
+    if is_open and owner_states(session, [owner]).get(owner or "") == NOT_CURRENT:
+        raise OwnerNotCurrent(owner or "")
 
 
 def resolve_assignee(

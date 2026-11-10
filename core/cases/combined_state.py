@@ -128,9 +128,13 @@ class QueueItem:
     needs_you: bool = False
     description: Optional[str] = None
     sla_paused: bool = False
+    # From core.cases.assignee.owner_states; None when unassigned.
+    owner_state: Optional[str] = None
 
 
-def queue_item(row, now: datetime, *, needs_you: bool = False) -> QueueItem:
+def queue_item(
+    row, now: datetime, *, needs_you: bool = False, owner_state: Optional[str] = None
+) -> QueueItem:
     """Apply combined state and the 75 / 90 health words to one SQL row."""
     health, seconds_left = sla_clock(
         now=now,
@@ -162,4 +166,5 @@ def queue_item(row, now: datetime, *, needs_you: bool = False) -> QueueItem:
         needs_you=needs_you,
         description=row.description,
         sla_paused=row.is_paused,
+        owner_state=owner_state,
     )

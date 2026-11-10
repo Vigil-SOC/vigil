@@ -32,10 +32,11 @@ HISTORY_KEYS_MAX = 50
 README = """\
 This directory is one Vigil case, read-only except scratch/.
 
-  case.json             the case record
+  case.json             the case record; owner_state says if its assignee is a
+                        current person (current, not_current; null if none)
   findings/index.tsv    finding_id, severity, timestamp, title, one per line
   findings/<id>.json    every finding on the case, in full
-  tasks.json            the case's tasks
+  tasks.json            the case's tasks, each with owner_state likewise
   escalations.json      its escalations
   flows.json            per host pair sums of its network-flow findings (when any)
   evidence/index.json   each evidence item: id, name, type, hashes, and its file
@@ -199,6 +200,7 @@ def _json(value: Any) -> str:
 
 def _records(case_id: str) -> Tuple[Optional[Args], Args, List[Args], List[Any]]:
     """The case, its side records, its findings in full, its evidence rows."""
+    from core.cases.assignee import with_owner_state
     from core.cases.case_evidence_service import CaseEvidenceService
     from core.storage.database_data_service import get_database_data_service
     from core.storage.schemas import FindingSchema
@@ -211,6 +213,9 @@ def _records(case_id: str) -> Tuple[Optional[Args], Args, List[Args], List[Any]]
         on_case = findings_on_case(session, case_id)
         findings = FindingSchema.dump_many(newest_first(on_case).all())
         records = side_records(session, case_id, on_case)
+        # One owner lookup for the case and its tasks (a copy: demo rows are shared).
+        case = dict(case)
+        with_owner_state(session, [case, *records["tasks"]])
         evidence = [
             (evidence_summary(row), row.file_path)
             for row in CaseEvidenceService().get_case_evidence(case_id, session=session)
