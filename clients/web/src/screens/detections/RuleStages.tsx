@@ -3,7 +3,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { errorText } from '../../shared/errorText'
 import { utcDayClock } from '../../shared/utc'
 import { detectionRulesApi, type RuleStages as Stages } from '../../services/api'
-import { sampledText, stageLine, waitingNote, who, type Stage, type StageFields } from './ruleStage'
+import { sampledText, stageLine, unprovenNote, waitingNote, who, type Stage, type StageFields } from './ruleStage'
 import DeployAgain from './DeployAgain'
 
 const STAGE_NAME: Record<Stage, string> = { shadow: 'Shadow', live: 'Live', off: 'Off' }
@@ -32,6 +32,7 @@ export default function RuleStages({ ruleId, row, asking: askFirst, onChanged }:
 
   const line = stageLine(row)
   const waiting = waitingNote(row, canWrite)
+  const unproven = line?.held ? null : unprovenNote(row)
   const action = !canWrite || !line ? null : line.live ? 'revert' : line.held ? 'release' : null
   const changed = () => { load(); onChanged() }
   if (!data) {
@@ -75,7 +76,9 @@ export default function RuleStages({ ruleId, row, asking: askFirst, onChanged }:
             : 'Live: analysts get its alerts. A person who can edit detections can move it back to shadow.'
           : line?.held
             ? 'Held in shadow: it runs but alerts nobody, and stays there until a person releases it.'
-            : 'In shadow it runs but alerts nobody. Vigil moves it live after 7 quiet days with its data arriving.'}
+            : unproven
+              ? `In shadow it runs but alerts nobody. ${unproven}`
+              : 'In shadow it runs but alerts nobody. Vigil moves it live after 7 quiet days with its data arriving, once it is shown to fire.'}
       </p>
     </div>
   )

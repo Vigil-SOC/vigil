@@ -335,7 +335,7 @@ class SecurityDetectionsTools:
         splunk_yaml: Optional[str] = None,
         elastic_toml: Optional[str] = None,
         sigma_yaml: Optional[str] = None,
-        proven_events: Optional[List[Dict]] = None,
+        proven_event_ids: Optional[Dict[str, List[str]]] = None,
         ruled_out_events: Optional[List[Dict]] = None,
         exceptions: Optional[Dict[str, List[Dict]]] = None,
         wazuh_xml: Optional[str] = None,
@@ -344,16 +344,17 @@ class SecurityDetectionsTools:
         """Save one rule's copies into Vigil's overlay; each Splunk and Elastic
         copy enters shadow (a Wazuh copy too: Vigil searches wazuh-archives-* for it in shadow).
 
-        With events, the Sigma form is replayed on them first and the save is
-        refused unless a proven event matches and no ruled-out one does (a
-        ruled-out event a Sigma exception matches is excluded).
+        With proven_event_ids, Vigil reads those events from each SIEM, replays
+        the Sigma form on them and runs each Splunk and Elastic copy over their
+        window; the save is refused unless each hits a named event and no
+        ruled-out event matches (one a Sigma exception matches is excluded).
         """
         return await asyncio.to_thread(
             save_rule,
             splunk_yaml,
             elastic_toml,
             sigma_yaml,
-            proven_events,
+            proven_event_ids,
             ruled_out_events,
             exceptions,
             wazuh_xml,

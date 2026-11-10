@@ -625,6 +625,11 @@ def configured_sources(
 # --- the replay -------------------------------------------------------------------
 
 
+def same_id(event_id: str, named: str) -> bool:
+    """A named id is the event's, or (Splunk) its ``_cd`` without the ``_bkt``."""
+    return event_id == named or event_id.endswith(f":{named}")
+
+
 def _plain_list(items: Sequence[str]) -> str:
     return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
 
@@ -651,6 +656,15 @@ async def _replay_one(
         out["error"] = str(exc) or type(exc).__name__
         return out
     attack = [event_of(source.siem, d) for d in attack_read.docs]
+    if named:
+        # Which named ids the SIEM returned, and when each happened (a save runs
+        # each native copy over their window).
+        found = {n: e for n in named for e in attack if same_id(e.id, n)}
+        out["named_found"] = [
+            {"id": e.id, "at": e.at.isoformat() if e.at else None}
+            for e in {id(e): e for e in found.values()}.values()
+        ]
+        out["named_missing"] = [n for n in named if n not in found]
     if attack_claim is not None and not named:
         # Entity terms are wide; keep only what the claim really holds.
         attack = [e for e in attack if attack_claim.holds(e)]
@@ -760,8 +774,10 @@ async def replay(
     start: datetime,
     end: datetime,
     skipped: Sequence[str] = (),
+    excepted: Sequence[Mapping[str, Any]] = (),
 ) -> Dict[str, Any]:
-    """The replay's evidence, as the step record stores it."""
+    """The replay's evidence, as the step record stores it. An event one of
+    ``excepted`` (exception matches) matches is not a hit."""
     evidence: Dict[str, Any] = {
         "step": "replay",
         "tool": "core.detections.engineering.siem_replay.replay",
@@ -791,6 +807,14 @@ async def replay(
             unproven_because=f"The rule cannot be read: {exc}.",
         )
         return evidence
+    if excepted:
+        from core.detections.exceptions import matches
+
+        rule = matcher
+
+        def matcher(view: Any) -> bool:
+            return rule(view) and not any(matches(m, view) for m in excepted)
+
     per_siem = [
         await _replay_one(
             source,
@@ -831,6 +855,7 @@ async def run(
     splunk_index: Optional[str] = None,
     wazuh_index: Optional[str] = None,
     now: Optional[datetime] = None,
+    excepted: Sequence[Mapping[str, Any]] = (),
 ) -> Dict[str, Any]:
     """Replay ``sigma`` on the SIEMs Vigil reads, over the last ``days``."""
     end = now or datetime.now(timezone.utc)
@@ -850,6 +875,7 @@ async def run(
             start=start,
             end=end,
             skipped=skipped,
+            excepted=excepted,
         )
     finally:
         for source in sources:

@@ -272,7 +272,7 @@ SECURITY_DETECTION_TOOLS = [
     },
     {
         "name": "save_detection_rule",
-        "description": "Save one drafted or changed detection rule into Vigil's overlay (a local rule source Vigil owns), then sync it into the rule inventory. Pass a Splunk copy (ESCU-style YAML with search), an Elastic copy (detection-rules TOML with a [rule] table), a Wazuh copy (one <rule> in Wazuh XML), or any of them together, plus an optional Sigma form. Each copy is written as its own file. A copy that does not parse, or that fails lint, refuses the whole save and writes nothing: the Sigma form and each Splunk search and Elastic query are linted for a literal IP, CIDR, environment host (.corp, .local, .internal, .lan), single host named on a host field (host=dc01, host.name == \"WS-FIN-07\") or named person account, even under not (a whole private range such as 10.0.0.0/8 is not one environment and passes). One bare host only left out (host.name != \"WS-FIN-07\", NOT host=dc01, a Sigma not-filter on a host field) passes with a warning: move it to an exception. Pass proven_events (and ruled_out_events) to have the Sigma form replayed on them first: the save is refused, with the replay in the error, unless the Sigma form is given, can be replayed, matches a proven event and matches no ruled-out event. The result is stored as checks.replay on the Sigma copy's version (result not_run when no events are passed). A Wazuh copy's values (<field>, <match>, <regex>, <srcip>, <hostname>, <user>...) are linted the same way, its techniques are read from <mitre>, and its id must be in Wazuh's custom range 100000-120000 and not one the Wazuh manager already loaded (omit it and the lowest free one is set); it enters shadow, where Vigil searches wazuh-archives-* for it (a rule it cannot translate faithfully, or an archive that is off, reads \"can't validate\" and never promotes itself), and takes no exceptions. A copy keeps the id it carries (ESCU id, Elastic rule_id, Sigma id, Wazuh rule id): pass an existing rule's id to change that rule (a logic change is a new version); omit it for a new rule. Returns each saved copy's rule_id, id, version and stage: a new Splunk or Elastic rule or version enters shadow (nobody sees its alerts); a Sigma copy has no stage. Vigil runs the Elastic copy itself, so its [rule] language must be eql, esql or lucene (kuery is refused) and an eql or lucene copy needs an index. Pass exceptions to keep an expected host, address or account out of the rule body. Writes no SIEM.",
+        "description": "Save one drafted or changed detection rule into Vigil's overlay (a local rule source Vigil owns), then sync it into the rule inventory. Pass a Splunk copy (ESCU-style YAML with search), an Elastic copy (detection-rules TOML with a [rule] table), a Wazuh copy (one <rule> in Wazuh XML), or any of them together, plus an optional Sigma form. Each copy is written as its own file. A copy that does not parse, or that fails lint, refuses the whole save and writes nothing: the Sigma form and each Splunk search and Elastic query are linted for a literal IP, CIDR, environment host (.corp, .local, .internal, .lan), single host named on a host field (host=dc01, host.name == \"WS-FIN-07\") or named person account, even under not (a whole private range such as 10.0.0.0/8 is not one environment and passes). One bare host only left out (host.name != \"WS-FIN-07\", NOT host=dc01, a Sigma not-filter on a host field) passes with a warning: move it to an exception. Pass proven_event_ids (the attack events' ids per SIEM, as splunk_execute and the Elastic tools return them) to prove the rule on the SIEM's own events before anything is written: Vigil reads those events itself, replays the Sigma form on them and on the window's normal events, and runs each Splunk and Elastic copy in its SIEM over the named events' window, the way shadow runs it. The save is refused, with the reason, unless the Sigma form is given, can be replayed, hits a named event and matches no ruled-out event, and each Splunk or Elastic copy returns at least one event named for its SIEM. A named id the SIEM does not return proves nothing. Normal events the Sigma form matches are recorded, not refused. Each copy's result is stored as checks.replay on its version (source siem; not_run for a copy with no event named for its SIEM, for a Wazuh copy, or when no ids are passed). A Splunk or Elastic copy goes live after shadow only once its version has a passed checks.replay; a Wazuh copy only once a shadow run hit. Events you write yourself are never proof: use check_detection_candidate to try a draft on them. A Wazuh copy's values (<field>, <match>, <regex>, <srcip>, <hostname>, <user>...) are linted the same way, its techniques are read from <mitre>, and its id must be in Wazuh's custom range 100000-120000 and not one the Wazuh manager already loaded (omit it and the lowest free one is set); it enters shadow, where Vigil searches wazuh-archives-* for it (a rule it cannot translate faithfully, or an archive that is off, reads \"can't validate\" and never promotes itself), and takes no exceptions. A copy keeps the id it carries (ESCU id, Elastic rule_id, Sigma id, Wazuh rule id): pass an existing rule's id to change that rule (a logic change is a new version); omit it for a new rule. Returns each saved copy's rule_id, id, version and stage: a new Splunk or Elastic rule or version enters shadow (nobody sees its alerts); a Sigma copy has no stage. Vigil runs the Elastic copy itself, so its [rule] language must be eql, esql or lucene (kuery is refused) and an eql or lucene copy needs an index. Pass exceptions to keep an expected host, address or account out of the rule body. Writes no SIEM.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -286,21 +286,26 @@ SECURITY_DETECTION_TOOLS = [
                 },
                 "sigma_yaml": {
                     "type": "string",
-                    "description": "Optional Sigma form of the same rule, with a detection block; linted before saving. Required when events are passed.",
+                    "description": "Optional Sigma form of the same rule, with a detection block; linted before saving. Required when proven_event_ids are passed.",
                 },
                 "wazuh_xml": {
                     "type": "string",
                     "description": "Wazuh copy: one <rule> element (optionally inside a <group>) with level, description, the match conditions, optionally id (100000-120000) and <mitre><id>.",
                 },
-                "proven_events": {
-                    "type": "array",
-                    "items": {"type": "object"},
-                    "description": "Proven events the rule must catch, fetched from the SIEM for the missed step's window. The Sigma form must match at least one.",
+                "proven_event_ids": {
+                    "type": "object",
+                    "properties": {
+                        "splunk": {"type": "array", "items": {"type": "string"}},
+                        "elastic": {"type": "array", "items": {"type": "string"}},
+                        "wazuh": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "additionalProperties": False,
+                    "description": "The attack events the rule must catch, by their ids in each SIEM, at most 50 per SIEM: Splunk as _bkt:_cd (its _bkt and _cd joined by a colon) from the rows splunk_execute returns, Elastic and Wazuh archive events as _id. Vigil reads them from the SIEM; the Sigma form must hit one, and each Splunk or Elastic copy must return one named for its SIEM.",
                 },
                 "ruled_out_events": {
                     "type": "array",
                     "items": {"type": "object"},
-                    "description": "Events from runs whose explanation was ruled out. The Sigma form must match none of them, except those a sigma exception matches.",
+                    "description": "Events from runs whose explanation was ruled out. The Sigma form must match none of them, except those a sigma exception matches. Passed only with proven_event_ids.",
                 },
                 "exceptions": _EXCEPTIONS_SCHEMA,
             },

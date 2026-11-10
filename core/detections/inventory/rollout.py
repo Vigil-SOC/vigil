@@ -41,7 +41,10 @@ are not applied; alerts the SIEM itself raises are never filtered.
 
 The sweep (after ``sync_repos``) then writes a stage row (actor 'system', proof
 holding the numbers) for each move that is due: shadow -> live after a quiet,
-passing week with checks['sees'] pass and checks['lint'] pass (at most
+passing week with checks['sees'] pass and checks['lint'] pass, once shown to
+fire (``unproven``: a Splunk or Elastic version's save-time SIEM run passed,
+checks['replay'] with source siem; a Wazuh copy hit in a shadow run that week;
+a quiet week alone proves nothing, #4212) (at most
 the stored promotion cap a day across all rules (``rollout_limits``;
 its shadow days and hit ceiling are stored there too and read on every sweep); a copy with no lint result yet waits
 for the sync that lints it), live -> shadow when half its findings are judged
@@ -157,6 +160,12 @@ WAZUH = "wazuh"
 # What a Wazuh deploy says while Vigil cannot run Wazuh rules in shadow.
 UNTESTED = "not shadow-tested: Vigil has not validated this Wazuh copy in shadow"
 NO_STAGE_AT = datetime.fromtimestamp(0, timezone.utc)
+# Why a shadow copy not yet shown to fire stays there (#4212).
+UNPROVEN = {
+    "splunk": "in shadow until it is saved with SIEM-proven events",
+    "elastic": "in shadow until it is saved with SIEM-proven events",
+    WAZUH: "in shadow until a shadow run sees it hit",
+}
 
 
 def _budget_key(rule_id: int) -> str:
@@ -786,6 +795,25 @@ def _week(now: datetime, days: int = DEFAULT_LIMITS.shadow_days) -> List[str]:
     return [(now - timedelta(days=i)).date().isoformat() for i in range(days)]
 
 
+def unproven(
+    language: str, checks: Mapping[str, Any], days: List[str]
+) -> Optional[str]:
+    """Why the copy is not shown to fire, or None when it is: a Splunk or Elastic
+    version needs a passed save-time SIEM run (checks.replay, source siem), a
+    Wazuh copy a shadow hit on one of ``days``. Zero hits is no proof (#4212)."""
+    if language in VIGIL_RUNS:
+        replay = checks.get("replay") or {}
+        if replay.get("source") == "siem" and replay.get("result") == "pass":
+            return None
+    elif language == WAZUH:
+        hits = (checks.get("shadow") or {}).get("days") or {}
+        if any(int(hits.get(d) or 0) for d in days):
+            return None
+    else:
+        return None
+    return UNPROVEN[language]
+
+
 def _due(
     session: Any,
     copy: Copy,
@@ -839,12 +867,28 @@ def _due(
             return None
         if not _linted(copy):  # no result yet: the next sync lints it
             return None
+        if unproven(copy.language, copy.checks, week):  # never shown to fire
+            return None
         if live_24h >= limits.live_per_day:
             return None
+        replay = copy.checks.get("replay") or {}
+        fired = (
+            {"shadow_hits": sum(v["hits"] for v in days.values())}
+            if copy.language == WAZUH
+            else {
+                k: replay.get(k)
+                for k in ("source", "result", "siem", "hits", "checked_at")
+            }
+        )
         return (
             "live",
             f"{limits.shadow_days} days in shadow, every day's runs passed, no day "
-            f"above {limits.max_hits_per_day} hits, Sees and lint passed",
+            f"above {limits.max_hits_per_day} hits, Sees and lint passed, "
+            + (
+                "a shadow run hit"
+                if copy.language == WAZUH
+                else "shown to fire on the SIEM's events at save"
+            ),
             {
                 "shadow_since": since,
                 "days": days,
@@ -852,6 +896,7 @@ def _due(
                 "live_rows_last_24h": live_24h,
                 "sees": seen,
                 "lint": lint,
+                "fired": fired,
             },
         )
     # live: only what happened since it went live counts.

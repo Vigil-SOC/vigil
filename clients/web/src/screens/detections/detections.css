@@ -206,6 +206,9 @@
 @container main (max-width: 699px) {
   .de-inv-tools { flex: 1 1 100%; }
   .de-search { flex: 1 1 100%; width: auto; }
+  /* A rollout move's reason takes its own line, not a zero-width third column. */
+  .de .de-st-list li { grid-template-columns: auto minmax(0, 1fr); }
+  .de .de-st-list .de-st-why { grid-column: 1 / -1; }
 }
 /* An overlay rule's hits over the days its exception matches are counted for */
 .de-x-win { margin: 10px 0 4px; padding: 10px 12px; border-radius: 8px; background: var(--bg2); }

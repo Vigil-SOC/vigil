@@ -1217,6 +1217,7 @@ def _copies_listed(session: Any) -> Dict[str, Any]:
         },
         "moves": stage_moves(session.execute(STAGE_ROWS)),
         "waiting": _not_loaded(rows),
+        "unproven": _unproven(rows),
         "rule_of": _rule_of_copy(session),
         "blind_spots": [
             {
@@ -1248,6 +1249,21 @@ def _not_loaded(rows: List[Any]) -> Dict[int, Dict[str, str]]:
         }
         for r in mine
         if r.id not in loaded
+    }
+
+
+def _unproven(rows: List[Any]) -> Dict[int, str]:
+    """Each overlay copy not yet shown to fire, with why it stays in shadow, as
+    the rollout sweep judges it (``rollout.unproven``)."""
+    from core.detections.inventory.rollout import _week, unproven
+    from core.detections.inventory.rollout_limits import read_limits
+
+    week = _week(datetime.now(timezone.utc), read_limits().shadow_days)
+    return {
+        r.id: why
+        for r in rows
+        if r.source == OVERLAY_SOURCE
+        and (why := unproven(r.language, r.checks or {}, week))
     }
 
 
@@ -1393,6 +1409,10 @@ def _stage_fields(rule_id: int, copies: Dict[str, Any]) -> Dict[str, Any]:
         "days_in_shadow": None,
         # A live Wazuh copy the manager hasn't loaded: it runs nowhere yet.
         "waiting": waiting if stage == "live" and waiting is not None else None,
+        # A shadow copy never shown to fire: why it is not promoted (#4212).
+        "unproven": (
+            (copies.get("unproven") or {}).get(rule_id) if stage == "shadow" else None
+        ),
         **(copies.get("moves") or {}).get(rule_id, {}),
     }
 
