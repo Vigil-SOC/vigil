@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import api from '../services/api';
 import { clearChatCache, retainChatCache } from '../shell/chatCache';
-import { onSignInEnded } from '../services/signInEnd';
+import { onMfaSetupRequired, onSignInEnded } from '../services/signInEnd';
 
 const DEV_MODE = import.meta.env.VITE_DEV_MODE === 'true';
 
@@ -32,6 +32,8 @@ interface User {
   is_active: boolean;
   is_verified: boolean;
   mfa_enabled: boolean;
+  /** The MFA requirement covers this person and they have none yet: setup comes before anything else. */
+  mfa_setup_required?: boolean;
   last_login: string | null;
   login_count: number;
   permissions?: Record<string, boolean>;
@@ -139,6 +141,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
   useEffect(() => {
     loadUser();
   }, [loadUser]);
+
+  // A request refused for lack of MFA: the requirement changed under a signed-in
+  // person, so re-read who they are and the console moves to setup.
+  useEffect(() => onMfaSetupRequired(() => void refreshUser()), [refreshUser]);
 
   const login = async (usernameOrEmail: string, password: string, mfaCode?: string): Promise<string[] | undefined> => {
     if (DEV_MODE) {

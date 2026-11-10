@@ -32,7 +32,7 @@ from core.auth.auth_service import (
     raise_if_locked,
 )
 from core.auth.bootstrap_code import has_human_user, setup_code_matches
-from core.auth.current_user import _detached
+from core.auth.current_user import DEV_MODE, _detached, mfa_setup_route
 from core.auth.identity import claim_sign_in_names, identifier_in_use
 from core.auth.password_reset import (
     decode_reset_token,
@@ -384,6 +384,17 @@ def _user_payload(user: User, session: Session) -> dict:
     from the login response and checks permissions before any /me refresh."""
     payload = UserSchema.dump(user)
     payload["permissions"] = AuthService.get_user_permissions(user.user_id, session)
+    # The console holds this person at MFA setup until it is done.
+    # (Not in dev mode, which has no gate and no user row to set MFA up on.)
+    payload["mfa_setup_required"] = (
+        not DEV_MODE
+        and not user.mfa_enabled
+        and session_policy.mfa_covered(
+            [name for name, on in payload["permissions"].items() if on],
+            _is_service_account(user),
+            session_policy.policy().require_mfa,
+        )
+    )
     return payload
 
 
@@ -667,6 +678,7 @@ def _exp_datetime(exp_ts) -> Optional[datetime]:
 
 
 @router.post("/logout")
+@mfa_setup_route
 async def logout(
     request: Request,
     response: Response,
@@ -982,6 +994,7 @@ def _sign_in_timing(request: Request, user: User, session: Session) -> Optional[
 
 
 @router.get("/me")
+@mfa_setup_route
 def get_current_user_info(
     request: Request,
     current_user: Annotated[User, Depends(get_current_active_user)],
@@ -1230,6 +1243,7 @@ def _record_mfa(session: Session, request: Request, user: User, action: str) -> 
 
 
 @router.post("/mfa/setup", response_model=MFASetupResponse)
+@mfa_setup_route
 def setup_mfa(
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: UnitOfWorkSession,
@@ -1271,6 +1285,7 @@ def setup_mfa(
 
 
 @router.post("/mfa/verify", response_model=RecoveryCodesResponse)
+@mfa_setup_route
 @limiter.limit("5/minute", key_func=session_rate_key)
 def verify_mfa(
     request: Request,

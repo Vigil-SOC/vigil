@@ -36,7 +36,7 @@ export function RecoveryCodes({ codes }: { codes: string[] }) {
         Save these now. Each code works once, and they cannot be shown again.
       </div>
       <ul
-        className="grid grid-cols-2 gap-2 m-0 p-3 list-none bg-bg-2 border border-line rounded-sm font-mono text-[13px] text-tx"
+        className="grid grid-cols-1 min-[480px]:grid-cols-2 gap-2 m-0 p-3 list-none bg-bg-2 border border-line rounded-sm font-mono text-[13px] text-tx"
         aria-label="Your recovery codes"
       >
         {codes.map((c) => (
@@ -55,8 +55,18 @@ export function RecoveryCodes({ codes }: { codes: string[] }) {
   )
 }
 
-export default function TwoStepDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { user, refreshUser } = useAuth()
+// required: the MFA requirement holds this person here before anything else. Only the
+// setup steps are offered, signing out is the way out, and the console opens on Done.
+export default function TwoStepDialog({
+  open,
+  onClose,
+  required = false,
+}: {
+  open: boolean
+  onClose: () => void
+  required?: boolean
+}) {
+  const { user, refreshUser, logout } = useAuth()
   const enabled = !!user?.mfa_enabled
   const [view, setView] = useState<View>('main')
   const [secret, setSecret] = useState('')
@@ -113,7 +123,8 @@ export default function TwoStepDialog({ open, onClose }: { open: boolean; onClos
     if (!res) return
     setCodes(res.data.recovery_codes)
     go('codes')
-    await refreshUser()
+    // Required: the console must not open before the recovery codes have been seen.
+    if (!required) await refreshUser()
   }
 
   const regenerate = async (e: FormEvent) => {
@@ -150,17 +161,24 @@ export default function TwoStepDialog({ open, onClose }: { open: boolean; onClos
             : 'Two-step sign-in'
 
   return (
-    <Popup open={open} onClose={onClose} title={title} width={460}>
+    <Popup open={open} onClose={onClose} title={title} width={460} dismissible={!required}>
       <div className="flex flex-col gap-3.5">
         {banner}
 
         {view === 'main' && !enabled && (
           <>
             <p className="m-0 text-sm text-tx-2 leading-relaxed">
-              Add a second step to signing in: a 6-digit code from an authenticator app, in addition to
-              your password.
+              {required
+                ? 'Two-step sign-in is required for your account. '
+                : 'Add a second step to signing in: '}
+              A 6-digit code from an authenticator app, in addition to your password.
             </p>
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-2.5">
+              {required && (
+                <button className="btn ghost" onClick={() => void logout()}>
+                  Sign out
+                </button>
+              )}
               <button className="btn primary" onClick={startSetup} disabled={busy}>
                 {busy ? 'Working…' : 'Set up'}
               </button>
@@ -222,8 +240,13 @@ export default function TwoStepDialog({ open, onClose }: { open: boolean; onClos
               />
             </Field>
             <div className="flex justify-end gap-2.5">
-              <button type="button" className="btn ghost" onClick={onClose} disabled={busy}>
-                Cancel
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={required ? () => void logout() : onClose}
+                disabled={busy}
+              >
+                {required ? 'Sign out' : 'Cancel'}
               </button>
               <button type="submit" className="btn primary" disabled={busy || code.trim().length < 6}>
                 {busy ? 'Verifying…' : 'Turn on'}
@@ -236,7 +259,7 @@ export default function TwoStepDialog({ open, onClose }: { open: boolean; onClos
           <>
             <RecoveryCodes codes={codes} />
             <div className="flex justify-end">
-              <button className="btn primary" onClick={onClose}>
+              <button className="btn primary" onClick={required ? () => void refreshUser() : onClose}>
                 Done
               </button>
             </div>

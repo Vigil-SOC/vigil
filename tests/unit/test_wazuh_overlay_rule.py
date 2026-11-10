@@ -219,14 +219,15 @@ def test_a_wazuh_copy_takes_no_exceptions():
 def test_the_save_tool_passes_the_wazuh_copy(monkeypatch):
     seen = {}
 
-    def fake(*args):
-        seen["args"] = args
+    def fake(*args, **kwargs):
+        seen["args"], seen["kwargs"] = args, kwargs
         return {"saved": []}
 
     monkeypatch.setattr("core.detections.tools.save_rule", fake)
     tools = SecurityDetectionsTools.__new__(SecurityDetectionsTools)
     asyncio.run(tools.save_detection_rule(wazuh_xml=RULE))
     assert seen["args"][-1] == RULE
+    assert seen["kwargs"]["proven_event_ids"] is None
 
 
 # --- ids as the manager reads them, and files as Wazuh writes them --------------

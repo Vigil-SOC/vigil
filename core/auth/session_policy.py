@@ -66,6 +66,9 @@ class SessionPolicy(BaseModel):
     # Days without a sign-in or a personal MCP token's use before an account is
     # deactivated; None: never. Any change to it is a person's act.
     dormancy_days: Optional[int] = Field(35, ge=7, le=90)
+    # Whose sign-in needs MFA: nobody, accounts holding a privileged permission,
+    # or every person. A service account is never covered.
+    require_mfa: Literal["off", "privileged", "everyone"] = "privileged"
 
     @model_validator(mode="after")
     def _privileged_within_standard(self):
@@ -81,6 +84,23 @@ class SessionPolicy(BaseModel):
 LOCK_UNTIL_UNLOCKED = 100
 
 _RULE_STRENGTH = {"none": 0, "letters_digits": 1, "four_classes": 2}
+
+
+# Weakest first: a lower level is a loosening.
+MFA_LEVELS = ("off", "privileged", "everyone")
+
+
+def mfa_covered(
+    permissions: Iterable[str], service_account: bool, level: str = "privileged"
+) -> bool:
+    """Whether an account holding ``permissions`` must have MFA at ``level``.
+
+    The one coverage check: the sign-in gate, the daily count and the warning all
+    ask it. Privileged is judged by permissions held, never by role name.
+    """
+    if service_account or level == "off":
+        return False
+    return level == "everyone" or not PRIVILEGED_PERMISSIONS.isdisjoint(permissions)
 
 
 def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
@@ -107,8 +127,10 @@ def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
     longer_dormancy = old.dormancy_days is not None and (
         new.dormancy_days is None or new.dormancy_days > old.dormancy_days
     )
+    lower_mfa = MFA_LEVELS.index(new.require_mfa) < MFA_LEVELS.index(old.require_mfa)
     return (
-        new.idle_standard_minutes > old.idle_standard_minutes
+        lower_mfa
+        or new.idle_standard_minutes > old.idle_standard_minutes
         or new.idle_privileged_minutes > old.idle_privileged_minutes
         or new.absolute_hours > old.absolute_hours
         or more_sign_ins
@@ -217,13 +239,18 @@ def policy() -> SessionPolicy:
             return SessionPolicy()
 
 
-def limits(permissions: Iterable[str], service_account: bool = False) -> Limits:
+def limits(
+    permissions: Iterable[str],
+    service_account: bool = False,
+    current: Optional[SessionPolicy] = None,
+) -> Limits:
     """The limits for an account holding ``permissions``.
 
     A service account is bound by the absolute limit only: it has no person
-    whose idleness could end it, and no sign-in limit.
+    whose idleness could end it, and no sign-in limit. ``current`` is the policy
+    when the caller has read it already.
     """
-    current = policy()
+    current = current or policy()
     absolute = timedelta(hours=current.absolute_hours)
     if service_account:
         return Limits(None, absolute)
