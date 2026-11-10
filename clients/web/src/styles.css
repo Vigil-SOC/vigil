@@ -3707,6 +3707,13 @@
       flex-direction: column;
       gap: 3px;
       min-width: 0;
+      /* the title keeps a readable width; the actions wrap below it first */
+      flex: 1 1 240px;
+   }
+
+   .settings-card > .card-h {
+      flex-wrap: wrap;
+      row-gap: 10px;
    }
 
    .settings-card-head p {

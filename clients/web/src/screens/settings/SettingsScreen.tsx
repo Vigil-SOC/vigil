@@ -64,7 +64,7 @@ const SYSTEM_TAB_DEFS: SystemTabDef[] = [
   { key: 'system', label: 'System', perm: 'platform.read', Component: SystemSection },
   { key: 'general', label: 'General', perm: 'platform.read', Component: GeneralSection },
   { key: 'dev', label: 'Developer', devOnly: true, perm: 'platform.read', Component: DeveloperSection },
-  { key: 'users', label: 'Users', perm: 'platform.read', Component: UsersSection },
+  { key: 'users', label: 'Team & access', perm: 'platform.read', Component: UsersSection },
   { key: 'sessions', label: 'Sessions', perm: 'sessions.manage', Component: SessionsSection },
   // a person's own view of the console, not the platform's: ungated
   { key: 'appearance', label: 'Appearance', Component: NavigationSection },

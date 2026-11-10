@@ -3441,6 +3441,11 @@
   "nullable": true,
   "type": "timestamp without time zone"
  },
+ "column mcp_credentials.successor_id": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(50)"
+ },
  "column mcp_credentials.token_hash": {
   "default": null,
   "nullable": false,

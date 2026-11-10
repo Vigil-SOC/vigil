@@ -186,12 +186,17 @@ def _require_sign_in(request: Request) -> None:
 def require_forward():
     """A sign-in, then ``audit.read`` for a service account and ``audit.forward`` otherwise.
 
+    A service account's API token stands in for the sign-in; a person's token does not.
+
     ``permission`` stays ``audit.forward``: the person half of the role matrix
     still denies a Manager, who holds ``audit.read`` and not ``audit.forward``.
     """
 
     def _check(request: Request, user: User = Depends(get_current_user)) -> User:
-        _require_sign_in(request)
+        if not (
+            current_user_module.is_token_request(request) and _is_service_account(user)
+        ):
+            _require_sign_in(request)
         permission = "audit.read" if _is_service_account(user) else "audit.forward"
         deny_unless(user.user_id, permission)
         return user

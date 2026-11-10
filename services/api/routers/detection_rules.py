@@ -611,17 +611,35 @@ def _events(raw: Optional[str], name: str) -> Optional[list]:
     return events
 
 
+def _event_ids(raw: Optional[str]) -> Optional[dict]:
+    if not raw:
+        return None
+    try:
+        ids = json.loads(raw)
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail="proven_event_ids is not valid JSON"
+        )
+    if not isinstance(ids, dict):
+        raise HTTPException(
+            status_code=400,
+            detail='proven_event_ids must be a JSON object: {"splunk": [...], "elastic": [...]}',
+        )
+    return ids
+
+
 @router.post("/detection-skill/import", dependencies=_SETTINGS_WRITE)
 async def import_detection_skill(
     file: UploadFile = File(...),
     public_key_pem: str = Form("", max_length=4096),
-    proven_events: Optional[str] = Form(None),
+    proven_event_ids: Optional[str] = Form(None),
     ruled_out_events: Optional[str] = Form(None),
     user: User = Depends(get_current_active_user),
 ):
     """Import a Detection Skill zip as a new rule, in shadow. ``public_key_pem``
-    is the exporting Vigil's key (its GET /proof-card/key); the events, JSON
-    lists, are replayed on the Sigma form as a new rule's are. Refused, with
+    is the exporting Vigil's key (its GET /proof-card/key); ``proven_event_ids``
+    (a JSON object of SIEM -> event ids) and ``ruled_out_events`` (a JSON list)
+    prove the copies on the SIEM as a new rule's save does. Refused, with
     the reason, on a failed signature, hash, lint or replay. The trail records
     the import, or its refusal, as this user."""
     data = await file.read(detection_skill.MAX_ZIP_BYTES + 1)
@@ -631,7 +649,7 @@ async def import_detection_skill(
         public_key_pem,
         user.user_id,
         user.username,
-        _events(proven_events, "proven_events"),
+        _event_ids(proven_event_ids),
         _events(ruled_out_events, "ruled_out_events"),
     )
     if result.get("error") and not result.get("saved"):

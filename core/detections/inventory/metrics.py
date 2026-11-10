@@ -7,7 +7,8 @@ stored data cannot say. Nothing is searched in a SIEM and nothing is written.
    (hunt or Case, ``episodic_verdicts``) that no rule alerted on, reconstructed
    as ``identify_gaps``' runs_rules_missed does. It is closed by the first overlay
    rule declaring the technique (compared at parent level) whose Sigma form passed
-   its replay against proven events (``checks.replay``) and whose copy entered
+   its replay on proven events Vigil read from the SIEM (``checks.replay``, source
+   ``siem``, #4212; not events the caller wrote) and whose copy entered
    ``shadow`` (``detection_rule_stages``) at or after the gap.
 2. ``shadow_to_live``: per overlay copy and version, its first ``shadow`` row to
    its first ``live`` row (``detection_rule_stages``), with who promoted it and why.
@@ -164,7 +165,8 @@ def gap_to_shadow(
             "Gaps: proven hunt and Case Verdicts an analyst concluded in the last "
             f"{GAP_DAYS} days that no rule alerted on (episodic_verdicts, "
             "reconstructed against findings). Validated: the overlay rule's Sigma "
-            "form passed its replay against proven events (checks.replay). In "
+            "form passed its replay on proven events Vigil read from the SIEM "
+            "(checks.replay, source siem). In "
             "shadow: the copy's first shadow row at or after the gap "
             "(detection_rule_stages). Techniques compared at parent level."
         ),
@@ -211,6 +213,7 @@ def _overlay_rules(session: Any) -> List[Dict[str, Any]]:
             DetectionRule.language,
             DetectionRule.techniques,
             DetectionRuleVersion.checks["replay"]["result"].astext,
+            DetectionRuleVersion.checks["replay"]["source"].astext,
         )
         .join(DetectionRuleVersion, catalog._latest_join())
         .where(DetectionRule.source == readers.OVERLAY_SOURCE)
@@ -224,13 +227,15 @@ def _overlay_rules(session: Any) -> List[Dict[str, Any]]:
         shadows.setdefault(rule_id, []).append(_utc(at))
     # The overlay saves one rule's copies under one name.
     rules: Dict[str, Dict[str, Any]] = {}
-    for rule_id, name, language, techniques, replay in copies:
+    for rule_id, name, language, techniques, replay, source in copies:
         rule = rules.setdefault(
             name,
             {"name": name, "techniques": set(), "validated": False, "shadow_ats": []},
         )
         rule["techniques"] |= {t.upper() for t in techniques or []}
-        rule["validated"] |= language == "sigma" and replay == "pass"
+        rule["validated"] |= (
+            language == "sigma" and replay == "pass" and source == "siem"
+        )
         rule["shadow_ats"] += shadows.get(rule_id, [])
     return list(rules.values())
 

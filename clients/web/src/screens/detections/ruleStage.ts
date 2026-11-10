@@ -26,6 +26,9 @@ export interface StageFields {
     /** Its PR as the sweep last read it from GitHub (at most hourly); absent before a read. */
     pr_state?: 'open' | 'closed' | 'merged'
   } | null
+  /** A shadow copy never shown to fire, and why it stays there (#4212): a quiet week alone
+   * never promotes it. */
+  unproven?: string | null
   /** Its shadow count came from Vigil's Wazuh sandbox replaying a sample of the archive (#4099). */
   sampled?: SampledCount | null
 }
@@ -166,8 +169,20 @@ export function stageLine(r: StageFields): StageLine | null {
     }
     if (r.held) return { ...base, text: `In shadow, held by ${r.held_by ? who(r.held_by) : 'a person'}${since ? ` since ${dayMonth(since)}` : ''}` }
     const d = r.days_in_shadow
-    return { ...base, text: d == null ? 'In shadow' : d === 0 ? 'In shadow · since today' : `In shadow · ${days(d)}` }
+    const text = d == null ? 'In shadow' : d === 0 ? 'In shadow · since today' : `In shadow · ${days(d)}`
+    // Amber: it needs someone to prove it before it can go live.
+    if (r.unproven) return { ...base, amber: true, title: unprovenNote(r) ?? '', text: `${text} · not shown to fire` }
+    return { ...base, text }
   }
   if (r.stage === 'live') return { ...base, text: since ? `Live since ${dayMonth(since)}` : 'Live' }
   return { ...base, text: since ? `Off since ${dayMonth(since)}` : 'Switched off' }
+}
+
+/** Why a shadow copy is not promoted, as the History panel says it; null once it is shown to fire. */
+export function unprovenNote(r: StageFields): string | null {
+  if (r.stage !== 'shadow' || !r.unproven) return null
+  return `It stays ${r.unproven}: a quiet week alone does not show it can match the attack it was written for. ` +
+    (/saved/.test(r.unproven)
+      ? 'Save it again with the attack events named by their SIEM ids; Vigil runs it on them, and once it returns one it moves live after 7 quiet days.'
+      : 'Once one of its shadow runs hits, Vigil moves it live after 7 quiet days.')
 }

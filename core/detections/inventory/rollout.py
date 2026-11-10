@@ -160,6 +160,12 @@ WAZUH = "wazuh"
 # What a Wazuh deploy says while Vigil cannot run Wazuh rules in shadow.
 UNTESTED = "not shadow-tested: Vigil has not validated this Wazuh copy in shadow"
 NO_STAGE_AT = datetime.fromtimestamp(0, timezone.utc)
+# Why a shadow copy not yet shown to fire stays there, as the listing says (#4212).
+UNPROVEN = {
+    "splunk": "in shadow until it is saved with SIEM-proven events",
+    "elastic": "in shadow until it is saved with SIEM-proven events",
+    WAZUH: "in shadow until a shadow run sees it hit",
+}
 
 
 def _budget_key(rule_id: int) -> str:
@@ -804,6 +810,19 @@ def shown_to_fire(
     if language == WAZUH and shadow_hits > 0:
         return "matched archived events in shadow"
     return None
+
+
+def unproven(
+    language: str, checks: Mapping[str, Any], days: List[str]
+) -> Optional[str]:
+    """Why a shadow copy is not shown to fire (``shown_to_fire``), for the rule
+    listing, or None when it is: counted on the same shadow hits over ``days``
+    that ``_due`` reads."""
+    if language not in UNPROVEN:
+        return None
+    hit_days = (checks.get("shadow") or {}).get("days") or {}
+    hits = sum(int(hit_days.get(d) or 0) for d in days)
+    return None if shown_to_fire(checks, language, hits) else UNPROVEN[language]
 
 
 def _due(

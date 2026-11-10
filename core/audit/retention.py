@@ -30,6 +30,11 @@ CONFIG_DESCRIPTION = (
     "Audit retention period, and erasures of an audit manager waiting out seven days."
 )
 LIST_NAME = "erased-principals.txt"
+# An erased account's username and email, derived from its principal id so the
+# originals are free again. The username is how an account reads as Erased.
+ERASED_PREFIX = "erased-"
+ERASED_DOMAIN = "erased.invalid"
+ERASED_NAME = "Erased account"
 # Queued on the session until the transaction commits. A rollback must not
 # leave an id in the file: restore would blank that principal anyway.
 _QUEUED = "erasure_file_ids"
@@ -49,6 +54,49 @@ _NAMES = """
 
 class RetentionError(ValueError):
     """The request is refused. The router answers 400, or 404 for an unknown principal."""
+
+
+def erased_username(principal_id: str) -> str:
+    return f"{ERASED_PREFIX}{principal_id}"
+
+
+def is_erased(username: Optional[str], principal_id: Optional[str]) -> bool:
+    return bool(principal_id) and username == erased_username(principal_id)
+
+
+def free_identifiers(session, principal_id: str) -> None:
+    """Rewrite the account's username, email and full name to opaque values, so
+    nothing readable stays and the username and email can be used again. Cases
+    and tasks assigned by username follow, so a new account of that name does
+    not inherit them. Plain SQL: an upgrade step runs it on its own connection too."""
+    if not _table(session, "users"):
+        return
+    params = {
+        "id": principal_id,
+        "prefix": ERASED_PREFIX,
+        "domain": ERASED_DOMAIN,
+        "name": ERASED_NAME,
+    }
+    for table in ("cases", "case_tasks"):
+        if _table(session, table):
+            session.execute(
+                text(f"""
+                    UPDATE public.{table} t SET assignee = :prefix || u.principal_id
+                    FROM public.users u
+                    WHERE u.principal_id = :id AND t.assignee = u.username
+                    """),
+                params,
+            )
+    session.execute(
+        text("""
+            UPDATE public.users SET
+                username = :prefix || principal_id,
+                email = :prefix || principal_id || '@' || :domain,
+                full_name = :name
+            WHERE principal_id = :id
+            """),
+        params,
+    )
 
 
 def outside_path() -> Optional[Path]:
@@ -398,13 +446,15 @@ def _drop_notices(session, principal_id: str) -> None:
 
 
 def _revoke(session, principal_id: str) -> None:
-    """Deactivate the account, revoke MCP credentials and end sign-ins, and keep those rows.
+    """Deactivate the account, free its username and email, revoke MCP credentials
+    and end sign-ins, and keep those rows.
 
     The user row stays, and the principal is not marked deleted. Deactivating
     is what stops the password signing in again and the role being honoured.
     """
     if not _table(session, "users"):
         return
+    free_identifiers(session, principal_id)
     user_id = session.execute(
         text(
             "UPDATE public.users SET is_active = false"

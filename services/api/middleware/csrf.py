@@ -27,6 +27,9 @@ Exempt paths:
   the same check. A request with no session cookie is a bearer caller: there
   is no cookie for a forged browser request to borrow, and that caller has
   no csrf_token to echo, so the check is skipped for that request only.
+- A request carrying an API token (``Authorization: Bearer vgl_api_...``) is
+  skipped on every route: ``get_current_user`` judges the token alone and never
+  reads a cookie beside it.
 
 Report-only mode:
 - `VIGIL_CSRF_REPORT_ONLY=true` logs violations at WARNING but lets the
@@ -47,6 +50,7 @@ from core.auth.auth_cookies import (
     context_path_prefix,
     cookie_root_path,
 )
+from core.auth.mcp_credential_service import looks_like_api_token
 from core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -102,6 +106,20 @@ def _ingestion_without_session(request: Request) -> bool:
     if not _is_ingestion_path(request.url.path):
         return False
     return not request.cookies.get(ACCESS_COOKIE_NAME)
+
+
+def _api_token_request(request: Request) -> bool:
+    """An API token in the header: judged alone, so a cookie beside it lends no authority.
+
+    A forged cross-site request cannot add an Authorization header, so there is
+    nothing for the check to protect and a program has no csrf_token to echo.
+    """
+    parts = request.headers.get("authorization", "").split()
+    return (
+        len(parts) == 2
+        and parts[0].lower() == "bearer"
+        and looks_like_api_token(parts[1])
+    )
 
 
 def _apply_context_path(path: str, prefix: str) -> str:
@@ -211,7 +229,11 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         path = request.url.path
-        if self._is_exempt(path) or _ingestion_without_session(request):
+        if (
+            self._is_exempt(path)
+            or _ingestion_without_session(request)
+            or _api_token_request(request)
+        ):
             return await call_next(request)
 
         if request.method in UNSAFE_METHODS:

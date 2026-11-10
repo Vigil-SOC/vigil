@@ -37,6 +37,7 @@ from core.auth.bootstrap_code import has_human_user, setup_code_matches
 from core.auth.current_user import DEV_MODE, _detached, mfa_setup_route
 from core.auth.deactivation import when_committed
 from core.auth.identity import claim_sign_in_names, identifier_in_use
+from core.auth.mcp_credential_service import looks_like_api_token
 from core.auth.password_reset import (
     decode_reset_token,
     default_base_url,
@@ -126,7 +127,21 @@ async def _refuse_service_account(request: Request):
             )
 
 
-router = APIRouter(dependencies=[Depends(_refuse_service_account)])
+TOKEN_DETAIL = "An API token can't use this endpoint"
+
+
+def _refuse_token(request: Request):
+    """Refuse an API token on every route here, so a token can't change its holder's
+    password, MFA or email, or mint tokens. On the whole router for the same reason as
+    above. It goes by the header alone, valid or not: no route here answers a token."""
+    token = _bearer_token(request)
+    if token and looks_like_api_token(token):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=TOKEN_DETAIL)
+
+
+router = APIRouter(
+    dependencies=[Depends(_refuse_token), Depends(_refuse_service_account)]
+)
 
 ROUTER_META = RouterMeta(
     prefix="/api/auth",

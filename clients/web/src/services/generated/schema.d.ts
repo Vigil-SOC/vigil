@@ -3542,8 +3542,9 @@ export interface paths {
         /**
          * Import Detection Skill
          * @description Import a Detection Skill zip as a new rule, in shadow. ``public_key_pem``
-         *     is the exporting Vigil's key (its GET /proof-card/key); the events, JSON
-         *     lists, are replayed on the Sigma form as a new rule's are. Refused, with
+         *     is the exporting Vigil's key (its GET /proof-card/key); ``proven_event_ids``
+         *     (a JSON object of SIEM -> event ids) and ``ruled_out_events`` (a JSON list)
+         *     prove the copies on the SIEM as a new rule's save does. Refused, with
          *     the reason, on a failed signature, hash, lint or replay. The trail records
          *     the import, or its refusal, as this user.
          */
@@ -4988,7 +4989,7 @@ export interface paths {
         };
         /**
          * Get Surface
-         * @description Whether Vigil's own tools are reachable, and whether anything can reach them.
+         * @description Whether Vigil's own tools are reachable, and whether any token can open them.
          */
         get: operations["get_api_mcp_surface"];
         /**
@@ -4998,49 +4999,6 @@ export interface paths {
         put: operations["put_api_mcp_surface"];
         post?: never;
         delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/mcp/surface/credentials": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Mint Credential
-         * @description Issue a credential for the signed-in user.
-         *
-         *     The token is in this response and nowhere else. It is not stored and cannot
-         *     be shown again; an operator who loses one mints another and revokes this.
-         */
-        post: operations["post_api_mcp_surface_credentials"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/mcp/surface/credentials/{credential_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * Revoke Credential
-         * @description Withdraw a credential. What it could reach, it can no longer reach.
-         */
-        delete: operations["delete_api_mcp_surface_credentials_credential_id"];
         options?: never;
         head?: never;
         patch?: never;
@@ -6455,6 +6413,94 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Own
+         * @description Your own tokens, newest first, revoked and ended ones included.
+         */
+        get: operations["get_api_tokens"];
+        put?: never;
+        /**
+         * Mint
+         * @description Issue a token for yourself. It is in this response and nowhere else.
+         */
+        post: operations["post_api_tokens"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tokens/all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List All
+         * @description Every token, for a ``users.write`` holder; filtered on the server.
+         *
+         *     ``holders`` is everyone who holds one, whatever the filter, for its menu.
+         */
+        get: operations["get_api_tokens_all"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tokens/{credential_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke
+         * @description Withdraw a token: its holder's own, or anyone's for a ``users.write`` holder
+         *     (the one act that does not need to cover the holder's role).
+         */
+        delete: operations["delete_api_tokens_credential_id"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tokens/{credential_id}/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rotate
+         * @description Mint a successor with the same holder and label. Only whoever could mint
+         *     for the holder rotates, so an admin revokes another person's token, never this.
+         */
+        post: operations["post_api_tokens_credential_id_rotate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/triage": {
         parameters: {
             query?: never;
@@ -6495,6 +6541,7 @@ export interface paths {
          *         role_id: Filter by role ID
          *         is_active: Filter by active status
          *         search: Search in username, email, or full name
+         *         account_status: "current" (not deleted or erased), "all", or one status
          *         current_user: Current authenticated user
          *         session: Database session
          *
@@ -6636,7 +6683,8 @@ export interface paths {
         get: operations["get_api_users_user_id"];
         /**
          * Update User
-         * @description Update user information (requires users.write permission).
+         * @description Update a user's profile and role (requires users.write permission).
+         *     Deactivate, reactivate and restore have their own routes.
          *
          *     The caller's permissions must also cover the target account's current
          *     role. Holding users.write is not enough to edit an account whose role
@@ -6669,6 +6717,69 @@ export interface paths {
          *         Success message
          */
         delete: operations["delete_api_users_user_id"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{user_id}/deactivate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deactivate User
+         * @description End the account's sign-ins and revoke every credential it holds.
+         *     users.write over the account; a service account or playbook may, as containment.
+         */
+        post: operations["post_api_users_user_id_deactivate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{user_id}/reactivate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reactivate User
+         * @description Let a deactivated account sign in again with its password and MFA. Its
+         *     tokens stay revoked. Restores the whole role, so a person's own act.
+         */
+        post: operations["post_api_users_user_id_reactivate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{user_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore User
+         * @description Bring a deleted account back, Deactivated: password and MFA kept, tokens
+         *     revoked. users.delete, and a person's own act.
+         */
+        post: operations["post_api_users_user_id_restore"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -8742,8 +8853,8 @@ export interface components {
         Body_import_detection_skill_api_detection_rules_detection_skill_import_post: {
             /** File */
             file: string;
-            /** Proven Events */
-            proven_events?: string | null;
+            /** Proven Event Ids */
+            proven_event_ids?: string | null;
             /**
              * Public Key Pem
              * @default
@@ -10248,13 +10359,6 @@ export interface components {
             /** Username */
             username: string;
         };
-        /** CredentialMint */
-        CredentialMint: {
-            /** Expires In Days */
-            expires_in_days?: number | null;
-            /** Label */
-            label: string;
-        };
         /**
          * CustomIntegrationRequest
          * @description Request to generate a custom integration from documentation.
@@ -11361,6 +11465,13 @@ export interface components {
             /** Source Case Id */
             source_case_id: string;
         };
+        /** MintRequest */
+        MintRequest: {
+            /** Expires In Days */
+            expires_in_days?: number | null;
+            /** Label */
+            label: string;
+        };
         /** ModelInfoResponse */
         ModelInfoResponse: {
             /** Context Window */
@@ -12159,6 +12270,16 @@ export interface components {
                     [key: string]: number;
                 } | null;
             };
+        };
+        /** RotateRequest */
+        RotateRequest: {
+            /** Expires In Days */
+            expires_in_days?: number | null;
+            /**
+             * Suspected Compromise
+             * @default false
+             */
+            suspected_compromise: boolean;
         };
         /**
          * Routability
@@ -13137,15 +13258,13 @@ export interface components {
         };
         /**
          * UpdateUserRequest
-         * @description Update user request.
+         * @description Update user request: profile and role. Status changes have their own routes.
          */
         UpdateUserRequest: {
             /** Email */
             email?: string | null;
             /** Full Name */
             full_name?: string | null;
-            /** Is Active */
-            is_active?: boolean | null;
             /** Role Id */
             role_id?: string | null;
         };
@@ -22473,74 +22592,6 @@ export interface operations {
             };
         };
     };
-    post_api_mcp_surface_credentials: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CredentialMint"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_api_mcp_surface_credentials_credential_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                credential_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_medic_decisions: {
         parameters: {
             query?: never;
@@ -24992,6 +25043,177 @@ export interface operations {
             };
         };
     };
+    get_api_tokens: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_tokens: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MintRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_tokens_all: {
+        parameters: {
+            query?: {
+                /** @description A holder's user id */
+                holder?: string | null;
+                status?: ("active" | "rotated" | "expired" | "revoked") | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_tokens_credential_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                credential_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_tokens_credential_id_rotate: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                credential_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RotateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_triage: {
         parameters: {
             query?: {
@@ -25036,6 +25258,7 @@ export interface operations {
                 role_id?: string | null;
                 is_active?: boolean | null;
                 search?: string | null;
+                status?: "current" | "all" | "active" | "locked" | "deactivated" | "deleted" | "erased";
             };
             header?: {
                 authorization?: string | null;
@@ -25342,6 +25565,105 @@ export interface operations {
         };
     };
     delete_api_users_user_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_users_user_id_deactivate: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_users_user_id_reactivate: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_users_user_id_restore: {
         parameters: {
             query?: never;
             header?: {

@@ -20,7 +20,11 @@ from sqlalchemy.orm import Session
 from core.auth import session_policy, sign_ins
 from core.auth.auth_cookies import ACCESS_COOKIE_NAME
 from core.auth.auth_service import AuthService
-from core.auth.mcp_credential_service import looks_like_mcp_token
+from core.auth.mcp_credential_service import (
+    authenticate,
+    looks_like_api_token,
+    looks_like_mcp_token,
+)
 from core.cases.agent_closure import clear_http_actor, note_http_actor
 from core.config import get_settings
 from core.storage.models import Role, SignIn, User
@@ -43,6 +47,9 @@ USER_ACTION_HEADER = "x-vigil-user-action"
 _SIGN_IN_ENDED = "Sign-in has ended"
 # A refusal is (status, detail, end reason); the reason is set only for an ended sign-in.
 _Refusal = tuple[int, Any, Optional[str]]
+
+# One answer for every way an API token can fail, so a probe learns nothing.
+_BAD_TOKEN = "Invalid or expired token"
 
 # The 403 detail.code of a covered account with no MFA, on every route but the setup ones.
 MFA_SETUP_REQUIRED = "mfa_setup_required"
@@ -204,6 +211,28 @@ def _check_sign_in(
         return user, None
 
 
+def _bearer(authorization: Optional[str]) -> Optional[str]:
+    """The token of a well-formed ``Authorization: Bearer`` header, else None."""
+    parts = (authorization or "").split()
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        return parts[1]
+    return None
+
+
+def is_token_request(request: Optional[Request] = None) -> bool:
+    """Whether the request being served authenticated with an API token."""
+    request = request or current_request.get()
+    actor = getattr(getattr(request, "state", None), "vigil_http_actor", None)
+    return actor is not None and actor.via == "token"
+
+
+def is_machine_request(user: User, request: Optional[Request] = None) -> bool:
+    """A service account, or anyone calling with an API token: a machine may only
+    narrow access, never widen it."""
+    machine = getattr(user, "service_account", False) is True
+    return machine or is_token_request(request)
+
+
 async def get_current_user(
     request: Request,
     authorization: Optional[str] = Header(None),
@@ -212,7 +241,9 @@ async def get_current_user(
     Resolve the authenticated user from either the access_token HttpOnly
     cookie (browser flow) or an Authorization: Bearer header (API clients).
 
-    Cookie is preferred when both are present.
+    Cookie is preferred when both are present, except for an API token
+    (``Bearer vgl_api_...``): that is judged alone, never beside a cookie, and
+    is a machine caller whoever holds it.
 
     In DEV_MODE, authentication is bypassed and a mock admin user is returned.
 
@@ -239,6 +270,24 @@ async def get_current_user(
     if DEV_MODE:
         logger.debug("DEV_MODE: Bypassing authentication")
         return await run_in_threadpool(_detached, _get_dev_user)
+
+    presented = _bearer(authorization)
+    if presented and looks_like_api_token(presented):
+        found = await run_in_threadpool(authenticate, presented)
+        if found is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=_BAD_TOKEN,
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        # No sign-in row and no claims: what needs a person's sign-in refuses it.
+        request.state.vigil_http_actor = note_http_actor(
+            username=found.user.username,
+            principal_id=found.user.principal_id,
+            via="token",
+            person=False,
+        )
+        return found.user
 
     cookie = request.cookies.get(ACCESS_COOKIE_NAME)
     # The cookie wins when a bearer is also present.

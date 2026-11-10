@@ -253,8 +253,15 @@ export function useFederation() {
   }
 }
 
+export type AccountStatus = 'active' | 'locked' | 'deactivated' | 'deleted' | 'erased'
+/** list_users' status filter: "current" is every account not deleted or erased */
+export type AccountFilter = 'current' | 'all' | AccountStatus
+
 export interface User {
   user_id: string
+  status: AccountStatus
+  /** open cases the account owns, shown before a deactivate or delete */
+  open_cases: number
   username: string
   email: string
   full_name: string
@@ -326,8 +333,17 @@ export interface UserPayload {
   role_id: string
 }
 
-export function useUsers() {
+export interface UsersQuery {
+  search: string
+  status: AccountFilter
+  skip: number
+  limit: number
+}
+
+/** The accounts matching ``query``, one page, searched and filtered by the server. */
+export function useUsers({ search, status, skip, limit }: UsersQuery) {
   const [users, setUsers] = useState<User[]>([])
+  const [total, setTotal] = useState(0)
   const [roles, setRoles] = useState<Role[]>([])
   const [rolesMeta, setRolesMeta] = useState<RolesMeta>(EMPTY_ROLES_META)
   const [phase, setPhase] = useState<Phase>('loading')
@@ -337,15 +353,18 @@ export function useUsers() {
 
   useEffect(() => {
     let cancelled = false
-    setPhase('loading')
+    // a new page or search keeps the table on screen while it loads
+    setPhase((p) => (p === 'ready' ? p : 'loading'))
     setError(null)
-    Promise.all([api.get('/users/'), api.get('/users/roles/list')])
+    const params = { status, skip, limit, search: search.trim() || undefined }
+    Promise.all([api.get('/users/', { params }), api.get('/users/roles/list')])
       .then(([usersRes, rolesRes]) => {
         if (cancelled) return
         const u = usersRes.data?.users
         const r = rolesRes.data?.roles
         if (!Array.isArray(u) || !Array.isArray(r)) throw new Error('Invalid users/roles data')
         setUsers(u)
+        setTotal(usersRes.data?.total ?? u.length)
         setRoles(r)
         const d = rolesRes.data
         setRolesMeta({
@@ -364,19 +383,27 @@ export function useUsers() {
     return () => {
       cancelled = true
     }
-  }, [reloadKey])
+  }, [reloadKey, search, status, skip, limit])
 
   const createUser = useCallback(
     (payload: UserPayload) => api.post('/users/', payload).then(() => reload()),
     [reload],
   )
   const updateUser = useCallback(
-    (userId: string, patch: Partial<UserPayload & { is_active: boolean }>) =>
-      api.put(`/users/${userId}`, patch).then(() => reload()),
+    (userId: string, patch: Partial<UserPayload>) => api.put(`/users/${userId}`, patch).then(() => reload()),
     [reload],
   )
   const deleteUser = useCallback(
     (userId: string) => api.delete(`/users/${userId}`).then(() => reload()),
+    [reload],
+  )
+  // deactivate, reactivate and restore: each its own act on the server
+  const changeStatus = useCallback(
+    (userId: string, act: 'deactivate' | 'reactivate' | 'restore') =>
+      api.post<User & { new_tokens_required?: boolean }>(`/users/${encodeURIComponent(userId)}/${act}`).then((res) => {
+        reload()
+        return res.data
+      }),
     [reload],
   )
 
@@ -396,6 +423,7 @@ export function useUsers() {
 
   return {
     users,
+    total,
     roles,
     rolesMeta,
     phase,
@@ -404,6 +432,7 @@ export function useUsers() {
     createUser,
     updateUser,
     deleteUser,
+    changeStatus,
     createRole,
     updateRole,
     deleteRole,

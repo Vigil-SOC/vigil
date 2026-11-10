@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from core.api.v1.autonomy_router import CeilingResponse, _http, _view
-from core.auth.auth_service import _is_service_account
+from core.auth.current_user import is_machine_request
 from core.auth.permissions import deny_unless, permission_gate
 from core.deps import provide_workflows
 from core.detections.inventory import rollout_limits
@@ -97,9 +97,10 @@ def put_workflow_autonomy(
     by = current_user.principal_id
     if raises:
         deny_unless(current_user.user_id, "ai_autonomy.write", session)
-        if _is_service_account(current_user):
+        if is_machine_request(current_user):
             raise HTTPException(
-                status_code=403, detail="A service account cannot raise autonomy"
+                status_code=403,
+                detail="A service account or API token cannot raise autonomy",
             )
         if current.stopped:
             raise HTTPException(status_code=409, detail="Stopped: resume first")
@@ -197,7 +198,7 @@ def put_rollout_limits(
     try:
         rollout_limits.update_limits(
             user_id=str(current_user.user_id),
-            caller_is_service=_is_service_account(current_user),
+            caller_is_service=is_machine_request(current_user),
             changes=changes,
             reason=body.reason,
         )
