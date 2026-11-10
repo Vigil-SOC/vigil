@@ -655,15 +655,16 @@ def unlock_user(
     session: UnitOfWorkSession,
 ):
     """End a lock and the failure count. users.write over the account, a role the
-    caller covers, and a person's own act: a lock ends no sign-in, so a locked
-    manager's open session must not be able to undo it, nor may a playbook."""
+    caller covers, and a person's own act, not a playbook's. A lock ends no
+    sign-in, so a locked caller's open session may not unlock anyone, itself included.
+    """
     with _denials(current_user, "user.unlock"):
         deny_unless(current_user.user_id, "users.write")
         user = _live_user(session, user_id)
-        if user.user_id == current_user.user_id:
+        if user.user_id == current_user.user_id or _account_is_locked(current_user):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Ask another administrator to unlock your account",
+                detail="Ask another administrator to unlock this account",
             )
         if not _acts_as_person(current_user, session):
             raise HTTPException(
@@ -671,7 +672,8 @@ def unlock_user(
                 detail="Unlocking needs a person's own sign-in",
             )
         _require_privileges_cover_target(current_user, user, session, action="unlock")
-    if not _account_is_locked(user):
+    # An expired timed lock leaves its count: Unlock clears that too.
+    if not _account_is_locked(user) and not user.failed_login_count:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="This account is not locked"
         )
