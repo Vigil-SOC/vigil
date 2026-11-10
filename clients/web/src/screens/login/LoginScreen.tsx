@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { authApi, bootstrapApi } from '../../services/api'
 import { Icon } from '../../shared/icons'
+import { RecoveryCodes } from '../../shell/TwoStepDialog'
 import AuthLayout from './AuthLayout'
 import { requestErrorMessage } from './requestErrorMessage'
 
@@ -14,6 +15,8 @@ export default function LoginScreen() {
   const [usernameOrEmail, setUsernameOrEmail] = useState('')
   const [password, setPassword] = useState('')
   const [mfaCode, setMfaCode] = useState('')
+  // fresh recovery codes the sign-in issued; shown once before the console
+  const [newCodes, setNewCodes] = useState<string[] | null>(null)
   const [showPassword, setShowPassword] = useState(false)
   const [showMfa, setShowMfa] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -76,8 +79,9 @@ export default function LoginScreen() {
     setError('')
     setLoading(true)
     try {
-      await login(usernameOrEmail, password, showMfa ? mfaCode : undefined)
-      navigate('/')
+      const codes = await login(usernameOrEmail, password, showMfa ? mfaCode : undefined)
+      if (codes?.length) setNewCodes(codes)
+      else navigate('/')
     } catch (err: any) {
       if (err?.message === 'MFA_REQUIRED') {
         setShowMfa(true)
@@ -135,14 +139,18 @@ export default function LoginScreen() {
     }
   }
 
-  const title = needsBootstrap
+  const title = newCodes
+    ? 'New recovery codes'
+    : needsBootstrap
     ? 'Create your account'
     : forgot
       ? 'Reset your password'
       : showMfa
         ? 'Two-factor authentication'
         : 'Sign in'
-  const subtitle = needsBootstrap
+  const subtitle = newCodes
+    ? 'Your old recovery codes no longer work. Keep these instead.'
+    : needsBootstrap
     ? 'No account exists yet. Set up the first administrator.'
     : forgot
       ? 'Enter the email on your account to request a reset link.'
@@ -159,7 +167,15 @@ export default function LoginScreen() {
         error ? { text: error, info: showMfa && !forgot } : { text: notice, info: true }
       }
     >
-      {needsBootstrap ? (
+      {newCodes ? (
+        <div className="flex flex-col gap-4">
+          <RecoveryCodes codes={newCodes} />
+          <button className="btn-signin" type="button" onClick={() => navigate('/')}>
+            Continue
+            <Icon name="arrowR" />
+          </button>
+        </div>
+      ) : needsBootstrap ? (
         <form onSubmit={handleBootstrap} autoComplete="on" noValidate>
           <div className="field">
             <label htmlFor="bs-code">Setup code</label>
@@ -369,15 +385,16 @@ export default function LoginScreen() {
                 name="mfa"
                 type="text"
                 autoComplete="one-time-code"
-                maxLength={8}
+                maxLength={16}
                 placeholder="000000"
                 ref={mfaInputRef}
                 disabled={loading}
                 value={mfaCode}
                 onChange={(e) => {
-                  // 6-digit authenticator code or 8-character recovery code
+                  // 6-digit authenticator code, 16-character recovery code, or an 8-character
+                  // one from before the upgrade
                   const v = e.target.value.replace(/[^a-z0-9]/gi, '')
-                  if (v.length <= 8) setMfaCode(v)
+                  if (v.length <= 16) setMfaCode(v)
                 }}
               />
             </div>
@@ -392,7 +409,7 @@ export default function LoginScreen() {
         <button
           className="btn-signin"
           type="submit"
-          disabled={loading || (showMfa && mfaCode.length !== 6 && mfaCode.length !== 8)}
+          disabled={loading || (showMfa && ![6, 8, 16].includes(mfaCode.length))}
         >
           {loading ? (
             <span className="spin" aria-hidden="true" />

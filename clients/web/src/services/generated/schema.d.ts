@@ -10806,6 +10806,8 @@ export interface components {
         LoginResponse: {
             /** Access Token */
             access_token: string;
+            /** Recovery Codes */
+            recovery_codes?: string[] | null;
             /** Refresh Token */
             refresh_token: string;
             /**
