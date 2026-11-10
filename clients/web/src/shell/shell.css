@@ -3166,3 +3166,12 @@ select.vg-side-input {
 .rh-ask-go:disabled { opacity: .6; cursor: default; }
 .rh-ask .rh-error { flex-basis: 100%; margin: 0; }
 
+
+.rh-section {
+  padding: 10px 14px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--tx2);
+}
