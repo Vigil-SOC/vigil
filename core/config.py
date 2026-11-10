@@ -217,6 +217,10 @@ class Settings(BaseSettings):
     vigil_csrf_exempt_paths: Optional[str] = None
     vigil_cookie_secure: bool = True
     vigil_cookie_samesite: str = "strict"
+    # The hostname people reach the console at, with no scheme or port: the
+    # WebAuthn relying-party id for security keys (core/auth/security_keys.py).
+    # Empty, or not HTTPS and not loopback: security keys are unavailable.
+    vigil_console_hostname: str = ""
 
     # Auth
     jwt_access_expiration_minutes: int = 30

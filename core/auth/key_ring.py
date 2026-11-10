@@ -9,8 +9,9 @@ the MFA key stays ``decrypt_only``.
 Version 1 of each purpose is the value derived from the secret before the ring
 existed, so tokens issued then keep verifying. Adoption writes version 1 and a
 random version 2 at the first app start, under an advisory lock so one replica
-does it. Only the API's startup adopts: a process holding the wrong secret
-must not wrap a ring nobody else can read.
+does it. A purpose added later gets one random current key at the next start
+(``_add_missing``). Only the API's startup adopts: a process holding the wrong
+secret must not wrap a ring nobody else can read.
 
 ``python -m core.auth.key_ring rotate <purpose>`` rotates on the host.
 """
@@ -83,6 +84,8 @@ PURPOSES: dict[str, Purpose] = {
     "reset": Purpose(timedelta(hours=1), lambda s: s.encode()),
     "setup": Purpose(timedelta(hours=24), _hmac("vigil-bootstrap-setup")),
     "mfa": Purpose(None, lambda s: hashlib.sha256(s.encode()).digest()),
+    # Security-key challenges (#4234): minutes long, bound to the account.
+    "webauthn": Purpose(timedelta(minutes=10), _hmac("vigil-webauthn-challenge")),
 }
 
 
@@ -372,15 +375,36 @@ def _reencrypt_mfa(session, fernet: MultiFernet) -> int:
     return moved
 
 
+def _add_missing(session, secret: str) -> list[str]:
+    """A current key for each purpose the adopted ring lacks, as a fresh random
+    version 1: nothing derived from the secret existed for it before."""
+    held = set(
+        session.execute(text("SELECT DISTINCT purpose FROM public.auth_keys"))
+        .scalars()
+        .all()
+    )
+    missing = sorted(set(PURPOSES) - held)
+    if missing:
+        _read(session, secret)  # a wrong secret must not add a row nobody can open
+        for purpose in missing:
+            _insert(session, secret, purpose, 1, "current", _new_material())
+        _trail(session, "auth.keys_adopted", purposes=missing, mfa_secrets=0)
+    return missing
+
+
 def adopt(session=None, *, secret: Optional[str] = None) -> bool:
     """Write version 1 (the derived value) and version 2 (random) of each
-    purpose, move MFA secrets under the new key. False when already adopted."""
+    purpose, move MFA secrets under the new key. On a ring already adopted, add
+    a key for any purpose it lacks. False when there was nothing to write."""
     secret = secret or wrapping_secret()
     with unit_of_work(session) as session:
         _advisory(session)  # the winner commits; the others then see its rows
         if session.execute(text("SELECT 1 FROM public.auth_keys LIMIT 1")).first():
-            forget()  # another replica adopted; do not keep an empty copy
-            return False
+            added = _add_missing(session, secret)
+            forget()  # another replica adopted, or this added keys
+            if added:
+                logger.info("key ring: added %s", ", ".join(added))
+            return bool(added)
         now = _now()
         fresh = {}
         for purpose, spec in PURPOSES.items():

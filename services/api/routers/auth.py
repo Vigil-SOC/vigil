@@ -16,7 +16,14 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from core.audit.trail import SYSTEM
-from core.auth import mfa_methods, session_policy, sign_ins, step_up, trail_events
+from core.auth import (
+    mfa_methods,
+    security_keys,
+    session_policy,
+    sign_ins,
+    step_up,
+    trail_events,
+)
 from core.auth.auth_cookies import (
     ACCESS_COOKIE_NAME,
     REFRESH_COOKIE_NAME,
@@ -24,6 +31,7 @@ from core.auth.auth_cookies import (
     set_auth_cookies,
 )
 from core.auth.auth_service import (
+    CODE_KEY,
     CODE_RECOVERY,
     AccountLockedError,
     AuthService,
@@ -58,9 +66,9 @@ from core.config import get_settings
 from core.platform.email_service import mail_is_configured, send_email
 from core.platform.notices import notify
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.storage.models import SignIn, User
+from core.storage.models import SecurityKey, SignIn, User
 from core.storage.schemas import UserSchema
-from core.storage.schemas.base import IsoDateTime
+from core.storage.schemas.base import IsoDateTime, OptDateTime
 from core.time import utcnow
 from services.api.middleware.auth import get_current_active_user
 from services.api.middleware.auth_rate_key import (
@@ -209,6 +217,10 @@ class LoginRequest(BaseModel):
     username_or_email: str
     password: str
     mfa_code: Optional[str] = None
+    # The second call with a security key: the key's assertion and the signed
+    # challenge the first call's 401 carried.
+    webauthn: Optional[dict] = None
+    webauthn_challenge: Optional[str] = None
 
 
 class LoginResponse(BaseModel):
@@ -278,10 +290,14 @@ class RecoveryCodesResponse(BaseModel):
 class MFAVerifyRequest(BaseModel):
     """A method change: the code and, for the strong check, the password. Body
     fields so neither is written to access logs. Optional so a missing password
-    is the check's own "Enter your password.", not a 422."""
+    or code is the check's own "Enter your password.", not a 422. A person with
+    security keys may send ``assertion`` and ``challenge`` in place of the code
+    (from POST /mfa/keys/assertion-options)."""
 
-    code: str
+    code: Optional[str] = None
     password: Optional[str] = None
+    assertion: Optional[dict] = None
+    challenge: Optional[str] = None
 
 
 class PasswordResetRequest(BaseModel):
@@ -450,6 +466,8 @@ def _user_payload(user: User, session: Session) -> dict:
             session_policy.policy().require_mfa,
         )
     )
+    # Whether this install has security keys, and why not when it has none.
+    payload["security_keys"] = security_keys.availability().dump()
     return payload
 
 
@@ -577,6 +595,7 @@ def _recover(session: Session, user: User, source: Optional[str]) -> None:
     """A recovery code was accepted at login: take every method, end the other
     sign-ins, and tell the person."""
     AuthService.clear_mfa(user)
+    security_keys.remove_all(session, user.principal_id)
     trail_events.record(
         session,
         "auth.mfa_recovered",
@@ -593,6 +612,31 @@ def _recover(session: Session, user: User, source: Optional[str]) -> None:
         "app and remaining recovery codes were removed and your other sign-ins "
         "ended; two-step sign-in has to be set up again. If this wasn't you, "
         "change your password and tell an admin.",
+    )
+
+
+def _mfa_required(session: Session, user: User) -> JSONResponse:
+    """The first login call's 401 for a person with MFA: ``X-MFA-Required`` as
+    ever, and with security keys the request options and signed challenge for the
+    second call. Nothing of this attempt is kept: it is not a sign-in yet."""
+    if user in session:
+        session.expire(user)
+    keyed = security_keys.has_keys(session, user.principal_id)
+    methods = ["authenticator_app"] if mfa_methods.has_app(user, keyed) else []
+    detail, challenge = "MFA code required", None
+    if keyed:
+        methods.append("security_key")
+        try:
+            challenge = security_keys.assertion_options(
+                session, user, security_keys.SIGN_IN
+            )
+        except security_keys.KeyRefused as exc:
+            # Keys are off for this install: the other method still works.
+            detail = str(exc) if methods == ["security_key"] else detail
+    return JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content={"detail": detail, "methods": methods, "security_key": challenge},
+        headers={"X-MFA-Required": "true"},
     )
 
 
@@ -667,14 +711,10 @@ def login(
     # Whether the account had MFA when the password was given: a recovery below
     # clears it, and the length rule must still be the one the account signed in under.
     had_mfa = user.mfa_enabled
-    # Check MFA if enabled
+    # Check MFA if enabled (a method of any kind: app, recovery codes or a key)
     if user.mfa_enabled:
-        if not payload.mfa_code:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="MFA code required",
-                headers={"X-MFA-Required": "true"},
-            )
+        if not payload.mfa_code and not payload.webauthn:
+            return _mfa_required(session, user)
 
         # authenticate_user clears the lockout counter on this session before
         # the code is checked. verify_mfa_code opens a savepoint, and
@@ -686,18 +726,39 @@ def login(
         if pending_reset:
             session.expire(user)
         # The login step is the one place a wrong code counts toward a lock.
-        accepted = AuthService.verify_mfa_code(
-            user.user_id,
-            payload.mfa_code,
-            session,
-            count_failures=True,
-            source=source,
-        )
+        if payload.webauthn:
+            try:
+                # The lock is authoritative, as it is for a code.
+                if _account_is_locked(user):
+                    raise security_keys.KeyRefused("locked")
+                security_keys.verify_assertion(
+                    session,
+                    user,
+                    payload.webauthn,
+                    payload.webauthn_challenge,
+                    security_keys.SIGN_IN,
+                )
+                accepted = CODE_KEY
+            except security_keys.KeyRefused as exc:
+                accepted = None
+                # A key switched off by configuration is not a wrong key.
+                if not isinstance(exc, security_keys.KeysUnavailable):
+                    AuthService._count_mfa_failure(user.user_id, user.username, source)
+        else:
+            accepted = AuthService.verify_mfa_code(
+                user.user_id,
+                payload.mfa_code,
+                session,
+                count_failures=True,
+                source=source,
+            )
         if not accepted:
-            failed("bad_mfa_code")
+            failed("bad_security_key" if payload.webauthn else "bad_mfa_code")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid MFA code",
+                detail=(
+                    "Invalid security key" if payload.webauthn else "Invalid MFA code"
+                ),
             )
         if pending_reset:
             clear_lock(user)
@@ -875,6 +936,8 @@ class ConfirmRequest(BaseModel):
 
     password: Optional[str] = None
     code: Optional[str] = None
+    assertion: Optional[dict] = None
+    challenge: Optional[str] = None
 
 
 def _confirm_it_is_you(
@@ -888,6 +951,8 @@ def _confirm_it_is_you(
         _session_sid(request),
         password=body.password,
         code=body.code,
+        assertion=body.assertion,
+        challenge=body.challenge,
         source=client_host(request),
     )
 
@@ -923,6 +988,8 @@ def confirm_it_is_you(
         sid,
         password=body.password,
         code=body.code,
+        assertion=body.assertion,
+        challenge=body.challenge,
         strong=body.strong,
         source=client_host(request),
     )
@@ -1446,8 +1513,11 @@ def setup_mfa(
         they are returned by POST /mfa/verify once the first TOTP code is
         confirmed.
     """
-    # Re-running setup would silently replace the secret and switch MFA off.
-    if current_user.mfa_enabled:
+    # Re-running setup would silently replace the app's secret. A person with
+    # only security keys is on MFA already and may still add the app.
+    if mfa_methods.has_app(
+        current_user, security_keys.has_keys(session, current_user.principal_id)
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="MFA is already enabled; turn it off before setting it up again",
@@ -1492,7 +1562,24 @@ def verify_mfa(
         Success message and one-time recovery codes (shown only once).
     """
     raise_if_locked(current_user)
-    if not current_user.mfa_enabled:
+    # A person on MFA through security keys alone is adding the app: that is a
+    # method change, so it takes the password and a key (never this code, which
+    # belongs to the new secret).
+    adding_app = current_user.mfa_enabled and not mfa_methods.has_app(
+        current_user, security_keys.has_keys(session, current_user.principal_id)
+    )
+    if adding_app:
+        step_up.confirm(
+            current_user,
+            session,
+            _session_sid(request),
+            password=body.password,
+            assertion=body.assertion,
+            challenge=body.challenge,
+            strong=True,
+            source=client_host(request),
+        )
+    elif not current_user.mfa_enabled:
         # The first method needs only the password; a wrong one counts toward
         # the three that end this sign-in.
         step_up.confirm(
@@ -1501,6 +1588,10 @@ def verify_mfa(
             _session_sid(request),
             password=body.password,
             source=client_host(request),
+        )
+    if not body.code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid MFA code"
         )
     codes = AuthService.enable_mfa(current_user.user_id, body.code, session)
 
@@ -1511,7 +1602,10 @@ def verify_mfa(
     # Read before this entry: "again" means an earlier on or off.
     again = mfa_methods.enabled_before(session, current_user.principal_id)
     _record_mfa(session, request, current_user, "auth.mfa_enabled")
-    if again and codes:
+    if adding_app:
+        # Adding ends no sign-in; the notice says how to end the others.
+        _tell_person(session, current_user, *_ADDED_APP)
+    elif again and codes:
         _tell_person(
             session,
             current_user,
@@ -1541,6 +1635,8 @@ def _strong_check(
         _session_sid(request),
         password=body.password,
         code=body.code,
+        assertion=body.assertion,
+        challenge=body.challenge,
         strong=True,
         source=client_host(request),
     )
@@ -1608,16 +1704,297 @@ def disable_mfa(
     """
     raise_if_locked(current_user)
     _strong_check(request, current_user, body, session)
+    keyed = security_keys.has_keys(session, current_user.principal_id)
+    if not keyed:
+        _refuse_last_method(current_user, session)
     if not AuthService.disable_mfa(current_user.user_id, session):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="MFA is not enabled"
         )
-    _record_mfa(session, request, current_user, "auth.mfa_disabled")
+    # With keys left only the app went; MFA stays on.
+    _record_mfa(
+        session,
+        request,
+        current_user,
+        "auth.authenticator_app_removed" if keyed else "auth.mfa_disabled",
+    )
     _end_others_after_change(
         session, current_user, _session_sid(request), client_host(request)
     )
 
     return {"message": "MFA disabled successfully"}
+
+
+# --- Security keys (#4234) ---------------------------------------------------
+
+_ADDED_APP = (
+    "An authenticator app was added",
+    "An authenticator app was added to your account. If this wasn't you, sign "
+    "out everywhere else from your sign-ins in the console, change your "
+    "password and tell an admin.",
+)
+_ADDED_KEY = (
+    "A security key was added",
+    "A security key was added to your account. If this wasn't you, sign out "
+    "everywhere else from your sign-ins in the console, change your password "
+    "and tell an admin.",
+)
+_REMOVED_KEY = (
+    "A security key was removed",
+    "A security key was removed from your account and your other sign-ins "
+    "ended. If this wasn't you, change your password and tell an admin.",
+)
+
+
+class SecurityKeyEntry(BaseModel):
+    """A key as the person sees it: never its credential id or public key."""
+
+    key_id: str
+    name: str
+    added_at: OptDateTime = None
+    last_used_at: OptDateTime = None
+
+
+class SecurityKeysResponse(BaseModel):
+    """The install's key state and the caller's keys."""
+
+    available: bool
+    # Why not, naming the hostname, when ``available`` is false.
+    reason: Optional[str] = None
+    keys: List[SecurityKeyEntry]
+
+
+class WebAuthnOptions(BaseModel):
+    """Options for the browser's ``credentials.create`` or ``.get`` and the signed
+    challenge to send back with the answer."""
+
+    options: dict
+    challenge: str
+
+
+class RegisterKeyRequest(MFAVerifyRequest):
+    """A key to register. ``credential`` and ``registration_challenge`` come from
+    the browser and from POST /mfa/keys/options; the rest is the method-change
+    check."""
+
+    name: Optional[str] = None
+    credential: dict
+    registration_challenge: str
+
+
+class SecurityKeyAdded(BaseModel):
+    key: SecurityKeyEntry
+    # The first method of a person without MFA: shown once, as for the app.
+    recovery_codes: Optional[List[str]] = None
+
+
+def _key_entry(row: SecurityKey) -> SecurityKeyEntry:
+    return SecurityKeyEntry(
+        key_id=row.key_id,
+        name=row.name,
+        added_at=row.created_at,
+        last_used_at=row.last_used_at,
+    )
+
+
+def _key_refusal(exc: security_keys.KeyRefused) -> HTTPException:
+    code = (
+        status.HTTP_409_CONFLICT
+        if isinstance(exc, security_keys.KeysUnavailable)
+        else status.HTTP_400_BAD_REQUEST
+    )
+    return HTTPException(status_code=code, detail=str(exc))
+
+
+def _covered(user: User, session: Session) -> bool:
+    """Whether the MFA requirement covers this person (the one coverage check)."""
+    held = AuthService.get_user_permissions(user.user_id, session)
+    return session_policy.mfa_covered(
+        [name for name, on in held.items() if on],
+        _is_service_account(user),
+        session_policy.policy().require_mfa,
+    )
+
+
+def _refuse_last_method(user: User, session: Session) -> None:
+    """A covered person's last method stays: it would lock them out at the next
+    request."""
+    if _covered(user, session):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Your role requires two-step sign-in. Add another method "
+            "before removing your last one.",
+        )
+
+
+@router.get("/mfa/keys", response_model=SecurityKeysResponse)
+@mfa_setup_route
+def list_my_security_keys(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    session: UnitOfWorkSession,
+):
+    """Your security keys, and whether this install offers them."""
+    now = security_keys.availability()
+    return SecurityKeysResponse(
+        **now.dump(),
+        keys=[
+            _key_entry(row)
+            for row in security_keys.keys_of(session, current_user.principal_id)
+        ],
+    )
+
+
+@router.post("/mfa/keys/options", response_model=WebAuthnOptions)
+@mfa_setup_route
+@limiter.limit("10/minute", key_func=session_rate_key)
+def security_key_registration_options(
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    session: UnitOfWorkSession,
+):
+    """Options to register a key: the allowed algorithms only. 409 with the
+    reason when this install has no security keys."""
+    try:
+        return security_keys.registration_options(session, current_user)
+    except security_keys.KeyRefused as exc:
+        raise _key_refusal(exc) from exc
+
+
+@router.post("/mfa/keys/assertion-options", response_model=WebAuthnOptions)
+@limiter.limit("10/minute", key_func=session_rate_key)
+def security_key_assertion_options(
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    session: UnitOfWorkSession,
+):
+    """Options to answer a check with a key ("touch your security key"): send the
+    assertion and ``challenge`` as ``assertion`` and ``challenge`` to /confirm or
+    any method change."""
+    try:
+        found = security_keys.assertion_options(
+            session, current_user, security_keys.CONFIRM
+        )
+    except security_keys.KeyRefused as exc:
+        raise _key_refusal(exc) from exc
+    if found is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You have no security keys",
+        )
+    return found
+
+
+@router.post(
+    "/mfa/keys", response_model=SecurityKeyAdded, status_code=status.HTTP_201_CREATED
+)
+@mfa_setup_route
+@limiter.limit("5/minute", key_func=session_rate_key)
+def register_security_key(
+    request: Request,
+    body: RegisterKeyRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    session: UnitOfWorkSession,
+):
+    """Register a security key. The strong check first (the first method of a
+    person without MFA needs only the password); adding ends no sign-in and
+    notifies the person. A first method turns MFA on and returns recovery codes
+    once."""
+    raise_if_locked(current_user)
+    now = security_keys.availability()
+    if not now.available:
+        raise _key_refusal(security_keys.KeysUnavailable(now.reason))
+    first = not current_user.mfa_enabled
+    if first:
+        step_up.confirm(
+            current_user,
+            session,
+            _session_sid(request),
+            password=body.password,
+            source=client_host(request),
+        )
+    else:
+        _strong_check(request, current_user, body, session)
+    had_keys = security_keys.has_keys(session, current_user.principal_id)
+    try:
+        row = security_keys.register(
+            session,
+            current_user,
+            body.name,
+            body.credential,
+            body.registration_challenge,
+        )
+    except security_keys.KeyRefused as exc:
+        raise _key_refusal(exc) from exc
+
+    codes = None
+    again = mfa_methods.enabled_before(session, current_user.principal_id)
+    locked = AuthService._lock_user(session, current_user.user_id)
+    if not first and not had_keys and locked.mfa_last_totp_step is None:
+        # The app was confirmed before steps were kept (or a recovery code made
+        # this check): with keys beside it, "no step yet" would read as pending.
+        locked.mfa_last_totp_step = int(utcnow().timestamp() // 30) - 1
+    if first:
+        codes = AuthService.turn_on_with_key(locked)
+        _record_mfa(session, request, current_user, "auth.mfa_enabled")
+    _record_mfa(session, request, current_user, "auth.security_key_added")
+    if not first:
+        _tell_person(session, current_user, *_ADDED_KEY)
+    elif again:
+        _tell_person(
+            session,
+            current_user,
+            "Two-step sign-in was turned on again",
+            "Two-step sign-in was turned on again for your account. If this "
+            "wasn't you, change your password and tell an admin.",
+        )
+    # Registering proved the person holds the key: the window starts.
+    step_up.open_window(session, _session_sid(request))
+    return SecurityKeyAdded(key=_key_entry(row), recovery_codes=codes)
+
+
+@router.delete("/mfa/keys/{key_id}")
+@limiter.limit("5/minute", key_func=session_rate_key)
+def remove_security_key(
+    request: Request,
+    key_id: str,
+    body: MFAVerifyRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    session: UnitOfWorkSession,
+):
+    """Remove one of your keys. The strong check, then the person's other sign-ins
+    end. Their last method is refused when the MFA requirement covers them;
+    otherwise removing a key-only person's last key turns MFA off."""
+    raise_if_locked(current_user)
+    _strong_check(request, current_user, body, session)
+    # The person's row first, so two removals (or a removal and the app's) count
+    # the methods one after the other.
+    locked = AuthService._lock_user(session, current_user.user_id)
+    row = (
+        session.query(SecurityKey)
+        .filter(
+            SecurityKey.key_id == key_id,
+            SecurityKey.principal_id == current_user.principal_id,
+        )
+        .with_for_update()
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such security key")
+    keys = security_keys.keys_of(session, current_user.principal_id)
+    last = len(keys) == 1 and not mfa_methods.has_app(locked, True)
+    if last:
+        _refuse_last_method(current_user, session)
+    session.delete(row)
+    session.flush()
+    _record_mfa(session, request, current_user, "auth.security_key_removed")
+    if last:
+        AuthService.clear_mfa(locked)
+        _record_mfa(session, request, current_user, "auth.mfa_disabled")
+    _end_others_after_change(
+        session, current_user, _session_sid(request), client_host(request)
+    )
+    _tell_person(session, current_user, *_REMOVED_KEY)
+    return {"message": "Security key removed"}
 
 
 # Public self-registration was removed intentionally. All user creation

@@ -2,8 +2,8 @@
 
 from core.upgrade.revision import run_sql
 
-revision = "0053_breached_passwords"
-down_revision = "0052_api_tokens"
+revision = "0055_breached_passwords"
+down_revision = "0054_security_keys"
 
 
 def upgrade() -> None:

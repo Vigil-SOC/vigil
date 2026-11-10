@@ -20,6 +20,7 @@ from core.storage.models.auth import (
     McpCredential,
     Principal,
     Role,
+    SecurityKey,
     SignIn,
     User,
 )
@@ -159,6 +160,7 @@ __all__ = [
     "Principal",
     "SiemSearch",
     "DetectionRuleException",
+    "SecurityKey",
     "SignIn",
     "MedicLastSeen",
     "Role",
