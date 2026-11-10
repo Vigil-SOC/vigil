@@ -4,7 +4,6 @@ Authentication Service - User authentication and authorization.
 Handles password hashing, JWT generation/validation, MFA, and session management.
 """
 
-import hashlib
 import logging
 import re
 import secrets
