@@ -16,10 +16,10 @@ from fastapi import Header, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
+from core.auth import session_policy, sign_ins
 from core.auth.auth_cookies import ACCESS_COOKIE_NAME
 from core.auth.auth_service import AuthService
 from core.auth.mcp_credential_service import looks_like_mcp_token
-from core.auth import session_policy, sign_ins
 from core.cases.agent_closure import clear_http_actor, note_http_actor
 from core.config import get_settings
 from core.storage.models import Role, SignIn, User
