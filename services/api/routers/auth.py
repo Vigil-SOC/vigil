@@ -665,6 +665,125 @@ async def logout(
     return {"message": "Logged out successfully"}
 
 
+class ConfirmRequest(BaseModel):
+    """The one-factor check before ending sign-ins: the password for a person
+    without MFA, a current authenticator or recovery code for one with it."""
+
+    password: Optional[str] = None
+    code: Optional[str] = None
+
+
+def _confirm_it_is_you(user: User, body: ConfirmRequest, session: Session) -> None:
+    """A fresh check on every call. 400, not 401: a 401 would make the web
+    client refresh and retry, spending two rate-limit slots."""
+    if user.mfa_enabled:
+        ok = bool(body.code) and AuthService.verify_mfa_code(
+            user.user_id, body.code, session
+        )
+        problem = (
+            "That code didn't work. Check the app and try again; "
+            "codes change every 30 seconds."
+        )
+    else:
+        ok = bool(body.password) and AuthService.verify_password(
+            body.password, user.password_hash
+        )
+        problem = "That password didn't work. Try again."
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=problem)
+
+
+def _end_own(
+    request: Request,
+    response: Response,
+    session: Session,
+    user: User,
+    ids: List[str],
+) -> sign_ins.EndedSignIns:
+    """End these sign-ins of the caller's, then write their entries (the rows
+    are locked before the trail's lock, the order every path takes)."""
+    ended = [sid for sid in ids if sign_ins.end(sid, sign_ins.ENDED_BY_PERSON, session)]
+    for sid in ended:
+        trail_events.record(
+            session,
+            "auth.sign_in_ended",
+            {"source_ip": client_host(request)},
+            actor=user.principal_id,
+            principal=user.principal_id,
+            sign_in=sid,
+            end_reason=sign_ins.ENDED_BY_PERSON,
+        )
+    here = _session_sid(request) in ended
+    if here:
+        clear_auth_cookies(response)
+    return sign_ins.EndedSignIns(ended=len(ended), signed_out=here)
+
+
+@router.get("/sign-ins", response_model=List[sign_ins.SignInEntry])
+def list_my_sign_ins(
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    session: UnitOfWorkSession,
+):
+    """Your open sign-ins and recently ended ones; the one asking is marked."""
+    return sign_ins.listing(session, current_user.principal_id, _session_sid(request))
+
+
+@router.post("/sign-ins/end-others", response_model=sign_ins.EndedSignIns)
+@limiter.limit("5/minute", key_func=session_rate_key)
+def end_other_sign_ins(
+    request: Request,
+    response: Response,
+    body: ConfirmRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    session: UnitOfWorkSession,
+):
+    """Sign out everywhere else: every open sign-in but this one."""
+    _confirm_it_is_you(current_user, body, session)
+    ids = [
+        sid
+        for sid, _ in sign_ins.open_ids(
+            session, current_user.principal_id, keep=_session_sid(request)
+        )
+    ]
+    return _end_own(request, response, session, current_user, ids)
+
+
+@router.post("/sign-ins/end-all", response_model=sign_ins.EndedSignIns)
+@limiter.limit("5/minute", key_func=session_rate_key)
+def end_all_my_sign_ins(
+    request: Request,
+    response: Response,
+    body: ConfirmRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    session: UnitOfWorkSession,
+):
+    """Sign out everywhere: every open sign-in, this one too."""
+    _confirm_it_is_you(current_user, body, session)
+    ids = [sid for sid, _ in sign_ins.open_ids(session, current_user.principal_id)]
+    return _end_own(request, response, session, current_user, ids)
+
+
+@router.post("/sign-ins/{sign_in_id}/end", response_model=sign_ins.EndedSignIns)
+@limiter.limit("5/minute", key_func=session_rate_key)
+def end_my_sign_in(
+    request: Request,
+    response: Response,
+    sign_in_id: str,
+    body: ConfirmRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    session: UnitOfWorkSession,
+):
+    """End one of your open sign-ins."""
+    _confirm_it_is_you(current_user, body, session)
+    mine = [sid for sid, _ in sign_ins.open_ids(session, current_user.principal_id)]
+    if sign_in_id not in mine:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Sign-in not found"
+        )
+    return _end_own(request, response, session, current_user, [sign_in_id])
+
+
 @router.post("/refresh", response_model=LoginResponse)
 @limiter.limit("30/minute", key_func=refresh_rate_key)
 async def refresh_token(

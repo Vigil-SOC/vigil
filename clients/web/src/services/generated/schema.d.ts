@@ -1168,6 +1168,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/sign-ins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List My Sign Ins
+         * @description Your open sign-ins and recently ended ones; the one asking is marked.
+         */
+        get: operations["get_api_auth_sign-ins"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/sign-ins/end-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End All My Sign Ins
+         * @description Sign out everywhere: every open sign-in, this one too.
+         */
+        post: operations["post_api_auth_sign-ins_end-all"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/sign-ins/end-others": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End Other Sign Ins
+         * @description Sign out everywhere else: every open sign-in but this one.
+         */
+        post: operations["post_api_auth_sign-ins_end-others"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/sign-ins/{sign_in_id}/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End My Sign In
+         * @description End one of your open sign-ins.
+         */
+        post: operations["post_api_auth_sign-ins_sign_in_id_end"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/autonomy": {
         parameters: {
             query?: never;
@@ -6294,6 +6374,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/sign-ins/end-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End Everyones Sign Ins
+         * @description Sign the whole install out, the caller too. A person's own act: users.write,
+         *     and every role an active account holds covered, with a typed reason.
+         */
+        post: operations["post_api_users_sign-ins_end-all"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users/{user_id}": {
         parameters: {
             query?: never;
@@ -6349,6 +6450,68 @@ export interface paths {
          *         Success message
          */
         delete: operations["delete_api_users_user_id"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{user_id}/sign-ins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List User Sign Ins
+         * @description A person's sign-ins, read-only. users.write over the account, and a role
+         *     the caller covers.
+         */
+        get: operations["get_api_users_user_id_sign-ins"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{user_id}/sign-ins/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End User Sign Ins
+         * @description End all of a person's open sign-ins, with a typed reason. A service account
+         *     or playbook holding users.write may call this as containment.
+         */
+        post: operations["post_api_users_user_id_sign-ins_end"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{user_id}/sign-ins/{sign_in_id}/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End User Sign In
+         * @description End one of a person's open sign-ins, with a typed reason.
+         */
+        post: operations["post_api_users_user_id_sign-ins_sign_in_id_end"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -9725,6 +9888,17 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /**
+         * ConfirmRequest
+         * @description The one-factor check before ending sign-ins: the password for a person
+         *     without MFA, a current authenticator or recovery code for one with it.
+         */
+        ConfirmRequest: {
+            /** Code */
+            code?: string | null;
+            /** Password */
+            password?: string | null;
+        };
         /** ConnectedHistoryRequest */
         ConnectedHistoryRequest: {
             /**
@@ -9965,6 +10139,24 @@ export interface components {
             directive_id: string;
             /** Kind */
             kind: string;
+        };
+        /**
+         * EndSignInsRequest
+         * @description Why a manager, service account or playbook ends sign-ins. Kept in the trail.
+         */
+        EndSignInsRequest: {
+            /** Reason */
+            reason: string;
+        };
+        /** EndedSignIns */
+        EndedSignIns: {
+            /** Ended */
+            ended: number;
+            /**
+             * Signed Out
+             * @default false
+             */
+            signed_out: boolean;
         };
         /**
          * EntityContext
@@ -11882,6 +12074,37 @@ export interface components {
             /** Steps */
             steps: components["schemas"]["SetupStep"][];
         };
+        /**
+         * SignInEntry
+         * @description One sign-in in a list.
+         */
+        SignInEntry: {
+            /** Address */
+            address?: string | null;
+            /** Auth Method */
+            auth_method: string;
+            /** Browser */
+            browser: string;
+            /**
+             * Current
+             * @default false
+             */
+            current: boolean;
+            /** Device */
+            device?: string | null;
+            /** End Reason */
+            end_reason?: string | null;
+            /** End Reason Text */
+            end_reason_text?: string | null;
+            /** Ended At */
+            ended_at?: string | null;
+            /** Last Action At */
+            last_action_at: string;
+            /** Sign In Id */
+            sign_in_id: string;
+            /** Started At */
+            started_at: string;
+        };
         /** SkillCaseResult */
         SkillCaseResult: {
             /** Missing */
@@ -13776,6 +13999,7 @@ export interface operations {
                 outcome?: string | null;
                 attribution?: string | null;
                 after?: number | null;
+                sign_in?: string | null;
             };
             header?: {
                 authorization?: string | null;
@@ -13853,6 +14077,7 @@ export interface operations {
                 outcome?: string | null;
                 attribution?: string | null;
                 after?: number | null;
+                sign_in?: string | null;
             };
             header?: {
                 authorization?: string | null;
@@ -14090,6 +14315,7 @@ export interface operations {
                 outcome?: string | null;
                 attribution?: string | null;
                 after?: number | null;
+                sign_in?: string | null;
             };
             header?: {
                 authorization?: string | null;
@@ -14663,6 +14889,144 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LoginResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_auth_sign-ins": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignInEntry"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_auth_sign-ins_end-all": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndedSignIns"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_auth_sign-ins_end-others": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndedSignIns"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_auth_sign-ins_sign_in_id_end": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                sign_in_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndedSignIns"];
                 };
             };
             /** @description Validation Error */
@@ -23822,6 +24186,41 @@ export interface operations {
             };
         };
     };
+    "post_api_users_sign-ins_end-all": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EndSignInsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndedSignIns"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_users_user_id: {
         parameters: {
             query?: never;
@@ -23912,6 +24311,114 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_users_user_id_sign-ins": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignInEntry"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_users_user_id_sign-ins_end": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EndSignInsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndedSignIns"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_users_user_id_sign-ins_sign_in_id_end": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                user_id: string;
+                sign_in_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EndSignInsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndedSignIns"];
                 };
             };
             /** @description Validation Error */
@@ -24433,6 +24940,7 @@ export interface operations {
                 outcome?: string | null;
                 attribution?: string | null;
                 after?: number | null;
+                sign_in?: string | null;
             };
             header?: {
                 authorization?: string | null;
@@ -24475,6 +24983,7 @@ export interface operations {
                 outcome?: string | null;
                 attribution?: string | null;
                 after?: number | null;
+                sign_in?: string | null;
             };
             header?: {
                 authorization?: string | null;
@@ -24518,6 +25027,7 @@ export interface operations {
                 outcome?: string | null;
                 attribution?: string | null;
                 after?: number | null;
+                sign_in?: string | null;
             };
             header?: {
                 authorization?: string | null;

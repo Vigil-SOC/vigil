@@ -12,10 +12,12 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
+from pydantic import BaseModel
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from core.storage.models import SignIn, User
+from core.storage.schemas.base import IsoDateTime, OptDateTime
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
@@ -31,6 +33,31 @@ UPGRADE = "upgrade"
 ACCOUNT_CHANGED = "account_changed"
 DEACTIVATED = "deactivated"
 ERASED = "erased"
+# Ended from the sign-in list or the person's detail (#4172).
+ENDED_BY_PERSON = "ended_by_person"
+ENDED_BY_ADMIN = "ended_by_admin"  # also a service account or playbook, as containment
+EVERYONE = "everyone_signed_out"
+
+# How each end reason reads in the console (epic #4164 §8).
+REASON_WORDS = {
+    SIGN_OUT: "Signed out",
+    EXPIRY: "Ran out",
+    IDLE: "Idle too long",
+    LENGTH_LIMIT: "Reached the sign-in length limit",
+    TOKEN_REUSE: "Token reuse",
+    UPGRADE: "Ended by an upgrade",
+    ACCOUNT_CHANGED: "Role, password, email or methods changed",
+    DEACTIVATED: "Account deactivated or deleted",
+    ERASED: "The person's details were erased",
+    ENDED_BY_PERSON: "Ended by the person",
+    ENDED_BY_ADMIN: "Ended by an admin",
+    EVERYONE: "Everyone signed out",
+}
+UNNAMED_REASON = "Ended by a security event"
+
+# Ended rows stay in a list this long, and a list holds at most this many.
+LISTED_FOR = timedelta(days=30)
+LISTED = 50
 
 # A person's own action stamps the row at most this often.
 STAMP_EVERY = timedelta(seconds=30)
@@ -53,6 +80,128 @@ def device_of(user_agent: Optional[str]) -> str:
     if any(os_ in ua for os_ in ("windows", "macintosh", "linux", "x11", "cros")):
         return "desktop"
     return "other"
+
+
+class SignInEntry(BaseModel):
+    """One sign-in in a list."""
+
+    sign_in_id: str
+    started_at: IsoDateTime
+    last_action_at: IsoDateTime
+    browser: str
+    device: Optional[str] = None
+    address: Optional[str] = None
+    # 'password' or 'mfa'
+    auth_method: str
+    ended_at: OptDateTime = None
+    end_reason: Optional[str] = None
+    end_reason_text: Optional[str] = None
+    # The sign-in the list was asked from (a person's own list only).
+    current: bool = False
+
+
+class EndedSignIns(BaseModel):
+    ended: int
+    # The caller's own sign-in was among them: its cookies are cleared.
+    signed_out: bool = False
+
+
+def browser_of(user_agent: Optional[str]) -> str:
+    """A coarse "Browser on OS" from a user agent, for a list. No dependency."""
+    ua = user_agent or ""
+    browser = next(
+        (
+            name
+            for token, name in (
+                ("Edg/", "Edge"),
+                ("OPR/", "Opera"),
+                ("Firefox/", "Firefox"),
+                ("FxiOS", "Firefox"),
+                ("CriOS", "Chrome"),
+                ("Chrome/", "Chrome"),
+                ("Safari/", "Safari"),
+            )
+            if token in ua
+        ),
+        None,
+    )
+    os_ = next(
+        (
+            name
+            for token, name in (
+                ("iPhone", "iOS"),
+                ("iPad", "iOS"),
+                ("Android", "Android"),
+                ("Windows", "Windows"),
+                ("Macintosh", "macOS"),
+                ("CrOS", "ChromeOS"),
+                ("Linux", "Linux"),
+                ("X11", "Linux"),
+            )
+            if token in ua
+        ),
+        None,
+    )
+    if browser and os_:
+        return f"{browser} on {os_}"
+    return browser or os_ or "Unknown browser"
+
+
+def shape(row: SignIn, current: Optional[str] = None) -> dict:
+    """One sign-in as a list shows it. Times are naive UTC."""
+    return {
+        "sign_in_id": row.sign_in_id,
+        "started_at": row.started_at,
+        "last_action_at": row.last_action_at,
+        "browser": browser_of(row.user_agent),
+        "device": row.device,
+        "address": row.address,
+        "auth_method": row.auth_method,
+        "ended_at": row.ended_at,
+        "end_reason": row.end_reason,
+        "end_reason_text": (
+            REASON_WORDS.get(row.end_reason, UNNAMED_REASON) if row.ended_at else None
+        ),
+        "current": row.sign_in_id == current,
+    }
+
+
+def listing(
+    session: Session, principal_id: str, current: Optional[str] = None
+) -> list[dict]:
+    """A principal's open sign-ins and recently ended ones, newest first."""
+    now = utcnow()
+    live = SignIn.ended_at.is_(None) & or_(
+        # An open row whose refresh token ran out is over, just not yet marked.
+        SignIn.expires_at.is_(None),
+        SignIn.expires_at > now,
+    )
+    rows = (
+        session.query(SignIn)
+        .filter(
+            SignIn.principal_id == principal_id,
+            or_(live, SignIn.ended_at > now - LISTED_FOR),
+        )
+        .order_by(SignIn.started_at.desc())
+        .limit(LISTED)
+        .all()
+    )
+    return [shape(row, current) for row in rows]
+
+
+def open_ids(
+    session: Session, principal_id: Optional[str] = None, keep: Optional[str] = None
+) -> list[tuple[str, str]]:
+    """(sign-in id, principal id) of open sign-ins, one principal's or all, to end
+    one by one through ``end``. ``keep`` is left out."""
+    query = session.query(SignIn.sign_in_id, SignIn.principal_id).filter(
+        SignIn.ended_at.is_(None)
+    )
+    if principal_id is not None:
+        query = query.filter(SignIn.principal_id == principal_id)
+    if keep is not None:
+        query = query.filter(SignIn.sign_in_id != keep)
+    return [(sid, pid) for sid, pid in query.all()]
 
 
 def start(

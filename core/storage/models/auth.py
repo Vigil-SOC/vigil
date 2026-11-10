@@ -96,7 +96,8 @@ class SignIn(Base):
     __table_args__ = (
         CheckConstraint(
             "end_reason IN ('sign_out', 'expiry', 'revoked', 'idle', 'length_limit',"
-            " 'token_reuse', 'upgrade', 'account_changed', 'deactivated', 'erased')",
+            " 'token_reuse', 'upgrade', 'account_changed', 'deactivated', 'erased',"
+            " 'ended_by_person', 'ended_by_admin', 'everyone_signed_out')",
             name="sign_ins_end_reason_check",
         ),
         Index("idx_sign_ins_principal", "principal_id"),

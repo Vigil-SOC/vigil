@@ -11,13 +11,14 @@ import uuid
 from contextlib import asynccontextmanager, contextmanager
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, EmailStr
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from core.auth import current_user as current_user_module
 from core.auth import mcp_credential_service, principals, sign_ins, trail_events
+from core.auth.auth_cookies import clear_auth_cookies
 from core.auth.auth_service import PERSON_ONLY, AuthService
 from core.auth.password_validator import PasswordPolicyError, validate_password_strength
 from core.auth.permissions import (
@@ -29,12 +30,14 @@ from core.auth.permissions import (
     deny_unless,
 )
 from core.auth.service_account import USERNAME_PATTERN as MEDIC_USERNAME_PATTERN
+from core.platform.notices import notify
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import Principal, Role, User
 from core.storage.schemas import RoleSchema, UserSchema
 from core.storage.unit_of_work import unit_of_work
 from core.upgrade.adopt import LEGACY_ROLE_IDS
 from services.api.middleware.auth import get_current_user
+from services.api.middleware.client_address import client_host
 
 logger = logging.getLogger(__name__)
 
@@ -417,6 +420,209 @@ def get_user(
     user_dict["permissions"] = AuthService.get_user_permissions(user_id)
 
     return user_dict
+
+
+class EndSignInsRequest(BaseModel):
+    """Why a manager, service account or playbook ends sign-ins. Kept in the trail."""
+
+    reason: str = Field(max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _typed(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("A reason is required")
+        return value
+
+
+def _managed_sign_ins(
+    current_user: User, session: Session, user_id: str, action: str
+) -> User:
+    """The person, for a holder of users.write who covers their role. Anyone
+    else gets a 403, so the screen shows them nothing."""
+    with _denials(current_user, f"user.sign_ins.{action}"):
+        deny_unless(current_user.user_id, "users.write")
+        user = _live_user(session, user_id)
+        if action == "end" and user.user_id == current_user.user_id:
+            # Your own need the fresh password or code check, on /api/auth/sign-ins.
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="End your own sign-ins from your account menu",
+            )
+        _require_privileges_cover_target(
+            current_user,
+            user,
+            session,
+            action="see the sign-ins of" if action == "read" else "end the sign-ins of",
+        )
+    return user
+
+
+def _end_as_admin(
+    request: Request,
+    session: Session,
+    current_user: User,
+    ids: list[tuple[str, str]],
+    note: str,
+    reason: str = sign_ins.ENDED_BY_ADMIN,
+) -> list[tuple[str, str]]:
+    """End these (sign-in id, principal id) pairs through ``sign_ins.end``, then
+    write an entry for each with the actor and the typed reason. Rows are locked
+    before the trail's lock, the order every path takes."""
+    ended = [(sid, pid) for sid, pid in ids if sign_ins.end(sid, reason, session)]
+    for sid, pid in ended:
+        trail_events.record(
+            session,
+            "auth.sign_in_ended",
+            {"source_ip": client_host(request)},
+            actor=current_user.principal_id,
+            principal=pid,
+            sign_in=sid,
+            end_reason=reason,
+            note=note,
+        )
+    return ended
+
+
+def _tell(current_user: User, principal_id: str, count: int, everyone=False) -> None:
+    """The person is told. No typed reason and nothing secret in the message:
+    notices are emailed."""
+    who = current_user.full_name or current_user.username
+    notify(
+        principal_id,
+        "sign_in_ended",
+        "Your sign-ins were ended" if count != 1 else "Your sign-in was ended",
+        f"{who} ended {'all of ' if everyone else ''}your open sign-in"
+        f"{'s' if count != 1 else ''}"
+        f"{' (everyone was signed out)' if everyone else ''}. "
+        "Sign in again to carry on, and ask them if you were not expecting this.",
+        priority="high",
+    )
+
+
+@router.get("/{user_id}/sign-ins", response_model=list[sign_ins.SignInEntry])
+def list_user_sign_ins(
+    user_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """A person's sign-ins, read-only. users.write over the account, and a role
+    the caller covers."""
+    user = _managed_sign_ins(current_user, session, user_id, "read")
+    return sign_ins.listing(session, user.principal_id)
+
+
+@router.post("/sign-ins/end-all", response_model=sign_ins.EndedSignIns)
+def end_everyones_sign_ins(
+    request: Request,
+    response: Response,
+    body: EndSignInsRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Sign the whole install out, the caller too. A person's own act: users.write,
+    and every role an active account holds covered, with a typed reason."""
+    with _denials(current_user, "user.sign_ins.end_all"):
+        deny_unless(current_user.user_id, "users.write")
+        if not _acts_as_person(current_user, session):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Signing everyone out needs a person's own sign-in",
+            )
+        role_ids = {
+            role_id
+            for (role_id,) in _not_deleted(session.query(User.role_id)).filter(
+                User.is_active.is_(True)
+            )
+        }
+        for role in session.query(Role).filter(Role.role_id.in_(role_ids)):
+            if not _can_assign_role(current_user, role, session):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Cannot sign everyone out: an active account's role "
+                    "grants privileges you do not have",
+                )
+    ended = _end_as_admin(
+        request,
+        session,
+        current_user,
+        sign_ins.open_ids(session),
+        body.reason,
+        sign_ins.EVERYONE,
+    )
+    trail_events.record(
+        session,
+        "auth.everyone_signed_out",
+        {"source_ip": client_host(request)},
+        actor=current_user.principal_id,
+        count=len(ended),
+        note=body.reason,
+    )
+    here = False
+    for principal_id in {pid for _, pid in ended} - {current_user.principal_id}:
+        # People only: a service account or agent has nobody to tell.
+        user = session.query(User).filter(User.principal_id == principal_id).first()
+        if user is not None and not _is_service_account(user):
+            _tell(
+                current_user,
+                principal_id,
+                sum(1 for _, p in ended if p == principal_id),
+                True,
+            )
+    if any(pid == current_user.principal_id for _, pid in ended):
+        clear_auth_cookies(response)
+        here = True
+    return sign_ins.EndedSignIns(ended=len(ended), signed_out=here)
+
+
+@router.post("/{user_id}/sign-ins/end", response_model=sign_ins.EndedSignIns)
+def end_user_sign_ins(
+    user_id: str,
+    request: Request,
+    body: EndSignInsRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """End all of a person's open sign-ins, with a typed reason. A service account
+    or playbook holding users.write may call this as containment."""
+    user = _managed_sign_ins(current_user, session, user_id, "end")
+    ended = _end_as_admin(
+        request,
+        session,
+        current_user,
+        sign_ins.open_ids(session, user.principal_id),
+        body.reason,
+    )
+    if ended:
+        _tell(current_user, user.principal_id, len(ended))
+    return sign_ins.EndedSignIns(ended=len(ended))
+
+
+@router.post(
+    "/{user_id}/sign-ins/{sign_in_id}/end", response_model=sign_ins.EndedSignIns
+)
+def end_user_sign_in(
+    user_id: str,
+    sign_in_id: str,
+    request: Request,
+    body: EndSignInsRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """End one of a person's open sign-ins, with a typed reason."""
+    user = _managed_sign_ins(current_user, session, user_id, "end")
+    open_ones = sign_ins.open_ids(session, user.principal_id)
+    if sign_in_id not in {sid for sid, _ in open_ones}:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Sign-in not found"
+        )
+    ended = _end_as_admin(
+        request, session, current_user, [(sign_in_id, user.principal_id)], body.reason
+    )
+    if ended:
+        _tell(current_user, user.principal_id, 1)
+    return sign_ins.EndedSignIns(ended=len(ended))
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
