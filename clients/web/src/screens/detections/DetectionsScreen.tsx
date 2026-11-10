@@ -17,6 +17,7 @@ import RolloutMetrics from './RolloutMetrics'
 import { useRolloutMetrics } from './useRolloutMetrics'
 import FindingPopup from '../dashboard/FindingPopup'
 import ProofCardExport from './ProofCardExport'
+import { RulesLoading } from './DetectionsLoading'
 import './detections.css'
 
 type RuleHealth =
@@ -319,7 +320,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   }, [hasMore, more, last, rows.length])
 
   if (error && !report) return <Failure>{error}</Failure>
-  if (!report) return <span className="x1-muted">Reading the inventory…</span>
+  if (!report) return <RulesLoading rollout={<RolloutMetrics data={rollout.data} error={rollout.error} onRetry={rollout.retry} />} />
   if (report.total === 0) {
     return (
       <Empty title="The inventory is empty">
@@ -540,8 +541,9 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
 
         {/* outside the 38px header row, whose height the virtual list counts on */}
         <p className="col-low-note de-pad de-hide-note">The health column is hidden while Ask Vigil is open; the chips above still filter by it.</p>
-        <div ref={listRef} className={`de-table list-scroll${loading ? ' loading' : ''}`} data-testid="de-rules">
+        <div ref={listRef} className={`de-table list-scroll${loading ? ' loading' : ''}`} aria-busy={loading} data-testid="de-rules">
           <div className="de-tr de-th">
+            {loading && <span className="de-th-busy" aria-hidden="true" />}
             <span>Rule</span><span>Where</span><span>Technique</span><span className="col-low">Health{sort === 'worst' ? ' ↓' : ''}</span><span className="de-right">Fires · {days}d{sort === 'most_fires' ? ' ↓' : sort === 'fewest_fires' ? ' ↑' : ''}</span><span className="de-right">Action</span>
           </div>
           <div className="de-rows" style={{ height: virtual.getTotalSize() }}>
