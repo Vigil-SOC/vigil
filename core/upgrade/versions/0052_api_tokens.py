@@ -15,8 +15,8 @@ from sqlalchemy import text
 
 from core.upgrade.revision import run_sql, stash_report
 
-revision = "0051_api_tokens"
-down_revision = "0050_step_up"
+revision = "0052_api_tokens"
+down_revision = "0051_erased_identifiers"
 
 MAX_DAYS = 365
 NEW_DAYS = 90
@@ -54,7 +54,10 @@ def upgrade() -> None:
               AND (c.expires_at IS NULL OR c.expires_at > :limit)
             RETURNING c.credential_id, u.principal_id
             """),
-        {"new": now + timedelta(days=NEW_DAYS), "limit": now + timedelta(days=MAX_DAYS)},
+        {
+            "new": now + timedelta(days=NEW_DAYS),
+            "limit": now + timedelta(days=MAX_DAYS),
+        },
     ).all()
     expires = (now + timedelta(days=NEW_DAYS)).isoformat()
     _trail(

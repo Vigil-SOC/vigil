@@ -99,7 +99,8 @@ def put_workflow_autonomy(
         deny_unless(current_user.user_id, "ai_autonomy.write", session)
         if is_machine_request(current_user):
             raise HTTPException(
-                status_code=403, detail="A service account or API token cannot raise autonomy"
+                status_code=403,
+                detail="A service account or API token cannot raise autonomy",
             )
         if current.stopped:
             raise HTTPException(status_code=409, detail="Stopped: resume first")

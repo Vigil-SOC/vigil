@@ -22,7 +22,7 @@ import hashlib
 import logging
 import secrets
 import uuid
-from datetime import datetime, timedelta
+from datetime import timedelta
 from functools import partial
 from typing import List, NamedTuple, Optional
 
@@ -247,7 +247,9 @@ def list_for_user(
         return query.order_by(McpCredential.created_at.desc()).all()
 
 
-def get(credential_id: str, session: Optional[Session] = None) -> Optional[McpCredential]:
+def get(
+    credential_id: str, session: Optional[Session] = None
+) -> Optional[McpCredential]:
     with unit_of_work(session) as session:
         return session.get(McpCredential, credential_id)
 
@@ -270,9 +272,7 @@ def holders(session: Optional[Session] = None) -> List[User]:
     with unit_of_work(session) as session:
         return (
             session.query(User)
-            .filter(
-                User.user_id.in_(session.query(McpCredential.user_id).distinct())
-            )
+            .filter(User.user_id.in_(session.query(McpCredential.user_id).distinct()))
             .order_by(User.username)
             .all()
         )

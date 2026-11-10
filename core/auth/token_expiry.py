@@ -48,7 +48,9 @@ def warning(user: User) -> list[dict[str, str]]:
                     continue
             days = max((credential.expires_at - now).days, 0)
             when = "today" if days == 0 else f"in {days} day{'s' if days != 1 else ''}"
-            whose = "" if credential.user_id == user.user_id else " (a service account's)"
+            whose = (
+                "" if credential.user_id == user.user_id else " (a service account's)"
+            )
             out.append(
                 {
                     "message": f'API token "{credential.label}"{whose} expires {when}',

@@ -35,13 +35,17 @@ NOTICE_LINK = "/settings?section=users"
 class MintRequest(BaseModel):
     label: str = Field(min_length=1, max_length=200)
     # None is the default for the holder; the rule is tokens.lifetime.
-    expires_in_days: Optional[int] = Field(default=None, ge=1, le=tokens.PERSON_MAX_DAYS)
+    expires_in_days: Optional[int] = Field(
+        default=None, ge=1, le=tokens.PERSON_MAX_DAYS
+    )
 
 
 class RotateRequest(BaseModel):
     # The old token ends now instead of in 24 hours.
     suspected_compromise: bool = False
-    expires_in_days: Optional[int] = Field(default=None, ge=1, le=tokens.PERSON_MAX_DAYS)
+    expires_in_days: Optional[int] = Field(
+        default=None, ge=1, le=tokens.PERSON_MAX_DAYS
+    )
 
 
 def _holder(user: User) -> dict:
@@ -79,7 +83,8 @@ def _refuse_token_request(request: Request, what: str) -> None:
 
 def _confirm(request: Request, user: User, action: str) -> None:
     """A token is never asked to confirm it's you, so a new one asks as its holder's
-    own privileged writes would: inside the window, for whoever holds such a permission."""
+    own privileged writes would: inside the window, for whoever holds such a permission.
+    """
     held = AuthService.get_user_permissions(user.user_id)
     if any(held.get(permission) for permission in STEP_UP):
         step_up.check(request, user.user_id, action)
