@@ -6496,6 +6496,7 @@ export interface paths {
          *         role_id: Filter by role ID
          *         is_active: Filter by active status
          *         search: Search in username, email, or full name
+         *         account_status: "current" (not deleted or erased), "all", or one status
          *         current_user: Current authenticated user
          *         session: Database session
          *
@@ -6637,7 +6638,8 @@ export interface paths {
         get: operations["get_api_users_user_id"];
         /**
          * Update User
-         * @description Update user information (requires users.write permission).
+         * @description Update a user's profile and role (requires users.write permission).
+         *     Deactivate, reactivate and restore have their own routes.
          *
          *     The caller's permissions must also cover the target account's current
          *     role. Holding users.write is not enough to edit an account whose role
@@ -6670,6 +6672,69 @@ export interface paths {
          *         Success message
          */
         delete: operations["delete_api_users_user_id"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{user_id}/deactivate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deactivate User
+         * @description End the account's sign-ins and revoke every credential it holds.
+         *     users.write over the account; a service account or playbook may, as containment.
+         */
+        post: operations["post_api_users_user_id_deactivate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{user_id}/reactivate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reactivate User
+         * @description Let a deactivated account sign in again with its password and MFA. Its
+         *     tokens stay revoked. Restores the whole role, so a person's own act.
+         */
+        post: operations["post_api_users_user_id_reactivate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{user_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore User
+         * @description Bring a deleted account back, Deactivated: password and MFA kept, tokens
+         *     revoked. users.delete, and a person's own act.
+         */
+        post: operations["post_api_users_user_id_restore"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -13119,15 +13184,13 @@ export interface components {
         };
         /**
          * UpdateUserRequest
-         * @description Update user request.
+         * @description Update user request: profile and role. Status changes have their own routes.
          */
         UpdateUserRequest: {
             /** Email */
             email?: string | null;
             /** Full Name */
             full_name?: string | null;
-            /** Is Active */
-            is_active?: boolean | null;
             /** Role Id */
             role_id?: string | null;
         };
@@ -25018,6 +25081,7 @@ export interface operations {
                 role_id?: string | null;
                 is_active?: boolean | null;
                 search?: string | null;
+                status?: "current" | "all" | "active" | "locked" | "deactivated" | "deleted" | "erased";
             };
             header?: {
                 authorization?: string | null;
@@ -25324,6 +25388,105 @@ export interface operations {
         };
     };
     delete_api_users_user_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_users_user_id_deactivate: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_users_user_id_reactivate: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_users_user_id_restore: {
         parameters: {
             query?: never;
             header?: {
