@@ -51,6 +51,9 @@ export default function ChangePasswordDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState(false)
+  // Set once the minimum age has refused; only then is the leak report offered.
+  const [tooSoon, setTooSoon] = useState(false)
+  const [leaked, setLeaked] = useState(false)
   // PasswordInput does not forward refs, so the first field is found through the form
   const formRef = useRef<HTMLFormElement>(null)
   const doneRef = useRef<HTMLButtonElement>(null)
@@ -63,6 +66,8 @@ export default function ChangePasswordDialog({
     setBusy(false)
     setError(null)
     setDone(false)
+    setTooSoon(false)
+    setLeaked(false)
   }, [open])
 
   // Popup focuses its panel after its children mount, so wait a tick before
@@ -95,10 +100,11 @@ export default function ChangePasswordDialog({
     setBusy(true)
     setError(null)
     try {
-      await authApi.changePassword({ current_password: form.current, new_password: form.next })
+      await authApi.changePassword({ current_password: form.current, new_password: form.next, suspected_leak: leaked })
       setForm({ current: '', next: '', confirm: '' })
       setDone(true)
     } catch (err) {
+      if ((err as { response?: { data?: { code?: string } } })?.response?.data?.code === 'password_min_age') setTooSoon(true)
       setError(requestErrorMessage(err, "Couldn't change your password. Try again."))
     } finally {
       setBusy(false)
@@ -177,6 +183,12 @@ export default function ChangePasswordDialog({
             onBlur={touch('confirm')}
           />
         </Field>
+        {tooSoon && (
+          <label className="flex items-start gap-2 text-sm text-tx-2 leading-relaxed">
+            <input type="checkbox" className="mt-0.5" checked={leaked} disabled={busy} onChange={(e) => setLeaked(e.target.checked)} />
+            <span>My current password may have leaked: change it now. This is recorded and the people who manage users are told.</span>
+          </label>
+        )}
         <div className="flex justify-end gap-2.5 mt-1">
           <button type="button" className="btn ghost" onClick={onClose} disabled={busy}>
             Cancel

@@ -10,7 +10,7 @@ type Rules = SessionPolicyBody['password_character_rules']
 type Mfa = SessionPolicyBody['require_mfa']
 type NumKey =
   | 'idle_standard_minutes' | 'idle_privileged_minutes' | 'absolute_hours' | 'sign_in_limit'
-  | 'password_min_length' | 'password_history' | 'lockout_threshold' | 'lockout_minutes' | 'dormancy_days'
+  | 'password_min_length' | 'password_history' | 'password_max_age_days' | 'password_min_age_days' | 'lockout_threshold' | 'lockout_minutes' | 'dormancy_days'
 // What the form holds: every field of the body.
 type Form = Record<NumKey, string> & { password_character_rules: Rules; require_mfa: Mfa; lockout_timed: boolean }
 
@@ -22,6 +22,8 @@ interface FieldDef {
   /** empty is allowed and reads as `none` */
   optional?: boolean
   none?: string
+  /** 0 reads as `none` too */
+  zeroIsOff?: boolean
 }
 
 const FIELDS: FieldDef[] = [
@@ -61,6 +63,14 @@ const FIELDS: FieldDef[] = [
     key: 'password_history', title: 'Password history', unit: 'passwords',
     hint: 'How many previous passwords are kept. A new password cannot match any of them.',
   },
+  {
+    key: 'password_max_age_days', title: 'Password maximum age', unit: 'days', optional: true, none: 'Off',
+    hint: 'A person must change a password older than this at their next sign-in, and is warned in the bell 7 days before. Service accounts are never blocked; managers are warned instead. Empty: passwords do not expire. Only a person can change it.',
+  },
+  {
+    key: 'password_min_age_days', title: 'Password minimum age', unit: 'days', none: 'Off', zeroIsOff: true,
+    hint: 'How long after a change before the person may change it again. A forced change, a reset of a locked account, an administrator’s reset and a reported leak are exempt. 0: off.',
+  },
 ]
 
 const RULES: { value: Rules; label: string; text: string }[] = [
@@ -85,6 +95,7 @@ const ORDER: (NumKey | 'require_mfa' | 'lockout_timed' | 'password_character_rul
   'idle_standard_minutes', 'idle_privileged_minutes', 'absolute_hours', 'sign_in_limit',
   'require_mfa', 'lockout_threshold', 'lockout_timed', 'lockout_minutes', 'dormancy_days',
   'password_min_length', 'password_history', 'password_character_rules',
+  'password_max_age_days', 'password_min_age_days',
 ]
 
 const RULES_TITLE = 'Password character rules'
@@ -99,6 +110,8 @@ const toForm = (p: SessionPolicy): Form => ({
   password_min_length: String(p.password_min_length),
   password_character_rules: p.password_character_rules,
   password_history: String(p.password_history),
+  password_max_age_days: p.password_max_age_days == null ? '' : String(p.password_max_age_days),
+  password_min_age_days: String(p.password_min_age_days),
   lockout_threshold: String(p.lockout_threshold),
   lockout_timed: p.lockout_timed,
   lockout_minutes: String(p.lockout_minutes),
@@ -106,7 +119,8 @@ const toForm = (p: SessionPolicy): Form => ({
   require_mfa: p.require_mfa,
 })
 
-const shown = (f: FieldDef, v: number | null | undefined) => (v == null ? (f.none ?? 'None') : `${v} ${f.unit}`)
+const shown = (f: FieldDef, v: number | null | undefined) =>
+  v == null || (f.zeroIsOff && v === 0) ? (f.none ?? 'None') : `${v} ${f.unit}`
 
 // Validation messages arrive as a list; the server's own wording is what is shown.
 function failure(e: unknown, fallback: string) {
@@ -348,7 +362,7 @@ export default function SessionsSection({ notify }: SectionProps) {
         onClose={() => setConfirm(null)}
         body={
           <>
-            <p>This change loosens the policy: a sign-in can last longer, an account hold more sign-ins, a password be shorter, simpler or reused sooner, someone sign in without MFA, a guesser have more tries or a shorter lock, or an unused account stay open longer:</p>
+            <p>This change loosens the policy: a sign-in can last longer, an account hold more sign-ins, a password be shorter, simpler, reused sooner, older or changed sooner, someone sign in without MFA, a guesser have more tries or a shorter lock, or an unused account stay open longer:</p>
             <ul className="my-2 pl-5 list-disc">
               {changes.map((f) => (
                 <li key={f.key}>{f.title}: {shown(f, saved[f.key])} → {shown(f, next?.[f.key])}</li>
