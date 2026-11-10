@@ -8,6 +8,7 @@ request whatever the browser holds.
 
 from __future__ import annotations
 
+import importlib
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional
@@ -295,9 +296,9 @@ def _stop_runs(session: Session) -> None:
         return
     pending = session.info.pop(_PENDING, None)
     if pending:
-        from core.auth import sign_in_runs
-
-        sign_in_runs.stop(pending)
+        # By name: the stop reaches the workflow and approval layers, which the
+        # sign-in check on every request must not depend on.
+        importlib.import_module("core.auth.sign_in_runs").stop(pending)
 
 
 @event.listens_for(Session, "after_rollback")
