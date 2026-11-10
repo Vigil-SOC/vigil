@@ -11,7 +11,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func
@@ -352,7 +352,7 @@ def get_investigation_file(investigation_id: str, filename: str):
     }
 
 
-def _person(user: User) -> Dict[str, str]:
+def _person(user: User, sid: Optional[str] = None) -> Dict[str, str]:
     """Who a Human Ask runs as: a name for the row, a signed token for the tools."""
     return {
         "started_by": user.username,
@@ -362,12 +362,17 @@ def _person(user: User) -> Dict[str, str]:
             or getattr(user, "user_id", None),
             origin="person",
             ttl=tool_principal.RUN_TTL,
+            sid=sid,
         ),
     }
 
 
 @router.post("/investigations/{investigation_id}/wake", dependencies=_RUN_AGENTS)
-def wake_investigation(investigation_id: str, user: User = Depends(get_current_user)):
+def wake_investigation(
+    investigation_id: str,
+    http_request: Request,
+    user: User = Depends(get_current_user),
+):
     """Restart a finished investigation by queueing a new one on the same case.
 
     A run's id is derived from its investigation id and its ledger is terminal
@@ -402,7 +407,7 @@ def wake_investigation(investigation_id: str, user: User = Depends(get_current_u
             "finding_ids": inv.get("trigger_ids") or [],
             "hypothesis": orch.workdir.read_file(investigation_id, "hypotheses.txt")
             or None,
-            **_person(user),
+            **_person(user, tool_principal.sid_of(http_request)),
         },
     )
 
@@ -473,7 +478,9 @@ def kill_investigation(investigation_id: str):
 
 @router.post("/investigations", dependencies=_RUN_AGENTS)
 def create_investigation(
-    request: InvestigationCreateRequest, user: User = Depends(get_current_user)
+    request: InvestigationCreateRequest,
+    http_request: Request,
+    user: User = Depends(get_current_user),
 ):
     """Manually create a new investigation."""
     from services.daemon.orchestrator import insert_intake_trigger
@@ -489,7 +496,7 @@ def create_investigation(
         payload["document"] = request.document
     # The daemon copies these onto the run. The token is not a session, and the
     # triage read drops it; the username is what the run row is attributed to.
-    payload.update(_person(user))
+    payload.update(_person(user, tool_principal.sid_of(http_request)))
 
     insert_intake_trigger(
         kind="human_ask",

@@ -21,6 +21,7 @@ from typing import Any, Callable, Dict, List, Optional
 from sqlalchemy import func
 
 from core.agents.builtins import ORCHESTRATOR_ACTOR
+from core.auth import sign_ins
 from core.auth.principals import agent_principal_id
 from core.cases.case_sla_service import case_title, open_case_holding
 from core.config import get_settings
@@ -369,6 +370,16 @@ def _principal_of(started_by: Optional[str], principal: Optional[str]) -> Option
     return SYSTEM_PRINCIPAL_ID
 
 
+def _sid_of(principal: Optional[str]) -> Optional[str]:
+    """The sign-in a Human Ask's stored token names. Absent for anything else."""
+    from core.auth import tool_principal
+
+    try:
+        return tool_principal.read(principal).sid if principal else None
+    except tool_principal.InvalidPrincipal:
+        return None
+
+
 def _start_principal(
     run_id: str,
     run_kind: str,
@@ -383,6 +394,7 @@ def _start_principal(
     actor = plugin_actor(run_kind)
     person_id: Optional[str] = None
     username: Optional[str] = None
+    sid: Optional[str] = None
     if principal:
         try:
             claims = tool_principal.read(principal)
@@ -392,6 +404,7 @@ def _start_principal(
         if claims is not None:
             person_id = claims.person_id
             username = claims.username
+            sid = claims.sid
     if username and not person_id:
         from core.agents.attribution import principal_id_for_username
 
@@ -409,6 +422,7 @@ def _start_principal(
         run_id=run_id,
         origin=origin,
         ttl=tool_principal.RUN_TTL,
+        sid=sid,
     )
     return token, actor, origin, person_id
 
@@ -1589,6 +1603,11 @@ class Orchestrator:
         runs = WorkflowRunService()
         row = None
         started_by, principal = _caller(inv_id)
+        # A Human Ask whose sign-in ended for a stopping reason starts nothing.
+        sid = _sid_of(principal)
+        if sid and sign_ins.ended_for_compromise(sid):
+            self._update_investigation_status(inv_id, "failed", sign_ins.STOP_REASON)
+            return
         try:
             run_kind = self._declared_run_kind(inv_record["workflow_id"])
             try:
@@ -1614,6 +1633,7 @@ class Orchestrator:
                         trigger_context=context,
                         triggered_by=started_by or "orchestrator",
                         triggered_by_principal_id=_principal_of(started_by, principal),
+                        sign_in_id=sid,
                     )
                     if row is None:
                         logger.warning("no workflow_runs row for %s", run_id)

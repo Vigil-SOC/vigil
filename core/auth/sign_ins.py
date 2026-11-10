@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from pydantic import BaseModel
-from sqlalchemy import or_
+from sqlalchemy import event, or_
 from sqlalchemy.orm import Session
 
 from core.storage.models import Principal, SignIn, User
@@ -39,6 +39,26 @@ ENDED_BY_ADMIN = "ended_by_admin"  # also a service account or playbook, as cont
 EVERYONE = "everyone_signed_out"
 # A newer sign-in took this one's place under the account's sign-in limit.
 SIGN_IN_LIMIT = "sign_in_limit"
+
+# The end reasons that stop the sign-in's agent runs (and their children): a
+# compromise, someone else's act, or a change of who the account is. Time, idle,
+# eviction, sign-out and upgrade endings stop nothing, and a reason not listed
+# here stops nothing. A sign-in a person acts from keeps its runs unless it is
+# itself ended.
+STOPS_RUNS = frozenset(
+    {
+        TOKEN_REUSE,
+        ACCOUNT_CHANGED,
+        DEACTIVATED,
+        ERASED,
+        ENDED_BY_PERSON,
+        ENDED_BY_ADMIN,
+        EVERYONE,
+    }
+)
+
+# What a stopped run reads, and what its tool calls are refused with.
+STOP_REASON = "stopped: sign-in ended"
 
 # How each end reason reads in the console (epic #4164 §8).
 REASON_WORDS = {
@@ -258,6 +278,41 @@ def make_room(session: Session, principal_id: str, limit: Optional[int]) -> int:
     return max(0, len(open_rows) - (limit - 1))
 
 
+# Sign-ins ended for a stopping reason wait on the session until it commits: the
+# callers end rows inside their own transaction, and a rolled-back change must not
+# stop runs.
+_PENDING = "sign_in_stops"
+
+
+def _queue_stop(session: Session, sign_in_id: str, principal_id: str, reason: str):
+    session.info.setdefault(_PENDING, []).append((sign_in_id, principal_id, reason))
+
+
+@event.listens_for(Session, "after_commit")
+def _stop_runs(session: Session) -> None:
+    pending = session.info.pop(_PENDING, None)
+    if pending:
+        from core.auth import sign_in_runs
+
+        sign_in_runs.stop(pending)
+
+
+@event.listens_for(Session, "after_rollback")
+def _drop_stops(session: Session) -> None:
+    session.info.pop(_PENDING, None)
+
+
+def ended_for_compromise(sign_in_id: str) -> bool:
+    """True when the sign-in ended for a reason that stops its runs."""
+    with unit_of_work() as session:
+        reason = (
+            session.query(SignIn.end_reason)
+            .filter(SignIn.sign_in_id == sign_in_id, SignIn.ended_at.isnot(None))
+            .scalar()
+        )
+    return reason in STOPS_RUNS
+
+
 def end(sign_in_id: str, reason: str, session: Optional[Session] = None) -> bool:
     """End one open sign-in. True if this call ended it.
 
@@ -276,6 +331,8 @@ def end(sign_in_id: str, reason: str, session: Optional[Session] = None) -> bool
             return False
         row.ended_at = now
         row.end_reason = reason
+        if reason in STOPS_RUNS:
+            _queue_stop(session, sign_in_id, row.principal_id, reason)
         return True
 
 
@@ -289,9 +346,13 @@ def end_all_for_user(
         )
         if principal_id is None:
             return 0
+        open_rows = SignIn.principal_id == principal_id, SignIn.ended_at.is_(None)
+        if reason in STOPS_RUNS:
+            for (sid,) in session.query(SignIn.sign_in_id).filter(*open_rows):
+                _queue_stop(session, sid, principal_id, reason)
         return (
             session.query(SignIn)
-            .filter(SignIn.principal_id == principal_id, SignIn.ended_at.is_(None))
+            .filter(*open_rows)
             .update(
                 {SignIn.ended_at: utcnow(), SignIn.end_reason: reason},
                 synchronize_session=False,
