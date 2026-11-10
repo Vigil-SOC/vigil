@@ -2,8 +2,8 @@
 
 from core.upgrade.revision import run_sql
 
-revision = "0049_step_up"
-down_revision = "0048_dormancy"
+revision = "0050_step_up"
+down_revision = "0049_case_shell_grants"
 
 
 def upgrade() -> None:
