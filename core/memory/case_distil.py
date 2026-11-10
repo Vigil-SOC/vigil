@@ -69,6 +69,7 @@ from core.storage.models import (
     Finding,
     case_findings,
 )
+from core.storage.shared_ioc_repository import TYPE_ALIASES
 from core.storage.unit_of_work import unit_of_work
 
 logger = logging.getLogger(__name__)
@@ -76,7 +77,7 @@ logger = logging.getLogger(__name__)
 # Bumped when the mapping below changes what it writes. Separate from the hunt
 # Distil's version: re-deriving is delete-then-insert scoped to one
 # investigation, and a change to how a Case maps must not re-offer every hunt.
-CASE_DISTIL_MAPPING_VERSION = 1
+CASE_DISTIL_MAPPING_VERSION = 2  # 2: IOC type aliases folded (#4160)
 
 # Cases whose episodic rows disagree with their current state, in both
 # directions: closed ones whose Verdict is missing, stale, or derived at another
@@ -242,7 +243,10 @@ def _subjects(session: Session, case_id: str) -> List[str]:
     infer: IOCs an analyst attached, already carrying their type.
 
     Two bounds the extractor gets for free and this does not. ``ioc_type`` is
-    free text, so a type outside the Entity Key vocabulary is dropped -- a
+    free text, so its spellings are first folded through the correlation
+    index's alias table (``md5`` -> ``hash``, ``fqdn`` -> ``domain``, ...), with
+    a machine spelled ``host`` as memory spells it; a type still outside the
+    Entity Key vocabulary after that is dropped -- a
     `mutex` key is one no reader will ever query, and an unqueryable key reads
     as an entity nobody has looked at rather than as a bad write. And an IOC
     list has no sentence to bound it, where the extractor works on one, so the
@@ -269,6 +273,9 @@ def _subjects(session: Session, case_id: str) -> List[str]:
     seen = set()
     for ioc_type, value in rows:
         kind = str(ioc_type or "").strip().lower()
+        kind = TYPE_ALIASES.get(kind, kind)
+        if kind == "hostname":  # correlation's spelling; memory's is `host`
+            kind = "host"
         if kind not in ENTITY_KEY_TYPES:
             continue
         key = entity_key(kind, str(value or ""))
