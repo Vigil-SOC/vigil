@@ -110,27 +110,37 @@ export default function LoginScreen() {
     } catch (err: any) {
       if (id !== prompting.current) return
       if (err instanceof KeyProblem && !(err instanceof NoKeyUsed)) setError(err.message)
-      else if (!(err instanceof NoKeyUsed)) setError(requestErrorMessage(err, "That security key didn't work. Try again."))
+      else if (!(err instanceof NoKeyUsed) && !forcedChange(err))
+        setError(requestErrorMessage(err, "That security key didn't work. Try again."))
     } finally {
-      if (id === prompting.current) {
-        setKeyWaiting(false)
-        setLoading(false)
-      }
+      setLoading(false)
+      if (id === prompting.current) setKeyWaiting(false)
     }
+  }
+
+  // A listed, expired or short password is a forced change after the key (or code) is accepted:
+  // the one reset path, with the reason.
+  const forcedChange = (err: any) => {
+    if (err?.message !== 'PASSWORD_CHANGE_REQUIRED') return false
+    navigate(`/reset-password?token=${encodeURIComponent(err.resetToken)}`, { state: { reason: err.reason } })
+    return true
   }
 
   // Try again, or switch to the key from a code: repeat call 1 for a fresh challenge.
   const retryKey = async () => {
+    const id = ++prompting.current
     setError('')
     setUseKey(true)
     setLoading(true)
     try {
       finish(await login(usernameOrEmail, password))
     } catch (err: any) {
+      // left the key view while this was in flight: no prompt
+      if (id !== prompting.current) return
       if (err?.message === 'MFA_REQUIRED') {
         setOffer(err.offer)
         void askKey(err.offer)
-      } else setError(requestErrorMessage(err, 'Sign in failed. Please try again.'))
+      } else if (!forcedChange(err)) setError(requestErrorMessage(err, 'Sign in failed. Please try again.'))
     } finally {
       setLoading(false)
     }
@@ -143,12 +153,8 @@ export default function LoginScreen() {
     try {
       finish(await login(usernameOrEmail, password, showMfa ? mfaCode : undefined))
     } catch (err: any) {
-      if (err?.message === 'PASSWORD_CHANGE_REQUIRED') {
-        // the one forced-change path: the reset screen, with the reason
-        navigate(`/reset-password?token=${encodeURIComponent(err.resetToken)}`, {
-          state: { reason: err.reason },
-        })
-      } else if (err?.message === 'MFA_REQUIRED') {
+      if (forcedChange(err)) return
+      if (err?.message === 'MFA_REQUIRED') {
         const o: MfaOffer = err.offer
         const key = !!o.securityKey
         const app = o.methods.includes('authenticator_app')

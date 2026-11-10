@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import QRCode from 'qrcode'
 import { useAuth } from '../contexts/AuthContext'
 import { keysApi, mfaApi, type Factor } from '../services/api'
-import { confirmWithKey, createCredential, keysSupported, KeyProblem } from '../services/webauthn'
+import { cancelPrompt, confirmWithKey, createCredential, keysSupported, KeyProblem } from '../services/webauthn'
 import { Icon } from '../shared/icons'
 import MfaMethodsList, { type MfaMethod } from '../shared/MfaMethodsList'
 import { Field, PasswordInput, Popup, TextInput } from '../shared/ui'
@@ -121,6 +121,7 @@ export default function TwoStepDialog({
       setKeyName('')
       setTarget(null)
       setViaKey(false)
+      cancelPrompt()
     }
   }, [open])
 

@@ -17,11 +17,16 @@ export const keysSupported = () =>
 
 // The browser runs one prompt at a time: a new one (or cancelPrompt) ends the one still waiting.
 let current: AbortController | null = null
-export const cancelPrompt = () => current?.abort()
+// counts cancellations, so a prompt not yet started (its options still loading) is dropped too
+let epoch = 0
+export const cancelPrompt = () => {
+  epoch++
+  current?.abort()
+}
 
 // A cancelled or timed-out prompt is "no key used"; anything else is a real error.
 async function prompt<T>(ask: (signal: AbortSignal) => Promise<T>): Promise<T> {
-  cancelPrompt()
+  current?.abort()
   const mine = (current = new AbortController())
   try {
     return await ask(mine.signal)
@@ -47,7 +52,9 @@ export function assertWith(options: Json): Promise<Json> {
 
 /** Fresh options for a check ("touch your security key"), then the prompt. */
 export async function confirmWithKey(): Promise<{ assertion: Json; challenge: string }> {
+  const asked = epoch
   const { data } = await keysApi.assertionOptions()
+  if (asked !== epoch) throw new NoKeyUsed()
   return { assertion: await assertWith(data.options), challenge: data.challenge }
 }
 
