@@ -96,7 +96,9 @@ class DetectionProposal(Base):
     case_id: Mapped[Optional[str]] = mapped_column(
         String(50), ForeignKey("cases.case_id", ondelete="SET NULL")
     )
-    origin: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    origin: Mapped[Dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
     sigma: Mapped[str] = mapped_column(Text, nullable=False)
     # The native copies Convert attached, by SIEM: splunk, elastic, wazuh.
     copies: Mapped[Dict[str, str]] = mapped_column(
@@ -214,7 +216,9 @@ class DetectionProposal(Base):
 
 class DetectionProposalEvent(Base):
     """One step tried on a proposal. Append-only: the app role holds no UPDATE or
-    DELETE, and a trigger refuses both for any role."""
+    DELETE, and a trigger refuses both for any role. The trigger comes with
+    ``python -m core.upgrade``; a database built by ``create_tables()`` (a scratch
+    or test database) has the table without it."""
 
     __tablename__ = "detection_proposal_events"
     __table_args__ = (
