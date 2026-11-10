@@ -11862,6 +11862,22 @@ export interface components {
              */
             lockout_timed: boolean;
             /**
+             * Password Character Rules
+             * @default none
+             * @enum {string}
+             */
+            password_character_rules: "none" | "letters_digits" | "four_classes";
+            /**
+             * Password History
+             * @default 5
+             */
+            password_history: number;
+            /**
+             * Password Min Length
+             * @default 16
+             */
+            password_min_length: number;
+            /**
              * Require Mfa
              * @default privileged
              * @enum {string}
@@ -12423,6 +12439,22 @@ export interface components {
              * @default false
              */
             lockout_timed: boolean;
+            /**
+             * Password Character Rules
+             * @default none
+             * @enum {string}
+             */
+            password_character_rules: "none" | "letters_digits" | "four_classes";
+            /**
+             * Password History
+             * @default 5
+             */
+            password_history: number;
+            /**
+             * Password Min Length
+             * @default 16
+             */
+            password_min_length: number;
             /**
              * Require Mfa
              * @default privileged

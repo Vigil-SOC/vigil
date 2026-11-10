@@ -1,11 +1,13 @@
 """Password strength validation using zxcvbn entropy scoring (NIST 800-63B)."""
 
 import logging
+import unicodedata
 from pathlib import Path
 from typing import Iterable, List, Optional
 
 from zxcvbn import zxcvbn
 
+from core.auth import session_policy
 from core.auth.password_hash import MAX_PASSWORD_LENGTH
 from core.config import get_settings
 
@@ -83,6 +85,48 @@ def check_not_listed(
         )
 
 
+def _classes(password: str) -> set:
+    """Character classes present, by Unicode category: letters (any script),
+    lowercase, uppercase, digits, and anything else. Nothing is normalised away."""
+    found = set()
+    for ch in password:
+        cat = unicodedata.category(ch)
+        if cat == "Nd":
+            found.add("digit")
+        elif cat.startswith("L"):
+            found.add("letter")
+            if cat == "Ll":
+                found.add("lowercase")
+            elif cat == "Lu":
+                found.add("uppercase")
+        else:
+            found.add("symbol")
+    return found
+
+
+_RULE_NEEDS = {
+    "letters_digits": (("letter", "a letter"), ("digit", "a digit")),
+    "four_classes": (
+        ("lowercase", "a lowercase letter"),
+        ("uppercase", "an uppercase letter"),
+        ("digit", "a digit"),
+        ("symbol", "a symbol or space"),
+    ),
+}
+
+
+def check_character_rules(password: str, rule: str) -> None:
+    """Raise PasswordPolicyError naming each class the policy's rule still needs."""
+    missing = [
+        name for key, name in _RULE_NEEDS.get(rule, ()) if key not in _classes(password)
+    ]
+    if missing:
+        raise PasswordPolicyError(
+            "Password must contain " + ", ".join(missing),
+            suggestions=[f"Add {', '.join(missing)}."],
+        )
+
+
 def validate_password_strength(
     password: str,
     *,
@@ -93,14 +137,12 @@ def validate_password_strength(
 ) -> None:
     """Raise PasswordPolicyError if password fails policy.
 
-    All kwargs are test overrides; production uses env/defaults.
+    The minimum length and character rule come from the session policy; the
+    kwargs override for tests.
     user_inputs: terms (username, email) zxcvbn penalizes if embedded.
     """
-    limit = (
-        min_length
-        if min_length is not None
-        else get_settings().auth_min_password_length
-    )
+    policy = session_policy.policy()
+    limit = min_length if min_length is not None else policy.password_min_length
     threshold = (
         min_score if min_score is not None else get_settings().auth_min_zxcvbn_score
     )
@@ -120,6 +162,7 @@ def validate_password_strength(
             suggestions=["Use a shorter passphrase."],
         )
 
+    check_character_rules(password, policy.password_character_rules)
     check_not_listed(password, user_inputs=user_inputs, blocklist=blocklist)
 
     result = zxcvbn(

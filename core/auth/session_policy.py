@@ -1,20 +1,29 @@
-"""How long a sign-in lasts, when failed sign-ins lock an account and when an idle one is deactivated, in one validated model.
+"""How long a sign-in lasts, when failed sign-ins lock an account, when an idle one is deactivated and what a
+password must be, in one validated model.
 
 One ``system_config`` row holds the document: the fields of ``SessionPolicy``
 plus its ``version``. A later setting joins by adding a field to the model.
 Every ``limits`` call reads the row, so a saved change applies at the next
 request; nothing is cached. Authentication and refresh read the limits only
-through ``limits``.
+through ``limits``; the password rules and lockout through ``policy``.
 """
 
+import logging
+import os
 from datetime import datetime, timedelta
 from typing import Iterable, Literal, NamedTuple, Optional
 
+from dotenv import dotenv_values
 from pydantic import BaseModel, Field, ValidationError, model_validator
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from core.auth import trail_events
+from core.config import _settings_env_file
 from core.storage.models import SystemConfig
 from core.storage.unit_of_work import unit_of_work
+
+logger = logging.getLogger(__name__)
 
 KEY = "auth.session_policy"
 
@@ -42,6 +51,12 @@ class SessionPolicy(BaseModel):
     absolute_hours: int = Field(12, ge=1, le=24)
     # Most open sign-ins one account may hold; None: no limit.
     sign_in_limit: Optional[int] = Field(None, ge=1, le=10)
+    # Characters (code points). 15 is the floor until Require MFA (#4177) lets
+    # an install with MFA for everyone go down to 12.
+    password_min_length: int = Field(16, ge=15, le=64)
+    password_character_rules: Literal["none", "letters_digits", "four_classes"] = "none"
+    # Previous passwords kept, and refused on reuse.
+    password_history: int = Field(5, ge=4, le=24)
     # Failures in a row that lock an account. Off, the lock holds until an
     # administrator's Unlock or the person's reset link; on, it ends after
     # lockout_minutes. LOCK_UNTIL_UNLOCKED failures lock until unlocked either way.
@@ -68,6 +83,8 @@ class SessionPolicy(BaseModel):
 # Failures in a row that lock until unlocked, even in timed mode.
 LOCK_UNTIL_UNLOCKED = 100
 
+_RULE_STRENGTH = {"none": 0, "letters_digits": 1, "four_classes": 2}
+
 
 # Weakest first: a lower level is a loosening.
 MFA_LEVELS = ("off", "privileged", "everyone")
@@ -87,8 +104,13 @@ def mfa_covered(
 
 
 def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
-    """Whether ``new`` lets a sign-in last longer, an account hold more, or a
-    guesser have more tries or a shorter lock, or an idle account stay longer."""
+    """Whether ``new`` lets a sign-in last longer, an account hold more, a
+    guesser have more tries or a shorter lock, an idle account stay longer, or a
+    password be shorter, simpler or reused sooner."""
+    weaker_rules = (
+        _RULE_STRENGTH[new.password_character_rules]
+        < _RULE_STRENGTH[old.password_character_rules]
+    )
     easier_lock = (
         new.lockout_threshold > old.lockout_threshold
         or (new.lockout_timed and not old.lockout_timed)
@@ -112,6 +134,9 @@ def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
         or new.idle_privileged_minutes > old.idle_privileged_minutes
         or new.absolute_hours > old.absolute_hours
         or more_sign_ins
+        or new.password_min_length < old.password_min_length
+        or weaker_rules
+        or new.password_history < old.password_history
         or easier_lock
         or longer_dormancy
     )
@@ -125,12 +150,70 @@ class Stored(NamedTuple):
     updated_at: Optional[datetime]
 
 
-def read_row(session: Session, lock: bool = False) -> tuple[Stored, bool]:
-    """The stored document (defaults when no row) and whether a row exists."""
-    row = (
-        session.query(SystemConfig).filter(SystemConfig.key == KEY).populate_existing()
+CARRIED = "carried from host configuration"
+
+
+def _carried_values() -> dict:
+    """Password settings an operator chose in the host environment before they
+    moved into this document. A value equal to the old default counts as unset.
+    Read only while no row exists: once one is saved the variables are never
+    read again."""
+    env_file = _settings_env_file()
+    env = dict(dotenv_values(env_file)) if env_file else {}
+    env.update(os.environ)
+    carried = {}
+    for var, field, old_default, low, high in (
+        ("AUTH_MIN_PASSWORD_LENGTH", "password_min_length", 12, 15, 64),
+        ("AUTH_PASSWORD_HISTORY_LIMIT", "password_history", 5, 4, 24),
+    ):
+        try:
+            value = int(env.get(var) or old_default)
+        except ValueError:
+            continue
+        if value != old_default:
+            carried[field] = max(low, min(high, value))  # moved into range
+    return carried
+
+
+def _seed(session: Session) -> None:
+    """Save any carried host values as version 1, once."""
+    carried = _carried_values()
+    if not carried:
+        return
+    value = {**SessionPolicy(**carried).model_dump(), "version": 1}
+    inserted = session.execute(
+        insert(SystemConfig)
+        .values(
+            key=KEY,
+            value=value,
+            description="Session policy: sign-in limits and password rules",
+            config_type="auth",
+            updated_by=CARRIED,
+        )
+        .on_conflict_do_nothing()
     )
-    row = (row.with_for_update() if lock else row).first()
+    if inserted.rowcount:
+        logger.warning("Session policy carried from host configuration: %s", carried)
+        trail_events.record(
+            session, "session_policy.carried", actor=CARRIED, version=1, new=value
+        )
+
+
+def read_row(session: Session, lock: bool = False) -> tuple[Stored, bool]:
+    """The stored document (defaults when no row) and whether a row exists.
+
+    The first read with no row saves any password settings carried from the
+    host environment as version 1 (#4175)."""
+    for attempt in range(2):
+        row = (
+            session.query(SystemConfig)
+            .filter(SystemConfig.key == KEY)
+            .populate_existing()
+        )
+        row = (row.with_for_update() if lock else row).first()
+        if row is not None or attempt:
+            break
+        _seed(session)
     if row is None:
         return Stored(SessionPolicy(), 0, None, None), False
     value = dict(row.value or {})
@@ -147,6 +230,7 @@ class Limits(NamedTuple):
 
 
 def policy() -> SessionPolicy:
+    """The policy in force now, read every call."""
     with unit_of_work() as session:
         try:
             return read_row(session)[0].policy
