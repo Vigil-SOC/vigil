@@ -169,6 +169,9 @@ _CONTEXT_LISTS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("user", ("usernames", "users")),
     ("hash", ("file_hashes",)),
     ("domain", ("domains",)),
+    ("process", ("processes",)),
+    ("url", ("urls",)),
+    ("email", ("emails",)),
 )
 
 _CONTEXT_SCALARS: Tuple[Tuple[str, str], ...] = (
