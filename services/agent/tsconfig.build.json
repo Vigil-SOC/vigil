@@ -9,8 +9,8 @@
 // same treatment, and only this config will say so: `npm run typecheck` uses
 // bundler resolution and lets a default import past.
 //
-// Both entry points emit from the include below -- dist/worker.js and
-// dist/serve.js -- because the image runs one or the other by command.
+// Every entry point emits from the include below -- dist/worker.js,
+// dist/serve.js and dist/shell.js -- because the image runs one of them by command.
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
