@@ -50,10 +50,12 @@ class Principal(Base):
 
 
 class SignIn(Base):
-    """One sign-in, from login to sign-out, expiry or revocation.
+    """One sign-in, from login to its end: the server's record of it.
 
-    Its id rides on both tokens as ``sid`` and survives every refresh. It is a
-    reference, never a credential: nothing authenticates by it.
+    Its id rides on both tokens as ``sid`` and survives every refresh. A token
+    is honoured only while this row is open and inside the session policy
+    (``core/auth/session_policy.py``); ending the row refuses it at the next
+    request.
     """
 
     __tablename__ = "sign_ins"
@@ -71,10 +73,30 @@ class SignIn(Base):
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     end_reason: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # The person's last own action: what the idle limit counts from.
+    last_action_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
+    )
+    # 'password' or 'mfa'
+    auth_method: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="password", server_default="password"
+    )
+    # The browser's user agent: the sign-in's tokens are honoured only from it.
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    device: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Advances with each refresh; a refresh token carries the one it was minted at.
+    refresh_generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    refresh_rotated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
 
     __table_args__ = (
         CheckConstraint(
-            "end_reason IN ('sign_out', 'expiry', 'revoked')",
+            "end_reason IN ('sign_out', 'expiry', 'revoked', 'idle', 'length_limit',"
+            " 'token_reuse', 'upgrade', 'account_changed', 'deactivated', 'erased')",
             name="sign_ins_end_reason_check",
         ),
         Index("idx_sign_ins_principal", "principal_id"),

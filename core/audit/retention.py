@@ -406,7 +406,7 @@ def _revoke(session, principal_id: str) -> None:
         return
     for credential in mcp_credential_service.list_for_user(user_id, session=session):
         mcp_credential_service.revoke(credential.credential_id, session=session)
-    sign_ins.end_all_for_user(user_id, sign_ins.REVOKED, session=session)
+    sign_ins.end_all_for_user(user_id, sign_ins.ERASED, session=session)
 
 
 def _queue_append(session, ids: list[str]) -> None:

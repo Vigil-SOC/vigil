@@ -19,16 +19,22 @@ from sqlalchemy.orm import Session
 from core.auth.auth_cookies import ACCESS_COOKIE_NAME
 from core.auth.auth_service import AuthService
 from core.auth.mcp_credential_service import looks_like_mcp_token
-from core.auth.session_cutoff import issued_before_cutoff
-from core.auth.token_blacklist import is_token_revoked
+from core.auth import session_policy, sign_ins
 from core.cases.agent_closure import clear_http_actor, note_http_actor
 from core.config import get_settings
-from core.storage.models import User
+from core.storage.models import Role, SignIn, User
 from core.storage.unit_of_work import unit_of_work
+from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
 ACCESS_TOKEN_TYPE = "access"
+
+# Set by the console on a request a person's own input caused. Polling and
+# streams do not carry it, so they never count as activity.
+USER_ACTION_HEADER = "x-vigil-user-action"
+
+_SIGN_IN_ENDED = "Sign-in has ended"
 
 # Dev mode flag - ONLY for development, never in production!
 DEV_MODE = get_settings().dev_mode
@@ -102,6 +108,52 @@ def _detached(lookup: Callable[[Session], Optional[User]]) -> Optional[User]:
         if user is not None and user in db:
             db.expunge(user)
         return user
+
+
+def _check_sign_in(
+    user_id: str, sid: str, user_agent: Optional[str], own_action: bool
+) -> tuple[Optional[User], Optional[tuple[int, str]]]:
+    """Load the user with the sign-in row and judge the row, in one short session.
+
+    Returns the detached user, or the refusal as (status, detail). A sign-in
+    found past a limit is ended here, with its reason, and commits with the 401.
+    """
+    with unit_of_work() as db:
+        user = db.query(User).filter(User.user_id == user_id).first()
+        if not user:
+            return None, (status.HTTP_401_UNAUTHORIZED, "User not found")
+        if not user.is_active:
+            return None, (status.HTTP_403_FORBIDDEN, "User account is inactive")
+        row = db.get(SignIn, sid)
+        if (
+            row is None
+            or row.ended_at is not None
+            or row.principal_id != user.principal_id
+        ):
+            return None, (status.HTTP_401_UNAUTHORIZED, _SIGN_IN_ENDED)
+        # The browser the sign-in began in. A mismatch refuses this request and
+        # ends nothing: the real browser still holds the same tokens.
+        if row.user_agent and row.user_agent != (user_agent or ""):
+            return None, (status.HTTP_401_UNAUTHORIZED, "Session fingerprint mismatch")
+
+        machine = user.service_account is True
+        role = db.get(Role, user.role_id)
+        held = [name for name, on in ((role and role.permissions) or {}).items() if on]
+        limit = session_policy.limits(held, machine)
+        now = utcnow()
+        over = None
+        if row.started_at + limit.absolute <= now:
+            over = sign_ins.LENGTH_LIMIT
+        elif limit.idle and row.last_action_at + limit.idle <= now:
+            over = sign_ins.IDLE
+        if over:
+            sign_ins.end(sid, over, db)
+            return None, (status.HTTP_401_UNAUTHORIZED, _SIGN_IN_ENDED)
+
+        if own_action and not machine:
+            sign_ins.stamp_action(sid, db)
+        db.expunge(user)
+        return user, None
 
 
 async def get_current_user(
@@ -191,49 +243,30 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Reject revoked tokens (logout / password change / role change).
-    if await is_token_revoked(payload):
+    # The sign-in row is the record: a token is good only while its row is open
+    # and inside the session policy.
+    sid = payload.get("sid")
+    if not sid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has been revoked",
+            detail="Sign in again",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-    # Validate session fingerprint (user-agent binding).
-    if not AuthService.verify_session_fingerprint(
-        payload,
-        user_agent=request.headers.get("user-agent"),
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Session fingerprint mismatch",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # Get user from database
-    user = await run_in_threadpool(
-        _detached,
-        lambda db: db.query(User).filter(User.user_id == payload["user_id"]).first(),
+    # A script's bearer call is its person's own action; the console's cookie
+    # requests count only when they carry the marker.
+    own_action = via == "bearer" or request.headers.get(USER_ACTION_HEADER) is not None
+    user, refusal = await run_in_threadpool(
+        _check_sign_in,
+        payload["user_id"],
+        sid,
+        request.headers.get("user-agent"),
+        own_action,
     )
-    if not user:
+    if refusal:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
-        )
-
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is inactive",
-        )
-
-    # Redis may have refused the cutoff write, or be serving reads without it.
-    # The user row is the record of that sign-out.
-    if issued_before_cutoff(payload, user.tokens_valid_after):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has been revoked",
-            headers={"WWW-Authenticate": "Bearer"},
+            status_code=refusal[0],
+            detail=refusal[1],
+            headers={"WWW-Authenticate": "Bearer"} if refusal[0] == 401 else None,
         )
 
     # The audit poll reads this to require a person sign-in before the role check.

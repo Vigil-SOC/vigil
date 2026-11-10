@@ -39,7 +39,7 @@ from typing import Optional, TextIO
 from sqlalchemy import inspect
 from sqlalchemy.exc import NoSuchTableError, OperationalError, SQLAlchemyError
 
-from core.auth import principals
+from core.auth import principals, sign_ins
 from core.auth.auth_service import AuthService
 from core.auth.identity import claim_sign_in_names, identifier_in_use
 from core.storage.connection import get_db_manager
@@ -152,9 +152,9 @@ def ensure(username: str, password: str) -> tuple[str, int]:
                 outcome = "rotated"
                 user.password_hash = AuthService.hash_password(password)
                 user.password_changed_at = now
-                # After bcrypt, which can cross a second. A login with the
-                # old password during the hash is then still before the cutoff.
-                user.tokens_valid_after = utcnow()
+                sign_ins.end_all_for_user(
+                    user.user_id, sign_ins.ACCOUNT_CHANGED, session
+                )
             user.is_active = True
             user.failed_login_count = 0
             user.locked_until = None

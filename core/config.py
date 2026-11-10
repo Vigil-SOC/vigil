@@ -235,7 +235,6 @@ class Settings(BaseSettings):
     auth_max_password_bytes: int = 72
     auth_min_zxcvbn_score: int = 3
     password_reset_ttl_seconds: int = 3600
-    revocation_fail_open: bool = False
 
     # Vigil's own Wazuh manager, the wazuh-sandbox compose profile (#4099): it
     # counts shadow Wazuh copies with wazuh-logtest. Empty: no sandbox.
