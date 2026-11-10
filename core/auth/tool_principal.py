@@ -10,9 +10,9 @@ opaquely, and the invoke endpoint verifies it before binding it with
 Two properties make this safe to hand to a process that is not the API:
 
 - **It is not a session.** ``get_current_user`` accepts any JWT signed with
-  ``JWT_SECRET_KEY`` that carries a ``user_id``. This is signed with a key
-  derived from that secret for this purpose alone, so it fails that check, and
-  it carries no ``user_id`` either way.
+  the ring's sign-in key that carries a ``user_id``. This is signed with the
+  ring's run-token key, so it fails that check, and it carries no ``user_id``
+  either way.
 - **Nothing the agent layer holds can sign one.** ``AGENT_INTERNAL_TOKEN`` is
   not an input.
 
@@ -21,13 +21,11 @@ Stateless, so a replica other than the one that served the chat can verify it.
 A run token also carries the person principal (absent when no person started
 it), the agent principal, the run id and the origin: person, schedule, alert
 or parent. The username stays ``sub``. Nothing here is a ``user_id``, and the
-key is still the derived one, so ``get_current_user`` refuses it.
+key is not the sign-in one, so ``get_current_user`` refuses it.
 """
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import logging
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -37,7 +35,7 @@ from typing import Iterator, Optional
 
 import jwt
 
-from core.auth import auth_service
+from core.auth import key_ring
 
 logger = logging.getLogger(__name__)
 
@@ -97,11 +95,6 @@ def current_claims() -> Optional[Claims]:
     return _current.get()
 
 
-def _key() -> bytes:
-    secret = auth_service.JWT_SECRET_KEY.encode()
-    return hmac.new(secret, _PURPOSE.encode(), hashlib.sha256).digest()
-
-
 def _claim(claims: dict, name: str) -> Optional[str]:
     value = claims.get(name)
     if value is None:
@@ -134,7 +127,7 @@ def mint(
         payload["run_id"] = run_id
     if origin:
         payload["origin"] = origin
-    return jwt.encode(payload, _key(), algorithm=_ALGORITHM)
+    return key_ring.sign("run", payload, _ALGORITHM)
 
 
 def read(token: str) -> Claims:
@@ -142,7 +135,7 @@ def read(token: str) -> Claims:
     try:
         claims = jwt.decode(
             token,
-            _key(),
+            key_ring.token_key("run", token),
             algorithms=[_ALGORITHM],
             audience=_PURPOSE,
             leeway=_LEEWAY,

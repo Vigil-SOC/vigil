@@ -4,7 +4,6 @@ Authentication Service - User authentication and authorization.
 Handles password hashing, JWT generation/validation, MFA, and session management.
 """
 
-import base64
 import hashlib
 import logging
 import re
@@ -16,15 +15,14 @@ from typing import Any, Dict, List, Optional
 
 import jwt
 import pyotp
-from cryptography.fernet import Fernet
+from cryptography.fernet import MultiFernet
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
-from core.auth import password_hash, principals
+from core.auth import key_ring, password_hash, principals
 from core.auth.identity import claim_sign_in_names, identifier_in_use, matching_accounts
 from core.config import get_settings
 from core.exceptions import default_on_error
-from core.secrets import get_secret
 from core.storage.models import Principal, Role, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -59,32 +57,11 @@ _last_undecryptable_log = float("-inf")
 
 
 class MFASecretDecryptionError(Exception):
-    """A stored MFA secret is encrypted but not under the current JWT_SECRET_KEY."""
+    """A stored MFA secret is encrypted but not under a key in the ring."""
 
 
 def _is_dev_mode() -> bool:
     return get_settings().dev_mode
-
-
-def _load_jwt_secret() -> str:
-    # Resolved at import time. DEV_MODE falls back to a deterministic dev secret
-    # so tokens survive restarts; production fails closed when unset.
-    value = get_secret("JWT_SECRET_KEY")
-
-    if value:
-        return value
-
-    if _is_dev_mode():
-        logger.warning(
-            "JWT_SECRET_KEY not set; using deterministic DEV_MODE fallback. "
-            "Tokens issued in dev are not portable to production."
-        )
-        return "dev-mode-insecure-jwt-secret-do-not-use-in-production"
-
-    raise RuntimeError(
-        "JWT_SECRET_KEY is required when DEV_MODE=false. "
-        "Set it in the environment or .env before starting the backend."
-    )
 
 
 def _refuse_dev_mode_in_production() -> None:
@@ -101,8 +78,11 @@ def _refuse_dev_mode_in_production() -> None:
 
 _refuse_dev_mode_in_production()
 
+# Fails closed at import when the secret that wraps the key ring is unset
+# (DEV_MODE generates one); every process that loads auth gets the check.
+key_ring.wrapping_secret()
+
 # JWT Configuration
-JWT_SECRET_KEY = _load_jwt_secret()
 JWT_ALGORITHM = "HS256"
 JWT_ACCESS_EXPIRATION_MINUTES = get_settings().jwt_access_expiration_minutes
 JWT_REFRESH_EXPIRATION_DAYS = get_settings().jwt_refresh_expiration_days
@@ -213,8 +193,7 @@ class AuthService:
         if user_agent:
             payload["sfp"] = AuthService._session_fingerprint(user_agent)
 
-        token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
-        return token
+        return key_ring.sign("signin", payload, JWT_ALGORITHM)
 
     @staticmethod
     def verify_session_fingerprint(
@@ -243,7 +222,11 @@ class AuthService:
             Decoded payload or None if invalid
         """
         try:
-            payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+            payload = jwt.decode(
+                token,
+                key_ring.token_key("signin", token),
+                algorithms=[JWT_ALGORITHM],
+            )
             return payload
         except jwt.ExpiredSignatureError:
             logger.warning("JWT token expired")
@@ -259,7 +242,7 @@ class AuthService:
         try:
             payload = jwt.decode(
                 token,
-                JWT_SECRET_KEY,
+                key_ring.token_key("signin", token),
                 algorithms=[JWT_ALGORITHM],
                 options={"verify_exp": False},
             )
@@ -597,14 +580,13 @@ class AuthService:
         return codes
 
     @staticmethod
-    def _fernet() -> Fernet:
-        """Fernet cipher keyed off JWT_SECRET_KEY (SHA-256 -> base64 32-byte key)."""
-        key = base64.urlsafe_b64encode(hashlib.sha256(JWT_SECRET_KEY.encode()).digest())
-        return Fernet(key)
+    def _fernet(force: bool = False) -> MultiFernet:
+        """The ring's MFA keys: encrypts under the current, decrypts under any."""
+        return key_ring.encryptor("mfa", force=force)
 
     @staticmethod
     def _encrypt_mfa_secret(secret: str) -> str:
-        """Encrypt an MFA secret at rest with Fernet (JWT-key-derived)."""
+        """Encrypt an MFA secret at rest under the ring's current MFA key."""
         return AuthService._fernet().encrypt(secret.encode()).decode()
 
     @staticmethod
@@ -613,16 +595,23 @@ class AuthService:
 
         Raises:
             MFASecretDecryptionError: the value is a Fernet token that the
-                current JWT_SECRET_KEY cannot decrypt.
+                ring's MFA keys cannot decrypt.
         """
+        fernet = AuthService._fernet()  # an unreadable ring raises, never plaintext
         try:
-            return AuthService._fernet().decrypt(encrypted.encode()).decode()
+            return fernet.decrypt(encrypted.encode()).decode()
         except Exception as exc:
             if not encrypted.startswith(_FERNET_TOKEN_PREFIX):
                 return encrypted  # legacy plaintext (pre-migration rows)
+            try:  # a rotation on another replica: read the ring again
+                return (
+                    AuthService._fernet(force=True).decrypt(encrypted.encode()).decode()
+                )
+            except Exception:  # noqa: BLE001 - reported below as undecryptable
+                pass
             AuthService._log_undecryptable_secret()
             raise MFASecretDecryptionError(
-                "MFA secret cannot be decrypted with the current JWT_SECRET_KEY"
+                "MFA secret cannot be decrypted with the ring's MFA keys"
             ) from exc
 
     @staticmethod
@@ -634,9 +623,9 @@ class AuthService:
             return
         _last_undecryptable_log = now
         logger.error(
-            "MFA secret cannot be decrypted with the current JWT_SECRET_KEY; "
-            "the key has changed since MFA was set up. TOTP codes are rejected "
-            "until the original key is restored; recovery codes still work."
+            "MFA secret cannot be decrypted with the ring's MFA keys; "
+            "the ring has changed since MFA was set up. TOTP codes are rejected "
+            "until the original ring is restored; recovery codes still work."
         )
 
     @staticmethod

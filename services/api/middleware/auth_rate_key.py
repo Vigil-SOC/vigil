@@ -16,7 +16,8 @@ import jwt
 from starlette.requests import Request
 
 from core.auth.auth_cookies import ACCESS_COOKIE_NAME, REFRESH_COOKIE_NAME
-from core.auth.auth_service import JWT_ALGORITHM, JWT_SECRET_KEY
+from core.auth import key_ring
+from core.auth.auth_service import JWT_ALGORITHM
 from services.api.middleware.client_address import client_host
 
 _MAX_SUBJECT = 320
@@ -44,8 +45,13 @@ def _subject(value: object) -> str:
 
 def _token_user(token: str, expected_type: str) -> Optional[str]:
     try:
-        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
-    except jwt.PyJWTError:
+        # By kid, so a token signed under a rotated key keeps its own bucket.
+        payload = jwt.decode(
+            token,
+            key_ring.token_key("signin", token),
+            algorithms=[JWT_ALGORITHM],
+        )
+    except (jwt.PyJWTError, key_ring.KeyRingError):
         return None
     if payload.get("token_type") != expected_type:
         return None

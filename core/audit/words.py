@@ -44,6 +44,19 @@ def _tool(verb: str) -> Callable[[Mapping[str, Any]], str]:
     return lambda p: f"{verb} {p['tool']}" if p.get("tool") else f"{verb} a tool"
 
 
+_KEY_PURPOSES = {
+    "signin": "sign-in",
+    "run": "run-token",
+    "reset": "reset-link",
+    "setup": "first-run code",
+    "mfa": "authenticator-secret",
+}
+
+
+def _key_purpose(p: Mapping[str, Any]) -> str:
+    return _KEY_PURPOSES.get(str(p.get("purpose")), "signing")
+
+
 def _checkpoint(p: Mapping[str, Any]) -> str:
     point = p.get("checkpoint")
     seq = point.get("seq") if isinstance(point, Mapping) else None
@@ -228,6 +241,9 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "auth.mfa_enabled": "Turned on two-step sign-in",
     "auth.mfa_disabled": "Turned off two-step sign-in",
     "auth.recovery_codes_regenerated": "Made new recovery codes",
+    "auth.keys_adopted": "Adopted the signing and encryption key ring",
+    "auth.key_rotated": lambda p: f"Rotated the {_key_purpose(p)} key",
+    "auth.key_retired": lambda p: f"Retired the {_key_purpose(p)} key",
     "credential.minted": "Issued an MCP credential",
     "credential.revoked": "Revoked an MCP credential",
     "credential.expired": "Refused an expired MCP credential",

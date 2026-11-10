@@ -933,8 +933,10 @@ async function restoreFlow({ snapshot, version }: RestorePoint): Promise<boolean
 }
 
 // Every container that holds a database session stops first; postgres stays
-// up. The restore rotates JWT_SECRET_KEY into secrets.enc, where this app's
-// environment value would outrank it, so the new key is read back and kept.
+// up. A restore of a database from before the key ring rotates JWT_SECRET_KEY
+// into secrets.enc, where this app's environment value would outrank it, so a
+// key found there is read back and kept. With a ring the secret is unchanged
+// and nothing is stored, so an empty read-back is fine.
 async function restoreStandalone(snapshot: string): Promise<string | null> {
   if ((await runCompose(composeArgs("stop", "backend", "agent-worker", "agent-serve", "bifrost"))) !== 0)
     return "could not stop the Vigil containers";
@@ -948,7 +950,7 @@ async function restoreStandalone(snapshot: string): Promise<string | null> {
       "--snapshot", snapshot, "--bifrost-data", "/var/lib/vigil/bifrost",
     ),
   );
-  // Read back even after a failure: an error past the swap still rotated the
+  // Read back even after a failure: an error past the swap may have rotated the
   // key. Same lookup as the restore's own; stdout is the key alone, and it
   // never reaches the splash or the app log.
   const key = await collect(
@@ -962,7 +964,7 @@ async function restoreStandalone(snapshot: string): Promise<string | null> {
   const secret = key.stdout.trim().split(/\r?\n/).pop()?.trim();
   if (key.code === 0 && secret) writeConfig({ jwtSecret: secret });
   if (restored !== 0) return "see the log above";
-  if (key.code !== 0 || !secret) return "restored, but the rotated JWT secret could not be read back";
+  if (key.code !== 0) return "restored, but the rotated JWT secret could not be read back";
   return null;
 }
 
