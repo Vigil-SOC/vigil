@@ -1,6 +1,7 @@
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import api from '../services/api';
 import { clearChatCache, retainChatCache } from '../shell/chatCache';
+import { onSignInEnded } from '../services/signInEnd';
 
 const DEV_MODE = import.meta.env.VITE_DEV_MODE === 'true';
 
@@ -42,6 +43,8 @@ interface AuthContextType {
   isLoading: boolean;
   /** /auth/me failed for a reason other than 401, so the session state is unknown. */
   backendUnreachable: boolean;
+  /** Set when the server ended this sign-in under the person; the reason is the server's, if it gave one. */
+  signedOut: { reason: string | null } | null;
   /** Re-runs the /auth/me load. */
   retryLoadUser: () => Promise<void>;
   /** Re-reads /auth/me in place, without the loading screen that unmounts the console. */
@@ -62,6 +65,27 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [backendUnreachable, setBackendUnreachable] = useState(false);
+  const [signedOut, setSignedOut] = useState<{ reason: string | null } | null>(null);
+  const userRef = useRef<User | null>(null);
+  // a person's own log out is not the server ending their sign-in
+  const loggingOut = useRef(false);
+  userRef.current = user;
+
+  // The server ended the sign-in (idle, length limit, ended elsewhere): drop what
+  // this browser holds and show the signed-out state. A refresh that fails with no
+  // reason and no one signed in is just a visitor without a session.
+  useEffect(
+    () =>
+      onSignInEnded((reason) => {
+        if (loggingOut.current || (!userRef.current && !reason)) return;
+        clearChatCache();
+        localStorage.clear();
+        sessionStorage.clear();
+        setUser(null);
+        setSignedOut({ reason });
+      }),
+    [],
+  );
 
   // Auth cookies are HttpOnly, so JS can't read them: call /auth/me and let the
   // cookie identify the user. If the API answered with a 4xx the user is not
@@ -133,6 +157,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       });
 
       if (response.data.user?.user_id) retainChatCache(response.data.user.user_id);
+      setSignedOut(null);
       setUser(response.data.user);
       return response.data.recovery_codes ?? undefined;
     } catch (error: any) {
@@ -164,11 +189,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
 
     // the backend clears the cookies and blacklists the JTI
+    loggingOut.current = true;
     try {
       await api.post('/auth/logout');
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
+      loggingOut.current = false;
       clearChatCache();
       setUser(null);
     }
@@ -186,6 +213,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     isAuthenticated: !!user,
     isLoading,
     backendUnreachable,
+    signedOut,
     retryLoadUser,
     refreshUser,
     login,

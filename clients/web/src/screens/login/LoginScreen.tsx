@@ -11,6 +11,9 @@ export default function LoginScreen() {
   const navigate = useNavigate()
   const location = useLocation()
   const { login } = useAuth()
+  // the address a signed-out person was on; sign-in returns there
+  const from = (location.state as { from?: { pathname: string; search?: string; hash?: string } } | null)?.from
+  const goBack = () => navigate(from && from.pathname !== '/login' ? { pathname: from.pathname, search: from.search, hash: from.hash } : '/')
 
   const [usernameOrEmail, setUsernameOrEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -29,7 +32,7 @@ export default function LoginScreen() {
 
   // drop the handoff from history so a reload doesn't replay it
   useEffect(() => {
-    if (navState?.notice || navState?.forgot) navigate('.', { replace: true, state: null })
+    if (navState?.notice || navState?.forgot) navigate('.', { replace: true, state: from ? { from } : null })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const [resetSent, setResetSent] = useState(false)
@@ -66,7 +69,7 @@ export default function LoginScreen() {
         setup_code: setupCode.trim(),
       })
       await login(usernameOrEmail, password)
-      navigate('/')
+      goBack()
     } catch (err: any) {
       setError(requestErrorMessage(err, 'Could not create your account.'))
     } finally {
@@ -81,7 +84,7 @@ export default function LoginScreen() {
     try {
       const codes = await login(usernameOrEmail, password, showMfa ? mfaCode : undefined)
       if (codes?.length) setNewCodes(codes)
-      else navigate('/')
+      else goBack()
     } catch (err: any) {
       if (err?.message === 'PASSWORD_CHANGE_REQUIRED') {
         // the one forced-change path: the reset screen, with the reason
@@ -175,7 +178,7 @@ export default function LoginScreen() {
       {newCodes ? (
         <div className="flex flex-col gap-4">
           <RecoveryCodes codes={newCodes} />
-          <button className="btn-signin" type="button" onClick={() => navigate('/')}>
+          <button className="btn-signin" type="button" onClick={goBack}>
             Continue
             <Icon name="arrowR" />
           </button>

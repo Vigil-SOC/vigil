@@ -7,8 +7,7 @@ service account) may only tighten the policy.
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
@@ -19,6 +18,7 @@ from core.auth import session_policy, trail_events
 from core.auth.permissions import require_permission
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import SystemConfig, User
+from core.storage.schemas.base import OptDateTime
 from core.time import utcnow
 
 router = APIRouter()
@@ -37,7 +37,15 @@ MACHINE_LOOSENING = "A machine caller may only tighten the session policy"
 class PolicyOut(session_policy.SessionPolicy):
     version: int
     updated_by: Optional[str] = None
-    updated_at: Optional[datetime] = None
+    # Who updated_by is, for a screen that says who changed it.
+    updated_by_name: Optional[str] = None
+    updated_at: OptDateTime = None
+
+
+class LooseningOut(BaseModel):
+    """The answer to a dry run: whether saving this body would loosen the policy."""
+
+    loosening: bool
 
 
 class StaleOut(BaseModel):
@@ -45,11 +53,13 @@ class StaleOut(BaseModel):
     current: PolicyOut
 
 
-def _out(stored: session_policy.Stored) -> PolicyOut:
+def _out(stored: session_policy.Stored, session) -> PolicyOut:
+    editor = stored.updated_by and session.get(User, stored.updated_by)
     return PolicyOut(
         **stored.policy.model_dump(),
         version=stored.version,
         updated_by=stored.updated_by,
+        updated_by_name=(editor.full_name or editor.username) if editor else None,
         updated_at=stored.updated_at,
     )
 
@@ -76,12 +86,12 @@ def get_policy(
     """The policy in force and its version (the ETag)."""
     stored, _found = session_policy.read_row(session)
     response.headers["ETag"] = _etag(stored.version)
-    return _out(stored)
+    return _out(stored, session)
 
 
 @router.put(
     "",
-    response_model=PolicyOut,
+    response_model=Union[PolicyOut, LooseningOut],
     responses={
         412: {"model": StaleOut, "description": "If-Match is not the current version"},
         428: {"description": "If-Match is missing"},
@@ -94,12 +104,17 @@ def put_policy(
     session: UnitOfWorkSession,
     user: User = Depends(_MANAGE),
     if_match: Optional[str] = Header(None),
+    dry_run: bool = False,
 ):
-    """Replace the policy. An idle limit above its standard, or a stale version, is refused."""
+    """Replace the policy. An idle limit above its standard, or a stale version, is refused.
+
+    ``dry_run`` checks the version like a save, then saves nothing and answers whether
+    the body would loosen the policy now in force.
+    """
     expected = _version_of(if_match)
 
     def stale():
-        current = _out(session_policy.read_row(session)[0])
+        current = _out(session_policy.read_row(session)[0], session)
         return JSONResponse(
             status_code=412,
             content=StaleOut(
@@ -109,11 +124,13 @@ def put_policy(
         )
 
     # The row stays locked until this request ends.
-    old, found = session_policy.read_row(session, lock=True)
+    old, found = session_policy.read_row(session, lock=not dry_run)
     if old.version != expected:
         return stale()
 
     loosening = session_policy.is_loosening(old.policy, body)
+    if dry_run:
+        return LooseningOut(loosening=loosening)
     actor = request.state.vigil_http_actor
     changes = {"old": old.policy.model_dump(), "new": body.model_dump()}
     if loosening and not actor.person:
@@ -156,4 +173,4 @@ def put_policy(
     session.flush()
     stored = session_policy.read_row(session)[0]
     response.headers["ETag"] = _etag(stored.version)
-    return _out(stored)
+    return _out(stored, session)
