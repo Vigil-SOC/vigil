@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { configApi } from '../services/api'
 import { Icon } from '../shared/icons'
@@ -51,6 +51,7 @@ export default function UserMenu({
   const { notify } = useToast()
   const navigate = useNavigate()
   const { screen } = useParams<{ screen?: string }>()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { scheme, setScheme } = useColorScheme()
   const [open, setOpen] = useState(false)
   const [twoStepOpen, setTwoStepOpen] = useState(false)
@@ -118,6 +119,15 @@ export default function UserMenu({
     avatarRef.current?.focus()
     setPasswordOpen(true)
   }
+
+  // The bell's password-expiry warning links here with ?change_password=1.
+  useEffect(() => {
+    if (!searchParams.get('change_password') || authBypassed) return
+    setPasswordOpen(true)
+    const next = new URLSearchParams(searchParams)
+    next.delete('change_password')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams, authBypassed])
 
   const openSignIns = () => {
     setOpen(false)

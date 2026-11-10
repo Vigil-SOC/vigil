@@ -3,52 +3,73 @@ import { sessionPolicyApi, type SessionPolicy, type SessionPolicyBody } from '..
 import { errorText } from '../../shared/errorText'
 import { Icon } from '../../shared/icons'
 import { utcDayClock } from '../../shared/utc'
-import { ConfirmDialog, NumberInput, Select, SettingsCard } from '../../shared/ui'
+import { ConfirmDialog, NumberInput, Select, SettingsCard, Toggle } from '../../shared/ui'
 import type { SectionProps } from './types'
 
-// The lockout, dormancy and MFA fields have no control here: a save sends the saved ones back unchanged.
-type Key = Exclude<
-  keyof SessionPolicyBody,
-  'lockout_threshold' | 'lockout_timed' | 'lockout_minutes' | 'dormancy_days' | 'require_mfa'
->
-type NumKey = Exclude<Key, 'password_character_rules'>
 type Rules = SessionPolicyBody['password_character_rules']
+type Mfa = SessionPolicyBody['require_mfa']
+type NumKey =
+  | 'idle_standard_minutes' | 'idle_privileged_minutes' | 'absolute_hours' | 'sign_in_limit'
+  | 'password_min_length' | 'password_history' | 'password_max_age_days' | 'password_min_age_days' | 'lockout_threshold' | 'lockout_minutes' | 'dormancy_days'
+// What the form holds: every field of the body.
+type Form = Record<NumKey, string> & { password_character_rules: Rules; require_mfa: Mfa; lockout_timed: boolean }
 
 interface FieldDef {
   key: NumKey
   title: string
   hint: string
   unit: string
-  min: number
-  max: number
-  /** empty means no limit */
+  /** empty is allowed and reads as `none` */
   optional?: boolean
+  none?: string
+  /** 0 reads as `none` too */
+  zeroIsOff?: boolean
 }
 
 const FIELDS: FieldDef[] = [
   {
-    key: 'idle_standard_minutes', title: 'Idle limit', unit: 'min', min: 1, max: 60,
+    key: 'idle_standard_minutes', title: 'Idle limit', unit: 'min',
     hint: 'A sign-in with no action from the person for this long ends. Only clicks, keystrokes and page changes count; polling and live streams do not.',
   },
   {
-    key: 'idle_privileged_minutes', title: 'Idle limit, privileged roles', unit: 'min', min: 1, max: 30,
+    key: 'idle_privileged_minutes', title: 'Idle limit, privileged roles', unit: 'min',
     hint: 'Applies to a role that holds any of these permissions: users, roles, audit, integrations, AI autonomy, AI decision approval, sessions. It cannot exceed the idle limit.',
   },
   {
-    key: 'absolute_hours', title: 'Sign-in length', unit: 'hours', min: 1, max: 24,
+    key: 'absolute_hours', title: 'Sign-in length', unit: 'hours',
     hint: 'A sign-in ends this long after it started, however active it was. Service accounts have this limit only.',
   },
   {
-    key: 'sign_in_limit', title: 'Open sign-ins per account', unit: 'sign-ins', min: 1, max: 10, optional: true,
+    key: 'sign_in_limit', title: 'Open sign-ins per account', unit: 'sign-ins', optional: true, none: 'No limit',
     hint: 'The most sign-ins one account holds at once. At the limit, a new sign-in ends the oldest. Empty: no limit.',
   },
   {
-    key: 'password_min_length', title: 'Password length', unit: 'characters', min: 15, max: 64,
+    key: 'lockout_threshold', title: 'Failed sign-ins before a lock', unit: 'failures',
+    hint: 'Failures in a row that lock an account. Anyone who knows a username can lock that person out. Without mail, only Unlock or the host reset script ends a lock that does not time out.',
+  },
+  {
+    key: 'lockout_minutes', title: 'Timed lock length', unit: 'min',
+    hint: 'How long a timed lock lasts. A person who keeps failing after it ends is locked again, and a long run of failures locks until unlocked.',
+  },
+  {
+    key: 'dormancy_days', title: 'Dormancy period', unit: 'days', optional: true, none: 'Off',
+    hint: 'Days without a sign-in or a personal MCP token’s use before an account is deactivated. Empty: off. An account no one uses stays open to anyone who learns its password. Longer periods, or off, leave such accounts open longer.',
+  },
+  {
+    key: 'password_min_length', title: 'Password length', unit: 'characters',
     hint: 'The fewest characters a new password has. Applies when a password is set or changed; existing passwords are not rechecked.',
   },
   {
-    key: 'password_history', title: 'Password history', unit: 'passwords', min: 4, max: 24,
+    key: 'password_history', title: 'Password history', unit: 'passwords',
     hint: 'How many previous passwords are kept. A new password cannot match any of them.',
+  },
+  {
+    key: 'password_max_age_days', title: 'Password maximum age', unit: 'days', optional: true, none: 'Off',
+    hint: 'A person must change a password older than this at their next sign-in, and is warned in the bell 7 days before. Service accounts are never blocked; managers are warned instead. Empty: passwords do not expire. Only a person can change it.',
+  },
+  {
+    key: 'password_min_age_days', title: 'Password minimum age', unit: 'days', none: 'Off', zeroIsOff: true,
+    hint: 'How long after a change before the person may change it again. A forced change, a reset of a locked account, an administrator’s reset and a reported leak are exempt. 0: off.',
   },
 ]
 
@@ -57,11 +78,31 @@ const RULES: { value: Rules; label: string; text: string }[] = [
   { value: 'letters_digits', label: 'Letters and digits', text: 'letters and digits' },
   { value: 'four_classes', label: 'Four character classes', text: 'four character classes' },
 ]
+const MFA: { value: Mfa; label: string; text: string }[] = [
+  { value: 'off', label: 'Off', text: 'off' },
+  { value: 'privileged', label: 'Privileged roles', text: 'privileged roles' },
+  { value: 'everyone', label: 'Everyone', text: 'everyone' },
+]
+const MFA_TITLE = 'Require MFA'
+const MFA_HINT = 'Whose sign-in needs two-step verification. Someone it covers who has none set up is held at setup until they do. Service accounts are never covered.'
+const mfaText = (v: string | null | undefined) => MFA.find((m) => m.value === v)?.text ?? String(v)
+const TIMED_TITLE = 'Timed locks'
+const TIMED_HINT = 'On: a lock ends after the length set below. Off: a lock holds until an administrator unlocks the account or the person uses a reset link.'
+const timedText = (v: boolean) => (v ? 'on' : 'off')
+
+// Display order; the three that are not plain numbers have their own rows.
+const ORDER: (NumKey | 'require_mfa' | 'lockout_timed' | 'password_character_rules')[] = [
+  'idle_standard_minutes', 'idle_privileged_minutes', 'absolute_hours', 'sign_in_limit',
+  'require_mfa', 'lockout_threshold', 'lockout_timed', 'lockout_minutes', 'dormancy_days',
+  'password_min_length', 'password_history', 'password_character_rules',
+  'password_max_age_days', 'password_min_age_days',
+]
+
 const RULES_TITLE = 'Password character rules'
 const RULES_HINT = 'What a new password must contain besides its length.'
 const rulesText = (v: string | null | undefined) => RULES.find((r) => r.value === v)?.text ?? String(v)
 
-const toForm = (p: SessionPolicy): Record<Key, string> => ({
+const toForm = (p: SessionPolicy): Form => ({
   idle_standard_minutes: String(p.idle_standard_minutes),
   idle_privileged_minutes: String(p.idle_privileged_minutes),
   absolute_hours: String(p.absolute_hours),
@@ -69,9 +110,17 @@ const toForm = (p: SessionPolicy): Record<Key, string> => ({
   password_min_length: String(p.password_min_length),
   password_character_rules: p.password_character_rules,
   password_history: String(p.password_history),
+  password_max_age_days: p.password_max_age_days == null ? '' : String(p.password_max_age_days),
+  password_min_age_days: String(p.password_min_age_days),
+  lockout_threshold: String(p.lockout_threshold),
+  lockout_timed: p.lockout_timed,
+  lockout_minutes: String(p.lockout_minutes),
+  dormancy_days: p.dormancy_days == null ? '' : String(p.dormancy_days),
+  require_mfa: p.require_mfa,
 })
 
-const shown = (f: FieldDef, v: number | null | undefined) => (v == null ? 'No limit' : `${v} ${f.unit}`)
+const shown = (f: FieldDef, v: number | null | undefined) =>
+  v == null || (f.zeroIsOff && v === 0) ? (f.none ?? 'None') : `${v} ${f.unit}`
 
 // Validation messages arrive as a list; the server's own wording is what is shown.
 function failure(e: unknown, fallback: string) {
@@ -93,12 +142,12 @@ const who = (p: SessionPolicy) => {
  * Whether a change loosens the policy is the server's answer (a dry run), never worked out here. */
 export default function SessionsSection({ notify }: SectionProps) {
   const [saved, setSaved] = useState<SessionPolicy | null>(null)
-  const [form, setForm] = useState<Record<Key, string> | null>(null)
+  const [form, setForm] = useState<Form | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
   const [stale, setStale] = useState<SessionPolicy | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [confirm, setConfirm] = useState<SessionPolicyBody | null>(null)
+  const [confirm, setConfirm] = useState<{ body: SessionPolicyBody; without_mfa: number | null } | null>(null)
 
   const load = useCallback(() => {
     setFailed(null)
@@ -123,20 +172,18 @@ export default function SessionsSection({ notify }: SectionProps) {
   for (const f of FIELDS) {
     const raw = form[f.key].trim()
     if (raw === '' && f.optional) parsed[f.key] = null
+    else if (f.key === 'lockout_minutes' && !form.lockout_timed) parsed[f.key] = saved.lockout_minutes
     else if (/^\d+$/.test(raw)) parsed[f.key] = Number(raw)
     else valid = false
   }
-  const { lockout_threshold, lockout_timed, lockout_minutes, dormancy_days, require_mfa } = saved
   const body = {
     ...parsed,
-    password_character_rules: form.password_character_rules as Rules,
-    lockout_threshold,
-    lockout_timed,
-    lockout_minutes,
-    dormancy_days,
-    require_mfa,
+    password_character_rules: form.password_character_rules,
+    lockout_timed: form.lockout_timed,
+    require_mfa: form.require_mfa,
   } as SessionPolicyBody
-  const dirty = FIELDS.some((f) => form[f.key] !== toForm(saved)[f.key])
+  const was = toForm(saved)
+  const dirty = (Object.keys(form) as (keyof Form)[]).some((k) => form[k] !== was[k])
 
   const save = async (next: SessionPolicyBody) => {
     setBusy(true)
@@ -167,7 +214,7 @@ export default function SessionsSection({ notify }: SectionProps) {
     setProblem(null)
     try {
       const { data } = await sessionPolicyApi.loosens(body, saved.version)
-      if ('loosening' in data && data.loosening) setConfirm(body)
+      if ('loosening' in data && data.loosening) setConfirm({ body, without_mfa: data.without_mfa ?? null })
       else await save(body)
     } catch (e) {
       refused(e)
@@ -176,12 +223,88 @@ export default function SessionsSection({ notify }: SectionProps) {
     }
   }
 
-  const changes = confirm ? FIELDS.filter((f) => confirm[f.key] !== saved[f.key]) : []
-  const rulesChanged = !!confirm && confirm.password_character_rules !== saved.password_character_rules
+  const next = confirm?.body
+  const changes = next ? FIELDS.filter((f) => next[f.key] !== saved[f.key]) : []
+  const rulesChanged = !!next && next.password_character_rules !== saved.password_character_rules
+  const mfaChanged = !!next && next.require_mfa !== saved.require_mfa
+  const timedChanged = !!next && next.lockout_timed !== saved.lockout_timed
+  const range = (f: FieldDef) => saved.ranges[f.key]
+  const dormancyLonger = !!next && saved.dormancy_days != null && (next.dormancy_days == null || next.dormancy_days > saved.dormancy_days)
+  const set = (patch: Partial<Form>) => setForm({ ...form, ...patch })
+
+  const numberRow = (f: FieldDef) => (
+    <div className="lim-row" key={f.key}>
+      <label className="lim-row-title" htmlFor={`sp-${f.key}`}>
+        {f.title}
+        <span>{f.hint}</span>
+      </label>
+      <span className="lim-row-tag">Saved: {shown(f, saved[f.key])} · allowed {range(f).min}–{range(f).max}</span>
+      <span className="lim-row-ctl flex items-center gap-2">
+        <NumberInput
+          id={`sp-${f.key}`}
+          style={{ width: 96 }}
+          min={range(f).min}
+          max={range(f).max}
+          step={1}
+          placeholder={f.optional ? 'None' : undefined}
+          value={form[f.key]}
+          disabled={busy}
+          onChange={(e) => set({ [f.key]: e.target.value })}
+        />
+        <span className="text-xs text-tx-3">{f.unit}</span>
+      </span>
+    </div>
+  )
+  const mfaRow = (
+    <div className="lim-row" key="require_mfa">
+      <label className="lim-row-title" id="sp-mfa-label">
+        {MFA_TITLE}
+        <span>{MFA_HINT}</span>
+      </label>
+      <span className="lim-row-tag">Saved: {mfaText(saved.require_mfa)}</span>
+      <span className="lim-row-ctl flex items-center gap-2">
+        <Select
+          value={form.require_mfa}
+          options={MFA.map(({ value, label }) => ({ value, label }))}
+          disabled={busy}
+          onSelect={(v) => set({ require_mfa: v as Mfa })}
+        />
+      </span>
+    </div>
+  )
+  const timedRow = (
+    <div className="lim-row" key="lockout_timed">
+      <span className="lim-row-title" id="sp-timed-label">
+        {TIMED_TITLE}
+        <span>{TIMED_HINT}</span>
+      </span>
+      <span className="lim-row-tag">Saved: {timedText(saved.lockout_timed)}</span>
+      <span className="lim-row-ctl flex items-center gap-2">
+        <Toggle checked={form.lockout_timed} label={TIMED_TITLE} disabled={busy} onChange={(v) => set({ lockout_timed: v })} />
+      </span>
+    </div>
+  )
+  const rulesRow = (
+    <div className="lim-row" key="password_character_rules">
+      <label className="lim-row-title" id="sp-rules-label">
+        {RULES_TITLE}
+        <span>{RULES_HINT}</span>
+      </label>
+      <span className="lim-row-tag">Saved: {rulesText(saved.password_character_rules)}</span>
+      <span className="lim-row-ctl flex items-center gap-2">
+        <Select
+          value={form.password_character_rules}
+          options={RULES.map(({ value, label }) => ({ value, label }))}
+          disabled={busy}
+          onSelect={(v) => set({ password_character_rules: v as Rules })}
+        />
+      </span>
+    </div>
+  )
   return (
     <SettingsCard
-      title="Sign-in limits and password rules"
-      desc="How long a sign-in lasts and what a new password must be. A saved change applies to every open sign-in at its next request."
+      title="Sign-in limits, MFA, lockout and password rules"
+      desc="How long a sign-in lasts, whose sign-in needs MFA, when failed sign-ins lock an account, when an unused one is deactivated, and what a new password must be. A saved change applies to every open sign-in at its next request."
     >
       {stale && (
         <div className="settings-banner err mb-3" role="alert" style={{ alignItems: 'flex-start' }}>
@@ -193,6 +316,8 @@ export default function SessionsSection({ notify }: SectionProps) {
             <span>
               Now: {[
                 ...FIELDS.map((f) => `${f.title.toLowerCase()} ${shown(f, stale[f.key])}`),
+                `require MFA ${mfaText(stale.require_mfa)}`,
+                `${TIMED_TITLE.toLowerCase()} ${timedText(stale.lockout_timed)}`,
                 `${RULES_TITLE.toLowerCase()} ${rulesText(stale.password_character_rules)}`,
               ].join(' · ')}.
             </span>
@@ -210,44 +335,14 @@ export default function SessionsSection({ notify }: SectionProps) {
           <span>{problem}</span>
         </div>
       )}
-      {FIELDS.map((f) => (
-        <div className="lim-row" key={f.key}>
-          <label className="lim-row-title" htmlFor={`sp-${f.key}`}>
-            {f.title}
-            <span>{f.hint}</span>
-          </label>
-          <span className="lim-row-tag">Saved: {shown(f, saved[f.key])} · allowed {f.min}–{f.max}</span>
-          <span className="lim-row-ctl flex items-center gap-2">
-            <NumberInput
-              id={`sp-${f.key}`}
-              style={{ width: 96 }}
-              min={f.min}
-              max={f.max}
-              step={1}
-              placeholder={f.optional ? 'None' : undefined}
-              value={form[f.key]}
-              disabled={busy}
-              onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
-            />
-            <span className="text-xs text-tx-3">{f.unit}</span>
-          </span>
-        </div>
-      ))}
-      <div className="lim-row">
-        <label className="lim-row-title" id="sp-rules-label">
-          {RULES_TITLE}
-          <span>{RULES_HINT}</span>
-        </label>
-        <span className="lim-row-tag">Saved: {rulesText(saved.password_character_rules)}</span>
-        <span className="lim-row-ctl flex items-center gap-2">
-          <Select
-            value={form.password_character_rules}
-            options={RULES.map(({ value, label }) => ({ value, label }))}
-            disabled={busy}
-            onSelect={(v) => setForm({ ...form, password_character_rules: v })}
-          />
-        </span>
-      </div>
+      {ORDER.map((key) => {
+        if (key === 'require_mfa') return mfaRow
+        if (key === 'lockout_timed') return timedRow
+        if (key === 'password_character_rules') return rulesRow
+        // The length applies only to timed locks.
+        if (key === 'lockout_minutes' && !form.lockout_timed) return null
+        return numberRow(FIELDS.find((f) => f.key === key)!)
+      })}
       <div className="flex flex-wrap items-center gap-2.5 mt-3.5">
         <button className="btn primary" disabled={busy || !dirty || !valid} onClick={submit}>
           {busy ? 'Saving…' : 'Save'}
@@ -263,19 +358,25 @@ export default function SessionsSection({ notify }: SectionProps) {
         title="Loosen the policy?"
         confirmLabel="Save change"
         busy={busy}
-        onConfirm={() => confirm && save(confirm)}
+        onConfirm={() => confirm && save(confirm.body)}
         onClose={() => setConfirm(null)}
         body={
           <>
-            <p>This change lets a sign-in last longer, an account hold more sign-ins, or a password be shorter, simpler or reused sooner:</p>
+            <p>This change loosens the policy: a sign-in can last longer, an account hold more sign-ins, a password be shorter, simpler, reused sooner, older or changed sooner, someone sign in without MFA, a guesser have more tries or a shorter lock, or an unused account stay open longer:</p>
             <ul className="my-2 pl-5 list-disc">
               {changes.map((f) => (
-                <li key={f.key}>{f.title}: {shown(f, saved[f.key])} → {shown(f, confirm?.[f.key])}</li>
+                <li key={f.key}>{f.title}: {shown(f, saved[f.key])} → {shown(f, next?.[f.key])}</li>
               ))}
+              {mfaChanged && <li>{MFA_TITLE}: {mfaText(saved.require_mfa)} → {mfaText(next?.require_mfa)}</li>}
+              {timedChanged && <li>{TIMED_TITLE}: {timedText(saved.lockout_timed)} → {timedText(next!.lockout_timed)}</li>}
               {rulesChanged && (
-                <li>{RULES_TITLE}: {rulesText(saved.password_character_rules)} → {rulesText(confirm?.password_character_rules)}</li>
+                <li>{RULES_TITLE}: {rulesText(saved.password_character_rules)} → {rulesText(next?.password_character_rules)}</li>
               )}
             </ul>
+            {confirm?.without_mfa != null && (
+              <p>{confirm.without_mfa} {confirm.without_mfa === 1 ? 'person' : 'people'} will be able to sign in without MFA.</p>
+            )}
+            {dormancyLonger && <p>Longer periods, or off, leave unused accounts open longer.</p>}
             <p>It is recorded in the audit trail with your name and the old and new values.</p>
           </>
         }

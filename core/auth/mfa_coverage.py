@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from core.auth import session_policy, trail_events
 from core.platform import notices
-from core.storage.models import User
+from core.storage.models import Role, User
 from core.storage.unit_of_work import unit_of_work
 
 ACTION = "auth.mfa_coverage_gap"
@@ -21,15 +21,19 @@ LOCK = 4177
 SETTINGS_LINK = "/settings?section=sessions"
 
 
-def without_mfa(session: Session) -> int:
-    """Active accounts the "everyone" level would cover that have no MFA yet."""
+def without_mfa(session: Session, level: str = "everyone") -> int:
+    """Active accounts ``level`` would cover that have no MFA yet."""
     users = (
-        session.query(User.service_account)
+        session.query(User.service_account, Role.permissions)
+        .outerjoin(Role, Role.role_id == User.role_id)
         .filter(User.is_active.is_(True), User.mfa_enabled.isnot(True))
         .all()
     )
     return sum(
-        session_policy.mfa_covered((), sa is True, "everyone") for (sa,) in users
+        session_policy.mfa_covered(
+            [name for name, on in (perms or {}).items() if on], sa is True, level
+        )
+        for sa, perms in users
     )
 
 

@@ -270,7 +270,7 @@ class AccountLink(Base):
 
     Only the SHA-256 of the link's value is stored. ``used_at`` is set by the
     submission that completes it, ``revoked_at`` by a revoke or a newer link.
-    Built by ``core/upgrade/versions/0052_account_links.sql``.
+    Built by ``core/upgrade/versions/0053_account_links.sql``.
     """
 
     __tablename__ = "account_links"
@@ -348,6 +348,9 @@ class McpCredential(Base):
     last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # The credential that replaced this one when it was rotated. Set once: a
+    # rotated credential is not rotated again.
+    successor_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
     __table_args__ = (Index("idx_mcp_credentials_user", "user_id"),)
 
@@ -359,6 +362,15 @@ class McpCredential(Base):
         if self.expires_at is not None and self.expires_at <= now:
             return False
         return True
+
+    def status(self, now: Optional[datetime] = None) -> str:
+        """``revoked``, ``expired``, ``rotated`` (still good until it ends) or ``active``."""
+        now = now or utcnow()
+        if self.revoked_at is not None:
+            return "revoked"
+        if self.expires_at is not None and self.expires_at <= now:
+            return "expired"
+        return "rotated" if self.successor_id else "active"
 
     def to_dict(self) -> dict:
         """What an operator may see. Never the token; it no longer exists."""
@@ -372,4 +384,6 @@ class McpCredential(Base):
             ),
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
             "revoked_at": self.revoked_at.isoformat() if self.revoked_at else None,
+            "successor_id": self.successor_id,
+            "status": self.status(),
         }
