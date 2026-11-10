@@ -221,8 +221,6 @@ class Settings(BaseSettings):
     # Auth
     jwt_access_expiration_minutes: int = 30
     jwt_refresh_expiration_days: int = 7
-    auth_lockout_threshold: int = 5
-    auth_lockout_duration_minutes: int = 15
     # Comma-separated IPs and CIDRs of reverse proxies allowed to set
     # X-Forwarded-For. Empty trusts the TCP peer only. "*" is ignored:
     # a client who can reach the backend directly could otherwise choose

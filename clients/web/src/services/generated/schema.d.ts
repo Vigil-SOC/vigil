@@ -6698,6 +6698,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/{user_id}/unlock": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unlock User
+         * @description End a lock and the failure count. users.write over the account, a role the
+         *     caller covers, and a person's own act: a lock ends no sign-in, so a locked
+         *     manager's open session must not be able to undo it, nor may a playbook.
+         */
+        post: operations["post_api_users_user_id_unlock"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agent-runs": {
         parameters: {
             query?: never;
@@ -11787,6 +11809,21 @@ export interface components {
              * @default 15
              */
             idle_standard_minutes: number;
+            /**
+             * Lockout Minutes
+             * @default 30
+             */
+            lockout_minutes: number;
+            /**
+             * Lockout Threshold
+             * @default 3
+             */
+            lockout_threshold: number;
+            /**
+             * Lockout Timed
+             * @default false
+             */
+            lockout_timed: boolean;
             /** Sign In Limit */
             sign_in_limit?: number | null;
             /** Updated At */
@@ -12323,6 +12360,21 @@ export interface components {
              * @default 15
              */
             idle_standard_minutes: number;
+            /**
+             * Lockout Minutes
+             * @default 30
+             */
+            lockout_minutes: number;
+            /**
+             * Lockout Threshold
+             * @default 3
+             */
+            lockout_threshold: number;
+            /**
+             * Lockout Timed
+             * @default false
+             */
+            lockout_timed: boolean;
             /** Sign In Limit */
             sign_in_limit?: number | null;
         };
@@ -12893,6 +12945,17 @@ export interface components {
             reason: string;
             /** Values */
             values: string[];
+        };
+        /**
+         * UnlockRequest
+         * @description How the manager confirmed the person is who they say. Kept in the trail.
+         */
+        UnlockRequest: {
+            /**
+             * Identity Confirmed By
+             * @enum {string}
+             */
+            identity_confirmed_by: "in_person" | "video_call" | "phone_call_back" | "other_verified_channel";
         };
         /**
          * UpdateConversationRequest
@@ -25181,6 +25244,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EndedSignIns"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_users_user_id_unlock: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnlockRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

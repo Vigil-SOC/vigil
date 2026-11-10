@@ -100,7 +100,7 @@ def _stop(runs: dict[str, str]) -> dict[str, str]:
     return stopped
 
 
-def _managers(person: str) -> list[str]:
+def managers(person: str) -> list[str]:
     """Active people, other than this one, who hold users.write."""
     from core.auth.auth_service import AuthService
     from core.storage.connection import get_db_session
@@ -139,7 +139,7 @@ def _tell(
         "do not recognise in Settings."
     )
     title = "Agent runs stopped: a sign-in ended"
-    to = _managers(person)
+    to = managers(person)
     if reason != sign_ins.ERASED:
         to.append(person)
     for principal in to:
