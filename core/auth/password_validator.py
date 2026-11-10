@@ -141,7 +141,7 @@ def validate_password_strength(
     kwargs override for tests.
     user_inputs: terms (username, email) zxcvbn penalizes if embedded.
     """
-    policy = session_policy.current()
+    policy = session_policy.policy()
     limit = min_length if min_length is not None else policy.password_min_length
     threshold = (
         min_score if min_score is not None else get_settings().auth_min_zxcvbn_score

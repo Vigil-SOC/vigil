@@ -104,3 +104,31 @@ def linked_iocs(
                 seen.add(pair)
                 out.append(pair)
     return out
+
+
+# SUMMARY_KEYS' kinds as memory spells an Entity Key type; files have none.
+_KEY_TYPES = {
+    "hosts": "host",
+    "users": "user",
+    "ips": "ip",
+    "domains": "domain",
+    "urls": "url",
+    "emails": "email",
+    "hashes": "hash",
+    "processes": "process",
+}
+
+
+def linked_entity_keys(contexts: Iterable[Any]) -> list[str]:
+    """The Entity Keys every alert names, once each, for ``recall_entity``."""
+    from core.memory.entity_keys import entity_key
+
+    keys = (
+        entity_key(_KEY_TYPES[kind], value)
+        for context in contexts
+        for kind, names in SUMMARY_KEYS.items()
+        if kind in _KEY_TYPES  # files name no Entity Key type
+        for name in names
+        for value in _values(context, name)
+    )
+    return list(dict.fromkeys(key for key in keys if key))

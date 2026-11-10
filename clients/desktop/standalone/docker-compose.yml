@@ -131,6 +131,7 @@ services:
       # core/config.py defaults to localhost:6989, which is nothing here.
       - AGENT_URL=http://agent-serve:6989
       - VIGIL_UPGRADE_DIR=/var/lib/vigil-upgrade
+      - SHELL_SOCKET=/run/vigil/shell/shell.sock
     ports:
       - "127.0.0.1:6987:6987"
     volumes:
@@ -143,6 +144,7 @@ services:
       # Detection rule repositories, fetched from Settings. Pre-created by the
       # image like the State Directory, and kept out of it.
       - detection_rules:/home/vigil/security-detections
+      - agent_shell_socket:/run/vigil/shell
     # logs/ is workdir-relative and /app is root-owned, so tmpfs is the only
     # mount that can carry the right owner. Keep uid/gid in step with
     # Dockerfile.backend.
@@ -155,6 +157,8 @@ services:
         condition: service_healthy
       bifrost:
         condition: service_healthy
+      agent-shell:
+        condition: service_started
       upgrade:
         condition: service_completed_successfully
     restart: unless-stopped
@@ -213,6 +217,47 @@ services:
     restart: unless-stopped
     networks:
       - vigil
+
+  # The read-only case shell (#4199), from the agent image already in the
+  # offline bundle. No network; the backend reaches it over a socket volume.
+  agent-shell:
+    image: ghcr.io/vigil-soc/vigil-agent:${VIGIL_VERSION}
+    command: ["node", "dist/shell.js"]
+    # Root, for setpriv, with only what it needs: SETUID/SETGID to drop each call
+    # to a pool uid, KILL to end a call's processes. The image's USER is 1000.
+    user: "0:0"
+    environment:
+      SHELL_SOCKET: /run/vigil-shell/sock/shell.sock
+    network_mode: none
+    read_only: true
+    # Each call's view, unpacked by its owner uid into a 0750 directory and
+    # deleted after. Only owners (group 60999) may create here, and nobody may
+    # list it; the command's uid may only pass through to its own directory.
+    tmpfs:
+      - /work:size=512m,mode=1731,gid=60999
+    # No /dev/shm: a file left there would outlive the call.
+    ipc: none
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID, KILL]
+    security_opt:
+      - no-new-privileges:true
+    # Reaps what a killed command's children leave re-parented to PID 1.
+    init: true
+    # Bounds every call together; each runner is also held to 64 processes and
+    # 32 MiB per file (shell.ts).
+    pids_limit: 512
+    mem_limit: 1g
+    healthcheck:
+      # Over the socket: the container has no network to fetch on.
+      test: ["CMD", "node", "-e", "require('http').get({socketPath: '/run/vigil-shell/sock/shell.sock', path: '/healthz'}, r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    volumes:
+      # Shared with the backend alone.
+      - agent_shell_socket:/run/vigil-shell/sock
+    restart: unless-stopped
 
   # Snapshot before the upgrade one-shot. No backups.json on a desktop install,
   # so the point lands in the upgrade directory. Writes restore-point there;
@@ -291,6 +336,7 @@ volumes:
   detection_rules:
   bifrost_data:
   upgrade_state:
+  agent_shell_socket:
 
 networks:
   vigil:

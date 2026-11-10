@@ -1,10 +1,11 @@
-"""How long a sign-in lasts and what a password must be, in one validated model.
+"""How long a sign-in lasts, when failed sign-ins lock an account and what a
+password must be, in one validated model.
 
 One ``system_config`` row holds the document: the fields of ``SessionPolicy``
 plus its ``version``. A later setting joins by adding a field to the model.
 Every ``limits`` call reads the row, so a saved change applies at the next
 request; nothing is cached. Authentication and refresh read the limits only
-through ``limits``; the password rules are read through ``current``.
+through ``limits``; the password rules and lockout through ``policy``.
 """
 
 import logging
@@ -56,6 +57,12 @@ class SessionPolicy(BaseModel):
     password_character_rules: Literal["none", "letters_digits", "four_classes"] = "none"
     # Previous passwords kept, and refused on reuse.
     password_history: int = Field(5, ge=4, le=24)
+    # Failures in a row that lock an account. Off, the lock holds until an
+    # administrator's Unlock or the person's reset link; on, it ends after
+    # lockout_minutes. LOCK_UNTIL_UNLOCKED failures lock until unlocked either way.
+    lockout_threshold: int = Field(3, ge=1, le=20)
+    lockout_timed: bool = False
+    lockout_minutes: int = Field(30, ge=30, le=1440)
 
     @model_validator(mode="after")
     def _privileged_within_standard(self):
@@ -67,15 +74,29 @@ class SessionPolicy(BaseModel):
         return self
 
 
+# Failures in a row that lock until unlocked, even in timed mode.
+LOCK_UNTIL_UNLOCKED = 100
+
 _RULE_STRENGTH = {"none": 0, "letters_digits": 1, "four_classes": 2}
 
 
 def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
-    """Whether ``new`` lets a sign-in last longer, an account hold more, or a
-    password be shorter, simpler or reused sooner."""
+    """Whether ``new`` lets a sign-in last longer, an account hold more, a
+    guesser have more tries or a shorter lock, or a password be shorter,
+    simpler or reused sooner."""
     weaker_rules = (
         _RULE_STRENGTH[new.password_character_rules]
         < _RULE_STRENGTH[old.password_character_rules]
+    )
+    easier_lock = (
+        new.lockout_threshold > old.lockout_threshold
+        or (new.lockout_timed and not old.lockout_timed)
+        # A shorter timed lock is a weaker one.
+        or (
+            new.lockout_timed
+            and old.lockout_timed
+            and new.lockout_minutes < old.lockout_minutes
+        )
     )
     more_sign_ins = old.sign_in_limit is not None and (
         new.sign_in_limit is None or new.sign_in_limit > old.sign_in_limit
@@ -88,6 +109,7 @@ def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
         or new.password_min_length < old.password_min_length
         or weaker_rules
         or new.password_history < old.password_history
+        or easier_lock
     )
 
 
@@ -178,7 +200,7 @@ class Limits(NamedTuple):
     sign_in_limit: Optional[int] = None
 
 
-def current() -> SessionPolicy:
+def policy() -> SessionPolicy:
     """The policy in force now, read every call."""
     with unit_of_work() as session:
         try:
@@ -194,12 +216,12 @@ def limits(permissions: Iterable[str], service_account: bool = False) -> Limits:
     A service account is bound by the absolute limit only: it has no person
     whose idleness could end it, and no sign-in limit.
     """
-    policy = current()
-    absolute = timedelta(hours=policy.absolute_hours)
+    current = policy()
+    absolute = timedelta(hours=current.absolute_hours)
     if service_account:
         return Limits(None, absolute)
     privileged = not PRIVILEGED_PERMISSIONS.isdisjoint(permissions)
     minutes = (
-        policy.idle_privileged_minutes if privileged else policy.idle_standard_minutes
+        current.idle_privileged_minutes if privileged else current.idle_standard_minutes
     )
-    return Limits(timedelta(minutes=minutes), absolute, policy.sign_in_limit)
+    return Limits(timedelta(minutes=minutes), absolute, current.sign_in_limit)

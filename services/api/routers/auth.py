@@ -27,6 +27,7 @@ from core.auth.auth_service import (
     AccountLockedError,
     AuthService,
     _is_service_account,
+    clear_lock,
     password_matches_any,
     raise_if_locked,
 )
@@ -262,7 +263,7 @@ class PasswordResetConfirm(BaseModel):
 def _apply_new_password(user: User, plaintext: str) -> None:
     """Enforce history, hash, set, update history + changed_at in one place.
     The request's unit of work owns the commit."""
-    keep = session_policy.current().password_history
+    keep = session_policy.policy().password_history
     # The current hash and the history are checked together (PBKDF2 runs once
     # per distinct salt).
     if password_matches_any(
@@ -511,7 +512,11 @@ def login(
     # Authenticate user
     try:
         user = AuthService.authenticate_user(
-            payload.username_or_email, payload.password, session, refusal=refusal
+            payload.username_or_email,
+            payload.password,
+            session,
+            refusal=refusal,
+            source=source,
         )
     except AccountLockedError:
         failed()
@@ -551,15 +556,21 @@ def login(
         pending_reset = user in session
         if pending_reset:
             session.expire(user)
-        if not AuthService.verify_mfa_code(user.user_id, payload.mfa_code, session):
+        # The login step is the one place a wrong code counts toward a lock.
+        if not AuthService.verify_mfa_code(
+            user.user_id,
+            payload.mfa_code,
+            session,
+            count_failures=True,
+            source=source,
+        ):
             failed("bad_mfa_code")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid MFA code",
             )
         if pending_reset:
-            user.failed_login_count = 0
-            user.locked_until = None
+            clear_lock(user)
             user.last_login = utcnow()
             user.login_count = (user.login_count or 0) + 1
         # Whether TOTP or an old code got in, an old-scheme set ends here.
@@ -1473,8 +1484,7 @@ async def password_reset_confirm(
     try:
         await asyncio.to_thread(_apply_new_password, user, body.new_password)
         # Clear any active lockout so the user can immediately log in.
-        user.failed_login_count = 0
-        user.locked_until = None
+        clear_lock(user)
         # The reset token's holder acted; they have no session.
         await asyncio.to_thread(
             trail_events.record,

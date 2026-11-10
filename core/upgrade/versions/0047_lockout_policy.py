@@ -1,9 +1,9 @@
-"""A run records the sign-in it started from (#4173)."""
+"""When and where an account was locked, and failure counts reset (#4176)."""
 
 from core.upgrade.revision import run_sql
 
-revision = "0045_run_sign_in"
-down_revision = "0044_sign_in_end_reasons"
+revision = "0047_lockout_policy"
+down_revision = "0046_run_sign_in"
 
 
 def upgrade() -> None:

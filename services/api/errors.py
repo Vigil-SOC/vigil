@@ -3,8 +3,8 @@
 Route handlers raise ``core.exceptions.SOCError`` subclasses for expected
 failures and let anything else propagate. ``BudgetExceeded`` is not a
 ``SOCError``; it has its own handler so a spent virtual key is a 402 rather
-than an internal error. ``AccountLockedError`` is a 423 with ``Retry-After``,
-which Medic's gateway reads to time its next login. ``trail.Paused`` is a 503
+than an internal error. ``AccountLockedError`` is a 423, with ``Retry-After`` when the lock is timed;
+Medic's gateway reads it to time its next login. ``trail.Paused`` is a 503
 with ``Retry-After`` while a feed-on restore's entry waits to leave the box.
 These handlers render them as JSON, so no route needs its own ``try``/``except`` to produce an HTTP
 error response.
@@ -24,6 +24,7 @@ from core.audit.trail import Paused
 from core.auth.auth_service import AccountLockedError
 from core.exceptions import SOCError
 from core.llm.cost.budget import BudgetExceeded
+from core.platform.email_service import mail_is_configured
 from core.telemetry import current_trace_ids
 from core.time import utcnow
 
@@ -84,11 +85,38 @@ async def budget_exceeded_handler(
 async def account_locked_handler(
     request: Request, exc: AccountLockedError
 ) -> JSONResponse:
-    retry_after = max(1, int((exc.locked_until - utcnow()).total_seconds()))
+    """A timed lock says when it ends, with Retry-After. A lock until unlocked
+    has no end to wait for: it says what ends it, and whether mail can carry a
+    reset link."""
+    if exc.locked_until:
+        retry_after = max(1, int((exc.locked_until - utcnow()).total_seconds()))
+        detail = (
+            "Account locked after repeated failed sign-ins. It ends at "
+            f"{exc.locked_until:%H:%M} UTC on {exc.locked_until:%Y-%m-%d}."
+        )
+        headers = {"Retry-After": str(retry_after)}
+    else:
+        detail = (
+            "Account locked after repeated failed sign-ins. Waiting will not end "
+            "it: an administrator's Unlock or a password reset link does. "
+            + (
+                "Use Forgot password to have a reset link mailed."
+                if mail_is_configured()
+                else "Mail is not set up on this server, so a reset link cannot be "
+                "mailed: ask an administrator."
+            )
+        )
+        headers = {}
     return JSONResponse(
         status_code=423,
-        content={"detail": "Account locked due to repeated failed login attempts"},
-        headers={"Retry-After": str(retry_after)},
+        content={
+            "detail": detail,
+            "code": "ACCOUNT_LOCKED",
+            "locked_until": (
+                exc.locked_until.isoformat() + "Z" if exc.locked_until else None
+            ),
+        },
+        headers=headers,
     )
 
 

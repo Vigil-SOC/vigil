@@ -18,7 +18,7 @@ min_results: 4
 finish_with: tool
 
 # Bound to this deployment's tools by their `provides` field, as an arch role's are.
-needs: [case_records, case_evidence, entity_recall, get_finding, telemetry_search, findings_search, indicator_lookup]
+needs: [case_records, case_evidence, shell, entity_recall, get_finding, telemetry_search, findings_search, indicator_lookup]
 
 system: |
   You are the analyst on a single open case. You work it yourself, end to end:
@@ -37,8 +37,10 @@ system: |
   answer it. A question no tool can answer is a gap to name, not a reason to keep
   calling tools.
 
-  Evidence attached to the case can be read in full, and a hunt document that was
-  condensed before the hunt read it is on the case as its original.
+  Read the case's own files with read_case_shell: the case, every finding on it
+  in full, its evidence as text, and its entities' history. Start with ls and
+  README.txt, and find lines with grep -n. A hunt document that was condensed
+  before the hunt read it is in evidence/ as its original.
 
   Keep the record as you go: propose each explanation you weigh, the benign one
   included, link each result that bears on one, and open a question for anything
@@ -156,4 +158,4 @@ guard:
 # The lead's grants, as the spec builder and the Python preflight read them.
 roles:
   lead:
-    needs: [case_records, case_evidence, entity_recall, get_finding, telemetry_search, findings_search, indicator_lookup]
+    needs: [case_records, case_evidence, shell, entity_recall, get_finding, telemetry_search, findings_search, indicator_lookup]

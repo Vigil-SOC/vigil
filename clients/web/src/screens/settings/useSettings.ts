@@ -266,6 +266,11 @@ export interface User {
   login_count: number
   principal_kind: 'person' | 'service_account'
   managed_by_medic: boolean
+  /** sign-in is refused now; locked_until is empty for a lock until an Unlock or a reset link */
+  locked: boolean
+  locked_until: string | null
+  locked_at: string | null
+  locked_from: string | null
   /** person-only keys the role holds; stored, no effect for a non-person */
   no_effect: string[]
 }

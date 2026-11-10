@@ -1,9 +1,12 @@
 # infra/docker/Dockerfile.agent
 # =============================================================================
-# Agent layer — one image, two commands
+# Agent layer — one image, three commands
 #
 #   node dist/worker.js   drains the BullMQ `agent-runs` queue   (default CMD)
 #   node dist/serve.js    answers the agent HTTP surface
+#   node dist/shell.js    the read-only case shell sidecar (#4199): runs as root
+#                         with SETUID/SETGID/KILL only, drops each call to a pool
+#                         uid with setpriv (util-linux, already in the base image)
 #
 # One image because they share every dependency and differ only in how work
 # arrives; two Deployments because a queue's depth and a count of open SSE
@@ -48,14 +51,15 @@ LABEL org.opencontainers.image.version="${VIGIL_VERSION}"
 
 WORKDIR /app
 
-# Nothing here needs apt except the base image's own gnutls (two fixable
-# CRITICALs: CVE-2026-33845, CVE-2026-42010) and perl-base (CVE-2026-13221,
-# CVE-2026-42496, CVE-2026-8376). Pinned because hadolint asks for it; Trivy is
-# what says when a pin has gone stale.
+# apt brings the base image's own gnutls (two fixable CRITICALs: CVE-2026-33845,
+# CVE-2026-42010) and perl-base (CVE-2026-13221, CVE-2026-42496, CVE-2026-8376),
+# and jq, the one tool the case shell adds to the image's bash and coreutils.
+# Pinned because hadolint asks for it; Trivy is what says when a pin has gone stale.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libgnutls30=3.7.9-2+deb12u7 \
         perl-base=5.36.0-7+deb12u4 \
+        jq=1.6-2.1+deb12u3 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY services/agent/package.json services/agent/package-lock.json ./
@@ -73,6 +77,10 @@ COPY --from=build /build/plugins/ ./dist/plugins/
 COPY core/skills/library/ ./dist/skills/
 
 RUN if [ -n "${VIGIL_VERSION}" ]; then echo "${VIGIL_VERSION}" > /app/VERSION; fi
+
+# The shell's socket volume mounts at /run/vigil-shell/sock. Its parent is root's
+# alone, so a command running under a pool uid cannot reach the socket.
+RUN mkdir -p /run/vigil-shell/sock && chmod 0700 /run/vigil-shell
 
 # 6989 serve: chat, run projections, and its own probes.
 # 6990 worker: probes only.

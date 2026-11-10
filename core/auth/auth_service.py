@@ -18,7 +18,7 @@ from cryptography.fernet import MultiFernet
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
-from core.auth import key_ring, password_hash, principals
+from core.auth import key_ring, password_hash, principals, session_policy
 from core.auth.identity import claim_sign_in_names, identifier_in_use, matching_accounts
 from core.config import get_settings
 from core.exceptions import default_on_error
@@ -86,10 +86,6 @@ JWT_ALGORITHM = "HS256"
 JWT_ACCESS_EXPIRATION_MINUTES = get_settings().jwt_access_expiration_minutes
 JWT_REFRESH_EXPIRATION_DAYS = get_settings().jwt_refresh_expiration_days
 
-# Account lockout configuration
-LOCKOUT_THRESHOLD = get_settings().auth_lockout_threshold
-LOCKOUT_DURATION_MINUTES = get_settings().auth_lockout_duration_minutes
-
 # Old codes were 8 hex characters, new ones 16
 _RECOVERY_CODE = re.compile(r"[0-9A-F]{8}|[0-9A-F]{16}")
 
@@ -100,31 +96,60 @@ def _is_service_account(user: User) -> bool:
 
 
 class AccountLockedError(Exception):
-    """Raised when authentication is refused because the account is locked."""
+    """Raised when authentication is refused because the account is locked.
+    ``locked_until`` is None for a lock that lasts until an Unlock or a reset link."""
 
-    def __init__(self, locked_until: datetime):
+    def __init__(self, locked_until: Optional[datetime]):
         self.locked_until = locked_until
-        super().__init__(f"Account locked until {locked_until.isoformat()}")
+        super().__init__(
+            f"Account locked until {locked_until.isoformat()}"
+            if locked_until
+            else "Account locked until unlocked"
+        )
 
 
 def _account_is_locked(user: User) -> bool:
-    until = user.locked_until
-    return until is not None and until > utcnow() and not _is_service_account(user)
+    """A timed lock holds until ``locked_until``; one with only ``locked_at`` set
+    holds until an Unlock or a reset link clears it."""
+    if _is_service_account(user):
+        return False
+    if user.locked_until is not None:
+        return user.locked_until > utcnow()
+    return user.locked_at is not None
+
+
+def clear_lock(user: User) -> None:
+    """The count and the lock end. Only a complete sign-in, an Unlock or a reset
+    link calls this."""
+    user.failed_login_count = 0
+    user.locked_until = user.locked_at = user.locked_from = None
 
 
 def raise_if_locked(user: User) -> None:
     if _account_is_locked(user):
-        logger.warning(
-            "Refused, account locked: %s until %s",
-            user.username,
-            user.locked_until.isoformat(),
-        )
+        logger.warning("Refused, account locked: %s", user.username)
         raise AccountLockedError(user.locked_until)
 
 
 def password_matches_any(plaintext: str, hashes) -> bool:
     """Return True if `plaintext` matches any hash in the iterable (either scheme)."""
     return password_hash.find(plaintext, list(hashes or [])) is not None
+
+
+def managers(person: str) -> list[str]:
+    """Principal ids of active people, other than this one, who hold users.write."""
+    with unit_of_work() as session:
+        users = (
+            session.query(User.user_id, User.principal_id)
+            .filter(User.is_active.is_(True), User.service_account.isnot(True))
+            .all()
+        )
+        return [
+            principal
+            for user_id, principal in users
+            if principal != person
+            and AuthService.check_permission(user_id, "users.write", session=session)
+        ]
 
 
 class AuthService:
@@ -229,6 +254,7 @@ class AuthService:
         password: str,
         session: Optional[Session] = None,
         refusal: Optional[dict] = None,
+        source: Optional[str] = None,
     ) -> Optional[User]:
         """The user, or None (or AccountLockedError). On a refusal, ``refusal``
         gets its ``reason`` and, for a known account, its ``principal``."""
@@ -273,7 +299,7 @@ class AuthService:
 
                 # Verify password
                 if not AuthService.verify_password(password, user.password_hash):
-                    AuthService._record_failed_attempt(user.user_id, now)
+                    AuthService._record_failed_attempt(user.user_id, now, source)
                     logger.warning("Invalid password for user: %s", user.username)
                     refusal["reason"] = "bad_password"
                     return None
@@ -295,8 +321,7 @@ class AuthService:
                     session.expire(user, ["password_hash"])
 
                 # Success — reset lockout state and update session tracking
-                user.failed_login_count = 0
-                user.locked_until = None
+                clear_lock(user)
                 user.last_login = now
                 user.login_count += 1
 
@@ -311,16 +336,28 @@ class AuthService:
             return None
 
     @staticmethod
-    def _record_failed_attempt(user_id: str, now: datetime) -> None:
-        """Persist one failed login attempt in its own transaction.
+    def _record_failed_attempt(
+        user_id: str, now: datetime, source: Optional[str] = None
+    ) -> None:
+        """Persist one failed login attempt in its own transaction, and lock the
+        account when the policy's threshold is reached.
 
         Deliberately does not join the caller's transaction: the login endpoint
         answers a failed attempt with 401, which rolls that transaction back. If
         this bookkeeping went with it the counter would never survive, the
         threshold would never trip, and the lockout would silently do nothing.
         """
+        # The policy is read at each failure, so a saved change applies at once.
+        policy = session_policy.policy()
+        locked = None
         with unit_of_work() as session:
-            user = session.query(User).filter(User.user_id == user_id).first()
+            # Row-locked: concurrent failures count one by one, one sets the lock.
+            user = (
+                session.query(User)
+                .filter(User.user_id == user_id)
+                .with_for_update()
+                .first()
+            )
             if not user:
                 return
             user.failed_login_count = (user.failed_login_count or 0) + 1
@@ -329,7 +366,7 @@ class AuthService:
                 # name blind Medic's gateway. Safe only because the password is
                 # long, random and held by the gateway alone. Still counted, and
                 # logged once at the threshold so brute force stays visible.
-                if user.failed_login_count == LOCKOUT_THRESHOLD:
+                if user.failed_login_count == policy.lockout_threshold:
                     logger.warning(
                         "Service account %s reached %d failed logins; "
                         "service accounts are not locked out",
@@ -337,18 +374,104 @@ class AuthService:
                         user.failed_login_count,
                     )
                 return
-            if user.failed_login_count >= LOCKOUT_THRESHOLD:
-                user.locked_until = now + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
+            if (
+                user.failed_login_count >= policy.lockout_threshold
+                and not _account_is_locked(user)
+            ):
+                # The count is not reset when a timed lock ends: each failure
+                # after it locks again, and LOCK_UNTIL_UNLOCKED of them in a
+                # row lock until unlocked.
+                timed = (
+                    policy.lockout_timed
+                    and user.failed_login_count < session_policy.LOCK_UNTIL_UNLOCKED
+                )
+                user.locked_until = (
+                    now + timedelta(minutes=policy.lockout_minutes) if timed else None
+                )
+                user.locked_at, user.locked_from = now, source
+                locked = (
+                    user.principal_id,
+                    user.username,
+                    user.failed_login_count,
+                    now,
+                    user.locked_until,
+                    source,
+                )
                 logger.warning(
                     "Account locked after %d failed attempts: %s",
                     user.failed_login_count,
                     user.username,
                 )
+        if locked:
+            AuthService._tell_locked(*locked)
 
     @staticmethod
-    def _count_mfa_failure(user_id: str, username: str) -> None:
+    def _tell_locked(
+        principal_id: str,
+        username: str,
+        failures: int,
+        when: datetime,
+        until: Optional[datetime],
+        source: Optional[str],
+    ) -> None:
+        """One notice to each manager and one to the person, who sees it at their
+        next sign-in. A lock ends no sign-in, so the notices are what tell anyone."""
+        from core.platform.notices import notify
+
+        where = f"from {source}" if source else "from an unknown address"
+        at = f"{when:%Y-%m-%d %H:%M} UTC"
+        ends = (
+            f"It ends on its own at {until:%Y-%m-%d %H:%M} UTC."
+            if until
+            else "It lasts until an administrator unlocks the account or the "
+            "person uses a password reset link."
+        )
+        try:
+            to_managers = managers(principal_id)
+        except Exception:  # noqa: BLE001 - the lock stands, so does the person's notice
+            logger.exception("could not find the managers to tell about a lock")
+            to_managers = []
+        notices = [
+            (
+                principal,
+                "account_locked",
+                f"Account locked: {username}",
+                f"{username} was locked at {at} after {failures} failed sign-ins "
+                f"{where}. {ends} Open sign-ins were not ended. Unlock it in "
+                "Settings once you have confirmed it is them.",
+            )
+            for principal in to_managers
+        ]
+        notices.append(
+            (
+                principal_id,
+                "account_locked",
+                "Your account was locked",
+                f"Your account was locked at {at} after {failures} failed sign-ins "
+                f"{where}. {ends} If this was not you, tell an administrator.",
+            )
+        )
+        for principal, kind, title, message in notices:
+            try:
+                notify(
+                    principal,
+                    kind,
+                    title,
+                    message,
+                    link=(
+                        "/settings?section=users" if principal != principal_id else None
+                    ),
+                    priority="high",
+                )
+            except Exception:  # noqa: BLE001 - one missed notice must not hide the rest
+                logger.exception("could not send a lock notice")
+
+    @staticmethod
+    def _count_mfa_failure(
+        user_id: str, username: str, source: Optional[str] = None
+    ) -> None:
         """Record a wrong code after the row lock has been released."""
-        AuthService._record_failed_attempt(user_id, utcnow())
+        AuthService._record_failed_attempt(user_id, utcnow(), source)
         logger.warning("Invalid MFA code for user: %s", username)
 
     @staticmethod
@@ -385,7 +508,7 @@ class AuthService:
             - [] if the code is valid but MFA was already enabled (no reissue)
             - None if there is no pending secret or the code is invalid
         """
-        failed: Optional[tuple[str, str]] = None
+        failed = False
         result: Optional[List[str]] = None
         with unit_of_work(session) as session:
             nested = session.begin_nested()
@@ -401,27 +524,24 @@ class AuthService:
                     if valid is None:
                         pass
                     elif not valid:
-                        failed = (user.user_id, user.username)
+                        # A confirmation: a wrong code is refused, not counted.
+                        failed = True
                     elif user.mfa_enabled:
                         # Already enabled — codes were issued at enable time,
                         # don't silently reissue. Use regenerate to rotate.
                         result = []
                     else:
                         user.mfa_enabled = True
-                        user.failed_login_count = 0
-                        user.locked_until = None
                         codes, user.mfa_recovery_codes = (
                             AuthService._generate_recovery_codes()
                         )
                         logger.info(f"MFA enabled for user: {user.username}")
                         result = codes
             finally:
-                if failed is not None:
+                if failed:
                     nested.rollback()
                 elif nested.is_active:
                     nested.commit()
-        if failed:
-            AuthService._count_mfa_failure(failed[0], failed[1])
         return result
 
     @staticmethod
@@ -448,12 +568,19 @@ class AuthService:
     @staticmethod
     @default_on_error(False)
     def verify_mfa_code(
-        user_id: str, code: str, session: Optional[Session] = None
+        user_id: str,
+        code: str,
+        session: Optional[Session] = None,
+        *,
+        count_failures: bool = False,
+        source: Optional[str] = None,
     ) -> bool:
-        """Verify a TOTP code or a one-time recovery code (login path).
+        """Verify a TOTP code or a one-time recovery code.
 
         Enabling MFA is handled by enable_mfa(); this method assumes MFA is
-        already enabled and only validates the supplied code.
+        already enabled and only validates the supplied code. Only the login
+        step passes ``count_failures``: a wrong code at a confirmation
+        (recovery codes, disabling MFA, a step-up) does not count toward a lock.
         """
         failed: Optional[tuple[str, str]] = None
         accepted = False
@@ -501,9 +628,9 @@ class AuthService:
                     nested.rollback()
                 elif nested.is_active:
                     nested.commit()
-        if failed:
+        if failed and count_failures:
             # The savepoint is already closed; count on a fresh transaction.
-            AuthService._count_mfa_failure(failed[0], failed[1])
+            AuthService._count_mfa_failure(failed[0], failed[1], source)
         return accepted
 
     @staticmethod
@@ -524,8 +651,6 @@ class AuthService:
             user.mfa_enabled = False
             user.mfa_secret = None
             user.mfa_recovery_codes = []
-            user.failed_login_count = 0
-            user.locked_until = None
             logger.info(f"MFA disabled for user: {user.username}")
             return True
 

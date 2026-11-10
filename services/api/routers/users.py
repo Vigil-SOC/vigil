@@ -9,7 +9,7 @@ import logging
 import re
 import uuid
 from contextlib import asynccontextmanager, contextmanager
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, EmailStr, Field, field_validator
@@ -19,7 +19,12 @@ from sqlalchemy.orm import Session
 from core.auth import current_user as current_user_module
 from core.auth import mcp_credential_service, principals, sign_ins, trail_events
 from core.auth.auth_cookies import clear_auth_cookies
-from core.auth.auth_service import PERSON_ONLY, AuthService
+from core.auth.auth_service import (
+    PERSON_ONLY,
+    AuthService,
+    _account_is_locked,
+    clear_lock,
+)
 from core.auth.password_validator import PasswordPolicyError, validate_password_strength
 from core.auth.permissions import (
     CATALOG,
@@ -313,6 +318,14 @@ def _dump_accounts(session: Session, users: list[User]) -> list[dict]:
         entry["no_effect"] = (
             sorted(PERSON_ONLY & _granted(held.get(user.role_id))) if machine else []
         )
+        # Whether sign-in is refused now, and when and from where the lock was set.
+        # locked_until is empty for a lock that lasts until an Unlock or a reset.
+        entry["locked"] = _account_is_locked(user)
+        entry["locked_until"] = (
+            user.locked_until and user.locked_until.isoformat() + "Z"
+        )
+        entry["locked_at"] = user.locked_at and user.locked_at.isoformat() + "Z"
+        entry["locked_from"] = user.locked_from
         dumped.append(entry)
     return dumped
 
@@ -623,6 +636,57 @@ def end_user_sign_in(
     if ended:
         _tell(current_user, user.principal_id, 1)
     return sign_ins.EndedSignIns(ended=len(ended))
+
+
+class UnlockRequest(BaseModel):
+    """How the manager confirmed the person is who they say. Kept in the trail."""
+
+    identity_confirmed_by: Literal[
+        "in_person", "video_call", "phone_call_back", "other_verified_channel"
+    ]
+
+
+@router.post("/{user_id}/unlock")
+def unlock_user(
+    user_id: str,
+    request: Request,
+    body: UnlockRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """End a lock and the failure count. users.write over the account, a role the
+    caller covers, and a person's own act, not a playbook's. A lock ends no
+    sign-in, so a locked caller's open session may not unlock anyone, itself included.
+    """
+    with _denials(current_user, "user.unlock"):
+        deny_unless(current_user.user_id, "users.write")
+        user = _live_user(session, user_id)
+        if user.user_id == current_user.user_id or _account_is_locked(current_user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Ask another administrator to unlock this account",
+            )
+        if not _acts_as_person(current_user, session):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Unlocking needs a person's own sign-in",
+            )
+        _require_privileges_cover_target(current_user, user, session, action="unlock")
+    # An expired timed lock leaves its count: Unlock clears that too.
+    if not _account_is_locked(user) and not user.failed_login_count:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="This account is not locked"
+        )
+    clear_lock(user)
+    trail_events.record(
+        session,
+        "user.unlocked",
+        {"source_ip": client_host(request)},
+        actor=current_user.principal_id,
+        principal=user.principal_id,
+        identity_confirmed_by=body.identity_confirmed_by,
+    )
+    return _dump_accounts(session, [user])[0]
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)

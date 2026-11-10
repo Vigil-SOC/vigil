@@ -774,8 +774,6 @@ config:
 
   # Secrets / auth policy
   ENABLE_KEYRING: "false"
-  AUTH_LOCKOUT_THRESHOLD: "5"
-  AUTH_LOCKOUT_DURATION_MINUTES: "15"
   # Ingress / load-balancer addresses allowed to set X-Forwarded-For.
   # Empty trusts the TCP peer. Set the ingress controller's pod CIDR when
   # ingress terminates TLS. "*" is ignored by the API.
