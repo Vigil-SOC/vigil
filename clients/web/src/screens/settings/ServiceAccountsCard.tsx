@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import { EmptyState, Field, Popup, Select, SettingsCard, TextInput } from '../../shared/ui'
 import { useAuth } from '../../contexts/AuthContext'
@@ -59,6 +59,11 @@ export default function ServiceAccountsCard({ notify, onChange }: SectionProps &
     load()
     onChange?.()
   }
+
+  const shown = accounts?.find((a) => a.user_id === open && !a.managed_by_medic)
+  useEffect(() => {
+    if (open) document.getElementById('service-account-tokens')?.scrollIntoView({ block: 'nearest' })
+  }, [open])
 
   const roleName = (id: string) => roles.find((r) => r.role_id === id)?.name ?? id
   const roleOptions = roles
@@ -161,76 +166,85 @@ export default function ServiceAccountsCard({ notify, onChange }: SectionProps &
             </thead>
             <tbody>
               {accounts.map((u) => (
-                <Fragment key={u.user_id}>
-                  <tr>
-                    <td style={{ whiteSpace: 'normal' }}>
+                <tr key={u.user_id}>
+                  <td style={{ whiteSpace: 'normal' }}>
+                    <div className="flex flex-col items-start gap-1">
+                      <span>{u.username}</span>
+                      {u.purpose && (
+                        <span className="text-xs text-tx-3 line-clamp-2 break-words" title={u.purpose}>
+                          {u.purpose}
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td>
+                    <span className="chip">{roleName(u.role_id)}</span>
+                  </td>
+                  <td style={{ whiteSpace: 'normal' }}>
+                    {u.managed_by_medic ? (
+                      <span className="text-tx-3">Managed by Medic</span>
+                    ) : (
                       <div className="flex flex-col items-start gap-1">
-                        <span>{u.username}</span>
-                        {u.purpose && (
-                          <span className="text-xs text-tx-3 line-clamp-2 break-words" title={u.purpose}>
-                            {u.purpose}
+                        {u.accountable && <span>{personLabel(u.accountable)}</span>}
+                        {u.accountable_gone && (
+                          <span className="state-pill fair">
+                            <span className="state-dot" aria-hidden="true" />
+                            Accountable person gone: reassign
                           </span>
                         )}
                       </div>
-                    </td>
-                    <td>
-                      <span className="chip">{roleName(u.role_id)}</span>
-                    </td>
-                    <td style={{ whiteSpace: 'normal' }}>
-                      {u.managed_by_medic ? (
-                        <span className="text-tx-3">Managed by Medic</span>
-                      ) : (
-                        <div className="flex flex-col items-start gap-1">
-                          {u.accountable && <span>{personLabel(u.accountable)}</span>}
-                          {u.accountable_gone && (
-                            <span className="state-pill fair">
-                              <span className="state-dot" aria-hidden="true" />
-                              Accountable person gone: reassign
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <span className={`state-pill ${u.status === 'active' ? 'good' : ''}`}>
-                        <span className="state-dot" aria-hidden="true" />
-                        {u.status === 'active' ? 'Active' : 'Deactivated'}
-                      </span>
-                    </td>
-                    <td className="col-act" style={{ textAlign: 'right' }}>
-                      {canWrite && !u.managed_by_medic && (
-                        <div className="inline-flex gap-1.5">
-                          <button
-                            className="btn ghost"
-                            aria-expanded={open === u.user_id}
-                            onClick={() => setOpen(open === u.user_id ? null : u.user_id)}
-                          >
-                            <Icon name="link" size={14} /> Tokens
-                          </button>
-                          <button
-                            className="btn ghost"
-                            onClick={() => {
-                              setError('')
-                              setReassigning({ user: u, to: '' })
-                            }}
-                          >
-                            <Icon name="user" size={14} /> Reassign
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                  {open === u.user_id && (
-                    <tr>
-                      <td colSpan={5} style={{ whiteSpace: 'normal' }}>
-                        <HeldTokens notify={notify} holder={u} onChange={changed} />
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
+                    )}
+                  </td>
+                  <td>
+                    <span className={`state-pill ${u.status === 'active' ? 'good' : ''}`}>
+                      <span className="state-dot" aria-hidden="true" />
+                      {u.status === 'active' ? 'Active' : 'Deactivated'}
+                    </span>
+                  </td>
+                  <td className="col-act" style={{ textAlign: 'right' }}>
+                    {canWrite && !u.managed_by_medic && (
+                      <div className="inline-flex gap-1.5">
+                        <button
+                          className="btn ghost icon"
+                          title="Tokens"
+                          aria-label={`Tokens of ${u.username}`}
+                          aria-expanded={open === u.user_id}
+                          onClick={() => setOpen(open === u.user_id ? null : u.user_id)}
+                        >
+                          <Icon name="link" size={15} />
+                        </button>
+                        <button
+                          className="btn ghost icon"
+                          title="Reassign"
+                          aria-label={`Reassign ${u.username}`}
+                          onClick={() => {
+                            setError('')
+                            setReassigning({ user: u, to: '' })
+                          }}
+                        >
+                          <Icon name="user" size={15} />
+                        </button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Below the table, not in it: a row would span the table's scroll width. */}
+      {shown && (
+        <div id="service-account-tokens" className="flex flex-col gap-2.5 mt-4">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold">Tokens of {shown.username}</span>
+            <span className="grow" />
+            <button className="btn ghost" onClick={() => setOpen(null)}>
+              Close
+            </button>
+          </div>
+          <HeldTokens key={shown.user_id} notify={notify} holder={shown} onChange={changed} />
         </div>
       )}
 

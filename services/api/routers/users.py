@@ -414,11 +414,12 @@ def _filter_status(query, wanted: AccountStatus):
         return query.filter(deleted, ~erased)
     query = query.filter(~deleted, ~erased)
     # As _account_is_locked: a timed lock until it ends, else until cleared.
+    # Never NULL, so ~locked keeps an account that was never locked.
     now = utcnow()
     locked = and_(
         User.service_account.isnot(True),
         or_(
-            User.locked_until > now,
+            and_(User.locked_until.isnot(None), User.locked_until > now),
             and_(User.locked_until.is_(None), User.locked_at.isnot(None)),
         ),
     )
