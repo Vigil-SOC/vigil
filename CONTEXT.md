@@ -582,12 +582,13 @@ _Avoid_: page, tab, view
   still exist. A hunt run by current code can be a regression snapshot, never a
   Golden.
 - **`type:value` keys are minted by two rules that disagree.** An **Entity Key**
-  (`core/memory/entity_keys.py`) defangs and keeps case for `arn` and `aws_key`; a
-  `shared_iocs` key (`core/storage/shared_ioc_repository.py`) does neither, and
-  spells a host `hostname` where memory spells it `host`. Handing one subsystem's
+  (`core/memory/entity_keys.py`) keeps case for `arn` and `aws_key`; a
+  `shared_iocs` key (`core/storage/shared_ioc_repository.py`) folds everything,
+  and spells a host `hostname` where memory spells it `host`. Both defang, by the
+  one rule in `core/storage/defang.py`. Handing one subsystem's
   keys to the other returns no rows, which reads as an entity nobody has looked
   at rather than as a bad query. Resolved: they stay separate, because unifying
-  them is a migration of a live table. The one shared piece is the
+  them is a migration of a live table. Besides `defang`, the shared piece is the
   `entity_context` spelling map, which yields candidates in memory's vocabulary --
   `make_key` aliases `host` back to `hostname` on the way in, so the older keys
   are unchanged.
