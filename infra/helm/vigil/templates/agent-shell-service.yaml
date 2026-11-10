@@ -1,0 +1,22 @@
+{{- /*
+ClusterIP only and not in the Ingress: the backend reaches this at SHELL_URL.
+agent-shell-networkpolicy.yaml admits the backend alone.
+*/ -}}
+{{- if .Values.agentShell.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vigil.agentShell.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.componentLabels" (dict "context" . "component" "agent-shell") | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 6992
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "agent-shell") | nindent 4 }}
+{{- end }}

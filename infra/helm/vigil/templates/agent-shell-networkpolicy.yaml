@@ -1,0 +1,39 @@
+{{- if .Values.agentShell.enabled }}
+{{- /*
+The agent shell's network: ingress from backend pods on 6992, no egress at all.
+Compose and desktop get this from network_mode: none.
+
+Rendered whenever the shell is, NOT only under networkPolicies.enabled (off by
+default): without it a default install would run the shell with open network.
+
+Policies add up: a pod gets every connection any policy selecting it allows. So
+the chart's -deny-all policy, which allows all egress, leaves this pod out
+(networkpolicy.yaml); this must stay the only policy that selects it.
+
+Only a network plugin that enforces NetworkPolicy makes this real.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "vigil.agentShell.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.componentLabels" (dict "context" . "component" "agent-shell") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "agent-shell") | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "backend") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 6992
+  # None: not DNS, not the backend, not the internet.
+  egress: []
+{{- end }}
