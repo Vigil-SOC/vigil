@@ -6,14 +6,13 @@ additionally require ``integrations.write`` permission since enabling
 an MCP server can spawn subprocesses and surface tools to agents.
 """
 
-import asyncio
 import logging
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+from sqlalchemy import or_
 
-from core.auth import step_up, trail_events
 from core.auth.permissions import permission_gate
 from core.deps import provide_mcp_client, provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry, deactivate, register_connected
@@ -36,22 +35,6 @@ ROUTER_META = RouterMeta(
     tags=["mcp"],
     auth=Auth.REQUIRED,
 )
-
-
-async def _require_integrations_admin(current_user: User, attempted: str) -> None:
-    """require_integrations_admin, with a refusal on the audit trail."""
-    try:
-        require_integrations_admin(current_user)
-    except HTTPException as exc:
-        if exc.status_code == 403:
-            # Off the loop: the write may wait on the trail's lock.
-            await asyncio.to_thread(
-                trail_events.refused,
-                "auth.denied",
-                actor=current_user.principal_id,
-                attempted=attempted,
-            )
-        raise
 
 
 def _validate_known_server(server_name: str) -> None:
@@ -409,30 +392,38 @@ async def reload_servers(
 # --- Vigil's own MCP surface ------------------------------------------------
 #
 # Everything above configures the servers Vigil calls out to. These configure
-# the one Vigil is: whether it listens, and which credentials open it.
+# the one Vigil is: whether it listens, and whether a token can open it.
 
 
 class SurfaceToggle(BaseModel):
     enabled: bool
 
 
-class CredentialMint(BaseModel):
-    label: str = Field(min_length=1, max_length=200)
-    expires_in_days: Optional[int] = Field(default=None, ge=1, le=3650)
-
-
 @router.get("/surface")
 async def get_surface(current_user: User = Depends(get_current_active_user)):
-    """Whether Vigil's own tools are reachable, and whether anything can reach them."""
-    from core.auth.mcp_credential_service import list_for_user
+    """Whether Vigil's own tools are reachable, and whether any token can open them."""
     from core.integrations.mcp.surface import is_enabled
+    from core.storage.models import McpCredential
+    from core.storage.unit_of_work import unit_of_work
+    from core.time import utcnow
     from services.api.mcp_surface import surface_address
 
-    credentials = list_for_user(current_user.user_id)
+    with unit_of_work() as session:
+        usable = (
+            session.query(McpCredential.credential_id)
+            .filter(
+                McpCredential.revoked_at.is_(None),
+                or_(
+                    McpCredential.expires_at.is_(None),
+                    McpCredential.expires_at > utcnow(),
+                ),
+            )
+            .first()
+        )
     return {
         "enabled": is_enabled(),
         "path": surface_address(),
-        "credentials": [c.to_dict() for c in credentials],
+        "has_token": usable is not None,
     }
 
 
@@ -455,81 +446,3 @@ async def set_surface(
         current_user.username,
     )
     return {"enabled": body.enabled}
-
-
-@router.post(
-    "/surface/credentials",
-    status_code=201,
-    # A person without MFA cannot mint a personal token; with it, only inside the window.
-    dependencies=[step_up.gate("integrations.write", "create a token")],
-)
-async def mint_credential(
-    body: CredentialMint,
-    current_user: User = Depends(get_current_active_user),
-):
-    """Issue a credential for the signed-in user.
-
-    The token is in this response and nowhere else. It is not stored and cannot
-    be shown again; an operator who loses one mints another and revokes this.
-    """
-    await _require_integrations_admin(current_user, "credential.mint")
-
-    from datetime import timedelta
-
-    from core.auth.mcp_credential_service import mint
-    from core.time import utcnow
-
-    expires_at = (
-        utcnow() + timedelta(days=body.expires_in_days)
-        if body.expires_in_days
-        else None
-    )
-    minted = await asyncio.to_thread(
-        mint,
-        current_user.user_id,
-        body.label,
-        expires_at=expires_at,
-        actor=current_user.principal_id,
-    )
-    if minted is None:
-        raise HTTPException(status_code=500, detail="Could not mint a credential")
-
-    return {
-        "token": minted.token,
-        "credential": minted.record.to_dict(),
-        "warning": "This token is shown once. Store it now; it cannot be recovered.",
-    }
-
-
-@router.delete("/surface/credentials/{credential_id}")
-async def revoke_credential(
-    credential_id: str,
-    current_user: User = Depends(get_current_active_user),
-):
-    """Withdraw a credential. What it could reach, it can no longer reach."""
-    await _require_integrations_admin(current_user, "credential.revoke")
-
-    from core.auth.mcp_credential_service import list_for_user, revoke
-
-    # Only your own: a credential names a principal, and revoking someone
-    # else's is an act on their account rather than on your configuration.
-    if credential_id not in {
-        c.credential_id
-        for c in list_for_user(current_user.user_id, include_revoked=True)
-    }:
-        raise HTTPException(status_code=404, detail="Credential not found")
-
-    if not revoke(credential_id):
-        raise HTTPException(status_code=409, detail="Already revoked")
-    await asyncio.to_thread(
-        trail_events.safety,
-        "credential.revoked",
-        actor=current_user.principal_id,
-        principal=current_user.principal_id,
-        credential_id=credential_id,
-    )
-
-    logger.warning(
-        "MCP credential %s revoked by %s", credential_id, current_user.username
-    )
-    return {"revoked": credential_id}

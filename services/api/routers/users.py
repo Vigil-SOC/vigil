@@ -151,8 +151,9 @@ def _is_person_account(user: User, session: Session) -> bool:
 
 
 def _acts_as_person(user: User, session: Session) -> bool:
-    """A person's own session. A service account's is not; DEV_MODE's dev user is."""
-    if _is_service_account(user):
+    """A person's own session. A service account's is not, nor is any API token's;
+    DEV_MODE's dev user is."""
+    if _is_service_account(user) or current_user_module.is_token_request():
         return False
     kind = _principal_kind(user, session)
     return kind == principals.PERSON if kind else current_user_module.DEV_MODE
