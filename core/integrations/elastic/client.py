@@ -333,6 +333,38 @@ class ElasticService:
             }
         return out
 
+    async def counts_since(
+        self, index: str, queries: Dict[str, Dict[str, Any]], days: int
+    ) -> Dict[str, Any]:
+        """One size-0 search over the last ``days`` of ``index`` (on @timestamp)
+        counting the events each named query matches: ``{"total": hits, "failed":
+        as :meth:`terms_since`'s, "counts": {name: events}}``. A missing index reads
+        as no events; a time-out, or every shard failing, raises."""
+        resp = await self.es_client.post(
+            f"/{validate_index(index)}/_search",
+            params={"ignore_unavailable": "true", "allow_no_indices": "true"},
+            json={
+                "size": 0,
+                "track_total_hits": 1,
+                "query": {"range": {"@timestamp": {"gte": f"now-{int(days)}d"}}},
+                "aggs": {"held": {"filters": {"filters": queries}}},
+            },
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        failed = _partial(body)
+        total = (body.get("hits") or {}).get("total")
+        hits = total.get("value") if isinstance(total, dict) else total
+        buckets = ((body.get("aggregations") or {}).get("held") or {}).get("buckets")
+        return {
+            "total": int(hits or 0),
+            "failed": failed,
+            "counts": {
+                name: int((buckets or {}).get(name, {}).get("doc_count") or 0)
+                for name in queries
+            },
+        }
+
     # Rule queries (the overlay runner): each returns (total hits, hits as
     # documents) and raises with Elasticsearch's own reason on a failure.
 
