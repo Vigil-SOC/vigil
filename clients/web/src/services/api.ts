@@ -3,7 +3,7 @@ import { basePath } from '../config/basePath'
 import type { Schema } from './apiTypes'
 import type { operations } from './generated/schema'
 import { USER_ACTION_HEADER, justActed } from './userAction'
-import { endReasonOf, reportSignInEnded } from './signInEnd'
+import { endReasonOf, isMfaSetupRequired, reportMfaSetupRequired, reportSignInEnded } from './signInEnd'
 
 // Auth is cookie-based; withCredentials sends the HttpOnly cookies on every
 // request, including through the Vite dev proxy.
@@ -79,6 +79,8 @@ api.interceptors.response.use(
     if (isAuthEndpoint) {
       return Promise.reject(error)
     }
+
+    if (isMfaSetupRequired(error)) reportMfaSetupRequired()
 
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true

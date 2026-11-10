@@ -11829,6 +11829,12 @@ export interface components {
              * @default false
              */
             lockout_timed: boolean;
+            /**
+             * Require Mfa
+             * @default privileged
+             * @enum {string}
+             */
+            require_mfa: "off" | "privileged" | "everyone";
             /** Sign In Limit */
             sign_in_limit?: number | null;
             /** Updated At */
@@ -12385,6 +12391,12 @@ export interface components {
              * @default false
              */
             lockout_timed: boolean;
+            /**
+             * Require Mfa
+             * @default privileged
+             * @enum {string}
+             */
+            require_mfa: "off" | "privileged" | "everyone";
             /** Sign In Limit */
             sign_in_limit?: number | null;
         };

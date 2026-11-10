@@ -114,6 +114,7 @@ export function Popup({
   title,
   children,
   width = 560,
+  dismissible = true,
 }: {
   open: boolean
   onClose: () => void
@@ -122,6 +123,8 @@ export function Popup({
   // A number is pixels; a string is any CSS width. .modal's max-width keeps it inside
   // the viewport either way.
   width?: number | string
+  // false: only the dialog's own buttons close it (a step the person must finish)
+  dismissible?: boolean
 }) {
   const panelRef = useRef<HTMLDivElement>(null)
   const escapeLayerRef = useRef(Symbol('popup'))
@@ -130,7 +133,7 @@ export function Popup({
   // re-run the focus effect on every keystroke and steal focus back to the panel,
   // so inputs inside the modal would accept only one character.
   const onCloseRef = useRef(onClose)
-  onCloseRef.current = onClose
+  onCloseRef.current = dismissible ? onClose : () => {}
 
   useEffect(() => {
     if (!open) return
@@ -156,7 +159,7 @@ export function Popup({
   if (!open) return null
   return (
     <OverlayPortal>
-      <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-overlay" onClick={dismissible ? onClose : undefined}>
         <div
           ref={panelRef}
           className="modal"
@@ -169,7 +172,7 @@ export function Popup({
         >
           <div className="modal-head">
             <h3 id={titleId}>{title}</h3>
-            <button className="modal-x" title="Close" aria-label="Close" onClick={onClose}><Icon name="close" size={16} /></button>
+            {dismissible && <button className="modal-x" title="Close" aria-label="Close" onClick={onClose}><Icon name="close" size={16} /></button>}
           </div>
           <div className="modal-body">{children}</div>
         </div>

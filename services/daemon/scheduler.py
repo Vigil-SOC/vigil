@@ -140,6 +140,16 @@ class TaskScheduler:
                 )
             )
 
+        # Hourly tick; the trail check inside makes the entry once a day, across
+        # replicas and restarts (#4177).
+        self._tasks.append(
+            ScheduledTask(
+                name="mfa_coverage",
+                func=self._run_mfa_coverage,
+                interval=3600,
+            )
+        )
+
         self._tasks.append(
             ScheduledTask(
                 name="threat_feed_poll",
@@ -407,6 +417,13 @@ class TaskScheduler:
             "approvals_expired": expired,
             "read_log_removed": reads,
         }
+
+    async def _run_mfa_coverage(self):
+        """Today's count of people who can sign in without MFA, on the trail."""
+        from core.auth.mfa_coverage import record_daily
+
+        if await asyncio.to_thread(record_daily):
+            logger.info("Recorded today's count of people without MFA")
 
     async def _run_probe_sweep(self):
         """Score the probes past their hour (#924), then queue today's (#923)."""

@@ -38,6 +38,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from core.auth import mfa_coverage
 from core.auth.auth_cookies import warn_if_cookie_insecure_in_production
 from core.auth.bootstrap_code import announce_setup_code
 from core.auth.key_ring import adopt_when_ready
@@ -224,6 +225,7 @@ app.add_middleware(
 # ENVIRONMENT=production refuses CSRF off, report-only, or a wider exempt list.
 refuse_unsafe_csrf_in_production()
 warn_if_cookie_insecure_in_production()
+mfa_coverage.register()
 app.add_middleware(CSRFMiddleware)
 
 # Security headers added AFTER CORS so it is the outermost middleware on the

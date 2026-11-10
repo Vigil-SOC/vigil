@@ -12,6 +12,27 @@ export function onSignInEnded(fn: Listener): () => void {
   }
 }
 
+// A request the server refused because the MFA requirement now covers this account
+// and it has no MFA: the console takes the person to setup.
+export const MFA_SETUP_REQUIRED = 'mfa_setup_required'
+const mfaListeners = new Set<() => void>()
+
+export function onMfaSetupRequired(fn: () => void): () => void {
+  mfaListeners.add(fn)
+  return () => {
+    mfaListeners.delete(fn)
+  }
+}
+
+export function isMfaSetupRequired(error: unknown): boolean {
+  const e = error as { response?: { status?: number; data?: { detail?: { code?: string } } } } | null
+  return e?.response?.status === 403 && e.response.data?.detail?.code === MFA_SETUP_REQUIRED
+}
+
+export function reportMfaSetupRequired() {
+  mfaListeners.forEach((fn) => fn())
+}
+
 /** The end reason a failed request carries, if the server sent one. */
 export function endReasonOf(error: unknown): string | null {
   const headers = (error as { response?: { headers?: Record<string, unknown> } } | null)?.response?.headers

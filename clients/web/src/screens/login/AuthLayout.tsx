@@ -12,12 +12,14 @@ interface Props {
   subtitle: string
   // `info` renders the accent notice style instead of the error style
   message?: { text: string; info?: boolean }
-  children: ReactNode
+  children?: ReactNode
+  // A dialog over the whole page: outside the form pane, whose fade-in transform would pin a fixed overlay inside it
+  overlay?: ReactNode
 }
 
 // The sign-in shell (brand panel + form pane) shared by sign-in, first-account
 // creation, and password reset.
-export default function AuthLayout({ screenLabel, title, subtitle, message, children }: Props) {
+export default function AuthLayout({ screenLabel, title, subtitle, message, children, overlay }: Props) {
   const { scheme, setScheme } = useColorScheme()
 
   return (
@@ -54,10 +56,12 @@ export default function AuthLayout({ screenLabel, title, subtitle, message, chil
         {/* ---------- form panel ---------- */}
         <section className="auth-pane">
           <div className="form-wrap">
-            <header>
-              <h2>{title}</h2>
-              <p>{subtitle}</p>
-            </header>
+            {title && (
+              <header>
+                <h2>{title}</h2>
+                <p>{subtitle}</p>
+              </header>
+            )}
 
             {message?.text && (
               <div className={`auth-error${message.info ? ' info' : ''}`} role="alert">
@@ -70,6 +74,7 @@ export default function AuthLayout({ screenLabel, title, subtitle, message, chil
           </div>
         </section>
       </div>
+      {overlay}
     </div>
   )
 }
