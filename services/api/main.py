@@ -212,7 +212,7 @@ app.add_middleware(
         "X-MFA-Required",
         "X-Requested-With",
     ],
-    expose_headers=["X-MFA-Required"],
+    expose_headers=["X-MFA-Required", "X-Sign-In-End-Reason"],
 )
 
 # CSRF middleware. On and enforcing by default (VIGIL_CSRF_REPORT_ONLY=true

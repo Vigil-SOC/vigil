@@ -3,6 +3,7 @@ import { basePath } from '../config/basePath'
 import type { Schema } from './apiTypes'
 import type { operations } from './generated/schema'
 import { USER_ACTION_HEADER, justActed } from './userAction'
+import { endReasonOf, reportSignInEnded } from './signInEnd'
 
 // Auth is cookie-based; withCredentials sends the HttpOnly cookies on every
 // request, including through the Vite dev proxy.
@@ -86,6 +87,10 @@ api.interceptors.response.use(
         await refreshSession()
         return api(originalRequest)
       } catch (refreshError) {
+        // A 401 on the refresh is the server saying the sign-in is over.
+        if ((refreshError as any)?.response?.status === 401) {
+          reportSignInEnded(endReasonOf(refreshError) ?? endReasonOf(error))
+        }
         return Promise.reject(refreshError)
       }
     }
@@ -111,8 +116,10 @@ export async function streamFetch(path: string, init: RequestInit = {}): Promise
     try {
       await refreshSession()
       res = await fetch(url, build())
-    } catch {
-      /* empty */
+    } catch (refreshError) {
+      if ((refreshError as any)?.response?.status === 401) {
+        reportSignInEnded(endReasonOf(refreshError))
+      }
     }
   }
   return res
@@ -1843,6 +1850,21 @@ export const signInsApi = {
     api.post<Schema<'EndedSignIns'>>('/users/sign-ins/end-all', {
       reason,
     } satisfies Schema<'EndSignInsRequest'>),
+}
+
+// The session policy: how long a sign-in lasts. A save needs the version from the read.
+export type SessionPolicy = Schema<'PolicyOut'>
+export type SessionPolicyBody = Schema<'SessionPolicy'>
+export const sessionPolicyApi = {
+  get: () => api.get<SessionPolicy>('/session-policy'),
+  put: (body: SessionPolicyBody, version: number) =>
+    api.put<SessionPolicy>('/session-policy', body, { headers: { 'If-Match': `"${version}"` } }),
+  // The server's own answer to whether saving this would loosen the policy; saves nothing.
+  loosens: (body: SessionPolicyBody, version: number) =>
+    api.put<Schema<'LooseningOut'>>('/session-policy', body, {
+      params: { dry_run: true },
+      headers: { 'If-Match': `"${version}"` },
+    }),
 }
 
 // Self-service two-step sign-in (TOTP + recovery codes) for the signed-in user.

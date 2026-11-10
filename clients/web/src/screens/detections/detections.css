@@ -85,10 +85,15 @@
    and the card's head, chips and footer stay put, so a long view never grows the page.
    The offset is the top bar + the card's head, chips and footer, so the whole card fits
    the window once scrolled to; the floor keeps a short window usable. */
-.de-table { border-top: 1px solid var(--ln1); border-bottom: 1px solid var(--ln0); overflow-x: auto; transition: opacity .15s; container-type: inline-size; }
+.de-table { border-top: 1px solid var(--ln1); border-bottom: 1px solid var(--ln0); overflow-x: auto; container-type: inline-size; }
 .de-table.list-scroll { max-height: clamp(300px, calc(100vh - 260px), 1400px); overscroll-behavior: contain; }
 .de-th { position: sticky; top: 0; z-index: 2; box-sizing: border-box; }
-.de-table.loading { opacity: .55; }
+/* A new view or search is being read: the old rows dim, the header stays sharp and an accent runs along its edge. */
+.de-rows, .de-empty { transition: opacity .15s; }
+.de-table.loading .de-rows, .de-table.loading .de-empty { opacity: .45; }
+.de-th-busy { position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; overflow: hidden; }
+.de-th-busy::after { content: ''; position: absolute; top: 0; bottom: 0; width: 28%; border-radius: 2px; background: var(--ac); animation: de-run 1.1s ease-in-out infinite; }
+@keyframes de-run { from { transform: translateX(-110%); } to { transform: translateX(360%); } }
 /* Rule (name, reason, toggles) keeps --col-main-min; Where, Technique, Health, Fires and
    Action are fixed; below the sum the table scrolls in its card. --de-tracks is the fixed
    tracks, their gaps and the row's side padding. */
@@ -328,6 +333,36 @@
 .de-cov-tac-b { padding: 2px 9px; border-radius: 999px; border: 1px solid var(--ln1); background: none; color: var(--tx2); font-size: 11.5px; cursor: pointer; }
 .de-cov-tac-b.on { border-color: var(--ac); color: var(--tx0); background: var(--bg2); }
 .de-cov-tac-b:focus-visible { outline: 2px solid var(--ac); outline-offset: 1px; }
+/* First load: the page's frame with bones where its numbers, bars and rows go. The
+   gradient is fixed to the viewport, so one sheen crosses every bone together. The
+   frame fades in after a beat, so a quick answer never flashes it. */
+.de-loading { display: grid; gap: 20px; animation: de-sk-in .2s .15s both; }
+.de-loading.de-cov { gap: 12px; }
+.de { --sk: color-mix(in oklab, var(--tx0) 7%, var(--bg1)); --sk-hi: color-mix(in oklab, var(--tx0) 14%, var(--bg1)); }
+.de-sk { display: block; flex: none; max-width: 100%; height: 10px; margin: 5px 0; border-radius: 4px; background: linear-gradient(90deg, var(--sk) 0 35%, var(--sk-hi) 50%, var(--sk) 65% 100%) 0 0 / 200vw 100% fixed; animation: de-sheen 1.8s ease-in-out infinite; }
+.de-sk.num { height: 22px; margin: 3px 0; border-radius: 5px; }
+.de-sk.pill { height: 22px; margin: 0; border-radius: 6px; }
+.de-sk.chip { height: 28px; margin: 0; border-radius: 999px; }
+.de-sk.bar { width: 100%; height: 10px; margin: 10px 0 0; border-radius: 5px; }
+.de-tac-head .de-sk { margin: 0; }
+.de-tac-head .de-sk.bar { margin: 0; }
+.de-siem-head .de-sk { margin: 4px 0; }
+.de-sk-chips .de-sk.chip { height: 32px; }
+.de-inv-tools .de-sk.chip { height: 36px; border-radius: 9px; }
+.de-sk-row { align-items: start; padding-top: 13px; padding-bottom: 13px; border-bottom: 1px solid var(--ln0); }
+.de-sk-row > .de-right { padding-top: 0; }
+.de-sk-row .de-where-cell .de-sk { margin: 0; }
+.de-sk-row .de-sk.pill { margin: -1px 0 0; }
+.de-spots .de-sk { margin: 4px 0; }
+.de-rollout-cells .de-sk.num { margin-top: 4px; }
+.de-sk-status { font-size: 12px; }
+.de-loading .de-tac-head { cursor: default; }
+@keyframes de-sheen { from { background-position: 100vw 0; } to { background-position: -100vw 0; } }
+@keyframes de-sk-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .de-sk, .de-loading { animation: none; }
+  .de-th-busy::after { animation-duration: 2.4s; }
+}
 /* Small screens: the chips give way to one "Tactics" dropdown beside the lens. */
 .de-cov-tacmenu { position: relative; display: none; }
 .de-cov-tacmenu-list { position: absolute; top: calc(100% + 6px); left: 0; z-index: 5; width: min(240px, 80vw); max-height: 60vh; overflow-y: auto; display: grid; gap: 2px; padding: 8px; border: 1px solid var(--ln1); border-radius: 9px; background: var(--bg2); box-shadow: 0 10px 30px rgba(0, 0, 0, .45); }

@@ -947,7 +947,7 @@ export interface paths {
          *         session: Database session
          *
          *     Returns:
-         *         User information with permissions
+         *         User information with permissions, and when the sign-in goes idle and ends
          */
         get: operations["get_api_auth_me"];
         /**
@@ -5996,6 +5996,9 @@ export interface paths {
         /**
          * Put Policy
          * @description Replace the policy. An idle limit above its standard, or a stale version, is refused.
+         *
+         *     ``dry_run`` checks the version like a save, then saves nothing and answers whether
+         *     the body would loosen the policy now in force.
          */
         put: operations["put_api_session-policy"];
         post?: never;
@@ -11214,6 +11217,14 @@ export interface components {
             };
         };
         /**
+         * LooseningOut
+         * @description The answer to a dry run: whether saving this body would loosen the policy.
+         */
+        LooseningOut: {
+            /** Loosening */
+            loosening: boolean;
+        };
+        /**
          * MFASetupResponse
          * @description MFA setup response.
          */
@@ -11798,6 +11809,8 @@ export interface components {
             updated_at?: string | null;
             /** Updated By */
             updated_by?: string | null;
+            /** Updated By Name */
+            updated_by_name?: string | null;
             /** Version */
             version: number;
         };
@@ -23991,7 +24004,9 @@ export interface operations {
     };
     "put_api_session-policy": {
         parameters: {
-            query?: never;
+            query?: {
+                dry_run?: boolean;
+            };
             header?: {
                 "if-match"?: string | null;
                 authorization?: string | null;
@@ -24011,7 +24026,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PolicyOut"];
+                    "application/json": components["schemas"]["PolicyOut"] | components["schemas"]["LooseningOut"];
                 };
             };
             /** @description If-Match is not the current version */

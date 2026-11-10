@@ -3,6 +3,7 @@ import {
   detectionRulesApi, type CoverageCell, type CoverageSiemName, type CoverageState, type DetectionCoverage,
 } from '../../services/api'
 import { Empty, Failure } from '../shared/x1'
+import { CoverageLoading } from './DetectionsLoading'
 
 // The heat map is Alex Margaris's from the 1.x line (ProgramTab's HeatMap), here
 // with main's meaning of proven (an active SIEM copy passes Runs and Sees) and a
@@ -88,7 +89,7 @@ export default function CoverageMap({ goSettings }: { goSettings: (section: 'dat
       </Failure>
     )
   }
-  if (!coverage) return <span className="x1-muted">Reading the coverage map…</span>
+  if (!coverage) return <CoverageLoading />
   if (coverage.techniques.length === 0) {
     return (
       <Empty title="No technique to show yet">
