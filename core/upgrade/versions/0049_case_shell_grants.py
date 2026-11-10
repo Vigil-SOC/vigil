@@ -16,8 +16,8 @@ from sqlalchemy import text
 
 from core.upgrade.revision import stash_report
 
-revision = "0048_case_shell_grants"
-down_revision = "0047_lockout_policy"
+revision = "0049_case_shell_grants"
+down_revision = "0048_dormancy"
 
 _DELETED = frozenset({"case_records", "case_evidence", "read_case_evidence"})
 _SHELL = "shell"
