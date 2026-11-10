@@ -72,7 +72,14 @@ class SignIn(Base):
     # The current refresh token's expiry; each refresh moves it.
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    end_reason: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    end_reason: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    # When MFA was last passed: completing MFA at sign-in, a confirmation or a
+    # strong check. The privileged idle window counts from it (core/auth/step_up.py).
+    confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Failed confirmations in a row; the third ends the sign-in.
+    confirm_failures: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
     # The person's last own action: what the idle limit counts from.
     last_action_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow, server_default=text("now()")
@@ -98,7 +105,7 @@ class SignIn(Base):
             "end_reason IN ('sign_out', 'expiry', 'revoked', 'idle', 'length_limit',"
             " 'token_reuse', 'upgrade', 'account_changed', 'deactivated', 'erased',"
             " 'ended_by_person', 'ended_by_admin', 'everyone_signed_out',"
-            " 'sign_in_limit')",
+            " 'sign_in_limit', 'too_many_confirmations')",
             name="sign_ins_end_reason_check",
         ),
         Index("idx_sign_ins_principal", "principal_id"),

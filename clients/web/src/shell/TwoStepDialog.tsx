@@ -61,10 +61,13 @@ export default function TwoStepDialog({
   open,
   onClose,
   required = false,
+  note,
 }: {
   open: boolean
   onClose: () => void
   required?: boolean
+  /** why it opened, above the setup prompt (a privileged change needs it) */
+  note?: string
 }) {
   const { user, refreshUser, logout } = useAuth()
   const enabled = !!user?.mfa_enabled
@@ -168,6 +171,7 @@ export default function TwoStepDialog({
         {view === 'main' && !enabled && (
           <>
             <p className="m-0 text-sm text-tx-2 leading-relaxed">
+              {note ? `${note} ` : ''}
               {required
                 ? 'Two-step sign-in is required for your account. '
                 : 'Add a second step to signing in: '}

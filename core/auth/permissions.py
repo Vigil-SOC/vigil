@@ -17,6 +17,7 @@ from typing import Callable, Optional
 from fastapi import Depends, Header, HTTPException, Request, status
 
 from core.auth import current_user as current_user_module
+from core.auth import step_up
 from core.auth.auth_cookies import ACCESS_COOKIE_NAME
 from core.auth.auth_service import AuthService
 from core.auth.current_user import get_current_user
@@ -199,6 +200,25 @@ KNOWN_PERMISSIONS = frozenset(CATALOG["permissions"]) | frozenset(
 PLATFORM_EQUIVALENT = frozenset({"integrations.install"})
 
 
+# Permissions whose writes ask "Confirm it's you" unless the sign-in confirmed
+# inside the privileged idle window (#4179, core/auth/step_up.py). The value is
+# the action the dialog's title names. A route that gates on one of these through
+# ``deny_unless`` asks by itself, so ``require_permission`` and an inline check
+# are covered alike; a handler that records its own 403s adds ``step_up.gate``.
+# Never ai_decisions.approve: routine approvals must not ask.
+# Machines are never asked, whatever they hold.
+STEP_UP = {
+    "platform.write": "change settings",
+    "integrations.write": "change integrations",
+    "integrations.install": "install an integration",
+    "ai_autonomy.write": "change AI autonomy",
+    "sessions.manage": "change session settings",
+    "roles.manage": "change roles",
+    "users.write": "change users",
+    "users.delete": "delete a user",
+}
+
+
 def _without(base: dict, *keys: str) -> dict:
     return {k: v for k, v in base.items() if k not in keys}
 
@@ -293,6 +313,15 @@ def deny_unless(user_id: str, permission: str, session=None) -> None:
     """403 naming the permission the gate declares."""
     missing = missing_permission(user_id, permission, session)
     if missing is None:
+        # A privileged write asks to confirm it's you, here, so a route that checks
+        # inline is covered too. A read never asks.
+        request = current_user_module.current_request.get()
+        if (
+            permission in STEP_UP
+            and request is not None
+            and request.method not in _SAFE_METHODS
+        ):
+            step_up.check(request, user_id, STEP_UP[permission])
         return
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,

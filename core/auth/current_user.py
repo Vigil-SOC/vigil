@@ -10,6 +10,7 @@ are unaffected.
 """
 
 import logging
+from contextvars import ContextVar
 from typing import Any, Callable, Optional
 
 from fastapi import Header, HTTPException, Request, status
@@ -27,6 +28,11 @@ from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
+
+# The request ``get_current_user`` is authenticating, for the rest of that request.
+current_request: ContextVar[Optional[Request]] = ContextVar(
+    "vigil_current_request", default=None
+)
 
 ACCESS_TOKEN_TYPE = "access"
 
@@ -225,6 +231,8 @@ async def get_current_user(
     # A previous request on this context must not decide this one. Dev mode
     # is not a cookie, so it stays cleared: the bypass is an agent close.
     clear_http_actor()
+    # For deny_unless, which has no request: a privileged write asks to confirm.
+    current_request.set(request)
     request.state.vigil_http_actor = None
 
     # DEV MODE: Bypass authentication and return mock user

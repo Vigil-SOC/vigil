@@ -16,7 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from core.audit.trail import SYSTEM
-from core.auth import session_policy, sign_ins, trail_events
+from core.auth import session_policy, sign_ins, step_up, trail_events
 from core.auth.auth_cookies import (
     ACCESS_COOKIE_NAME,
     REFRESH_COOKIE_NAME,
@@ -51,6 +51,7 @@ from core.platform.email_service import mail_is_configured, send_email
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import SignIn, User
 from core.storage.schemas import UserSchema
+from core.storage.schemas.base import IsoDateTime
 from core.time import utcnow
 from services.api.middleware.auth import get_current_active_user
 from services.api.middleware.auth_rate_key import (
@@ -207,13 +208,15 @@ class ChangePasswordRequest(BaseModel):
 class ProfileUpdateRequest(BaseModel):
     """Signed-in user's own profile.
 
-    ``current_password`` is required when ``email`` names a different mailbox.
-    The password is a body field so it is not written to access logs.
+    A different ``email`` always takes the strong check, inside the confirmation
+    window too: ``current_password`` and, with MFA on, ``code``. They are body
+    fields so they are not written to access logs.
     """
 
     full_name: Optional[str] = None
     email: Optional[EmailStr] = None
     current_password: Optional[str] = None
+    code: Optional[str] = None
 
 
 class RefreshTokenRequest(BaseModel):
@@ -749,24 +752,57 @@ class ConfirmRequest(BaseModel):
     code: Optional[str] = None
 
 
-def _confirm_it_is_you(user: User, body: ConfirmRequest, session: Session) -> None:
-    """A fresh check on every call. 400, not 401: a 401 would make the web
-    client refresh and retry, spending two rate-limit slots."""
-    if user.mfa_enabled:
-        ok = bool(body.code) and AuthService.verify_mfa_code(
-            user.user_id, body.code, session
-        )
-        problem = (
-            "That code didn't work. Check the app and try again; "
-            "codes change every 30 seconds."
-        )
-    else:
-        ok = bool(body.password) and AuthService.verify_password(
-            body.password, user.password_hash
-        )
-        problem = "That password didn't work. Try again."
-    if not ok:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=problem)
+def _confirm_it_is_you(
+    request: Request, user: User, body: ConfirmRequest, session: Session
+) -> None:
+    """A fresh one-factor check on every call. It shares the confirmation's
+    window and its count of failures in a row."""
+    step_up.confirm(
+        user,
+        session,
+        _session_sid(request),
+        password=body.password,
+        code=body.code,
+        source=client_host(request),
+    )
+
+
+class ConfirmItRequest(ConfirmRequest):
+    """Confirm it's you for a privileged change. ``strong``: the password and,
+    with MFA, a current code, whatever the window."""
+
+    strong: bool = False
+
+
+class ConfirmedResponse(BaseModel):
+    """The window the confirmation opened."""
+
+    confirmed_at: IsoDateTime
+    window_ends_at: IsoDateTime
+
+
+@router.post("/confirm", response_model=ConfirmedResponse)
+@limiter.limit("10/minute", key_func=session_rate_key)
+def confirm_it_is_you(
+    request: Request,
+    body: ConfirmItRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    session: UnitOfWorkSession,
+):
+    """Confirm it's you: opens the window the privileged changes read. A wrong
+    answer is a 400; the third in a row ends the sign-in (401, never a lock)."""
+    sid = _session_sid(request)
+    step_up.confirm(
+        current_user,
+        session,
+        sid,
+        password=body.password,
+        code=body.code,
+        strong=body.strong,
+        source=client_host(request),
+    )
+    now = utcnow()
+    return ConfirmedResponse(confirmed_at=now, window_ends_at=now + step_up.window())
 
 
 def _end_own(
@@ -815,7 +851,7 @@ def end_other_sign_ins(
     session: UnitOfWorkSession,
 ):
     """Sign out everywhere else: every open sign-in but this one."""
-    _confirm_it_is_you(current_user, body, session)
+    _confirm_it_is_you(request, current_user, body, session)
     ids = [
         sid
         for sid, _ in sign_ins.open_ids(
@@ -835,7 +871,7 @@ def end_all_my_sign_ins(
     session: UnitOfWorkSession,
 ):
     """Sign out everywhere: every open sign-in, this one too."""
-    _confirm_it_is_you(current_user, body, session)
+    _confirm_it_is_you(request, current_user, body, session)
     ids = [sid for sid, _ in sign_ins.open_ids(session, current_user.principal_id)]
     return _end_own(request, response, session, current_user, ids)
 
@@ -851,7 +887,7 @@ def end_my_sign_in(
     session: UnitOfWorkSession,
 ):
     """End one of your open sign-ins."""
-    _confirm_it_is_you(current_user, body, session)
+    _confirm_it_is_you(request, current_user, body, session)
     mine = [sid for sid, _ in sign_ins.open_ids(session, current_user.principal_id)]
     if sign_in_id not in mine:
         raise HTTPException(
@@ -1022,7 +1058,9 @@ def _apply_profile_update(
     full_name: Optional[str],
     email: Optional[str],
     current_password: Optional[str],
+    code: Optional[str] = None,
     sign_in: Optional[str] = None,
+    source: Optional[str] = None,
 ) -> tuple[bool, dict]:
     """Apply a profile edit; return whether the email changed and the new payload.
 
@@ -1032,25 +1070,19 @@ def _apply_profile_update(
     changing_email = bool(email) and email.casefold() != user.email.casefold()
     if changing_email:
         # Password reset is mailed to the address on the account, so a live
-        # session is not enough to point that address somewhere else.
-        # 400, not 401: the session is valid and a body field is wrong. A 401
-        # would make the web client refresh and retry, spending two rate-limit slots.
-        if not current_password or not AuthService.verify_password(
-            current_password, user.password_hash
-        ):
-            logger.warning(
-                "Rejected email change for %s: current password %s",
-                user.username,
-                "missing" if not current_password else "incorrect",
-            )
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "Current password is incorrect"
-                    if current_password
-                    else "Current password is required to change the email address"
-                ),
-            )
+        # session is not enough to point that address somewhere else: the strong
+        # check, every time, the confirmation window or not. Without MFA, the
+        # password alone. 400, not 401: the session is valid and a body field is
+        # wrong. A 401 would make the web client refresh and retry.
+        step_up.confirm(
+            user,
+            session,
+            sign_in,
+            password=current_password,
+            code=code,
+            strong=True,
+            source=source,
+        )
         claim_sign_in_names(session, email)
         if identifier_in_use(session, email, except_user_id=user.user_id):
             raise HTTPException(
@@ -1124,7 +1156,9 @@ async def update_current_user(
             body.full_name,
             body.email,
             body.current_password,
+            body.code,
             _session_sid(request),
+            client_host(request),
         )
 
         if email_changed:
@@ -1313,6 +1347,8 @@ def verify_mfa(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid MFA code"
         )
     _record_mfa(session, request, current_user, "auth.mfa_enabled")
+    # Setting it up proved the person holds the factor: the window starts.
+    step_up.open_window(session, _session_sid(request))
 
     return RecoveryCodesResponse(
         recovery_codes=codes, message="MFA enabled successfully"
