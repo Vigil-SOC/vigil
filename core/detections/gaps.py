@@ -10,7 +10,8 @@ Sees is covered on paper only: a rule declares it, and nothing that runs on arri
 data does. A Blind spot is a data source SIEM rules read that has no events (or lacks
 their fields), with the rules it starves.
 
-A proven hunt or closed Case that no rule alerted on is a run rules missed. It is
+A proven hunt (escalated to incident response or not) or closed Case that no rule
+alerted on is a run rules missed. It is
 read from the Verdicts episodic memory already holds and correlated with
 ``reconstruct`` against the Findings in its window; nothing is written.
 """
@@ -20,6 +21,8 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Collection, Dict, List, Mapping, Optional, Tuple
+
+from sqlalchemy import bindparam, text
 
 from core.detections.reconstruction import _entities_from_context, reconstruct
 from core.memory.entity_keys import normalise_keys
@@ -368,7 +371,24 @@ def _not_active_reason(entry: Optional[Mapping[str, Any]]) -> str:
 # --- Runs rules missed -------------------------------------------------------
 
 LEDGER_KINDS = ("hunt", "case")
+# handed_off is a hypothesis proven and then escalated to incident response: the
+# most serious proven runs end there, not at proven.
+PROVEN = ("proven", "handed_off")
 RULED_OUT = ("disproven", "false_positive")
+# The techniques the proven hunts run on each Case cited. Their Verdicts are keyed by
+# hunt id and the Case only by the hunt's workflow run, so the marker joins the two.
+_CASE_HUNT_TECHNIQUES = text("""
+    SELECT wr.trigger_context->>'case_id' AS case_id, ev.techniques AS techniques
+    FROM workflow_runs wr
+    JOIN episodic_distil_markers m
+      ON m.investigation_kind = 'hunt' AND m.origin_run_id::text = wr.run_id
+    JOIN episodic_verdicts ev
+      ON ev.investigation_kind = 'hunt' AND ev.investigation_id = m.investigation_id
+    WHERE wr.trigger_context->>'case_id' IN :case_ids
+      AND ev.outcome IN :proven
+    """).bindparams(
+    bindparam("case_ids", expanding=True), bindparam("proven", expanding=True)
+)
 # A Verdict's entity keys, as the reconstruction step spells them. Other key types
 # (hash, domain, url...) are not entities a Finding is joined on.
 _STEP_KEYS = {"host": "hostnames", "ip": "src_ips", "user": "users"}
@@ -388,7 +408,8 @@ def read_ledger(since_days: int = 30) -> List[Dict[str, Any]]:
     """Hunt and Case Verdicts concluded in the window, Case gaps filled from its Findings.
 
     A Case Verdict carries no techniques and usually no subjects, so both are read
-    from the Case's own Findings here; nothing is written back to the Verdict.
+    from the Case's own Findings here, techniques also from the proven hunts run on
+    the Case; nothing is written back to the Verdict.
     """
     since = datetime.now(timezone.utc) - timedelta(days=since_days)
     with get_db_manager().session_scope() as session:
@@ -429,6 +450,15 @@ def read_ledger(since_days: int = 30) -> List[Dict[str, Any]]:
             ):
                 if TECHNIQUE_ID.match(label.strip()):
                     labels.setdefault(case_id, set()).add(label.strip().upper())
+            # A Finding labelled only by tactic leaves the Case no technique; the
+            # hunt that proved it there usually cited one.
+            for case_id, techniques in session.execute(
+                _CASE_HUNT_TECHNIQUES,
+                {"case_ids": sorted(case_ids), "proven": list(PROVEN)},
+            ):
+                for label in techniques or []:
+                    if TECHNIQUE_ID.match(label.strip()):
+                        labels.setdefault(case_id, set()).add(label.strip().upper())
             for case_id, entity_context in (
                 session.query(case_findings.c.case_id, Finding.entity_context)
                 .join(Finding, Finding.finding_id == case_findings.c.finding_id)
@@ -521,7 +551,7 @@ def missed_runs_report(
     proven = [
         v
         for v in verdicts
-        if v["outcome"] == "proven"
+        if v["outcome"] in PROVEN
         and (since is None or _naive_utc(v["concluded_at"]) >= _naive_utc(since))
         and (not is_case or _run(v) == ("case", context))
         and (not wanted or any(in_scope(t) for t in v["techniques"]))

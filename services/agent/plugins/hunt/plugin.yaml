@@ -176,8 +176,12 @@ finding:
           field: {type: string, description: "The field or aggregate the finding rests on, e.g. conn_count, filename."}
           authored: {type: string, enum: [sensor, adversary, third_party]}
     # Narrowed like source_system. Optional: a record with nothing to classify
-    # should say nothing rather than invent a technique to fill the field.
-    attack_technique: {type: string}
+    # should say nothing rather than invent a technique to fill the field. A
+    # Verdict's techniques are only the ones its evidence cited, and a proven
+    # Verdict with none never becomes a detection gap.
+    attack_technique:
+      type: string
+      description: "The ATT&CK technique this record shows the adversary using, e.g. T1071.001 for C2 over HTTP(S). Set it on every record that shows adversary behaviour; leave it out for routine or benign records."
 
 # The run's roles, as the spec builder and the Python preflight read them: what the
 # lead may use, and the critic that argues the null before a hypothesis is proven.

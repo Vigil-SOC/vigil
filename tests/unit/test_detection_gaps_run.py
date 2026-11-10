@@ -310,6 +310,12 @@ def test_identify_gaps_since_reconstructs_only_newer_proven_runs():
     assert report["proven_verdicts"] == 1
 
 
+def test_a_hunt_escalated_to_incident_response_counts_as_proven():
+    escalated = {**_verdict("escalated", T0), "outcome": "handed_off"}
+    report = missed_runs_report("", False, [escalated], lambda start, end: [], {}, 30)
+    assert report["proven_verdicts"] == 1
+
+
 def test_the_schedule_intake_mints_its_case_with_the_techniques(monkeypatch):
     seen = {}
 
