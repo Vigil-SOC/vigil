@@ -14,6 +14,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { signInsApi } from '../../services/api'
 import ServiceAccountsCard from './ServiceAccountsCard'
 import TokensCard from './TokensCard'
+import UserMethodsDialog from './UserMethodsDialog'
 import UserSignInsDialog from './UserSignInsDialog'
 import {
   useUsers,
@@ -116,6 +117,7 @@ function PeopleAndRoles({ notify, changes }: SectionProps & { changes: number })
   const [confirmDelete, setConfirmDelete] = useState<User | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [signInsOf, setSignInsOf] = useState<User | null>(null)
+  const [methodsOf, setMethodsOf] = useState<User | null>(null)
   const [everyoneOpen, setEveryoneOpen] = useState(false)
   const [everyoneReason, setEveryoneReason] = useState('')
   const [signingOut, setSigningOut] = useState(false)
@@ -431,6 +433,11 @@ function PeopleAndRoles({ notify, changes }: SectionProps & { changes: number })
                           <Icon name="clock" size={15} />
                         </button>
                       )}
+                      {canWrite && live(u) && covers(u.role_id) && u.user_id !== me?.user_id && (
+                        <button className="btn ghost icon" title="Sign-in methods" onClick={() => setMethodsOf(u)}>
+                          <Icon name="shield" size={15} />
+                        </button>
+                      )}
                       {canWrite && u.status === 'locked' && covers(u.role_id) && u.user_id !== me?.user_id && (
                         <button className="btn ghost icon" title="Unlock" onClick={() => setUnlockOf(u)}>
                           <Icon name="lock" size={15} />
@@ -555,6 +562,8 @@ function PeopleAndRoles({ notify, changes }: SectionProps & { changes: number })
             </div>
           </div>
         </Popup>
+
+        {methodsOf && <UserMethodsDialog user={methodsOf} onClose={() => setMethodsOf(null)} />}
 
         {signInsOf && (
           <UserSignInsDialog user={signInsOf} onClose={() => setSignInsOf(null)} notify={notify} />

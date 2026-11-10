@@ -1021,6 +1021,118 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/mfa-methods": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List My Mfa Methods
+         * @description Your own sign-in methods: type, name, added and last used. Never a secret.
+         */
+        get: operations["get_api_auth_mfa-methods"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/mfa/keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List My Security Keys
+         * @description Your security keys, and whether this install offers them.
+         */
+        get: operations["get_api_auth_mfa_keys"];
+        put?: never;
+        /**
+         * Register Security Key
+         * @description Register a security key. The strong check first (the first method of a
+         *     person without MFA needs only the password); adding ends no sign-in and
+         *     notifies the person. A first method turns MFA on and returns recovery codes
+         *     once.
+         */
+        post: operations["post_api_auth_mfa_keys"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/mfa/keys/assertion-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Security Key Assertion Options
+         * @description Options to answer a check with a key ("touch your security key"): send the
+         *     assertion and ``challenge`` as ``assertion`` and ``challenge`` to /confirm or
+         *     any method change.
+         */
+        post: operations["post_api_auth_mfa_keys_assertion-options"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/mfa/keys/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Security Key Registration Options
+         * @description Options to register a key: the allowed algorithms only. 409 with the
+         *     reason when this install has no security keys.
+         */
+        post: operations["post_api_auth_mfa_keys_options"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/mfa/keys/{key_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Security Key
+         * @description Remove one of your keys. The strong check, then the person's other sign-ins
+         *     end. Their last method is refused when the MFA requirement covers them;
+         *     otherwise removing a key-only person's last key turns MFA off.
+         */
+        delete: operations["delete_api_auth_mfa_keys_key_id"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/mfa/recovery-codes": {
         parameters: {
             query?: never;
@@ -6786,6 +6898,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/{user_id}/mfa-methods": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List User Mfa Methods
+         * @description A person's sign-in methods, read-only: type, name, added, last used and the
+         *     recovery codes left, never a secret or a code. users.write over the account,
+         *     and a role the caller covers.
+         */
+        get: operations["get_api_users_user_id_mfa-methods"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users/{user_id}/reactivate": {
         parameters: {
             query?: never;
@@ -10299,6 +10433,12 @@ export interface components {
          *     with MFA, a current code, whatever the window.
          */
         ConfirmItRequest: {
+            /** Assertion */
+            assertion?: {
+                [key: string]: unknown;
+            } | null;
+            /** Challenge */
+            challenge?: string | null;
             /** Code */
             code?: string | null;
             /** Password */
@@ -10315,6 +10455,12 @@ export interface components {
          *     without MFA, a current authenticator or recovery code for one with it.
          */
         ConfirmRequest: {
+            /** Assertion */
+            assertion?: {
+                [key: string]: unknown;
+            } | null;
+            /** Challenge */
+            challenge?: string | null;
             /** Code */
             code?: string | null;
             /** Password */
@@ -11469,6 +11615,12 @@ export interface components {
             password: string;
             /** Username Or Email */
             username_or_email: string;
+            /** Webauthn */
+            webauthn?: {
+                [key: string]: unknown;
+            } | null;
+            /** Webauthn Challenge */
+            webauthn_challenge?: string | null;
         };
         /**
          * LoginResponse
@@ -11477,6 +11629,11 @@ export interface components {
         LoginResponse: {
             /** Access Token */
             access_token: string;
+            /**
+             * Mfa Removed
+             * @default false
+             */
+            mfa_removed: boolean;
             /** Recovery Codes */
             recovery_codes?: string[] | null;
             /** Refresh Token */
@@ -11513,11 +11670,23 @@ export interface components {
         };
         /**
          * MFAVerifyRequest
-         * @description MFA verification request.
+         * @description A method change: the code and, for the strong check, the password. Body
+         *     fields so neither is written to access logs. Optional so a missing password
+         *     or code is the check's own "Enter your password.", not a 422. A person with
+         *     security keys may send ``assertion`` and ``challenge`` in place of the code
+         *     (from POST /mfa/keys/assertion-options).
          */
         MFAVerifyRequest: {
+            /** Assertion */
+            assertion?: {
+                [key: string]: unknown;
+            } | null;
+            /** Challenge */
+            challenge?: string | null;
             /** Code */
-            code: string;
+            code?: string | null;
+            /** Password */
+            password?: string | null;
         };
         /**
          * MergeRequest
@@ -11531,6 +11700,21 @@ export interface components {
             merged_by: string;
             /** Source Case Id */
             source_case_id: string;
+        };
+        /** MfaMethod */
+        MfaMethod: {
+            /** Added At */
+            added_at?: string | null;
+            /** Key Id */
+            key_id?: string | null;
+            /** Last Used At */
+            last_used_at?: string | null;
+            /** Name */
+            name: string;
+            /** Remaining */
+            remaining?: number | null;
+            /** Type */
+            type: string;
         };
         /** MintRequest */
         MintRequest: {
@@ -12247,6 +12431,32 @@ export interface components {
             /** Refresh Token */
             refresh_token?: string | null;
         };
+        /**
+         * RegisterKeyRequest
+         * @description A key to register. ``credential`` and ``registration_challenge`` come from
+         *     the browser and from POST /mfa/keys/options; the rest is the method-change
+         *     check.
+         */
+        RegisterKeyRequest: {
+            /** Assertion */
+            assertion?: {
+                [key: string]: unknown;
+            } | null;
+            /** Challenge */
+            challenge?: string | null;
+            /** Code */
+            code?: string | null;
+            /** Credential */
+            credential: {
+                [key: string]: unknown;
+            };
+            /** Name */
+            name?: string | null;
+            /** Password */
+            password?: string | null;
+            /** Registration Challenge */
+            registration_challenge: string;
+        };
         /** RejectRequest */
         RejectRequest: {
             /**
@@ -12656,6 +12866,38 @@ export interface components {
             skills?: components["schemas"]["SearchHit"][];
             /** Workflows */
             workflows?: components["schemas"]["SearchHit"][];
+        };
+        /** SecurityKeyAdded */
+        SecurityKeyAdded: {
+            key: components["schemas"]["SecurityKeyEntry"];
+            /** Recovery Codes */
+            recovery_codes?: string[] | null;
+        };
+        /**
+         * SecurityKeyEntry
+         * @description A key as the person sees it: never its credential id or public key.
+         */
+        SecurityKeyEntry: {
+            /** Added At */
+            added_at?: string | null;
+            /** Key Id */
+            key_id: string;
+            /** Last Used At */
+            last_used_at?: string | null;
+            /** Name */
+            name: string;
+        };
+        /**
+         * SecurityKeysResponse
+         * @description The install's key state and the caller's keys.
+         */
+        SecurityKeysResponse: {
+            /** Available */
+            available: boolean;
+            /** Keys */
+            keys: components["schemas"]["SecurityKeyEntry"][];
+            /** Reason */
+            reason?: string | null;
         };
         /**
          * ServerEnabledRequest
@@ -13546,6 +13788,19 @@ export interface components {
             } | null;
             /** User Id */
             user_id: string;
+        };
+        /**
+         * WebAuthnOptions
+         * @description Options for the browser's ``credentials.create`` or ``.get`` and the signed
+         *     challenge to send back with the answer.
+         */
+        WebAuthnOptions: {
+            /** Challenge */
+            challenge: string;
+            /** Options */
+            options: {
+                [key: string]: unknown;
+            };
         };
         /** WebhookIn */
         WebhookIn: {
@@ -15449,6 +15704,202 @@ export interface operations {
                 authorization?: string | null;
             };
             path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MFAVerifyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_auth_mfa-methods": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MfaMethod"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_auth_mfa_keys: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecurityKeysResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_auth_mfa_keys: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisterKeyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecurityKeyAdded"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_auth_mfa_keys_assertion-options": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebAuthnOptions"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_auth_mfa_keys_options: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebAuthnOptions"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_auth_mfa_keys_key_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                key_id: string;
+            };
             cookie?: never;
         };
         requestBody: {
@@ -25770,6 +26221,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_users_user_id_mfa-methods": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MfaMethod"][];
                 };
             };
             /** @description Validation Error */

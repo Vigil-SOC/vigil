@@ -537,15 +537,6 @@ DEEPTEMPO_FINDING_TOOLS = [
         },
     },
     {
-        "name": "get_case",
-        "description": "Get detailed information about a specific case including all findings, timeline, activities, and MITRE techniques. A null confidence in mitre_predictions means the source named the technique and gave no confidence: it is unknown, not 0.",
-        "input_schema": {
-            "type": "object",
-            "properties": {"case_id": {"type": "string", "description": "The case ID"}},
-            "required": ["case_id"],
-        },
-    },
-    {
         "name": "read_case_shell",
         "description": (
             "Run one bash command over a case's files, read-only, and get its "

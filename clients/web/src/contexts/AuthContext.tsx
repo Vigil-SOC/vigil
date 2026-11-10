@@ -39,6 +39,11 @@ interface User {
   permissions?: Record<string, boolean>;
 }
 
+export interface LoginResult {
+  recoveryCodes?: string[];
+  mfaRemoved?: boolean;
+}
+
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
@@ -51,8 +56,8 @@ interface AuthContextType {
   retryLoadUser: () => Promise<void>;
   /** Re-reads /auth/me in place, without the loading screen that unmounts the console. */
   refreshUser: () => Promise<void>;
-  /** Resolves to fresh recovery codes when the sign-in replaced an old set; show them once. */
-  login: (usernameOrEmail: string, password: string, mfaCode?: string) => Promise<string[] | undefined>;
+  /** Resolves to fresh recovery codes when the sign-in replaced an old set (show them once), and whether a recovery code removed the person's methods (setup comes next). */
+  login: (usernameOrEmail: string, password: string, mfaCode?: string) => Promise<LoginResult>;
   logout: () => Promise<void>;
   hasPermission: (permission: string) => boolean;
 }
@@ -146,12 +151,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // person, so re-read who they are and the console moves to setup.
   useEffect(() => onMfaSetupRequired(() => void refreshUser()), [refreshUser]);
 
-  const login = async (usernameOrEmail: string, password: string, mfaCode?: string): Promise<string[] | undefined> => {
+  const login = async (usernameOrEmail: string, password: string, mfaCode?: string): Promise<LoginResult> => {
     if (DEV_MODE) {
       console.log('DEV_MODE: Bypassing login, using mock user');
       retainChatCache(DEV_USER.user_id);
       setUser(DEV_USER);
-      return undefined;
+      return {};
     }
 
     // the backend sets the HttpOnly cookies; only the user comes back in the body
@@ -165,7 +170,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
       if (response.data.user?.user_id) retainChatCache(response.data.user.user_id);
       setSignedOut(null);
       setUser(response.data.user);
-      return response.data.recovery_codes ?? undefined;
+      return {
+        recoveryCodes: response.data.recovery_codes ?? undefined,
+        mfaRemoved: !!response.data.mfa_removed,
+      };
     } catch (error: any) {
       const isMfaRequired =
         error.response?.headers?.['x-mfa-required'] === 'true' ||

@@ -21,6 +21,7 @@ from core.auth import current_user as current_user_module
 from core.auth import (
     dormancy,
     mcp_credential_service,
+    mfa_methods,
     principals,
     session_policy,
     sign_ins,
@@ -719,6 +720,24 @@ def list_user_sign_ins(
     the caller covers."""
     user = _managed_sign_ins(current_user, session, user_id, "read")
     return sign_ins.listing(session, user.principal_id)
+
+
+@router.get("/{user_id}/mfa-methods", response_model=list[mfa_methods.MfaMethod])
+def list_user_mfa_methods(
+    user_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """A person's sign-in methods, read-only: type, name, added, last used and the
+    recovery codes left, never a secret or a code. users.write over the account,
+    and a role the caller covers."""
+    with _denials(current_user, "user.mfa_methods.read"):
+        deny_unless(current_user.user_id, "users.write")
+        user = _live_user(session, user_id)
+        _require_privileges_cover_target(
+            current_user, user, session, action="see the sign-in methods of"
+        )
+    return mfa_methods.methods(session, user)
 
 
 @router.post("/sign-ins/end-all", response_model=sign_ins.EndedSignIns)

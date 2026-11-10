@@ -18,7 +18,13 @@ from cryptography.fernet import MultiFernet
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
-from core.auth import key_ring, password_hash, principals, session_policy
+from core.auth import (
+    key_ring,
+    password_hash,
+    principals,
+    security_keys,
+    session_policy,
+)
 from core.auth.identity import claim_sign_in_names, identifier_in_use, matching_accounts
 from core.config import get_settings
 from core.exceptions import default_on_error
@@ -88,6 +94,14 @@ JWT_REFRESH_EXPIRATION_DAYS = get_settings().jwt_refresh_expiration_days
 
 # Old codes were 8 hex characters, new ones 16
 _RECOVERY_CODE = re.compile(r"[0-9A-F]{8}|[0-9A-F]{16}")
+
+# What ``verify_mfa_code`` accepted: the app, a current recovery code, or a
+# bcrypt-era one (#4177, which only upgrades the set).
+CODE_APP = "app"
+CODE_RECOVERY = "recovery"
+CODE_OLD_RECOVERY = "old_recovery"
+# An assertion of a security key was accepted at login (#4234).
+CODE_KEY = "security_key"
 
 
 def _is_service_account(user: User) -> bool:
@@ -490,10 +504,13 @@ class AuthService:
 
             secret = pyotp.random_base32()
             user.mfa_secret = AuthService._encrypt_mfa_secret(secret)
-            user.mfa_enabled = False
-            # Clear any stale codes from a prior setup attempt; fresh codes
-            # are issued at enable time.
-            user.mfa_recovery_codes = []
+            # A person with security keys keeps MFA on, and the codes issued with
+            # their first method, while the app is set up beside them.
+            if not security_keys.has_keys(session, user.principal_id):
+                user.mfa_enabled = False
+                # Clear any stale codes from a prior setup attempt; fresh codes
+                # are issued at enable time.
+                user.mfa_recovery_codes = []
             user.mfa_last_totp_step = None  # the old secret's steps don't apply
 
             logger.info(f"MFA setup initiated for user: {user.username}")
@@ -553,26 +570,24 @@ class AuthService:
     @staticmethod
     @default_on_error(None)
     def get_mfa_recovery_codes(
-        user_id: str, code: str, session: Optional[Session] = None
+        user_id: str, session: Optional[Session] = None
     ) -> Optional[List[str]]:
-        """Replace a user's recovery codes after proving possession of a TOTP
-        or recovery code, so a session alone cannot mint codes.
+        """Replace a user's recovery codes. The caller has run the strong check
+        (``step_up.confirm``), so no code is asked for here.
 
         Returns plaintext codes (caller displays them once), or None if MFA
-        is not enabled or the code is wrong.
+        is not enabled.
         """
         with unit_of_work(session) as session:
-            user = session.query(User).filter(User.user_id == user_id).first()
+            user = AuthService._lock_user(session, user_id)
             if not user or not user.mfa_enabled:
-                return None
-            if not AuthService.verify_mfa_code(user_id, code, session):
                 return None
 
             codes, user.mfa_recovery_codes = AuthService._generate_recovery_codes()
             return codes
 
     @staticmethod
-    @default_on_error(False)
+    @default_on_error(None)
     def verify_mfa_code(
         user_id: str,
         code: str,
@@ -580,8 +595,12 @@ class AuthService:
         *,
         count_failures: bool = False,
         source: Optional[str] = None,
-    ) -> bool:
+    ) -> Optional[str]:
         """Verify a TOTP code or a one-time recovery code.
+
+        Returns which kind was accepted (``CODE_APP``, ``CODE_RECOVERY`` for a
+        current-scheme recovery code, ``CODE_OLD_RECOVERY`` for a bcrypt-era one),
+        or None: truthy when it passed, so a caller that only asks "did it" still can.
 
         Enabling MFA is handled by enable_mfa(); this method assumes MFA is
         already enabled and only validates the supplied code. Only the login
@@ -589,7 +608,7 @@ class AuthService:
         (recovery codes, disabling MFA, a step-up) does not count toward a lock.
         """
         failed: Optional[tuple[str, str]] = None
-        accepted = False
+        accepted: Optional[str] = None
         with unit_of_work(session) as session:
             nested = session.begin_nested()
             try:
@@ -597,7 +616,13 @@ class AuthService:
                 # the second sees the consumed recovery code / stored TOTP step.
                 user = AuthService._lock_user(session, user_id)
                 if not user or not user.mfa_secret or _account_is_locked(user):
-                    return False
+                    return None
+                # With keys, a secret no code has confirmed yet (no TOTP step) is a
+                # setup in progress, not a method: it answers no login or check.
+                if user.mfa_last_totp_step is None and security_keys.has_keys(
+                    session, user.principal_id
+                ):
+                    return None
 
                 # Try TOTP first. An undecryptable secret must not block recovery
                 # codes: they are hashes and do not depend on the key.
@@ -606,7 +631,7 @@ class AuthService:
                 except MFASecretDecryptionError:
                     totp_ok = False  # already logged at ERROR with the cause
                 if totp_ok:
-                    accepted = True
+                    accepted = CODE_APP
                 else:
                     recovery_codes = list(user.mfa_recovery_codes or [])
                     candidate = code.strip().upper()
@@ -619,6 +644,11 @@ class AuthService:
                         else None
                     )
                     if found is not None:
+                        accepted = (
+                            CODE_OLD_RECOVERY
+                            if password_hash.needs_rewrite(recovery_codes[found])
+                            else CODE_RECOVERY
+                        )
                         recovery_codes.pop(found)
                         user.mfa_recovery_codes = recovery_codes
                         logger.info(
@@ -626,7 +656,6 @@ class AuthService:
                             user.username,
                             len(recovery_codes),
                         )
-                        accepted = True
                     if not accepted:
                         failed = (user.user_id, user.username)
             finally:
@@ -640,25 +669,47 @@ class AuthService:
         return accepted
 
     @staticmethod
-    @default_on_error(False)
-    def disable_mfa(user_id: str, code: str, session: Optional[Session] = None) -> bool:
-        """Turn MFA off after proving possession of a TOTP or recovery code.
+    def turn_on_with_key(user: User) -> list[str]:
+        """A person's first method is a security key: MFA is on, with the one-time
+        recovery codes returned here, as for the app. ``user`` is a locked row.
+        A secret left by an abandoned app setup goes."""
+        user.mfa_secret = None
+        user.mfa_last_totp_step = None
+        user.mfa_enabled = True
+        codes, user.mfa_recovery_codes = AuthService._generate_recovery_codes()
+        return codes
 
-        Clears the secret and any remaining recovery codes. Returns False
-        (leaving MFA untouched) if MFA is not enabled or the code is wrong.
+    @staticmethod
+    @default_on_error(False)
+    def disable_mfa(user_id: str, session: Optional[Session] = None) -> bool:
+        """Remove the authenticator app. The caller has run the strong check
+        (``step_up.confirm``).
+
+        With no security key that turns MFA off: the secret and the remaining
+        recovery codes go too. A person with keys keeps MFA, the codes and the
+        keys. Returns False, leaving MFA untouched, if there is no app to remove.
         """
         with unit_of_work(session) as session:
-            user = session.query(User).filter(User.user_id == user_id).first()
+            user = AuthService._lock_user(session, user_id)
             if not user or not user.mfa_enabled:
                 return False
-            if not AuthService.verify_mfa_code(user_id, code, session):
-                return False
-
-            user.mfa_enabled = False
-            user.mfa_secret = None
-            user.mfa_recovery_codes = []
+            if security_keys.has_keys(session, user.principal_id):
+                if not user.mfa_secret:
+                    return False
+                user.mfa_secret = None
+                user.mfa_last_totp_step = None
+            else:
+                AuthService.clear_mfa(user)
             logger.info(f"MFA disabled for user: {user.username}")
             return True
+
+    @staticmethod
+    def clear_mfa(user: User) -> None:
+        """Remove every method: the app, its steps and the remaining codes."""
+        user.mfa_enabled = False
+        user.mfa_secret = None
+        user.mfa_recovery_codes = []
+        user.mfa_last_totp_step = None
 
     @staticmethod
     def _generate_recovery_codes() -> tuple[list[str], list[str]]:
