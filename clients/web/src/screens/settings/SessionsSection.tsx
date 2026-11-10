@@ -23,6 +23,9 @@ interface FieldDef {
   max: number
   /** empty means no limit */
   optional?: boolean
+  /** how an unset value (or 0, when `zeroIsOff`) reads; default "No limit" */
+  offText?: string
+  zeroIsOff?: boolean
 }
 
 const FIELDS: FieldDef[] = [
@@ -43,12 +46,20 @@ const FIELDS: FieldDef[] = [
     hint: 'The most sign-ins one account holds at once. At the limit, a new sign-in ends the oldest. Empty: no limit.',
   },
   {
-    key: 'password_min_length', title: 'Password length', unit: 'characters', min: 15, max: 64,
-    hint: 'The fewest characters a new password has. Applies when a password is set or changed; existing passwords are not rechecked.',
+    key: 'password_min_length', title: 'Password length', unit: 'characters', min: 12, max: 64,
+    hint: 'The fewest characters a new password has. Under 15 only while MFA is required of everyone; a save that breaks that link is refused. Applies when a password is set or changed; existing passwords are not rechecked.',
   },
   {
     key: 'password_history', title: 'Password history', unit: 'passwords', min: 4, max: 24,
     hint: 'How many previous passwords are kept. A new password cannot match any of them.',
+  },
+  {
+    key: 'password_max_age_days', title: 'Password maximum age', unit: 'days', min: 1, max: 365, optional: true, offText: 'Off',
+    hint: 'A person must change a password older than this at their next sign-in, and is warned in the bell 7 days before. Service accounts are never blocked; managers are warned instead. Empty: passwords do not expire. Only a person can change it.',
+  },
+  {
+    key: 'password_min_age_days', title: 'Password minimum age', unit: 'days', min: 0, max: 7, offText: 'Off', zeroIsOff: true,
+    hint: 'How long after a change before the person may change it again. A forced change, a reset of a locked account, an administrator’s reset and a reported leak are exempt. 0: off.',
   },
 ]
 
@@ -69,9 +80,12 @@ const toForm = (p: SessionPolicy): Record<Key, string> => ({
   password_min_length: String(p.password_min_length),
   password_character_rules: p.password_character_rules,
   password_history: String(p.password_history),
+  password_max_age_days: p.password_max_age_days == null ? '' : String(p.password_max_age_days),
+  password_min_age_days: String(p.password_min_age_days),
 })
 
-const shown = (f: FieldDef, v: number | null | undefined) => (v == null ? 'No limit' : `${v} ${f.unit}`)
+const shown = (f: FieldDef, v: number | null | undefined) =>
+  v == null || (f.zeroIsOff && v === 0) ? (f.offText ?? 'No limit') : `${v} ${f.unit}`
 
 // Validation messages arrive as a list; the server's own wording is what is shown.
 function failure(e: unknown, fallback: string) {
@@ -267,7 +281,7 @@ export default function SessionsSection({ notify }: SectionProps) {
         onClose={() => setConfirm(null)}
         body={
           <>
-            <p>This change lets a sign-in last longer, an account hold more sign-ins, or a password be shorter, simpler or reused sooner:</p>
+            <p>This change lets a sign-in last longer, an account hold more sign-ins, or a password be shorter, simpler, reused sooner, older or changed sooner:</p>
             <ul className="my-2 pl-5 list-disc">
               {changes.map((f) => (
                 <li key={f.key}>{f.title}: {shown(f, saved[f.key])} → {shown(f, confirm?.[f.key])}</li>

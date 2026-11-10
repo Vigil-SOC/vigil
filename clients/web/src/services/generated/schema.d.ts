@@ -9949,6 +9949,11 @@ export interface components {
             current_password: string;
             /** New Password */
             new_password: string;
+            /**
+             * Suspected Leak
+             * @default false
+             */
+            suspected_leak: boolean;
         };
         /**
          * ChatDocument
@@ -11919,6 +11924,13 @@ export interface components {
              * @default 5
              */
             password_history: number;
+            /** Password Max Age Days */
+            password_max_age_days?: number | null;
+            /**
+             * Password Min Age Days
+             * @default 0
+             */
+            password_min_age_days: number;
             /**
              * Password Min Length
              * @default 16
@@ -12500,6 +12512,13 @@ export interface components {
              * @default 5
              */
             password_history: number;
+            /** Password Max Age Days */
+            password_max_age_days?: number | null;
+            /**
+             * Password Min Age Days
+             * @default 0
+             */
+            password_min_age_days: number;
             /**
              * Password Min Length
              * @default 16

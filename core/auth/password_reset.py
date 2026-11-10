@@ -40,6 +40,9 @@ class ResetClaim(NamedTuple):
     user_id: str
     # isoformat of password_changed_at when issued; None if it was NULL.
     changed_at: Optional[str]
+    # Issued by sign-in because the password must change, or by an
+    # administrator's script: the minimum age does not apply to it.
+    forced: bool = False
 
 
 def _ttl_seconds() -> int:
@@ -57,12 +60,14 @@ def _stamp(changed_at: Optional[datetime]) -> Optional[str]:
     return changed_at.isoformat() if changed_at else None
 
 
-def generate_reset_token(user) -> str:
+def generate_reset_token(user, forced: bool = False) -> str:
     """Sign a reset token for ``user`` (anything with user_id and
-    password_changed_at), valid until its password next changes."""
-    return _get_serializer().dumps(
-        {"user_id": user.user_id, "changed_at": _stamp(user.password_changed_at)}
-    )
+    password_changed_at), valid until its password next changes. ``forced``
+    marks a link the minimum password age does not apply to."""
+    claims = {"user_id": user.user_id, "changed_at": _stamp(user.password_changed_at)}
+    if forced:
+        claims["forced"] = True
+    return _get_serializer().dumps(claims)
 
 
 def default_base_url(settings) -> str:
@@ -99,7 +104,9 @@ def decode_reset_token(token: str) -> Optional[ResetClaim]:
     if "changed_at" not in payload:
         logger.info("Password reset token predates the password stamp")
         return None
-    return ResetClaim(payload["user_id"], payload["changed_at"])
+    return ResetClaim(
+        payload["user_id"], payload["changed_at"], payload.get("forced") is True
+    )
 
 
 def is_current(claim: ResetClaim, user) -> bool:
