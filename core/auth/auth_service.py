@@ -139,6 +139,22 @@ def password_matches_any(plaintext: str, hashes) -> bool:
     return password_hash.find(plaintext, list(hashes or [])) is not None
 
 
+def managers(person: str) -> list[str]:
+    """Principal ids of active people, other than this one, who hold users.write."""
+    with unit_of_work() as session:
+        users = (
+            session.query(User.user_id, User.principal_id)
+            .filter(User.is_active.is_(True), User.service_account.isnot(True))
+            .all()
+        )
+        return [
+            principal
+            for user_id, principal in users
+            if principal != person
+            and AuthService.check_permission(user_id, "users.write", session=session)
+        ]
+
+
 class AuthService:
     """Service for user authentication and authorization."""
 
@@ -403,7 +419,6 @@ class AuthService:
     ) -> None:
         """One notice to each manager and one to the person, who sees it at their
         next sign-in. A lock ends no sign-in, so the notices are what tell anyone."""
-        from core.auth.sign_in_runs import managers
         from core.platform.notices import notify
 
         where = f"from {source}" if source else "from an unknown address"

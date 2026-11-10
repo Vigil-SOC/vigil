@@ -6710,8 +6710,8 @@ export interface paths {
         /**
          * Unlock User
          * @description End a lock and the failure count. users.write over the account, a role the
-         *     caller covers, and a person's own act: a lock ends no sign-in, so a locked
-         *     manager's open session must not be able to undo it, nor may a playbook.
+         *     caller covers, and a person's own act, not a playbook's. A lock ends no
+         *     sign-in, so a locked caller's open session may not unlock anyone, itself included.
          */
         post: operations["post_api_users_user_id_unlock"];
         delete?: never;

@@ -2,8 +2,8 @@
 
 from core.upgrade.revision import run_sql
 
-revision = "0046_lockout_policy"
-down_revision = "0045_detection_proposals"
+revision = "0047_lockout_policy"
+down_revision = "0046_run_sign_in"
 
 
 def upgrade() -> None:
