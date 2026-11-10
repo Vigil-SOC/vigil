@@ -1942,7 +1942,10 @@ export const breachedListApi = {
   },
 }
 
-// Self-service two-step sign-in (TOTP + recovery codes) for the signed-in user.
+/** The factor of a method change: a current code, or a security key's assertion and the challenge it signed. */
+export type Factor = { code?: string; assertion?: Record<string, unknown>; challenge?: string }
+
+// Self-service two-step sign-in (TOTP + recovery codes + security keys) for the signed-in user.
 export const mfaApi = {
   setup: () => api.post<Schema<'MFASetupResponse'>>('/auth/mfa/setup'),
   // the first method needs the password; a change to one that exists, the password and a code
@@ -1951,19 +1954,31 @@ export const mfaApi = {
       code,
       password,
     } satisfies Schema<'MFAVerifyRequest'>),
-  regenerateRecoveryCodes: (code: string, password: string) =>
+  regenerateRecoveryCodes: (password: string, factor: Factor) =>
     api.post<Schema<'RecoveryCodesResponse'>>('/auth/mfa/recovery-codes', {
-      code,
       password,
+      ...factor,
     } satisfies Schema<'MFAVerifyRequest'>),
   // axios sends a DELETE body only through `data`
-  disable: (code: string, password: string) =>
+  disable: (password: string, factor: Factor) =>
     api.delete<{ message: string }>('/auth/mfa', {
-      data: { code, password } satisfies Schema<'MFAVerifyRequest'>,
+      data: { password, ...factor } satisfies Schema<'MFAVerifyRequest'>,
     }),
   methods: () => api.get<Schema<'MfaMethod'>[]>('/auth/mfa-methods'),
   // Another person's, read-only, for managers (users.write over the account).
   ofUser: (userId: string) => api.get<Schema<'MfaMethod'>[]>(`/users/${encodeURIComponent(userId)}/mfa-methods`),
+}
+
+// Security keys: the browser options for a registration or a check, then the key itself.
+export const keysApi = {
+  registrationOptions: () => api.post<Schema<'WebAuthnOptions'>>('/auth/mfa/keys/options'),
+  assertionOptions: () => api.post<Schema<'WebAuthnOptions'>>('/auth/mfa/keys/assertion-options'),
+  // a person with no MFA yet sends the password alone; the first key then returns recovery codes
+  add: (body: Schema<'RegisterKeyRequest'>) => api.post<Schema<'SecurityKeyAdded'>>('/auth/mfa/keys', body),
+  remove: (keyId: string, password: string, factor: Factor) =>
+    api.delete<{ message: string }>(`/auth/mfa/keys/${encodeURIComponent(keyId)}`, {
+      data: { password, ...factor } satisfies Schema<'MFAVerifyRequest'>,
+    }),
 }
 
 export default api

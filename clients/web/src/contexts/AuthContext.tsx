@@ -34,9 +34,24 @@ interface User {
   mfa_enabled: boolean;
   /** The MFA requirement covers this person and they have none yet: setup comes before anything else. */
   mfa_setup_required?: boolean;
+  /** Whether this install offers security keys, and why not when it doesn't. */
+  security_keys?: { available: boolean; reason?: string | null };
   last_login: string | null;
   login_count: number;
   permissions?: Record<string, boolean>;
+}
+
+/** A key's answer to the sign-in challenge, sent beside the password on the second call. */
+export interface KeyAnswer {
+  assertion: Record<string, unknown>;
+  challenge: string;
+}
+
+/** What the 401 `X-MFA-Required` answer offers: the methods, the key challenge, and the server's note. */
+export interface MfaOffer {
+  methods: string[];
+  securityKey: { options: Record<string, unknown>; challenge: string } | null;
+  detail: string;
 }
 
 export interface LoginResult {
@@ -57,7 +72,7 @@ interface AuthContextType {
   /** Re-reads /auth/me in place, without the loading screen that unmounts the console. */
   refreshUser: () => Promise<void>;
   /** Resolves to fresh recovery codes when the sign-in replaced an old set (show them once), and whether a recovery code removed the person's methods (setup comes next). */
-  login: (usernameOrEmail: string, password: string, mfaCode?: string) => Promise<LoginResult>;
+  login: (usernameOrEmail: string, password: string, mfaCode?: string, key?: KeyAnswer) => Promise<LoginResult>;
   logout: () => Promise<void>;
   hasPermission: (permission: string) => boolean;
 }
@@ -151,7 +166,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // person, so re-read who they are and the console moves to setup.
   useEffect(() => onMfaSetupRequired(() => void refreshUser()), [refreshUser]);
 
-  const login = async (usernameOrEmail: string, password: string, mfaCode?: string): Promise<LoginResult> => {
+  const login = async (usernameOrEmail: string, password: string, mfaCode?: string, key?: KeyAnswer): Promise<LoginResult> => {
     if (DEV_MODE) {
       console.log('DEV_MODE: Bypassing login, using mock user');
       retainChatCache(DEV_USER.user_id);
@@ -165,6 +180,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
         username_or_email: usernameOrEmail,
         password,
         mfa_code: mfaCode,
+        webauthn: key?.assertion,
+        webauthn_challenge: key?.challenge,
       });
 
       if (response.data.user?.user_id) retainChatCache(response.data.user.user_id);
@@ -179,7 +196,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
         error.response?.headers?.['x-mfa-required'] === 'true' ||
         error.response?.data?.detail === 'MFA code required';
       if (isMfaRequired) {
-        throw new Error('MFA_REQUIRED', { cause: error });
+        const body = error.response?.data;
+        const offer: MfaOffer = {
+          methods: body?.methods ?? ['authenticator_app'],
+          securityKey: body?.security_key ?? null,
+          detail: body?.detail ?? '',
+        };
+        throw Object.assign(new Error('MFA_REQUIRED', { cause: error }), { offer });
       }
       // The password is listed or otherwise refused now: no session, a reset
       // token for the change instead. Carried on the error for the login screen.
