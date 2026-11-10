@@ -549,6 +549,13 @@ def _recover(session: Session, user: User, source: Optional[str]) -> None:
     """A recovery code was accepted at login: take every method, end the other
     sign-ins, and tell the person."""
     AuthService.clear_mfa(user)
+    trail_events.record(
+        session,
+        "auth.mfa_recovered",
+        {"source_ip": source},
+        actor=user.principal_id,
+        principal=user.principal_id,
+    )
     _end_others_after_change(session, user, None, source)
     _tell_person(
         session,
@@ -629,6 +636,9 @@ def login(
 
     new_recovery_codes = None
     recovered = False
+    # Whether the account had MFA when the password was given: a recovery below
+    # clears it, and the length rule must still be the one the account signed in under.
+    had_mfa = user.mfa_enabled
     # Check MFA if enabled
     if user.mfa_enabled:
         if not payload.mfa_code:
@@ -682,7 +692,7 @@ def login(
     if not service_account:
         try:
             check_not_listed(payload.password, user_inputs=[user.username, user.email])
-            if not user.mfa_enabled and len(payload.password) < SINGLE_FACTOR_MIN:
+            if not had_mfa and len(payload.password) < SINGLE_FACTOR_MIN:
                 raise PasswordPolicyError(
                     f"Password is under {SINGLE_FACTOR_MIN} characters, too short "
                     "without a second factor"
@@ -733,15 +743,6 @@ def login(
         actor=user.principal_id,
         sign_in=sid,
     )
-    if recovered:
-        trail_events.record(
-            session,
-            "auth.mfa_recovered",
-            {"source_ip": source},
-            actor=user.principal_id,
-            principal=user.principal_id,
-            sign_in=sid,
-        )
     # A service account gets body tokens only: a cookie is a console session.
     if not service_account:
         _set_cookies_for(response, access_token, refresh_token)
