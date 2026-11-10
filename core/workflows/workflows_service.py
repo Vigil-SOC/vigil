@@ -1,5 +1,6 @@
 """Workflows service for discovering, parsing, and executing WORKFLOW.md workflow definitions."""
 
+import asyncio
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -14,7 +15,7 @@ from core.agents.attribution import (
     principal_id_for_username,
 )
 from core.agents.queue import new_run_id
-from core.auth import tool_principal
+from core.auth import sign_in_runs, sign_ins, tool_principal
 from core.auth.principals import SYSTEM_PRINCIPAL_ID
 from core.documents.fence import fenced_document
 from core.findings.anomaly_score import format_anomaly_score
@@ -72,6 +73,7 @@ def _run_token(
     agent_id: str,
     run_id: str,
     origin: str,
+    sid: Optional[str] = None,
 ) -> str:
     """The token the run carries. A token we signed is re-signed with this run.
 
@@ -87,6 +89,7 @@ def _run_token(
             return principal
         username = username or claims.username
         person_id = person_id or claims.person_id
+        sid = sid or claims.sid
     return tool_principal.mint(
         username,
         person_id=person_id,
@@ -94,6 +97,7 @@ def _run_token(
         run_id=run_id,
         origin=origin,
         ttl=tool_principal.RUN_TTL,
+        sid=sid,
     )
 
 
@@ -718,6 +722,18 @@ class WorkflowsService:
                     carried.username
                 )
                 username = username or carried.username
+        # The sign-in the run follows from: the token's, or a handoff's source run's.
+        # Schedule and alert runs have none.
+        sid = None
+        if principal:
+            try:
+                sid = tool_principal.read(principal).sid
+            except tool_principal.InvalidPrincipal:
+                pass
+        if not sid and origin_kind == "parent" and origin_id:
+            sid = await asyncio.to_thread(sign_in_runs.inherited_sid, origin_id)
+        if sid and await asyncio.to_thread(sign_ins.ended_for_compromise, sid):
+            return {"success": False, "error": sign_ins.STOP_REASON}
         context = {**dict(parameters or {}), "run_kind": workflow.run_kind}
         agents = phase_actors(workflow.phases)
         if agents:
@@ -744,6 +760,7 @@ class WorkflowsService:
             triggered_by=triggered_by,
             triggered_by_principal_id=who,
             run_id=run_id,
+            sign_in_id=sid,
         )
         if not persisted:
             return {"success": False, "error": "Could not persist run (DB unavailable)"}
@@ -756,6 +773,7 @@ class WorkflowsService:
             agent_id=actor_principal,
             run_id=run_id,
             origin=resolved_origin,
+            sid=sid,
         )
         origin_value = _origin_value(resolved_origin, person_id, origin_id)
         asked = _asked_hypotheses(parameters)

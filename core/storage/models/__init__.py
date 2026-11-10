@@ -46,6 +46,10 @@ from core.storage.models.config import (
     ThreatIndicator,
     UserPreference,
 )
+from core.storage.models.detection_proposal import (
+    DetectionProposal,
+    DetectionProposalEvent,
+)
 from core.storage.models.detection_rule import (
     DETECTION_RULE_STAGES,
     DETECTION_RULE_STATUSES,
@@ -113,6 +117,8 @@ __all__ = [
     "CustomWorkflow",
     "DETECTION_RULE_STAGES",
     "DETECTION_RULE_STATUSES",
+    "DetectionProposal",
+    "DetectionProposalEvent",
     "DetectionRule",
     "DetectionRuleCheckChange",
     "DetectionRuleStage",

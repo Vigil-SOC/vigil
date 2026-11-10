@@ -297,8 +297,16 @@ class WorkflowRun(Base):
     max_cost_usd: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True)
     # Set when an operator removes the run from History. The row and its ledger stay.
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # The sign-in the run started from (a handoff run inherits its source's), so a
+    # compromise ending can find it. Null for schedule and alert runs and old rows.
+    sign_in_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
+        Index(
+            "idx_workflow_runs_sign_in",
+            "sign_in_id",
+            postgresql_where=text("sign_in_id IS NOT NULL"),
+        ),
         Index("idx_workflow_runs_workflow_id", "workflow_id", "started_at"),
         Index("idx_workflow_runs_started_at", "started_at"),
         # find_run_by_trigger reads this on every handoff a run hands over -- once

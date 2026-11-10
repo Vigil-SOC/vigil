@@ -711,6 +711,8 @@ def _disable_alone(user_id: str) -> None:
         session.query(User).filter(User.user_id == user_id).update(
             {User.is_active: False}, synchronize_session=False
         )
+        # Its open sign-ins end with it, so their agent runs stop.
+        sign_ins.end_all_for_user(user_id, sign_ins.DEACTIVATED, session)
 
 
 def _apply_user_update(
