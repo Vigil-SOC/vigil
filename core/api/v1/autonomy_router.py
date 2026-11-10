@@ -17,8 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
 
-from core.auth.auth_service import _is_service_account
-from core.auth.current_user import get_current_user
+from core.auth.current_user import get_current_user, is_machine_request
 from core.auth.permissions import deny_unless, permission_gate
 from core.deps import provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
@@ -164,7 +163,7 @@ def put_ceiling(
     try:
         update_ceiling(
             user_id=str(current_user.user_id),
-            caller_is_service=_is_service_account(current_user),
+            caller_is_service=is_machine_request(current_user),
             **edit,
         )
         return _view()
@@ -193,7 +192,7 @@ def post_resume(
     try:
         resume_ceiling(
             user_id=str(current_user.user_id),
-            caller_is_service=_is_service_account(current_user),
+            caller_is_service=is_machine_request(current_user),
         )
         return _view()
     except CeilingRefusal as exc:
@@ -277,10 +276,10 @@ def put_tool_class(
         return _entry(row)
     if loosens(before, after):
         deny_unless(current_user.user_id, "ai_autonomy.write", session)
-        if _is_service_account(current_user):
+        if is_machine_request(current_user):
             raise HTTPException(
                 status_code=403,
-                detail="A service account cannot loosen a tool's class",
+                detail="A service account or API token cannot loosen a tool's class",
             )
         try:
             stopped = read_ceiling().stopped

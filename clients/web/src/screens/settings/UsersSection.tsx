@@ -12,6 +12,7 @@ import {
 } from '../../shared/ui'
 import { useAuth } from '../../contexts/AuthContext'
 import { signInsApi } from '../../services/api'
+import TokensCard from './TokensCard'
 import UserSignInsDialog from './UserSignInsDialog'
 import {
   useUsers,
@@ -51,7 +52,18 @@ function errText(e: unknown, fallback: string): string {
   return (e as { message?: string })?.message || fallback
 }
 
+// Everyone manages their own tokens, so they do not wait on, or hide behind, the user list.
 export default function UsersSection({ notify }: SectionProps) {
+  const { hasPermission } = useAuth()
+  return (
+    <>
+      <PeopleAndRoles notify={notify} />
+      <TokensCard notify={notify} canManage={hasPermission('users.write')} />
+    </>
+  )
+}
+
+function PeopleAndRoles({ notify }: SectionProps) {
   const { user: me, hasPermission, logout } = useAuth()
   const navigate = useNavigate()
   const [search, setSearch] = useState('')

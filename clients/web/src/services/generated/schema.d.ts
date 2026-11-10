@@ -4989,7 +4989,7 @@ export interface paths {
         };
         /**
          * Get Surface
-         * @description Whether Vigil's own tools are reachable, and whether anything can reach them.
+         * @description Whether Vigil's own tools are reachable, and whether any token can open them.
          */
         get: operations["get_api_mcp_surface"];
         /**
@@ -4999,49 +4999,6 @@ export interface paths {
         put: operations["put_api_mcp_surface"];
         post?: never;
         delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/mcp/surface/credentials": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Mint Credential
-         * @description Issue a credential for the signed-in user.
-         *
-         *     The token is in this response and nowhere else. It is not stored and cannot
-         *     be shown again; an operator who loses one mints another and revokes this.
-         */
-        post: operations["post_api_mcp_surface_credentials"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/mcp/surface/credentials/{credential_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * Revoke Credential
-         * @description Withdraw a credential. What it could reach, it can no longer reach.
-         */
-        delete: operations["delete_api_mcp_surface_credentials_credential_id"];
         options?: never;
         head?: never;
         patch?: never;
@@ -6450,6 +6407,94 @@ export interface paths {
         get: operations["get_api_timeline_range"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Own
+         * @description Your own tokens, newest first, revoked and ended ones included.
+         */
+        get: operations["get_api_tokens"];
+        put?: never;
+        /**
+         * Mint
+         * @description Issue a token for yourself. It is in this response and nowhere else.
+         */
+        post: operations["post_api_tokens"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tokens/all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List All
+         * @description Every token, for a ``users.write`` holder; filtered on the server.
+         *
+         *     ``holders`` is everyone who holds one, whatever the filter, for its menu.
+         */
+        get: operations["get_api_tokens_all"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tokens/{credential_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke
+         * @description Withdraw a token: its holder's own, or anyone's for a ``users.write`` holder
+         *     (the one act that does not need to cover the holder's role).
+         */
+        delete: operations["delete_api_tokens_credential_id"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tokens/{credential_id}/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rotate
+         * @description Mint a successor with the same holder and label. Only whoever could mint
+         *     for the holder rotates, so an admin revokes another person's token, never this.
+         */
+        post: operations["post_api_tokens_credential_id_rotate"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10309,13 +10354,6 @@ export interface components {
             /** Username */
             username: string;
         };
-        /** CredentialMint */
-        CredentialMint: {
-            /** Expires In Days */
-            expires_in_days?: number | null;
-            /** Label */
-            label: string;
-        };
         /**
          * CustomIntegrationRequest
          * @description Request to generate a custom integration from documentation.
@@ -11422,6 +11460,13 @@ export interface components {
             /** Source Case Id */
             source_case_id: string;
         };
+        /** MintRequest */
+        MintRequest: {
+            /** Expires In Days */
+            expires_in_days?: number | null;
+            /** Label */
+            label: string;
+        };
         /** ModelInfoResponse */
         ModelInfoResponse: {
             /** Context Window */
@@ -12213,6 +12258,16 @@ export interface components {
                     [key: string]: number;
                 } | null;
             };
+        };
+        /** RotateRequest */
+        RotateRequest: {
+            /** Expires In Days */
+            expires_in_days?: number | null;
+            /**
+             * Suspected Compromise
+             * @default false
+             */
+            suspected_compromise: boolean;
         };
         /**
          * Routability
@@ -22518,74 +22573,6 @@ export interface operations {
             };
         };
     };
-    post_api_mcp_surface_credentials: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CredentialMint"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_api_mcp_surface_credentials_credential_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                credential_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_medic_decisions: {
         parameters: {
             query?: never;
@@ -25024,6 +25011,177 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TimelineResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_tokens: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_tokens: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MintRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_tokens_all: {
+        parameters: {
+            query?: {
+                /** @description A holder's user id */
+                holder?: string | null;
+                status?: ("active" | "rotated" | "expired" | "revoked") | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_tokens_credential_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                credential_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_tokens_credential_id_rotate: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                credential_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RotateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

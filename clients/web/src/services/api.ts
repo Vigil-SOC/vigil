@@ -498,20 +498,54 @@ export const mcpApi = {
   // does not parse answers 422 and changes nothing. Needs integrations.write.
   reloadServers: () => api.post<ReloadServersResponse>('/mcp/servers/reload'),
 
-  // Vigil's own MCP surface: whether it listens, and what may open it.
+  // Vigil's own MCP surface: whether it listens, and whether any token can open it.
   getSurface: () => api.get('/mcp/surface'),
 
   setSurfaceEnabled: (enabled: boolean) => api.put('/mcp/surface', { enabled }),
+}
 
-  // The token is in this response and nowhere else.
-  mintCredential: (label: string, expiresInDays?: number) =>
-    api.post('/mcp/surface/credentials', {
-      label,
-      expires_in_days: expiresInDays ?? null,
+export interface ApiTokenHolder {
+  user_id: string
+  username: string
+  full_name: string | null
+  service_account: boolean
+}
+
+export type ApiTokenStatus = 'active' | 'rotated' | 'expired' | 'revoked'
+
+export interface ApiToken {
+  credential_id: string
+  label: string
+  created_at: string | null
+  last_used_at: string | null
+  expires_at: string | null
+  revoked_at: string | null
+  status: ApiTokenStatus
+  holder: ApiTokenHolder
+}
+
+// A minted or rotated token is in the response and nowhere else.
+export interface MintedApiToken {
+  token: string
+  credential: ApiToken
+}
+
+export const tokensApi = {
+  listOwn: () => api.get<{ tokens: ApiToken[] }>('/tokens'),
+
+  // users.write. The filter is the server's.
+  listAll: (params: { holder?: string; status?: ApiTokenStatus }) =>
+    api.get<{ tokens: ApiToken[]; holders: ApiTokenHolder[] }>('/tokens/all', { params }),
+
+  mint: (label: string, expiresInDays: number) =>
+    api.post<MintedApiToken>('/tokens', { label, expires_in_days: expiresInDays }),
+
+  rotate: (credentialId: string, suspectedCompromise: boolean) =>
+    api.post<MintedApiToken>(`/tokens/${credentialId}/rotate`, {
+      suspected_compromise: suspectedCompromise,
     }),
 
-  revokeCredential: (credentialId: string) =>
-    api.delete(`/mcp/surface/credentials/${credentialId}`),
+  revoke: (credentialId: string) => api.delete(`/tokens/${credentialId}`),
 }
 
 export const agentsApi = {
