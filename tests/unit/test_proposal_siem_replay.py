@@ -194,6 +194,75 @@ def test_normal_events_without_the_rules_fields_prove_nothing():
     )
 
 
+MISSPELT = """title: rundll32 registers a DLL
+detection:
+  selection:
+    Image|endswith: '\\rundll32.exe'
+    CmdLine|contains: 'DllRegisterServer'
+  condition: selection
+"""
+
+
+def test_a_field_no_event_holds_is_named_with_the_datas_own_spelling():
+    out = _run(MISSPELT, [_Fake(ATTACK, NORMAL)])
+    assert out["proven"] is False and out["hits"] == 0
+    assert out["fields_absent"] == ["CmdLine"]
+    (siem,) = out["siems"]
+    assert siem["events_read"] == 7 and siem["fields_absent"] == ["CmdLine"]
+    because = out["unproven_because"]
+    assert because.startswith("It matched none of the attack events.")
+    assert "CmdLine is in none of the 7 events read from Elastic." in because
+
+
+def test_a_lookalike_field_in_the_data_is_offered():
+    with_cmd = [
+        {**d, "_source": {**d["_source"], "process": {"command_line": "x"}}}
+        for d in ATTACK + NORMAL
+    ]
+    out = _run(MISSPELT, [_Fake(with_cmd[:2], with_cmd[2:])])
+    assert out["siems"][0]["field_lookalikes"] == {"CmdLine": ["process.command_line"]}
+    assert (
+        "The rule may spell a field differently from your data: Elastic has "
+        "process.command_line for CmdLine." in out["unproven_because"]
+    )
+
+
+def test_a_field_with_no_lookalike_says_the_data_may_not_log_it():
+    out = _run(MISSPELT, [_Fake(ATTACK, NORMAL)])
+    assert "or the data may not log it." in out["unproven_because"]
+
+
+def test_no_field_held_anywhere_names_them_instead_of_the_general_line():
+    other = [{"_id": "x", "_source": {"@timestamp": AT, "message": "dns query"}}]
+    out = _run(CLEAN, [_Fake([], other)])
+    assert out["fields_absent"] == ["EventID", "ParentImage", "Image"]
+    because = out["unproven_because"]
+    assert (
+        "EventID, ParentImage and Image are not in the one event read from Elastic."
+        in because
+    )
+    assert "No normal event in the window holds a field" not in because
+
+
+def test_a_proven_rule_says_nothing_of_a_field_only_one_branch_reads():
+    either = CLEAN.replace(
+        "  condition: selection\n",
+        "  other:\n    CmdLine|contains: 'x'\n  condition: selection or other\n",
+    )
+    out = _run(either, [_Fake(ATTACK, NORMAL)])
+    assert out["proven"] is True and out["unproven_because"] is None
+    assert out["fields_absent"] == ["CmdLine"]  # kept on the evidence
+
+
+def test_absent_fields_count_every_siem_read():
+    splunk_like = [
+        {"_id": "s1", "_source": {"@timestamp": AT, "CmdLine": "regsvr32 x.dll"}}
+    ]
+    out = _run(MISSPELT, [_Fake(ATTACK, NORMAL), _Fake([], splunk_like)])
+    assert out["fields_absent"] == []  # the second SIEM holds CmdLine
+    assert "is in none of" not in (out["unproven_because"] or "")
+
+
 def test_no_attack_event_read_says_how_to_get_one():
     out = _run(CLEAN, [_Fake([], NORMAL)], attack_claim=None)
     assert out["attack_basis"] == "none" and out["proven"] is False
