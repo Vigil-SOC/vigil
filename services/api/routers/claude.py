@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -320,6 +320,7 @@ def _context_window(provider_id: Optional[str], provider_type: str, model: str) 
 @router.post("/chat/stream", dependencies=[permission_gate("ai_chat.use")])
 async def chat_stream(
     request: ChatRequest,
+    http_request: Request,
     current_user: User = Depends(get_current_user),
     registry: MCPRegistry = Depends(provide_mcp_registry),
     workflows: WorkflowsService = Depends(provide_workflows),
@@ -459,6 +460,7 @@ async def chat_stream(
             agent_id=agent_principal_id(CHAT_PLUGIN_ID),
             run_id=run_id,
             origin="person",
+            sid=tool_principal.sid_of(http_request),
         ),
         "actor": agent_principal_id(CHAT_PLUGIN_ID),
         "origin": "person",

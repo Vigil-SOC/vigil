@@ -5,7 +5,16 @@ import re
 from contextlib import suppress
 from typing import Annotated, Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Path,
+    Query,
+    Request,
+    UploadFile,
+)
 from pydantic import BaseModel, Field
 
 from core.agents.projections import read_call, read_projection, read_replay, read_verify
@@ -383,6 +392,7 @@ async def get_workflow_preflight(
 async def execute_workflow(
     workflow_id: str,
     request: WorkflowExecuteRequest,
+    http_request: Request,
     service: WorkflowsService = Depends(provide_workflows),
     user: User = Depends(get_current_user),
 ):
@@ -428,6 +438,7 @@ async def execute_workflow(
                 or getattr(user, "user_id", None),
                 origin="person",
                 ttl=tool_principal.RUN_TTL,
+                sid=tool_principal.sid_of(http_request),
             ),
         )
     except Exception:

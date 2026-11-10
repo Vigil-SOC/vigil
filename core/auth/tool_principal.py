@@ -20,8 +20,10 @@ Stateless, so a replica other than the one that served the chat can verify it.
 
 A run token also carries the person principal (absent when no person started
 it), the agent principal, the run id and the origin: person, schedule, alert
-or parent. The username stays ``sub``. Nothing here is a ``user_id``, and the
-key is not the sign-in one, so ``get_current_user`` refuses it.
+or parent, and the sign-in it started from (``sid``: none for schedule and
+alert runs, a child carries its parent's). The username stays ``sub``. Nothing
+here is a ``user_id``, and the key is not the sign-in one, so
+``get_current_user`` refuses it.
 """
 
 from __future__ import annotations
@@ -69,6 +71,8 @@ class Claims:
     agent_id: Optional[str]
     run_id: Optional[str]
     origin: Optional[str]
+    # The sign-in the run started from; absent for schedule and alert runs.
+    sid: Optional[str] = None
 
 
 _current: ContextVar[Optional[Claims]] = ContextVar("vigil_tool_claims", default=None)
@@ -112,6 +116,7 @@ def mint(
     agent_id: Optional[str] = None,
     run_id: Optional[str] = None,
     origin: Optional[str] = None,
+    sid: Optional[str] = None,
 ) -> str:
     if origin is not None and origin not in ORIGINS:
         raise ValueError(f"origin must be one of {sorted(ORIGINS)}")
@@ -127,6 +132,8 @@ def mint(
         payload["run_id"] = run_id
     if origin:
         payload["origin"] = origin
+    if sid:
+        payload["sid"] = sid
     return key_ring.sign("run", payload, _ALGORITHM)
 
 
@@ -157,7 +164,14 @@ def read(token: str) -> Claims:
         agent_id=agent_id,
         run_id=_claim(claims, "run_id"),
         origin=origin,
+        sid=_claim(claims, "sid"),
     )
+
+
+def sid_of(request) -> Optional[str]:
+    """The sign-in the request's access token names (set by ``get_current_user``)."""
+    claims = getattr(request.state, "access_claims", None) or {}
+    return claims.get("sid") or None
 
 
 def verify(token: str) -> str:
