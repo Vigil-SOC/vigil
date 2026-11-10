@@ -83,7 +83,12 @@ export default function LoginScreen() {
       if (codes?.length) setNewCodes(codes)
       else navigate('/')
     } catch (err: any) {
-      if (err?.message === 'MFA_REQUIRED') {
+      if (err?.message === 'PASSWORD_CHANGE_REQUIRED') {
+        // the one forced-change path: the reset screen, with the reason
+        navigate(`/reset-password?token=${encodeURIComponent(err.resetToken)}`, {
+          state: { reason: err.reason },
+        })
+      } else if (err?.message === 'MFA_REQUIRED') {
         setShowMfa(true)
         setMfaCode('')
         setError('Enter your 2FA code to continue.')

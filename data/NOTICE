@@ -1,0 +1,45 @@
+data/common_passwords.txt — breached-password list
+===================================================
+
+Source
+  Pwdb_top-1000000.txt from SecLists, pinned to commit
+  758fecf4925900dd1bd0a3cba39551d6b4f2da8c:
+  https://github.com/danielmiessler/SecLists/blob/758fecf4925900dd1bd0a3cba39551d6b4f2da8c/Passwords/Common-Credentials/Pwdb_top-1000000.txt
+
+  The list is derived from real passwords exposed in public breaches. It is
+  the top million of the Pwdb-Public data set (ignis-sec/Pwdb-Public), ranked
+  by how often each password appeared.
+
+Licences (both MIT; the notices below must stay with the file)
+  SecLists       Copyright (c) 2018 Daniel Miessler
+  Pwdb-Public    Copyright (c) 2020 Ata Hakçıl
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in
+  all copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
+Filter applied to the source's 1,000,000 lines, in this order
+  1. Keep entries of 12 or more characters (Unicode characters, not bytes).
+     Shorter passwords are already refused by the minimum length.
+  2. Drop email-shaped entries: those matching ^[^@\s]+@[^@\s]+\.[^@\s]+$
+     (one "@" with text before it, and a dotted domain after it).
+  3. Drop exact duplicates, keeping the first (highest-ranked) occurrence.
+  Rank order is preserved. Entries are written as they appear in the source
+  (no trimming, no case change); the application compares case-insensitively.
+
+Result
+  31,102 lines, 29,940 distinct once lowercased.

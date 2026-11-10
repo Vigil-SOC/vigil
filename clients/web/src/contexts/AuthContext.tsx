@@ -142,6 +142,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
       if (isMfaRequired) {
         throw new Error('MFA_REQUIRED', { cause: error });
       }
+      // The password is listed or otherwise refused now: no session, a reset
+      // token for the change instead. Carried on the error for the login screen.
+      const detail = error.response?.data?.detail;
+      if (error.response?.status === 403 && detail?.code === 'password_change_required') {
+        throw Object.assign(new Error('PASSWORD_CHANGE_REQUIRED', { cause: error }), {
+          resetToken: detail.reset_token as string,
+          reason: detail.message as string,
+        });
+      }
       throw error;
     }
   };

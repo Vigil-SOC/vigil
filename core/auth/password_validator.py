@@ -40,15 +40,47 @@ def _get_blocklist() -> frozenset:
         return _blocklist
     try:
         with open(_BLOCKLIST_PATH, encoding="utf-8") as f:
+            # One entry per line, as the source has it; an entry may start with "#".
             _blocklist = frozenset(
-                line.strip().lower()
-                for line in f
-                if line.strip() and not line.startswith("#")
+                line.rstrip("\r\n").lower() for line in f if line.strip()
             )
     except FileNotFoundError:
         logger.warning("Blocklist not found at %s", _BLOCKLIST_PATH)
         _blocklist = frozenset()
     return _blocklist
+
+
+def check_not_listed(
+    password: str,
+    *,
+    user_inputs: Optional[Iterable[str]] = None,
+    blocklist: Optional[Iterable[str]] = None,
+) -> None:
+    """Raise PasswordPolicyError if the whole password is a breached-list entry,
+    "Vigil", or one of ``user_inputs`` (username, email). Case-insensitive.
+
+    Cheap enough to run at every sign-in, unlike the zxcvbn pass."""
+    folded = password.lower()
+    if folded == "vigil":
+        raise PasswordPolicyError(
+            'Password can\'t be "Vigil"',
+            suggestions=["Choose something unrelated to this product."],
+        )
+    if any(t and folded == t.lower() for t in user_inputs or ()):
+        raise PasswordPolicyError(
+            "Password can't be your username or email address",
+            suggestions=["Choose something unrelated to this account."],
+        )
+    block = (
+        frozenset(b.lower() for b in blocklist)
+        if blocklist is not None
+        else _get_blocklist()
+    )
+    if folded in block:
+        raise PasswordPolicyError(
+            "Password appears in a list of breached passwords",
+            suggestions=["Choose something more unique."],
+        )
 
 
 def validate_password_strength(
@@ -88,16 +120,7 @@ def validate_password_strength(
             suggestions=["Use a shorter passphrase."],
         )
 
-    block = (
-        frozenset(b.lower() for b in blocklist)
-        if blocklist is not None
-        else _get_blocklist()
-    )
-    if password.lower() in block:
-        raise PasswordPolicyError(
-            "Password is too common — choose something more unique",
-            suggestions=["Avoid passwords from known breach lists."],
-        )
+    check_not_listed(password, user_inputs=user_inputs, blocklist=blocklist)
 
     result = zxcvbn(
         password, user_inputs=user_inputs or [], max_length=MAX_PASSWORD_LENGTH
