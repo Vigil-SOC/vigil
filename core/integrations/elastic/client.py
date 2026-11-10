@@ -427,17 +427,23 @@ class ElasticService:
         return self._total(hits, len(docs)), docs
 
     async def dsl_search(
-        self, index: str, query: Dict[str, Any], time_range: Dict[str, Any], size: int
+        self,
+        index: str,
+        query: Dict[str, Any],
+        time_range: Dict[str, Any],
+        size: int,
+        sort: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[int, List[Dict[str, Any]]]:
-        """``POST /<index>/_search`` with a query DSL ``query``, in ``time_range``."""
-        body = await self._rule_post(
-            f"/{validate_index(index)}/_search",
-            {
-                "size": size,
-                "track_total_hits": True,
-                "query": {"bool": {"must": [query], "filter": [{"range": time_range}]}},
-            },
-        )
+        """``POST /<index>/_search`` with a query DSL ``query``, in ``time_range``,
+        in ``sort`` order when given."""
+        request: Dict[str, Any] = {
+            "size": size,
+            "track_total_hits": True,
+            "query": {"bool": {"must": [query], "filter": [{"range": time_range}]}},
+        }
+        if sort:
+            request["sort"] = sort
+        body = await self._rule_post(f"/{validate_index(index)}/_search", request)
         hits = body.get("hits") or {}
         docs = list(hits.get("hits") or [])
         return self._total(hits, len(docs)), docs

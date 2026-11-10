@@ -13,12 +13,14 @@ Per SIEM, two reads, each one search of that SIEM's budget:
 
 - **attack**: the events a person named by id, else the events of the proposal's
   Case: on its hosts, users or addresses, inside its window (its Verdict's, else
-  its Findings'), at most ``MAX_ATTACK``;
+  its Findings'), padded by ``CLAIM_PAD``; the newest ``MAX_ATTACK``;
 - **benign**: the newest ``MAX_BENIGN`` events in the window that hold a field the
   rule reads. Those any Case or hunt claims (a Verdict's hosts, users or
   addresses inside its window, unless the Verdict ruled the run out) are left
-  out; what remains is taken as normal activity, so a false positive here may be
-  an attack nobody linked, and the evidence says so.
+  out, and so are the proposal's own Case's events, but only inside that Case's
+  padded window: its host's events outside it count as normal. What remains is
+  taken as normal activity, so a false positive here may be an attack nobody
+  linked, and the evidence says so.
 
 The rule is matched with main's own Sigma evaluator (``core.detections.replay``).
 A rule's field is looked up as written, else by the last part of the event's own
@@ -35,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
@@ -347,6 +350,12 @@ def _variants(name: str) -> List[str]:
     return sorted({name, lower_first, name.lower()})
 
 
+def _snake(name: str) -> str:
+    """``EventID`` as winlogbeat spells it, ``event_id``; ``CommandLine`` as
+    ``command_line``."""
+    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name).lower()
+
+
 # --- reading the SIEMs ------------------------------------------------------------
 
 
@@ -400,7 +409,7 @@ def _holding(fields: Sequence[str]) -> Dict[str, Any]:
     exists = [
         {"exists": {"field": path}}
         for name in fields
-        for variant in _variants(name)
+        for variant in _variants(name) + [_snake(name), _snake(name).replace("_", "-")]
         for path in (variant, f"*.{variant}")
     ]
     return {"bool": {"should": exists, "minimum_should_match": 1}}
@@ -442,7 +451,10 @@ class ElasticSource(Source):
         self, query: Dict[str, Any], start: datetime, end: datetime, size: int
     ) -> Read:
         window = {"@timestamp": {"gte": start.isoformat(), "lte": end.isoformat()}}
-        total, docs = await self.service.dsl_search(self.index, query, window, size)
+        # Newest first: unsorted, a busy host's first page is any of its events.
+        total, docs = await self.service.dsl_search(
+            self.index, query, window, size, sort=NEWEST_FIRST
+        )
         return Read(total=total, docs=docs)
 
     async def attack(
@@ -470,6 +482,9 @@ class ElasticSource(Source):
         self, fields: Sequence[str], start: datetime, end: datetime
     ) -> Read:
         return await self._search(_holding(fields), start, end, MAX_BENIGN)
+
+
+NEWEST_FIRST = [{"@timestamp": {"order": "desc", "unmapped_type": "date"}}]
 
 
 class WazuhSource(ElasticSource):
@@ -501,11 +516,11 @@ class SplunkSource(Source):
     ) -> Read:
         from core.detections.inventory.rollout import _splunk_doc
 
-        # A table keeps every row and field; Splunk's verbose mode (all_fields)
-        # keeps only its first 1,000 results.
+        # Splunk returns events newest first. The table keeps every row and field;
+        # a verbose-mode (all_fields) job may keep fewer results than asked for.
         found = await asyncio.to_thread(
             self.service.search,
-            f"{spl} | head {size} | table _cd _time host sourcetype *",
+            f"{spl} | head {size} | table _bkt _cd _time host sourcetype *",
             earliest_time=f"{start.timestamp():.3f}",
             latest_time=f"{end.timestamp():.3f}",
             max_count=size,
@@ -524,6 +539,16 @@ class SplunkSource(Source):
         start: datetime,
         end: datetime,
     ) -> Read:
+        if ids:
+            # An id is _bkt:_cd, as _splunk_doc writes it, or _cd alone.
+            named = " OR ".join(
+                f"_cd={_spl_value(i)} OR _named={_spl_value(i)}" for i in ids
+            )
+            spl = (
+                f"search index={self.index}"
+                f' | eval _named=_bkt.":"._cd | where {named}'
+            )
+            return await self._search(spl, start, end, MAX_ATTACK)
         if claim is None:
             return Read()
         terms = [f"host={_spl_value(h)}" for h in claim.hosts]
@@ -630,7 +655,8 @@ async def _replay_one(
         # Entity terms are wide; keep only what the claim really holds.
         attack = [e for e in attack if attack_claim.holds(e)]
     attack_ids = {e.id for e in attack}
-    # The Case's own events are never normal ones, read as attack or not.
+    # The Case's own events inside its padded window are never normal ones, read as
+    # attack or not.
     claimed = [c for c in claims if not c.ruled_out]
     if attack_claim is not None and not named:
         claimed.append(attack_claim)

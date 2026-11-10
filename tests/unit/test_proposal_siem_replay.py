@@ -308,3 +308,68 @@ def test_an_events_host_user_and_address_are_read():
 def test_the_fields_a_rule_reads():
     assert sr.rule_fields(BROAD) == ["EventID", "ParentImage"]
     assert sr.rule_fields("not: [yaml") == []
+
+
+# --- what the SIEMs are asked ------------------------------------------------------
+
+
+class _Cluster:
+    """dsl_search over ``docs`` (oldest first): in ``sort`` order when asked, and
+    cut at ``size``, as Elasticsearch does."""
+
+    def __init__(self, docs):
+        self.docs, self.asked = list(docs), []
+
+    async def dsl_search(self, index, query, window, size, sort=None):
+        self.asked.append({"query": query, "sort": sort})
+        docs = self.docs
+        if sort:
+            docs = sorted(docs, key=lambda d: d["_source"]["@timestamp"], reverse=True)
+        return len(docs), docs[:size]
+
+
+def test_a_busy_case_host_still_reads_its_newest_events_first():
+    at = datetime.fromisoformat(AT)
+    older = [
+        _winlog(
+            f"o{i}",
+            "C:\\Windows\\explorer.exe",
+            f"C:\\tool-{i}.exe",
+            at=(at - timedelta(seconds=2, milliseconds=i)).isoformat(),
+        )
+        for i in range(sr.MAX_ATTACK + 5)
+    ][::-1]
+    cluster = _Cluster(older + ATTACK)
+    source = sr.ElasticSource(cluster, "logs-*", 30, "elastic-siem")
+    source.spend = lambda what: True
+
+    out = _run(CLEAN, [source])
+
+    assert out["hits"] == 2 and out["siems"][0]["attack_cut_short"] is True
+    assert all(a["sort"] == sr.NEWEST_FIRST for a in cluster.asked)
+
+
+def test_a_rule_reading_event_id_finds_winlogbeats_event_id_field():
+    paths = {
+        clause["exists"]["field"]
+        for clause in sr._holding(["EventID"])["bool"]["should"]
+    }
+    assert {"*.event_id", "*.event-id", "*.eventID", "*.EventID"} <= paths
+
+
+class _Splunk:
+    def __init__(self):
+        self.spl = []
+
+    def search(self, spl, **_):
+        self.spl.append(spl)
+        return type("Found", (), {"results": []})()
+
+
+def test_splunk_reads_the_events_a_person_named():
+    service = _Splunk()
+    source = sr.SplunkSource(service, "main", 30)
+    asyncio.run(source.attack(None, ["main~3~G:7:42", "9:1"], ["Image"], START, NOW))
+    (spl,) = service.spl
+    assert spl.startswith("search index=main | eval _named=")
+    assert '_named="main~3~G:7:42"' in spl and '_cd="9:1"' in spl
