@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from core.storage.models import SignIn, User
+from core.storage.models import Principal, SignIn, User
 from core.storage.schemas.base import IsoDateTime, OptDateTime
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -37,6 +37,8 @@ ERASED = "erased"
 ENDED_BY_PERSON = "ended_by_person"
 ENDED_BY_ADMIN = "ended_by_admin"  # also a service account or playbook, as containment
 EVERYONE = "everyone_signed_out"
+# A newer sign-in took this one's place under the account's sign-in limit.
+SIGN_IN_LIMIT = "sign_in_limit"
 
 # How each end reason reads in the console (epic #4164 §8).
 REASON_WORDS = {
@@ -52,6 +54,7 @@ REASON_WORDS = {
     ENDED_BY_PERSON: "Ended by the person",
     ENDED_BY_ADMIN: "Ended by an admin",
     EVERYONE: "Everyone signed out",
+    SIGN_IN_LIMIT: "A newer sign-in took its place",
 }
 UNNAMED_REASON = "Ended by a security event"
 
@@ -229,6 +232,30 @@ def start(
     )
     session.add(row)
     return row
+
+
+def make_room(session: Session, principal_id: str, limit: Optional[int]) -> int:
+    """End the oldest open sign-ins so one more fits under ``limit``.
+
+    Locks the principal first: two logins at once would otherwise each see room
+    and both start. Call it in the transaction that calls ``start``.
+    """
+    if limit is None:
+        return 0
+    session.query(Principal.principal_id).filter(
+        Principal.principal_id == principal_id
+    ).with_for_update(key_share=True).first()
+    open_rows = (
+        session.query(SignIn)
+        .filter(SignIn.principal_id == principal_id, SignIn.ended_at.is_(None))
+        .order_by(SignIn.started_at)
+        .with_for_update()
+        .all()
+    )
+    now = utcnow()
+    for row in open_rows[: max(0, len(open_rows) - (limit - 1))]:
+        row.ended_at, row.end_reason = now, SIGN_IN_LIMIT
+    return max(0, len(open_rows) - (limit - 1))
 
 
 def end(sign_in_id: str, reason: str, session: Optional[Session] = None) -> bool:

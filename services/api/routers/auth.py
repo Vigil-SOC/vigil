@@ -557,6 +557,9 @@ def login(
     )
 
     refresh_payload = AuthService.verify_jwt_token(refresh_token) or {}
+    # Past the account's sign-in limit, the oldest open sign-in ends (a service
+    # account has none).
+    sign_ins.make_room(session, user.principal_id, limit.sign_in_limit)
     sign_ins.start(
         session,
         sid,

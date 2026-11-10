@@ -9,4 +9,5 @@ ALTER TABLE public.sign_ins
     CHECK (end_reason IN ('sign_out', 'expiry', 'revoked', 'idle', 'length_limit',
                           'token_reuse', 'upgrade', 'account_changed',
                           'deactivated', 'erased', 'ended_by_person',
-                          'ended_by_admin', 'everyone_signed_out'));
+                          'ended_by_admin', 'everyone_signed_out',
+                          'sign_in_limit'));
