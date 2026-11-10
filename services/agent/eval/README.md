@@ -14,6 +14,10 @@ for it goes into one in-memory `events(time, host, user, source, event, detail)`
 table, and the call's SQL runs over it, so a query's filters decide what comes back
 and an invalid query fails with SQLite's error. A telemetry `failure` still answers
 any call whose arguments hold all its `match` terms, so a blind source stays blind.
+The case shell (`read_case_shell`) builds a directory per call holding `case.json`,
+the case id and the rows of the response matched on that id, and runs the command
+there with bash on this host, with no environment, a 10s limit and the sidecar's
+output caps.
 The other tools answer with the first response whose `match` terms all appear in
 the call's arguments. Anything a case does not mention answers with nothing, which
 is what an empty search looks like. Nothing reaches a real system; addresses are

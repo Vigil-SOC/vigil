@@ -26,7 +26,7 @@ _ID_LINE = re.compile(r"^id:.*$", re.MULTILINE)
 _EXAMPLE = """id: custom-phishing-triage
 description: Triages reported phishing emails and says whether the sender is malicious.
 needs:
-  - case_records
+  - shell
   - indicator_lookup
 skills:
   - phishing-analysis

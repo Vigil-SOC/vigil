@@ -1,8 +1,7 @@
-"""One case as files: what ``case_records``, ``read_case_evidence`` and the case
-shell (#4199) read.
+"""One case as files: what the case shell (#4199) reads.
 
-The shell is handed this view as a tar; the two older tools call the same reads
-here, so there is one copy of them until #4201 deletes those tools. Every read
+The shell is handed this view as a tar; it is the only way an agent reads its
+case's records and evidence (#4201). Every read
 runs under the caller's claims, as any tool does. Renders are kept briefly per
 case and caller, and a file's extracted text is kept by its hash, so a run that
 calls the shell ten times extracts each attachment once.

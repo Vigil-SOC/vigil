@@ -555,7 +555,6 @@ _VIGIL_TOOL_SYSTEMS = {
     "search_findings": "vigil_alerts",
     "get_finding": "vigil_alerts",
     "recall_entity": "vigil_memory",
-    "case_records": "vigil_memory",
     "lookup_indicators": "vigil_threat_intel",
 }
 
