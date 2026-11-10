@@ -1,5 +1,6 @@
 """API tokens: a person mints and rotates their own, and a ``users.write`` holder
-sees every token and revokes any (#4223).
+sees every token and revokes any (#4223). A ``users.write`` holder who covers a
+service account's role mints and rotates its tokens, Medic's excepted (#4224).
 
 A token is a machine caller whoever holds it: it cannot mint, rotate or change
 an account. It lives outside ``/api/auth`` so that refusal is this module's own.
@@ -15,13 +16,18 @@ from pydantic import BaseModel, Field
 from core.auth import current_user as current_user_module
 from core.auth import mcp_credential_service as tokens
 from core.auth import step_up, trail_events
-from core.auth.auth_service import AuthService, _is_service_account
+from core.auth.auth_service import AuthService, _is_service_account, managers
 from core.auth.permissions import STEP_UP, deny_unless, missing_permission
 from core.platform.notices import notify
 from core.routing import Auth, RouterMeta
-from core.storage.models import McpCredential, User
+from core.storage.models import McpCredential, Principal, Role, User
 from core.storage.unit_of_work import unit_of_work
 from services.api.middleware.auth import get_current_active_user
+from services.api.routers.users import (
+    _acts_as_person,
+    _can_assign_role,
+    _is_medic,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -34,6 +40,8 @@ NOTICE_LINK = "/settings?section=users"
 
 class MintRequest(BaseModel):
     label: str = Field(min_length=1, max_length=200)
+    # A service account's user id, to mint for it; None is for yourself.
+    holder: Optional[str] = None
     # None is the default for the holder; the rule is tokens.lifetime.
     expires_in_days: Optional[int] = Field(
         default=None, ge=1, le=tokens.PERSON_MAX_DAYS
@@ -61,17 +69,39 @@ def _view(credential: McpCredential, holder: User) -> dict:
     return {**credential.to_dict(), "holder": _holder(holder)}
 
 
-def _tell(holder: User, title: str, message: str, priority: str = "normal") -> None:
-    """The holder is told. Never the token: notices are emailed."""
-    try:
-        notify(
-            holder.principal_id,
-            "api_token",
-            title,
-            message,
-            link=NOTICE_LINK,
-            priority=priority,
+def _answering(holder: User) -> list[str]:
+    """Who hears of a token change: the holder; for a service account the person
+    who answers for it, or while they are gone every ``users.write`` holder."""
+    if not _is_service_account(holder):
+        return [holder.principal_id]
+    with unit_of_work() as session:
+        person = (
+            session.query(User)
+            .join(Principal, Principal.principal_id == User.principal_id)
+            .filter(
+                User.principal_id == holder.accountable_principal_id,
+                User.is_active.is_(True),
+                Principal.deleted_at.is_(None),
+            )
+            .first()
         )
+        if person is not None:
+            return [person.principal_id]
+    return managers(holder.principal_id)
+
+
+def _tell(holder: User, title: str, message: str, priority: str = "normal") -> None:
+    """Never the token: notices are emailed."""
+    try:
+        for to in _answering(holder):
+            notify(
+                to,
+                "api_token",
+                title,
+                message,
+                link=NOTICE_LINK,
+                priority=priority,
+            )
     except Exception:  # noqa: BLE001 - the act stands; the notice is not its record
         logger.exception("Could not notify the holder of a token change")
 
@@ -91,8 +121,25 @@ def _confirm(request: Request, user: User, action: str) -> None:
 
 
 def _may_mint_for(caller: User, holder: User) -> bool:
-    """Today only a person for themselves; a service account's minter is a later route."""
-    return caller.user_id == holder.user_id and not _is_service_account(caller)
+    """A person for themselves; for a live service account other than Medic's, a
+    person holding ``users.write`` who covers its role. Never a token (the routes
+    refuse a token request first)."""
+    if _is_service_account(caller):
+        return False
+    if caller.user_id == holder.user_id:
+        return True
+    if not _is_service_account(holder) or _is_medic(holder) or not _manages(caller):
+        return False
+    with unit_of_work() as session:
+        principal = session.get(Principal, holder.principal_id)
+        role = session.get(Role, holder.role_id)
+        return (
+            principal is not None
+            and principal.deleted_at is None
+            and holder.is_active
+            and _acts_as_person(caller, session)
+            and (role is None or _can_assign_role(caller, role, session))
+        )
 
 
 def _manages(user: User) -> bool:
@@ -145,15 +192,32 @@ def mint(
     body: MintRequest,
     current_user: User = Depends(get_current_active_user),
 ):
-    """Issue a token for yourself. It is in this response and nowhere else."""
+    """Issue a token for yourself, or for ``holder``, a service account. It is in
+    this response and nowhere else."""
     _refuse_token_request(request, "mint tokens")
     if _is_service_account(current_user):
         raise HTTPException(
             status_code=403, detail="A service account's token is minted for it"
         )
+    holder = current_user
+    if body.holder and body.holder != current_user.user_id:
+        with unit_of_work() as session:
+            holder = session.get(User, body.holder)
+        if holder is None or not _manages(current_user):
+            raise HTTPException(status_code=404, detail="Account not found")
+        if _is_medic(holder):
+            raise HTTPException(
+                status_code=403, detail="Medic's account is managed by Medic"
+            )
+        if not _may_mint_for(current_user, holder):
+            raise HTTPException(
+                status_code=403,
+                detail="Tokens are minted only for a live service account "
+                "whose role you cover",
+            )
     _confirm(request, current_user, "create a token")
     minted = tokens.mint(
-        current_user.user_id,
+        holder.user_id,
         body.label,
         body.expires_in_days,
         actor=current_user.principal_id,
@@ -161,15 +225,20 @@ def mint(
     if minted is None:
         raise HTTPException(status_code=500, detail="Could not mint a token")
     record = minted.record
+    whose = (
+        "your account"
+        if holder is current_user
+        else f"the service account {holder.username}"
+    )
     _tell(
-        current_user,
+        holder,
         "API token issued",
-        f'A token "{record.label}" was issued for your account. '
+        f'A token "{record.label}" was issued for {whose}. '
         f"It expires on {_date(record.expires_at)}.",
     )
     return {
         "token": minted.token,
-        "credential": _view(record, current_user),
+        "credential": _view(record, holder),
         "warning": "This token is shown once. Store it now; it cannot be recovered.",
     }
 
@@ -209,10 +278,15 @@ def rotate(
         if body.suspected_compromise
         else f"stops working on {_date(old.expires_at)}"
     )
+    whose = (
+        f"The service account {holder.username}'s"
+        if _is_service_account(holder)
+        else "Your"
+    )
     _tell(
         holder,
         "API token rotated",
-        f'Your token "{credential.label}" was rotated; the old one {ends}.',
+        f'{whose} token "{credential.label}" was rotated; the old one {ends}.',
         "high" if body.suspected_compromise else "normal",
     )
     return {
@@ -243,10 +317,15 @@ def revoke(credential_id: str, current_user: User = Depends(get_current_active_u
         credential_id=credential_id,
     )
     who = current_user.full_name or current_user.username
+    whose = (
+        f"The service account {holder.username}'s"
+        if _is_service_account(holder)
+        else "Your"
+    )
     _tell(
         holder,
         "API token revoked",
-        f'Your token "{credential.label}" was revoked'
+        f'{whose} token "{credential.label}" was revoked'
         + ("." if own else f" by {who}. Ask them if you were not expecting this."),
         "normal" if own else "high",
     )

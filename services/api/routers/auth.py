@@ -1512,7 +1512,7 @@ def password_reset_request(
     settings = get_settings()
     user = session.query(User).filter(User.email == body.email).first()
     # A service account's password belongs to its program: no reset mail.
-    if user and user.is_active and not _is_service_account(user):
+    if user and user.is_active and user.password_hash and not _is_service_account(user):
         token = generate_reset_token(user)
         link = reset_link(default_base_url(settings), token)
         subject = "Vigil SOC — password reset"
@@ -1577,7 +1577,7 @@ async def password_reset_confirm(
     # Locked so two confirms of one link serialize: the second reads the
     # password_changed_at the first wrote, and fails is_current.
     user = await asyncio.to_thread(_get_user, session, claim.user_id, True)
-    if user is not None and _is_service_account(user):
+    if user is not None and (_is_service_account(user) or not user.password_hash):
         logger.warning("Refused password reset for service account %s", user.username)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

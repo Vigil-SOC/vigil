@@ -12,6 +12,7 @@ import {
 } from '../../shared/ui'
 import { useAuth } from '../../contexts/AuthContext'
 import { signInsApi } from '../../services/api'
+import ServiceAccountsCard from './ServiceAccountsCard'
 import TokensCard from './TokensCard'
 import UserSignInsDialog from './UserSignInsDialog'
 import {
@@ -55,15 +56,20 @@ function errText(e: unknown, fallback: string): string {
 // Everyone manages their own tokens, so they do not wait on, or hide behind, the user list.
 export default function UsersSection({ notify }: SectionProps) {
   const { hasPermission } = useAuth()
+  // a service account made or changed below shows in Team & access too
+  const [changes, setChanges] = useState(0)
   return (
     <>
-      <PeopleAndRoles notify={notify} />
-      <TokensCard notify={notify} canManage={hasPermission('users.write')} />
+      <PeopleAndRoles notify={notify} changes={changes} />
+      {hasPermission('users.read') && (
+        <ServiceAccountsCard notify={notify} onChange={() => setChanges((n) => n + 1)} />
+      )}
+      <TokensCard notify={notify} canManage={hasPermission('users.write')} changes={changes} />
     </>
   )
 }
 
-function PeopleAndRoles({ notify }: SectionProps) {
+function PeopleAndRoles({ notify, changes }: SectionProps & { changes: number }) {
   const { user: me, hasPermission, logout } = useAuth()
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
@@ -94,6 +100,9 @@ function PeopleAndRoles({ notify }: SectionProps) {
     updateRole,
     deleteRole,
   } = useUsers({ search, status: statusFilter, skip: page * PAGE, limit: PAGE })
+  useEffect(() => {
+    if (changes) reload()
+  }, [changes, reload])
   // an act can empty the last page: step back to the last one with rows
   useEffect(() => {
     if (phase === 'ready' && page > 0 && page * PAGE >= total) setPage(Math.max(0, Math.ceil(total / PAGE) - 1))

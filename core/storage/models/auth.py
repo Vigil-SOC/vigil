@@ -134,7 +134,9 @@ class User(Base):
     # Authentication
     username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     email: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # None for a service account made on Team & access: it holds tokens only, so
+    # no password can sign it in.
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     # Profile
     full_name: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -199,11 +201,18 @@ class User(Base):
         DateTime, nullable=True
     )
 
-    # A machine login, not a person: today only Medic's gateway (D2-17). Exempt
-    # from lockout and held to the Viewer role. Set only by
-    # core/auth/service_account.py, which the enable flow runs; no API writes it.
+    # A machine login, not a person (D2-17): Medic's gateway, made by
+    # core/auth/service_account.py and held to Viewer, or an integration's
+    # token-only account (POST /api/users/service-accounts). Exempt from lockout.
     service_account: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    # A service account's: what it is for, and the person who answers for it. By
+    # principal id, which an erasure keeps. Whether that person is gone is
+    # worked out when read.
+    purpose: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    accountable_principal_id: Mapped[Optional[str]] = mapped_column(
+        Text, ForeignKey("principals.principal_id", ondelete="RESTRICT"), nullable=True
     )
 
     # Timestamps

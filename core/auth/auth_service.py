@@ -162,8 +162,11 @@ class AuthService:
 
     @staticmethod
     @default_on_error(False)
-    def verify_password(password: str, stored_hash: str) -> bool:
-        """Verify a password against its hash (PBKDF2, or a bcrypt from before)."""
+    def verify_password(password: str, stored_hash: Optional[str]) -> bool:
+        """Verify a password against its hash (PBKDF2, or a bcrypt from before).
+        An account with no password (a token-only service account) never matches."""
+        if not stored_hash:
+            return False
         return password_hash.verify(password, stored_hash)
 
     @staticmethod
@@ -297,8 +300,11 @@ class AuthService:
                     refusal["reason"] = "locked"
                 raise_if_locked(user)
 
-                # Verify password
-                if not AuthService.verify_password(password, user.password_hash):
+                # Verify password. None (a token-only service account) answers
+                # as a wrong one does.
+                if not user.password_hash or not AuthService.verify_password(
+                    password, user.password_hash
+                ):
                     AuthService._record_failed_attempt(user.user_id, now, source)
                     logger.warning("Invalid password for user: %s", user.username)
                     refusal["reason"] = "bad_password"

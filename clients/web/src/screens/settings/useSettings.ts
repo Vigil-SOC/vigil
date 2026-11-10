@@ -282,6 +282,11 @@ export interface User {
   deactivating_at: string | null
   /** person-only keys the role holds; stored, no effect for a non-person */
   no_effect: string[]
+  /** an integration's service account: what it is for and who answers for it */
+  purpose: string | null
+  accountable: { user_id: string; username: string; full_name: string } | null
+  /** the accountable person is deactivated or deleted */
+  accountable_gone: boolean
 }
 
 export interface Role {

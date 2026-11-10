@@ -1,6 +1,7 @@
-"""Service accounts: machine logins that are not people (D2-17).
+"""Medic's service account: a machine login that is not a person (D2-17).
 
-Today there is one, Medic's gateway, which reads the backend as a Viewer. The
+Medic's gateway reads the backend as a Viewer. Other service accounts are made
+on Team & access and hold tokens only (``POST /api/users/service-accounts``). The
 enable flow for each install shape runs, inside the backend's environment::
 
     python -m core.auth.service_account ensure medic-<12 of a-z0-9>   < password
@@ -10,7 +11,7 @@ exec`` record the full command line. The account is a Viewer with
 ``service_account = true``, so failed logins never lock it (a lock would let
 anyone who learns the name blind Medic; see ``AuthService._record_failed_attempt``)
 and the users API won't give it another role. Other service accounts may hold
-any role; Medic's stays Viewer. To recover from a lockout on roles, see
+any role; Medic's stays Viewer and gets no tokens. To recover from a lockout on roles, see
 ``core.auth.recover_admin``. The name is random so it can't be
 guessed; the password is the gateway's alone.
 
@@ -18,9 +19,12 @@ guessed; the password is the gateway's alone.
 (failure count and any lock cleared). Every run also puts back what a stolen
 gateway session could change through ``/api/auth/me``: the email (a reset
 address) and MFA (which would lock the gateway out). Any other active Medic
-service account is retired, so a re-minted name leaves no stale login behind. It refuses an
-existing account that is not a Viewer service account. Nothing it prints or logs
-holds the password.
+service account, active or deactivated, is retired, its principal marked deleted with a trail entry, so a
+re-minted name leaves no stale login behind. It refuses, changing nothing, an
+existing account that is not a Viewer service account, a deleted one, and a
+deactivated one: a deactivation made in an incident stands until a person
+reactivates the account on Team & access. Nothing it prints or logs holds the
+password.
 
 Exit codes (sysexits, so a caller can tell them from ``docker compose exec``'s
 own failures): 0 done · 64 bad input · 70 database error · 77 refused · 75
@@ -39,8 +43,9 @@ from typing import Optional, TextIO
 from sqlalchemy import inspect
 from sqlalchemy.exc import NoSuchTableError, OperationalError, SQLAlchemyError
 
-from core.auth import principals, sign_ins
+from core.auth import principals, sign_ins, trail_events
 from core.auth.auth_service import AuthService
+from core.auth.deactivation import deactivate_account
 from core.auth.identity import claim_sign_in_names, identifier_in_use
 from core.storage.connection import get_db_manager
 from core.storage.models import Principal, Role, User
@@ -142,9 +147,17 @@ def ensure(username: str, password: str) -> tuple[str, int]:
                 raise ServiceAccountError(
                     f"{username} was deleted; enable with a new name"
                 )
+            if not user.is_active:
+                raise ServiceAccountError(
+                    f"{username} is deactivated; reactivate it on Team & access"
+                )
             if user.role_id != VIEWER_ROLE_ID:
                 raise ServiceAccountError(
                     f"{username} holds {user.role_id}; Medic's account is Viewer only"
+                )
+            if identifier_in_use(session, email, except_user_id=user.user_id):
+                raise ServiceAccountError(
+                    f"{username} collides with an existing sign-in name"
                 )
             if AuthService.verify_password(password, user.password_hash):
                 outcome = "unchanged"
@@ -155,13 +168,8 @@ def ensure(username: str, password: str) -> tuple[str, int]:
                 sign_ins.end_all_for_user(
                     user.user_id, sign_ins.ACCOUNT_CHANGED, session
                 )
-            user.is_active = True
             user.failed_login_count = 0
             user.locked_until = None
-            if identifier_in_use(session, email, except_user_id=user.user_id):
-                raise ServiceAccountError(
-                    f"{username} collides with an existing sign-in name"
-                )
             user.email = email
             user.mfa_enabled = False
             user.mfa_secret = None
@@ -169,14 +177,36 @@ def ensure(username: str, password: str) -> tuple[str, int]:
 
         retired = 0
         # Other Medic accounts only: another service account is not Medic's.
-        others = session.query(User).filter(
-            User.service_account.is_(True),
-            User.username.like("medic-%"),
-            User.username != username,
-            User.is_active.is_(True),
+        others = (
+            session.query(User)
+            .join(Principal, Principal.principal_id == User.principal_id)
+            .filter(
+                User.service_account.is_(True),
+                User.username.like("medic-%"),
+                User.username != username,
+                # A deactivated one too: left, a person could reactivate it.
+                Principal.deleted_at.is_(None),
+            )
+            .all()
         )
         for other in others:
-            other.is_active = False
+            if not _USERNAME.fullmatch(other.username):
+                continue
+            # Deleted, as a person's delete does: its sign-ins end and it stays.
+            principals.mark_deleted(session, other.principal_id)
+            deactivate_account(
+                session,
+                other,
+                actor=principals.SYSTEM_PRINCIPAL_ID,
+                by_person=True,
+            )
+            trail_events.record(
+                session,
+                "user.deleted",
+                actor=principals.SYSTEM_PRINCIPAL_ID,
+                principal=other.principal_id,
+                reason="medic_rotated",
+            )
             retired += 1
         return outcome, retired
 

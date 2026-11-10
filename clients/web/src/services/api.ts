@@ -537,8 +537,9 @@ export const tokensApi = {
   listAll: (params: { holder?: string; status?: ApiTokenStatus }) =>
     api.get<{ tokens: ApiToken[]; holders: ApiTokenHolder[] }>('/tokens/all', { params }),
 
-  mint: (label: string, expiresInDays: number) =>
-    api.post<MintedApiToken>('/tokens', { label, expires_in_days: expiresInDays }),
+  // holder: a service account's user id (users.write); its token lasts a year.
+  mint: (label: string, expiresInDays?: number, holder?: string) =>
+    api.post<MintedApiToken>('/tokens', { label, expires_in_days: expiresInDays, holder }),
 
   rotate: (credentialId: string, suspectedCompromise: boolean) =>
     api.post<MintedApiToken>(`/tokens/${credentialId}/rotate`, {

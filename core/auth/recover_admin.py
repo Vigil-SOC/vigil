@@ -65,6 +65,7 @@ def recover(username: str, reason: str) -> str:
             principal is None
             or principal.kind != principals.PERSON
             or principal.deleted_at is not None
+            or not user.password_hash
         ):
             raise RecoveryRefused(f"{username} is not an existing person")
         if not user.is_active:

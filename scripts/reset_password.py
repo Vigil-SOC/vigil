@@ -63,6 +63,13 @@ def issue_link(session, who: str, base_url: str) -> int:
             print(f"  {user.username} <{user.email}>", file=sys.stderr)
         return 1
     user = matches[0]
+    # A service account's password is its program's, and a token-only one has none.
+    if user.service_account or not user.password_hash:
+        print(
+            f"User {user.username!r} is a service account; it has no password to reset.",
+            file=sys.stderr,
+        )
+        return 1
     if not user.is_active:
         print(
             f"User {user.username!r} is inactive; reactivate it before resetting.",
