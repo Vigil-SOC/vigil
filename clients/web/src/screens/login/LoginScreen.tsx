@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { useAuth } from '../../contexts/AuthContext'
+import { useAuth, type LoginResult, type MfaOffer } from '../../contexts/AuthContext'
 import { authApi, bootstrapApi } from '../../services/api'
+import { assertWith, cancelPrompt, KeyProblem, NoKeyUsed, SECURITY_KEYS_DOCS } from '../../services/webauthn'
 import { Icon } from '../../shared/icons'
 import TwoStepDialog, { RecoveryCodes } from '../../shell/TwoStepDialog'
+import { KeyWaiting } from '../../shell/SecurityKeyParts'
 import AuthLayout from './AuthLayout'
 import { requestErrorMessage } from './requestErrorMessage'
 
@@ -24,6 +26,12 @@ export default function LoginScreen() {
   const [showMfa, setShowMfa] = useState(false)
   // the "Use a recovery code" screen, in place of the authenticator code
   const [recovery, setRecovery] = useState(false)
+  // what the first call offered (an app, a key), and whether the key prompt is the one showing
+  const [offer, setOffer] = useState<MfaOffer | null>(null)
+  const [useKey, setUseKey] = useState(false)
+  const [keyWaiting, setKeyWaiting] = useState(false)
+  // the prompt now waiting; an answer from an earlier one (switched away from, or retried) is dropped
+  const prompting = useRef(0)
   // a recovery code removed this person's methods: setup opens over this screen
   const [setupOpen, setSetupOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -81,15 +89,59 @@ export default function LoginScreen() {
     }
   }
 
+  const finish = ({ recoveryCodes, mfaRemoved }: LoginResult) => {
+    if (mfaRemoved) setSetupOpen(true)
+    else if (recoveryCodes?.length) setNewCodes(recoveryCodes)
+    else goBack()
+  }
+
+  // The 401 offered a key: the browser's prompt comes straight after it (the challenge is short-lived).
+  // A cancelled prompt is "no key used": nothing is sent, so nothing counts against the account.
+  const askKey = async (o: MfaOffer) => {
+    if (!o.securityKey) return
+    const id = ++prompting.current
+    setKeyWaiting(true)
+    setError('')
+    try {
+      const assertion = await assertWith(o.securityKey.options)
+      if (id !== prompting.current) return
+      setLoading(true)
+      finish(await login(usernameOrEmail, password, undefined, { assertion, challenge: o.securityKey.challenge }))
+    } catch (err: any) {
+      if (id !== prompting.current) return
+      if (err instanceof KeyProblem && !(err instanceof NoKeyUsed)) setError(err.message)
+      else if (!(err instanceof NoKeyUsed)) setError(requestErrorMessage(err, "That security key didn't work. Try again."))
+    } finally {
+      if (id === prompting.current) {
+        setKeyWaiting(false)
+        setLoading(false)
+      }
+    }
+  }
+
+  // Try again, or switch to the key from a code: repeat call 1 for a fresh challenge.
+  const retryKey = async () => {
+    setError('')
+    setUseKey(true)
+    setLoading(true)
+    try {
+      finish(await login(usernameOrEmail, password))
+    } catch (err: any) {
+      if (err?.message === 'MFA_REQUIRED') {
+        setOffer(err.offer)
+        void askKey(err.offer)
+      } else setError(requestErrorMessage(err, 'Sign in failed. Please try again.'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
     setLoading(true)
     try {
-      const { recoveryCodes, mfaRemoved } = await login(usernameOrEmail, password, showMfa ? mfaCode : undefined)
-      if (mfaRemoved) setSetupOpen(true)
-      else if (recoveryCodes?.length) setNewCodes(recoveryCodes)
-      else goBack()
+      finish(await login(usernameOrEmail, password, showMfa ? mfaCode : undefined))
     } catch (err: any) {
       if (err?.message === 'PASSWORD_CHANGE_REQUIRED') {
         // the one forced-change path: the reset screen, with the reason
@@ -97,9 +149,16 @@ export default function LoginScreen() {
           state: { reason: err.reason },
         })
       } else if (err?.message === 'MFA_REQUIRED') {
+        const o: MfaOffer = err.offer
+        const key = !!o.securityKey
+        const app = o.methods.includes('authenticator_app')
+        setOffer(o)
         setShowMfa(true)
         setMfaCode('')
-        setError('Enter your 2FA code to continue.')
+        setUseKey(key)
+        setRecovery(false)
+        if (key) void askKey(o)
+        else setError(!app && o.detail ? o.detail : 'Enter your 2FA code to continue.')
       } else {
         setError(
           requestErrorMessage(
@@ -115,9 +174,23 @@ export default function LoginScreen() {
     }
   }
 
+  // no app and no usable key (keys are off for this install): nothing to answer with, the server says why
+  const app = !!offer?.methods.includes('authenticator_app')
+  const noMethod = !!offer && !offer.securityKey && !app
+
+  // off the key view: its prompt ends, and nothing it answers later counts
+  const leaveKey = () => {
+    prompting.current++
+    cancelPrompt()
+    setKeyWaiting(false)
+    setUseKey(false)
+  }
+
   const backToCredentials = () => {
+    leaveKey()
     setShowMfa(false)
     setRecovery(false)
+    setOffer(null)
     setMfaCode('')
     setError('')
   }
@@ -178,7 +251,7 @@ export default function LoginScreen() {
       ? 'Enter the email on your account to request a reset link.'
       : showMfa
         ? recovery
-          ? 'This removes your authenticator app and signs you out everywhere else.'
+          ? 'This removes your sign-in methods and signs you out everywhere else.'
           : 'Confirm your identity to finish signing in.'
         : 'Authenticate to access the operations console.'
 
@@ -408,6 +481,51 @@ export default function LoginScreen() {
               </button>
             </div>
           </>
+        ) : useKey ? (
+          <div className="field">
+            <KeyWaiting waiting={keyWaiting}>
+              {!keyWaiting && (
+                <button type="button" className="link" onClick={() => void retryKey()} disabled={loading}>
+                  Try again
+                </button>
+              )}
+              {app && (
+                <>
+                  <button type="button" className="link" onClick={leaveKey}>
+                    Use an authenticator code instead
+                  </button>
+                  <button
+                    type="button"
+                    className="link"
+                    onClick={() => {
+                      leaveKey()
+                      setRecovery(true)
+                    }}
+                  >
+                    Use a recovery code
+                  </button>
+                </>
+              )}
+            </KeyWaiting>
+            <div className="mfa-back">
+              <button type="button" className="link" onClick={backToCredentials}>
+                ← Back to sign in
+              </button>
+            </div>
+          </div>
+        ) : noMethod ? (
+          <>
+            <div className="mfa-back">
+              <a className="link" href={SECURITY_KEYS_DOCS} target="_blank" rel="noreferrer">
+                About security keys
+              </a>
+            </div>
+            <div className="mfa-back">
+              <button type="button" className="link" onClick={backToCredentials}>
+                ← Back to sign in
+              </button>
+            </div>
+          </>
         ) : (
           <div className="field">
             <label htmlFor="auth-mfa">{recovery ? 'Recovery code' : 'Authentication code'}</label>
@@ -442,14 +560,24 @@ export default function LoginScreen() {
                 ← Back to sign in
               </button>
             </div>
-            <div className="mfa-back">
-              <button type="button" className="link" onClick={() => toggleRecovery(!recovery)}>
-                {recovery ? 'Use my authenticator app instead' : 'Use a recovery code'}
-              </button>
-            </div>
+            {offer?.methods.includes('security_key') && offer.securityKey && (
+              <div className="mfa-back">
+                <button type="button" className="link" onClick={() => void retryKey()}>
+                  Use a security key or passkey instead
+                </button>
+              </div>
+            )}
+            {(recovery ? app : true) && (
+              <div className="mfa-back">
+                <button type="button" className="link" onClick={() => toggleRecovery(!recovery)}>
+                  {recovery ? 'Use my authenticator app instead' : 'Use a recovery code'}
+                </button>
+              </div>
+            )}
           </div>
         )}
 
+        {!(showMfa && (useKey || noMethod)) && (
         <button
           className="btn-signin"
           type="submit"
@@ -464,6 +592,7 @@ export default function LoginScreen() {
             </>
           )}
         </button>
+        )}
       </form>
       )}
     </AuthLayout>
