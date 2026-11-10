@@ -43,6 +43,7 @@ from core.auth.password_reset import (
 )
 from core.auth.password_validator import (
     PasswordPolicyError,
+    check_not_listed,
     validate_password_strength,
 )
 from core.config import get_settings
@@ -70,6 +71,8 @@ logger = logging.getLogger(__name__)
 SERVICE_ACCOUNT_DETAIL = "Service accounts can't use this endpoint"
 _INVALID_REFRESH_TOKEN = "Invalid refresh token"
 _INVALID_RESET_TOKEN = "Invalid or expired reset token"
+# Login's 403 detail.code when the password must change before sign-in.
+PASSWORD_CHANGE_REQUIRED = "password_change_required"
 
 
 def _bearer_token(request: Request) -> Optional[str]:
@@ -542,6 +545,27 @@ def login(
             user.login_count = (user.login_count or 0) + 1
         # Whether TOTP or an old code got in, an old-scheme set ends here.
         new_recovery_codes = AuthService.upgrade_recovery_codes(user)
+
+    # The password and any MFA code are good; the password may have joined the
+    # breached list since it was set. No tokens, cookies or sign-in row: a reset
+    # token takes the person to /password-reset/confirm, the one forced-change
+    # path. Returned, not raised, so a spent MFA code stays spent. A service
+    # account's password is generated and it cannot reset.
+    if not service_account:
+        try:
+            check_not_listed(payload.password, user_inputs=[user.username, user.email])
+        except PasswordPolicyError as exc:
+            logger.info("Password change required at sign-in: %s", user.username)
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={
+                    "detail": {
+                        "code": PASSWORD_CHANGE_REQUIRED,
+                        "message": f"{exc}. Choose a new password to sign in.",
+                        "reset_token": generate_reset_token(user),
+                    }
+                },
+            )
 
     # Generate tokens. One sign-in, named on both, kept through every refresh.
     _ua = request.headers.get("user-agent")

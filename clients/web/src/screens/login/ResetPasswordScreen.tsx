@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { authApi } from '../../services/api'
 import { Icon } from '../../shared/icons'
 import AuthLayout from './AuthLayout'
@@ -11,6 +11,8 @@ import { requestErrorMessage } from './requestErrorMessage'
 export default function ResetPasswordScreen() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
+  // set when sign-in sent the person here because the password is refused now
+  const reason = (useLocation().state as { reason?: string } | null)?.reason
   const token = params.get('token') ?? ''
 
   const [password, setPassword] = useState('')
@@ -44,7 +46,7 @@ export default function ResetPasswordScreen() {
       title={token ? 'Choose a new password' : 'Reset link incomplete'}
       subtitle={
         token
-          ? 'This signs out every existing session.'
+          ? `${reason ? `${reason} ` : ''}This signs out every existing session.`
           : 'Open the full link from your reset email, or request another.'
       }
       message={{ text: error }}
