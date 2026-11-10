@@ -23,6 +23,16 @@ whose search waits on the budget. A failed search is tried again on this
 process's next sweep. Vigil's Splunk overlay copies in shadow or live (not
 handed off to a Splunk saved search) are checked alongside, on the same keyed
 searches and budget. Nothing is written to Splunk.
+
+A search that passed on a named index (none internal, not ``*``) is then asked
+for the fields its first clause requires: a ``field=value``, ``!=``, ``<`` or
+``>`` term not negated and not in an ``OR``, nor a default field (``host``,
+``source``, ``_time``…). One search per data source, keyed ``splunk:fields:``
+and its source, counts over the same 7 days the events holding each field its
+rules require; a field none holds fails the rule with ``missing_fields``, which
+the Rules page shows as Missing field. With Splunk's warnings on that search
+(a peer down, results cut), a field it didn't find stays unknown. Fields made
+later in the search (``eval``, ``rex``) and data-model searches are not asked.
 """
 
 from __future__ import annotations
@@ -47,7 +57,26 @@ logger = logging.getLogger(__name__)
 DAYS = sees.DAYS
 HOLD = timedelta(hours=24)
 RAW = "splunk:raw"
+FIELDS = "splunk:fields:"
 MAX_DEPTH = 20
+# Every event has them, or they steer the search rather than match a field.
+DEFAULT_FIELDS = {
+    "index",
+    "sourcetype",
+    "source",
+    "host",
+    "eventtype",
+    "tag",
+    "earliest",
+    "latest",
+    "linecount",
+    "punct",
+    "savedsearch",
+    "splunk_server",
+    "splunk_server_group",
+    "timeendpos",
+    "timestartpos",
+}
 
 RuleKey = sees.RuleKey
 # ("raw", indexes, sourcetypes, note) or ("dm", model, dataset or None, None).
@@ -236,6 +265,79 @@ def need_of(search: str) -> Need:
     raise _Unread(f"| {word} reads no index: its data source is not read")
 
 
+FIELD_TERM = re.compile(
+    r'([A-Za-z][\w.:{}@-]*)\s*(!=|>=|<=|=|>|<)\s*("(?:[^"\\]|\\.)*"|[^\s()"]+)'
+)
+FIELD_IN = re.compile(r"([A-Za-z][\w.:{}@-]*)\s+IN\s*\(", re.I)
+WORD = re.compile(r'[^\s()"]+')
+QUOTED = re.compile(r'"(?:[^"\\]|\\.)*"')
+
+
+def _required(clause: str, at: int = 0) -> Tuple[List[str], int]:
+    """(the fields a clause's matches all hold, where its group ends). Splunk joins
+    terms with AND except where OR, which binds first, links them."""
+    items: List[Tuple[bool, List[str]]] = []  # (negated, fields it requires)
+    ored: Set[int] = set()
+    negate = link = False
+    i = at
+    while i < len(clause):
+        c = clause[i]
+        if c.isspace():
+            i += 1
+            continue
+        if c == ")":
+            i += 1
+            break
+        fields: List[str] = []
+        if c == "(":
+            fields, i = _required(clause, i + 1)
+        elif c == '"':
+            m = QUOTED.match(clause, i)
+            i = m.end() if m else len(clause)
+        elif m := FIELD_IN.match(clause, i):
+            fields, i = [m.group(1)], _required(clause, m.end())[1]
+        elif m := FIELD_TERM.match(clause, i):
+            fields, i = [m.group(1)], m.end()
+        else:
+            m = WORD.match(clause, i)
+            word = m.group(0) if m else c
+            i += len(word)
+            if word.upper() == "NOT":
+                negate = True
+                continue
+            if word.upper() == "OR":
+                link = True
+                continue
+            if word.upper() == "AND":
+                continue
+            if i < len(clause) and clause[i] == "(":  # TERM(…), CASE(…): text
+                _, i = _required(clause, i + 1)
+        if link and items:
+            ored.update((len(items) - 1, len(items)))
+        items.append((negate, fields))
+        negate = link = False
+    out: List[str] = []
+    for n, (negated, fields) in enumerate(items):
+        if not negated and n not in ored:
+            out.extend(f for f in fields if f not in out)
+    return out, i
+
+
+def fields_of(search: str) -> List[str]:
+    """The fields an expanded search's first clause requires its events hold,
+    less the default ones; none for a search starting with a command."""
+    first = _split(search.strip(), "|")[0]
+    if not first.strip():
+        return []
+    clause = re.sub(r"^\s*search\b", "", first, flags=re.I)
+    return [
+        f
+        for f in _required(clause)[0]
+        if f.lower() not in DEFAULT_FIELDS
+        and not f.lower().startswith(("date_", "tag::"))
+    ]
+
+
 def _match(value: str, pattern: str) -> bool:
     """Splunk's matching: case-insensitive, and ``*`` covers no internal index."""
     value, pattern = value.lower(), pattern.lower()
@@ -288,10 +390,14 @@ def _rules() -> List[Tuple[RuleKey, Mapping[str, Any]]]:
 
 def _needs(
     service: Any, rules: List[Tuple[RuleKey, Mapping[str, Any]]]
-) -> Tuple[Dict[RuleKey, Need], Dict[RuleKey, Dict[str, Any]]]:
-    """Each rule's data source, or its unknown result. REST reads only."""
+) -> Tuple[
+    Dict[RuleKey, Need], Dict[RuleKey, Dict[str, Any]], Dict[RuleKey, List[str]]
+]:
+    """Each rule's data source, or its unknown result, and the fields its first
+    clause requires. REST reads only."""
     needs: Dict[RuleKey, Need] = {}
     results: Dict[RuleKey, Dict[str, Any]] = {}
+    reads: Dict[RuleKey, List[str]] = {}
     table: Optional[Dict[str, List[Mapping]]] = None
     macro_error: Optional[str] = None
     owners: Dict[str, Optional[List[str]]] = {}
@@ -314,6 +420,8 @@ def _needs(
         except _Unread as exc:
             results[key] = _unknown(str(exc))
             continue
+        if need[0] == "raw":
+            reads[key] = fields_of(search)
         if need[0] == "raw" and not need[1]:
             owner = str(content.get("owner") or "")
             if owner not in owners:
@@ -332,7 +440,7 @@ def _needs(
             )
             need = ("raw", defaults or ["*"], need[2], note)
         needs[key] = need
-    return needs, results
+    return needs, results, reads
 
 
 def _internal(needs: List[Need]) -> bool:
@@ -398,6 +506,105 @@ def _verdict(need: Need, answer: Any, allowed: Any) -> Dict[str, Any]:
     }
 
 
+def _fields_key(need: Need) -> Optional[str]:
+    """The field search's budget key for a named, non-internal index; else None."""
+    kind, indexes, _, note = need
+    if kind != "raw" or note or not indexes:
+        return None
+    if any(i == "*" or i.startswith("_") for i in indexes):
+        return None
+    return FIELDS + _source(need)
+
+
+def _any(field: str, values: List[str]) -> str:
+    quoted = (v.replace("\\", "\\\\").replace('"', '\\"') for v in values)
+    terms = [f'{field}="{v}"' for v in quoted]
+    return terms[0] if len(terms) == 1 else f"({' OR '.join(terms)})"
+
+
+def _field_search(service: Any, need: Need, names: List[str]) -> Dict[str, Any]:
+    """Per field, True when an event of the source in 7 days holds it, False
+    when none does, None when Splunk warned and none it read did."""
+    _, indexes, sourcetypes, _ = need
+    where = " ".join(
+        [_any("index", indexes)]
+        + ([_any("sourcetype", sourcetypes)] if sourcetypes else [])
+    )
+    counts = ", ".join(f'count("{n}") AS f{i}' for i, n in enumerate(names))
+    found = service.search(
+        f"search {where} | stats {counts}", earliest_time=f"-{DAYS}d", max_count=1
+    )
+    row = (found.results or [{}])[0]
+    absent = None if found.warnings else False
+    return {
+        n: True if int(row.get(f"f{i}") or 0) else absent for i, n in enumerate(names)
+    }
+
+
+def _field_answers(
+    service: Any,
+    url: str,
+    per_hour: int,
+    wanted: Dict[str, Tuple[Need, List[str]]],
+    report: SplunkSeesReport,
+) -> Dict[str, Dict[str, Any]]:
+    """Budget key -> its field answers: held here, else searched, least recently
+    searched first, as far as the budget goes."""
+    out: Dict[str, Dict[str, Any]] = {}
+    now = time.monotonic()
+    due = []
+    for key, (_, names) in wanted.items():
+        hold = held.get((url, key))
+        fresh = hold is not None and now - hold[0] < HOLD.total_seconds()
+        if hold is not None and fresh and set(names) <= set(hold[1]):
+            out[key] = hold[1]
+            continue
+        due.append(key)
+        if fresh:
+            failed.add((url, key))  # a field this process's answer lacks: search again
+    last = search_budget.last_spent(splunk.SOURCE, due)
+    never = datetime.min.replace(tzinfo=timezone.utc)
+    cutoff = datetime.now(timezone.utc) - HOLD
+    due = [k for k in due if last.get(k, never) <= cutoff or (url, k) in failed]
+    for n, key in enumerate(sorted(due, key=lambda k: last.get(k, never))):
+        if not search_budget.spend(splunk.SOURCE, per_hour, key):
+            report.deferred += len(due) - n
+            break
+        report.searched += 1
+        try:
+            out[key] = _field_search(service, *wanted[key])
+        except Exception as exc:  # noqa: BLE001 -- its rules are left as they are
+            logger.warning("detection rules: Splunk field search failed: %s", exc)
+            failed.add((url, key))
+            continue
+        held[(url, key)] = (time.monotonic(), out[key])
+        failed.discard((url, key))
+    return out
+
+
+def _with_fields(
+    verdict: Dict[str, Any],
+    need: Need,
+    fields: List[str],
+    answer: Optional[Mapping[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """A data-source pass, failed when no event of the source holds a field the
+    search requires; None while its field search has no answer."""
+    if verdict["result"] != "pass" or not fields or _fields_key(need) is None:
+        return verdict
+    if answer is None:
+        return None
+    missing = [f for f in fields if answer.get(f) is False]
+    if not missing:
+        return verdict
+    return {
+        "result": "fail",
+        "reason": f"fail: {', '.join(missing)} in no event of {_source(need)} in {DAYS}d",
+        "data_source": verdict["data_source"],
+        "missing_fields": missing,
+    }
+
+
 def _check(
     service: Any,
     rules: List[Tuple[RuleKey, Mapping[str, Any]]],
@@ -405,7 +612,7 @@ def _check(
     per_hour: int,
     report: SplunkSeesReport,
 ) -> Dict[RuleKey, Dict[str, Any]]:
-    needs, results = _needs(service, rules)
+    needs, results, reads = _needs(service, rules)
     answers: Dict[str, Any] = {}
     by_key: Dict[str, List[Need]] = {}
     for need in needs.values():
@@ -470,12 +677,30 @@ def _check(
             allowed_cache[index] = service.can_search_index(index)
         return allowed_cache[index]
 
+    verdicts: Dict[RuleKey, Dict[str, Any]] = {}
     for rule, need in needs.items():
         key = _key(need)
         if key not in answers:
             report.left += 1  # waits for the budget, or another process holds it
             continue
-        results[rule] = _verdict(need, answers[key], allowed)
+        verdicts[rule] = _verdict(need, answers[key], allowed)
+
+    wanted: Dict[str, Tuple[Need, List[str]]] = {}
+    for rule, verdict in verdicts.items():
+        fkey = _fields_key(needs[rule])
+        if fkey and reads.get(rule) and verdict["result"] == "pass":
+            names = wanted.setdefault(fkey, (needs[rule], []))[1]
+            names.extend(f for f in reads[rule] if f not in names)
+    found = _field_answers(service, url, per_hour, wanted, report) if wanted else {}
+    for rule, verdict in verdicts.items():
+        fkey = _fields_key(needs[rule])
+        after = _with_fields(
+            verdict, needs[rule], reads.get(rule) or [], found.get(fkey or "")
+        )
+        if after is None:
+            report.left += 1
+        else:
+            results[rule] = after
     return results
 
 
