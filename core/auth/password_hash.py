@@ -10,6 +10,7 @@ import base64
 import hmac
 import os
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 
 import bcrypt
 from cryptography.hazmat.primitives import hashes
@@ -67,6 +68,32 @@ def _bcrypt_ok(candidate: bytes, entry: str) -> bool:
         return False  # over bcrypt's 72 bytes (NFKC can grow a string): not a match
 
 
+def _derive_all(normal: bytes, stored: list[str]) -> dict[tuple[str, int], bytes]:
+    """Derive for every distinct salt and count in ``stored`` at once: each
+    derivation is slow (up to 25 of them for a full password history) and
+    releases the GIL, so they run side by side."""
+    wanted = set()
+    for entry in stored:
+        parts = (entry or "").split("$")
+        try:
+            if len(parts) == 4 and parts[0] == SCHEME:
+                wanted.add((parts[2], int(parts[1])))
+        except ValueError:
+            continue
+    if len(wanted) < 2:
+        return {}
+    todo = list(wanted)
+
+    def one(key):
+        try:
+            return _derive(normal, base64.b64decode(key[0]), key[1])
+        except ValueError:
+            return None  # malformed: the loop below skips the entry
+
+    with ThreadPoolExecutor(max_workers=min(len(todo), os.cpu_count() or 1)) as pool:
+        return {k: v for k, v in zip(todo, pool.map(one, todo)) if v is not None}
+
+
 def find(secret: str, stored: list[str]) -> int | None:
     """Index of the first hash in ``stored`` that matches ``secret``, else None.
     PBKDF2 hashes sharing a salt and count cost one derivation between them.
@@ -74,7 +101,7 @@ def find(secret: str, stored: list[str]) -> int | None:
     if len(secret) > MAX_PASSWORD_LENGTH:
         return None
     normal = _normalise(secret)
-    derived: dict[tuple[str, int], bytes] = {}
+    derived = _derive_all(normal, stored)
     for i, entry in enumerate(stored):
         try:
             if not entry:

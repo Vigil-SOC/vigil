@@ -29,6 +29,17 @@ spends nothing.
 While a part the verdict depends on has no answer here (budget spent, or
 another process holds it), the rule is left as it is. Nothing is written to the
 indexer or the manager.
+
+A rule passed on its decoder's archived events is then asked for the decoded
+fields it and its ``if_sid`` ancestors read (it fires only after they match):
+their ``<field>`` conditions and the static elements Wazuh decodes, ``srcip``,
+``user`` and the rest, as ``wazuh_shadow`` maps them; a negated one is not asked.
+One more size-0 search of the archive, spent under
+``wazuh:fields:<pattern>`` and held 24 h as the others, counts the events decoded
+as each of its decoders that hold each field. A field none of them holds fails
+the rule with ``missing_fields``, which the Rules page shows as Missing field. A
+rule that alerted itself in the window, or that reads no decoded field, keeps
+its pass.
 """
 
 from __future__ import annotations
@@ -65,6 +76,88 @@ held: Dict[Tuple[str, str], Tuple[float, Dict[str, Any]]] = {}
 # (indexer url, index pattern) whose search failed in this process: searched again
 # next sync, though its keyed row (spent before the search) is recent.
 failed: Set[Tuple[str, str]] = set()
+# (indexer url, decoder, rule field) -> (monotonic time searched, whether an event
+# decoded as it held the field).
+held_fields: Dict[Tuple[str, str, str], Tuple[float, bool]] = {}
+FIELDS_KEY = f"wazuh:fields:{ARCHIVES}"
+# Field pairs one search counts; the rest wait for the next sync.
+MAX_PAIRS = 2000
+
+# Static elements that read a decoded field, at their archive path (wazuh_shadow's
+# table); ``user`` is data.dstuser when the event has one, else data.srcuser.
+STATIC_FIELDS: Dict[str, Tuple[str, ...]] = {
+    **{
+        name: (f"data.{name}",)
+        for name in ("id", "status", "url", "protocol", "srcport", "dstport")
+    },
+    "srcip": ("data.srcip",),
+    "dstip": ("data.dstip",),
+    "action": ("data.action",),
+    "user": ("data.dstuser", "data.srcuser"),
+}
+# Elements the manager lists with a pattern that are not a decoded field.
+NOT_FIELDS = frozenset(
+    {
+        "match",
+        "regex",
+        "pcre2",
+        "hostname",
+        "program_name",
+        "location",
+        "extra_data",
+        "system_name",
+        "data",
+        "srcgeoip",
+        "dstgeoip",
+        "list",
+        "time",
+        "weekday",
+        "decoded_as",
+    }
+)
+
+
+def rule_fields(details: Mapping[str, Any]) -> List[str]:
+    """The decoded fields a rule's own conditions read, as the manager lists them:
+    a ``<field name="x">`` is the key ``x`` with a pattern."""
+    out: List[str] = []
+    for key, value in details.items():
+        if not isinstance(value, Mapping) or "pattern" not in value:
+            continue
+        if str(value.get("negate") or "").strip().lower() == "yes":
+            continue
+        if key in NOT_FIELDS or key in out:
+            continue
+        out.append(key)
+    return out
+
+
+def lineage_fields(
+    rid: str, anc: Set[str], details: Mapping[str, Mapping[str, Any]]
+) -> List[str]:
+    """The rule's own fields, then its ancestors': it fires only after they match."""
+    out: List[str] = []
+    for one in [rid, *sorted(anc - {rid}, key=lambda r: (len(r), r))]:
+        for name in rule_fields(details.get(one) or {}):
+            if name not in out:
+                out.append(name)
+    return out
+
+
+def _paths(name: str) -> Tuple[str, ...]:
+    return STATIC_FIELDS.get(name) or (f"data.{name}",)
+
+
+def _pair_query(decoder: str, name: str) -> Dict[str, Any]:
+    exists = [{"exists": {"field": p}} for p in _paths(name)]
+    return {
+        "bool": {
+            "filter": [
+                {"term": {DECODER: decoder}},
+                {"bool": {"should": exists, "minimum_should_match": 1}},
+            ]
+        }
+    }
 
 
 @dataclass
@@ -245,6 +338,97 @@ async def _answers(
     return None, out
 
 
+Pair = Tuple[str, str]
+
+
+def _archived(decs: Set[str], archive: Any) -> Set[str]:
+    return decs & archive[DECODER]["values"] if isinstance(archive, dict) else set()
+
+
+async def _field_answers(
+    service: Any, url: str, per_hour: int, pairs: Set[Pair], report: WazuhSeesReport
+) -> Dict[Pair, bool]:
+    """Whether events decoded as each decoder hold each field: the answers held
+    here, then one search for the rest. A pair with no answer is absent."""
+    now = time.monotonic()
+    out: Dict[Pair, bool] = {}
+    due: List[Pair] = []
+    for pair in sorted(pairs):
+        hold = held_fields.get((url, *pair))
+        if hold and now - hold[0] < HOLD_SECONDS:
+            out[pair] = hold[1]
+        else:
+            due.append(pair)
+    if not due:
+        return out
+    last = search_budget.last_spent(sees.INTEGRATION, [FIELDS_KEY]).get(FIELDS_KEY)
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=HOLD_SECONDS)
+    ours = any(k[0] == url for k in held_fields) or (url, FIELDS_KEY) in failed
+    # Searched within 24 h by a process whose answers this one doesn't hold: its
+    # rules are left as that process wrote them.
+    if last is not None and last > cutoff and not ours:
+        return out
+    if not search_budget.spend(sees.INTEGRATION, per_hour, FIELDS_KEY):
+        report.deferred += 1
+        return out
+    report.searched += 1
+    asked = due[:MAX_PAIRS]
+    try:
+        answer = await service.counts_since(
+            ARCHIVES,
+            {str(i): _pair_query(dec, name) for i, (dec, name) in enumerate(asked)},
+            DAYS,
+        )
+    except Exception as exc:  # noqa: BLE001 -- those rules are left as they are
+        logger.warning("detection rules: Wazuh field search failed: %s", exc)
+        failed.add((url, FIELDS_KEY))
+        return out
+    failed.discard((url, FIELDS_KEY))
+    searched = time.monotonic()
+    for i, pair in enumerate(asked):
+        held = answer["counts"].get(str(i), 0) > 0
+        # With shards failed, an absence there proves nothing.
+        if held or not answer["failed"]:
+            held_fields[(url, *pair)] = (searched, held)
+            out[pair] = held
+    return out
+
+
+def _with_fields(
+    verdict: Dict[str, Any],
+    rid: str,
+    decs: Set[str],
+    fields: List[str],
+    archive: Any,
+    alerts: Any,
+    answers: Mapping[Pair, bool],
+) -> Optional[Dict[str, Any]]:
+    """A decoder pass, failed when no archived event of its decoders holds a field
+    the rule reads; None while a pair it needs has no answer."""
+    if not fields or verdict["result"] != "pass":
+        return verdict
+    if isinstance(alerts, dict) and rid in alerts[RULE]["values"]:
+        return verdict  # it alerted: its fields arrive
+    archived = _archived(decs, archive)
+    if not archived:
+        return verdict  # passed on alerts alone: the archive can't say
+    pairs = [(dec, name) for dec in sorted(archived) for name in fields]
+    if any(p not in answers for p in pairs):
+        return None
+    missing = [n for n in fields if not any(answers[(d, n)] for d in archived)]
+    if not missing:
+        return verdict
+    return {
+        "result": "fail",
+        "reason": (
+            f"fail: {', '.join(missing)} in no event decoded as "
+            f"{' or '.join(sorted(archived))} in {DAYS}d"
+        ),
+        "data_source": verdict["data_source"],
+        "missing_fields": missing,
+    }
+
+
 def _verdict(
     decs: Set[str], anc: Set[str], archive: Any, alerts: Any
 ) -> Optional[Dict[str, Any]]:
@@ -328,7 +512,11 @@ def sweep() -> WazuhSeesReport:
         active, details = _rules()
         report.rules = len(active)
         lineage = _lineage(details)
+        reads = {
+            rid: lineage_fields(rid, lineage(rid)[1], details) for _, rid in active
+        }
         parts: Dict[str, Any] = {}
+        answers: Dict[Pair, bool] = {}
         why, config = indexer()
         if why is None:
             per_hour = config.get("max_searches_per_hour")
@@ -336,23 +524,38 @@ def sweep() -> WazuhSeesReport:
                 sees.DEFAULT_PER_HOUR if per_hour is None else max(int(per_hour), 0)
             )
             service = kibana.service_of(config)
+            url = config["elasticsearch_url"]
 
-            async def _run() -> Tuple[Optional[str], Dict[str, Any]]:
+            async def _run() -> Tuple[Optional[str], Dict[str, Any], Dict[Pair, bool]]:
                 try:
-                    return await _answers(
-                        service, config["elasticsearch_url"], per_hour, report
-                    )
+                    why, parts = await _answers(service, url, per_hour, report)
+                    archive = parts.get(ARCHIVES)
+                    pairs = {
+                        (dec, name)
+                        for _, rid in active
+                        for dec in _archived(lineage(rid)[0], archive)
+                        for name in reads[rid]
+                    }
+                    if why or not pairs:
+                        return why, parts, {}
+                    found = await _field_answers(service, url, per_hour, pairs, report)
+                    return why, parts, found
                 finally:
                     await service.close()
 
-            why, parts = asyncio.run(_run())
+            why, parts, answers = asyncio.run(_run())
         results: Dict[RuleKey, Dict[str, Any]] = {}
         for key, rid in active:
             decs, anc = lineage(rid)
             if why:
                 results[key] = _unknown(why, _source(decs))
                 continue
-            verdict = _verdict(decs, anc, parts.get(ARCHIVES), parts.get(ALERTS))
+            archive, alerts = parts.get(ARCHIVES), parts.get(ALERTS)
+            verdict = _verdict(decs, anc, archive, alerts)
+            if verdict is not None:
+                verdict = _with_fields(
+                    verdict, rid, decs, reads[rid], archive, alerts, answers
+                )
             if verdict is None:
                 report.left += 1
             else:

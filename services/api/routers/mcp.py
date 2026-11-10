@@ -13,7 +13,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from core.auth import trail_events
+from core.auth import step_up, trail_events
 from core.auth.permissions import permission_gate
 from core.deps import provide_mcp_client, provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry, deactivate, register_connected
@@ -457,7 +457,12 @@ async def set_surface(
     return {"enabled": body.enabled}
 
 
-@router.post("/surface/credentials", status_code=201)
+@router.post(
+    "/surface/credentials",
+    status_code=201,
+    # A person without MFA cannot mint a personal token; with it, only inside the window.
+    dependencies=[step_up.gate("integrations.write", "create a token")],
+)
 async def mint_credential(
     body: CredentialMint,
     current_user: User = Depends(get_current_active_user),

@@ -213,7 +213,7 @@ export default function UsersSection({ notify }: SectionProps) {
     if (!editing) {
       if (!form.username.trim()) return 'Username is required'
       // Length and strength are the server's policy. A copy of those numbers
-      // here would drift from a deployment's AUTH_MIN_PASSWORD_LENGTH.
+      // here would drift from a deployment's session policy.
       if (!form.password) return 'Enter a password.'
     }
     if (!form.full_name.trim()) return 'Full name is required'
@@ -498,7 +498,7 @@ export default function UsersSection({ notify }: SectionProps) {
               />
             </Field>
             {!editing && (
-              <Field label="Password" hint="At least 12 characters. A few unrelated words make a strong one.">
+              <Field label="Password" hint="A few unrelated words make a strong one.">
                 <TextInput
                   type="password"
                   value={form.password}

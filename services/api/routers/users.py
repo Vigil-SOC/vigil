@@ -24,6 +24,7 @@ from core.auth import (
     principals,
     session_policy,
     sign_ins,
+    step_up,
     trail_events,
 )
 from core.auth.auth_cookies import clear_auth_cookies
@@ -40,6 +41,7 @@ from core.auth.permissions import (
     KNOWN_PERMISSIONS,
     PLATFORM_EQUIVALENT,
     PRESETS,
+    STEP_UP,
     builtin_diff,
     deny_unless,
 )
@@ -57,6 +59,12 @@ from services.api.middleware.client_address import client_host
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _step_up(permission: str):
+    """Ask "Confirm it's you" before a write that holds ``permission``."""
+    return step_up.gate(permission, STEP_UP[permission])
+
 
 ROUTER_META = RouterMeta(
     prefix="/api/users",
@@ -816,7 +824,9 @@ def unlock_user(
     return _dump_accounts(session, [user])[0]
 
 
-@router.post("/", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/", status_code=status.HTTP_201_CREATED, dependencies=[_step_up("users.write")]
+)
 def create_user(
     request: CreateUserRequest,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -1008,7 +1018,7 @@ def _apply_user_update(
     return user, stale_reason, UserSchema.dump(user)
 
 
-@router.put("/{user_id}")
+@router.put("/{user_id}", dependencies=[_step_up("users.write")])
 async def update_user(
     user_id: str,
     request: UpdateUserRequest,
@@ -1074,7 +1084,7 @@ def _tell_person(session: Session, user: User, kind: str, title: str, message: s
     )
 
 
-@router.post("/{user_id}/deactivate")
+@router.post("/{user_id}/deactivate", dependencies=[_step_up("users.write")])
 def deactivate_user(
     user_id: str,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -1117,7 +1127,7 @@ def deactivate_user(
     return _dump_accounts(session, [user])[0]
 
 
-@router.post("/{user_id}/reactivate")
+@router.post("/{user_id}/reactivate", dependencies=[_step_up("users.write")])
 def reactivate_user(
     user_id: str,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -1167,7 +1177,7 @@ def reactivate_user(
     return entry
 
 
-@router.post("/{user_id}/restore")
+@router.post("/{user_id}/restore", dependencies=[_step_up("users.delete")])
 def restore_user(
     user_id: str,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -1258,7 +1268,7 @@ def _delete_user(session: Session, current_user: User, user_id: str) -> User:
     return user
 
 
-@router.delete("/{user_id}")
+@router.delete("/{user_id}", dependencies=[_step_up("users.delete")])
 async def delete_user(
     user_id: str,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -1396,7 +1406,11 @@ def _record_role(
     )
 
 
-@router.post("/roles", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/roles",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[_step_up("roles.manage")],
+)
 def create_role(
     request: CreateRoleRequest,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -1438,7 +1452,7 @@ def create_role(
     return _role_entry(role, 0)
 
 
-@router.put("/roles/{role_id}")
+@router.put("/roles/{role_id}", dependencies=[_step_up("roles.manage")])
 def update_role(
     role_id: str,
     request: UpdateRoleRequest,
@@ -1476,7 +1490,7 @@ def update_role(
     return _role_entry(role, holders)
 
 
-@router.delete("/roles/{role_id}")
+@router.delete("/roles/{role_id}", dependencies=[_step_up("roles.manage")])
 def delete_role(
     role_id: str,
     current_user: Annotated[User, Depends(get_current_user)],

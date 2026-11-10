@@ -394,21 +394,17 @@ RUN echo "ubuntu:ubuntu" | chpasswd
 
 USER ubuntu
 
-# CI's DB-backed unit job (`pytest tests/unit -m external_service`) gets its
-# POSTGRES_* from job env. tests/conftest.py turns .env loading off, as CI
-# does, so a bare shell hits MissingPostgresPasswordError and the throwaway-
-# database fixture errors. The password alone is enough: host, port and user
-# default to the compose Postgres that `start` brings up, and the fixture only
-# uses it to CREATE/DROP its own vigil_test_* database. It is the published
+# Vigil keeps no unit or integration tests. POSTGRES_PASSWORD is set so a bare
+# shell that imports the backend without .env (tests/conftest.py turns .env
+# loading off) doesn't hit MissingPostgresPasswordError. It is the published
 # compose default, the same value `start` and .env already use.
 ENV POSTGRES_PASSWORD=deeptempo_secure_password_change_me
 
-# Every pytest job in ci-cd.yml and nightly.yml sets TESTING=true. Without it a
-# test that enters TestClient as a context manager runs the real app lifespan,
-# which dials Bifrost, the model catalog and the MCP servers, and never
-# finishes (tests/unit/auth/test_token_type.py hangs even with the stack up).
-# `start` writes TESTING=false into .env, which every stack launcher sources,
-# so the live app still connects to its integrations.
+# TESTING=true makes the API skip its startup connections (Bifrost, the model
+# catalog, MCP servers) when the app lifespan runs outside the real stack. None
+# of the remaining pytest jobs (connectors-live.yml, medic.yml, medic-nightly.yml)
+# set it. `start` writes TESTING=false into .env, which every stack launcher
+# sources, so the live app still connects to its integrations.
 ENV TESTING=true
 
 # Chrome for Testing, into /home/ubuntu/.agent-browser (system libraries are

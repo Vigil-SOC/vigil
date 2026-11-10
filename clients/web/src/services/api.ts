@@ -4,6 +4,7 @@ import type { Schema } from './apiTypes'
 import type { operations } from './generated/schema'
 import { USER_ACTION_HEADER, justActed } from './userAction'
 import { endReasonOf, isMfaSetupRequired, reportMfaSetupRequired, reportSignInEnded } from './signInEnd'
+import { askStepUp, stepUpDetailOf } from './stepUp'
 
 // Auth is cookie-based; withCredentials sends the HttpOnly cookies on every
 // request, including through the Vite dev proxy.
@@ -81,6 +82,19 @@ api.interceptors.response.use(
     }
 
     if (isMfaSetupRequired(error)) reportMfaSetupRequired()
+
+    // A privileged change outside the confirmation window: ask once, then retry it
+    // as it was. A cancel leaves the original refusal for the caller to show.
+    const stepUp = stepUpDetailOf(error)
+    if (stepUp && !originalRequest._stepUp) {
+      originalRequest._stepUp = true
+      try {
+        await askStepUp(stepUp)
+      } catch {
+        return Promise.reject(error)
+      }
+      return api(originalRequest)
+    }
 
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true
@@ -1823,6 +1837,11 @@ export const authApi = {
    *  caller is signed out once this resolves. */
   changePassword: (body: Schema<'ChangePasswordRequest'>) =>
     api.post<{ message: string }>('/auth/change-password', body),
+}
+
+// Confirm it's you: opens the window the privileged changes read.
+export const confirmApi = {
+  confirm: (body: Schema<'ConfirmItRequest'>) => api.post<Schema<'ConfirmedResponse'>>('/auth/confirm', body),
 }
 
 export type SignIn = Schema<'SignInEntry'>

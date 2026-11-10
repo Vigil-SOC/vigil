@@ -22,6 +22,7 @@ import { DOCK_MIN, DOCK_WIDTH, useDockWidth } from './useDockWidth'
 import CommandBar from './CommandBar'
 import DevModeWarning from './DevModeWarning'
 import UserMenu from './UserMenu'
+import ConfirmItHost from './ConfirmItDialog'
 import RuleHealthBell from './RuleHealthBell'
 import { landingScreen } from './landing'
 import ConsoleTour, { type TourStopId } from './ConsoleTour'
@@ -834,6 +835,7 @@ function SocConsoleInner() {
         />
       )}
       <SignInWatch />
+      <ConfirmItHost />
       </ToastProvider>
       </OverlayHost.Provider>
     </div>

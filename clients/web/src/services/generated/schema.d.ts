@@ -863,6 +863,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm It Is You
+         * @description Confirm it's you: opens the window the privileged changes read. A wrong
+         *     answer is a 400; the third in a row ends the sign-in (401, never a lock).
+         */
+        post: operations["post_api_auth_confirm"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/login": {
         parameters: {
             query?: never;
@@ -3328,6 +3349,23 @@ export interface paths {
         put?: never;
         /** Paste Proposal */
         post: operations["post_api_detection-engineering_proposals"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-engineering/proposals/draft-with-vigil": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Draft With Vigil */
+        post: operations["post_api_detection-engineering_proposals_draft-with-vigil"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10157,6 +10195,22 @@ export interface components {
             };
         };
         /**
+         * ConfirmItRequest
+         * @description Confirm it's you for a privileged change. ``strong``: the password and,
+         *     with MFA, a current code, whatever the window.
+         */
+        ConfirmItRequest: {
+            /** Code */
+            code?: string | null;
+            /** Password */
+            password?: string | null;
+            /**
+             * Strong
+             * @default false
+             */
+            strong: boolean;
+        };
+        /**
          * ConfirmRequest
          * @description The one-factor check before ending sign-ins: the password for a person
          *     without MFA, a current authenticator or recovery code for one with it.
@@ -10166,6 +10220,16 @@ export interface components {
             code?: string | null;
             /** Password */
             password?: string | null;
+        };
+        /**
+         * ConfirmedResponse
+         * @description The window the confirmation opened.
+         */
+        ConfirmedResponse: {
+            /** Confirmed At */
+            confirmed_at: string;
+            /** Window Ends At */
+            window_ends_at: string;
         };
         /** ConnectedHistoryRequest */
         ConnectedHistoryRequest: {
@@ -10419,6 +10483,21 @@ export interface components {
             directive_id: string;
             /** Kind */
             kind: string;
+        };
+        /** DraftRequest */
+        DraftRequest: {
+            /** Case Id */
+            case_id: string;
+            /**
+             * Days
+             * @default 30
+             */
+            days: number;
+            /**
+             * Notes
+             * @default
+             */
+            notes: string;
         };
         /** EditRequest */
         EditRequest: {
@@ -11895,6 +11974,22 @@ export interface components {
              */
             lockout_timed: boolean;
             /**
+             * Password Character Rules
+             * @default none
+             * @enum {string}
+             */
+            password_character_rules: "none" | "letters_digits" | "four_classes";
+            /**
+             * Password History
+             * @default 5
+             */
+            password_history: number;
+            /**
+             * Password Min Length
+             * @default 16
+             */
+            password_min_length: number;
+            /**
              * Require Mfa
              * @default privileged
              * @enum {string}
@@ -11950,10 +12045,13 @@ export interface components {
          * ProfileUpdateRequest
          * @description Signed-in user's own profile.
          *
-         *     ``current_password`` is required when ``email`` names a different mailbox.
-         *     The password is a body field so it is not written to access logs.
+         *     A different ``email`` always takes the strong check, inside the confirmation
+         *     window too: ``current_password`` and, with MFA on, ``code``. They are body
+         *     fields so they are not written to access logs.
          */
         ProfileUpdateRequest: {
+            /** Code */
+            code?: string | null;
             /** Current Password */
             current_password?: string | null;
             /** Email */
@@ -12456,6 +12554,22 @@ export interface components {
              * @default false
              */
             lockout_timed: boolean;
+            /**
+             * Password Character Rules
+             * @default none
+             * @enum {string}
+             */
+            password_character_rules: "none" | "letters_digits" | "four_classes";
+            /**
+             * Password History
+             * @default 5
+             */
+            password_history: number;
+            /**
+             * Password Min Length
+             * @default 16
+             */
+            password_min_length: number;
             /**
              * Require Mfa
              * @default privileged
@@ -14991,6 +15105,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_auth_confirm: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmItRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfirmedResponse"];
                 };
             };
             /** @description Validation Error */
@@ -19409,6 +19558,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["PasteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-engineering_proposals_draft-with-vigil": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DraftRequest"];
             };
         };
         responses: {

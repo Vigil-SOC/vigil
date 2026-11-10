@@ -10,8 +10,8 @@ from alembic import op
 from core.audit import retention
 from core.upgrade.revision import stash_report
 
-revision = "0050_erased_identifiers"
-down_revision = "0049_case_shell_grants"
+revision = "0051_erased_identifiers"
+down_revision = "0050_step_up"
 
 
 def upgrade() -> None:
