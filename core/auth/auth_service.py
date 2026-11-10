@@ -93,9 +93,6 @@ LOCKOUT_DURATION_MINUTES = get_settings().auth_lockout_duration_minutes
 # Old codes were 8 hex characters, new ones 16
 _RECOVERY_CODE = re.compile(r"[0-9A-F]{8}|[0-9A-F]{16}")
 
-# Number of prior password hashes to remember and reject on reuse
-PASSWORD_HISTORY_LIMIT = get_settings().auth_password_history_limit
-
 
 def _is_service_account(user: User) -> bool:
     """Only an explicit True exempts from lockout; anything else fails closed."""

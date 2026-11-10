@@ -249,7 +249,7 @@ export default function LoginScreen() {
                 id="bs-pass"
                 name="new-password"
                 type={showPassword ? 'text' : 'password'}
-                placeholder="At least 12 characters"
+                placeholder="A few unrelated words"
                 autoComplete="new-password"
                 disabled={loading}
                 value={password}

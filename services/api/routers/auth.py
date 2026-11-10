@@ -24,7 +24,6 @@ from core.auth.auth_cookies import (
     set_auth_cookies,
 )
 from core.auth.auth_service import (
-    PASSWORD_HISTORY_LIMIT,
     AccountLockedError,
     AuthService,
     _is_service_account,
@@ -73,6 +72,8 @@ _INVALID_REFRESH_TOKEN = "Invalid refresh token"
 _INVALID_RESET_TOKEN = "Invalid or expired reset token"
 # Login's 403 detail.code when the password must change before sign-in.
 PASSWORD_CHANGE_REQUIRED = "password_change_required"
+# A password under this many characters is not enough on its own, without MFA.
+SINGLE_FACTOR_MIN = 15
 
 
 def _bearer_token(request: Request) -> Optional[str]:
@@ -261,15 +262,17 @@ class PasswordResetConfirm(BaseModel):
 def _apply_new_password(user: User, plaintext: str) -> None:
     """Enforce history, hash, set, update history + changed_at in one place.
     The request's unit of work owns the commit."""
-    if password_matches_any(plaintext, user.password_history or []) or (
-        user.password_hash
-        and AuthService.verify_password(plaintext, user.password_hash)
+    keep = session_policy.current().password_history
+    # The current hash and the history are checked together (PBKDF2 runs once
+    # per distinct salt).
+    if password_matches_any(
+        plaintext, [user.password_hash, *(user.password_history or [])[:keep]]
     ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"Password matches one of your last {PASSWORD_HISTORY_LIMIT} "
-                "passwords — choose a different one."
+                f"Password matches your current password or one of your "
+                f"previous {keep} — choose a different one."
             ),
         )
 
@@ -277,8 +280,9 @@ def _apply_new_password(user: User, plaintext: str) -> None:
     previous = list(user.password_history or [])
     if user.password_hash:
         previous.insert(0, user.password_hash)
-    # Cap to the configured limit so the JSONB row doesn't grow unbounded.
-    user.password_history = previous[:PASSWORD_HISTORY_LIMIT]
+    # Cap to the policy's history so the JSONB row doesn't grow unbounded;
+    # lowering it trims here, at the next change.
+    user.password_history = previous[:keep]
     user.password_hash = new_hash
     user.password_changed_at = utcnow()
 
@@ -547,13 +551,18 @@ def login(
         new_recovery_codes = AuthService.upgrade_recovery_codes(user)
 
     # The password and any MFA code are good; the password may have joined the
-    # breached list since it was set. No tokens, cookies or sign-in row: a reset
+    # breached list since it was set, or be too short for one factor. No tokens, cookies or sign-in row: a reset
     # token takes the person to /password-reset/confirm, the one forced-change
     # path. Returned, not raised, so a spent MFA code stays spent. A service
     # account's password is generated and it cannot reset.
     if not service_account:
         try:
             check_not_listed(payload.password, user_inputs=[user.username, user.email])
+            if not user.mfa_enabled and len(payload.password) < SINGLE_FACTOR_MIN:
+                raise PasswordPolicyError(
+                    f"Password is under {SINGLE_FACTOR_MIN} characters, too short "
+                    "without a second factor"
+                )
         except PasswordPolicyError as exc:
             logger.info("Password change required at sign-in: %s", user.username)
             return JSONResponse(

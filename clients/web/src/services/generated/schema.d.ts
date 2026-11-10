@@ -11776,6 +11776,22 @@ export interface components {
              * @default 15
              */
             idle_standard_minutes: number;
+            /**
+             * Password Character Rules
+             * @default none
+             * @enum {string}
+             */
+            password_character_rules: "none" | "letters_digits" | "four_classes";
+            /**
+             * Password History
+             * @default 5
+             */
+            password_history: number;
+            /**
+             * Password Min Length
+             * @default 16
+             */
+            password_min_length: number;
             /** Sign In Limit */
             sign_in_limit?: number | null;
             /** Updated At */
@@ -12310,6 +12326,22 @@ export interface components {
              * @default 15
              */
             idle_standard_minutes: number;
+            /**
+             * Password Character Rules
+             * @default none
+             * @enum {string}
+             */
+            password_character_rules: "none" | "letters_digits" | "four_classes";
+            /**
+             * Password History
+             * @default 5
+             */
+            password_history: number;
+            /**
+             * Password Min Length
+             * @default 16
+             */
+            password_min_length: number;
             /** Sign In Limit */
             sign_in_limit?: number | null;
         };

@@ -14,7 +14,7 @@ type PasswordProblems = Partial<Record<keyof PasswordForm, string>>
 
 /**
  * Only what the browser can know on its own. Length, strength and history
- * reuse are the server's policy (AUTH_MIN_PASSWORD_LENGTH and friends), and
+ * reuse are the server's policy (the session policy), and
  * its refusal comes back with the exact rule, so the client does not keep a
  * copy of those numbers that could drift from a deployment's settings.
  */
@@ -153,7 +153,7 @@ export default function ChangePasswordDialog({
         </Field>
         <Field
           label="New password"
-          hint="At least 12 characters. A few unrelated words make a strong one."
+          hint="A few unrelated words make a strong one."
           error={shown.next}
         >
           <PasswordInput

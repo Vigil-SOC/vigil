@@ -88,7 +88,6 @@ _SUFFIXES = (
 # Credential-shaped names that are settings, not secrets (redact.awk's allow list).
 _ALLOW = frozenset(
     {
-        "auth_min_password_length",
         "password_reset_ttl_seconds",
         "existing_secret",
         "existing_secret_key",

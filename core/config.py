@@ -228,8 +228,6 @@ class Settings(BaseSettings):
     # a client who can reach the backend directly could otherwise choose
     # the address the anonymous rate-limit buckets use.
     vigil_trusted_proxies: str = ""
-    auth_password_history_limit: int = 5
-    auth_min_password_length: int = 12
     auth_min_zxcvbn_score: int = 3
     password_reset_ttl_seconds: int = 3600
 

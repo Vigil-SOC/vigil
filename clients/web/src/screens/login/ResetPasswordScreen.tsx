@@ -61,7 +61,7 @@ export default function ResetPasswordScreen() {
                 id="reset-pass"
                 name="new-password"
                 type={showPassword ? 'text' : 'password'}
-                placeholder="At least 12 characters"
+                placeholder="A few unrelated words"
                 autoComplete="new-password"
                 autoFocus
                 disabled={loading}
