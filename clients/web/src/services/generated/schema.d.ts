@@ -5747,6 +5747,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/session-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Policy
+         * @description The policy in force and its version (the ETag).
+         */
+        get: operations["get_api_session-policy"];
+        /**
+         * Put Policy
+         * @description Replace the policy. An idle limit above its standard, or a stale version, is refused.
+         */
+        put: operations["put_api_session-policy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/skills": {
         parameters: {
             query?: never;
@@ -11349,6 +11373,32 @@ export interface components {
              */
             verify_proxy_tls: boolean;
         };
+        /** PolicyOut */
+        PolicyOut: {
+            /**
+             * Absolute Hours
+             * @default 12
+             */
+            absolute_hours: number;
+            /**
+             * Idle Privileged Minutes
+             * @default 10
+             */
+            idle_privileged_minutes: number;
+            /**
+             * Idle Standard Minutes
+             * @default 15
+             */
+            idle_standard_minutes: number;
+            /** Sign In Limit */
+            sign_in_limit?: number | null;
+            /** Updated At */
+            updated_at?: string | null;
+            /** Updated By */
+            updated_by?: string | null;
+            /** Version */
+            version: number;
+        };
         /**
          * PostgreSQLConfig
          * @description PostgreSQL database backend configuration.
@@ -11832,6 +11882,26 @@ export interface components {
             /** Enabled */
             enabled: boolean;
         };
+        /** SessionPolicy */
+        SessionPolicy: {
+            /**
+             * Absolute Hours
+             * @default 12
+             */
+            absolute_hours: number;
+            /**
+             * Idle Privileged Minutes
+             * @default 10
+             */
+            idle_privileged_minutes: number;
+            /**
+             * Idle Standard Minutes
+             * @default 15
+             */
+            idle_standard_minutes: number;
+            /** Sign In Limit */
+            sign_in_limit?: number | null;
+        };
         /** SetupState */
         SetupState: {
             /**
@@ -12051,6 +12121,12 @@ export interface components {
         StageChangeRequest: {
             /** Reason */
             reason: string;
+        };
+        /** StaleOut */
+        StaleOut: {
+            current: components["schemas"]["PolicyOut"];
+            /** Detail */
+            detail: string;
         };
         /** StartRunRequest */
         StartRunRequest: {
@@ -22895,6 +22971,89 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    "get_api_session-policy": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "put_api_session-policy": {
+        parameters: {
+            query?: never;
+            header?: {
+                "if-match"?: string | null;
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionPolicy"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyOut"];
+                };
+            };
+            /** @description If-Match is not the current version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StaleOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description If-Match is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

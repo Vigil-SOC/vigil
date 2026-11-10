@@ -15,7 +15,7 @@ from typing import Optional
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from core.storage.models import SignIn, User
+from core.storage.models import Principal, SignIn, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
@@ -31,6 +31,8 @@ UPGRADE = "upgrade"
 ACCOUNT_CHANGED = "account_changed"
 DEACTIVATED = "deactivated"
 ERASED = "erased"
+# A newer sign-in took this one's place under the account's sign-in limit.
+SIGN_IN_LIMIT = "sign_in_limit"
 
 # A person's own action stamps the row at most this often.
 STAMP_EVERY = timedelta(seconds=30)
@@ -80,6 +82,30 @@ def start(
     )
     session.add(row)
     return row
+
+
+def make_room(session: Session, principal_id: str, limit: Optional[int]) -> int:
+    """End the oldest open sign-ins so one more fits under ``limit``.
+
+    Locks the principal first: two logins at once would otherwise each see room
+    and both start. Call it in the transaction that calls ``start``.
+    """
+    if limit is None:
+        return 0
+    session.query(Principal.principal_id).filter(
+        Principal.principal_id == principal_id
+    ).with_for_update(key_share=True).first()
+    open_rows = (
+        session.query(SignIn)
+        .filter(SignIn.principal_id == principal_id, SignIn.ended_at.is_(None))
+        .order_by(SignIn.started_at)
+        .with_for_update()
+        .all()
+    )
+    now = utcnow()
+    for row in open_rows[: max(0, len(open_rows) - (limit - 1))]:
+        row.ended_at, row.end_reason = now, SIGN_IN_LIMIT
+    return max(0, len(open_rows) - (limit - 1))
 
 
 def end(sign_in_id: str, reason: str, session: Optional[Session] = None) -> bool:

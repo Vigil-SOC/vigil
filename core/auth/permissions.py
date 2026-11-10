@@ -64,6 +64,7 @@ CATALOG = {
         "integrations.install": _split_from("integrations.write"),
         "cases.assign": _split_from("cases.write"),
         "roles.manage": _NEW_CAPABILITY,
+        "sessions.manage": _NEW_CAPABILITY,
         "ai_decisions.read": _SIGNED_IN_READ,
     },
     "builtins": {
@@ -97,6 +98,7 @@ CATALOG = {
             "platform.read": True,
             "platform.write": True,
             "roles.manage": True,
+            "sessions.manage": True,
             "users.delete": True,
             "users.read": True,
             "users.write": True,
