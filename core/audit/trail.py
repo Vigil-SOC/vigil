@@ -576,6 +576,8 @@ class TrailQuery:
     outcome: Optional[str] = None
     attribution: Optional[str] = None
     after: Optional[int] = None
+    # Entries that carry this sign-in id (sign-in, sign-out and every ending).
+    sign_in: Optional[str] = None
 
     def recorded(self) -> dict[str, Any]:
         """The filter an export entry stores. Empty fields are left out."""
@@ -591,6 +593,7 @@ class TrailQuery:
             ("outcome", self.outcome),
             ("attribution", self.attribution),
             ("after", self.after),
+            ("sign_in", self.sign_in),
         ):
             if value is None:
                 continue
@@ -693,6 +696,7 @@ def make_query(
     outcome: Optional[str] = None,
     attribution: Optional[str] = None,
     after: Optional[int] = None,
+    sign_in: Optional[str] = None,
 ) -> TrailQuery:
     return TrailQuery(
         since=since,
@@ -705,6 +709,7 @@ def make_query(
         outcome=_one(outcome, _OUTCOMES, "outcome"),
         attribution=_one(attribution, _ATTRIBUTIONS, "attribution"),
         after=after,
+        sign_in=_blank(sign_in),
     )
 
 
@@ -772,6 +777,9 @@ def where_clause(query: TrailQuery) -> tuple[str, dict[str, Any]]:
     if query.after is not None:
         parts.append("t.seq > :after")
         params["after"] = query.after
+    if query.sign_in is not None:
+        parts.append("t.payload->>'sign_in' = :sign_in")
+        params["sign_in"] = query.sign_in
     return " AND ".join(parts), params
 
 

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import {
   ConfirmDialog,
@@ -10,6 +11,8 @@ import {
   Toggle,
 } from '../../shared/ui'
 import { useAuth } from '../../contexts/AuthContext'
+import { signInsApi } from '../../services/api'
+import UserSignInsDialog from './UserSignInsDialog'
 import {
   useUsers,
   type Role,
@@ -47,7 +50,8 @@ function errText(e: unknown, fallback: string): string {
 }
 
 export default function UsersSection({ notify }: SectionProps) {
-  const { hasPermission } = useAuth()
+  const { user: me, hasPermission, logout } = useAuth()
+  const navigate = useNavigate()
   const {
     users,
     roles,
@@ -70,6 +74,10 @@ export default function UsersSection({ notify }: SectionProps) {
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<User | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [signInsOf, setSignInsOf] = useState<User | null>(null)
+  const [everyoneOpen, setEveryoneOpen] = useState(false)
+  const [everyoneReason, setEveryoneReason] = useState('')
+  const [signingOut, setSigningOut] = useState(false)
 
   const canWrite = hasPermission('users.write')
   const canDelete = hasPermission('users.delete')
@@ -107,6 +115,34 @@ export default function UsersSection({ notify }: SectionProps) {
     roles.find((r) => r.kind !== 'legacy')?.role_id ??
     roles[0]?.role_id
   const editingMedic = !!editing?.managed_by_medic
+
+  // The sign-ins of an account whose role grants nothing the caller lacks. The server
+  // checks the same rule; this only keeps the button off rows it would refuse.
+  const known = new Set(rolesMeta.permissions)
+  const covers = (roleId: string) => {
+    const r = roles.find((x) => x.role_id === roleId)
+    return !r || granted(r.permissions).every((k) => !known.has(k) || hasPermission(k))
+  }
+  const canSignOutEveryone = canWrite && users.filter((u) => u.is_active).every((u) => covers(u.role_id))
+
+  const handleSignOutEveryone = async () => {
+    setSigningOut(true)
+    try {
+      const { data } = await signInsApi.endEveryone(everyoneReason.trim())
+      setEveryoneOpen(false)
+      setEveryoneReason('')
+      if (data.signed_out) {
+        await logout()
+        navigate('/login')
+      } else {
+        notify('ok', `Signed out ${data.ended} sign-in${data.ended === 1 ? '' : 's'}.`)
+      }
+    } catch (e) {
+      notify('err', errText(e, 'Failed to sign everyone out'))
+    } finally {
+      setSigningOut(false)
+    }
+  }
 
   const openCreate = () => {
     if (roles.length === 0) {
@@ -209,6 +245,11 @@ export default function UsersSection({ notify }: SectionProps) {
             <button className="btn ghost" onClick={reload}>
               <Icon name="refresh" /> Refresh
             </button>
+            {canSignOutEveryone && (
+              <button className="btn ghost" onClick={() => setEveryoneOpen(true)}>
+                <Icon name="logout" /> Sign everyone out
+              </button>
+            )}
             {canWrite && (
               <button className="btn primary" onClick={openCreate}>
                 <Icon name="plus" /> Add User
@@ -281,6 +322,11 @@ export default function UsersSection({ notify }: SectionProps) {
                   </td>
                   <td className="col-act" style={{ textAlign: 'right' }}>
                     <div className="inline-flex gap-1.5">
+                      {canWrite && covers(u.role_id) && u.user_id !== me?.user_id && (
+                        <button className="btn ghost icon" title="Sign-ins" onClick={() => setSignInsOf(u)}>
+                          <Icon name="clock" size={15} />
+                        </button>
+                      )}
                       {canWrite && (
                         <button className="btn ghost icon" title="Edit" onClick={() => openEdit(u)}>
                           <Icon name="edit" size={15} />
@@ -372,6 +418,36 @@ export default function UsersSection({ notify }: SectionProps) {
             </div>
           </div>
         </Popup>
+
+        {signInsOf && (
+          <UserSignInsDialog user={signInsOf} onClose={() => setSignInsOf(null)} notify={notify} />
+        )}
+
+        <ConfirmDialog
+          open={everyoneOpen}
+          title="Sign everyone out?"
+          body={
+            <div className="flex flex-col gap-3.5">
+              <span>
+                This ends every open sign-in on this install, yours too, and everyone is told. People sign in again to
+                carry on.
+              </span>
+              <Field label="Reason" hint="Kept in the audit trail.">
+                <TextInput
+                  maxLength={500}
+                  value={everyoneReason}
+                  disabled={signingOut}
+                  onChange={(e) => setEveryoneReason(e.target.value)}
+                />
+              </Field>
+            </div>
+          }
+          confirmLabel="Sign everyone out"
+          busy={signingOut}
+          confirmDisabled={!everyoneReason.trim()}
+          onConfirm={handleSignOutEveryone}
+          onClose={() => !signingOut && setEveryoneOpen(false)}
+        />
 
         <ConfirmDialog
           open={!!confirmDelete}

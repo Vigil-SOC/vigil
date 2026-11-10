@@ -44,6 +44,12 @@ def _tool(verb: str) -> Callable[[Mapping[str, Any]], str]:
     return lambda p: f"{verb} {p['tool']}" if p.get("tool") else f"{verb} a tool"
 
 
+def _sign_in_ended(p: Mapping[str, Any]) -> str:
+    # Whose it was is the entry's principal; the actor is named by the screen.
+    own = p.get(trail.ACTOR) == p.get("principal")
+    return "Ended one of their own sign-ins" if own else "Ended someone's sign-in"
+
+
 _KEY_PURPOSES = {
     "signin": "sign-in",
     "run": "run-token",
@@ -232,6 +238,8 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     # Sign-in, account and credential (core/auth/trail_events.py and its callers)
     "auth.sign_in": "Signed in",
     "auth.sign_out": "Signed out",
+    "auth.sign_in_ended": _sign_in_ended,
+    "auth.everyone_signed_out": "Signed everyone out",
     "auth.sign_in_failed": lambda p: "Failed to sign in"
     + (f": {_word(p['reason'])}" if p.get("reason") else ""),
     "auth.denied": lambda p: "Was refused"

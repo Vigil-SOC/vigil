@@ -151,6 +151,7 @@ def _filters(
     outcome: Optional[str] = None,
     attribution: Optional[str] = None,
     after: Optional[int] = Query(None, ge=0),
+    sign_in: Optional[str] = None,
 ) -> trail.TrailQuery:
     kind_c = (kind or "").strip()
     if kind_c and kind_c not in _KINDS:
@@ -167,6 +168,7 @@ def _filters(
             outcome=outcome,
             attribution=attribution,
             after=after,
+            sign_in=sign_in,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

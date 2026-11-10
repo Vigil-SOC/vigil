@@ -1816,6 +1816,35 @@ export const authApi = {
     api.post<{ message: string }>('/auth/change-password', body),
 }
 
+export type SignIn = Schema<'SignInEntry'>
+/** The one-factor check before ending sign-ins: the password, or a code with MFA. */
+export type SignInConfirm = Schema<'ConfirmRequest'>
+
+// A person's own sign-ins (account menu). Every ending needs a fresh check.
+export const signInsApi = {
+  mine: () => api.get<SignIn[]>('/auth/sign-ins'),
+  endOne: (id: string, body: SignInConfirm) =>
+    api.post<Schema<'EndedSignIns'>>(`/auth/sign-ins/${encodeURIComponent(id)}/end`, body),
+  endOthers: (body: SignInConfirm) => api.post<Schema<'EndedSignIns'>>('/auth/sign-ins/end-others', body),
+  endAll: (body: SignInConfirm) => api.post<Schema<'EndedSignIns'>>('/auth/sign-ins/end-all', body),
+  // Another person's, for managers (users.write over the account). A typed reason is required.
+  ofUser: (userId: string) => api.get<SignIn[]>(`/users/${encodeURIComponent(userId)}/sign-ins`),
+  endUsersOne: (userId: string, id: string, reason: string) =>
+    api.post<Schema<'EndedSignIns'>>(
+      `/users/${encodeURIComponent(userId)}/sign-ins/${encodeURIComponent(id)}/end`,
+      { reason } satisfies Schema<'EndSignInsRequest'>,
+    ),
+  endUsersAll: (userId: string, reason: string) =>
+    api.post<Schema<'EndedSignIns'>>(`/users/${encodeURIComponent(userId)}/sign-ins/end`, {
+      reason,
+    } satisfies Schema<'EndSignInsRequest'>),
+  // The whole install, the caller's own sign-in included.
+  endEveryone: (reason: string) =>
+    api.post<Schema<'EndedSignIns'>>('/users/sign-ins/end-all', {
+      reason,
+    } satisfies Schema<'EndSignInsRequest'>),
+}
+
 // Self-service two-step sign-in (TOTP + recovery codes) for the signed-in user.
 export const mfaApi = {
   setup: () => api.post<Schema<'MFASetupResponse'>>('/auth/mfa/setup'),

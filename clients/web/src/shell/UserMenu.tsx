@@ -9,6 +9,7 @@ import { useColorScheme } from '../contexts/ColorSchemeContext'
 import { useToast } from './toast'
 import TwoStepDialog from './TwoStepDialog'
 import ChangePasswordDialog from './ChangePasswordDialog'
+import SignInsDialog from './SignInsDialog'
 
 const FEEDBACK_BASE =
   import.meta.env.VITE_FEEDBACK_URL ||
@@ -54,6 +55,7 @@ export default function UserMenu({
   const [open, setOpen] = useState(false)
   const [twoStepOpen, setTwoStepOpen] = useState(false)
   const [passwordOpen, setPasswordOpen] = useState(false)
+  const [signInsOpen, setSignInsOpen] = useState(false)
   const avatarRef = useRef<HTMLButtonElement>(null)
   const ref = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -117,8 +119,15 @@ export default function UserMenu({
     setPasswordOpen(true)
   }
 
-  const handlePasswordChanged = async () => {
+  const openSignIns = () => {
+    setOpen(false)
+    avatarRef.current?.focus()
+    setSignInsOpen(true)
+  }
+
+  const handleSignedOutHere = async () => {
     setPasswordOpen(false)
+    setSignInsOpen(false)
     await logout()
     navigate('/login')
   }
@@ -180,6 +189,11 @@ export default function UserMenu({
             <Icon name="lock" size={15} /> Change password
           </button>
         )}
+        {!authBypassed && (
+          <button role="menuitem" onClick={openSignIns}>
+            <Icon name="clock" size={15} /> Your sign-ins
+          </button>
+        )}
         <button role="menuitem" className="signout" onClick={handleLogout}>
           <Icon name="logout" size={15} /> Sign out
         </button>
@@ -191,7 +205,16 @@ export default function UserMenu({
     <ChangePasswordDialog
       open={passwordOpen}
       onClose={() => setPasswordOpen(false)}
-      onSignedOut={handlePasswordChanged}
+      onSignedOut={handleSignedOutHere}
+    />
+  )
+
+  const signIns = (
+    <SignInsDialog
+      open={signInsOpen}
+      onClose={() => setSignInsOpen(false)}
+      mfa={!!user.mfa_enabled}
+      onSignedOut={handleSignedOutHere}
     />
   )
 
@@ -210,6 +233,7 @@ export default function UserMenu({
       {menu && (root ? createPortal(menu, root) : menu)}
       {root ? createPortal(twoStep, root) : twoStep}
       {passwordOpen && (root ? createPortal(dialog, root) : dialog)}
+      {signInsOpen && (root ? createPortal(signIns, root) : signIns)}
     </div>
   )
 }
