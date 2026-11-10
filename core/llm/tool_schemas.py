@@ -607,6 +607,37 @@ DEEPTEMPO_FINDING_TOOLS = [
         },
     },
     {
+        "name": "read_case_shell",
+        "description": (
+            "Run one bash command over a case's files, read-only, and get its "
+            "exit code, stdout and stderr. The working directory holds the case "
+            "record (case.json), every finding on it in full (findings/<id>.json, "
+            "findings/index.tsv), tasks.json, escalations.json, flows.json, each "
+            "evidence item as extracted text with evidence/index.json (a "
+            "document condensed before a hunt read it is here as the original), "
+            "and the history of the entities its findings name "
+            "(entities/history.json). README.txt lists it. Use ls, cat, head, "
+            "sed -n, grep -n, wc, sort, awk and jq; pipe within one command. "
+            "Only scratch/ is writable and nothing outlives the call; there is "
+            "no network. Output past about 8,000 bytes is cut and truncated is "
+            "true: narrow the command and run it again."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "case_id": {
+                    "type": "string",
+                    "description": "The case whose files to read.",
+                },
+                "command": {
+                    "type": "string",
+                    "description": "One bash command, run with the case's files as its working directory.",
+                },
+            },
+            "required": ["case_id", "command"],
+        },
+    },
+    {
         "name": "create_case",
         "description": "Create a new investigation case. Use this to organize related findings into a case for tracking and investigation.",
         "input_schema": {

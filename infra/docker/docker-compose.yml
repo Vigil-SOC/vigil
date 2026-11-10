@@ -224,6 +224,8 @@ services:
       MCP_RUNNER_URL: http://mcp-runner:6991
       MCP_RUNNER_TOKEN: ${MCP_RUNNER_TOKEN:-}
       MCP_RUNNER_TOKEN_FILE: /run/vigil/mcp-runner/token
+      # The case shell's socket (agent-shell). Unreachable reads as unavailable.
+      SHELL_SOCKET: /run/vigil/shell/shell.sock
       # GET /metrics bearer. The file metrics-token writes, unless METRICS_TOKEN
       # is set (that value wins, and the init container copies it into the file
       # so Prometheus sends the same secret). Unset and missing file: 401.
@@ -266,10 +268,13 @@ services:
       - mcp_runner_token:/run/vigil/mcp-runner:ro
       - metrics_token:/run/vigil/metrics:ro
       - ${VIGIL_UPGRADE_HOST_DIR:-upgrade_state}:/var/lib/vigil-upgrade:ro
+      - agent_shell_socket:/run/vigil/shell
     depends_on:
       metrics-token:
         condition: service_completed_successfully
       mcp-runner:
+        condition: service_started
+      agent-shell:
         condition: service_started
       postgres:
         condition: service_healthy
@@ -641,6 +646,51 @@ services:
     restart: unless-stopped
     networks:
       - deeptempo-network
+
+  # The read-only case shell (#4199): the agent image's third command. The
+  # backend posts one case's view and one command over a unix socket on a volume
+  # only the two of them mount. No network, no credentials, read-only root.
+  agent-shell:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.agent
+    container_name: deeptempo-agent-shell
+    command: ["node", "dist/shell.js"]
+    # Root, for setpriv, with only what it needs: SETUID/SETGID to drop each call
+    # to a pool uid, KILL to end a call's processes. The image's USER is 1000.
+    user: "0:0"
+    environment:
+      SHELL_SOCKET: /run/vigil-shell/sock/shell.sock
+    network_mode: none
+    read_only: true
+    # Each call's view, unpacked by its owner uid into a 0750 directory and
+    # deleted after. Only owners (group 60999) may create here, and nobody may
+    # list it; the command's uid may only pass through to its own directory.
+    tmpfs:
+      - /work:size=512m,mode=1731,gid=60999
+    # No /dev/shm: a file left there would outlive the call.
+    ipc: none
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID, KILL]
+    security_opt:
+      - no-new-privileges:true
+    # Reaps what a killed command's children leave re-parented to PID 1.
+    init: true
+    # Bounds every call together; each runner is also held to 64 processes and
+    # 32 MiB per file (shell.ts).
+    pids_limit: 512
+    mem_limit: 1g
+    healthcheck:
+      # Over the socket: the container has no network to fetch on.
+      test: ["CMD", "node", "-e", "require('http').get({socketPath: '/run/vigil-shell/sock/shell.sock', path: '/healthz'}, r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    volumes:
+      # Shared with the backend alone.
+      - agent_shell_socket:/run/vigil-shell/sock
+    restart: unless-stopped
 
   # ─── Medic: this install's own ops-health watcher (System Watcher) ────────
   # Off by default (C8). Enabling it on Compose takes BOTH `--profile medic`
@@ -1380,6 +1430,9 @@ volumes:
   detection_rules:
     driver: local
   mcp_runner_token:
+    driver: local
+  # The case shell's socket: agent-shell and the backend only.
+  agent_shell_socket:
     driver: local
   metrics_token:
     driver: local

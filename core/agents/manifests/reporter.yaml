@@ -7,6 +7,7 @@ description: Writes case summaries and executive briefs
 needs:
   - get_case
   - read_case_evidence
+  - shell
   - list_cases
   - list_findings
   - search_findings

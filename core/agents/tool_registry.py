@@ -71,6 +71,7 @@ TOOL_PERMISSIONS: Dict[str, str] = {
     "get_case": "cases.read",
     "case_records": "cases.read",
     "read_case_evidence": "cases.read",
+    "read_case_shell": "cases.read",
     "create_case": "cases.write",
     "add_finding_to_case": "cases.write",
     "update_case": "cases.write",
@@ -571,44 +572,24 @@ def update_case(
 
 # The case's findings ride beside its tasks and escalations, paged: under
 # "findings", not an envelope key tools_router would unwrap and drop siblings of.
+# The reads are core.cases.case_view's, which the case shell renders from too.
 def _case_records(args: Args) -> Args:
     from sqlalchemy import func
-    from sqlalchemy.orm import noload
 
-    from core.cases.case_records_service import list_escalations, tasks_on_case
-    from core.storage.models import Finding, case_findings
+    from core.cases.case_view import findings_on_case, newest_first, side_records
     from core.storage.schemas import FindingSchema
-    from core.storage.schemas.case_entities import CaseEscalationSchema, CaseTaskSchema
     from core.storage.unit_of_work import unit_of_work
 
     case_id = str(args.get("case_id") or "")
     offset = max(int(args.get("offset") or 0), 0)
     limit = max(int(args.get("limit") or 100), 1)
     with unit_of_work() as session:
-        on_case = (
-            session.query(Finding)
-            .join(case_findings, case_findings.c.finding_id == Finding.finding_id)
-            .filter(case_findings.c.case_id == case_id)
-        )
+        on_case = findings_on_case(session, case_id)
         total = on_case.with_entities(func.count()).scalar() or 0
-        page = (
-            on_case.options(noload(Finding.mitre_prediction_rows))
-            .order_by(Finding.timestamp.desc().nulls_last(), Finding.finding_id)
-            .offset(offset)
-            .limit(limit)
-            .all()
-        )
-        records = {
-            "tasks": CaseTaskSchema.dump_many(tasks_on_case(session, case_id)),
-            "escalations": CaseEscalationSchema.dump_many(
-                list_escalations(session, case_id)
-            ),
-        }
-        flows = _case_flows(session, on_case)
+        page = newest_first(on_case).offset(offset).limit(limit).all()
+        # Flows ahead of the findings page, so a cut at result_cap takes findings.
+        records = side_records(session, case_id, on_case)
         findings = FindingSchema.dump_many(page)
-    if flows is not None:
-        # Ahead of the findings page, so a cut at result_cap takes findings.
-        records["flows"] = flows
     return {
         **records,
         "total": total,
@@ -616,26 +597,13 @@ def _case_records(args: Args) -> Args:
     }
 
 
-# A case's evidence, read by id and never by path (#3778). Extracted afresh on
-# every call; no list under an envelope key tools_router would unwrap.
+# A case's evidence, read by id and never by path (#3778). Text comes from
+# core.cases.case_view, extracted once per file hash; no list under an envelope
+# key tools_router would unwrap.
 EVIDENCE_WINDOW = 8_000
 EVIDENCE_WINDOW_MAX = 16_000
 EVIDENCE_MATCHES_MAX = 50
 EVIDENCE_LINE_MAX = 300
-
-
-def _evidence_summary(row: Any) -> Args:
-    return {
-        "evidence_id": row.evidence_id,
-        "type": row.evidence_type,
-        "name": row.name,
-        "description": row.description,
-        "has_file": bool(row.file_path),
-        "size_bytes": row.file_size,
-        "sha256": row.file_hash_sha256,
-        "collected_by": row.collected_by,
-        "collected_at": row.collected_at.isoformat() if row.collected_at else None,
-    }
 
 
 def _whole_int(args: Args, name: str, default: int) -> int:
@@ -651,21 +619,22 @@ def _whole_int(args: Args, name: str, default: int) -> int:
 
 
 async def _read_case_evidence(args: Args) -> Args:
-    import asyncio
-
     from core.cases.case_evidence_service import CaseEvidenceService
-    from core.documents.extract import DocumentRefused, extract_document
+    from core.cases.case_view import (
+        EvidenceUnreadable,
+        evidence_summary,
+        evidence_text,
+    )
     from core.storage.models import CaseEvidence
     from core.storage.unit_of_work import unit_of_work
 
     case_id = str(args.get("case_id") or "")
     if not case_id:
         raise MCPFailure("invalid_args", "read_case_evidence needs a case_id")
-    store = CaseEvidenceService()
     if args.get("evidence_id") in (None, ""):
         with unit_of_work() as session:
-            rows = store.get_case_evidence(case_id, session=session)
-            evidence = [_evidence_summary(row) for row in rows]
+            rows = CaseEvidenceService().get_case_evidence(case_id, session=session)
+            evidence = [evidence_summary(row) for row in rows]
         return {"case_id": case_id, "total": len(evidence), "evidence": evidence}
 
     evidence_id = _whole_int(args, "evidence_id", 0)
@@ -677,26 +646,12 @@ async def _read_case_evidence(args: Args) -> Args:
                 "invalid_args",
                 f"evidence {evidence_id} is not attached to case {case_id}",
             )
-        summary = _evidence_summary(row)
+        summary = evidence_summary(row)
         file_path = row.file_path
-    if file_path:
-        try:
-            path = store.resolve_stored_file(file_path)
-            if not path.is_file():
-                raise FileNotFoundError(f"no file on disk at {file_path}")
-            extracted = await asyncio.to_thread(extract_document, path, path.name)
-        except (ValueError, OSError, DocumentRefused) as exc:
-            raise MCPFailure(
-                "unavailable",
-                f"evidence {evidence_id}'s file could not be read: {exc}",
-            ) from None
-        text = extracted.text
-    else:
-        text = summary["description"] or ""
-        if not text.strip():
-            raise MCPFailure(
-                "unavailable", f"evidence {evidence_id} has no file and no text"
-            )
+    try:
+        text = await evidence_text(evidence_id, file_path, summary["description"])
+    except EvidenceUnreadable as exc:
+        raise MCPFailure("unavailable", str(exc)) from None
 
     result: Args = {
         **summary,
@@ -739,24 +694,71 @@ async def _read_case_evidence(args: Args) -> Args:
     return result
 
 
-# Every NetFlow finding on the case, not the page: its ingest digest, read by
-# JSON path so the flow previews stay in the database (#3275).
-def _case_flows(session: Any, on_case: Any) -> Optional[Args]:
-    from core.findings.netflow_digest import case_flow_summary
-    from core.storage.models import Finding
+# One read-only bash command over a case's view, run in the agent-shell sidecar
+# (#4199). Named for its lead verb: attribution.effectful reads it as a read.
+# A non-zero exit is an answer; a sidecar that is down or a command past its
+# limit is unavailable, which a run records as a visibility gap.
+async def _read_case_shell(args: Args) -> Args:
+    import base64
 
-    rows = on_case.with_entities(
-        Finding.finding_id,
-        Finding.entity_context["netflow_digest"],
-        Finding.entity_context["source_evidence"]["telemetry_kind"],
-    ).all()
-    digested = [(fid, digest) for fid, digest, _ in rows if digest is not None]
-    missing = [
-        fid for fid, digest, kind in rows if digest is None and kind == "netflow"
-    ]
-    if not digested and not missing:
-        return None
-    return case_flow_summary(digested, without_digest=missing)
+    import httpx
+
+    from core.cases.case_view import render_case_view, shell_address
+
+    case_id = str(args.get("case_id") or "")
+    command = str(args.get("command") or "")
+    if not case_id or not command.strip():
+        raise MCPFailure(
+            "invalid_args", "read_case_shell needs a case_id and a command"
+        )
+    socket, url = shell_address()
+    if not socket and not url:
+        raise MCPFailure(
+            "unavailable", "no case shell is configured on this deployment"
+        )
+    view = await render_case_view(case_id)
+    if view is None:
+        raise MCPFailure("invalid_args", f"case {case_id} not found")
+    transport = httpx.AsyncHTTPTransport(uds=socket) if socket else None
+    try:
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url=url or "http://shell",
+            timeout=httpx.Timeout(None, connect=5.0),
+        ) as client:
+            response = await client.post(
+                "/run",
+                json={"command": command, "view": base64.b64encode(view).decode()},
+            )
+    except httpx.HTTPError as exc:
+        raise MCPFailure(
+            "unavailable", f"the case shell could not be reached: {exc}"
+        ) from None
+    answer = (
+        response.json()
+        if response.headers.get("content-type", "").startswith("application/json")
+        else {}
+    )
+    if response.status_code == 400:
+        raise MCPFailure("invalid_args", str(answer.get("error") or response.text))
+    if response.status_code != 200:
+        raise MCPFailure(
+            "unavailable",
+            f"the case shell answered {response.status_code}: {answer.get('error') or response.text[:300]}",
+        )
+    if answer.get("timed_out"):
+        raise MCPFailure(
+            "unavailable",
+            f"the command passed its {answer.get('timeout_ms')} ms limit and was killed",
+        )
+    return {
+        "case_id": case_id,
+        "exit_code": answer.get("exit_code"),
+        "stdout": answer.get("stdout", ""),
+        "stderr": answer.get("stderr", ""),
+        # Cut by the shell, so nothing downstream cuts it again unannounced.
+        "truncated": bool(answer.get("truncated")),
+    }
 
 
 def add_finding_to_case(*, case_id: str, finding_id: str) -> Args:
@@ -1145,6 +1147,9 @@ async def execute_backend_tool(
 
     if tool_name == "read_case_evidence":
         return await _read_case_evidence(args), True
+
+    if tool_name == "read_case_shell":
+        return await _read_case_shell(args), True
 
     if tool_name in _OWNED:
         result = globals()[tool_name](**args)
