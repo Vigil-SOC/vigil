@@ -58,6 +58,38 @@ def _cookie_secure() -> bool:
     return get_settings().vigil_cookie_secure
 
 
+def warn_if_cookie_insecure_in_production() -> None:
+    """Secure off stays allowed (loopback, SSH tunnel); in production say so.
+
+    One log line now, and a live condition on the bell for those who hold
+    platform.write; it ends when the setting changes.
+    """
+    settings = get_settings()
+    if (
+        settings.vigil_cookie_secure
+        or settings.environment.strip().lower() != "production"
+    ):
+        return
+    message = (
+        "Auth cookies are sent without the Secure flag (VIGIL_COOKIE_SECURE=false). "
+        "This is safe only on loopback or through an SSH tunnel."
+    )
+    logger.warning(message)
+
+    def cookie_secure_off(user):
+        from core.auth.permissions import missing_permission
+
+        if get_settings().vigil_cookie_secure:
+            return []
+        if missing_permission(user.user_id, "platform.write") is not None:
+            return []
+        return [{"message": message, "link": "/settings"}]
+
+    from core.platform import notices
+
+    notices.CONDITIONS.append(cookie_secure_off)
+
+
 def _cookie_samesite() -> str:
     raw = get_settings().vigil_cookie_samesite.strip().lower()
     if raw not in ("strict", "lax", "none"):

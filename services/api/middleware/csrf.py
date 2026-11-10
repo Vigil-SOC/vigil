@@ -139,6 +139,42 @@ def _parse_exempt_paths(
     )
 
 
+def refuse_unsafe_csrf_in_production() -> None:
+    """Refuse start-up when ENVIRONMENT=production and a switch undoes CSRF protection.
+
+    Same test and shape as DEV_MODE's refusal. Exempt paths are compared in their
+    normalized form, so a sub-path of an always-exempt prefix is not a loosening.
+    """
+    settings = get_settings()
+    if settings.environment.strip().lower() != "production":
+        return
+    if not settings.vigil_csrf_enabled:
+        problem = "VIGIL_CSRF_ENABLED=false turns CSRF protection off. Set it to true"
+    elif settings.vigil_csrf_report_only:
+        problem = (
+            "VIGIL_CSRF_REPORT_ONLY=true logs CSRF violations but lets them "
+            "through. Set it to false"
+        )
+    else:
+        always = _parse_exempt_paths(None)
+        extra = [
+            p
+            for p in _parse_exempt_paths(settings.vigil_csrf_exempt_paths)
+            if not p.startswith(always)
+        ]
+        if not extra:
+            return
+        problem = (
+            f"VIGIL_CSRF_EXEMPT_PATHS exempts {', '.join(extra)} from CSRF "
+            "checks, which leaves cookie-authenticated routes unprotected. "
+            "Remove those entries"
+        )
+    raise RuntimeError(
+        f"{problem}, or unset ENVIRONMENT if this is not a production install "
+        "(ENVIRONMENT=production refuses it)."
+    )
+
+
 class CSRFMiddleware(BaseHTTPMiddleware):
     def __init__(
         self,

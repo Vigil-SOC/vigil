@@ -808,7 +808,8 @@ config:
   VIGIL_CSP_ENABLED: "true"
   VIGIL_CSP_POLICY: ""
 
-  # CSRF
+  # CSRF. ENVIRONMENT=production refuses to start with VIGIL_CSRF_ENABLED=false,
+  # VIGIL_CSRF_REPORT_ONLY=true, or an exempt path outside the always-exempt set.
   VIGIL_CSRF_ENABLED: "true"
   # Added to the always-exempt set (webhooks, the /mcp surface, the agent
   # layer's /internal endpoints) rather than replacing it. Ingestion is not
@@ -817,7 +818,9 @@ config:
   # App-root relative; the API prefixes each entry with VIGIL_CONTEXT_PATH.
   VIGIL_CSRF_EXEMPT_PATHS: "/api/webhooks/"
 
-  # Auth cookies
+  # Auth cookies. "false" is allowed in production only for loopback or an SSH
+  # tunnel: the API logs a warning and the console bell shows a notice to
+  # people who hold platform.write.
   VIGIL_COOKIE_SECURE: "true"
   VIGIL_COOKIE_SAMESITE: "strict"
 
