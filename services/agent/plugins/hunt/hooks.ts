@@ -469,7 +469,11 @@ const RESULT_ITEM_FALLBACK = {
         properties: { field: { type: "string" }, authored: { type: "string", enum: ["sensor", "adversary", "third_party"] } },
       },
     },
-    attack_technique: { type: "string" },
+    attack_technique: {
+      type: "string",
+      description:
+        "The ATT&CK technique id the rows show, e.g. T1071.001, chosen from the playbook's list when it declares one. Leave it out when the rows show none.",
+    },
   },
 };
 
