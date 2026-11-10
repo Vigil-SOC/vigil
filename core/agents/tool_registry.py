@@ -941,8 +941,8 @@ def approve_action(*, action_id: str) -> Args:
 
 
 async def reject_action(*, action_id: str, reason: str) -> Args:
-    from core.api.v1.approvals_router import ActionNotFound, decide_reject
     from core.cases.agent_closure import actor, actor_identity
+    from core.response.approval_decisions import ActionNotFound, decide_reject
     from core.response.approval_service import AlreadyDecided
 
     if refusal := permission_refusal(APPROVE_PERMISSION):
