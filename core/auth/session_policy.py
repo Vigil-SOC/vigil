@@ -77,9 +77,7 @@ class Stored(NamedTuple):
 def read_row(session: Session, lock: bool = False) -> tuple[Stored, bool]:
     """The stored document (defaults when no row) and whether a row exists."""
     row = (
-        session.query(SystemConfig)
-        .filter(SystemConfig.key == KEY)
-        .populate_existing()
+        session.query(SystemConfig).filter(SystemConfig.key == KEY).populate_existing()
     )
     row = (row.with_for_update() if lock else row).first()
     if row is None:
