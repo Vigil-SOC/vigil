@@ -17,8 +17,8 @@ from sqlalchemy import text
 
 from core.upgrade.revision import stash_report
 
-revision = "0052_get_case_shell"
-down_revision = "0051_erased_identifiers"
+revision = "0053_get_case_shell"
+down_revision = "0052_api_tokens"
 
 _DELETED = frozenset({"get_case"})
 _SHELL = "shell"
