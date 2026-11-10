@@ -75,7 +75,7 @@ export default function RuleStages({ ruleId, row, asking: askFirst, onChanged }:
             : 'Live: analysts get its alerts. A person who can edit detections can move it back to shadow.'
           : line?.held
             ? 'Held in shadow: it runs but alerts nobody, and stays there until a person releases it.'
-            : 'In shadow it runs but alerts nobody. Vigil moves it live after 7 quiet days with its data arriving.'}
+            : 'In shadow it runs but alerts nobody. Vigil moves it live after 7 quiet days with its data arriving, once it was shown to catch the attack it was written for in its SIEM when it was saved.'}
       </p>
     </div>
   )

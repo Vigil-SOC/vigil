@@ -85,7 +85,9 @@ def test_shadow_to_live_per_version_with_who_promoted_it():
     assert out["in_shadow"] == 1
     assert "7 days in shadow" in out["exit_criteria"]
     # The sweep promotes only on a lint pass too, and says so in its reason.
-    assert out["exit_criteria"].endswith("Sees and lint passed")
+    assert "Sees and lint passed" in out["exit_criteria"]
+    # And only once shown to fire (#4212).
+    assert "shown to fire" in out["exit_criteria"]
 
 
 # 3. Live rules passing Runs and Sees everywhere they run
