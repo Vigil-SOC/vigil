@@ -45,6 +45,8 @@ def _tool(verb: str) -> Callable[[Mapping[str, Any]], str]:
 
 
 def _sign_in_ended(p: Mapping[str, Any]) -> str:
+    if p.get("end_reason") == "too_many_confirmations":
+        return "Had a sign-in ended by three failed confirmations"
     # Whose it was is the entry's principal; the actor is named by the screen.
     own = p.get(trail.ACTOR) == p.get("principal")
     return "Ended one of their own sign-ins" if own else "Ended someone's sign-in"
@@ -239,6 +241,9 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "auth.sign_in": "Signed in",
     "auth.sign_out": "Signed out",
     "auth.sign_in_ended": _sign_in_ended,
+    "auth.confirmed": lambda p: "Confirmed it's them"
+    + (" with a password and a second step" if p.get("strong") else ""),
+    "auth.confirmation_failed": "Failed to confirm it's them",
     "auth.everyone_signed_out": "Signed everyone out",
     "auth.sign_in_failed": lambda p: "Failed to sign in"
     + (f": {_word(p['reason'])}" if p.get("reason") else ""),

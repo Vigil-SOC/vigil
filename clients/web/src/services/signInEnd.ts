@@ -56,6 +56,7 @@ const REASON_TEXT: Record<string, string> = {
   everyone_signed_out: 'You were signed out because every sign-in was ended.',
   deactivated: 'You were signed out because the account was deactivated or deleted.',
   token_reuse: 'You were signed out because a sign-in token was used twice.',
+  too_many_confirmations: 'You were signed out because confirming it was you failed three times in a row.',
   sign_out: 'You signed out from another tab or device.',
 }
 

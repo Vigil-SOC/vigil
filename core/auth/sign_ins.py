@@ -40,6 +40,8 @@ ENDED_BY_ADMIN = "ended_by_admin"  # also a service account or playbook, as cont
 EVERYONE = "everyone_signed_out"
 # A newer sign-in took this one's place under the account's sign-in limit.
 SIGN_IN_LIMIT = "sign_in_limit"
+# Three failed confirmations in a row (core/auth/step_up.py).
+TOO_MANY_CONFIRMATIONS = "too_many_confirmations"
 
 # The end reasons that stop the sign-in's agent runs (and their children): a
 # compromise, someone else's act, or a change of who the account is. Time, idle,
@@ -55,6 +57,7 @@ STOPS_RUNS = frozenset(
         ENDED_BY_PERSON,
         ENDED_BY_ADMIN,
         EVERYONE,
+        TOO_MANY_CONFIRMATIONS,
     }
 )
 
@@ -76,6 +79,7 @@ REASON_WORDS = {
     ENDED_BY_ADMIN: "Ended by an admin",
     EVERYONE: "Everyone signed out",
     SIGN_IN_LIMIT: "A newer sign-in took its place",
+    TOO_MANY_CONFIRMATIONS: "Too many failed confirmations",
 }
 UNNAMED_REASON = "Ended by a security event"
 
@@ -253,6 +257,8 @@ def start(
         device=device_of(user_agent),
         address=address,
         refresh_generation=0,
+        # Completing MFA at sign-in starts the confirmation window.
+        confirmed_at=now if auth_method == "mfa" else None,
     )
     session.add(row)
     return row
