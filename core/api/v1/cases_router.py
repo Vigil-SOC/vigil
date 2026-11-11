@@ -80,6 +80,7 @@ from core.storage.schemas.case_api import (
     CaseLinkedFinding,
     CaseListResponse,
     CaseMergeResponse,
+    CaseOwnersResponse,
     CaseRulesResponse,
     CaseSearchResponse,
     CaseSuccessResponse,
@@ -244,12 +245,19 @@ class SearchRequest(BaseModel):
     status: Optional[List[str]] = None
     priority: Optional[List[str]] = None
     assignee: Optional[List[str]] = None
+    # Cases with no owner (NULL or ""), alongside any named in ``assignee``.
+    unassigned: bool = False
     tags: Optional[List[str]] = None
     mitre_techniques: Optional[List[str]] = None
     created_after: Optional[datetime] = None
     created_before: Optional[datetime] = None
     limit: int = 100
     offset: int = 0
+
+
+def _owner(value: Optional[str]) -> Optional[str]:
+    """An owner filter is exact: blank is no filter, anything else is kept as sent."""
+    return value if value and value.strip() else None
 
 
 def _blank(value: Optional[str]) -> Optional[str]:
@@ -285,6 +293,7 @@ def get_cases(
     data_source: Optional[str] = None,
     sla_at_risk: bool = False,
     assignee: Optional[str] = None,
+    unassigned: bool = False,
     closed: Optional[bool] = None,
     query: Optional[str] = None,
     needs_you_only: bool = Query(default=False, alias="needs_you"),
@@ -308,7 +317,8 @@ def get_cases(
     keeps open cases that do not need you, ``closed_by=agent|person`` keeps
     closed cases by who closed them, and ``alerts_from=today|all`` keeps cases
     holding an alert created that UTC day (or any alert). The strip follows
-    ``alerts_from`` and ignores the other filters.
+    ``alerts_from`` and ignores the other filters. ``assignee`` is an exact
+    stored owner; ``unassigned=true`` adds cases with no owner (NULL or "").
     """
     # Demo cases live in memory. The database being down is a different empty.
     if data_service.is_demo_mode():
@@ -323,7 +333,8 @@ def get_cases(
             offset=offset,
             query=_blank(query),
             priority=_blank(priority),
-            assignee=_blank(assignee),
+            assignee=_owner(assignee),
+            unassigned=unassigned,
             state=_blank(state),
             closed=closed,
             sla_at_risk=sla_at_risk,
@@ -357,7 +368,8 @@ def get_cases(
             offset=offset,
             query_text=_blank(query),
             priority=_blank(priority),
-            assignee=_blank(assignee),
+            assignee=_owner(assignee),
+            unassigned=unassigned,
             workflow=_blank(workflow),
             data_source=_blank(data_source),
             sla_at_risk=sla_at_risk,
@@ -394,6 +406,26 @@ def get_cases(
         "has_more": offset + len(rows) < total,
         "strip": asdict(strip),
     }
+
+
+@router.get("/owners", response_model=CaseOwnersResponse)
+def get_case_owners():
+    """The Cases list's owner filter values.
+
+    Each distinct non-blank owner stored on a case the reader can list, closed
+    included, with its owner state. Unassigned is the ``unassigned`` filter,
+    not a value here.
+    """
+    if data_service.is_demo_mode():
+        from core.findings.demo_reads import case_owners, load_demo
+
+        return {"owners": case_owners(load_demo()[1])}
+    if not data_service.is_using_database():
+        return {"owners": []}
+    with unit_of_work() as session:
+        names = CaseRepository(session).owners()
+        states = owner_states(session, names)
+    return {"owners": [{"owner": n, "owner_state": states[n]} for n in names]}
 
 
 def _linked_findings(session, finding_ids: object) -> List[CaseLinkedFinding]:
@@ -967,6 +999,7 @@ def search_cases(data: SearchRequest):
         status=data.status,
         priority=data.priority,
         assignee=data.assignee,
+        unassigned=data.unassigned,
         tags=data.tags,
         mitre_techniques=data.mitre_techniques,
         created_after=data.created_after,

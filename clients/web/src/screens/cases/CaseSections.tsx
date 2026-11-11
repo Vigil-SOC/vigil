@@ -10,7 +10,7 @@ import { casesApi } from '../../services/api'
 import type { Schema } from '../../services/apiTypes'
 import { Icon } from '../../shared/icons'
 import { EmptyState } from '../../shared/ui'
-import { errorDetail } from './caseFormat'
+import { errorDetail, STALE_OWNER_NOTE } from './caseFormat'
 import type { Phase } from './useCases'
 
 function fmtDT(s?: string): string {
@@ -178,7 +178,7 @@ const isTaskPriority = (v: string | undefined): v is TaskPriority =>
   v !== undefined && Object.prototype.hasOwnProperty.call(PRIO_ORDER, v)
 /** Sort rank for a task's priority; the unknown band sorts last. Any other name sorts as medium. */
 const prioOrder = (v: string | undefined) => PRIO_ORDER[isTaskPriority(v) ? v : 'medium']
-type CaseTask = Schema<'CaseTaskSchema'>
+type CaseTask = Schema<'CaseTaskRead'>
 export function useTasks(caseId: string) {
   return useResource<CaseTask[]>(caseId, () => casesApi.getTasks(caseId).then((r) => r.data.tasks))
 }
@@ -272,7 +272,7 @@ export function TasksView({ caseId, resource: { data, phase, error, reload }, on
                 </div>
                 {t.description && <div className="text-xs text-tx-3 mt-[2px]">{t.description}</div>}
                 <div className="text-xs text-tx-faint mt-[2px] flex gap-3">
-                  {t.assignee && <span>@{t.assignee}</span>}
+                  {t.assignee && <span>@{t.assignee}{t.owner_state === 'not_current' && <> · {STALE_OWNER_NOTE}</>}</span>}
                   {t.due_date && <span className={overdue ? 'text-crit' : ''}>Due {fmtD(t.due_date)}</span>}
                 </div>
               </div>

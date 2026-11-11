@@ -74,6 +74,16 @@ def _as_list(value: Filterable) -> List[str]:
     return list(value)
 
 
+def _assignee_clause(assignee: Filterable, unassigned: bool):
+    """Exact owners, plus no owner (NULL or "") when ``unassigned``; None is no filter."""
+    clauses = []
+    if _as_list(assignee):
+        clauses.append(Case.assignee.in_(_as_list(assignee)))
+    if unassigned:
+        clauses.append(or_(Case.assignee.is_(None), Case.assignee == ""))
+    return or_(*clauses) if clauses else None
+
+
 def _ranked(stmt: Select, name: str):
     """One row per case: the innermost select is windowed, this keeps ``rn = 1``."""
     ranked = stmt.subquery()
@@ -415,6 +425,7 @@ class CaseRepository:
         status: Filterable = None,
         priority: Filterable = None,
         assignee: Filterable = None,
+        unassigned: bool = False,
         tags: Optional[Sequence[str]] = None,
         mitre_techniques: Optional[Sequence[str]] = None,
         created_after: Optional[datetime] = None,
@@ -451,11 +462,13 @@ class CaseRepository:
         for column, value in (
             (Case.status, status),
             (Case.priority, priority),
-            (Case.assignee, assignee),
         ):
             values = _as_list(value)
             if values:
                 conditions.append(column.in_(values))
+        owner = _assignee_clause(assignee, unassigned)
+        if owner is not None:
+            conditions.append(owner)
 
         # Array-contains filters: a case must carry every requested tag/technique.
         for tag in _as_list(tags):
@@ -557,6 +570,26 @@ class CaseRepository:
         )
         return self.session.execute(stmt).scalar_one_or_none()
 
+    def owners(self) -> List[str]:
+        """Distinct non-blank stored owners on cases the queue can list, closed included.
+
+        Goes through ``_restrict`` with its filters off, so any reader scoping
+        added there narrows this list too.
+        """
+        stmt = self._restrict(
+            select(Case.assignee).distinct().order_by(Case.assignee),
+            workflow=None,
+            data_source=None,
+            sla_at_risk=False,
+            state=None,
+            closed=None,
+            open_only=False,
+            now=utcnow(),
+        )
+        return [
+            value for value in self.session.scalars(stmt) if value and value.strip()
+        ]
+
     def _restrict(
         self,
         stmt: Select,
@@ -618,6 +651,7 @@ class CaseRepository:
         query_text: Optional[str] = None,
         priority: Filterable = None,
         assignee: Filterable = None,
+        unassigned: bool = False,
         workflow: Optional[str] = None,
         data_source: Optional[str] = None,
         sla_at_risk: bool = False,
@@ -719,8 +753,9 @@ class CaseRepository:
             )
         if _as_list(priority):
             stmt = stmt.where(Case.priority.in_(_as_list(priority)))
-        if _as_list(assignee):
-            stmt = stmt.where(Case.assignee.in_(_as_list(assignee)))
+        owner = _assignee_clause(assignee, unassigned)
+        if owner is not None:
+            stmt = stmt.where(owner)
         stmt = self._restrict(
             stmt,
             workflow=workflow,

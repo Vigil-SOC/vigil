@@ -1662,7 +1662,10 @@
 .cg-sub { color: var(--tx2); }
 
 .cg-owner { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.cg-owner-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .cg-owner-name { color: var(--tx0); }
+/* a stored owner that is not a current account: meta type, wraps under the name */
+.owner-note { font-size: 12px; color: var(--tx2); overflow-wrap: anywhere; }
 .cg-avatar {
   flex-shrink: 0;
   display: inline-flex;

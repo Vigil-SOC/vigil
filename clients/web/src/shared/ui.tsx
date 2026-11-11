@@ -209,10 +209,14 @@ export function FilterButton({
   useEffect(() => {
     if (!open) return
     const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      const t = e.target as Element
+      // a Select inside the panel portals its menu out, so a pick there is not outside
+      if (t.closest?.('.field-menu')) return
+      if (ref.current && !ref.current.contains(t)) setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
+      // Escape closes an open Select menu first
+      if (e.key === 'Escape' && !document.querySelector('.field-menu')) setOpen(false)
     }
     document.addEventListener('mousedown', onDoc)
     document.addEventListener('keydown', onKey)

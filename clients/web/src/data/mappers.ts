@@ -121,6 +121,7 @@ interface QueueCase {
   health_status?: string | null
   needs_you?: boolean | null
   sla_paused?: boolean | null
+  owner_state?: 'current' | 'not_current' | null
   mitre_techniques?: string[] | null
 }
 
@@ -166,7 +167,8 @@ export function mapQueueCase(c: QueueCase): CaseRow {
     status: c.combined_state || c.status || 'open',
     prio: casePrio(c.priority ?? undefined),
     owner: initials(c.assignee ?? undefined),
-    ownerName: c.assignee || 'unassigned',
+    ownerName: c.assignee || '',
+    ownerStale: c.owner_state === 'not_current',
     findings: c.findings_count ?? c.finding_ids?.length ?? 0,
     alertsSinceLastRun: c.alerts_since_last_run ?? 0,
     tactic: c.mitre_techniques?.[0] || DASH,
