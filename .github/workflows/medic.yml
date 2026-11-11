@@ -80,6 +80,11 @@ jobs:
       - name: Import fence
         run: uv run --project services/medic --frozen lint-imports
 
+      # Shipped Medic content never sends the operator to the vendor or to an
+      # evidence report (#3919); medic-core 0.4.0 did and nothing caught it.
+      - name: Copy check
+        run: uv run --project services/medic --frozen python -m services.medic.packs.copy_check
+
       # What a medic-core change does and the version bump it needs (F5), against
       # the last medic-core-v* tag or, before the first tag, the merge base. The
       # report goes to the job summary (a fork PR's token can't comment); the step
