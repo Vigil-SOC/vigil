@@ -970,7 +970,7 @@ def approve_action(*, action_id: str) -> Args:
 
 
 async def reject_action(*, action_id: str, reason: str) -> Args:
-    from core.cases.agent_closure import actor, actor_identity
+    from core.cases.agent_closure import acting_principal, actor
     from core.response.approval_decisions import ActionNotFound, decide_reject
     from core.response.approval_service import AlreadyDecided
 
@@ -986,14 +986,9 @@ async def reject_action(*, action_id: str, reason: str) -> Args:
         origin = action.workflow_run_id or (action.parameters or {}).get("run_id")
         if not origin or origin != claims.run_id:
             return {"error": f"Action {action_id} was not raised by this run"}
-    # Inside a run, its signed claims name who; over /mcp, the bound caller does.
-    if claims is not None:
-        principal = claims.person_id or claims.agent_id
-    else:
-        principal = actor_identity()[0]
     try:
         decided = await decide_reject(
-            _approvals(), action_id, reason, actor(), principal
+            _approvals(), action_id, reason, actor(), acting_principal()
         )
     except ActionNotFound:
         decided = None
