@@ -40,8 +40,17 @@ ENDED_BY_ADMIN = "ended_by_admin"  # also a service account or playbook, as cont
 EVERYONE = "everyone_signed_out"
 # A newer sign-in took this one's place under the account's sign-in limit.
 SIGN_IN_LIMIT = "sign_in_limit"
+# How a sign-in got in: MFA, or the app standing in for keys while they are
+# unavailable (a step-down), or a key-only person's recovery code doing so.
+MFA_STEP_DOWN = "mfa_step_down"
+RECOVERY_STEP_DOWN = "recovery_step_down"
+WITH_MFA = ("mfa", MFA_STEP_DOWN, RECOVERY_STEP_DOWN)
+
 # Three failed confirmations in a row (core/auth/step_up.py).
 TOO_MANY_CONFIRMATIONS = "too_many_confirmations"
+# A restore ended every open sign-in. Not in STOPS_RUNS: it stops the runs in
+# one pass and sends one notice (core/backup/restore.py), not one per person.
+RESTORE = "restore"
 
 # The end reasons that stop the sign-in's agent runs (and their children): a
 # compromise, someone else's act, or a change of who the account is. Time, idle,
@@ -80,6 +89,7 @@ REASON_WORDS = {
     EVERYONE: "Everyone signed out",
     SIGN_IN_LIMIT: "A newer sign-in took its place",
     TOO_MANY_CONFIRMATIONS: "Too many failed confirmations",
+    RESTORE: "Ended by a restore",
 }
 UNNAMED_REASON = "Ended by a security event"
 
@@ -122,7 +132,7 @@ class SignInEntry(BaseModel):
     browser: str
     device: Optional[str] = None
     address: Optional[str] = None
-    # 'password' or 'mfa'
+    # 'password', 'mfa', or a step-down while security keys are unavailable
     auth_method: str
     ended_at: OptDateTime = None
     end_reason: Optional[str] = None
@@ -258,7 +268,7 @@ def start(
         address=address,
         refresh_generation=0,
         # Completing MFA at sign-in starts the confirmation window.
-        confirmed_at=now if auth_method == "mfa" else None,
+        confirmed_at=now if auth_method in WITH_MFA else None,
     )
     session.add(row)
     return row
@@ -382,6 +392,19 @@ def end_all_for_user(
                 synchronize_session=False,
             )
         )
+
+
+def end_every_open(session: Session, reason: str) -> int:
+    """End every open sign-in of every principal in one UPDATE; no run is queued.
+    Returns how many."""
+    return (
+        session.query(SignIn)
+        .filter(SignIn.ended_at.is_(None))
+        .update(
+            {SignIn.ended_at: utcnow(), SignIn.end_reason: reason},
+            synchronize_session=False,
+        )
+    )
 
 
 def stamp_action(sign_in_id: str, session: Session) -> None:

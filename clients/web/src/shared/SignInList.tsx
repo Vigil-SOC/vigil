@@ -3,7 +3,12 @@ import type { SignIn } from '../services/api'
 const stamp = (iso: string) =>
   new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 
-const method = (m: string) => (m === 'mfa' ? 'Password and authenticator app' : 'Password')
+const METHODS: Record<string, string> = {
+  mfa: 'Password and authenticator app',
+  mfa_step_down: 'Password and authenticator app (security keys unavailable)',
+  recovery_step_down: 'Password and recovery code (security keys unavailable)',
+}
+const method = (m: string) => METHODS[m] ?? 'Password'
 
 /**
  * A person's sign-ins as a row stack: start, last action, browser and OS, device,

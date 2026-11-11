@@ -43,3 +43,10 @@ Filter applied to the source's 1,000,000 lines, in this order
 
 Result
   31,102 lines, 29,940 distinct once lowercased.
+
+Last refreshed
+  The date below is when this list was last checked against a newer one. Vigil
+  warns people who manage sessions once it, or the last import, is over 90 days
+  old. Update it with the file at each release.
+
+Checked: 2026-11-10
