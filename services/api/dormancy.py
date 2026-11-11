@@ -50,6 +50,10 @@ def sweep() -> None:
     if days is None:
         return
     now = utcnow()
+    # After a restore the clocks are as backed up: nobody is warned or deactivated
+    # until the grace ends, then the normal warning comes first.
+    if dormancy.in_grace(now):
+        return
     with unit_of_work() as session:
         last = dormancy.activity(session)
         # Active people only: a service account is never deactivated for idleness.

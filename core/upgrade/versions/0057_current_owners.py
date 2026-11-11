@@ -6,7 +6,7 @@ rewritten to the username of the one non-service account it names, by username
 or email ignoring case, whatever that account's state. A row older than that
 account is skipped: the value was written before the account held the name.
 No owner changes, so no trail entry and no ``updated_at`` bump. The report
-counts rewritten rows. Also joins the three 0054 heads.
+counts rewritten rows.
 """
 
 from alembic import op
@@ -14,8 +14,8 @@ from sqlalchemy import text
 
 from core.upgrade.revision import stash_report
 
-revision = "0055_current_owners"
-down_revision = "0054_security_keys"
+revision = "0057_current_owners"
+down_revision = "0056_restore_end_reason"
 
 # {table} and {key} are fixed names below, never input.
 _REWRITE = """

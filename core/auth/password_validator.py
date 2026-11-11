@@ -9,7 +9,7 @@ from typing import Iterable, List, Optional
 
 from zxcvbn import zxcvbn
 
-from core.auth import session_policy
+from core.auth import breached_list, session_policy
 from core.auth.password_hash import MAX_PASSWORD_LENGTH
 from core.config import get_settings
 from core.platform import notices
@@ -84,7 +84,9 @@ def check_not_listed(
         if blocklist is not None
         else _get_blocklist()
     )
-    if folded in block:
+    # The shipped list, then entries an administrator imported. An explicit
+    # ``blocklist`` stands alone.
+    if folded in block or (blocklist is None and breached_list.is_imported(folded)):
         raise PasswordPolicyError(
             "Password appears in a list of breached passwords",
             suggestions=["Choose something more unique."],
@@ -278,3 +280,4 @@ def stale_service_accounts(user: User) -> list[dict[str, str]]:
 
 def register() -> None:
     notices.CONDITIONS.extend([expiry_warning, stale_service_accounts])
+    breached_list.register()

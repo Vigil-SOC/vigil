@@ -1927,6 +1927,21 @@ export const sessionPolicyApi = {
     }),
 }
 
+// The shipped breached-password list and what an administrator has imported onto it.
+export type BreachedListStatus = Schema<'ListStatus'>
+export type BreachedListImport = Schema<'ImportResult'>
+export const breachedListApi = {
+  get: () => api.get<BreachedListStatus>('/session-policy/breached-list'),
+  import: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.post<BreachedListImport>('/session-policy/breached-list', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 0,
+    })
+  },
+}
+
 /** The factor of a method change: a current code, or a security key's assertion and the challenge it signed. */
 export type Factor = { code?: string; assertion?: Record<string, unknown>; challenge?: string }
 

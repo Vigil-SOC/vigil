@@ -14,9 +14,12 @@ from datetime import datetime, timedelta
 from typing import Iterable, Optional
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from core.storage.models import McpCredential, User
+from core.storage.models import McpCredential, SystemConfig, User
+from core.storage.unit_of_work import unit_of_work
+from core.time import utcnow
 
 # How long before the deadline the holder and managers are warned; never more
 # than the period leaves.
@@ -49,3 +52,46 @@ def window(days: int) -> timedelta:
 
 def warning_start(last: datetime, days: int) -> datetime:
     return deadline(last, days) - window(days)
+
+
+# A restore brings back last-sign-in dates as backed up, so for this long after it
+# settled the sweep deactivates nobody and starts no warnings. Its own row, apart
+# from the session policy, which is edited and validated as a document.
+GRACE = timedelta(days=7)
+GRACE_KEY = "auth.restore_settled_at"
+
+
+def start_grace(session: Session, now: Optional[datetime] = None) -> datetime:
+    """Record that a restore settled now; a later restore overwrites it."""
+    now = now or utcnow()
+    value = {"settled_at": now.isoformat()}
+    session.execute(
+        insert(SystemConfig)
+        .values(
+            key=GRACE_KEY,
+            value=value,
+            description="When the last restore settled: dormancy's grace counts from it",
+            config_type="auth",
+            updated_by="restore",
+        )
+        .on_conflict_do_update(index_elements=["key"], set_={"value": value})
+    )
+    return now
+
+
+def grace_until() -> Optional[datetime]:
+    """When the grace after the last restore ends, or None if no restore recorded."""
+    with unit_of_work() as session:
+        value = (
+            session.query(SystemConfig.value)
+            .filter(SystemConfig.key == GRACE_KEY)
+            .scalar()
+        )
+    if not value:
+        return None
+    return datetime.fromisoformat(value["settled_at"]) + GRACE
+
+
+def in_grace(now: Optional[datetime] = None) -> bool:
+    until = grace_until()
+    return until is not None and (now or utcnow()) < until
