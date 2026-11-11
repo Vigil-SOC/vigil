@@ -6711,6 +6711,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/people": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List People
+         * @description Every current person, for the owner and assignee pickers.
+         *
+         *     Current is ``owner_states``'s test: active, not a service account, not
+         *     deleted. A person's own sign-in holding cases.assign or cases.write only.
+         */
+        get: operations["get_api_users_people"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users/roles": {
         parameters: {
             query?: never;
@@ -12254,6 +12277,16 @@ export interface components {
              * @default 0
              */
             days: number;
+        };
+        /**
+         * Person
+         * @description One current person, as a picker shows them.
+         */
+        Person: {
+            /** Display Name */
+            display_name?: string | null;
+            /** Username */
+            username: string;
         };
         /** PhaseUpdate */
         PhaseUpdate: {
@@ -26019,6 +26052,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_users_people: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Person"][];
                 };
             };
             /** @description Validation Error */

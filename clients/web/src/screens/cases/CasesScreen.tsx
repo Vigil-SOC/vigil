@@ -27,6 +27,7 @@ import { SeverityMark } from '../../shared/SeverityMark'
 import { LevelBadge, slaLevel } from '../../shared/LevelBadge'
 import { InfoTip } from '../../shared/InfoTip'
 import { useAuth } from '../../contexts/AuthContext'
+import { OwnerFix, PersonPicker, isOwnerNotCurrent } from '../../shared/people'
 import { useToast } from '../../shell/toast'
 import { inputCls } from './CaseSections'
 import { CasePage } from './CasePage'
@@ -891,6 +892,9 @@ function EditCaseForm({ c, onClose, onSaved, onStale }: {
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  // The stored owner a save was refused over (OWNER_NOT_CURRENT); fixed with the picker above.
+  const [staleOwner, setStaleOwner] = useState('')
+  const canAssign = useAuth().hasPermission('cases.assign')
   const set = (field: CaseEditField) => (value: string) => setValues((v) => ({ ...v, [field]: value }))
 
   // Only a Case crossing into closed is being closed. Re-saving one that is
@@ -927,8 +931,10 @@ function EditCaseForm({ c, onClose, onSaved, onStale }: {
     }
     setBusy(true)
     setErr('')
+    setStaleOwner('')
     try {
-      await casesApi.update(c.id, update)
+      // A close that changes nothing else sends no PATCH: the close endpoint judges it.
+      if (Object.keys(update).length > 1) await casesApi.update(c.id, update)
       setSeen(landed)
       // Second, so a close that fails leaves the edits saved and the Case open,
       // rather than closed under a title that never landed.
@@ -942,6 +948,8 @@ function EditCaseForm({ c, onClose, onSaved, onStale }: {
       if (moved) {
         setConflicts(moved)
         onStale()
+      } else if (isOwnerNotCurrent(e)) {
+        setStaleOwner(stored.assignee)
       } else {
         setErr(errorDetail(e, 'Failed to save changes'))
       }
@@ -982,8 +990,14 @@ function EditCaseForm({ c, onClose, onSaved, onStale }: {
       {closing && <ClosureFields category={category} reason={reason} onCategory={setCategory} onReason={setReason} />}
       <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
         <span>Assignee</span>
-        <input className={inputCls} placeholder="name or email" value={values.assignee} onChange={(e) => set('assignee')(e.target.value)} />
+        <PersonPicker
+          value={values.assignee}
+          state={values.assignee === c.stored.assignee ? c.ownerState : undefined}
+          onSelect={set('assignee')}
+          disabled={!canAssign}
+        />
       </label>
+      {staleOwner && <OwnerFix owner={staleOwner} canChange={canAssign} />}
       <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
         <span>Description</span>
         <textarea className={inputCls} rows={4} value={values.description} onChange={(e) => set('description')(e.target.value)} style={{ resize: 'vertical' }} />
