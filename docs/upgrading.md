@@ -21,6 +21,8 @@ A refused upgrade changes nothing and exits non-zero. This install stays down un
 
 Rolling back by image tag alone is not the way back. Restore the restore point, using the release that took it, then install the previous release.
 
+Each snapshot, the pre-upgrade one included, is followed by a second one in the same repository, tagged `wrapping-key`, holding only `JWT_SECRET_KEY`; the snapshot's own `.env` has that line removed. A restore keeps the install's `JWT_SECRET_KEY` and falls back to the paired one if the install's does not open the restored key ring (see [compromise recovery](compromise-recovery.md)). Snapshots from before this have no pair and restore as before.
+
 ## Helm
 
 The chart runs the command as Jobs of the backend image, logged in as the database owner, with `/var/lib/vigil-upgrade` on a 1Gi PVC that is kept across upgrades and after `helm uninstall`. Helm takes no Vigil backup. Instead, set both acknowledgement values on `helm install` and on every `helm upgrade`:

@@ -20,7 +20,9 @@ from pathlib import Path
 from typing import Iterable, Mapping
 
 from core.backup.create import (
+    PAIR_PREFIX,
     SKIPPED_MESSAGE,
+    WRAPPING_TAG,
     BackupError,
     BackupSkipped,
     _local_repo,
@@ -350,6 +352,61 @@ class _Tagged:
 
 
 def forget_pre_upgrade(
+    repo: str,
+    passphrase: Path,
+    extra: Mapping[str, str] | None,
+    upgrade_dir: Path | None,
+) -> None:
+    """Retention after a snapshot: older pre-upgrade ones, then the wrapping-key
+    snapshots whose main snapshot is gone."""
+    _forget_old_pre_upgrade(repo, passphrase, extra, upgrade_dir)
+    _forget_orphan_wrapping_keys(repo, passphrase, extra)
+
+
+def _forget_orphan_wrapping_keys(
+    repo: str, passphrase: Path, extra: Mapping[str, str] | None
+) -> None:
+    """Forget each ``wrapping-key`` snapshot whose paired main snapshot no longer
+    exists. Local repositories only, as ``_forget``."""
+    local = _local_repo(repo)
+    if local is None or not (local / "config").is_file():
+        return
+    proc = _run(
+        _priority_prefix() + ["restic", "-r", repo, "snapshots", "--json"],
+        env=_restic_env(passphrase, extra),
+        check=False,
+    )
+    try:
+        listed = json.loads(proc.stdout) if proc.returncode == 0 else None
+    except json.JSONDecodeError:
+        listed = None
+    if not isinstance(listed, list):
+        return
+    mains, wrapping = [], []
+    for snap in listed:
+        tags = snap.get("tags") or []
+        (wrapping if WRAPPING_TAG in tags else mains).append((snap.get("id"), tags))
+    ids = [snap_id for snap_id, _ in mains if isinstance(snap_id, str)]
+    drop = []
+    for snap_id, tags in wrapping:
+        paired = [t[len(PAIR_PREFIX) :] for t in tags if t.startswith(PAIR_PREFIX)]
+        # A short id and a full one name one snapshot when one starts the other.
+        if paired and not any(
+            i.startswith(p) or p.startswith(i) for p in paired for i in ids
+        ):
+            drop.append(snap_id)
+    if not drop:
+        return
+    forgot = _run(
+        _priority_prefix() + ["restic", "-r", repo, "forget", "--prune", *drop],
+        env=_restic_env(passphrase, extra),
+        check=False,
+    )
+    if forgot.returncode != 0:
+        raise BackupError(f"restic forget failed: {_output(forgot)}")
+
+
+def _forget_old_pre_upgrade(
     repo: str,
     passphrase: Path,
     extra: Mapping[str, str] | None,
