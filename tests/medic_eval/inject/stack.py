@@ -38,6 +38,8 @@ IMAGES = ("backend", "daemon", "agent")  # <project>-<name>:local, see compose.e
 # enable-compose.sh builds these and reads the gateway's by tag.
 MEDIC_IMAGES = ("vigil-medic:local", "vigil-medic-gateway:local", "vigil-medic-dockerproxy:local")
 ADMIN_USER = "evaladmin"
+# core/auth/bootstrap_code.py SETUP_CODE_LOG_MARK (the harness runs on the host, so no import).
+SETUP_CODE_LOG_MARK = "First-run setup code:"
 INSTALL = (
     "postgres",
     "redis",
@@ -239,9 +241,13 @@ class Stack:
 
     def bootstrap_admin(self) -> None:
         """The first-run flow: a fresh database has no admin (Medic's Viewer is a service account)."""
-        code = self.py(
-            "backend", "from core.auth.bootstrap_code import setup_code; print(setup_code())"
+        # Read the code from the API's log as an operator does; a bare `python -c` has no
+        # database for the key ring. Announced by a background task, so wait for it.
+        out = self.wait(
+            lambda: self.logs("backend"), lambda out: SETUP_CODE_LOG_MARK in out
         )
+        line = [ln for ln in out.splitlines() if SETUP_CODE_LOG_MARK in ln][-1]
+        code = line.split(SETUP_CODE_LOG_MARK, 1)[1].strip()
         status, body = self.api(
             "POST",
             "/api/auth/bootstrap",
