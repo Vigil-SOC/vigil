@@ -1381,6 +1381,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/sso/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Sso Settings
+         * @description The settings, whether a secret is stored, the redirect address, and the version (the ETag).
+         */
+        get: operations["get_api_auth_sso_settings"];
+        /**
+         * Put Sso Settings
+         * @description Replace the settings, checking the provider when its address or client changes.
+         */
+        put: operations["put_api_auth_sso_settings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/autonomy": {
         parameters: {
             query?: never;
@@ -11274,6 +11298,13 @@ export interface components {
             /** Feedback */
             feedback?: string | null;
         };
+        /** GroupRole */
+        GroupRole: {
+            /** Group */
+            group: string;
+            /** Role Id */
+            role_id: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -13439,6 +13470,98 @@ export interface components {
              * @constant
              */
             version: 1;
+        };
+        /**
+         * SsoSettingsIn
+         * @description What a save sends. ``issuer`` comes from the check and ``require_sso`` is not changed here.
+         */
+        SsoSettingsIn: {
+            /**
+             * Client Id
+             * @default
+             */
+            client_id: string;
+            /** Client Secret */
+            client_secret?: string | null;
+            /**
+             * Default Role Id
+             * @default role-viewer
+             */
+            default_role_id: string;
+            /**
+             * Discovery Url
+             * @default
+             */
+            discovery_url: string;
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /** Group Roles */
+            group_roles?: components["schemas"]["GroupRole"][];
+            /**
+             * Groups Claim
+             * @default groups
+             */
+            groups_claim: string;
+        };
+        /** SsoSettingsOut */
+        SsoSettingsOut: {
+            /**
+             * Client Id
+             * @default
+             */
+            client_id: string;
+            /** Client Secret Set */
+            client_secret_set: boolean;
+            /**
+             * Default Role Id
+             * @default role-viewer
+             */
+            default_role_id: string;
+            /**
+             * Discovery Url
+             * @default
+             */
+            discovery_url: string;
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /** Frontend Url Set */
+            frontend_url_set: boolean;
+            /** Group Roles */
+            group_roles?: components["schemas"]["GroupRole"][];
+            /**
+             * Groups Claim
+             * @default groups
+             */
+            groups_claim: string;
+            /** Issuer */
+            issuer?: string | null;
+            /** Redirect Url */
+            redirect_url: string;
+            /**
+             * Require Sso
+             * @default false
+             */
+            require_sso: boolean;
+            /** Updated At */
+            updated_at?: string | null;
+            /** Updated By */
+            updated_by?: string | null;
+            /** Updated By Name */
+            updated_by_name?: string | null;
+            /** Version */
+            version: number;
+        };
+        /** SsoStaleOut */
+        SsoStaleOut: {
+            current: components["schemas"]["SsoSettingsOut"];
+            /** Detail */
+            detail: string;
         };
         /**
          * StageChangeRequest
@@ -16484,6 +16607,89 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    get_api_auth_sso_settings: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SsoSettingsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_auth_sso_settings: {
+        parameters: {
+            query?: never;
+            header?: {
+                "if-match"?: string | null;
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SsoSettingsIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SsoSettingsOut"];
+                };
+            };
+            /** @description If-Match is not the current version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SsoStaleOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description If-Match is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

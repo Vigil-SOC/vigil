@@ -5373,6 +5373,131 @@
       color: var(--accent-2);
    }
 
+   .settings-banner.warn {
+      background: var(--med-dim);
+      border-color: var(--med);
+      color: var(--med);
+      align-items: flex-start;
+   }
+
+   .settings-banner code {
+      font-family: var(--mono);
+   }
+
+   /* Single sign-on card (SsoCard.tsx) */
+   .sso-card {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+   }
+
+   .sso-pair {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 14px 20px;
+      align-items: start;
+   }
+
+   .sso-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+   }
+
+   .sso-redirect {
+      flex: 1;
+      min-width: 0;
+      overflow-wrap: anywhere;
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--tx);
+      padding: 7px 10px;
+      border: 1px dashed var(--line-strong);
+      border-radius: var(--r-sm);
+      background: var(--bg-1);
+   }
+
+   .sso-reached {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11.5px;
+      color: var(--ok);
+      overflow-wrap: anywhere;
+   }
+
+   .sso-reached svg {
+      flex: none;
+   }
+
+   .sso-rule {
+      border: 0;
+      border-top: 1px solid var(--line);
+      margin: 4px 0 0;
+   }
+
+   .sso-sub {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+   }
+
+   .sso-sub h4,
+   .sso-sub p {
+      margin: 0;
+   }
+
+   .sso-sub h4 {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--tx);
+   }
+
+   .sso-sub p {
+      font-size: 12px;
+      color: var(--tx-3);
+   }
+
+   .sso-card .field-input.mono {
+      font-family: var(--mono);
+   }
+
+   .sso-map {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      list-style: none;
+      margin: 0;
+      padding: 0;
+   }
+
+   .sso-map-row {
+      display: grid;
+      grid-template-columns: auto 18px minmax(120px, 1fr) 14px minmax(140px, 220px) auto;
+      align-items: center;
+      gap: 8px;
+      color: var(--tx-3);
+   }
+
+   .sso-map-order {
+      display: inline-flex;
+      gap: 2px;
+   }
+
+   .sso-map-n {
+      font-size: 12px;
+      text-align: center;
+   }
+
+   .sso-foot {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-top: 4px;
+   }
+
    /* "Filters" button + popover */
    .btn.has-filters {
       border-color: var(--accent-line);
