@@ -126,6 +126,26 @@
 * **desktop:** Bifrost's runtime settings (provider keys, virtual keys, budgets, rate limits) now persist in a `bifrost_data` named volume, so they survive quitting the app ([#1452](https://github.com/Vigil-SOC/vigil/issues/1452)). Earlier versions kept them in an anonymous volume that every quit orphaned; those are not migrated, so re-enter any Bifrost settings made in its UI once. Providers seeded from environment variables come back on their own. Reclaim the orphaned volumes with `docker volume prune`.
 * **compose:** Bifrost's request log (`logs.db`) now lives in the `bifrost_data` volume, so gateway log history, cost time series and `recalculate-cost` survive a container recreate ([#1454](https://github.com/Vigil-SOC/vigil/issues/1454)). It was written to `/app/logs.db` in the container's writable layer. Applies to the server and desktop standalone stacks. The config store is untouched, so no volume reset is needed. History already in `/app/logs.db` is not migrated: the first recreate drops it, as every recreate did before. Snapshots still leave `logs.db` out, and a restore moves the live one aside into `.pre-restore-<stamp>` in the Bifrost data directory rather than restoring it.
 
+## 1.1.1 (2026-11-11)
+
+## What's Changed
+* Filter the Cases list by who holds cases, or Unassigned; label stale owners (#4266) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4280
+* Proposals over /mcp carry their proposer: create_approval_action records the caller's principal (#4278) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4281
+* Single sign-on card on Team & access: provider settings, discovery check, write-only secret by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4287
+* Sign in with SSO: OpenID Connect redirect sign-in, account linking and creation, roles from groups (#4284) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4288
+* Erasure blanks sign-in details, and catches up earlier erasures by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4291
+* People who sign in only through the provider: Signs in with on the Users list, and Confirm it's you at the provider (#4285) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4289
+* Require single sign-on: password sign-in and reset links off for people, on only from an SSO sign-in, off from the host (#4286) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4290
+* Keys: backup and restore, emergency rotation, overdue rotation (#4181) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4296
+* Erasure keeps its list at VIGIL_ERASURE_DIR, writes it under an advisory lock, and shows when a deferred erasure can't be recorded by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4300
+* Keys: backup and restore, emergency rotation, overdue rotation (#4181) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4292
+* Close out the sign-in upgrade: retired settings fixed, cutoff column dropped, upgrade notes (#4297) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4302
+* Helm points erasure at the State Directory, and CI checks every shipped shape's erasure list by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4301
+* chore(medic): bundle medic-core 0.4.1 by @vigil-release-please[bot] in https://github.com/Vigil-SOC/vigil/pull/3960
+
+
+**Full Changelog**: https://github.com/Vigil-SOC/vigil/compare/v1.1.0...v1.1.1
+
 ## 1.1.0 (2026-11-11)
 
 ## What's Changed
