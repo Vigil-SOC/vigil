@@ -1880,6 +1880,26 @@ export const invitesApi = {
   accept: (body: Schema<'AcceptInvite'>) => api.post<{ message: string }>('/auth/accept-invite', body),
 }
 
+// Teams on Team & access. Reads need users.read; changes need teams.manage.
+export const teamsApi = {
+  list: () => api.get<Schema<'TeamOut'>[]>('/users/teams'),
+  get: (id: string) => api.get<Schema<'TeamDetail'>>(`/users/teams/${encodeURIComponent(id)}`),
+  create: (name: string) =>
+    api.post<Schema<'TeamOut'>>('/users/teams', { name } satisfies Schema<'TeamName'>),
+  rename: (id: string, name: string) =>
+    api.post<Schema<'TeamOut'>>(`/users/teams/${encodeURIComponent(id)}/rename`, { name } satisfies Schema<'TeamName'>),
+  archive: (id: string) => api.post<Schema<'TeamOut'>>(`/users/teams/${encodeURIComponent(id)}/archive`),
+  unarchive: (id: string) => api.post<Schema<'TeamOut'>>(`/users/teams/${encodeURIComponent(id)}/unarchive`),
+  addMember: (id: string, userId: string) =>
+    api.post<Schema<'TeamDetail'>>(`/users/teams/${encodeURIComponent(id)}/members`, {
+      user_id: userId,
+    } satisfies Schema<'TeamMemberAdd'>),
+  removeMember: (id: string, userId: string) =>
+    api.delete<Schema<'TeamMemberRemoved'>>(
+      `/users/teams/${encodeURIComponent(id)}/members/${encodeURIComponent(userId)}`,
+    ),
+}
+
 export const authApi = {
   // Public password reset. `request` answers the same whether or not the email
   // matches an account; the emailed link lands on /reset-password?token=…

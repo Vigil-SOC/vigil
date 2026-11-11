@@ -14,6 +14,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext'
 import { signInsApi } from '../../services/api'
 import InvitesCard from './InvitesCard'
+import TeamsCard from './TeamsCard'
 import { CONFIRMED_BY, CompromiseBox, ResetLinkDialog } from './RecoveryDialogs'
 import ServiceAccountsCard from './ServiceAccountsCard'
 import SsoCard from './SsoCard'
@@ -640,6 +641,8 @@ function PeopleAndRoles({ notify }: SectionProps) {
           onClose={() => setConfirmDelete(null)}
         />
       </SettingsCard>
+
+      <TeamsCard notify={notify} />
 
       {canWrite && (
         <InvitesCard
