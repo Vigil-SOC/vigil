@@ -35,6 +35,12 @@ from core.cases.assignee import (
     with_owner_state,
 )
 from core.cases.case_evidence_service import CaseEvidenceService
+from core.cases.case_handoff import (
+    assignee_needs_assign,
+    claim_case,
+)
+from core.cases.case_handoff import move_case as move_case_row
+from core.cases.case_handoff import newly_set_owner, note_owner, require_owner_can_write
 from core.cases.case_ioc_service import CaseIOCService
 from core.cases.case_sla_service import open_case
 from core.cases.case_state import detail_fields
@@ -96,6 +102,8 @@ router = APIRouter()
 router.dependencies.append(permission_gate("cases.read"))
 
 _CASES_WRITE = [permission_gate("cases.write")]
+# Versioned, not frozen: the contract snapshot skips x-vigil-beta.
+_BETA = {"openapi_extra": {"x-vigil-beta": True}}
 
 ROUTER_META = RouterMeta(
     prefix="/api/v1/cases",
@@ -166,6 +174,20 @@ class CaseExpected(BaseModel):
     status: Optional[str] = None
     priority: Optional[str] = None
     assignee: Optional[str] = None
+
+
+class CaseMove(BaseModel):
+    """Move a case to another team. Beta: the shape may still change.
+
+    ``source_team_id`` is the team the caller showed. No ``expected`` object.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_team_id: str = Field(min_length=1)
+    destination_team_id: str = Field(min_length=1)
+    reason: Optional[str] = None
+    owner: Optional[str] = None
 
 
 class CaseUpdate(BaseModel):
@@ -621,10 +643,6 @@ def update_case(
     Returns:
         Success status
     """
-    if case_data.assignee is not None:
-        # The case owner. Task assignee stays cases.write.
-        deny_unless(current_user.user_id, "cases.assign", session)
-
     case = _case_to_edit(session, case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
@@ -643,9 +661,18 @@ def update_case(
         updates["priority"] = case_data.priority
     if case_data.assignee is not None:
         # Empty or whitespace unassigns; anything else must name one person.
+        stored_owner = case.get("assignee")
         updates["assignee"] = resolve_assignee(
-            session, case_data.assignee, current=case.get("assignee")
+            session, case_data.assignee, current=stored_owner
         )
+        # An echo needs nothing extra. Clearing your own needs cases.write,
+        # which this route already required. Anyone else's owner needs assign.
+        if assignee_needs_assign(
+            stored_owner, updates["assignee"], current_user.username
+        ):
+            deny_unless(current_user.user_id, "cases.assign", session)
+        if named := newly_set_owner(stored_owner, updates["assignee"]):
+            require_owner_can_write(session, named)
     if case_data.notes is not None:
         updates["notes"] = [
             *(case.get("notes") or []),
@@ -669,6 +696,14 @@ def update_case(
     if not data_service.update_case(case_id, session=session, **updates):
         raise HTTPException(status_code=500, detail="Failed to update case")
 
+    if "assignee" in updates:
+        note_owner(
+            session,
+            case_id=case_id,
+            previous=case.get("assignee"),
+            new=updates["assignee"],
+        )
+
     if change:
         record_status_change(
             session,
@@ -682,6 +717,57 @@ def update_case(
         background_tasks.add_task(_sync_upstream_status, case_id, case_data.status)
 
     return {"success": True}
+
+
+@router.post(
+    "/{case_id}/move",
+    dependencies=_CASES_WRITE,
+    response_model=CaseSchema,
+    openapi_extra=_BETA["openapi_extra"],
+)
+def move_case(
+    case_id: str,
+    body: CaseMove,
+    session: UnitOfWorkSession,
+    current_user: User = Depends(get_current_user),
+):
+    """Move the case to another team. Beta, and left out of the frozen snapshot.
+
+    A person sends a reason. The owner stays only when they are a current
+    member of the destination; otherwise the case arrives unowned.
+    """
+    case = move_case_row(
+        session,
+        case_id,
+        source_team_id=body.source_team_id,
+        destination_team_id=body.destination_team_id,
+        reason=body.reason,
+        owner=body.owner,
+        username=current_user.username,
+        user_id=current_user.user_id,
+        http=True,
+    )
+    return CaseSchema.dump(case)
+
+
+@router.post(
+    "/{case_id}/claim",
+    dependencies=_CASES_WRITE,
+    response_model=CaseSchema,
+    openapi_extra=_BETA["openapi_extra"],
+)
+def claim_case_route(
+    case_id: str,
+    session: UnitOfWorkSession,
+    current_user: User = Depends(get_current_user),
+):
+    """Assign to me. Beta, and left out of the frozen snapshot.
+
+    A current member of the case's team takes it when it is unowned or the
+    stored owner is not a current account.
+    """
+    case = claim_case(session, case_id, current_user)
+    return CaseSchema.dump(case)
 
 
 @router.post(

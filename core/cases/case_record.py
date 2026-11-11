@@ -564,11 +564,14 @@ def _detail(entry: Mapping[str, Any], text: str) -> str:
     beside = _short(entry.get("operator_text"))
     if not beside or action not in (
         "case.assign",
+        "case.claim",
+        "case.move",
+        "case.reopen",
         "case.resolution_step",
         "case.journal",
     ):
         return text
-    if action != "case.assign":
+    if action not in ("case.assign", "case.claim"):
         return _join(text, beside)
     # The new holder, then "previously <old>" (case_trail.holder_text); either
     # may be old free text over several lines, so split once.

@@ -10,7 +10,6 @@ from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
-from core.audit import trail
 from core.cases import case_trail
 from core.cases.agent_closure import (
     activity_actor,
@@ -18,6 +17,12 @@ from core.cases.agent_closure import (
     close_channel,
     current_credential_id,
     record_close,
+)
+from core.cases.case_handoff import (
+    move_reopened_archived_team,
+    note_owner,
+    require_merge_source,
+    require_owner_can_write,
 )
 from core.cases.closure import (
     CHANNEL_AGENT,
@@ -27,13 +32,7 @@ from core.cases.closure import (
 )
 from core.exceptions import NotFoundError, default_on_error
 from core.storage.case_insert import insert_case
-from core.storage.models import (
-    Case,
-    CaseAuditLog,
-    CaseEscalation,
-    CaseTask,
-    CaseTemplate,
-)
+from core.storage.models import Case, CaseTask, CaseTemplate
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
@@ -213,6 +212,8 @@ class CaseWorkflowService:
             # Generate case ID
             timestamp = utcnow().strftime("%Y%m%d%H%M%S")
             case_id = f"case-{timestamp}"
+            if assignee:
+                require_owner_can_write(session, assignee)
 
             case = insert_case(
                 session,
@@ -302,112 +303,9 @@ class CaseWorkflowService:
                             session.flush()
                         case.findings.append(finding)
 
+            note_owner(session, case_id=case.case_id, previous=None, new=assignee)
             logger.info(f"Created case {case_id} from template {template_id}")
             return case
-
-    def escalate_case(
-        self,
-        case_id: str,
-        escalated_from: str,
-        escalated_to: str,
-        reason: str,
-        urgency_level: str = "high",
-        session: Optional[Session] = None,
-    ) -> bool:
-        """
-        Escalate a case.
-
-        Args:
-            case_id: Case ID
-            escalated_from: Who escalated the case
-            escalated_to: Who to escalate to
-            reason: Escalation reason
-            urgency_level: Urgency level
-            session: Database session (optional)
-
-        Returns:
-            True if successful
-
-        An owned session rolls back and this returns False, as
-        ``default_on_error`` did. A joined session does not roll back — the
-        caller commits — so a trail failure propagates and that commit does
-        not happen.
-        """
-        joined = session is not None
-        try:
-            with unit_of_work(session) as session:
-                case = session.query(Case).filter(Case.case_id == case_id).first()
-                if not case:
-                    logger.info(f"Case {case_id} not found")
-                    return False
-
-                # Create escalation record
-                escalation = CaseEscalation(
-                    case_id=case_id,
-                    escalated_from=escalated_from,
-                    escalated_to=escalated_to,
-                    reason=reason,
-                    urgency_level=urgency_level,
-                    status="pending",
-                )
-                session.add(escalation)
-                # The owner change rides on this entry, both holders (#4264).
-                previous = case.assignee
-                moved = previous != escalated_to
-                # The case record only shows case-audit rows, so the name has to
-                # land here as well as on the escalation until the trail is in use.
-                # The reason and the holders' text are beside the hash, not in it.
-                texts = [
-                    reason,
-                    *(case_trail.holder_text(previous, escalated_to) if moved else []),
-                ]
-                case_trail.append_or_legacy(
-                    session,
-                    action=case_trail.ESCALATE,
-                    signed_in=escalated_from,
-                    case_id=case_id,
-                    operator_text="\n".join(t for t in texts if t) or None,
-                    legacy=CaseAuditLog(
-                        entity_type="case",
-                        entity_id=case_id,
-                        action="update",
-                        field_name="escalation",
-                        change_summary=(
-                            f"{escalated_from} escalated this case to "
-                            f"{escalated_to}: {reason}"
-                        ),
-                        changed_by=escalated_from,
-                    ),
-                    ids=lambda: {
-                        "escalation_id": escalation.escalation_id,
-                        **(
-                            case_trail.holders(session, previous, escalated_to)
-                            if moved
-                            else {}
-                        ),
-                    },
-                )
-
-                # Update case
-                case.assignee = escalated_to
-                case.timeline.append(
-                    {
-                        "timestamp": utcnow().isoformat(),
-                        "event": (
-                            f"{escalated_from} escalated to {escalated_to}: {reason}"
-                        ),
-                    }
-                )
-
-                logger.info(f"Escalated case {case_id} to {escalated_to}")
-                return True
-        except Exception as exc:
-            if isinstance(exc, trail.Paused) or (
-                joined and isinstance(exc, case_trail.TrailWriteError)
-            ):
-                raise
-            logger.exception("CaseWorkflowService.escalate_case failed")
-            return False
 
     @default_on_error(False)
     def update_template(
@@ -637,6 +535,7 @@ class CaseWorkflowService:
         closure = session.get(CaseClosureInfo, case_id)
         if closure is not None:
             closure.closure_category = ClosureCategory.UNSPECIFIED.value
+        move_reopened_archived_team(session, case_id)
 
     def merge_cases(
         self, target_case_id: str, source_case_id: str, merged_by: str = "system"
@@ -661,11 +560,18 @@ class CaseWorkflowService:
 
         with unit_of_work() as session:
             target = session.query(Case).filter_by(case_id=target_case_id).first()
-            source = session.query(Case).filter_by(case_id=source_case_id).first()
+            source = (
+                session.query(Case)
+                .filter_by(case_id=source_case_id)
+                .with_for_update()
+                .first()
+            )
             if not target:
                 raise NotFoundError(f"Target case {target_case_id} not found")
             if not source:
                 raise NotFoundError(f"Source case {source_case_id} not found")
+            if source.team_id != target.team_id:
+                require_merge_source(session, merged_by, source.team_id)
 
             target_finding_ids = {f.finding_id for f in target.findings}
             moved_findings = 0

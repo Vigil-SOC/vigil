@@ -1,7 +1,7 @@
 """An assignee is one active person's username.
 
-Every writer that sets a case's or a case task's assignee, or escalates a
-case, resolves what it was given here. Username or email, ignoring case, and
+Every writer that sets a case's or a case task's assignee resolves what it
+was given here. Username or email, ignoring case, and
 stored as that account's username, so "Assigned to me" (an exact match on the
 username) finds it.
 
@@ -178,11 +178,3 @@ def resolve_assignee(
     if not user.is_active or user.service_account is True:
         raise AssigneeRefused()
     return user.username
-
-
-def resolve_escalation_target(session: Session, raw: Optional[str]) -> str:
-    """As ``resolve_assignee``, but an escalation needs someone: blank is refused."""
-    username = resolve_assignee(session, raw)
-    if username is None:
-        raise AssigneeRefused()
-    return username

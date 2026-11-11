@@ -14,6 +14,13 @@ from core.agents.attribution import current_claims
 from core.agents.mcp_tools import MCPFailure
 from core.agents.projections import pack_completed_hunts, read_replay
 from core.auth.permissions import APPROVE_PERMISSION, permission_refusal
+from core.cases.agent_closure import actor, service_session
+from core.cases.case_handoff import (
+    OwnerCannotWrite,
+    assignee_needs_assign,
+    newly_set_owner,
+    require_owner_can_write,
+)
 from core.cases.case_sla_service import open_case
 from core.cases.case_status import (
     CASE_STATUSES,
@@ -490,6 +497,12 @@ def create_case(
         assignee, refusal = _resolve_assignee(assignee)
         if refusal:
             return refusal
+        if assignee:
+            try:
+                with service_session() as session:
+                    require_owner_can_write(session, assignee)
+            except OwnerCannotWrite as exc:
+                return {"error": exc.message, "code": exc.code}
     data = _data()
     ids = finding_ids or []
     case = open_case(
@@ -533,7 +546,6 @@ def update_case(
         return refusal
     if status is not None and (refusal := _status_refusal(status)):
         return refusal
-    from core.cases.agent_closure import actor, service_session
     from core.time import utcnow
 
     data = _data()
@@ -551,14 +563,21 @@ def update_case(
     if priority:
         updates["priority"] = priority
     if assignee is not None:
-        if refusal := permission_refusal("cases.assign"):
-            return refusal
         # Blank unassigns; re-sending the stored value keeps it.
-        updates["assignee"], refusal = _resolve_assignee(
-            assignee, current=case.get("assignee")
-        )
+        stored_owner = case.get("assignee")
+        updates["assignee"], refusal = _resolve_assignee(assignee, current=stored_owner)
         if refusal:
             return refusal
+        new_owner = updates["assignee"]
+        if assignee_needs_assign(stored_owner, new_owner, actor()):
+            if refusal := permission_refusal("cases.assign"):
+                return refusal
+        if named := newly_set_owner(stored_owner, new_owner):
+            try:
+                with service_session() as session:
+                    require_owner_can_write(session, named)
+            except OwnerCannotWrite as exc:
+                return {"error": exc.message, "code": exc.code}
     if add_note:
         notes = list(case.get("notes") or [])
         notes.append({"timestamp": utcnow().isoformat() + "Z", "content": add_note})

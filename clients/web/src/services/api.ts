@@ -374,9 +374,6 @@ export const casesApi = {
   closeCase: (id: string, data: Schema<'ClosureInfo'>) =>
     api.post<Schema<'CaseCloseResponse'>>(`/cases/${id}/close`, data),
 
-  escalate: (id: string, data: Schema<'EscalationAdd'>) =>
-    api.post<Schema<'CaseSuccessResponse'>>(`/cases/${id}/escalate`, data),
-
   getEscalations: (id: string) =>
     api.get<Schema<'CaseEscalationsResponse'>>(`/cases/${id}/escalations`),
 

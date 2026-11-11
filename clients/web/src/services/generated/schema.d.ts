@@ -2265,6 +2265,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cases/{case_id}/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Claim Case Route
+         * @description Assign to me. Beta, and left out of the frozen snapshot.
+         *
+         *     A current member of the case's team takes it when it is unowned or the
+         *     stored owner is not a current account.
+         */
+        post: operations["post_api_cases_case_id_claim"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cases/{case_id}/close": {
         parameters: {
             query?: never;
@@ -2344,7 +2367,7 @@ export interface paths {
         put?: never;
         /**
          * Escalate Case
-         * @description Escalate case. Who escalated it is the signed-in user.
+         * @description Escalation has been replaced by the beta move and ``move_case``.
          */
         post: operations["post_api_cases_case_id_escalate"];
         delete?: never;
@@ -2569,6 +2592,29 @@ export interface paths {
          *     closed with a note and linked via a 'merged_into' relationship.
          */
         post: operations["post_api_cases_case_id_merge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cases/{case_id}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move Case
+         * @description Move the case to another team. Beta, and left out of the frozen snapshot.
+         *
+         *     A person sends a reason. The owner stays only when they are a current
+         *     member of the destination; otherwise the case arrives unowned.
+         */
+        post: operations["post_api_cases_case_id_move"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8180,6 +8226,29 @@ export interface paths {
         patch: operations["patch_api_v1_cases_case_id"];
         trace?: never;
     };
+    "/api/v1/cases/{case_id}/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Claim Case Route
+         * @description Assign to me. Beta, and left out of the frozen snapshot.
+         *
+         *     A current member of the case's team takes it when it is unowned or the
+         *     stored owner is not a current account.
+         */
+        post: operations["post_api_v1_cases_case_id_claim"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/cases/{case_id}/close": {
         parameters: {
             query?: never;
@@ -8347,6 +8416,29 @@ export interface paths {
          *     closed with a note and linked via a 'merged_into' relationship.
          */
         post: operations["post_api_v1_cases_case_id_merge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/cases/{case_id}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move Case
+         * @description Move the case to another team. Beta, and left out of the frozen snapshot.
+         *
+         *     A person sends a reason. The owner stays only when they are a current
+         *     member of the destination; otherwise the case arrives unowned.
+         */
+        post: operations["post_api_v1_cases_case_id_move"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10101,6 +10193,22 @@ export interface components {
             total_cases: number;
         };
         /**
+         * CaseMove
+         * @description Move a case to another team. Beta: the shape may still change.
+         *
+         *     ``source_team_id`` is the team the caller showed. No ``expected`` object.
+         */
+        CaseMove: {
+            /** Destination Team Id */
+            destination_team_id: string;
+            /** Owner */
+            owner?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /** Source Team Id */
+            source_team_id: string;
+        };
+        /**
          * CaseOwner
          * @description One stored owner on a readable case: the value as stored, and its state.
          */
@@ -11353,26 +11461,6 @@ export interface components {
              * @default
              */
             reason: string;
-        };
-        /**
-         * EscalationAdd
-         * @description Escalate case.
-         */
-        EscalationAdd: {
-            /**
-             * Escalated From
-             * @description Ignored: the signed-in user is recorded as who escalated.
-             */
-            escalated_from?: string | null;
-            /** Escalated To */
-            escalated_to: string;
-            /** Reason */
-            reason: string;
-            /**
-             * Urgency Level
-             * @default high
-             */
-            urgency_level: string;
         };
         /**
          * EvidenceAdd
@@ -18769,6 +18857,39 @@ export interface operations {
             };
         };
     };
+    post_api_cases_case_id_claim: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseSchema"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     post_api_cases_case_id_close: {
         parameters: {
             query?: never;
@@ -18968,19 +19089,15 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EscalationAdd"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CaseSuccessResponse"];
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -19410,6 +19527,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseMergeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_cases_case_id_move: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CaseMove"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseSchema"];
                 };
             };
             /** @description Validation Error */
@@ -29567,6 +29721,39 @@ export interface operations {
             };
         };
     };
+    post_api_v1_cases_case_id_claim: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseSchema"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     post_api_v1_cases_case_id_close: {
         parameters: {
             query?: never;
@@ -29921,6 +30108,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseMergeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_v1_cases_case_id_move: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CaseMove"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseSchema"];
                 };
             };
             /** @description Validation Error */

@@ -23,18 +23,17 @@ from core.cases import case_journal_service, case_records_service
 from core.cases.assignee import (
     require_current_owner,
     resolve_assignee,
-    resolve_escalation_target,
     task_is_open,
     with_owner_state,
 )
 from core.cases.case_attachment_service import attach_document
 from core.cases.case_collaboration_service import CaseCollaborationService
 from core.cases.case_evidence_service import CaseEvidenceService
+from core.cases.case_handoff import ESCALATE_REPLACED
 from core.cases.case_notification_service import WATCHER_NOTIFICATION_TYPES
 from core.cases.case_record import merge_record, unread_row
 from core.cases.case_sla_service import CaseSLAService, SlaOutcome
 from core.cases.case_state import case_run_refs, primary_ref
-from core.cases.case_workflow_service import CaseWorkflowService
 from core.documents.extract import ACCEPTED_TYPES, DocumentRefused, spool_upload
 from core.routing import Auth, OptionalUnitOfWorkSession, RouterMeta, UnitOfWorkSession
 from core.storage.database_data_service import DatabaseDataService
@@ -671,44 +670,13 @@ async def get_relationships(case_id: str, session: UnitOfWorkSession):
 # Case Closure
 
 
-# Case Escalation
-class EscalationAdd(BaseModel):
-    """Escalate case."""
-
-    escalated_from: Optional[str] = Field(
-        default=None,
-        description="Ignored: the signed-in user is recorded as who escalated.",
+@router.post("/{case_id}/escalate", dependencies=_CASES_WRITE, status_code=410)
+async def escalate_case(case_id: str):
+    """Escalation has been replaced by the beta move and ``move_case``."""
+    raise HTTPException(
+        status_code=410,
+        detail=ESCALATE_REPLACED.format(case_id=case_id),
     )
-    escalated_to: str
-    reason: str
-    urgency_level: str = "high"
-
-
-@router.post(
-    "/{case_id}/escalate", dependencies=_CASES_WRITE, response_model=CaseSuccessResponse
-)
-async def escalate_case(
-    case_id: str,
-    data: EscalationAdd,
-    session: UnitOfWorkSession,
-    current_user: User = Depends(get_current_user),
-):
-    """Escalate case. Who escalated it is the signed-in user."""
-    # Escalation hands the case to escalated_to, which is an owner change.
-    deny_unless(current_user.user_id, "cases.assign", session)
-    # Before the call: it swallows errors into "Failed to escalate case".
-    escalated_to = resolve_escalation_target(session, data.escalated_to)
-    workflow_service = CaseWorkflowService()
-    success = workflow_service.escalate_case(
-        case_id,
-        escalated_from=current_user.username,
-        escalated_to=escalated_to,
-        reason=data.reason,
-        urgency_level=data.urgency_level,
-    )
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to escalate case")
-    return {"success": True}
 
 
 @router.get("/{case_id}/escalations", response_model=CaseEscalationsResponse)
