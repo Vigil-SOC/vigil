@@ -12,6 +12,7 @@ import {
 } from '../../shared/ui'
 import { useAuth } from '../../contexts/AuthContext'
 import { signInsApi } from '../../services/api'
+import SsoCard from './SsoCard'
 import TokensCard from './TokensCard'
 import UserMethodsDialog from './UserMethodsDialog'
 import UserSignInsDialog from './UserSignInsDialog'
@@ -58,6 +59,7 @@ export default function UsersSection({ notify }: SectionProps) {
   const { hasPermission } = useAuth()
   return (
     <>
+      {hasPermission('roles.manage') && <SsoCard notify={notify} />}
       <PeopleAndRoles notify={notify} />
       <TokensCard notify={notify} canManage={hasPermission('users.write')} />
     </>

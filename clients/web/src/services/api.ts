@@ -1936,6 +1936,15 @@ export const sessionPolicyApi = {
     }),
 }
 
+// Single sign-on settings. The client secret is sent on a save and never comes back.
+export type SsoSettings = Schema<'SsoSettingsOut'>
+export type SsoSettingsBody = Schema<'SsoSettingsIn'>
+export const ssoApi = {
+  get: () => api.get<SsoSettings>('/auth/sso/settings'),
+  put: (body: SsoSettingsBody, version: number) =>
+    api.put<SsoSettings>('/auth/sso/settings', body, { headers: { 'If-Match': `"${version}"` } }),
+}
+
 // The shipped breached-password list and what an administrator has imported onto it.
 export type BreachedListStatus = Schema<'ListStatus'>
 export type BreachedListImport = Schema<'ImportResult'>
