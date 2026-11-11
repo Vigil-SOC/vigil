@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import NoReturn, Optional
+from urllib.parse import urlparse
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
@@ -28,6 +29,8 @@ from core.time import utcnow
 # The 403's detail.code: confirm, or set up MFA first (a person without it).
 CONFIRMATION_REQUIRED = "confirmation_required"
 MFA_FIRST = "step_up_mfa_setup"
+# The refusal's variant for a person who confirms at the provider.
+SSO = "sso"
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -52,15 +55,66 @@ def window_end(confirmed_at: Optional[datetime]) -> Optional[datetime]:
     return end if end and end > utcnow() else None
 
 
-def open_window(session: Session, sign_in_id: Optional[str]) -> None:
-    """Start or restart the window, and forget earlier failures."""
-    if sign_in_id:
-        session.query(SignIn).filter(
-            SignIn.sign_in_id == sign_in_id, SignIn.ended_at.is_(None)
-        ).update(
+def open_window(session: Session, sign_in_id: Optional[str]) -> bool:
+    """Start or restart the window, and forget earlier failures. False: no open sign-in."""
+    if not sign_in_id:
+        return False
+    updated = (
+        session.query(SignIn)
+        .filter(SignIn.sign_in_id == sign_in_id, SignIn.ended_at.is_(None))
+        .update(
             {SignIn.confirmed_at: utcnow(), SignIn.confirm_failures: 0},
             synchronize_session=False,
         )
+    )
+    return updated > 0
+
+
+def _via_provider(mfa: Optional[bool], password: Optional[str], method) -> bool:
+    """No MFA and no password, signed in through the provider: confirms there (#4285)."""
+    return not mfa and not password and method == sign_ins.SSO
+
+
+def at_provider(session: Session, principal_id: str, sign_in_id: str) -> bool:
+    """Whether this person confirms at the provider for this open sign-in of theirs."""
+    user = (
+        session.query(User.mfa_enabled, User.password_hash)
+        .filter(User.principal_id == principal_id)
+        .first()
+    )
+    method = (
+        session.query(SignIn.auth_method)
+        .filter(
+            SignIn.sign_in_id == sign_in_id,
+            SignIn.principal_id == principal_id,
+            SignIn.ended_at.is_(None),
+        )
+        .scalar()
+    )
+    return user is not None and _via_provider(*user, method)
+
+
+def confirmed(
+    session: Session,
+    principal_id: str,
+    sign_in_id: Optional[str],
+    source: Optional[str],
+    strong: bool = False,
+) -> bool:
+    """A confirmation that held: open the window and put it on the trail. False,
+    and nothing recorded, when the sign-in has ended meanwhile."""
+    if sign_in_id and not open_window(session, sign_in_id):
+        return False
+    trail_events.record(
+        session,
+        "auth.confirmed",
+        {"source_ip": source},
+        actor=principal_id,
+        principal=principal_id,
+        sign_in=sign_in_id,
+        strong=strong or None,
+    )
+    return True
 
 
 def _refusal(code: str, **fields) -> HTTPException:
@@ -73,7 +127,8 @@ def check(request: Request, user_id: str, action: str) -> None:
     """403 unless the caller is not a person, or is inside the window.
 
     ``action`` names the change in the dialog's title ("change settings").
-    A person with no MFA is sent to set it up: the window needs a factor.
+    A person with no MFA is sent to set it up: the window needs a factor. One
+    with no password either, signed in through the provider, confirms there (#4285).
     """
     actor = getattr(request.state, "vigil_http_actor", None)
     claims = getattr(request.state, "access_claims", None)
@@ -82,11 +137,18 @@ def check(request: Request, user_id: str, action: str) -> None:
     if actor is None or not actor.person or not sid:
         return
     with unit_of_work() as session:
-        mfa = session.query(User.mfa_enabled).filter(User.user_id == user_id).scalar()
-        confirmed = (
-            session.query(SignIn.confirmed_at).filter(SignIn.sign_in_id == sid).scalar()
-        )
-    if not mfa:
+        mfa, password = (
+            session.query(User.mfa_enabled, User.password_hash)
+            .filter(User.user_id == user_id)
+            .first()
+        ) or (False, None)
+        confirmed, method = (
+            session.query(SignIn.confirmed_at, SignIn.auth_method)
+            .filter(SignIn.sign_in_id == sid)
+            .first()
+        ) or (None, None)
+    via_provider = _via_provider(mfa, password, method)
+    if not mfa and not via_provider:
         raise _refusal(
             MFA_FIRST,
             action=action,
@@ -95,11 +157,20 @@ def check(request: Request, user_id: str, action: str) -> None:
     if window_end(confirmed) is None:
         raise _refusal(
             CONFIRMATION_REQUIRED,
-            variant="one_factor",
+            variant=SSO if via_provider else "one_factor",
             action=action,
+            **({"provider": _provider_name()} if via_provider else {}),
             window_minutes=int(window().total_seconds() // 60),
             confirmed_at=confirmed.isoformat() if confirmed else None,
         )
+
+
+def _provider_name() -> Optional[str]:
+    """The provider's host, for the dialog's "Confirm at …"."""
+    from core.auth import sso_settings
+
+    issuer = sso_settings.settings().issuer
+    return urlparse(issuer).hostname if issuer else None
 
 
 def gate(permission: str, action: str) -> Depends:
@@ -212,16 +283,7 @@ def confirm(
         problem = BAD_STRONG if strong else BAD_CODE
 
     if problem is None:
-        open_window(session, sign_in_id)
-        trail_events.record(
-            session,
-            "auth.confirmed",
-            {"source_ip": source},
-            actor=user.principal_id,
-            principal=user.principal_id,
-            sign_in=sign_in_id,
-            strong=strong or None,
-        )
+        confirmed(session, user.principal_id, sign_in_id, source, strong=strong)
         return
     _refuse(user, sign_in_id, source, problem)
 

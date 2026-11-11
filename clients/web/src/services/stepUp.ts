@@ -9,8 +9,11 @@ export type StepUpDetail = {
   code: typeof CONFIRMATION_REQUIRED | typeof STEP_UP_MFA_SETUP
   /** the action the dialog's title names: "change settings" */
   action: string
-  /** one_factor: a code (or the password with no MFA); strong: password and code */
-  variant?: 'one_factor' | 'strong'
+  /** one_factor: a code (or the password with no MFA); strong: password and code;
+   *  sso: no password and no MFA, signed in through the provider: confirm there (#4285) */
+  variant?: 'one_factor' | 'strong' | 'sso'
+  /** sso: the provider's host, for "Confirm at …" */
+  provider?: string | null
   window_minutes?: number
   confirmed_at?: string | null
 }

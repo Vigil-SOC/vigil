@@ -429,10 +429,14 @@ def _dump_accounts(session: Session, users: list[User]) -> list[dict]:
         .group_by(Case.assignee)
         .all()
     )
+    linked = sso.linked_principals(session)
     now = utcnow()
     dumped = []
     for user in users:
         entry = UserSchema.dump(user)
+        # How the account signs in (#4285); never the hash or the subject.
+        entry["has_password"] = bool(user.password_hash)
+        entry["has_sso"] = user.principal_id in linked
         entry["status"] = _account_status(user, user.principal_id in deleted)
         entry["open_cases"] = open_cases.get(user.username, 0)
         machine = _is_service_account(user)
