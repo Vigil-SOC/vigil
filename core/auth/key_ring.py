@@ -83,13 +83,13 @@ def _hmac(tag: str) -> Callable[[str], bytes]:
 REFRESH_EXPIRATION_DAYS = 7
 
 # Overlaps are each purpose's longest token: sign-ins 24 h or the refresh
-# token's lifetime if longer, run tokens 31 d (tool_principal.RUN_TTL), reset
-# links 1 h, single sign-on state 5 min.
+# token's lifetime if longer, run tokens 31 d (tool_principal.RUN_TTL), single
+# sign-on state 5 min. Reset links are rows of auth_links now (#4227): their
+# purpose is gone, and a stored key for it is retired at the next start.
 _SIGNIN_OVERLAP = max(timedelta(hours=24), timedelta(days=REFRESH_EXPIRATION_DAYS))
 PURPOSES: dict[str, Purpose] = {
     "signin": Purpose(_SIGNIN_OVERLAP, lambda s: s.encode()),
     "run": Purpose(timedelta(days=31), _hmac("vigil-tool-principal")),
-    "reset": Purpose(timedelta(hours=1), lambda s: s.encode()),
     "setup": Purpose(timedelta(hours=24), _hmac("vigil-bootstrap-setup")),
     "mfa": Purpose(None, lambda s: hashlib.sha256(s.encode()).digest()),
     # The pepper (#4298): password and recovery-code hashes are encrypted under it.
@@ -481,6 +481,15 @@ def _add_missing(session, secret: str) -> list[str]:
         .scalars()
         .all()
     )
+    # A purpose no longer used (reset, #4227): its keys' material is deleted.
+    for purpose, version in session.execute(
+        text(
+            "SELECT purpose, version FROM public.auth_keys "
+            "WHERE state <> 'retired' AND NOT (purpose = ANY(:known))"
+        ),
+        {"known": sorted(PURPOSES)},
+    ).all():
+        _retire(session, purpose, version, reason="purpose_retired")
     missing = sorted(set(PURPOSES) - held)
     if missing:
         _read(session, secret)  # a wrong secret must not add a row nobody can open

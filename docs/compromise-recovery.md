@@ -2,7 +2,7 @@
 
 Copy this page, fill in the blanks for your site, and keep the copy where the on-call person can read it without Vigil running. It covers Compose and host installs. Helm takes no Vigil backup (see [upgrading](upgrading.md)), and its keys come from the chart's Secret.
 
-Vigil keeps one key per purpose in a key ring: `signin`, `run`, `reset`, `setup`, `mfa`, `pepper`, `webauthn` and `sso`. The ring is stored in the database, wrapped under `JWT_SECRET_KEY`, which stays outside it. All the commands below run on the host (or in a one-shot of the backend image) as `python -m core.auth.key_ring`.
+Vigil keeps one key per purpose in a key ring: `signin`, `run`, `setup`, `mfa`, `pepper`, `webauthn` and `sso`. Password reset links are not signed: each is a database row, revoked from Settings > Users or closed by any change to the account's password, email or status. The ring is stored in the database, wrapped under `JWT_SECRET_KEY`, which stays outside it. All the commands below run on the host (or in a one-shot of the backend image) as `python -m core.auth.key_ring`.
 
 | Who | Name | Contact |
 | --- | --- | --- |
@@ -34,7 +34,7 @@ Every emergency rotation also stops every running agent run (reason "emergency k
 | --- | --- |
 | `signin` | Everyone is signed out. This is the only purpose that does so. |
 | `run` | Tokens held by runs stop working. The runs are stopped anyway. |
-| `reset`, `setup`, `webauthn`, `sso` | Links, codes and challenges in flight stop working; people ask again. |
+| `setup`, `webauthn`, `sso` | Links, codes and challenges in flight stop working; people ask again. |
 | `mfa` | Authenticator secrets move under a new key. This does not help if the database was copied (see 4). |
 | `pepper` | Every earlier pepper key is retired and nothing is re-encrypted, so every stored password and recovery-code hash becomes unreadable. Everyone must reset their password (see 4a). |
 
@@ -62,6 +62,8 @@ The authenticator secrets are encrypted under the `mfa` key. Someone holding bot
 1. `python -m core.auth.key_ring emergency all`.
 2. `python -m core.auth.key_ring reset-mfa --yes` clears every authenticator app and recovery code. A person who has a security key keeps MFA through it.
 3. Tell people to set the app up again at their next sign-in.
+
+For one person, reset their two-step sign-in from Settings > Users, or on the host with `python scripts/reset_password.py --reset-mfa <user>`.
 
 A restore that cannot open the ring does this itself: it replaces the ring, clears the authenticator secrets nobody can read, and the restore notice says how many people must enrol again, and how many must reset their password (see 4a).
 

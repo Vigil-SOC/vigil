@@ -282,6 +282,26 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "auth.key_rotation_failed": lambda p: f"Could not rotate the {_key_purpose(p)} key",
     "auth.key_rotation_recovered": lambda p: f"Rotated the late {_key_purpose(p)} key",
     "auth.mfa_reset_all": "Cleared every authenticator app",
+    "auth.mfa_reset": lambda p: "Reset someone's two-step sign-in"
+    + (" from the host" if p.get(trail.ACTOR) == trail.SYSTEM else ""),
+    "user.unlocked": "Unlocked an account",
+    "reset.sent": lambda p: {
+        "self": "Asked for a password reset link",
+        "signin": "Was sent to change a password at sign-in",
+        "email": "Emailed someone a password reset link",
+        "copy": "Copied a password reset link for someone",
+        "host": "Issued a password reset link from the host",
+    }.get(p.get("channel"), "Issued a password reset link"),
+    "reset.revoked": lambda p: "Revoked a password reset link"
+    + (
+        {
+            "replaced": " (replaced by a new link)",
+            "password_changed": " (the password changed)",
+            "email_changed": " (the email address changed)",
+            "deactivated": " (the account was deactivated)",
+        }.get(p.get("reason"), "")
+    ),
+    "reset.expired": "A password reset link expired unused",
     "auth.emergency_rotation": "Rotated keys with no overlap, in an emergency",
     "credential.minted": "Issued an API token",
     "credential.rotated": lambda p: "Rotated an API token"

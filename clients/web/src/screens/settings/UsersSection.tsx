@@ -13,6 +13,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext'
 import { signInsApi } from '../../services/api'
 import InvitesCard from './InvitesCard'
+import { CONFIRMED_BY, CompromiseBox, ResetLinkDialog } from './RecoveryDialogs'
 import ServiceAccountsCard from './ServiceAccountsCard'
 import SsoCard from './SsoCard'
 import TokensCard from './TokensCard'
@@ -118,6 +119,8 @@ function PeopleAndRoles({ notify }: SectionProps) {
   const [unlockOf, setUnlockOf] = useState<User | null>(null)
   const [confirmedBy, setConfirmedBy] = useState('')
   const [unlocking, setUnlocking] = useState(false)
+  const [unlockCompromise, setUnlockCompromise] = useState(false)
+  const [resetOf, setResetOf] = useState<User | null>(null)
   const [statusAct, setStatusAct] = useState<{ user: User; act: StatusAct } | null>(null)
   const [acting, setActing] = useState(false)
 
@@ -190,10 +193,11 @@ function PeopleAndRoles({ notify }: SectionProps) {
     if (!unlockOf || !confirmedBy) return
     setUnlocking(true)
     try {
-      await signInsApi.unlock(unlockOf.user_id, confirmedBy)
-      notify('ok', `Unlocked ${unlockOf.username}.`)
+      await signInsApi.unlock(unlockOf.user_id, confirmedBy, unlockCompromise)
+      notify('ok', `Unlocked ${unlockOf.username}.${unlockCompromise ? ' Their API tokens were revoked.' : ''}`)
       setUnlockOf(null)
       setConfirmedBy('')
+      setUnlockCompromise(false)
       reload()
     } catch (e) {
       notify('err', errText(e, 'Failed to unlock'))
@@ -425,6 +429,12 @@ function PeopleAndRoles({ notify }: SectionProps) {
                           <Icon name="lock" size={15} />
                         </button>
                       )}
+                      {/* a locked row has Unlock here; its Sign-in methods offer the reset, so the row stays as wide */}
+                      {canWrite && u.status === 'active' && covers(u.role_id) && u.user_id !== me?.user_id && u.principal_kind !== 'service_account' && (
+                        <button className="btn ghost icon" title="Reset password" onClick={() => setResetOf(u)}>
+                          <Icon name="key" size={15} />
+                        </button>
+                      )}
                       {canWrite && (live(u) || u.status === 'deactivated') && (
                         <button className="btn ghost icon" title="Edit" onClick={() => openEdit(u)}>
                           <Icon name="edit" size={15} />
@@ -536,7 +546,21 @@ function PeopleAndRoles({ notify }: SectionProps) {
           </div>
         </Popup>
 
-        {methodsOf && <UserMethodsDialog user={methodsOf} onClose={() => setMethodsOf(null)} />}
+        {methodsOf && (
+          <UserMethodsDialog
+            user={methodsOf}
+            notify={notify}
+            canReset={methodsOf.principal_kind !== 'service_account'}
+            onClose={() => setMethodsOf(null)}
+            onReset={reload}
+            onResetPassword={() => {
+              setResetOf(methodsOf)
+              setMethodsOf(null)
+            }}
+          />
+        )}
+
+        {resetOf && <ResetLinkDialog user={resetOf} notify={notify} onClose={() => setResetOf(null)} />}
 
         {signInsOf && (
           <UserSignInsDialog user={signInsOf} onClose={() => setSignInsOf(null)} notify={notify} />
@@ -587,13 +611,18 @@ function PeopleAndRoles({ notify }: SectionProps) {
                   onSelect={setConfirmedBy}
                 />
               </Field>
+              <CompromiseBox checked={unlockCompromise} disabled={unlocking} onChange={setUnlockCompromise} />
             </div>
           }
           confirmLabel="Unlock"
           busy={unlocking}
           confirmDisabled={!confirmedBy}
           onConfirm={handleUnlock}
-          onClose={() => !unlocking && setUnlockOf(null)}
+          onClose={() => {
+            if (unlocking) return
+            setUnlockOf(null)
+            setUnlockCompromise(false)
+          }}
         />
 
         <ConfirmDialog
@@ -719,12 +748,6 @@ function OpenCases({ user }: { user: User }) {
   )
 }
 
-const CONFIRMED_BY = [
-  { value: 'in_person', label: 'In person' },
-  { value: 'video_call', label: 'On a video call' },
-  { value: 'phone_call_back', label: 'By calling them back on a known number' },
-  { value: 'other_verified_channel', label: 'Another verified channel' },
-]
 
 // when and where the lock was set, as a sentence
 function lockedFrom(u: User): string {

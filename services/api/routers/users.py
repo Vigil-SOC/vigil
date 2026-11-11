@@ -24,6 +24,7 @@ from core.auth import (
     mcp_credential_service,
     mfa_methods,
     principals,
+    security_keys,
     session_policy,
     sign_ins,
     sso,
@@ -37,9 +38,12 @@ from core.auth.auth_service import (
     AuthService,
     _account_is_locked,
     clear_lock,
+    managers,
 )
 from core.auth.deactivation import deactivate_account, when_committed
 from core.auth.identity import claim_sign_in_names, identifier_in_use
+from core.auth.password_reset import reset_link
+from core.auth.password_validator import USERS_LINK
 from core.auth.permissions import (
     CATALOG,
     KNOWN_PERMISSIONS,
@@ -1141,12 +1145,159 @@ def end_user_sign_in(
     return sign_ins.EndedSignIns(ended=len(ended))
 
 
-class UnlockRequest(BaseModel):
-    """How the manager confirmed the person is who they say. Kept in the trail."""
+IdentityConfirmedBy = Literal[
+    "in_person", "video_call", "phone_call_back", "other_verified_channel"
+]
 
-    identity_confirmed_by: Literal[
-        "in_person", "video_call", "phone_call_back", "other_verified_channel"
-    ]
+
+class UnlockRequest(BaseModel):
+    """How the manager confirmed the person is who they say. Kept in the trail.
+    ``suspected_compromise`` also revokes the person's API tokens."""
+
+    identity_confirmed_by: IdentityConfirmedBy
+    suspected_compromise: bool = False
+
+
+class ResetLinkRequest(BaseModel):
+    """Send the person a reset link, or copy one to hand over. A copied link
+    needs how their identity was confirmed."""
+
+    channel: Literal["email", "copy"]
+    identity_confirmed_by: Optional[IdentityConfirmedBy] = None
+    suspected_compromise: bool = False
+
+
+class ResetLinkEntry(BaseModel):
+    link_id: str
+    channel: str
+    issued_by_name: Optional[str] = None
+    issued_at: IsoDateTime
+    expires_at: IsoDateTime
+
+
+class ResetLinkState(BaseModel):
+    """The person's open reset link, if any, and what Email needs first."""
+
+    reset_link: Optional[ResetLinkEntry] = None
+    email_missing: list[str]
+
+
+class ResetLinkIssued(BaseModel):
+    """``token`` and ``link`` come back once, for a copied link only; ``link`` is
+    empty when VIGIL_FRONTEND_URL isn't set and the console builds it."""
+
+    reset_link: ResetLinkEntry
+    token: Optional[str] = None
+    link: Optional[str] = None
+    tokens_revoked: int = 0
+
+
+class MfaResetRequest(EndSignInsRequest):
+    """A typed reason and how the person's identity was confirmed, both kept."""
+
+    identity_confirmed_by: IdentityConfirmedBy
+    suspected_compromise: bool = False
+
+
+class MfaResetResult(BaseModel):
+    ended: int
+    tokens_revoked: int = 0
+    # Set when the person is the last who can manage roles besides the caller.
+    warning: Optional[str] = None
+
+
+def _recovery_target(
+    current_user: User, session: Session, user_id: str, action: str
+) -> User:
+    """The account a recovery act is for: users.write over it, a role the caller
+    covers, a person's own act and never on themselves or a service account."""
+    deny_unless(current_user.user_id, "users.write")
+    user = _live_user(session, user_id)
+    if user.user_id == current_user.user_id or _account_is_locked(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Ask another administrator to {action} this account",
+        )
+    if not _acts_as_person(current_user, session):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Recovering an account needs a person's own sign-in",
+        )
+    _require_privileges_cover_target(current_user, user, session, action=action)
+    if _is_service_account(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="A service account has no password or two-step sign-in to recover",
+        )
+    return user
+
+
+def _tell_of_recovery(
+    session: Session,
+    current_user: User,
+    user: User,
+    title: str,
+    to_person: str,
+    to_managers: str,
+) -> None:
+    """Once committed: the person, and every other holder of users.write but the
+    caller. Never the link: notices are emailed."""
+    # Read now: the rows are expired once the commit has happened.
+    about, actor = user.principal_id, current_user.principal_id
+    theirs = title.replace("Your", f"{user.username}'s")
+
+    def send() -> None:
+        notify(about, "account_recovery", title, to_person, priority="high")
+        for to in managers(about):
+            if to == actor:
+                continue
+            try:
+                notify(
+                    to,
+                    "account_recovery",
+                    theirs,
+                    to_managers,
+                    USERS_LINK,
+                    priority="high",
+                )
+            except Exception:  # noqa: BLE001 - the others are still told
+                logger.exception("could not send a recovery notice to %s", to)
+
+    when_committed(session, send)
+
+
+def _revoke_tokens(session: Session, current_user: User, user: User) -> int:
+    """Suspected compromise: every API token the person holds is revoked."""
+    revoked = 0
+    for credential in mcp_credential_service.list_for_user(
+        user.user_id, session=session
+    ):
+        if mcp_credential_service.revoke(credential.credential_id, session=session):
+            trail_events.record(
+                session,
+                "credential.revoked",
+                actor=current_user.principal_id,
+                principal=user.principal_id,
+                credential_id=credential.credential_id,
+                compromised=True,
+            )
+            revoked += 1
+    return revoked
+
+
+def _reset_entry(session: Session, row: AuthLink) -> ResetLinkEntry:
+    who = row.invited_by and (
+        session.query(User.full_name, User.username)
+        .filter(User.principal_id == row.invited_by)
+        .first()
+    )
+    return ResetLinkEntry(
+        link_id=row.link_id,
+        channel=row.channel or "",
+        issued_by_name=(who and (who.full_name or who.username)) or None,
+        issued_at=row.issued_at,
+        expires_at=row.expires_at,
+    )
 
 
 @router.post("/{user_id}/unlock")
@@ -1188,8 +1339,227 @@ def unlock_user(
         actor=current_user.principal_id,
         principal=user.principal_id,
         identity_confirmed_by=body.identity_confirmed_by,
+        suspected_compromise=body.suspected_compromise or None,
+    )
+    if body.suspected_compromise:
+        _revoke_tokens(session, current_user, user)
+    who = current_user.full_name or current_user.username
+    _tell_of_recovery(
+        session,
+        current_user,
+        user,
+        "Your account was unlocked",
+        f"{who} unlocked your account. If you didn't ask for this, tell an admin now.",
+        f"{who} unlocked {user.username}'s account.",
     )
     return _dump_accounts(session, [user])[0]
+
+
+@router.get("/{user_id}/reset-link", response_model=ResetLinkState)
+def get_reset_link(
+    user_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """The person's open reset link, never its value. users.write over the account."""
+    with _denials(current_user, "user.reset_link.read"):
+        deny_unless(current_user.user_id, "users.write")
+        user = _live_user(session, user_id)
+        _require_privileges_cover_target(
+            current_user, user, session, action="see the reset link of"
+        )
+    rows = invites.open_resets(session, user.principal_id)
+    for row in rows:
+        invites.note_expired(session, row)
+    live = next((r for r in rows if not invites.is_expired(r)), None)
+    return ResetLinkState(
+        reset_link=live and _reset_entry(session, live), email_missing=_email_missing()
+    )
+
+
+@router.post(
+    "/{user_id}/reset-link",
+    response_model=ResetLinkIssued,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[_step_up("users.write")],
+)
+def issue_reset_link(
+    user_id: str,
+    request: Request,
+    body: ResetLinkRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """A one-hour, single-use reset link for the person, replacing any open one:
+    emailed to their address, or returned once to hand over. It never touches
+    two-step sign-in. They and the other holders of users.write are told."""
+    with _denials(current_user, "user.reset_link"):
+        user = _recovery_target(current_user, session, user_id, "reset the password of")
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This account is deactivated. Reactivate it first.",
+            )
+        if sso.required():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Single sign-on is required, so no reset links are issued",
+            )
+        if body.channel == invites.EMAIL and (missing := _email_missing()):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Email isn't available: set {' and '.join(missing)}, "
+                "or copy the link instead.",
+            )
+        if body.channel == invites.COPY and not body.identity_confirmed_by:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Say how you confirmed it is them before copying a link",
+            )
+    row, token = invites.issue_reset(
+        session,
+        user,
+        body.channel,
+        current_user.principal_id,
+        identity_confirmed_by=body.identity_confirmed_by,
+        suspected_compromise=body.suspected_compromise or None,
+    )
+    revoked = (
+        _revoke_tokens(session, current_user, user) if body.suspected_compromise else 0
+    )
+    base = get_settings().vigil_frontend_url.strip()
+    who = current_user.full_name or current_user.username
+    if body.channel == invites.EMAIL:
+        link, to = reset_link(base, token), user.email
+        when_committed(
+            session,
+            lambda: send_email(
+                to=to,
+                subject="Vigil SOC — password reset",
+                body=(
+                    f"{who} sent you a link to choose a new password.\n\n"
+                    "It is valid for one hour and can only be used once.\n\n"
+                    f"{link}\n\n"
+                    "If you weren't expecting this, tell an administrator."
+                ),
+            ),
+        )
+    how = "emailed you" if body.channel == invites.EMAIL else "made"
+    _tell_of_recovery(
+        session,
+        current_user,
+        user,
+        "Your password reset link",
+        f"{who} {how} a link to reset your password. It works once, for one hour. "
+        "If you didn't ask for this, tell an admin now.",
+        f"{who} issued a password reset link for {user.username}"
+        f"{' and revoked their API tokens' if revoked else ''}.",
+    )
+    entry = _reset_entry(session, row)
+    if body.channel == invites.EMAIL:
+        return ResetLinkIssued(reset_link=entry, tokens_revoked=revoked)
+    return ResetLinkIssued(
+        reset_link=entry,
+        token=token,
+        link=reset_link(base, token) if base else None,
+        tokens_revoked=revoked,
+    )
+
+
+@router.delete("/{user_id}/reset-link", dependencies=[_step_up("users.write")])
+def revoke_reset_link(
+    user_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Cancel the person's open reset link; it stops working."""
+    with _denials(current_user, "user.reset_link.revoke"):
+        user = _recovery_target(
+            current_user, session, user_id, "revoke the reset link of"
+        )
+    if not invites.revoke_resets(
+        session, user.principal_id, current_user.principal_id, "revoked"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No open reset link"
+        )
+    return {"message": "Reset link revoked"}
+
+
+@router.post(
+    "/{user_id}/mfa/reset",
+    response_model=MfaResetResult,
+    dependencies=[_step_up("users.write")],
+)
+def reset_user_mfa(
+    user_id: str,
+    request: Request,
+    body: MfaResetRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Remove every two-step method the person has (the authenticator app,
+    security keys, recovery codes) and end their sign-ins, with a typed reason.
+    Exempt from the last-manager guard: it warns instead. The MFA requirement
+    asks them to set it up again at their next sign-in."""
+    with _denials(current_user, "user.mfa_reset"):
+        user = _recovery_target(
+            current_user, session, user_id, "reset two-step sign-in for"
+        )
+    user = AuthService._lock_user(session, user.user_id)
+    if not (
+        user.mfa_enabled
+        or user.mfa_secret
+        or user.mfa_recovery_codes
+        or security_keys.has_keys(session, user.principal_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="They have no two-step sign-in to reset",
+        )
+    AuthService.clear_mfa(user)
+    keys = security_keys.remove_all(session, user.principal_id)
+    trail_events.record(
+        session,
+        "auth.mfa_reset",
+        {"source_ip": client_host(request)},
+        actor=current_user.principal_id,
+        principal=user.principal_id,
+        identity_confirmed_by=body.identity_confirmed_by,
+        security_keys=keys,
+        suspected_compromise=body.suspected_compromise or None,
+        note=body.reason,
+    )
+    ended = _end_as_admin(
+        request,
+        session,
+        current_user,
+        sign_ins.open_ids(session, user.principal_id),
+        body.reason,
+    )
+    revoked = (
+        _revoke_tokens(session, current_user, user) if body.suspected_compromise else 0
+    )
+    warning = None
+    held = {u.user_id for u in _manager_accounts(session)}
+    if user.user_id in held and not held - {user.user_id, current_user.user_id}:
+        warning = (
+            f"{user.username} is the only other person who can manage roles. "
+            "They must set up two-step sign-in again at their next sign-in."
+        )
+    who = current_user.full_name or current_user.username
+    _tell_of_recovery(
+        session,
+        current_user,
+        user,
+        "Your two-step sign-in was reset",
+        f"{who} removed your two-step sign-in methods and recovery codes, and "
+        "ended your sign-ins. Set two-step sign-in up again when you next sign "
+        "in. If you didn't ask for this, tell an admin now.",
+        f"{who} reset {user.username}'s two-step sign-in and ended their sign-ins"
+        f"{' and revoked their API tokens' if revoked else ''}.",
+    )
+    return MfaResetResult(ended=len(ended), tokens_revoked=revoked, warning=warning)
 
 
 @router.post(
@@ -1337,14 +1707,20 @@ def reassign_service_account(
     return _dump_accounts(session, [user])[0]
 
 
-def _disable_alone(user_id: str, actor: str, by_person: bool) -> list[str]:
+def _disable_alone(
+    user_id: str, actor: str, by_person: bool
+) -> tuple[list[str], list[str]]:
     """Commit a disable on its own: it stands whatever else the request does.
-    Returns the credentials it revoked, for the caller to put on the trail."""
+    Returns the credentials and reset links it revoked, for the caller's trail."""
     with unit_of_work() as session:
         user = session.get(User, user_id)
-        return deactivate_account(
+        revoked = deactivate_account(
             session, user, actor=actor, by_person=by_person, record_trail=False
         )
+        links = invites.revoke_resets(
+            session, user.principal_id, actor, "deactivated", record=False
+        )
+        return revoked, links
 
 
 def _apply_user_update(
@@ -1542,7 +1918,7 @@ def deactivate_user(
     # A safety action: committed on its own and recorded, or held to record
     # late, so a trail failure leaves it in place.
     if trail_events.ready(session):
-        revoked = _disable_alone(user_id, actor, by_person)
+        revoked, links = _disable_alone(user_id, actor, by_person)
         trail_events.safety("user.disabled", actor=actor, principal=principal)
         for credential_id in revoked:
             trail_events.safety(
@@ -1550,6 +1926,14 @@ def deactivate_user(
                 actor=actor,
                 principal=principal,
                 credential_id=credential_id,
+            )
+        for link_id in links:
+            trail_events.safety(
+                "reset.revoked",
+                actor=actor,
+                principal=principal,
+                link_id=link_id,
+                reason="deactivated",
             )
         session.refresh(user)
     else:

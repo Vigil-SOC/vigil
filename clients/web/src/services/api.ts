@@ -1923,10 +1923,18 @@ export const signInsApi = {
       reason,
     } satisfies Schema<'EndSignInsRequest'>),
   // End a lock; how the manager confirmed the person's identity goes to the audit trail.
-  unlock: (userId: string, identityConfirmedBy: string) =>
+  unlock: (userId: string, identityConfirmedBy: string, suspectedCompromise = false) =>
     api.post(`/users/${encodeURIComponent(userId)}/unlock`, {
       identity_confirmed_by: identityConfirmedBy as Schema<'UnlockRequest'>['identity_confirmed_by'],
+      suspected_compromise: suspectedCompromise,
     }),
+  // Recovery: a reset link (emailed, or copied once) and a reset of two-step sign-in.
+  resetLink: (userId: string) => api.get<Schema<'ResetLinkState'>>(`/users/${encodeURIComponent(userId)}/reset-link`),
+  issueResetLink: (userId: string, body: Schema<'ResetLinkRequest'>) =>
+    api.post<Schema<'ResetLinkIssued'>>(`/users/${encodeURIComponent(userId)}/reset-link`, body),
+  revokeResetLink: (userId: string) => api.delete(`/users/${encodeURIComponent(userId)}/reset-link`),
+  resetMfa: (userId: string, body: Schema<'MfaResetRequest'>) =>
+    api.post<Schema<'MfaResetResult'>>(`/users/${encodeURIComponent(userId)}/mfa/reset`, body),
   // The whole install, the caller's own sign-in included.
   endEveryone: (reason: string) =>
     api.post<Schema<'EndedSignIns'>>('/users/sign-ins/end-all', {
