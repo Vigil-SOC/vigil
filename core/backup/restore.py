@@ -21,6 +21,7 @@ from __future__ import annotations
 import base64
 import getpass
 import json
+import logging
 import os
 import re
 import secrets
@@ -39,7 +40,8 @@ from sqlalchemy import text as sa_text
 from sqlalchemy.pool import NullPool
 
 from core.audit import feed, retention, trail
-from core.auth import key_ring
+from core.auth import dormancy, key_ring, sign_in_runs, sign_ins
+from core.auth.mfa_coverage import SETTINGS_LINK
 from core.backup.connection import backup_database_config
 from core.backup.create import (
     PRE_RESTORE_PREFIX,
@@ -61,10 +63,12 @@ from core.secrets_manager import EncryptedFileBackend
 from core.skills.skill_library import operator_skills_root
 from core.storage.config_service import get_config_service
 from core.storage.connection import DatabaseConfig, get_db_manager
-from core.storage.models import ApprovalAction, User
+from core.storage.models import ApprovalAction, SignIn, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 from core.version import __version__
+
+logger = logging.getLogger(__name__)
 
 # The FIRST_BREAK query from services/agent/ledger/verify.ts. The hash stays
 # the database's agent_event_hash; $1 is the whole ledger (NULL run id).
@@ -199,10 +203,16 @@ def restore_snapshot(
                 # The restored database is the live name. Point this process at
                 # it before blanking, or the erasure list is applied nowhere.
                 _point_at_live(cfg)
+                reapplied_at = utcnow()
                 _reapply_erased(root, dump_in_snapshot)
                 lines.extend(
                     _settle_restored(
-                        cfg, manifest, snapshot_id, restoring_user, abandoned
+                        cfg,
+                        manifest,
+                        snapshot_id,
+                        restoring_user,
+                        abandoned,
+                        reapplied_at,
                     )
                 )
                 _record_restored(manifest, snapshot_id, discarded)
@@ -967,13 +977,20 @@ def _abandoned_tip(cfg: DatabaseConfig) -> dict | None:
 
 
 def _restore_values(
-    snapshot_id: str, created_at: str, expired: int, rotated: bool
+    snapshot_id: str,
+    created_at: str,
+    expired: int,
+    rotated: bool,
+    ended: int,
+    stopped: int,
 ) -> dict:
     return {
         "snapshot_id": snapshot_id,
         "created_at": created_at,
         "expired_count": expired,
         "jwt_rotated": rotated,
+        "sign_ins_ended": ended,
+        "runs_stopped": stopped,
     }
 
 
@@ -982,6 +999,8 @@ def _record_restore(
     created_at: str,
     expired: int,
     rotated: bool,
+    ended: int,
+    stopped: int,
     actor: str,
     abandoned: dict | None,
     failure: BackupError | None,
@@ -994,7 +1013,7 @@ def _record_restore(
     A failure is part of this entry; it is not a later update. The entry is
     flagged unconfirmed, and a feed-on restore pauses later writes (decision 11).
     """
-    values = _restore_values(snapshot_id, created_at, expired, rotated)
+    values = _restore_values(snapshot_id, created_at, expired, rotated, ended, stopped)
     with get_db_manager().session_scope() as session:
         if _trail_ready(session):
             payload = {
@@ -1028,10 +1047,12 @@ def _settle_restored(
     snapshot_id: str,
     actor: str,
     abandoned: dict | None,
+    reapplied_at: datetime,
 ) -> list[str]:
     created_at: str = manifest["created_at"]
     failure: BackupError | None = None
     expired = 0
+    ended = stopped = 0
     rotated = False
     new_secret = False
     from_env = False
@@ -1069,12 +1090,21 @@ def _settle_restored(
         # Any settle failure after the swap still records one entry. A
         # pre-trail snapshot only keeps today's row when settle reached it.
         failure = exc if isinstance(exc, BackupError) else BackupError(str(exc))
+    # Apart from the key step: a failed key step still ends the sign-ins, and a
+    # failed ending is still reported and recorded.
+    try:
+        ended, stopped = _end_restored_sessions(created_at, reapplied_at)
+    except Exception as exc:
+        ending = BackupError(f"could not end the restored sign-ins: {exc}")
+        failure = BackupError(f"{failure}\n{ending}") if failure else ending
     try:
         _record_restore(
             snapshot_id,
             created_at,
             expired,
             rotated,
+            ended,
+            stopped,
             actor,
             abandoned,
             failure,
@@ -1092,6 +1122,8 @@ def _settle_restored(
     lines = [
         f"backup date: {created_at}",
         f"approvals expired: {expired}",
+        f"sign-ins ended: {ended}",
+        f"runs stopped: {stopped}",
         "integration credentials and user accounts date from the backup",
     ]
     if from_env and new_secret:
@@ -1102,6 +1134,78 @@ def _settle_restored(
             "because an environment value outranks secrets.enc"
         )
     return lines
+
+
+def _end_restored_sessions(created_at: str, reapplied_at: datetime) -> tuple[int, int]:
+    """End every open sign-in, stop every in-flight run, open the dormancy grace
+    and tell the holders of ``sessions.manage`` once; returns (sign-ins ended,
+    runs stopped).
+
+    The runs stop through ``sign_in_runs._stop`` (the abort directive, the
+    cancelled row, "stopped: sign-in ended"). This host process may have no
+    workers or Redis, and ``stop_run``'s escalation timer dies with it, so each
+    stopped run also gets its terminal in the ledger now.
+    """
+    from core.workflows.run_cancel import force_terminal
+
+    runs = sign_in_runs.in_flight_runs()
+    with unit_of_work() as session:
+        ended = sign_ins.end_every_open(session, sign_ins.RESTORE)
+        dormancy.start_grace(session)
+        # People erased by this restore's own reapply were ended before this step.
+        erased = (
+            session.query(SignIn)
+            .filter(
+                SignIn.end_reason == sign_ins.ERASED, SignIn.ended_at >= reapplied_at
+            )
+            .count()
+        )
+    stopped = sign_in_runs._stop(runs)
+    for run_id in stopped:
+        force_terminal(run_id, sign_in_runs.STOP_REASON)
+    _tell_session_holders(created_at, ended + erased, len(stopped))
+    return ended + erased, len(stopped)
+
+
+def _tell_session_holders(created_at: str, ended: int, stopped: int) -> None:
+    """One notice to each active person who holds ``sessions.manage``. No names,
+    no tokens."""
+    from core.auth.permissions import missing_permission
+    from core.platform.notices import notify
+
+    until = dormancy.grace_until()
+    # Prose, not a list: the bell shows a notice as one paragraph.
+    message = (
+        f"A restore from the backup of {created_at[:10]} has settled. "
+        f"{ended} sign-in{'s' if ended != 1 else ''} ended, so everyone signs in "
+        f"again, and {stopped} agent run{'s' if stopped != 1 else ''} stopped. "
+        "Last-sign-in dates and failed-sign-in counts are as they were in the "
+        "backup, so dormancy deactivates nobody and warns nobody until "
+        f"{until:%Y-%m-%d} UTC. Locks set after the backup are gone."
+    )
+    with unit_of_work() as session:
+        people = (
+            session.query(User.user_id, User.principal_id)
+            .filter(User.is_active.is_(True), User.service_account.isnot(True))
+            .all()
+        )
+        holders = [
+            principal
+            for user_id, principal in people
+            if missing_permission(user_id, "sessions.manage", session) is None
+        ]
+    for principal in holders:
+        try:
+            notify(
+                principal,
+                "restore_settled",
+                "A restore ended every sign-in",
+                message,
+                link=SETTINGS_LINK,
+                priority="high",
+            )
+        except Exception:  # noqa: BLE001 - the restore has already settled
+            logger.exception("could not tell a session manager about the restore")
 
 
 def _point_at_live(cfg: DatabaseConfig) -> None:

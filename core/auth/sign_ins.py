@@ -48,6 +48,9 @@ WITH_MFA = ("mfa", MFA_STEP_DOWN, RECOVERY_STEP_DOWN)
 
 # Three failed confirmations in a row (core/auth/step_up.py).
 TOO_MANY_CONFIRMATIONS = "too_many_confirmations"
+# A restore ended every open sign-in. Not in STOPS_RUNS: it stops the runs in
+# one pass and sends one notice (core/backup/restore.py), not one per person.
+RESTORE = "restore"
 
 # The end reasons that stop the sign-in's agent runs (and their children): a
 # compromise, someone else's act, or a change of who the account is. Time, idle,
@@ -86,6 +89,7 @@ REASON_WORDS = {
     EVERYONE: "Everyone signed out",
     SIGN_IN_LIMIT: "A newer sign-in took its place",
     TOO_MANY_CONFIRMATIONS: "Too many failed confirmations",
+    RESTORE: "Ended by a restore",
 }
 UNNAMED_REASON = "Ended by a security event"
 
@@ -388,6 +392,19 @@ def end_all_for_user(
                 synchronize_session=False,
             )
         )
+
+
+def end_every_open(session: Session, reason: str) -> int:
+    """End every open sign-in of every principal in one UPDATE; no run is queued.
+    Returns how many."""
+    return (
+        session.query(SignIn)
+        .filter(SignIn.ended_at.is_(None))
+        .update(
+            {SignIn.ended_at: utcnow(), SignIn.end_reason: reason},
+            synchronize_session=False,
+        )
+    )
 
 
 def stamp_action(sign_in_id: str, session: Session) -> None:
