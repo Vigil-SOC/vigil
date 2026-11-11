@@ -221,7 +221,9 @@ def add_task(
     )
     session.add(task)
     session.flush()
-    _task_entry(session, case_trail.TASK, task, signed_in, description)
+    _task_entry(
+        session, case_trail.TASK, task, signed_in, description, owner=(None, assignee)
+    )
     return task
 
 
@@ -231,16 +233,24 @@ def _task_entry(
     task: CaseTask,
     signed_in: Optional[str],
     description: Optional[str],
+    owner: Optional[tuple[Optional[str], Optional[str]]] = None,
 ) -> None:
-    # Ids and the status are hashed; the title and description are free text.
-    text = "\n\n".join(part for part in (task.title, description) if part)
+    # Ids, the status and the holders are hashed; the title, description and
+    # the holders' stored text are free text. ``owner`` is (previous, new) when
+    # the assignee changed; a new task with none records none.
+    held = owner is not None and any(owner)
+    texts = [task.title, description, *(case_trail.holder_text(*owner) if held else [])]
     case_trail.append_or_legacy(
         session,
         action=action,
         signed_in=signed_in,
         case_id=task.case_id,
-        operator_text=text or None,
-        ids=lambda: {"task_id": task.task_id, "status": task.status},
+        operator_text="\n\n".join(t for t in texts if t) or None,
+        ids=lambda: {
+            "task_id": task.task_id,
+            "status": task.status,
+            **(case_trail.holders(session, *owner) if held else {}),
+        },
     )
 
 
@@ -275,11 +285,23 @@ def update_task(
 
     Driven off the payload rather than a field list held here: TaskUpdate is
     already the definition of what a caller may change, and a second copy of
-    it only stays right until someone adds a field.
+    it only stays right until someone adds a field. An ``assignee`` goes
+    through ``resolve_assignee``; blank unassigns, None leaves it. A refusal
+    raises ``AssigneeRefused`` before anything is written.
     """
+    from core.cases.assignee import resolve_assignee
+
     task = session.query(CaseTask).filter(CaseTask.task_id == task_id).first()
     if task is None:
         return None
+    updates = dict(updates)
+    owner = None
+    raw = updates.pop("assignee", None)
+    if raw is not None:
+        previous = task.assignee
+        task.assignee = resolve_assignee(session, raw, current=previous)
+        if task.assignee != previous:
+            owner = (previous, task.assignee)
     for field, value in updates.items():
         if value is not None and hasattr(task, field):
             setattr(task, field, value)
@@ -290,6 +312,7 @@ def update_task(
         task,
         signed_in,
         updates.get("description"),
+        owner=owner,
     )
     return task
 
