@@ -4,7 +4,8 @@
 ``JWT_SECRET_KEY``, which stays outside the database. A purpose has one
 ``current`` key and, after a rotation, older ones: signing keys stay
 ``verify_only`` until their overlap ends (then ``retired``, material deleted),
-the MFA and pepper keys stay ``decrypt_only``.
+the MFA and pepper keys stay ``decrypt_only``, except that an emergency
+pepper retires every earlier one (the hashes under them need a reset).
 
 Version 1 of each purpose is the value derived from the secret before the ring
 existed, so tokens issued then keep verifying. Adoption writes version 1 and a
@@ -565,11 +566,14 @@ def rotate(
     overlap: Optional[timedelta] = None,
     operator: Optional[str] = None,
     older_than: Optional[timedelta] = None,
+    exposed: bool = False,
 ) -> Optional[int]:
     """A new current key for ``purpose``; the old one verifies for ``overlap``
     (the purpose's own by default, none for a restore or an emergency). The MFA
     key goes decrypt-only and every secret moves under the new one: MFA secrets
-    for ``mfa``, every stored password and recovery-code hash for ``pepper``. Returns the
+    for ``mfa``, every stored password and recovery-code hash for ``pepper``.
+    ``exposed`` (an emergency pepper) retires every earlier key instead and
+    re-encrypts nothing: what it protected stays unreadable until reset. Returns the
     version, or None when ``older_than`` is set and the current key is younger
     (checked under the lock, so replicas never rotate twice)."""
     spec = PURPOSES[purpose]
@@ -596,7 +600,7 @@ def rotate(
             {"p": purpose},
         ).scalar_one()
         new_material = _new_material()
-        if spec.encrypts:
+        if spec.encrypts and not exposed:
             session.execute(
                 text(
                     "UPDATE public.auth_keys SET state = 'decrypt_only' "
@@ -604,7 +608,7 @@ def rotate(
                 ),
                 {"p": purpose, "v": old},
             )
-        elif overlap > timedelta(0):
+        elif overlap > timedelta(0) and not spec.encrypts:
             session.execute(
                 text(
                     "UPDATE public.auth_keys SET state = 'verify_only', "
@@ -617,7 +621,8 @@ def rotate(
                 session.execute(
                     text(
                         "SELECT version FROM public.auth_keys WHERE purpose = :p "
-                        "AND state IN ('current', 'verify_only') ORDER BY version"
+                        "AND state IN ('current', 'verify_only', 'decrypt_only') "
+                        "ORDER BY version"
                     ),
                     {"p": purpose},
                 )
@@ -634,7 +639,7 @@ def rotate(
                 )
         _insert(session, secret, purpose, version, "current", new_material)
         moved = {}
-        if spec.encrypts:  # the key just written reads as current
+        if spec.encrypts and not exposed:  # the key just written reads as current
             keys = _read(session, secret)[purpose]
             if purpose == "pepper":
                 moved["password_hashes"] = _reencrypt_hashes(session, keys)
@@ -649,6 +654,7 @@ def rotate(
             previous=old,
             **moved,
             overlap_seconds=None if spec.encrypts else int(overlap.total_seconds()),
+            **({"earlier_retired": True} if exposed else {}),
         )
     forget()
     return version
@@ -848,6 +854,26 @@ def clear_unreadable_apps(session, secret: Optional[str], *, everyone=False) -> 
     return before - _apps_on(session)
 
 
+def unreadable_passwords(session) -> int:
+    """How many people's password hash names a pepper version no live key holds,
+    so they must reset it. Counted in the database from the version in the
+    prefix, never from a hash. Service accounts are left out: their gateway
+    rewrites the password at its next start."""
+    return session.execute(
+        text(r"""
+            SELECT count(*) FROM public.users u
+            WHERE u.password_hash LIKE :m
+              AND u.service_account IS NOT TRUE
+              AND NOT EXISTS (
+                SELECT 1 FROM public.auth_keys k WHERE k.purpose = 'pepper'
+                  AND k.state <> 'retired'
+                  AND CAST(k.version AS text)
+                      = substring(u.password_hash from '^pepper-(\d+)\$'))
+        """),
+        {"m": "pepper-%"},
+    ).scalar_one()
+
+
 def clear_all_apps(operator: str) -> int:
     """Everyone with an authenticator app enrols again: for the case where the MFA
     key and the database were both exposed. Returns how many people lost the app."""
@@ -948,8 +974,16 @@ def emergency(purposes: list[str], operator: str) -> int:
     from core.platform.notices import notify
 
     for purpose in purposes:
-        rotate(purpose, overlap=timedelta(0), operator=operator)
+        # An exposed pepper is retired, not re-encrypted: the stolen copy stays shut.
+        rotate(
+            purpose,
+            overlap=timedelta(0),
+            operator=operator,
+            exposed=purpose == "pepper",
+        )
     stopped = _stop_runs(operator)
+    with unit_of_work() as session:
+        reset = unreadable_passwords(session) if "pepper" in purposes else 0
     with unit_of_work() as session:
         _trail(
             session,
@@ -957,12 +991,19 @@ def emergency(purposes: list[str], operator: str) -> int:
             operator,
             purposes=purposes,
             runs_stopped=stopped,
+            **({"passwords_to_reset": reset} if "pepper" in purposes else {}),
         )
     signed_out = "signin" in purposes
     message = (
         f"Keys were rotated with no overlap in an emergency: {', '.join(purposes)}. "
         + ("Everyone is signed out and signs in again. " if signed_out else "")
         + f"{stopped} agent run{'s' if stopped != 1 else ''} stopped."
+        + (
+            f" {reset} {'person' if reset == 1 else 'people'} must reset the "
+            "password; their recovery codes are removed until they make new ones."
+            if "pepper" in purposes
+            else ""
+        )
     )
     for principal in permissions.holders("sessions.manage"):
         try:
@@ -1018,7 +1059,8 @@ def main(argv=None) -> int:
     rot.add_argument("purpose", choices=sorted(PURPOSES))
     emer = sub.add_parser(
         "emergency",
-        help="rotate with no overlap and stop every run (signin signs everyone out)",
+        help="rotate with no overlap and stop every run (signin signs everyone out; "
+        "pepper retires the old ones, so everyone resets their password)",
     )
     emer.add_argument("purpose", choices=[*sorted(PURPOSES), "all"])
     sub.add_parser(

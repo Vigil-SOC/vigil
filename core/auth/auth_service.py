@@ -36,6 +36,9 @@ from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
+# The refusal reason for a password hash under a retired pepper: reset, not retry.
+PASSWORD_RESET_REQUIRED = "password_reset_required"
+
 # A person's own act (decision 9). Never held by a service account, token, or agent.
 PERSON_ONLY = frozenset({"audit.forward", "audit.manage"})
 
@@ -338,6 +341,16 @@ class AuthService:
                 if _account_is_locked(user):
                     refusal["reason"] = "locked"
                 raise_if_locked(user)
+
+                # A hash under a retired pepper can't be checked: not a wrong
+                # password, so nothing is counted and no lock is set. A service
+                # account's gateway rewrites its own at its next start.
+                if not _is_service_account(user) and password_hash.unreadable(
+                    user.password_hash
+                ):
+                    logger.warning("Password must be reset: %s", user.username)
+                    refusal["reason"] = PASSWORD_RESET_REQUIRED
+                    return None
 
                 # Verify password
                 if not AuthService.verify_password(password, user.password_hash):

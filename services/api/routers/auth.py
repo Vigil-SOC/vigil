@@ -21,6 +21,7 @@ from core.audit.retention import ERASED_PREFIX, is_erased
 from core.audit.trail import SYSTEM
 from core.auth import (
     key_ring,
+    password_hash,
     mfa_methods,
     principals,
     security_keys,
@@ -43,6 +44,7 @@ from core.auth.auth_service import (
     CODE_APP,
     CODE_KEY,
     CODE_RECOVERY,
+    PASSWORD_RESET_REQUIRED,
     AccountLockedError,
     AuthService,
     _account_is_locked,
@@ -339,15 +341,16 @@ class PasswordResetConfirm(BaseModel):
     new_password: str
 
 
-def _apply_new_password(user: User, plaintext: str) -> None:
+def _apply_new_password(user: User, plaintext: str) -> dict:
     """Enforce history, hash, set, update history + changed_at in one place.
-    The request's unit of work owns the commit."""
+    The request's unit of work owns the commit. Entries under a retired pepper
+    can't be read: the history check skips them, and recovery codes among them are
+    removed. Returns what that skipped, for the trail."""
     keep = session_policy.policy().password_history
+    checked = [user.password_hash, *(user.password_history or [])[:keep]]
     # The current hash and the history are checked together (PBKDF2 runs once
     # per distinct salt).
-    if password_matches_any(
-        plaintext, [user.password_hash, *(user.password_history or [])[:keep]]
-    ):
+    if password_matches_any(plaintext, checked):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
@@ -365,6 +368,13 @@ def _apply_new_password(user: User, plaintext: str) -> None:
     user.password_history = previous[:keep]
     user.password_hash = new_hash
     user.password_changed_at = utcnow()
+    skipped = sum(password_hash.unreadable(h) for h in checked)
+    codes_removed = any(
+        password_hash.unreadable(c) for c in user.mfa_recovery_codes or []
+    )
+    if codes_removed:  # new ones come from the existing regeneration flow
+        user.mfa_recovery_codes = []
+    return {"history_skipped": skipped, "recovery_codes_removed": codes_removed}
 
 
 def _min_age_refusal(user: User) -> Optional[JSONResponse]:
@@ -858,6 +868,23 @@ def login(
 
     if not user:
         failed()
+        if refusal.get("reason") == PASSWORD_RESET_REQUIRED:
+            # 403, not 401: no refresh-and-retry; nothing was counted.
+            by_mail = mail_is_configured()
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": PASSWORD_RESET_REQUIRED,
+                    "message": "Your password must be reset before you can sign in. "
+                    + (
+                        "Use Forgot password to have a reset link mailed."
+                        if by_mail
+                        else "Mail is not set up on this server, so a reset link "
+                        "cannot be mailed: ask an administrator."
+                    ),
+                    "by_mail": by_mail,
+                },
+            )
         raise _invalid_credentials()
 
     service_account = _is_service_account(user)
@@ -2749,8 +2776,10 @@ async def password_reset_confirm(
         )
 
     # The minimum age limits a voluntary change only: not the reset sign-in
-    # forced, nor one that unlocks a locked account.
-    if not claim.forced and not _account_is_locked(user):
+    # forced, nor one that unlocks a locked account, nor one whose password
+    # can't be read (a retired pepper).
+    unreadable = await asyncio.to_thread(password_hash.unreadable, user.password_hash)
+    if not claim.forced and not unreadable and not _account_is_locked(user):
         if refused := _min_age_refusal(user):
             return refused
 
@@ -2767,7 +2796,9 @@ async def password_reset_confirm(
         )
 
     try:
-        await asyncio.to_thread(_apply_new_password, user, body.new_password)
+        unread = await asyncio.to_thread(
+            _apply_new_password, user, body.new_password
+        )
         # Clear any active lockout so the user can immediately log in.
         clear_lock(user)
         # The reset token's holder acted; they have no session.
@@ -2778,6 +2809,7 @@ async def password_reset_confirm(
             {"source_ip": client_host(request)},
             actor=user.principal_id,
             principal=user.principal_id,
+            **unread,
         )
 
         await asyncio.to_thread(
@@ -2785,7 +2817,10 @@ async def password_reset_confirm(
         )
 
         logger.info("Password reset completed for user: %s", user.username)
-        return {"message": "Password reset successfully"}
+        return {
+            "message": "Password reset successfully",
+            "recovery_codes_removed": unread["recovery_codes_removed"],
+        }
     except HTTPException:
         raise
     except Exception as exc:
