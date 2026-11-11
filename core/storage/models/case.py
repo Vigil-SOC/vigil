@@ -5,23 +5,21 @@ from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy import (
     DateTime,
+    ForeignKey,
     Index,
     String,
     Text,
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
-from sqlalchemy.orm import (
-    Mapped,
-    mapped_column,
-    relationship,
-)
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from core.storage.models.base import Base, JSONBList, case_findings
 from core.time import utcnow
 
 if TYPE_CHECKING:
     from core.storage.models.finding import Finding
+    from core.storage.models.team import Team
 
 
 class Case(Base):
@@ -44,8 +42,14 @@ class Case(Base):
         String(20), nullable=False, default="medium", server_default="medium"
     )
 
-    # Assignment
+    # Assignment. The team is required; the owner stays a username.
     assignee: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    team_id: Mapped[str] = mapped_column(
+        String(50),
+        ForeignKey("teams.team_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    team: Mapped["Team"] = relationship(lazy="selectin")
 
     # Tags (array of strings)
     tags: Mapped[List[str]] = mapped_column(ARRAY(String), nullable=True, default=list)
@@ -95,6 +99,7 @@ class Case(Base):
         Index("idx_case_status", "status"),
         Index("idx_case_priority", "priority"),
         Index("idx_case_assignee", "assignee"),
+        Index("idx_case_team_id", "team_id"),
         Index("idx_case_created_at", "created_at"),
         Index("idx_case_updated_at", "updated_at"),
         Index(

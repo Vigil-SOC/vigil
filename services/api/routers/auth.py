@@ -87,6 +87,7 @@ from core.storage.models import Principal, Role, SecurityKey, SignIn, SsoLink, U
 from core.storage.schemas import UserSchema
 from core.storage.schemas.base import IsoDateTime, OptDateTime
 from core.storage.unit_of_work import unit_of_work
+from core.teams import join_default
 from core.time import utcnow
 from services.api.middleware.auth import get_current_active_user
 from services.api.middleware.auth_rate_key import (
@@ -1406,6 +1407,7 @@ def _sso_sign_in(
         principals.add_for_user(session, user)
         session.add(user)
         session.flush()
+        join_default(session, user.principal_id, actor=SYSTEM)
         trail_events.record(
             session,
             "user.created",

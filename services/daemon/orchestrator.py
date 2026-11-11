@@ -25,6 +25,7 @@ from core.auth import sign_ins
 from core.auth.principals import agent_principal_id
 from core.cases.case_sla_service import case_title, open_case_holding
 from core.config import get_settings
+from core.storage.case_insert import insert_case
 from core.time import utcnow
 from services.daemon.config import OrchestratorConfig
 
@@ -584,13 +585,10 @@ def _shadow_hypothesis(findings: List[Dict]) -> str:
 
 def _mint_case(session, spec: CaseSpec) -> str:
     """Insert a Case and its finding links on the caller's session. Does not commit."""
-    from sqlalchemy import select
-
-    from core.storage.models import Case, Finding
-
     case_id = spec.case_id or _new_case_id()
     now = utcnow()
-    case = Case(
+    case = insert_case(
+        session,
         case_id=case_id,
         title=(spec.title or "Investigation")[:200],
         description="",
@@ -598,20 +596,9 @@ def _mint_case(session, spec: CaseSpec) -> str:
         priority=spec.priority,
         timeline=[{"timestamp": now.isoformat() + "Z", "event": "Case created"}],
         mitre_techniques=spec.mitre_techniques or None,
+        finding_ids=spec.finding_ids,
     )
-    session.add(case)
-    session.flush()
-    if spec.finding_ids:
-        rows = (
-            session.execute(
-                select(Finding).where(Finding.finding_id.in_(spec.finding_ids))
-            )
-            .scalars()
-            .all()
-        )
-        case.findings.extend(rows)
-        session.flush()
-    return case_id
+    return case.case_id
 
 
 # Intake rows only ever name Postgres findings, so these read Postgres directly

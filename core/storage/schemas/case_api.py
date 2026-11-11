@@ -11,7 +11,7 @@ from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel
 
-from core.storage.schemas.case import CaseSchema
+from core.storage.schemas.case import CaseSchema, CaseTeam
 from core.storage.schemas.case_entities import (
     CaseClosureInfoSchema,
     CaseCommentSchema,
@@ -76,6 +76,7 @@ class CaseQueueItem(BaseModel):
     description: Optional[str] = None
     sla_paused: bool = False
     owner_state: OwnerStateField
+    team: Optional[CaseTeam] = None
 
 
 class CaseQueueStrip(BaseModel):

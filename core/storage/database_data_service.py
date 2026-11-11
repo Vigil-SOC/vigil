@@ -16,6 +16,7 @@ from core.storage.connection import (
 from core.storage.schemas import CaseSchema, FindingSchema
 from core.storage.score import optional_float
 from core.storage.service import IP_FACET_KEYS, DatabaseService
+from core.teams import TeamRefused
 
 logger = logging.getLogger(__name__)
 
@@ -477,6 +478,7 @@ class DatabaseDataService:
         description: str = "",
         status: str = "open",
         case_id: Optional[str] = None,
+        assignee: Optional[str] = None,
     ) -> Optional[Dict]:
         if self._demo_mode and self._demo_service:
             return self._demo_service.create_case(
@@ -501,9 +503,12 @@ class DatabaseDataService:
                     description=description,
                     status=status,
                     priority=priority,
+                    assignee=assignee,
                 )
                 return CaseSchema.dump(case) if case else None
             except case_trail_hook.RAISED:
+                raise
+            except TeamRefused:
                 raise
             except Exception as e:
                 logger.error(f"Error creating case in DB: {e}")

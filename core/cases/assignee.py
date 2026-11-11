@@ -16,7 +16,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from core.exceptions import SOCError
-from core.storage.models import Principal, User
+from core.storage.models import Principal, TeamMembership, User
 
 OwnerState = Literal["current", "not_current"]
 CURRENT: OwnerState = "current"
@@ -82,13 +82,57 @@ def owner_states(
     return {name: CURRENT if name in current else NOT_CURRENT for name in names}
 
 
+def _team_id(row: dict) -> Optional[str]:
+    team = row.get("team")
+    if isinstance(team, dict) and isinstance(team.get("id"), str):
+        return team["id"]
+    team_id = row.get("team_id")
+    return team_id if isinstance(team_id, str) else None
+
+
+def _case_row(row: dict) -> bool:
+    """Task rows carry ``task_id``. ``owner_on_team`` is a case fact."""
+    return "task_id" not in row
+
+
+def owners_on_team(
+    session: Optional[Session], rows: list[dict], *, key: str = "assignee"
+) -> set[tuple[str, str]]:
+    """``(username, team_id)`` pairs that are a membership, from one query."""
+    names = {
+        owner
+        for row in rows
+        if _case_row(row) and (owner := (row.get(key) or "").strip())
+    }
+    if not names or session is None:
+        return set()
+    found = session.execute(
+        select(User.username, TeamMembership.team_id)
+        .join(TeamMembership, TeamMembership.principal_id == User.principal_id)
+        .where(User.username.in_(names))
+    ).all()
+    return {(username, team_id) for username, team_id in found}
+
+
 def with_owner_state(
     session: Optional[Session], rows: list[dict], *, key: str = "assignee"
 ) -> list[dict]:
-    """Set ``owner_state`` on each case or task dict, from one lookup."""
+    """Set ``owner_state`` on each row, and ``owner_on_team`` on case rows.
+
+    ``owner_on_team`` is true or false when the case has an owner, and absent
+    when it is unassigned. Task rows are left alone. One membership query.
+    """
     states = owner_states(session, (row.get(key) for row in rows))
+    on_team = owners_on_team(session, rows, key=key)
     for row in rows:
         row["owner_state"] = states.get(row.get(key) or "")
+        if not _case_row(row):
+            continue
+        owner = (row.get(key) or "").strip()
+        if not owner:
+            row.pop("owner_on_team", None)
+            continue
+        row["owner_on_team"] = (owner, _team_id(row)) in on_team
     return rows
 
 

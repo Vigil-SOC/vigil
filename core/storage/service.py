@@ -22,6 +22,7 @@ from sqlalchemy.orm import lazyload, noload, selectinload
 
 from core.exceptions import default_on_error
 from core.storage import case_trail_hook
+from core.storage.case_insert import insert_case
 from core.storage.case_repository import CASE_FINDING_IDS_ONLY, CaseRepository
 from core.storage.connection import get_db_manager
 from core.storage.ip_exclusion_repository import exclusion_view_filter
@@ -35,6 +36,7 @@ from core.storage.models import (
 )
 from core.storage.schemas import FindingSchema
 from core.storage.technique_confidence import rank_by_confidence
+from core.teams import TeamRefused
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -1137,7 +1139,7 @@ class DatabaseService:
 
     # ========== Case Operations ==========
 
-    @default_on_error(None, passthrough=case_trail_hook.RAISED)
+    @default_on_error(None, passthrough=(*case_trail_hook.RAISED, TeamRefused))
     def create_case(
         self, case_id: str, title: str, finding_ids: List[str], **kwargs
     ) -> Optional[Case]:
@@ -1154,51 +1156,26 @@ class DatabaseService:
             Created Case object or None if failed
         """
         with self.db_manager.session_scope() as session:
-            # Create case
-            now = utcnow()
-            case = Case(
+            case = insert_case(
+                session,
                 case_id=case_id,
                 title=title,
+                finding_ids=finding_ids,
                 description=kwargs.get("description", ""),
                 status=kwargs.get("status", "new"),
                 priority=kwargs.get("priority", "medium"),
                 assignee=kwargs.get("assignee"),
                 tags=kwargs.get("tags", []),
                 notes=kwargs.get("notes", []),
-                timeline=kwargs.get(
-                    "timeline",
-                    [{"timestamp": now.isoformat() + "Z", "event": "Case created"}],
-                ),
+                timeline=kwargs.get("timeline"),
                 activities=kwargs.get("activities", []),
                 resolution_steps=kwargs.get("resolution_steps", []),
                 mitre_techniques=kwargs.get("mitre_techniques"),
             )
-            session.add(case)
-            session.flush()
-
-            # Link findings
-            if finding_ids:
-                findings = (
-                    session.execute(
-                        select(Finding).where(Finding.finding_id.in_(finding_ids))
-                    )
-                    .scalars()
-                    .all()
-                )
-                case.findings.extend(findings)
-                session.flush()
-
-            if writer := case_trail_hook.writer(session):
-                writer.append_case(
-                    session,
-                    writer.CREATE,
-                    case_id,
-                    operator_text=title or None,
-                    status=case.status,
-                    priority=case.priority,
-                    assignee=writer.assignee_principal(session, case.assignee),
-                )
             session.refresh(case)
+            # Touch it while the session is open: the dump runs after it closes.
+            if case.team is None:
+                logger.warning("case %s has no team row", case_id)
             logger.info(f"Created case: {case_id} with {len(finding_ids)} findings")
             return case
 
@@ -1218,6 +1195,8 @@ class DatabaseService:
             options = () if include_findings else (CASE_FINDING_IDS_ONLY,)
             case = session.get(Case, case_id, options=options)
             if case:
+                if case.team is None:
+                    logger.warning("case %s has no team row", case_id)
                 if include_findings:
                     for linked in case.findings:
                         _ = linked.mitre_prediction_rows
@@ -1256,8 +1235,10 @@ class DatabaseService:
                 order_by="created_at",
             )
 
-            # Detach from session
+            # Detach from session. Read the team first so the dump can use it.
             for case in cases:
+                if case.team is None:
+                    logger.warning("case %s has no team row", case.case_id)
                 session.expunge(case)
 
             return cases

@@ -32,6 +32,7 @@ from core.storage.models import (
     CaseSLA,
     Finding,
     Investigation,
+    Team,
     WorkflowRun,
     WorkflowRunPhase,
     case_findings,
@@ -370,6 +371,9 @@ class CaseQueueRow:
     resolution_completed_at: Optional[datetime]
     is_paused: bool
     description: Optional[str] = None
+    team_id: Optional[str] = None
+    team_name: Optional[str] = None
+    team_is_default: bool = False
 
 
 @dataclass(frozen=True)
@@ -716,6 +720,9 @@ class CaseRepository:
                 Case.priority,
                 Case.assignee,
                 Case.created_at,
+                Team.team_id.label("team_id"),
+                Team.name.label("team_name"),
+                Team.is_default.label("team_is_default"),
                 latest.c.workflow_id,
                 latest.c.iteration_count,
                 latest.c.cost_usd,
@@ -733,6 +740,7 @@ class CaseRepository:
                 last_activity.label("last_activity"),
             )
             .select_from(Case)
+            .outerjoin(Team, Team.team_id == Case.team_id)
             .outerjoin(latest, latest.c.inv_case_id == Case.case_id)
             .outerjoin(live, live.c.live_case_id == Case.case_id)
             .outerjoin(sla, sla.c.sla_case_id == Case.case_id)
@@ -831,6 +839,9 @@ class CaseRepository:
                     resolution_completed_at=record["resolution_completed_at"],
                     is_paused=bool(record["is_paused"]),
                     description=record["description"],
+                    team_id=record["team_id"],
+                    team_name=record["team_name"],
+                    team_is_default=bool(record["team_is_default"]),
                 )
             )
         return rows, int(total)

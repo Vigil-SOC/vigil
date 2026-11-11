@@ -32,6 +32,7 @@ from core.config import _settings_env_file, get_settings
 from core.exceptions import default_on_error
 from core.storage.models import Principal, Role, User
 from core.storage.unit_of_work import unit_of_work
+from core.teams import TeamRefused, join_for_new_account
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -959,7 +960,7 @@ class AuthService:
             return role.permissions
 
     @staticmethod
-    @default_on_error(None)
+    @default_on_error(None, passthrough=(TeamRefused,))
     def create_user(
         username: str,
         email: str,
@@ -1015,6 +1016,7 @@ class AuthService:
             # commits.
             session.flush()
             session.refresh(user)
+            join_for_new_account(session, user.principal_id, invite_link_id)
 
             logger.info(f"User created: {username}")
             return user

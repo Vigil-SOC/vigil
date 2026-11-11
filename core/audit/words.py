@@ -378,6 +378,17 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "case.escalate": "Escalated the case",
     "case.close": "Closed the case",
     "case.create": "Opened the case",
+    "team.created": "Created a team",
+    "team.renamed": "Renamed a team",
+    "team.archived": "Archived a team",
+    "team.unarchived": "Brought a team back",
+    "team.member_added": "Added a person to a team",
+    "team.member_removed": "Removed a person from a team",
+    "teams.placed": lambda p: (
+        "Created the default team, joined "
+        f"{p.get('people_joined', 0)} people and placed "
+        f"{p.get('cases_placed', 0)} cases"
+    ),
     "case.status": _to("status"),
     "case.priority": _to("priority"),
     "case.assign": _assign,

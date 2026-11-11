@@ -32,8 +32,11 @@ HISTORY_KEYS_MAX = 50
 README = """\
 This directory is one Vigil case, read-only except scratch/.
 
-  case.json             the case record; owner_state says if its assignee is a
-                        current person (current, not_current; null if none)
+  case.json             the case record; team is its owning team (id, name,
+                        is_default). owner_state says if its assignee is a
+                        current person (current, not_current; null if none).
+                        owner_on_team says whether that person is on the team,
+                        and is absent when the case is unassigned
   findings/index.tsv    finding_id, severity, timestamp, title, one per line
   findings/<id>.json    every finding on the case, in full
   tasks.json            the case's tasks, each with owner_state likewise
