@@ -2,7 +2,7 @@
 
 Copy this page, fill in the blanks for your site, and keep the copy where the on-call person can read it without Vigil running. It covers Compose and host installs. Helm takes no Vigil backup (see [upgrading](upgrading.md)), and its keys come from the chart's Secret.
 
-Vigil keeps one key per purpose in a key ring: `signin`, `run`, `reset`, `setup`, `mfa`, `webauthn` and `sso`. The ring is stored in the database, wrapped under `JWT_SECRET_KEY`, which stays outside it. All the commands below run on the host (or in a one-shot of the backend image) as `python -m core.auth.key_ring`.
+Vigil keeps one key per purpose in a key ring: `signin`, `run`, `reset`, `setup`, `mfa`, `pepper`, `webauthn` and `sso`. The ring is stored in the database, wrapped under `JWT_SECRET_KEY`, which stays outside it. All the commands below run on the host (or in a one-shot of the backend image) as `python -m core.auth.key_ring`.
 
 | Who | Name | Contact |
 | --- | --- | --- |
@@ -36,6 +36,7 @@ Every emergency rotation also stops every running agent run (reason "emergency k
 | `run` | Tokens held by runs stop working. The runs are stopped anyway. |
 | `reset`, `setup`, `webauthn`, `sso` | Links, codes and challenges in flight stop working; people ask again. |
 | `mfa` | Authenticator secrets move under a new key. This does not help if the database was copied (see 4). |
+| `pepper` | Every stored password and recovery-code hash moves under a new key; the old key stays, decrypt-only. |
 
 Choose by what leaked:
 

@@ -39,7 +39,7 @@ from typing import Optional, TextIO
 from sqlalchemy import inspect
 from sqlalchemy.exc import NoSuchTableError, OperationalError, SQLAlchemyError
 
-from core.auth import principals, sign_ins
+from core.auth import key_ring, principals, sign_ins
 from core.auth.auth_service import AuthService
 from core.auth.identity import claim_sign_in_names, identifier_in_use
 from core.storage.connection import get_db_manager
@@ -261,7 +261,7 @@ def main(
     except ServiceAccountError as exc:
         print(f"error: {exc}", file=stderr)
         return EX_REFUSED
-    except NotReady as exc:
+    except (NotReady, key_ring.KeyRingError) as exc:  # the ring: not adopted yet
         print(f"database not ready: {exc}", file=stderr)
         return EX_TEMPFAIL
     except OperationalError as exc:

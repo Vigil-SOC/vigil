@@ -199,9 +199,10 @@ class AuthService:
         return password_hash.hash(password)
 
     @staticmethod
-    @default_on_error(False)
+    @default_on_error(False, passthrough=(key_ring.KeyRingError,))
     def verify_password(password: str, stored_hash: str) -> bool:
-        """Verify a password against its hash (PBKDF2, or a bcrypt from before)."""
+        """Verify a password against its hash (PBKDF2, or a bcrypt from before).
+        An unreadable key ring raises: it is not a wrong password."""
         return password_hash.verify(password, stored_hash)
 
     @staticmethod
@@ -366,8 +367,8 @@ class AuthService:
                 logger.info(f"User authenticated successfully: {username_or_email}")
                 return user
 
-        except AccountLockedError:
-            raise
+        except (AccountLockedError, key_ring.KeyRingError):
+            raise  # an unreadable ring is a service error: no failure is counted
         except Exception as e:
             logger.error(f"Authentication error: {e}")
             refusal["reason"] = "error"

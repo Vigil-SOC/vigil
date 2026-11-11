@@ -847,6 +847,14 @@ def login(
     except AccountLockedError:
         failed()
         raise
+    except key_ring.KeyRingError:
+        # Not a wrong password: nothing counted, the person may try again.
+        logger.exception("Sign-in refused: the key ring cannot be read")
+        failed("error")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Sign-in is unavailable right now. Try again shortly.",
+        )
 
     if not user:
         failed()
