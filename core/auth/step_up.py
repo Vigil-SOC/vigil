@@ -176,6 +176,7 @@ def confirm(
     assertion: Optional[dict] = None,
     challenge: Optional[str] = None,
     strong: bool = False,
+    signed_in: bool = False,
     source: Optional[str] = None,
 ) -> None:
     """Check it is still the person, or raise.
@@ -186,9 +187,11 @@ def confirm(
     ``assertion`` (and the ``challenge`` it signed) in place of the code. A success opens the window; a failure counts, and the
     third ends the sign-in (401). 400, not 401, for a wrong answer: a 401 would
     make the web client refresh and retry. An empty field is asked for, not counted.
+    ``signed_in``: the sign-in itself gave the code (a key-only person's recovery
+    sign-in while keys are unavailable), so no code is asked for.
     """
     needs_password = strong or not user.mfa_enabled
-    needs_code = user.mfa_enabled
+    needs_code = user.mfa_enabled and not signed_in
     if needs_password and not password:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Enter your password.")
     if needs_code and not code and not assertion:

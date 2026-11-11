@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.dialects.postgresql import insert
 
-from core.auth import mfa_coverage, session_policy, trail_events
+from core.auth import mfa_coverage, security_keys, session_policy, trail_events
 from core.auth.permissions import require_permission
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import SystemConfig, User
@@ -35,6 +35,8 @@ _MANAGE = require_permission("sessions.manage")
 MACHINE_LOOSENING = "A machine caller may only tighten the session policy"
 MACHINE_DORMANCY = "Changing the dormancy period needs a person's own sign-in"
 MACHINE_MAX_AGE = "Changing the maximum password age needs a person's own sign-in"
+MACHINE_KEYS = "Requiring security keys needs a person's own sign-in"
+NEEDS_OWN_KEY = "Add a security key of your own before requiring them of others"
 
 
 class Range(BaseModel):
@@ -60,6 +62,14 @@ class PolicyOut(session_policy.SessionPolicy):
     # Who updated_by is, for a screen that says who changed it.
     updated_by_name: Optional[str] = None
     updated_at: OptDateTime = None
+    # Set only on the save that raised Require phishing-resistant MFA.
+    without_key: Optional[int] = None
+    notice: Optional[str] = None
+
+
+def _no_key_text(count: int) -> str:
+    who = "person has" if count == 1 else "people have"
+    return f"{count} {who} no security key; they can't finish signing in until they add one"
 
 
 class LooseningOut(BaseModel):
@@ -69,6 +79,9 @@ class LooseningOut(BaseModel):
     # Set only when Require MFA is lowered: active people who could then sign in
     # without MFA, because the new level does not require it of them.
     without_mfa: Optional[int] = None
+    # Set only when security keys are required of more people: covered, active
+    # people with no key, who can't finish signing in until they add one.
+    without_key: Optional[int] = None
 
 
 class StaleOut(BaseModel):
@@ -153,6 +166,9 @@ def put_policy(
         return stale()
 
     loosening = session_policy.is_loosening(old.policy, body)
+    raising = session_policy.KEY_LEVELS.index(
+        body.require_phishing_resistant
+    ) > session_policy.KEY_LEVELS.index(old.policy.require_phishing_resistant)
     if dry_run:
         lowered = session_policy.MFA_LEVELS.index(
             body.require_mfa
@@ -164,7 +180,15 @@ def put_policy(
             if lowered
             else None
         )
-        return LooseningOut(loosening=loosening, without_mfa=count)
+        return LooseningOut(
+            loosening=loosening,
+            without_mfa=count,
+            without_key=(
+                mfa_coverage.without_key(session, body.require_phishing_resistant)
+                if raising
+                else None
+            ),
+        )
     actor = request.state.vigil_http_actor
     changes = {"old": old.policy.model_dump(), "new": body.model_dump()}
     # Any change to dormancy or the maximum password age, tightening too, is a
@@ -185,6 +209,30 @@ def put_policy(
             **changes,
         )
         raise HTTPException(status_code=403, detail=reason)
+
+    without_key = None
+    if raising:
+        # Raising tightens, so is_loosening lets a machine do it: it may not. The
+        # person needs a key of their own, and keys must be available at all.
+        keys = security_keys.availability()
+        refusal = None
+        if not actor.person:
+            refusal = (403, MACHINE_KEYS)
+        elif not keys.available:
+            refusal = (409, keys.reason)
+        elif not security_keys.has_keys(session, user.principal_id):
+            refusal = (403, NEEDS_OWN_KEY)
+        if refusal:
+            trail_events.refused(
+                "session_policy.refused",
+                actor=user.principal_id,
+                reason=refusal[1],
+                loosening=loosening,
+                **changes,
+            )
+            raise HTTPException(status_code=refusal[0], detail=refusal[1])
+        without_key = mfa_coverage.without_key(session, body.require_phishing_resistant)
+        changes["without_key"] = without_key
 
     value = {**body.model_dump(), "version": old.version + 1}
     if found:
@@ -216,4 +264,7 @@ def put_policy(
     session.flush()
     stored = session_policy.read_row(session)[0]
     response.headers["ETag"] = _etag(stored.version)
-    return _out(stored, session)
+    out = _out(stored, session)
+    if without_key is not None:
+        out.without_key, out.notice = without_key, _no_key_text(without_key)
+    return out

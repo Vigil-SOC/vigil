@@ -9,9 +9,9 @@ from __future__ import annotations
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from core.auth import session_policy, trail_events
+from core.auth import security_keys, session_policy, trail_events
 from core.platform import notices
-from core.storage.models import Role, User
+from core.storage.models import Role, SecurityKey, User
 from core.storage.unit_of_work import unit_of_work
 
 ACTION = "auth.mfa_coverage_gap"
@@ -27,6 +27,26 @@ def without_mfa(session: Session, level: str = "everyone") -> int:
         session.query(User.service_account, Role.permissions)
         .outerjoin(Role, Role.role_id == User.role_id)
         .filter(User.is_active.is_(True), User.mfa_enabled.isnot(True))
+        .all()
+    )
+    return sum(
+        session_policy.mfa_covered(
+            [name for name, on in (perms or {}).items() if on], sa is True, level
+        )
+        for sa, perms in users
+    )
+
+
+def without_key(session: Session, level: str) -> int:
+    """Active accounts ``level`` of require_phishing_resistant covers that hold no
+    security key: they can't finish signing in until they add one."""
+    keyed = session.query(SecurityKey.principal_id).filter(
+        SecurityKey.principal_id == User.principal_id
+    )
+    users = (
+        session.query(User.service_account, Role.permissions)
+        .outerjoin(Role, Role.role_id == User.role_id)
+        .filter(User.is_active.is_(True), ~keyed.exists())
         .all()
     )
     return sum(
@@ -62,8 +82,30 @@ def warning(user: User) -> list[dict[str, str]]:
     ]
 
 
+def keys_unavailable(user: User) -> list[dict[str, str]]:
+    """The bell's condition while keys are required but this install has none:
+    covered people sign in with the app (marked as a step-down) until keys return."""
+    from core.auth.permissions import missing_permission
+
+    if missing_permission(user.user_id, "sessions.manage") is not None:
+        return []
+    if session_policy.policy().require_phishing_resistant == "nobody":
+        return []
+    now = security_keys.availability()
+    if now.available:
+        return []
+    return [
+        {
+            "message": f"Security keys are required but unavailable. {now.reason} "
+            "Covered people sign in with the app until they return.",
+            "link": SETTINGS_LINK,
+        }
+    ]
+
+
 def register() -> None:
     notices.CONDITIONS.append(warning)
+    notices.CONDITIONS.append(keys_unavailable)
 
 
 def record_daily() -> bool:

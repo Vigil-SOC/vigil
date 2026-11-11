@@ -8,11 +8,12 @@ import type { SectionProps } from './types'
 
 type Rules = SessionPolicyBody['password_character_rules']
 type Mfa = SessionPolicyBody['require_mfa']
+type Keys = SessionPolicyBody['require_phishing_resistant']
 type NumKey =
   | 'idle_standard_minutes' | 'idle_privileged_minutes' | 'absolute_hours' | 'sign_in_limit'
   | 'password_min_length' | 'password_history' | 'password_max_age_days' | 'password_min_age_days' | 'lockout_threshold' | 'lockout_minutes' | 'dormancy_days'
 // What the form holds: every field of the body.
-type Form = Record<NumKey, string> & { password_character_rules: Rules; require_mfa: Mfa; lockout_timed: boolean }
+type Form = Record<NumKey, string> & { password_character_rules: Rules; require_mfa: Mfa; require_phishing_resistant: Keys; lockout_timed: boolean }
 
 interface FieldDef {
   key: NumKey
@@ -86,14 +87,23 @@ const MFA: { value: Mfa; label: string; text: string }[] = [
 const MFA_TITLE = 'Require MFA'
 const MFA_HINT = 'Whose sign-in needs two-step verification. Someone it covers who has none set up is held at setup until they do. Service accounts are never covered.'
 const mfaText = (v: string | null | undefined) => MFA.find((m) => m.value === v)?.text ?? String(v)
+const KEYS: { value: Keys; label: string; text: string }[] = [
+  { value: 'nobody', label: 'Nobody', text: 'nobody' },
+  { value: 'privileged', label: 'Privileged roles', text: 'privileged roles' },
+  { value: 'everyone', label: 'Everyone', text: 'everyone' },
+]
+const KEYS_TITLE = 'Require phishing-resistant MFA'
+const KEYS_HINT = 'Whose sign-in needs a security key: for them the authenticator app no longer counts, and anyone covered with no key is held at setup until they add one. Never above Require MFA. Only a person with a key can raise it, and only while keys are available; while they are unavailable, covered people sign in with the app, marked as a step-down.'
+const keysText = (v: string | null | undefined) => KEYS.find((m) => m.value === v)?.text ?? String(v)
+const noKeyText = (n: number) => `${n} ${n === 1 ? 'person has' : 'people have'} no security key; they can't finish signing in until they add one`
 const TIMED_TITLE = 'Timed locks'
 const TIMED_HINT = 'On: a lock ends after the length set below. Off: a lock holds until an administrator unlocks the account or the person uses a reset link.'
 const timedText = (v: boolean) => (v ? 'on' : 'off')
 
 // Display order; the three that are not plain numbers have their own rows.
-const ORDER: (NumKey | 'require_mfa' | 'lockout_timed' | 'password_character_rules')[] = [
+const ORDER: (NumKey | 'require_mfa' | 'require_phishing_resistant' | 'lockout_timed' | 'password_character_rules')[] = [
   'idle_standard_minutes', 'idle_privileged_minutes', 'absolute_hours', 'sign_in_limit',
-  'require_mfa', 'lockout_threshold', 'lockout_timed', 'lockout_minutes', 'dormancy_days',
+  'require_mfa', 'require_phishing_resistant', 'lockout_threshold', 'lockout_timed', 'lockout_minutes', 'dormancy_days',
   'password_min_length', 'password_history', 'password_character_rules',
   'password_max_age_days', 'password_min_age_days',
 ]
@@ -117,6 +127,7 @@ const toForm = (p: SessionPolicy): Form => ({
   lockout_minutes: String(p.lockout_minutes),
   dormancy_days: p.dormancy_days == null ? '' : String(p.dormancy_days),
   require_mfa: p.require_mfa,
+  require_phishing_resistant: p.require_phishing_resistant,
 })
 
 const shown = (f: FieldDef, v: number | null | undefined) =>
@@ -147,7 +158,7 @@ export default function SessionsSection({ notify }: SectionProps) {
   const [stale, setStale] = useState<SessionPolicy | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [confirm, setConfirm] = useState<{ body: SessionPolicyBody; without_mfa: number | null } | null>(null)
+  const [confirm, setConfirm] = useState<{ body: SessionPolicyBody; without_mfa: number | null; without_key: number | null; loosening: boolean } | null>(null)
 
   const load = useCallback(() => {
     setFailed(null)
@@ -181,6 +192,7 @@ export default function SessionsSection({ notify }: SectionProps) {
     password_character_rules: form.password_character_rules,
     lockout_timed: form.lockout_timed,
     require_mfa: form.require_mfa,
+    require_phishing_resistant: form.require_phishing_resistant,
   } as SessionPolicyBody
   const was = toForm(saved)
   const dirty = (Object.keys(form) as (keyof Form)[]).some((k) => form[k] !== was[k])
@@ -193,7 +205,7 @@ export default function SessionsSection({ notify }: SectionProps) {
       setSaved(res.data)
       setForm(toForm(res.data))
       setStale(null)
-      notify('ok', 'Session policy saved. It applies at each open sign-in’s next request.')
+      notify('ok', `Session policy saved. It applies at each open sign-in’s next request.${res.data.notice ? ` ${res.data.notice}.` : ''}`)
     } catch (e) {
       refused(e)
     } finally {
@@ -214,7 +226,10 @@ export default function SessionsSection({ notify }: SectionProps) {
     setProblem(null)
     try {
       const { data } = await sessionPolicyApi.loosens(body, saved.version)
-      if ('loosening' in data && data.loosening) setConfirm({ body, without_mfa: data.without_mfa ?? null })
+      // A raise of the key requirement is shown with its count before it is saved, as a loosening is.
+      const loosening = 'loosening' in data && data.loosening
+      const without_key = 'without_key' in data ? data.without_key ?? null : null
+      if (loosening || without_key != null) setConfirm({ body, without_mfa: ('without_mfa' in data && data.without_mfa) || null, without_key, loosening })
       else await save(body)
     } catch (e) {
       refused(e)
@@ -227,6 +242,7 @@ export default function SessionsSection({ notify }: SectionProps) {
   const changes = next ? FIELDS.filter((f) => next[f.key] !== saved[f.key]) : []
   const rulesChanged = !!next && next.password_character_rules !== saved.password_character_rules
   const mfaChanged = !!next && next.require_mfa !== saved.require_mfa
+  const keysChanged = !!next && next.require_phishing_resistant !== saved.require_phishing_resistant
   const timedChanged = !!next && next.lockout_timed !== saved.lockout_timed
   const range = (f: FieldDef) => saved.ranges[f.key]
   const dormancyLonger = !!next && saved.dormancy_days != null && (next.dormancy_days == null || next.dormancy_days > saved.dormancy_days)
@@ -268,6 +284,23 @@ export default function SessionsSection({ notify }: SectionProps) {
           options={MFA.map(({ value, label }) => ({ value, label }))}
           disabled={busy}
           onSelect={(v) => set({ require_mfa: v as Mfa })}
+        />
+      </span>
+    </div>
+  )
+  const keysRow = (
+    <div className="lim-row" key="require_phishing_resistant">
+      <label className="lim-row-title" id="sp-keys-label">
+        {KEYS_TITLE}
+        <span>{KEYS_HINT}</span>
+      </label>
+      <span className="lim-row-tag">Saved: {keysText(saved.require_phishing_resistant)}</span>
+      <span className="lim-row-ctl flex items-center gap-2">
+        <Select
+          value={form.require_phishing_resistant}
+          options={KEYS.map(({ value, label }) => ({ value, label }))}
+          disabled={busy}
+          onSelect={(v) => set({ require_phishing_resistant: v as Keys })}
         />
       </span>
     </div>
@@ -317,6 +350,7 @@ export default function SessionsSection({ notify }: SectionProps) {
               Now: {[
                 ...FIELDS.map((f) => `${f.title.toLowerCase()} ${shown(f, stale[f.key])}`),
                 `require MFA ${mfaText(stale.require_mfa)}`,
+                `${KEYS_TITLE.toLowerCase()} ${keysText(stale.require_phishing_resistant)}`,
                 `${TIMED_TITLE.toLowerCase()} ${timedText(stale.lockout_timed)}`,
                 `${RULES_TITLE.toLowerCase()} ${rulesText(stale.password_character_rules)}`,
               ].join(' · ')}.
@@ -337,6 +371,7 @@ export default function SessionsSection({ notify }: SectionProps) {
       )}
       {ORDER.map((key) => {
         if (key === 'require_mfa') return mfaRow
+        if (key === 'require_phishing_resistant') return keysRow
         if (key === 'lockout_timed') return timedRow
         if (key === 'password_character_rules') return rulesRow
         // The length applies only to timed locks.
@@ -355,19 +390,22 @@ export default function SessionsSection({ notify }: SectionProps) {
       <ConfirmDialog
         open={!!confirm}
         danger={false}
-        title="Loosen the policy?"
+        title={confirm?.loosening ? 'Loosen the policy?' : 'Require security keys?'}
         confirmLabel="Save change"
         busy={busy}
         onConfirm={() => confirm && save(confirm.body)}
         onClose={() => setConfirm(null)}
         body={
           <>
-            <p>This change loosens the policy: a sign-in can last longer, an account hold more sign-ins, a password be shorter, simpler, reused sooner, older or changed sooner, someone sign in without MFA, a guesser have more tries or a shorter lock, or an unused account stay open longer:</p>
+            <p>{confirm?.loosening
+              ? 'This change loosens the policy: a sign-in can last longer, an account hold more sign-ins, a password be shorter, simpler, reused sooner, older or changed sooner, someone sign in without MFA or without a security key, a guesser have more tries or a shorter lock, or an unused account stay open longer:'
+              : 'This change requires security keys of more people:'}</p>
             <ul className="my-2 pl-5 list-disc">
               {changes.map((f) => (
                 <li key={f.key}>{f.title}: {shown(f, saved[f.key])} → {shown(f, next?.[f.key])}</li>
               ))}
               {mfaChanged && <li>{MFA_TITLE}: {mfaText(saved.require_mfa)} → {mfaText(next?.require_mfa)}</li>}
+              {keysChanged && <li>{KEYS_TITLE}: {keysText(saved.require_phishing_resistant)} → {keysText(next?.require_phishing_resistant)}</li>}
               {timedChanged && <li>{TIMED_TITLE}: {timedText(saved.lockout_timed)} → {timedText(next!.lockout_timed)}</li>}
               {rulesChanged && (
                 <li>{RULES_TITLE}: {rulesText(saved.password_character_rules)} → {rulesText(next?.password_character_rules)}</li>
@@ -376,6 +414,7 @@ export default function SessionsSection({ notify }: SectionProps) {
             {confirm?.without_mfa != null && (
               <p>{confirm.without_mfa} {confirm.without_mfa === 1 ? 'person' : 'people'} will be able to sign in without MFA.</p>
             )}
+            {confirm?.without_key != null && <p>{noKeyText(confirm.without_key)}.</p>}
             {dormancyLonger && <p>Longer periods, or off, leave unused accounts open longer.</p>}
             <p>It is recorded in the audit trail with your name and the old and new values.</p>
           </>

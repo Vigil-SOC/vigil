@@ -11590,6 +11590,8 @@ export interface components {
         LooseningOut: {
             /** Loosening */
             loosening: boolean;
+            /** Without Key */
+            without_key?: number | null;
             /** Without Mfa */
             without_mfa?: number | null;
         };
@@ -12210,6 +12212,8 @@ export interface components {
              * @default false
              */
             lockout_timed: boolean;
+            /** Notice */
+            notice?: string | null;
             /**
              * Password Character Rules
              * @default none
@@ -12243,6 +12247,12 @@ export interface components {
              * @enum {string}
              */
             require_mfa: "off" | "privileged" | "everyone";
+            /**
+             * Require Phishing Resistant
+             * @default nobody
+             * @enum {string}
+             */
+            require_phishing_resistant: "nobody" | "privileged" | "everyone";
             /** Sign In Limit */
             sign_in_limit?: number | null;
             /** Updated At */
@@ -12253,6 +12263,8 @@ export interface components {
             updated_by_name?: string | null;
             /** Version */
             version: number;
+            /** Without Key */
+            without_key?: number | null;
         };
         /**
          * PostgreSQLConfig
@@ -12906,6 +12918,12 @@ export interface components {
              * @enum {string}
              */
             require_mfa: "off" | "privileged" | "everyone";
+            /**
+             * Require Phishing Resistant
+             * @default nobody
+             * @enum {string}
+             */
+            require_phishing_resistant: "nobody" | "privileged" | "everyone";
             /** Sign In Limit */
             sign_in_limit?: number | null;
         };

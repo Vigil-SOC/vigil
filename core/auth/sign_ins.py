@@ -40,6 +40,12 @@ ENDED_BY_ADMIN = "ended_by_admin"  # also a service account or playbook, as cont
 EVERYONE = "everyone_signed_out"
 # A newer sign-in took this one's place under the account's sign-in limit.
 SIGN_IN_LIMIT = "sign_in_limit"
+# How a sign-in got in: MFA, or the app standing in for keys while they are
+# unavailable (a step-down), or a key-only person's recovery code doing so.
+MFA_STEP_DOWN = "mfa_step_down"
+RECOVERY_STEP_DOWN = "recovery_step_down"
+WITH_MFA = ("mfa", MFA_STEP_DOWN, RECOVERY_STEP_DOWN)
+
 # Three failed confirmations in a row (core/auth/step_up.py).
 TOO_MANY_CONFIRMATIONS = "too_many_confirmations"
 
@@ -122,7 +128,7 @@ class SignInEntry(BaseModel):
     browser: str
     device: Optional[str] = None
     address: Optional[str] = None
-    # 'password' or 'mfa'
+    # 'password', 'mfa', or a step-down while security keys are unavailable
     auth_method: str
     ended_at: OptDateTime = None
     end_reason: Optional[str] = None
@@ -258,7 +264,7 @@ def start(
         address=address,
         refresh_generation=0,
         # Completing MFA at sign-in starts the confirmation window.
-        confirmed_at=now if auth_method == "mfa" else None,
+        confirmed_at=now if auth_method in WITH_MFA else None,
     )
     session.add(row)
     return row
