@@ -539,7 +539,7 @@ def rewrap(session, old_secret: str, new_secret: str) -> int:
     """Wrap every key that is not retired under ``new_secret`` instead; the rows
     must open under ``old_secret``. Returns how many."""
     old, new = _wrapper(old_secret), _wrapper(new_secret)
-    # A restore may hand this a database from before revision 0059.
+    # A restore may hand this a database from before revision 0060.
     dated = session.execute(
         text(
             "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' "

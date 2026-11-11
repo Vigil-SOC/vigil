@@ -438,6 +438,15 @@ def _blank_beside(session, principal_id: str) -> None:
             ),
             {"id": principal_id},
         )
+    if _table(session, "sign_ins"):
+        # The rows and their ids stay; only the device details go.
+        session.execute(
+            text(
+                "UPDATE public.sign_ins SET user_agent = NULL, device = NULL,"
+                " address = NULL WHERE principal_id = :id"
+            ),
+            {"id": principal_id},
+        )
 
 
 def _drop_notices(session, principal_id: str) -> None:

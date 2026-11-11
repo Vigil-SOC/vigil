@@ -2,8 +2,8 @@
 
 from core.upgrade.revision import run_sql
 
-revision = "0059_key_wrapped_at"
-down_revision = "0058_sso_links"
+revision = "0060_key_wrapped_at"
+down_revision = "0059_erased_sign_ins"
 
 
 def upgrade() -> None:
