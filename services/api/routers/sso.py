@@ -5,26 +5,31 @@ the ETag; PUT needs that version in ``If-Match`` and refuses a stale one with
 412. A save that changes the discovery URL, client ID or secret first fetches
 the provider's discovery document and refuses, with a fixed reason, unless it
 answers. The client secret is written to the secrets store and never returned.
+
+"Require single sign-on" (#4286) is a field of the same row. It turns on only
+from the caller's own SSO sign-in that started after the discovery URL or client
+ID last changed; while on, those two can't change and SSO can't be turned off.
 """
 
 from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy.dialects.postgresql import insert
 
-from core.auth import sso_settings, trail_events
+from core.auth import sign_ins, sso, sso_settings, trail_events
 from core.auth.password_reset import default_base_url
 from core.auth.permissions import require_permission
 from core.config import get_settings
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import get_secret, secret_write_failure_detail, set_secret
-from core.storage.models import Role, SystemConfig, User
+from core.storage.models import Role, SignIn, SystemConfig, User
 from core.storage.schemas.base import OptDateTime
 from core.time import utcnow
+from services.api.routers.auth import _session_sid
 from services.api.routers.users import _can_assign_role
 
 router = APIRouter()
@@ -43,10 +48,32 @@ NOT_REACHED = (
 NEEDS_CLIENT = (
     "Single sign-on needs a client ID and a client secret before it is turned on"
 )
+# Why Require single sign-on can't be turned on from this sign-in.
+REQUIRE_SSO_OFF = "Single sign-on is not on and saved"
+REQUIRE_NOT_SSO = "Your sign-in didn't come through SSO: sign out and sign in with SSO"
+REQUIRE_STALE = (
+    "Your SSO sign-in started before the discovery URL or client ID last changed: "
+    "sign in with SSO again"
+)
+REQUIRE_FIRST = "Turn off Require single sign-on first"
+
+
+def require_blockers(
+    s: sso_settings.SsoSettings, request: Request, session
+) -> list[str]:
+    """What stops the caller turning Require single sign-on on under ``s``; empty: nothing."""
+    blockers = [] if sso.is_on(s) else [REQUIRE_SSO_OFF]
+    sid = _session_sid(request)
+    row = session.get(SignIn, sid) if sid else None
+    if row is None or row.auth_method != sign_ins.SSO:
+        blockers.append(REQUIRE_NOT_SSO)
+    elif s.provider_changed_at is None or row.started_at <= s.provider_changed_at:
+        blockers.append(REQUIRE_STALE)
+    return blockers
 
 
 class SsoSettingsIn(BaseModel):
-    """What a save sends. ``issuer`` comes from the check and ``require_sso`` is not changed here."""
+    """What a save sends. ``issuer`` comes from the check."""
 
     enabled: bool = False
     discovery_url: str = Field("", max_length=2048)
@@ -58,6 +85,8 @@ class SsoSettingsIn(BaseModel):
     )
     default_role_id: str = sso_settings.DEFAULT_ROLE
     groups_claim: str = Field("groups", min_length=1, max_length=128)
+    # None or absent keeps the stored value.
+    require_sso: Optional[bool] = None
 
 
 class SsoSettingsOut(sso_settings.SsoSettings):
@@ -69,6 +98,8 @@ class SsoSettingsOut(sso_settings.SsoSettings):
     updated_by: Optional[str] = None
     updated_by_name: Optional[str] = None
     updated_at: OptDateTime = None
+    # Why the caller can't turn Require single sign-on on now; empty: they can.
+    require_blockers: list[str] = []
 
 
 class SsoStaleOut(BaseModel):
@@ -76,7 +107,7 @@ class SsoStaleOut(BaseModel):
     current: SsoSettingsOut
 
 
-def _out(stored: sso_settings.Stored, session) -> SsoSettingsOut:
+def _out(stored: sso_settings.Stored, session, request: Request) -> SsoSettingsOut:
     editor = stored.updated_by and session.get(User, stored.updated_by)
     config = get_settings()
     return SsoSettingsOut(
@@ -88,6 +119,7 @@ def _out(stored: sso_settings.Stored, session) -> SsoSettingsOut:
         updated_by=stored.updated_by,
         updated_by_name=(editor.full_name or editor.username) if editor else None,
         updated_at=stored.updated_at,
+        require_blockers=require_blockers(stored.settings, request, session),
     )
 
 
@@ -108,12 +140,15 @@ def _version_of(if_match: Optional[str]) -> int:
 
 @router.get("/settings", response_model=SsoSettingsOut)
 def get_sso_settings(
-    response: Response, session: UnitOfWorkSession, _: User = Depends(_MANAGE)
+    request: Request,
+    response: Response,
+    session: UnitOfWorkSession,
+    _: User = Depends(_MANAGE),
 ):
     """The settings, whether a secret is stored, the redirect address, and the version (the ETag)."""
     stored, _found = sso_settings.read_row(session)
     response.headers["ETag"] = _etag(stored.version)
-    return _out(stored, session)
+    return _out(stored, session, request)
 
 
 @router.put(
@@ -129,6 +164,7 @@ def get_sso_settings(
 )
 def put_sso_settings(
     body: SsoSettingsIn,
+    request: Request,
     response: Response,
     session: UnitOfWorkSession,
     user: User = Depends(_MANAGE),
@@ -138,7 +174,7 @@ def put_sso_settings(
     expected = _version_of(if_match)
 
     def stale():
-        current = _out(sso_settings.read_row(session)[0], session)
+        current = _out(sso_settings.read_row(session)[0], session, request)
         return JSONResponse(
             status_code=412,
             content=SsoStaleOut(
@@ -165,11 +201,14 @@ def put_sso_settings(
         ],
         default_role_id=body.default_role_id,
         groups_claim=body.groups_claim.strip(),
-        require_sso=old.settings.require_sso,
+        require_sso=(
+            old.settings.require_sso if body.require_sso is None else body.require_sso
+        ),
+        provider_changed_at=old.settings.provider_changed_at,
     )
     changes = {
-        "old": old.settings.model_dump(),
-        "new": new.model_dump(),
+        "old": old.settings.model_dump(mode="json"),
+        "new": new.model_dump(mode="json"),
         "client_secret_changed": bool(secret),
     }
 
@@ -188,11 +227,17 @@ def put_sso_settings(
         if not _can_assign_role(user, role, session):
             refuse(403, f"You can't {use} {role.name}: it grants more than you hold")
 
-    provider_changed = (
+    client_changed = (
         new.discovery_url != old.settings.discovery_url
         or new.client_id != old.settings.client_id
-        or bool(secret)
     )
+    # While required, the provider people sign in through stays put.
+    if old.settings.require_sso and (client_changed or not new.enabled):
+        refuse(409, REQUIRE_FIRST)
+    # A row saved before the timestamp was kept gets one on its next save.
+    if client_changed or (new.discovery_url and new.provider_changed_at is None):
+        new.provider_changed_at = utcnow()
+    provider_changed = client_changed or bool(secret)
     if provider_changed or (new.discovery_url and not new.issuer):
         if new.discovery_url:
             try:
@@ -201,7 +246,7 @@ def put_sso_settings(
                 refuse(400, refusal.reason)
         else:
             new.issuer = None
-        changes["new"] = new.model_dump()
+        changes["new"] = new.model_dump(mode="json")
 
     if new.enabled:
         if not new.issuer:
@@ -209,7 +254,11 @@ def put_sso_settings(
         if not new.client_id or not (secret or get_secret(sso_settings.SECRET_KEY)):
             refuse(409, NEEDS_CLIENT)
 
-    value = {**new.model_dump(), "version": old.version + 1}
+    turning_on = new.require_sso and not old.settings.require_sso
+    if turning_on and (blockers := require_blockers(new, request, session)):
+        refuse(409, "; ".join(blockers))
+
+    value = {**new.model_dump(mode="json"), "version": old.version + 1}
     if found:
         row = session.get(SystemConfig, sso_settings.KEY)
         row.value, row.updated_by, row.updated_at = value, user.user_id, utcnow()
@@ -235,10 +284,17 @@ def put_sso_settings(
         version=old.version + 1,
         **changes,
     )
+    if new.require_sso != old.settings.require_sso:
+        trail_events.record(
+            session,
+            "sso.required_on" if new.require_sso else "sso.required_off",
+            actor=user.principal_id,
+            version=old.version + 1,
+        )
     session.flush()
     # Last, so a save that loses above never replaces the stored secret; a failure here rolls the row back.
     if secret and not set_secret(sso_settings.SECRET_KEY, secret):
         refuse(500, secret_write_failure_detail("The client secret was not saved"))
     stored = sso_settings.read_row(session)[0]
     response.headers["ETag"] = _etag(stored.version)
-    return _out(stored, session)
+    return _out(stored, session, request)

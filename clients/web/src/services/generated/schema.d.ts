@@ -9195,6 +9195,11 @@ export interface components {
          * @description Whether the instance still needs its first account.
          */
         BootstrapStatusResponse: {
+            /**
+             * Require Sso
+             * @default false
+             */
+            require_sso: boolean;
             /** Required */
             required: boolean;
             /**
@@ -13478,7 +13483,7 @@ export interface components {
         };
         /**
          * SsoSettingsIn
-         * @description What a save sends. ``issuer`` comes from the check and ``require_sso`` is not changed here.
+         * @description What a save sends. ``issuer`` comes from the check.
          */
         SsoSettingsIn: {
             /**
@@ -13510,6 +13515,8 @@ export interface components {
              * @default groups
              */
             groups_claim: string;
+            /** Require Sso */
+            require_sso?: boolean | null;
         };
         /** SsoSettingsOut */
         SsoSettingsOut: {
@@ -13546,8 +13553,15 @@ export interface components {
             groups_claim: string;
             /** Issuer */
             issuer?: string | null;
+            /** Provider Changed At */
+            provider_changed_at?: string | null;
             /** Redirect Url */
             redirect_url: string;
+            /**
+             * Require Blockers
+             * @default []
+             */
+            require_blockers: string[];
             /**
              * Require Sso
              * @default false

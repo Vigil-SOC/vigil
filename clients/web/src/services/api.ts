@@ -1673,6 +1673,7 @@ interface BootstrapStatus {
   required: boolean
   // single sign-on is on: the login page offers "Sign in with SSO"
   sso_enabled?: boolean
+  require_sso?: boolean
 }
 
 interface BootstrapPayload {

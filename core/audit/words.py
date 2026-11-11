@@ -258,6 +258,9 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     + (f": {_word(p['reason'])}" if p.get("reason") else ""),
     "auth.denied": lambda p: "Was refused"
     + (f" {p['attempted']}" if p.get("attempted") else ""),
+    "sso.required_on": "Turned on Require single sign-on",
+    "sso.required_off": lambda p: "Turned off Require single sign-on"
+    + (f" from the host: {p['reason']}" if p.get("reason") else ""),
     "auth.password_changed": "Changed their password",
     "auth.password_reset": "Reset their password",
     "auth.mfa_enabled": "Turned on two-step sign-in",

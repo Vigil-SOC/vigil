@@ -23,6 +23,7 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
+from core.auth import sso  # noqa: E402
 from core.auth.identity import matching_accounts  # noqa: E402
 from core.auth.password_reset import (  # noqa: E402
     default_base_url,
@@ -63,6 +64,13 @@ def issue_link(session, who: str, base_url: str) -> int:
             print(f"  {user.username} <{user.email}>", file=sys.stderr)
         return 1
     user = matches[0]
+    if sso.required():
+        print(
+            "Single sign-on is required, so reset links are not issued. "
+            "Turn it off first: python -m core.auth.require_sso_off",
+            file=sys.stderr,
+        )
+        return 1
     if not user.is_active:
         print(
             f"User {user.username!r} is inactive; reactivate it before resetting.",

@@ -15,6 +15,7 @@ type Form = {
   group_roles: Mapping[]
   default_role_id: string
   groups_claim: string
+  require_sso: boolean
 }
 
 const toForm = (s: SsoSettings): Form => ({
@@ -25,6 +26,7 @@ const toForm = (s: SsoSettings): Form => ({
   group_roles: (s.group_roles ?? []).map((g) => ({ ...g })),
   default_role_id: s.default_role_id ?? 'role-viewer',
   groups_claim: s.groups_claim ?? 'groups',
+  require_sso: !!s.require_sso,
 })
 
 const same = (a: Form, b: Form) => JSON.stringify(a) === JSON.stringify(b)
@@ -82,6 +84,10 @@ export default function SsoCard({ notify }: SectionProps) {
   }
 
   const reached = !!saved.issuer
+  // While required, the provider and SSO itself stay as saved: turn Require off first.
+  const locked = !!saved.require_sso
+  const lockedTitle = locked ? 'Turn off Require single sign-on first' : undefined
+  const blockers = saved.require_blockers ?? []
   const dirty = !same(form, toForm(saved))
   const valid = form.group_roles.every((g) => g.group.trim()) && !!form.groups_claim.trim()
   // A saved id with no role behind it (or a list we could not read) still shows as itself.
@@ -135,8 +141,8 @@ export default function SsoCard({ notify }: SectionProps) {
           <Toggle
             checked={form.enabled}
             label="Single sign-on"
-            title={reached ? undefined : 'Save settings that reach the provider first'}
-            disabled={busy || (!reached && !form.enabled)}
+            title={lockedTitle ?? (reached ? undefined : 'Save settings that reach the provider first')}
+            disabled={busy || locked || (!reached && !form.enabled)}
             onChange={(v) => set({ enabled: v })}
           />
         </span>
@@ -156,7 +162,8 @@ export default function SsoCard({ notify }: SectionProps) {
             className="mono"
             placeholder="https://your-provider/.well-known/openid-configuration"
             value={form.discovery_url}
-            disabled={busy}
+            disabled={busy || locked}
+            title={lockedTitle}
             spellCheck={false}
             onChange={(e) => set({ discovery_url: e.target.value })}
           />
@@ -168,7 +175,7 @@ export default function SsoCard({ notify }: SectionProps) {
         </div>
         <div className="sso-pair">
           <Field label="Client ID">
-            <TextInput className="mono" value={form.client_id} disabled={busy} spellCheck={false} onChange={(e) => set({ client_id: e.target.value })} />
+            <TextInput className="mono" value={form.client_id} disabled={busy || locked} title={lockedTitle} spellCheck={false} onChange={(e) => set({ client_id: e.target.value })} />
           </Field>
           {saved.client_secret_set && !replacing ? (
             <Field label="Client secret" hint="Saved. It is never shown again.">
@@ -285,6 +292,45 @@ export default function SsoCard({ notify }: SectionProps) {
                 <TextInput className="mono" value={form.groups_claim} disabled={busy} spellCheck={false} onChange={(e) => set({ groups_claim: e.target.value })} />
               </Field>
             </div>
+            <hr className="sso-rule" />
+            <div className="sso-require">
+              <Toggle
+                checked={form.require_sso}
+                label="Require single sign-on"
+                // Turning on needs a qualifying sign-in; turning off never does.
+                disabled={busy || (!saved.require_sso && blockers.length > 0)}
+                onChange={(v) => set({ require_sso: v })}
+              />
+              <div className="sso-sub">
+                <h4>Require single sign-on</h4>
+                <p>Passwords are refused for people, and no reset links are sent. Service accounts are unaffected.</p>
+              </div>
+            </div>
+            {saved.require_sso ? (
+              <div className="sso-conditions">
+                <span className="sso-cond">
+                  <Icon name="info" size={13} />
+                  <span>
+                    The discovery URL, client ID and the On switch are locked while this is on. If the provider is down, an
+                    operator turns it off on the host: <code>python -m core.auth.require_sso_off</code>
+                  </span>
+                </span>
+              </div>
+            ) : (
+              <div className="sso-conditions">
+                {blockers.length === 0 ? (
+                  <span className="sso-cond ok">
+                    <Icon name="check" size={13} /> <span>You signed in through SSO with these settings.</span>
+                  </span>
+                ) : (
+                  blockers.map((b) => (
+                    <span key={b} className="sso-cond warn">
+                      <Icon name="alert" size={13} /> <span>{b}.</span>
+                    </span>
+                  ))
+                )}
+              </div>
+            )}
           </>
         )}
 

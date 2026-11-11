@@ -891,7 +891,8 @@ function RolesCard({
       {meta.nobody_can_manage_roles && (
         <div className="settings-banner err mb-3">
           <Icon name="alert" size={14} /> Nobody on this install can manage roles. On the host, run{' '}
-          <code className="font-mono">python -m core.auth.recover_admin &lt;username&gt;</code>
+          <code className="font-mono">python -m core.auth.recover_admin &lt;username&gt;</code>. If Require single sign-on is on
+          and the provider is down, run <code className="font-mono">python -m core.auth.require_sso_off</code> to let passwords back in.
         </div>
       )}
       <div className="table-wrap">

@@ -83,6 +83,16 @@ def is_on(current: Optional[sso_settings.SsoSettings] = None) -> bool:
     )
 
 
+def required(current: Optional[sso_settings.SsoSettings] = None) -> bool:
+    """Require single sign-on in force: on, and SSO itself working, so a broken row locks nobody out."""
+    s = current or sso_settings.settings()
+    return bool(s.require_sso and is_on(s))
+
+
+# The one detail a refused password sign-in gets while it is required.
+REQUIRED_DETAIL = "Your organization signs in with SSO"
+
+
 def redirect_uri() -> str:
     """The address the provider sends the browser back to: the one the card shows."""
     return default_base_url(get_settings()).rstrip("/") + sso_settings.CALLBACK_PATH
