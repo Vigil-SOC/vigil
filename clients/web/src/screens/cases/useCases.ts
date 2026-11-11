@@ -74,6 +74,8 @@ export interface CaseFilters {
   priority: string
   sla: '' | 'risk'
   assignee: string
+  // cases with no owner, alongside any assignee
+  unassigned: boolean
   workflow: string
   dataSource: string
   limit: number
@@ -91,6 +93,7 @@ export const INITIAL_CASE_FILTERS: CaseFilters = {
   priority: 'any',
   sla: '',
   assignee: '',
+  unassigned: false,
   workflow: '',
   dataSource: '',
   limit: CASE_PAGE_LIMIT,
@@ -127,7 +130,9 @@ function toParams(f: CaseFilters) {
   if (f.kind) params.kind = f.kind
   if (f.priority && f.priority !== 'any') params.priority = f.priority
   if (f.sla === 'risk') params.sla_at_risk = true
-  if (f.assignee.trim()) params.assignee = f.assignee.trim()
+  // exact, as stored: the value comes from the owner list or a ?owner= link
+  if (f.assignee.trim()) params.assignee = f.assignee
+  if (f.unassigned) params.unassigned = true
   if (f.workflow.trim()) params.workflow = f.workflow.trim()
   if (f.dataSource.trim()) params.data_source = f.dataSource.trim()
   if (f.query.trim()) params.query = f.query.trim()

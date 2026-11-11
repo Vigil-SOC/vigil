@@ -31,7 +31,7 @@ import { OwnerFix, PersonPicker, isOwnerNotCurrent } from '../../shared/people'
 import { useToast } from '../../shell/toast'
 import { inputCls } from './CaseSections'
 import { CasePage } from './CasePage'
-import { caseConflicts, errorDetail } from './caseFormat'
+import { caseConflicts, errorDetail, STALE_OWNER_NOTE } from './caseFormat'
 import { ClosureFields, closurePayload, closureProblem, type ClosureCategory } from './ClosureFields'
 import { LATER_RELEASE } from '../../shared/later'
 import { holdCase } from '../../shell/heldCase'
@@ -108,6 +108,78 @@ const WORKING = ':working'
 const MINE = ':mine'
 const NEAR_SLA = ':near-sla'
 const OTHER = ':other'
+const UNASSIGNED = ':unassigned'
+const OWNERS_FAILED = ':owners-failed'
+// an owner's option value, so a username can't collide with the values above
+const OWNER = 'owner:'
+
+type CaseOwner = Schema<'CaseOwner'>
+type OwnerPick = { assignee: string; unassigned: boolean }
+
+/** The owners stored on cases this reader can list, reloaded when a case changes; `failed` if the read failed. */
+function useCaseOwners(): { owners: CaseOwner[]; failed: boolean } {
+  const [state, setState] = useState<{ owners: CaseOwner[]; failed: boolean }>({ owners: [], failed: false })
+  useEffect(() => {
+    let cancelled = false
+    let latest = 0
+    const load = () => {
+      const call = ++latest
+      // only the latest read lands, so a slow earlier one can't overwrite it
+      const keep = () => !cancelled && call === latest
+      casesApi
+        .getOwners()
+        .then((res) => { if (keep()) setState({ owners: res.data.owners, failed: false }) })
+        .catch(() => { if (keep()) setState({ owners: [], failed: true }) })
+    }
+    load()
+    window.addEventListener(CASES_CHANGED, load)
+    return () => {
+      cancelled = true
+      window.removeEventListener(CASES_CHANGED, load)
+    }
+  }, [])
+  return state
+}
+
+/** The option value for an owner filter: '' is everyone's. */
+function ownerValue({ assignee, unassigned }: OwnerPick, me: string): string {
+  if (!assignee.trim()) return unassigned ? UNASSIGNED : ''
+  return assignee === me ? MINE : OWNER + assignee
+}
+
+/** The filter an owner option sets; null for the inert "couldn't load" note. */
+function ownerPick(value: string, me: string): OwnerPick | null {
+  if (value === OWNERS_FAILED) return null
+  if (value === MINE) return { assignee: me, unassigned: false }
+  if (value === UNASSIGNED) return { assignee: '', unassigned: true }
+  return { assignee: value.startsWith(OWNER) ? value.slice(OWNER.length) : '', unassigned: false }
+}
+
+/** Everyone's, Assigned to me, Unassigned, then the readable owners, stale ones labelled. A selected owner
+ *  the list lacks (a ?owner= link, or the list failed) is kept, so the filter never hides. */
+function ownerOptions(
+  { owners, failed }: { owners: CaseOwner[]; failed: boolean },
+  me: string,
+  selected: string,
+  extra: { value: string; label: string; count?: number }[] = [],
+) {
+  const listed = owners.filter((o) => o.owner !== me).map((o) => ({
+    value: OWNER + o.owner,
+    label: o.owner_state === 'not_current' ? `${o.owner} · ${STALE_OWNER_NOTE}` : o.owner,
+  }))
+  if (selected.trim() && selected !== me && !owners.some((o) => o.owner === selected)) listed.unshift({ value: OWNER + selected, label: selected })
+  return [
+    { value: '', label: 'Everyone’s' },
+    ...(me ? [{ value: MINE, label: 'Assigned to me' }] : []),
+    ...extra,
+    { value: UNASSIGNED, label: 'Unassigned' },
+    ...(failed ? [{ value: OWNERS_FAILED, label: 'Couldn’t load owners' }] : []),
+    ...listed,
+  ]
+}
+
+/** An owner filter's name in a combined option. */
+const ownerLabel = (pick: OwnerPick) => (pick.assignee.trim() || (pick.unassigned ? 'Unassigned' : ''))
 
 const KIND_WORDS: Record<string, string> = {
   investigate: 'Investigation',
@@ -155,7 +227,7 @@ export default function CasesScreen({ setViewFull, viewFull, openCase, caseSeed,
   const selected = searchParams.get('case')
   // ?state=closed, ?needs_you=1 and ?working=1 open the list on that chip, and ?closed_by and
   // ?alerts_from narrow it, so an Overview count can link to the cases its alerts are in; ?owner opens
-  // it on one assignee's cases, as a notice about an account's open work links
+  // it on one assignee's cases (?unassigned=1 on cases with none), as a notice about an account's open work links
   const [filters, setFilters] = useState<CaseFilters>(() => {
     const closedBy = searchParams.get('closed_by')
     const alertsFrom = searchParams.get('alerts_from')
@@ -167,6 +239,7 @@ export default function CasesScreen({ setViewFull, viewFull, openCase, caseSeed,
       closedBy: closedBy === 'agent' || closedBy === 'person' ? closedBy : '',
       alertsFrom: alertsFrom === 'today' || alertsFrom === 'all' ? alertsFrom : '',
       assignee: searchParams.get('owner') ?? '',
+      unassigned: searchParams.get('unassigned') === '1',
     }
   })
   const backToList = useCallback(() => setSearchParams({}), [setSearchParams])
@@ -214,6 +287,7 @@ function CasesTable({
 }) {
   const { rows, total, strip, phase, error, reload } = useCases(filters)
   const { kinds, names: workflowNames } = useWorkflowCatalog()
+  const owners = useCaseOwners()
   const me = useAuth().user?.username ?? ''
   const [showAdvanced, setShowAdvanced] = useState(false)
   // Advanced search replaces the page until cleared. Results stay in API order.
@@ -237,7 +311,7 @@ function CasesTable({
   // what the Filters panel holds; the chips own state, needs-you, kind and SLA
   const panelFilters =
     (filters.priority !== 'any' ? 1 : 0) +
-    (filters.assignee.trim() ? 1 : 0) +
+    (filters.assignee.trim() || filters.unassigned ? 1 : 0) +
     (filters.workflow.trim() ? 1 : 0) +
     (filters.dataSource.trim() ? 1 : 0)
   const activeFilters =
@@ -274,6 +348,7 @@ function CasesTable({
       priority: 'any',
       sla: '',
       assignee: '',
+      unassigned: false,
       workflow: '',
       dataSource: '',
     })
@@ -300,20 +375,24 @@ function CasesTable({
     { value: 'closed', label: 'Closed' },
   ]
 
-  // Assigned: an assignee typed in the Filters panel shows as its own option, so it never hides
-  const assignee = filters.assignee.trim()
-  // the panel's assignee can sit alongside Near SLA; then one option names both
-  const other = assignee && assignee !== me ? assignee : ''
-  const assignedValue = other ? OTHER : filters.sla === 'risk' ? NEAR_SLA : assignee ? MINE : ''
+  // Assigned: the panel's owner can sit alongside Near SLA; then one option names both
+  const owner = { assignee: filters.assignee, unassigned: filters.unassigned }
+  const ownerSel = ownerValue(owner, me)
+  const assignedValue = filters.sla === 'risk' ? (ownerSel ? OTHER : NEAR_SLA) : ownerSel
   const assignedOptions = [
-    { value: '', label: 'Everyone’s' },
-    ...(me ? [{ value: MINE, label: 'Assigned to me' }] : []),
-    { value: NEAR_SLA, label: 'Near SLA', count: strip.sla_at_risk },
-    ...(other ? [{ value: OTHER, label: filters.sla === 'risk' ? `${other} · Near SLA` : other }] : []),
+    ...ownerOptions(owners, me, filters.assignee, [{ value: NEAR_SLA, label: 'Near SLA', count: strip.sla_at_risk }]),
+    ...(filters.sla === 'risk' && ownerSel ? [{ value: OTHER, label: `${ownerSel === MINE ? 'Assigned to me' : ownerLabel(owner)} · Near SLA` }] : []),
   ]
+  const noOwner = { assignee: '', unassigned: false }
   const pickAssigned = (v: string) => {
     if (v === OTHER) return
-    setFilters(v === MINE ? { assignee: me, sla: '' } : v === NEAR_SLA ? { sla: 'risk', assignee: '' } : { assignee: '', sla: '' })
+    if (v === NEAR_SLA) return setFilters({ sla: 'risk', ...noOwner })
+    const pick = ownerPick(v, me)
+    if (pick) setFilters({ ...pick, sla: '' })
+  }
+  const pickPanelOwner = (v: string) => {
+    const pick = ownerPick(v, me)
+    if (pick) setFilters(pick)
   }
 
   const kindName = (c: CaseRow) => (c.workflowId && workflowNames[c.workflowId]) || c.workflowId || '—'
@@ -346,10 +425,10 @@ function CasesTable({
                   onSelect={(priority) => setFilters({ priority })}
                   options={[{ value: 'any', label: 'Any' }, ...CASE_PRIO_OPTIONS]}
                 />
-                <label className="filter-grp">
+                <div className="filter-grp">
                   <span className="filter-grp-label">Assignee</span>
-                  <input aria-label="Assignee filter" className={inputCls} value={filters.assignee} onChange={(e) => setFilters({ assignee: e.target.value })} />
-                </label>
+                  <Select searchable value={ownerSel} options={ownerOptions(owners, me, filters.assignee)} onSelect={pickPanelOwner} />
+                </div>
                 <label className="filter-grp">
                   <span className="filter-grp-label">Workflow</span>
                   <input aria-label="Workflow filter" className={inputCls} value={filters.workflow} onChange={(e) => setFilters({ workflow: e.target.value })} />
@@ -388,7 +467,7 @@ function CasesTable({
             label="Near SLA"
             info={<InfoTip label="How near SLA is counted" {...NEAR_SLA_TIP} />}
             value={strip.sla_at_risk.toLocaleString()}
-            onClick={() => setFilters({ sla: filters.sla === 'risk' ? '' : 'risk', assignee: '' })}
+            onClick={() => setFilters({ sla: filters.sla === 'risk' ? '' : 'risk', ...noOwner })}
             pressed={filters.sla === 'risk'}
           />
           {/* display-only: the closed filter lists every closed case, not today's */}
@@ -410,7 +489,7 @@ function CasesTable({
                 onSelect={(kind) => setFilters({ kind })}
               />
             )}
-            <Select name="Assigned" value={assignedValue} options={assignedOptions} onSelect={pickAssigned} />
+            <Select name="Assigned" searchable={owners.owners.length > 8} value={assignedValue} options={assignedOptions} onSelect={pickAssigned} />
             {/* set by an Overview link; shown, and removable, so the list never looks wrong for no reason */}
             {filters.closedBy && (
               <FilterChip
@@ -443,7 +522,7 @@ function CasesTable({
           )}
         </div>
       </div>
-      {showAdvanced && <AdvancedSearchPanel onResults={setResults} rows={rows} />}
+      {showAdvanced && <AdvancedSearchPanel onResults={setResults} rows={rows} owners={owners} me={me} />}
       {results && (
         <div className="adv-results-bar">
           <span>Showing <b>{results.length}</b> search result{results.length === 1 ? '' : 's'}</span>
@@ -505,9 +584,12 @@ function CasesTable({
                     <span role="cell"><StatePill state={c.status} needs={c.needsYou} /></span>
                     <span role="cell" className="cg-owner col-low">
                       <span className="cg-avatar" aria-hidden="true">{c.owner}</span>
-                      <span className="cg-owner-name">
-                        {c.ownerName === 'unassigned' ? 'Unassigned' : c.ownerName}
-                        {me && c.ownerName === me && ' (you)'}
+                      <span className="cg-owner-text">
+                        <span className="cg-owner-name">
+                          {c.ownerName || 'Unassigned'}
+                          {me && c.ownerName === me && ' (you)'}
+                        </span>
+                        {c.ownerStale && <span className="owner-note">{STALE_OWNER_NOTE}</span>}
                       </span>
                     </span>
                     <span role="cell" className="cg-time col-low">
@@ -613,7 +695,12 @@ function DeleteCaseDialog({
   )
 }
 
-function AdvancedSearchPanel({ onResults, rows }: { onResults: (r: CaseRow[] | null) => void; rows: CaseRow[] }) {
+function AdvancedSearchPanel({ onResults, rows, owners, me }: {
+  onResults: (r: CaseRow[] | null) => void
+  rows: CaseRow[]
+  owners: { owners: CaseOwner[]; failed: boolean }
+  me: string
+}) {
   const [query, setQuery] = useState('')
   const [priority, setPriority] = useState('')
   const [status, setStatus] = useState('')
@@ -647,7 +734,9 @@ function AdvancedSearchPanel({ onResults, rows }: { onResults: (r: CaseRow[] | n
     if (query.trim()) filters.query_text = query.trim()
     if (priority) filters.priority = [priority]
     if (status) filters.status = [status]
-    if (assignee.trim()) filters.assignee = [assignee.trim()]
+    const owner = ownerPick(assignee, me)
+    if (owner?.assignee) filters.assignee = [owner.assignee]
+    if (owner?.unassigned) filters.unassigned = true
     const tagList = tags.split(',').map((t) => t.trim()).filter(Boolean)
     if (tagList.length) filters.tags = tagList
     if (start) filters.created_after = start
@@ -659,7 +748,7 @@ function AdvancedSearchPanel({ onResults, rows }: { onResults: (r: CaseRow[] | n
     setBusy(true)
     setErr('')
     try {
-      const res = await caseSearchApi.search({ ...filters, limit: 50, offset: 0 })
+      const res = await caseSearchApi.search({ ...filters, unassigned: filters.unassigned ?? false, limit: 50, offset: 0 })
       onResults(res.data.results.map((c) => mapQueueCase(c)))
     } catch (e) {
       setErr(errorDetail(e, 'Search failed'))
@@ -734,7 +823,7 @@ function AdvancedSearchPanel({ onResults, rows }: { onResults: (r: CaseRow[] | n
         />
       </label>
       <label className="af"><span>Assignee</span>
-        <input className={inputCls} placeholder="name or email" value={assignee} onChange={(e) => setAssignee(e.target.value)} onKeyDown={onKey} />
+        <Select searchable value={assignee} options={ownerOptions(owners, me, ownerPick(assignee, me)?.assignee ?? '')} onSelect={(v) => v !== OWNERS_FAILED && setAssignee(v)} />
       </label>
       <label className="af"><span>Tags</span>
         <input className={inputCls} placeholder="comma-separated" value={tags} onChange={(e) => setTags(e.target.value)} onKeyDown={onKey} />
@@ -855,7 +944,7 @@ const CONFLICT_NAME: Record<CaseEditField, string> = {
 function conflictValue(field: CaseEditField, value: string): string {
   if (field === 'status') return CASE_STATUS_OPTIONS.find((o) => o.value === value)?.label ?? (value || 'blank')
   if (field === 'priority') return CASE_PRIO_OPTIONS.find((o) => o.value === value)?.label ?? (value || 'blank')
-  if (field === 'assignee') return value || 'unassigned'
+  if (field === 'assignee') return value || 'Unassigned'
   return value ? `“${value}”` : 'empty'
 }
 

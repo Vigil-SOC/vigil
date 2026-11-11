@@ -97,6 +97,19 @@ class CaseListResponse(BaseModel):
     strip: CaseQueueStrip
 
 
+class CaseOwner(BaseModel):
+    """One stored owner on a readable case: the value as stored, and its state."""
+
+    owner: str
+    owner_state: Literal["current", "not_current"]
+
+
+class CaseOwnersResponse(BaseModel):
+    """Distinct non-blank owners on cases the reader can list, closed included."""
+
+    owners: list[CaseOwner]
+
+
 class CaseInvestigationRef(BaseModel):
     """One run on the case page: an investigation, or a run started on the case
     with no investigation row (``investigation_id`` null). Newest first."""

@@ -278,6 +278,7 @@ def _matches(
     query: Optional[str],
     priority: Optional[str],
     assignee: Optional[str],
+    unassigned: bool,
     state: Optional[str],
     closed: Optional[bool],
     sla_at_risk: bool,
@@ -317,8 +318,12 @@ def _matches(
         return False
     if priority and (case.get("priority") or "") != priority:
         return False
-    if assignee is not None and (case.get("assignee") or "") != assignee:
-        return False
+    if assignee is not None or unassigned:
+        owner = case.get("assignee") or ""
+        if not (
+            (assignee is not None and owner == assignee) or (unassigned and not owner)
+        ):
+            return False
     if data_source:
         sources = {
             findings_by_id.get(finding_id, {}).get("data_source")
@@ -336,6 +341,15 @@ def _matches(
     return True
 
 
+def case_owners(cases: list[dict]) -> list[dict]:
+    """Distinct non-blank demo owners, each with its state (none current: no database)."""
+    names = sorted(
+        {o for c in cases if isinstance(o := c.get("assignee"), str) and o.strip()}
+    )
+    states = owner_states(None, names)
+    return [{"owner": name, "owner_state": states[name]} for name in names]
+
+
 def case_queue(
     cases: list[dict],
     findings: list[dict],
@@ -346,6 +360,7 @@ def case_queue(
     query: Optional[str] = None,
     priority: Optional[str] = None,
     assignee: Optional[str] = None,
+    unassigned: bool = False,
     state: Optional[str] = None,
     closed: Optional[bool] = None,
     sla_at_risk: bool = False,
@@ -389,6 +404,7 @@ def case_queue(
             query=query,
             priority=priority,
             assignee=assignee,
+            unassigned=unassigned,
             state=state,
             closed=closed,
             sla_at_risk=sla_at_risk,

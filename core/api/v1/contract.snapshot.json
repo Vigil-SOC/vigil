@@ -1831,6 +1831,46 @@
         "title": "CaseMetricsSummaryResponse",
         "type": "object"
       },
+      "CaseOwner": {
+        "description": "One stored owner on a readable case: the value as stored, and its state.",
+        "properties": {
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "owner_state": {
+            "enum": [
+              "current",
+              "not_current"
+            ],
+            "title": "Owner State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner",
+          "owner_state"
+        ],
+        "title": "CaseOwner",
+        "type": "object"
+      },
+      "CaseOwnersResponse": {
+        "description": "Distinct non-blank owners on cases the reader can list, closed included.",
+        "properties": {
+          "owners": {
+            "items": {
+              "$ref": "#/components/schemas/CaseOwner"
+            },
+            "title": "Owners",
+            "type": "array"
+          }
+        },
+        "required": [
+          "owners"
+        ],
+        "title": "CaseOwnersResponse",
+        "type": "object"
+      },
       "CaseQueueItem": {
         "description": "One row of the case queue.\n\n``case_id`` and ``title`` stay so callers that only need a picker\n(the workflow start dialog) can keep reading the list.",
         "properties": {
@@ -4408,6 +4448,11 @@
               }
             ],
             "title": "Tags"
+          },
+          "unassigned": {
+            "default": false,
+            "title": "Unassigned",
+            "type": "boolean"
           }
         },
         "title": "SearchRequest",
@@ -6965,6 +7010,16 @@
           },
           {
             "in": "query",
+            "name": "unassigned",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Unassigned",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
             "name": "closed",
             "required": false,
             "schema": {
@@ -7689,6 +7744,55 @@
         "summary": "Get Summary",
         "tags": [
           "case-metrics"
+        ]
+      }
+    },
+    "/api/v1/cases/owners": {
+      "get": {
+        "operationId": "get_api_v1_cases_owners",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseOwnersResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Case Owners",
+        "tags": [
+          "cases"
         ]
       }
     },

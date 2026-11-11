@@ -7,7 +7,7 @@ import { StatePill } from '../../shared/StatePill'
 import { useNoSideways } from '../../shared/useNoSideways'
 import { utcDay } from '../../shared/utc'
 import { commentCount, CommentsView, inputCls, SectionCard, TasksView, useComments, useResource, useTasks, type Resource } from './CaseSections'
-import { errorDetail, timeLeft, when } from './caseFormat'
+import { errorDetail, STALE_OWNER_NOTE, timeLeft, when } from './caseFormat'
 import { entityShown, type RunFold } from './caseFold'
 import { cardsByFinding, ruleLine, type CaseRuleCard } from './caseRuleLine'
 import type { CaseInvestigationRef, CaseLinkedFinding } from './useCases'
@@ -400,7 +400,7 @@ function initialsOf(name: string): string {
 }
 
 /** Comments, tasks and tickets load once here (open or not) and feed the collapsed line, the summary and the cards. */
-function People({ caseId, owner, onWritten }: { caseId: string; owner: string; onWritten?: () => void }) {
+function People({ caseId, owner, ownerStale, onWritten }: { caseId: string; owner: string; ownerStale: boolean; onWritten?: () => void }) {
   const [open, setOpen] = useState(false)
   const comments = useComments(caseId)
   const tasks = useTasks(caseId)
@@ -408,12 +408,13 @@ function People({ caseId, owner, onWritten }: { caseId: string; owner: string; o
   // Never a made-up count: the number appears only once that list has loaded.
   const count = (r: Resource<unknown[]>) => (r.phase === 'ready' ? String(r.data?.length ?? 0) : '—')
   const n = commentCount(comments.data)
+  const who = ownerStale ? `${owner} (${STALE_OWNER_NOTE})` : owner
   const line =
     comments.phase === 'ready'
-      ? `${owner}, ${n} ${n === 1 ? 'comment' : 'comments'}`
+      ? `${who}, ${n} ${n === 1 ? 'comment' : 'comments'}`
       : comments.phase === 'error'
-        ? `${owner}, comments unavailable`
-        : owner
+        ? `${who}, comments unavailable`
+        : who
   return (
     <section className="side-block">
       <button type="button" className="side-people-toggle" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
@@ -425,6 +426,7 @@ function People({ caseId, owner, onWritten }: { caseId: string; owner: string; o
           <div className="side-owner">
             <span className="avatar">{owner === '—' ? '—' : initialsOf(owner)}</span>
             <span>{owner}</span>
+            {ownerStale && <span className="owner-note">{STALE_OWNER_NOTE}</span>}
           </div>
           <div className="side-meta">
             Comments {comments.phase === 'ready' ? n : '—'} · Tasks {count(tasks as Resource<unknown[]>)} · Tickets {count(tickets as Resource<unknown[]>)}
@@ -439,10 +441,12 @@ function People({ caseId, owner, onWritten }: { caseId: string; owner: string; o
 }
 
 /** The Details, Alerts, Related cases, Known and People blocks of the case side panel. */
-export function CaseSide({ caseId, linked, owner, latest, workflowNames, sla, closed, fold, onWritten }: {
+export function CaseSide({ caseId, linked, owner, ownerStale, latest, workflowNames, sla, closed, fold, onWritten }: {
   caseId: string
   linked: CaseLinkedFinding[]
   owner: string
+  /** The stored owner is not a current account. */
+  ownerStale: boolean
   latest: CaseInvestigationRef | null
   workflowNames: Record<string, string>
   sla: Sla
@@ -462,7 +466,7 @@ export function CaseSide({ caseId, linked, owner, latest, workflowNames, sla, cl
       <Alerts caseId={caseId} items={linked} />
       <RelatedCases caseId={caseId} />
       <Known fold={fold} hasRun={latest !== null} keys={keys} onWritten={onWritten} />
-      <People caseId={caseId} owner={owner} onWritten={onWritten} />
+      <People caseId={caseId} owner={owner} ownerStale={ownerStale} onWritten={onWritten} />
     </>
   )
 }

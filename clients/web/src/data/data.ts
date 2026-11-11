@@ -85,7 +85,10 @@ export interface CaseRow {
   budgetHealth?: string | null
   comments?: number
   owner: string
+  /** The stored owner; '' is Unassigned. */
   ownerName: string
+  /** The stored owner is not a current account. */
+  ownerStale: boolean
   /** The stored owner's state from the read; null when unassigned. */
   ownerState?: 'current' | 'not_current' | null
   findings: number

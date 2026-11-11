@@ -1937,7 +1937,7 @@ export function CasePage({
         </div>
 
         <aside className="case-side" aria-label="Case details">
-          <CaseSide key={id} caseId={id} linked={linkedFindings} owner={c?.ownerName || '—'} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} onWritten={onSideWrite} />
+          <CaseSide key={id} caseId={id} linked={linkedFindings} owner={c ? c.ownerName || 'Unassigned' : '—'} ownerStale={c?.ownerStale ?? false} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} onWritten={onSideWrite} />
           <details className="case-fold">
             <summary>Files</summary>
             <EvidenceCard caseId={id} title="Files" onWritten={onSideWrite} />

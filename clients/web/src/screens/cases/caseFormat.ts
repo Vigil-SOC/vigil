@@ -1,3 +1,4 @@
+import { NOT_CURRENT } from '../../shared/people'
 import { utcClock, utcDayClock } from '../../shared/utc'
 import type { Schema } from '../../services/apiTypes'
 import type { CaseInvestigationRef } from './useCases'
@@ -36,3 +37,6 @@ export function caseConflicts(error: unknown): Schema<'CaseFieldConflict'>[] | n
   const response = (error as { response?: { status?: number; data?: Partial<Schema<'CaseConflictResponse'>> } })?.response
   return response?.status === 409 && response.data?.conflicts ? response.data.conflicts : null
 }
+
+/** The one label for a stored owner that is not a current account (#4266). */
+export const STALE_OWNER_NOTE = NOT_CURRENT

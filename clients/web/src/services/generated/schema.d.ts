@@ -1633,7 +1633,8 @@ export interface paths {
          *     keeps open cases that do not need you, ``closed_by=agent|person`` keeps
          *     closed cases by who closed them, and ``alerts_from=today|all`` keeps cases
          *     holding an alert created that UTC day (or any alert). The strip follows
-         *     ``alerts_from`` and ignores the other filters.
+         *     ``alerts_from`` and ignores the other filters. ``assignee`` is an exact
+         *     stored owner; ``unassigned=true`` adds cases with no owner (NULL or "").
          */
         get: operations["get_api_cases"];
         put?: never;
@@ -1854,6 +1855,30 @@ export interface paths {
          *         ``critical_cases`` counts open critical cases only.
          */
         get: operations["get_api_cases_metrics_summary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cases/owners": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Case Owners
+         * @description The Cases list's owner filter values.
+         *
+         *     Each distinct non-blank owner stored on a case the reader can list, closed
+         *     included, with its owner state. Unassigned is the ``unassigned`` filter,
+         *     not a value here.
+         */
+        get: operations["get_api_cases_owners"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7470,7 +7495,8 @@ export interface paths {
          *     keeps open cases that do not need you, ``closed_by=agent|person`` keeps
          *     closed cases by who closed them, and ``alerts_from=today|all`` keeps cases
          *     holding an alert created that UTC day (or any alert). The strip follows
-         *     ``alerts_from`` and ignores the other filters.
+         *     ``alerts_from`` and ignores the other filters. ``assignee`` is an exact
+         *     stored owner; ``unassigned=true`` adds cases with no owner (NULL or "").
          */
         get: operations["get_api_v1_cases"];
         put?: never;
@@ -7671,6 +7697,30 @@ export interface paths {
          *         ``critical_cases`` counts open critical cases only.
          */
         get: operations["get_api_v1_cases_metrics_summary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/cases/owners": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Case Owners
+         * @description The Cases list's owner filter values.
+         *
+         *     Each distinct non-blank owner stored on a case the reader can list, closed
+         *     included, with its owner state. Unassigned is the ``unassigned`` filter,
+         *     not a value here.
+         */
+        get: operations["get_api_v1_cases_owners"];
         put?: never;
         post?: never;
         delete?: never;
@@ -9670,6 +9720,27 @@ export interface components {
             };
             /** Total Cases */
             total_cases: number;
+        };
+        /**
+         * CaseOwner
+         * @description One stored owner on a readable case: the value as stored, and its state.
+         */
+        CaseOwner: {
+            /** Owner */
+            owner: string;
+            /**
+             * Owner State
+             * @enum {string}
+             */
+            owner_state: "current" | "not_current";
+        };
+        /**
+         * CaseOwnersResponse
+         * @description Distinct non-blank owners on cases the reader can list, closed included.
+         */
+        CaseOwnersResponse: {
+            /** Owners */
+            owners: components["schemas"]["CaseOwner"][];
         };
         /** CasePurgeResponse */
         CasePurgeResponse: {
@@ -12990,6 +13061,11 @@ export interface components {
             status?: string[] | null;
             /** Tags */
             tags?: string[] | null;
+            /**
+             * Unassigned
+             * @default false
+             */
+            unassigned: boolean;
         };
         /** SearchResults */
         SearchResults: {
@@ -16884,6 +16960,7 @@ export interface operations {
                 data_source?: string | null;
                 sla_at_risk?: boolean;
                 assignee?: string | null;
+                unassigned?: boolean;
                 closed?: boolean | null;
                 query?: string | null;
                 needs_you?: boolean;
@@ -17212,6 +17289,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseMetricsSummaryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_cases_owners: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseOwnersResponse"];
                 };
             };
             /** @description Validation Error */
@@ -27480,6 +27588,7 @@ export interface operations {
                 data_source?: string | null;
                 sla_at_risk?: boolean;
                 assignee?: string | null;
+                unassigned?: boolean;
                 closed?: boolean | null;
                 query?: string | null;
                 needs_you?: boolean;
@@ -27777,6 +27886,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseMetricsSummaryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_v1_cases_owners: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseOwnersResponse"];
                 };
             };
             /** @description Validation Error */

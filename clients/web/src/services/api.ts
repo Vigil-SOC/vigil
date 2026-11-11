@@ -300,6 +300,7 @@ export const casesApi = {
     data_source?: string
     sla_at_risk?: boolean
     assignee?: string
+    unassigned?: boolean
     closed?: boolean
     query?: string
     needs_you?: boolean
@@ -313,6 +314,9 @@ export const casesApi = {
 
   getById: (id: string, signal?: AbortSignal) =>
     api.get<Schema<'CaseDetailResponse'>>(`/cases/${id}`, { signal }),
+
+  /** The owner filter's values: owners stored on readable cases, with their state. */
+  getOwners: () => api.get<Schema<'CaseOwnersResponse'>>('/cases/owners'),
 
   create: (data: Schema<'CaseCreate'>) =>
     api.post<Schema<'CaseSchema'>>('/cases', data),
