@@ -29,6 +29,10 @@ chart-templated).
 State Directory. VIGIL_DIR is deliberately NOT in vigil.env: it must only be set
 where the volume is actually mounted, or a workload advertises a path it cannot
 write. Include all three together, or none.
+
+VIGIL_ERASURE_DIR is set only off an emptyDir: the erasure list must outlive a
+pod, or a restore would bring an erased person's data back. The apply upgrade
+Job mounts the volume and sets it too (templates/upgrade.yaml).
 */}}
 {{- define "vigil.stateEnv" -}}
 - name: VIGIL_DIR
@@ -37,6 +41,9 @@ write. Include all three together, or none.
 {{- if hasKey .Values.stateDirectory.volume "emptyDir" }}
 - name: VIGIL_DIR_EPHEMERAL
   value: "true"
+{{- else }}
+- name: VIGIL_ERASURE_DIR
+  value: {{ .Values.stateDirectory.mountPath | quote }}
 {{- end }}
 {{- end -}}
 

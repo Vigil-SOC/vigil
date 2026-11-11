@@ -294,6 +294,11 @@ spec:
               value: {{ .Release.Name | quote }}
             - name: VIGIL_UPGRADE_STOP_TIMEOUT
               value: {{ .Values.upgrade.stopTimeoutSeconds | toString | quote }}
+            {{- /* The erasure list lives in the State Directory when that is durable. */}}
+            {{- if not (hasKey .Values.stateDirectory.volume "emptyDir") }}
+            - name: VIGIL_ERASURE_DIR
+              value: {{ .Values.stateDirectory.mountPath | quote }}
+            {{- end }}
             {{- end }}
           volumeMounts:
             - name: upgrade-state
@@ -302,6 +307,9 @@ spec:
             - name: script
               mountPath: /opt/vigil-upgrade
               readOnly: true
+            {{- end }}
+            {{- if and (eq $job.name "apply") (not (hasKey .Values.stateDirectory.volume "emptyDir")) }}
+            {{- include "vigil.stateVolumeMount" . | nindent 12 }}
             {{- end }}
           resources:
             {{- toYaml .Values.upgrade.resources | nindent 12 }}
@@ -313,6 +321,9 @@ spec:
         - name: script
           configMap:
             name: {{ $fn }}
+        {{- end }}
+        {{- if and (eq $job.name "apply") (not (hasKey .Values.stateDirectory.volume "emptyDir")) }}
+        {{- include "vigil.stateVolume" . | nindent 8 }}
         {{- end }}
 ---
 {{- end }}
