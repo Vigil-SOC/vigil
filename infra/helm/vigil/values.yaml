@@ -797,7 +797,6 @@ config:
   # Empty trusts the TCP peer. Set the ingress controller's pod CIDR when
   # ingress terminates TLS. "*" is ignored by the API.
   VIGIL_TRUSTED_PROXIES: ""
-  PASSWORD_RESET_TTL_SECONDS: "3600"
   # Include the context path under a subdirectory (e.g. https://example.com/vigil).
   VIGIL_FRONTEND_URL: ""
 

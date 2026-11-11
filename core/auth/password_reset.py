@@ -28,7 +28,6 @@ from typing import NamedTuple, Optional
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from core.auth import key_ring
-from core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +44,8 @@ class ResetClaim(NamedTuple):
     forced: bool = False
 
 
-def _ttl_seconds() -> int:
-    return get_settings().password_reset_ttl_seconds
+# A reset link's lifetime. Fixed: PASSWORD_RESET_TTL_SECONDS is retired.
+RESET_TTL_SECONDS = 3600
 
 
 def _get_serializer() -> URLSafeTimedSerializer:
@@ -91,7 +90,7 @@ def decode_reset_token(token: str) -> Optional[ResetClaim]:
     against the user with ``is_current`` before acting on it.
     """
     try:
-        payload = _get_serializer().loads(token, max_age=_ttl_seconds())
+        payload = _get_serializer().loads(token, max_age=RESET_TTL_SECONDS)
     except SignatureExpired:
         logger.info("Password reset token expired")
         return None

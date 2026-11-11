@@ -226,15 +226,11 @@ class Settings(BaseSettings):
     vigil_console_hostname: str = ""
 
     # Auth
-    jwt_access_expiration_minutes: int = 30
-    jwt_refresh_expiration_days: int = 7
     # Comma-separated IPs and CIDRs of reverse proxies allowed to set
     # X-Forwarded-For. Empty trusts the TCP peer only. "*" is ignored:
     # a client who can reach the backend directly could otherwise choose
     # the address the anonymous rate-limit buckets use.
     vigil_trusted_proxies: str = ""
-    auth_min_zxcvbn_score: int = 3
-    password_reset_ttl_seconds: int = 3600
 
     # Vigil's own Wazuh manager, the wazuh-sandbox compose profile (#4099): it
     # counts shadow Wazuh copies with wazuh-logtest. Empty: no sandbox.
