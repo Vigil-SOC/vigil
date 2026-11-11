@@ -18,11 +18,15 @@ from typing import Any, Callable, Dict, List, Optional
 from sqlalchemy import func
 
 from core.platform.email_service import mail_is_configured, send_email
+from core.platform.user_agent import browser_of
 from core.storage.connection import get_db_manager
-from core.storage.models import CaseNotification, User
+from core.storage.models import CaseNotification, SignIn, User
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
+
+# The notice to a person whose oldest sign-in a newer one ended under the sign-in limit.
+SIGN_IN_LIMIT_KIND = "sign_in_limit"
 
 # Rows returned: the unread ones (up to LISTED) and the newest EARLIER read ones.
 LISTED = 50
@@ -40,10 +44,13 @@ def notify(
     link: Optional[str] = None,
     priority: str = "normal",
     metadata: Optional[Dict[str, Any]] = None,
+    mail_body: Optional[str] = None,
 ) -> int:
     """Writes a notice for ``principal_id``; returns its id. Never put a
     credential or token in ``message``: it is emailed and logged by the
-    console mail backend in dev mode. Keep the ``link`` in the metadata."""
+    console mail backend in dev mode. Keep the ``link`` in the metadata.
+    ``mail_body`` is what the email says when it should say more than the
+    stored ``message`` (which erasure can later need to blank)."""
     meta = dict(metadata or {})
     if link:
         meta["link"] = link
@@ -68,7 +75,7 @@ def notify(
                 .scalar()
             )
             if to:
-                send_email(to=to, subject=title, body=message)
+                send_email(to=to, subject=title, body=mail_body or message)
                 row.delivery_channel = "email"
                 row.is_sent = True
                 row.sent_at = utcnow()
@@ -81,12 +88,33 @@ def _own_notices(session, user_id: str):
     )
 
 
-def _shape(row: CaseNotification) -> Dict[str, Any]:
+def _sign_in_limit_message(session, row: CaseNotification) -> str:
+    """The sentence for a sign-in-limit notice, with where the new sign-in came
+    from read off its row now, so erasure that blanked the row blanks it here."""
+    sid = (row.notification_metadata or {}).get("sign_in_id")
+    sign_in = session.get(SignIn, sid) if sid else None
+    where = []
+    if sign_in and sign_in.user_agent:
+        where.append(
+            browser_of(sign_in.user_agent)
+            + (f" ({sign_in.device})" if sign_in.device else "")
+        )
+    if sign_in and sign_in.address:
+        where.append(f"address {sign_in.address}")
+    return row.message + (f" It came from {', '.join(where)}." if where else "")
+
+
+def _shape(session, row: CaseNotification) -> Dict[str, Any]:
+    message = (
+        _sign_in_limit_message(session, row)
+        if row.notification_type == SIGN_IN_LIMIT_KIND
+        else row.message
+    )
     return {
         "id": row.notification_id,
         "kind": row.notification_type,
         "title": row.title,
-        "message": row.message,
+        "message": message,
         "link": (row.notification_metadata or {}).get("link"),
         "priority": row.priority,
         "read": row.is_read,
@@ -131,8 +159,8 @@ def listing(user: User) -> Dict[str, Any]:
         unread_total = unread_q.with_entities(func.count()).scalar()
         total = base.with_entities(func.count()).scalar()
         return {
-            "notices": [_shape(r) for r in unread],
-            "earlier": [_shape(r) for r in earlier],
+            "notices": [_shape(session, r) for r in unread],
+            "earlier": [_shape(session, r) for r in earlier],
             "unread": unread_total,
             "total": total,
             "conditions": conditions(user),

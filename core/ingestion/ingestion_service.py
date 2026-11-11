@@ -23,12 +23,14 @@ from typing import Any, Dict, Iterable, List, Optional, Union
 
 import ijson
 
+from core.cases.assignee import AssigneeRefused, resolve_assignee
 from core.findings.source_evidence import (
     loglm_row_evidence,
     normalize_finding_source_evidence,
 )
 from core.ingestion.triage_signal import MAX_IDS
 from core.storage.score import optional_float as _optional_float
+from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -572,6 +574,19 @@ class IngestionService:
                     self.stats["cases_skipped"] += 1
                     return True
 
+                # Stored as the username it names; a refusal keeps the trimmed
+                # text, and a non-string is kept as its text (the column and
+                # the owner lookup are strings), so no case drops over it.
+                assignee = case_data.get("assignee")
+                if isinstance(assignee, str):
+                    try:
+                        with unit_of_work() as session:
+                            assignee = resolve_assignee(session, assignee)
+                    except AssigneeRefused:
+                        assignee = assignee.strip()
+                elif assignee is not None:
+                    assignee = str(assignee)
+
                 # Create case in database
                 case = self.db_service.create_case(
                     case_id=case_id,
@@ -580,7 +595,7 @@ class IngestionService:
                     description=case_data.get("description", ""),
                     status=case_data.get("status", "new"),
                     priority=case_data.get("priority", "medium"),
-                    assignee=case_data.get("assignee"),
+                    assignee=assignee,
                     tags=case_data.get("tags", []),
                     notes=notes,
                     timeline=case_data.get("timeline", []),

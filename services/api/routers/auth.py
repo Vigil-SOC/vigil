@@ -6,13 +6,13 @@ Handles login, logout, token refresh, password management, and MFA.
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated, List, NamedTuple, Optional, Union
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from core.audit.trail import SYSTEM
@@ -65,7 +65,7 @@ from core.auth.password_validator import (
 )
 from core.config import get_settings
 from core.platform.email_service import mail_is_configured, send_email
-from core.platform.notices import notify
+from core.platform.notices import SIGN_IN_LIMIT_KIND, notify
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import SecurityKey, SignIn, User
 from core.storage.schemas import UserSchema
@@ -684,6 +684,71 @@ def _mfa_required(
     )
 
 
+# Two evictions of one account within this long tell its managers.
+EVICTION_WINDOW = timedelta(hours=1)
+EVICTION_TEXT = (
+    "A new sign-in took the place of your oldest one, because your account is "
+    "at its sign-in limit. If this wasn't you, change your password and tell an admin."
+)
+
+
+def _tell_of_eviction(
+    session: Session, user: User, sid: str, ua: Optional[str], source: Optional[str]
+) -> None:
+    """After the commit, tell the person whose oldest sign-in the new one ended,
+    and, when it makes the account's second eviction in the hour, its managers
+    (a third or later tells nobody). A failed send never touches the login."""
+    # One login's evictions share an ``ended_at``, so distinct values count logins.
+    evictions = (
+        session.query(func.count(func.distinct(SignIn.ended_at)))
+        .filter(
+            SignIn.principal_id == user.principal_id,
+            SignIn.end_reason == sign_ins.SIGN_IN_LIMIT,
+            SignIn.ended_at > utcnow() - EVICTION_WINDOW,
+        )
+        .scalar()
+    )
+    principal, name = user.principal_id, user.username
+    # The stored notice is generic: the panel reads the sign-in's row, which erasure
+    # can blank. The mailed copy says where it came from.
+    where = f"{sign_ins.browser_of(ua)} ({sign_ins.device_of(ua)})"
+    if source:
+        where += f", address {source}"
+
+    def send() -> None:
+        try:
+            notify(
+                principal,
+                SIGN_IN_LIMIT_KIND,
+                "A new sign-in ended your oldest one",
+                EVICTION_TEXT,
+                link="/overview?sign_ins=1",
+                priority="high",
+                metadata={"sign_in_id": sid},
+                mail_body=f"{EVICTION_TEXT} It came from {where}.",
+            )
+        except Exception:  # noqa: BLE001 - the managers are still told
+            logger.exception("could not send a sign-in limit notice for %s", name)
+        if evictions != 2:
+            return
+        for to in managers(principal):
+            try:
+                notify(
+                    to,
+                    "sign_in_limit_repeat",
+                    f"{name}'s sign-ins were ended twice in an hour",
+                    f"A new sign-in ended another of {name}'s under the account's "
+                    "sign-in limit for the second time within an hour. It may be "
+                    "someone else signing in with their credentials.",
+                    USERS_LINK,
+                    priority="high",
+                )
+            except Exception:  # noqa: BLE001 - the rest are still told
+                logger.exception("could not send a sign-in limit notice for %s", name)
+
+    when_committed(session, send)
+
+
 @router.post("/login", response_model=LoginResponse)
 @limiter.limit("5/minute", key_func=login_rate_key)
 def login(
@@ -895,7 +960,7 @@ def login(
     refresh_payload = AuthService.verify_jwt_token(refresh_token) or {}
     # Past the account's sign-in limit, the oldest open sign-in ends (a service
     # account has none).
-    sign_ins.make_room(session, user.principal_id, limit.sign_in_limit)
+    evicted = sign_ins.make_room(session, user.principal_id, limit.sign_in_limit)
     auth_method = "mfa" if user.mfa_enabled and not app_not_counted else "password"
     if step_down:
         auth_method = (
@@ -912,6 +977,8 @@ def login(
         user_agent=_ua,
         address=source,
     )
+    if evicted:
+        _tell_of_eviction(session, user, sid, _ua, source)
     trail_events.record(
         session,
         "auth.sign_in",
