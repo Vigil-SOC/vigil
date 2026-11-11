@@ -2,8 +2,8 @@
 
 from core.upgrade.revision import run_sql
 
-revision = "0055_service_accounts"
-down_revision = "0054_security_keys"
+revision = "0057_service_accounts"
+down_revision = "0056_restore_end_reason"
 
 
 def upgrade() -> None:
