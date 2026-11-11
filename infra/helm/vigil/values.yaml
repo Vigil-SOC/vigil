@@ -615,6 +615,16 @@ serviceAccount:
 #   stateDirectory.volume:
 #     persistentVolumeClaim:
 #       claimName: vigil-state
+# (set `stateDirectory.volume.emptyDir=null` too, or Helm keeps the default
+# emptyDir beside the claim.)
+#
+# Off an emptyDir, the erasure list (erased-principals.txt) is kept here too:
+# VIGIL_ERASURE_DIR is exported to the same workloads, and to the `apply`
+# upgrade Job, which mounts the volume. With an emptyDir the list stays in the
+# upgrade directory. With ReadWriteOnce storage whose pods land on different
+# nodes, the `apply` Job's pod cannot attach the claim while the old pods hold
+# it; `apply` is the Job that stops them, so `helm upgrade` waits until its
+# timeout. Use ReadWriteMany, or keep every pod on one node.
 stateDirectory:
   mountPath: /var/lib/vigil
   volume:

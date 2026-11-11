@@ -565,6 +565,109 @@ jobs:
             --set upgrade.acknowledgeReason=CI-fresh-install \
             --show-only templates/upgrade.yaml > "$RUNNER_TEMP/upgrade.yaml"
 
+      - name: Every shape keeps the erasure list on durable storage
+        # #4275: a list on a per-pod emptyDir is lost on restart, and a restore
+        # would bring an erased person back. Checks the rendered chart (default
+        # and durable State Directory) and both Compose files.
+        run: |
+          chart="$RUNNER_TEMP/chart"
+          version="$(tr -d '[:space:]' < "$RUNNER_TEMP/app-version")"
+          render() {
+            helm template ci "$chart" \
+              --set secrets.postgresPassword=test \
+              --set secrets.vigilAppPassword=vigil-app-test \
+              --set upgrade.acknowledgeVersion="$version" \
+              --set upgrade.acknowledgeReason=CI-erasure-list \
+              --show-only templates/backend-deployment.yaml \
+              --show-only templates/upgrade.yaml "$@"
+          }
+          render > "$RUNNER_TEMP/shape-default.yaml"
+          # emptyDir=null: --set merges, and would leave the default emptyDir
+          # beside the claim.
+          render --set stateDirectory.volume.emptyDir=null \
+            --set stateDirectory.volume.persistentVolumeClaim.claimName=vigil-state \
+            > "$RUNNER_TEMP/shape-durable.yaml"
+          # `${VAR:?}` in both Compose files refuses to render without these.
+          for v in REDIS_PASSWORD POSTGRES_PASSWORD POSTGRES_APP_PASSWORD \
+              AGENT_INTERNAL_TOKEN BIFROST_ADMIN_PASSWORD JWT_SECRET_KEY; do
+            export "$v=placeholder"
+          done
+          export VIGIL_VERSION=ci
+          for f in infra/docker/docker-compose.yml clients/desktop/standalone/docker-compose.yml; do
+            docker compose -f "$f" config --format json \
+              > "$RUNNER_TEMP/compose-$(basename "$(dirname "$f")").json"
+          done
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          import yaml
+
+          tmp = Path(os.environ["RUNNER_TEMP"])
+          bad = []
+
+          def containers(doc):
+              spec = doc["spec"]["template"]["spec"]
+              return spec, spec["containers"]
+
+          def env_names(doc):
+              return {e["name"] for c in containers(doc)[1] for e in c.get("env", [])}
+
+          for shape, durable in (("default", False), ("durable", True)):
+              docs = [
+                  d
+                  for d in yaml.safe_load_all((tmp / f"shape-{shape}.yaml").read_text())
+                  if d and d.get("kind") in ("Deployment", "Job")
+              ]
+              by_name = {d["metadata"]["name"].rsplit("-", 1)[-1]: d for d in docs}
+              backend = next(d for d in docs if d["kind"] == "Deployment")
+              if not {"check", "apply", "install"} <= set(by_name):
+                  bad.append(f"{shape}: expected the check, apply and install Jobs")
+                  continue
+              vol = next(
+                  (v for v in containers(backend)[0]["volumes"] if v["name"] == "vigil-state"),
+                  {},
+              )
+              if durable and "emptyDir" in vol:
+                  bad.append("durable: the vigil-state volume still has an emptyDir")
+              for d in [backend, *(by_name[n] for n in ("check", "apply", "install"))]:
+                  name = d["metadata"]["name"]
+                  spec, cs = containers(d)
+                  names = env_names(d)
+                  mounts = {m["name"] for c in cs for m in c.get("volumeMounts", [])}
+                  state = "vigil-state" in mounts or any(
+                      v["name"] == "vigil-state" for v in spec.get("volumes", [])
+                  )
+                  # Only the backend and the apply Job read or write the list.
+                  want = durable and d is not by_name["check"] and d is not by_name["install"]
+                  if ("VIGIL_ERASURE_DIR" in names) != want:
+                      bad.append(f"{shape}: {name} VIGIL_ERASURE_DIR is {'missing' if want else 'set'}")
+                  if want and not (state and "vigil-state" in mounts):
+                      bad.append(f"{shape}: {name} does not mount vigil-state")
+                  if d is by_name["apply"] and not durable and state:
+                      bad.append(f"{shape}: {name} mounts vigil-state off a durable volume")
+                  if d in (by_name["check"], by_name["install"]) and state:
+                      bad.append(f"{shape}: {name} mounts vigil-state")
+                  if durable and "VIGIL_DIR_EPHEMERAL" in names:
+                      bad.append(f"{shape}: {name} is marked VIGIL_DIR_EPHEMERAL")
+
+          # Compose: the backend's effective list directory is a writable volume.
+          for path in sorted(tmp.glob("compose-*.json")):
+              backend = json.loads(path.read_text())["services"]["backend"]
+              env = backend.get("environment", {})
+              where = env.get("VIGIL_ERASURE_DIR") or env.get("VIGIL_UPGRADE_DIR")
+              vols = [v for v in backend.get("volumes", []) if v.get("target") == where]
+              if not where:
+                  bad.append(f"{path.name}: the backend has no erasure list directory")
+              elif not vols or vols[0].get("read_only"):
+                  bad.append(f"{path.name}: {where} is not a writable volume on the backend")
+
+          for line in bad:
+              print(f"::error::{line}")
+          raise SystemExit(1 if bad else 0)
+          PY
+
       - name: Run the install hook as the chart user
         # The rendered command is `python /opt/vigil-upgrade/helm_upgrade.py
         # install` in the backend image. That image is this checkout, so the
