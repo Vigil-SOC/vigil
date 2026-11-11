@@ -3392,6 +3392,65 @@
       flex: 0 0 auto;
    }
 
+   /* people picker (shared/people.tsx): a stored owner that isn't current, the
+      list-failed fallback, and the in-place fix when a save is refused for it */
+   .person-pick, .person-pick-fallback {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+      width: 100%;
+   }
+
+   .person-pick .field-select > span:first-child {
+      min-width: 0;
+      overflow-wrap: anywhere;
+   }
+
+   .person-pick-input {
+      width: 100%;
+      background: var(--bg-2);
+      border: 1px solid var(--line);
+      border-radius: var(--r-sm);
+      padding: 7px 10px;
+      font-size: 13px;
+      color: var(--tx);
+   }
+
+   .person-pick-note, .owner-stale {
+      font-size: 12px;
+      font-weight: 500;
+      text-transform: none;
+      letter-spacing: normal;
+      color: var(--tx2);
+   }
+
+   .owner-fix {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 6px;
+      padding: 10px 12px;
+      border: 1px solid var(--fair-ln);
+      border-radius: var(--radius-card-inner);
+      background: var(--fair-bg);
+      color: var(--tx0);
+      font-size: 13px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+   }
+
+   .owner-fix p { margin: 0; }
+
+   .owner-fix-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+   }
+
+   .owner-fix-row .person-pick { flex: 1 1 160px; }
+
    .field-menu {
       left: 0;
       right: 0;

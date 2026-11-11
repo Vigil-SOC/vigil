@@ -10,6 +10,8 @@ import { casesApi } from '../../services/api'
 import type { Schema } from '../../services/apiTypes'
 import { Icon } from '../../shared/icons'
 import { EmptyState } from '../../shared/ui'
+import { OwnerFix, PersonPicker, isOwnerNotCurrent } from '../../shared/people'
+import { useAuth } from '../../contexts/AuthContext'
 import { errorDetail } from './caseFormat'
 import type { Phase } from './useCases'
 
@@ -178,39 +180,50 @@ const isTaskPriority = (v: string | undefined): v is TaskPriority =>
   v !== undefined && Object.prototype.hasOwnProperty.call(PRIO_ORDER, v)
 /** Sort rank for a task's priority; the unknown band sorts last. Any other name sorts as medium. */
 const prioOrder = (v: string | undefined) => PRIO_ORDER[isTaskPriority(v) ? v : 'medium']
-type CaseTask = Schema<'CaseTaskSchema'>
+type CaseTask = Schema<'CaseTaskRead'>
 export function useTasks(caseId: string) {
   return useResource<CaseTask[]>(caseId, () => casesApi.getTasks(caseId).then((r) => r.data.tasks))
 }
+// Done is completed or cancelled, as the server's TASK_DONE; any other status is open.
+const taskDone = (status?: string | null) => status === 'completed' || status === 'cancelled'
+
 export function TasksView({ caseId, resource: { data, phase, error, reload }, onWritten }: { caseId: string; resource: Resource<CaseTask[]>; onWritten?: () => void }) {
+  const canWrite = useAuth().hasPermission('cases.write')
   const [adding, setAdding] = useState(false)
   const [form, setForm] = useState({ title: '', priority: 'medium', assignee: '', due_date: '' })
   const [writeError, setWriteError] = useState<string | null>(null)
+  // A done/not-done toggle refused for a stale assignee, fixed in place on that row.
+  const [fix, setFix] = useState<{ taskId: number; owner: string; assignee: string } | null>(null)
   const tasks = (data || []).slice().sort((a, b) => {
-    const ad = a.status === 'completed' ? 1 : 0
-    const bd = b.status === 'completed' ? 1 : 0
+    const ad = taskDone(a.status) ? 1 : 0
+    const bd = taskDone(b.status) ? 1 : 0
     if (ad !== bd) return ad - bd
     return prioOrder(a.priority ?? undefined) - prioOrder(b.priority ?? undefined)
   })
-  const done = tasks.filter((t) => t.status === 'completed').length
+  const done = tasks.filter((t) => taskDone(t.status)).length
   const pct = tasks.length ? Math.round((done / tasks.length) * 100) : 0
 
-  const toggle = async (t: CaseTask) => {
+  const write = async (t: CaseTask, update: Schema<'TaskUpdate'>, fallback: string) => {
     if (t.task_id == null) return
-    const next = t.status === 'completed' ? 'pending' : 'completed'
     setWriteError(null)
     try {
-      await casesApi.updateTask(caseId, t.task_id, {
-        status: next,
-        ...(next === 'completed' ? { completed_at: new Date().toISOString() } : {}),
-      })
+      await casesApi.updateTask(caseId, t.task_id, update)
     } catch (e) {
-      setWriteError(errorDetail(e, 'Couldn’t update the task'))
+      if (isOwnerNotCurrent(e) && update.status) {
+        setFix({ taskId: t.task_id, owner: t.assignee || '', assignee: '' })
+      } else {
+        setWriteError(errorDetail(e, fallback))
+      }
       return
     }
+    setFix((f) => (f?.taskId === t.task_id ? null : f))
     reload()
     onWritten?.()
   }
+  // Reopening a done task (or completing a cancelled one) takes it to pending/completed.
+  const toggleUpdate = (t: CaseTask): Schema<'TaskUpdate'> =>
+    taskDone(t.status) ? { status: 'pending' } : { status: 'completed', completed_at: new Date().toISOString() }
+  const toggle = (t: CaseTask) => write(t, toggleUpdate(t), 'Couldn’t update the task')
   const submit = async () => {
     if (!form.title.trim()) return
     setWriteError(null)
@@ -248,7 +261,7 @@ export function TasksView({ caseId, resource: { data, phase, error, reload }, on
           <select className={inputCls} value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
             {['critical', 'high', 'medium', 'low'].map((p) => <option key={p} value={p}>{p}</option>)}
           </select>
-          <input className={inputCls} placeholder="Assignee" value={form.assignee} onChange={(e) => setForm({ ...form, assignee: e.target.value })} />
+          <PersonPicker label="Assignee" value={form.assignee} onSelect={(assignee) => setForm({ ...form, assignee })} disabled={!canWrite} />
           <input className={inputCls} type="date" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} />
           <button className="btn primary" onClick={submit}>Add task</button>
         </div>
@@ -259,22 +272,42 @@ export function TasksView({ caseId, resource: { data, phase, error, reload }, on
         {phase === 'error' && <p className="muted">Couldn’t load tasks: {error}</p>}
         {phase === 'ready' && tasks.length === 0 && <MiniEmpty icon="note" title="No tasks yet" body="Add tasks to assign containment, validation, or follow-up work." />}
         {tasks.map((t) => {
-          const overdue = t.due_date && t.status !== 'completed' && new Date(t.due_date).getTime() < Date.now()
+          const isDone = taskDone(t.status)
+          const overdue = t.due_date && !isDone && new Date(t.due_date).getTime() < Date.now()
+          const fixing = fix && fix.taskId === t.task_id ? fix : null
           return (
-            <div key={t.task_id ?? t.title} className={`flex items-start gap-2.5${t.status === 'completed' ? ' opacity-60' : ''}`}>
-              <button className="mt-[1px] text-tx-3 hover:text-accent" onClick={() => toggle(t)} title="Toggle">
-                <Icon name={t.status === 'completed' ? 'lock' : 'note'} size={15} />
+            <div key={t.task_id ?? t.title} className="flex items-start gap-2.5">
+              <button className={`mt-[1px] text-tx-3 hover:text-accent${isDone ? ' opacity-60' : ''}`} onClick={() => toggle(t)} title={isDone ? 'Mark not done' : 'Mark done'}>
+                <Icon name={isDone ? 'lock' : 'note'} size={15} />
               </button>
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className={`text-[13px] ${t.status === 'completed' ? 'line-through text-tx-3' : 'text-tx'}`}>{t.title}</span>
+                <div className={`flex items-center gap-2${isDone ? ' opacity-60' : ''}`}>
+                  <span className={`text-[13px] ${isDone ? 'line-through text-tx-3' : 'text-tx'}`}>{t.title}</span>
                   {t.priority && <span className={`prio ${t.priority}`}>{t.priority[0].toUpperCase()}</span>}
                 </div>
                 {t.description && <div className="text-xs text-tx-3 mt-[2px]">{t.description}</div>}
-                <div className="text-xs text-tx-faint mt-[2px] flex gap-3">
-                  {t.assignee && <span>@{t.assignee}</span>}
+                <div className="task-meta">
+                  <PersonPicker
+                    label={`Assignee of ${t.title}`}
+                    value={t.assignee || ''}
+                    state={t.owner_state}
+                    onSelect={(assignee) => {
+                      if (assignee !== (t.assignee || '')) void write(t, { assignee }, 'Couldn’t reassign the task')
+                    }}
+                    disabled={!canWrite}
+                    commitTyped
+                  />
                   {t.due_date && <span className={overdue ? 'text-crit' : ''}>Due {fmtD(t.due_date)}</span>}
                 </div>
+                {fixing && (
+                  <OwnerFix owner={fixing.owner} canChange={canWrite}>
+                    <div className="owner-fix-row">
+                      <PersonPicker label="New assignee" value={fixing.assignee} onSelect={(assignee) => setFix({ ...fixing, assignee })} />
+                      <button className="btn" onClick={() => void write(t, { ...toggleUpdate(t), assignee: fixing.assignee }, 'Couldn’t update the task')}>Save</button>
+                      <button className="btn ghost" onClick={() => setFix(null)}>Cancel</button>
+                    </div>
+                  </OwnerFix>
+                )}
               </div>
             </div>
           )

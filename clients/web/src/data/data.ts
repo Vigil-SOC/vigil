@@ -86,6 +86,8 @@ export interface CaseRow {
   comments?: number
   owner: string
   ownerName: string
+  /** The stored owner's state from the read; null when unassigned. */
+  ownerState?: 'current' | 'not_current' | null
   findings: number
   /** Read on the case page only; the queue reads 0. */
   alertsSinceLastRun: number

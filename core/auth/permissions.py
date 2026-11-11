@@ -394,22 +394,34 @@ async def resolve_signed_in_user(
     return user
 
 
-def require_person_permission(permission: str) -> Callable[..., User]:
-    """``permission`` held by a person principal, never by a credential.
+def require_person_permission(
+    permission: str, *either: str, refuse_machine: bool = False
+) -> Callable[..., User]:
+    """``permission`` (or any of ``either``) held by a person principal, never by a credential.
 
     The kind check is ``AuthService.check_permission``, which refuses a
     non-person for ``audit.forward`` and ``audit.manage`` even when dev mode
     grants every role permission. A missing sign-in is refused first, except
-    in dev mode, which has no token. The role matrix reads ``permission``.
+    in dev mode, which has no token; ``refuse_machine`` refuses a service
+    account's sign-in the same way. The role matrix reads ``permission``.
     """
 
     def _check(request: Request, user: User = Depends(resolve_signed_in_user)) -> User:
         if not current_user_module.DEV_MODE:
             claims = getattr(request.state, "access_claims", None)
-            if not isinstance(claims, dict) or not claims.get("sid"):
+            if (
+                not isinstance(claims, dict)
+                or not claims.get("sid")
+                or (
+                    refuse_machine
+                    and current_user_module.is_machine_request(user, request)
+                )
+            ):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED, detail=SIGN_IN_REQUIRED
                 )
+        if any(missing_permission(user.user_id, other) is None for other in either):
+            return user
         deny_unless(user.user_id, permission)
         return user
 

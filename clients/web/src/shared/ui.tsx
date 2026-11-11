@@ -286,11 +286,14 @@ export function Select({
   searchable = false,
   disabled,
   name,
+  label,
 }: {
   value: string
   options: DropOption[]
   onSelect: (value: string) => void
   placeholder?: string
+  // an accessible name, for a Select with no wrapping <label>
+  label?: string
   // adds a filter input to the open menu, for long option lists
   searchable?: boolean
   disabled?: boolean
@@ -514,6 +517,7 @@ export function Select({
         className={`field-select${toolbar ? ' toolbar' : ''}${toolbar && value !== options[0]?.value ? ' set' : ''}`}
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-label={label}
         disabled={disabled}
         aria-controls={open ? listId : undefined}
         aria-activedescendant={open && !searchable && shown[active] ? optionId(active) : undefined}
