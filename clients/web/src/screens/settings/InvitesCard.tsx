@@ -1,15 +1,46 @@
 import { useCallback, useEffect, useState } from 'react'
 import { basePath } from '../../config/basePath'
+import { useAuth } from '../../contexts/AuthContext'
 import { Icon } from '../../shared/icons'
 import '../../shared/kit.css'
 import { ConfirmDialog, Field, Popup, Select, SettingsCard, TextInput } from '../../shared/ui'
-import { invitesApi } from '../../services/api'
+import { invitesApi, teamsApi } from '../../services/api'
 import type { Schema } from '../../services/apiTypes'
 import type { SectionProps } from './types'
 
 type Entry = Schema<'InviteEntry'>
 type Channel = Entry['channel']
+type Team = Schema<'TeamOut'>
 type Option = { value: string; label: string }
+
+/** Break a long address at @ and dots, so a narrow cell doesn't split a label mid-letter. */
+function EmailLine({ email }: { email: string }) {
+  const bits = email.split(/([@.])/)
+  return (
+    <div>
+      {bits.map((bit, i) => (
+        <span key={`${bit}-${i}`}>
+          {bit}
+          {(bit === '@' || bit === '.') && <wbr />}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+/** Names on the invite, or the ids when the team list isn't available. Empty joins the default team.
+ *  Under the email, in the column that stays on screen, rather than a column of its own. */
+function TeamNames({ ids, teams }: { ids: string[]; teams: Team[] | null }) {
+  const label = ids.length
+    ? ids.map((id) => teams?.find((t) => t.id === id)?.name ?? id).join(', ')
+    : 'Default team'
+  return (
+    <div className="cell-clamp mt-1">
+      <span className="muted">Teams · </span>
+      {label}
+    </div>
+  )
+}
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -47,6 +78,11 @@ export default function InvitesCard({
   roleName: (id: string) => string
   defaultRoleId?: string
 }) {
+  const { hasPermission } = useAuth()
+  const canPickTeams = hasPermission('teams.manage')
+  const [teams, setTeams] = useState<Team[] | null>(null)
+  const [teamsError, setTeamsError] = useState('')
+  const [picked, setPicked] = useState<string[]>([])
   const [invites, setInvites] = useState<Entry[]>([])
   const [emailMissing, setEmailMissing] = useState<string[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -76,15 +112,32 @@ export default function InvitesCard({
   }, [])
   useEffect(reload, [reload])
 
+  const loadTeams = useCallback(() => {
+    teamsApi.list().then(
+      ({ data }) => {
+        setTeams(data)
+        setTeamsError('')
+      },
+      (e) => setTeamsError(errText(e, 'Couldn’t load teams')),
+    )
+  }, [])
+  useEffect(loadTeams, [loadTeams])
+
   const emailOn = emailMissing.length === 0
+  const choosable = (teams ?? []).filter((t) => !t.archived)
 
   const openInvite = () => {
     setEmail('')
     setRoleId(roleOptions.some((o) => o.value === defaultRoleId) ? (defaultRoleId ?? '') : (roleOptions[0]?.value ?? ''))
     setChannel('copy')
+    setPicked([])
     setError('')
+    loadTeams()
     setOpen(true)
   }
+
+  const toggleTeam = (id: string) =>
+    setPicked((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]))
 
   // an issued link: Copy shows it once, Email says where it went
   const issued = (res: Schema<'InviteIssued'>) => {
@@ -103,7 +156,14 @@ export default function InvitesCard({
     setBusy(true)
     setError('')
     try {
-      const { data } = await invitesApi.create({ email: to, role_id: roleId, channel })
+      // Chosen teams only. Omit the field and the account joins the default team.
+      const teamIds = canPickTeams ? choosable.filter((t) => picked.includes(t.id)).map((t) => t.id) : []
+      const { data } = await invitesApi.create({
+        email: to,
+        role_id: roleId,
+        channel,
+        ...(teamIds.length ? { team_ids: teamIds } : {}),
+      })
       setOpen(false)
       issued(data)
     } catch (e) {
@@ -116,7 +176,8 @@ export default function InvitesCard({
   const handleResend = async (row: Entry) => {
     setResending(row.link_id)
     try {
-      // an emailed invite goes by email again while that works; otherwise it is copied
+      // an emailed invite goes by email again while that works; otherwise it is copied.
+      // The new link keeps the teams already stored; this does not send a new list.
       const via: Channel = row.channel === 'email' && emailOn ? 'email' : 'copy'
       const { data } = await invitesApi.resend(row.link_id, via)
       issued(data)
@@ -190,7 +251,12 @@ export default function InvitesCard({
             )}
             {invites.map((r) => (
               <tr key={r.link_id}>
-                <td>{r.email}</td>
+                <td className="cell-wrap">
+                  <div className="invite-who">
+                    <EmailLine email={r.email} />
+                    <TeamNames ids={r.team_ids} teams={teams} />
+                  </div>
+                </td>
                 <td>
                   <span className="chip">{roleName(r.role_id)}</span>
                 </td>
@@ -251,6 +317,37 @@ export default function InvitesCard({
               onSelect={setRoleId}
             />
           </Field>
+          {canPickTeams && (
+            <fieldset className="flex flex-col gap-2 border-0 p-0 m-0 min-w-0">
+              <legend className="field-label mb-1">Teams</legend>
+              <span className="field-hint">
+                None chosen: they join the default team. The teams you choose are the ones they join.
+              </span>
+              {teamsError && (
+                <div className="settings-banner err" role="alert">
+                  <Icon name="alert" size={14} /> <span className="min-w-0">{teamsError}</span>
+                </div>
+              )}
+              {teams === null && !teamsError && <span className="text-xs text-tx-3">Loading teams…</span>}
+              {choosable.length > 0 && (
+                <div className="flex flex-col gap-1.5 min-w-0" style={{ maxHeight: 160, overflowY: 'auto' }}>
+                  {choosable.map((t) => (
+                    <label key={t.id} className="flex items-center gap-2 text-sm min-w-0">
+                      <input
+                        type="checkbox"
+                        className="shrink-0"
+                        checked={picked.includes(t.id)}
+                        disabled={busy}
+                        onChange={() => toggleTeam(t.id)}
+                      />
+                      <span className="min-w-0 break-words">{t.name}</span>
+                      {t.is_default && <span className="chip shrink-0">Default</span>}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </fieldset>
+          )}
           <fieldset className="flex flex-col gap-2 border-0 p-0 m-0">
             <legend className="field-label mb-1">How they get the link</legend>
             <label className={`flex items-start gap-2 text-sm ${emailOn ? '' : 'opacity-60'}`}>
@@ -288,7 +385,7 @@ export default function InvitesCard({
               </span>
             </label>
           </fieldset>
-          <div className="flex justify-end gap-2.5 mt-1">
+          <div className="flex flex-wrap justify-end gap-2.5 mt-1">
             <button className="btn ghost" onClick={() => setOpen(false)} disabled={busy}>
               Cancel
             </button>
