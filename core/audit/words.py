@@ -125,7 +125,13 @@ def _investigation_log(p: Mapping[str, Any]) -> str:
 
 def _task_update(p: Mapping[str, Any]) -> str:
     status = _word(p.get("status"))
-    return f"Updated a task, now {status}" if status else "Updated a task"
+    said = f"Updated a task, now {status}" if status else "Updated a task"
+    if p.get("unassigned"):
+        return f"{said}, unassigned"
+    if p.get("assignee") or p.get("assignee_unresolved"):
+        moved = p.get("previous_assignee") or p.get("previous_assignee_unresolved")
+        return f"{said}, {'reassigned' if moved else 'assigned'}"
+    return said
 
 
 def _link(p: Mapping[str, Any]) -> str:

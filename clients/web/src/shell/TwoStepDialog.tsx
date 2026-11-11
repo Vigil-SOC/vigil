@@ -1,14 +1,17 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import QRCode from 'qrcode'
 import { useAuth } from '../contexts/AuthContext'
-import { mfaApi } from '../services/api'
+import { keysApi, mfaApi, type Factor } from '../services/api'
+import { cancelPrompt, confirmWithKey, createCredential, keysSupported, KeyProblem } from '../services/webauthn'
 import { Icon } from '../shared/icons'
 import MfaMethodsList, { type MfaMethod } from '../shared/MfaMethodsList'
 import { Field, PasswordInput, Popup, TextInput } from '../shared/ui'
+import { KEY_AFTER_CONTINUE, KeysUnavailable } from './SecurityKeyParts'
 
-type View = 'main' | 'enrol' | 'codes' | 'regenerate' | 'disable'
+type View = 'main' | 'enrol' | 'codes' | 'regenerate' | 'disable' | 'addKey' | 'removeKey'
 
 function errText(e: unknown, fallback: string): string {
+  if (e instanceof KeyProblem) return e.message
   const err = e as { response?: { status?: number; data?: { detail?: unknown } }; message?: string }
   if (err.response?.status === 429) return 'Too many attempts. Wait a minute and try again.'
   const detail = err.response?.data?.detail
@@ -82,6 +85,20 @@ export default function TwoStepDialog({
   const [busy, setBusy] = useState(false)
   // your own methods, listed on the "on" screen
   const [methods, setMethods] = useState<MfaMethod[]>([])
+  const [keyName, setKeyName] = useState('')
+  // the key being removed
+  const [target, setTarget] = useState<MfaMethod | null>(null)
+  // answering a check with a key instead of a code (people with an app and a key choose)
+  const [viaKey, setViaKey] = useState(false)
+
+  // Keys are offered only when this install can use them (the server's reason is shown otherwise).
+  const keys = user?.security_keys
+  const keysOn = !!keys?.available && keysSupported()
+  const keyRows = methods.filter((m) => m.type === 'security_key')
+  const hasApp = methods.some((m) => m.type === 'authenticator_app')
+  const canKey = keysOn && keyRows.length > 0
+  // a person with only keys has no code to type
+  const keyNow = canKey && (!hasApp || viaKey)
 
   useEffect(() => {
     if (open && enabled && view === 'main') {
@@ -101,6 +118,10 @@ export default function TwoStepDialog({
       setCode('')
       setPassword('')
       setError(null)
+      setKeyName('')
+      setTarget(null)
+      setViaKey(false)
+      cancelPrompt()
     }
   }, [open])
 
@@ -109,6 +130,7 @@ export default function TwoStepDialog({
     setCode('')
     setPassword('')
     setError(null)
+    setViaKey(false)
   }
 
   // Runs one API call with shared busy/error handling; returns undefined on failure.
@@ -145,9 +167,16 @@ export default function TwoStepDialog({
     if (!required) await refreshUser()
   }
 
+  // The strong check's second step: a code, or a key's assertion (the prompt comes after Continue).
+  const factor = async (): Promise<Factor> => {
+    if (!keyNow) return { code: code.trim() }
+    const { assertion, challenge } = await confirmWithKey()
+    return { assertion, challenge }
+  }
+
   const regenerate = async (e: FormEvent) => {
     e.preventDefault()
-    const res = await run(() => mfaApi.regenerateRecoveryCodes(code.trim(), password), 'Invalid MFA code')
+    const res = await run(async () => mfaApi.regenerateRecoveryCodes(password, await factor()), 'Invalid MFA code')
     if (!res) return
     setCodes(res.data.recovery_codes)
     go('codes')
@@ -155,8 +184,38 @@ export default function TwoStepDialog({
 
   const disable = async (e: FormEvent) => {
     e.preventDefault()
-    const res = await run(() => mfaApi.disable(code.trim(), password), 'Invalid MFA code')
+    const res = await run(async () => mfaApi.disable(password, await factor()), 'Invalid MFA code')
     if (!res) return
+    await refreshUser()
+    go('main')
+  }
+
+  const addKey = async (e: FormEvent) => {
+    e.preventDefault()
+    const res = await run(async () => {
+      // a first method needs only the password; after that, the strong check
+      const check = enabled ? await factor() : {}
+      const { data: reg } = await keysApi.registrationOptions()
+      const credential = await createCredential(reg.options)
+      return keysApi.add({ name: keyName.trim(), credential, registration_challenge: reg.challenge, password, ...check })
+    }, 'Could not add the key.')
+    if (!res) return
+    if (res.data.recovery_codes) {
+      setCodes(res.data.recovery_codes)
+      go('codes')
+      if (!required) await refreshUser()
+    } else {
+      go('main')
+    }
+  }
+
+  const removeKey = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!target?.key_id) return
+    const id = target.key_id
+    const res = await run(async () => keysApi.remove(id, password, await factor()), 'Could not remove the key.')
+    if (!res) return
+    // the last key of a key-only person turns two-step sign-in off
     await refreshUser()
     go('main')
   }
@@ -170,6 +229,38 @@ export default function TwoStepDialog({
         onChange={(e) => setPassword(e.target.value)}
       />
     </Field>
+  )
+
+  // The factor half of a strong check: a code, or the key prompt that follows Continue.
+  const factorField = keyNow ? (
+    <div className="flex flex-col gap-1.5">
+      <p className="m-0 text-sm text-tx-2 leading-relaxed">{KEY_AFTER_CONTINUE}</p>
+      {hasApp && (
+        <button type="button" className="data-link self-start" style={{ padding: 0 }} onClick={() => setViaKey(false)}>
+          Use an authenticator code instead
+        </button>
+      )}
+    </div>
+  ) : (
+    <div className="flex flex-col gap-1.5">
+      <Field
+        label="Authentication or recovery code"
+        hint="Enter a current code from your authenticator app, or an unused recovery code."
+      >
+        <TextInput value={code} onChange={(e) => setCode(e.target.value)} autoComplete="one-time-code" autoFocus />
+      </Field>
+      {canKey && (
+        <button type="button" className="data-link self-start" style={{ padding: 0 }} onClick={() => setViaKey(true)}>
+          Use a security key or passkey instead
+        </button>
+      )}
+    </div>
+  )
+  const strongReady = !!password && (keyNow || !!code.trim())
+  const strongBack = (
+    <button type="button" className="btn ghost" onClick={() => go('main')} disabled={busy}>
+      Back
+    </button>
   )
 
   const banner = error && (
@@ -186,8 +277,14 @@ export default function TwoStepDialog({
         : view === 'regenerate'
           ? 'Regenerate recovery codes'
           : view === 'disable'
-            ? 'Turn off two-step sign-in'
-            : 'Two-step sign-in'
+            ? keyRows.length
+              ? 'Remove authenticator app'
+              : 'Turn off two-step sign-in'
+            : view === 'addKey'
+              ? 'Add a security key'
+              : view === 'removeKey'
+                ? 'Remove a security key'
+                : 'Two-step sign-in'
 
   return (
     <Popup open={open} onClose={onClose} title={title} width={460} dismissible={!required}>
@@ -201,12 +298,20 @@ export default function TwoStepDialog({
               {required
                 ? 'Two-step sign-in is required for your account. '
                 : 'Add a second step to signing in: '}
-              A 6-digit code from an authenticator app, in addition to your password.
+              {keysOn
+                ? 'A 6-digit code from an authenticator app, or a security key or passkey, in addition to your password.'
+                : 'A 6-digit code from an authenticator app, in addition to your password.'}
             </p>
-            <div className="flex justify-end gap-2.5">
+            {keys && !keysOn && keys.available === false && <KeysUnavailable reason={keys.reason} />}
+            <div className="flex flex-wrap justify-end gap-2.5">
               {required && (
                 <button className="btn ghost" onClick={() => void logout()}>
                   Sign out
+                </button>
+              )}
+              {keysOn && (
+                <button className="btn ghost" onClick={() => go('addKey')} disabled={busy}>
+                  <Icon name="key" size={14} /> Add a security key
                 </button>
               )}
               <button className="btn primary" onClick={startSetup} disabled={busy}>
@@ -221,18 +326,30 @@ export default function TwoStepDialog({
             <div className="settings-banner ok">
               <Icon name="shield" size={14} /> Two-step sign-in is on.
             </div>
-            <MfaMethodsList methods={methods} />
+            <MfaMethodsList
+              methods={methods}
+              onRemove={keysOn ? (m) => { setTarget(m); go('removeKey') } : undefined}
+            />
+            {keys && keys.available === false && <KeysUnavailable reason={keys.reason} />}
             <p className="m-0 text-sm text-tx-2 leading-relaxed">
               If you lose your authenticator, a recovery code lets you sign in once. Regenerating makes
               the old codes stop working.
             </p>
-            <div className="flex justify-end gap-2.5">
+            <div className="flex flex-wrap justify-end gap-2.5">
+              {keysOn && (
+                <button className="btn ghost" onClick={() => go('addKey')} disabled={busy}>
+                  <Icon name="key" size={14} /> Add a security key
+                </button>
+              )}
               <button className="btn ghost" onClick={() => go('regenerate')} disabled={busy}>
                 Regenerate recovery codes
               </button>
-              <button className="btn danger" onClick={() => go('disable')} disabled={busy}>
-                Turn off
-              </button>
+              {/* a person with only keys removes them one by one; the last one turns it off. With keys that can't be used now, the app stays. */}
+              {((hasApp && (keysOn || !keyRows.length)) || methods.length === 0) && (
+                <button className="btn danger" onClick={() => go('disable')} disabled={busy}>
+                  {keyRows.length ? 'Remove authenticator app' : 'Turn off'}
+                </button>
+              )}
             </div>
           </>
         )}
@@ -308,27 +425,64 @@ export default function TwoStepDialog({
               Your other sign-ins end.
             </p>
             {passwordField}
-            <Field
-              label="Authentication or recovery code"
-              hint="Enter a current code from your authenticator app, or an unused recovery code."
-            >
-              <TextInput
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-                autoComplete="one-time-code"
-                autoFocus
-              />
-            </Field>
+            {factorField}
             <div className="flex justify-end gap-2.5">
-              <button type="button" className="btn ghost" onClick={() => go('main')} disabled={busy}>
-                Back
-              </button>
+              {strongBack}
               <button
                 type="submit"
                 className={view === 'regenerate' ? 'btn primary' : 'btn danger'}
-                disabled={busy || !code.trim() || !password}
+                disabled={busy || !strongReady}
               >
-                {busy ? 'Working…' : view === 'regenerate' ? 'Regenerate' : 'Turn off'}
+                {busy ? 'Working…' : view === 'regenerate' ? 'Regenerate' : keyRows.length ? 'Remove app' : 'Turn off'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {view === 'addKey' && (
+          <form className="flex flex-col gap-3.5" onSubmit={addKey}>
+            <p className="m-0 text-sm text-tx-2 leading-relaxed">
+              {enabled
+                ? 'Changes to your sign-in methods always ask for your password and a second step. Adding a key ends no sign-in.'
+                : 'Your password is all that is needed to add your first method. Your browser then asks for the key.'}
+            </p>
+            <Field label="Key name" hint="Your admin can see this name.">
+              <TextInput
+                value={keyName}
+                onChange={(e) => setKeyName(e.target.value)}
+                maxLength={100}
+                placeholder="e.g. YubiKey 5"
+                autoFocus
+              />
+            </Field>
+            {passwordField}
+            {enabled && factorField}
+            <div className="flex justify-end gap-2.5">
+              {strongBack}
+              <button type="submit" className="btn primary" disabled={busy || !(enabled ? strongReady : !!password)}>
+                {busy ? 'Working…' : 'Continue'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {view === 'removeKey' && target && (
+          <form className="flex flex-col gap-3.5" onSubmit={removeKey}>
+            <div className="settings-banner info">
+              <Icon name="alert" size={14} />
+              {keyRows.length === 1 && !hasApp
+                ? 'Removing your last method turns two-step sign-in off, and signs you out of your other sign-ins.'
+                : 'Removing it signs you out of your other sign-ins. This sign-in stays open.'}
+            </div>
+            <p className="m-0 text-sm text-tx-2 leading-relaxed">
+              Changes to your sign-in methods always ask for your password and a second step.
+            </p>
+            {passwordField}
+            {factorField}
+            <div className="flex justify-end gap-2.5">
+              {strongBack}
+              <button type="submit" className="btn danger" disabled={busy || !strongReady}>
+                {busy ? 'Working…' : `Remove ${target.name}`}
               </button>
             </div>
           </form>

@@ -1009,7 +1009,8 @@ def update_case_task(
     try:
         from core.cases import case_records_service
 
-        updates = {"status": status}
+        # A blank assignee unassigns; a refusal raises before the commit.
+        updates = {"status": status, "assignee": assignee}
         if status == "completed":
             updates["completed_at"] = utcnow()
 
@@ -1019,12 +1020,6 @@ def update_case_task(
             )
             if task is None:
                 return jdump({"error": f"Task {task_id} not found"})
-            if assignee is not None:
-                # Blank unassigns. A refusal raises before the commit.
-                task.assignee = resolve_assignee(
-                    session, assignee, current=task.assignee
-                )
-                session.flush()
             payload = CaseTaskSchema.dump(task)
             case_id = task.case_id
             title = task.title

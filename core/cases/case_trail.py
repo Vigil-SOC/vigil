@@ -180,12 +180,13 @@ def append_case(
     case_id: Optional[str],
     *,
     operator_text: Optional[str] = None,
+    holders: Optional[Callable[[], dict[str, Any]]] = None,
     **fields: Any,
 ) -> None:
     """One case-row entry in the caller's transaction; no legacy row (#3403).
 
     The caller is whoever is bound (``actor_identity``), never an argument.
-    A callable field is read only when the trail is in use.
+    A callable field, and ``holders``, are read only when the trail is in use.
     """
     append_or_legacy(
         session,
@@ -193,13 +194,56 @@ def append_case(
         signed_in=None,
         case_id=case_id,
         operator_text=operator_text,
-        ids=lambda: {k: v() if callable(v) else v for k, v in fields.items()},
+        ids=lambda: {
+            **{k: v() if callable(v) else v for k, v in fields.items()},
+            **(holders() if holders else {}),
+        },
     )
 
 
 def assignee_principal(session, username: Optional[str]) -> Callable[[], Any]:
     """An assignee's principal id, looked up when the entry is written."""
     return lambda: principal_for_username(session, username) if username else None
+
+
+def _holder_principal(session, value: str) -> Optional[str]:
+    """The principal of the account whose username is exactly ``value``.
+
+    Unlike ``principal_for_username`` (the actor lookup), any account counts:
+    deactivated, deleted or erased (``erased-<principal_id>``) alike.
+    """
+    from core.storage.models import Principal, User
+
+    row = (
+        session.query(User.principal_id)
+        .join(Principal, Principal.principal_id == User.principal_id)
+        .filter(User.username == value)
+        .first()
+    )
+    return None if row is None else row[0]
+
+
+def holders(session, previous: Optional[str], new: Optional[str]) -> dict[str, Any]:
+    """Hashed fields for an owner or assignee change (#4264).
+
+    Each holder is its principal id, or an ``*_unresolved`` marker when the
+    stored text names no account (the text is beside the hash, ``holder_text``),
+    or absent when unassigned. Call it when the trail is in use.
+    """
+    fields: dict[str, Any] = {}
+    for key, value in (("previous_assignee", previous), ("assignee", new)):
+        if value:
+            principal = _holder_principal(session, value)
+            fields[key] = principal
+            fields[f"{key}_unresolved"] = None if principal else True
+    if not new:
+        fields["unassigned"] = True
+    return {k: v for k, v in fields.items() if v is not None}
+
+
+def holder_text(previous: Optional[str], new: Optional[str]) -> list[str]:
+    """The holders as stored, for beside the hash: never in it."""
+    return [t for t in (new, f"previously {previous}" if previous else None) if t]
 
 
 def append_update(
@@ -230,12 +274,11 @@ def append_update(
     for key in ("status", "priority"):
         if key in changed:
             fields[key] = after[key]
+    owner = None
     if "assignee" in changed:
-        fields["assignee"] = assignee_principal(session, after["assignee"])
-        if after["assignee"]:
-            texts.append(str(after["assignee"]))
-        else:
-            fields["unassigned"] = True
+        previous, new = before.get("assignee"), after["assignee"]
+        owner = lambda: holders(session, previous, new)  # noqa: E731
+        texts.extend(holder_text(previous, new))
     if changed == ["findings"]:
         action = FINDINGS_LINK if not unlinked else UNLINK if not linked else EDIT
     else:
@@ -265,6 +308,7 @@ def append_update(
         action,
         case_id,
         operator_text="\n".join(t for t in texts if t) or None,
+        holders=owner,
         **fields,
     )
 

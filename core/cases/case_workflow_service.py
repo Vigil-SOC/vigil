@@ -353,15 +353,22 @@ class CaseWorkflowService:
                     status="pending",
                 )
                 session.add(escalation)
+                # The owner change rides on this entry, both holders (#4264).
+                previous = case.assignee
+                moved = previous != escalated_to
                 # The case record only shows case-audit rows, so the name has to
                 # land here as well as on the escalation until the trail is in use.
-                # The reason is operator_text on the trail, not part of the hash.
+                # The reason and the holders' text are beside the hash, not in it.
+                texts = [
+                    reason,
+                    *(case_trail.holder_text(previous, escalated_to) if moved else []),
+                ]
                 case_trail.append_or_legacy(
                     session,
                     action=case_trail.ESCALATE,
                     signed_in=escalated_from,
                     case_id=case_id,
-                    operator_text=reason,
+                    operator_text="\n".join(t for t in texts if t) or None,
                     legacy=CaseAuditLog(
                         entity_type="case",
                         entity_id=case_id,
@@ -373,7 +380,14 @@ class CaseWorkflowService:
                         ),
                         changed_by=escalated_from,
                     ),
-                    ids=lambda: {"escalation_id": escalation.escalation_id},
+                    ids=lambda: {
+                        "escalation_id": escalation.escalation_id,
+                        **(
+                            case_trail.holders(session, previous, escalated_to)
+                            if moved
+                            else {}
+                        ),
+                    },
                 )
 
                 # Update case
