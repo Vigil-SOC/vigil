@@ -152,6 +152,9 @@ class Settings(BaseSettings):
     # python -m core.upgrade: run history directory (unset = none kept), and
     # the version-bound acknowledgement that stands in for a restore point.
     vigil_upgrade_dir: Optional[str] = None
+    # Where erased-principals.txt lives, shared by every backend replica.
+    # Unset falls back to vigil_upgrade_dir.
+    vigil_erasure_dir: Optional[str] = None
     vigil_upgrade_ack_version: str = ""
     vigil_upgrade_ack_reason: str = ""
 

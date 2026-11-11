@@ -5,13 +5,17 @@ The period and a pending erasure of an ``audit.manage`` holder live in
 used: its audit helper would append a second ``config.change``. Each is
 announced with one trail entry and takes effect seven days later. The ids
 that have actually been blanked are one per line in
-``$VIGIL_UPGRADE_DIR/erased-principals.txt``, and the same list is copied
-into each backup. They are not stored in the database.
+``$VIGIL_ERASURE_DIR/erased-principals.txt`` (``$VIGIL_UPGRADE_DIR`` when that
+is unset), and the same list is copied into each backup. They are not stored in
+the database. Replicas share the list on one volume, so each write takes a
+Postgres advisory lock and is fsynced before the lock is released.
 """
 
 from __future__ import annotations
 
 import json
+import os
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -21,6 +25,7 @@ from sqlalchemy import bindparam, event, text
 from core.audit import trail
 from core.auth import mcp_credential_service, principals, sign_ins
 from core.config import get_settings
+from core.storage.connection import get_db_manager
 
 MIN_DAYS = 365
 MAX_DAYS = 36500
@@ -30,6 +35,14 @@ CONFIG_DESCRIPTION = (
     "Audit retention period, and erasures of an audit manager waiting out seven days."
 )
 LIST_NAME = "erased-principals.txt"
+# Replicas take turns writing the list. Distinct from the trail's, the feed's,
+# the upgrade's and the rule sync's keys.
+_LIST_LOCK = 0x7669_6769_6C45_5253  # "vigilERS"
+# One refusal wherever the list has nowhere to live; restore prefixes it.
+UNSET_MESSAGE = (
+    "the erasure list has no directory: set VIGIL_ERASURE_DIR (or VIGIL_UPGRADE_DIR), "
+    "and on Helm give stateDirectory.volume shared storage such as a ReadWriteMany claim"
+)
 # An erased account's username and email, derived from its principal id so the
 # originals are free again. The username is how an account reads as Erased.
 ERASED_PREFIX = "erased-"
@@ -103,8 +116,9 @@ def free_identifiers(session, principal_id: str) -> None:
 
 
 def outside_path() -> Optional[Path]:
-    """The erasure list. None when ``VIGIL_UPGRADE_DIR`` is unset."""
-    raw = (get_settings().vigil_upgrade_dir or "").strip()
+    """The erasure list: in ``VIGIL_ERASURE_DIR``, else ``VIGIL_UPGRADE_DIR``. None when both are unset."""
+    settings = get_settings()
+    raw = (settings.vigil_erasure_dir or settings.vigil_upgrade_dir or "").strip()
     if not raw:
         return None
     return Path(raw) / LIST_NAME
@@ -163,8 +177,8 @@ def erase(
 ) -> dict:
     """Blank ``principal_id``, or announce it when that principal can manage the trail.
 
-    Refuses, before any blanking, when the upgrade directory is unset, when
-    ``actor`` is erasing their own principal, or when the target is the last
+    Refuses, before any blanking, when the erasure list has no directory or
+    can't be written, when ``actor`` is erasing their own principal, or when the target is the last
     active principal holding ``audit.manage``.
     """
     now = _aware(now)
@@ -172,8 +186,6 @@ def erase(
     reason = (reason or "").strip()
     if not principal_id:
         raise RetentionError("a principal is required")
-    if outside_path() is None:
-        raise RetentionError("VIGIL_UPGRADE_DIR is unset")
     _check_writable()
     if not _exists(session, principal_id):
         raise RetentionError("unknown principal")
@@ -248,7 +260,7 @@ def lock_due_accounts(session, now: datetime) -> None:
     """
     now = _aware(now)
     stored = _load(session, lock=True)
-    if outside_path() is None:
+    if _blocked() is not None:
         return
     ids = sorted(
         {
@@ -300,7 +312,7 @@ def reapply(session, snapshot_ids: list[str]) -> None:
         return
     path = outside_path()
     if path is None:
-        raise RetentionError("VIGIL_UPGRADE_DIR is unset")
+        raise RetentionError(UNSET_MESSAGE)
     for pid in union:
         _blank_label(session, pid)
         _revoke(session, pid)
@@ -343,7 +355,9 @@ def _apply_period(session, now: datetime) -> None:
 
 
 def _apply_erasures(session, now: datetime) -> None:
-    if outside_path() is None:
+    # An id that can't reach the list would be undone by a restore, so a due
+    # erasure stays pending until the list is writable again.
+    if _blocked() is not None:
         return
     stored = _load(session, lock=True)
     due = [item for item in stored["erasures"] if _stamp(item) + WAIT <= now]
@@ -531,6 +545,8 @@ def _check_writable() -> None:
     A blanking whose id never reaches the list is undone by a restore.
     """
     path = outside_path()
+    if path is None:
+        raise RetentionError(UNSET_MESSAGE)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8"):
@@ -539,26 +555,62 @@ def _check_writable() -> None:
         raise RetentionError(f"the erasure list is not writable: {path}") from exc
 
 
+def _blocked() -> Optional[str]:
+    """Why an erasure can't be recorded now, or None."""
+    try:
+        _check_writable()
+    except RetentionError as exc:
+        return str(exc)
+    return None
+
+
+@contextmanager
+def _list_lock():
+    """Serialize list writes across replicas, even on different nodes.
+
+    The writes run in ``after_commit``, where the session can't emit SQL, so
+    the lock is session-level on its own connection.
+    """
+    manager = get_db_manager()
+    manager.initialize()  # a no-op once the process has its engine
+    with manager.engine.connect().execution_options(
+        isolation_level="AUTOCOMMIT"
+    ) as conn:
+        conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _LIST_LOCK})
+        try:
+            yield
+        finally:
+            conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _LIST_LOCK})
+
+
 def _write_exact(body: str) -> None:
     path = outside_path()
     if path is None:
-        raise RetentionError("VIGIL_UPGRADE_DIR is unset")
+        raise RetentionError(UNSET_MESSAGE)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(body, encoding="utf-8")
+    with _list_lock(), path.open("w", encoding="utf-8") as handle:
+        handle.write(body)
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def _append_file(ids: list[str]) -> None:
     path = outside_path()
     if path is None:
-        raise RetentionError("VIGIL_UPGRADE_DIR is unset")
-    existing = set(read_ids(path))
-    fresh = [pid for pid in ids if pid not in existing]
-    if not fresh:
-        return
+        raise RetentionError(UNSET_MESSAGE)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        for pid in fresh:
-            handle.write(pid + "\n")
+    # Read, check and append under one lock: another replica's append lands
+    # before the read or after the fsync, never between.
+    with _list_lock():
+        existing = set(read_ids(path))
+        fresh = [pid for pid in dict.fromkeys(ids) if pid not in existing]
+        if not fresh:
+            return
+        with path.open("a", encoding="utf-8") as handle:
+            for pid in fresh:
+                handle.write(pid + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
 
 
 def _exists(session, principal_id: str) -> bool:
@@ -689,6 +741,8 @@ def _view(session, now: datetime) -> dict:
         "pending_on": (_stamp(pending) + WAIT).isoformat() if pending else None,
         "unconfirmed": any(waiting(item) for item in periods),
         "erasure_unconfirmed": any(seq not in period_seqs for seq in announced),
+        # Live, not stored: why a due erasure would wait.
+        "blocked": _blocked(),
         "erasures": [
             {
                 "principal_id": item.get("principal_id"),

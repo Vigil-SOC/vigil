@@ -731,7 +731,7 @@ def _check_erasure_list(root: Path, dump_in_snapshot: str) -> None:
     path = _under_target(root, str(Path(dump_in_snapshot).parent / retention.LIST_NAME))
     if path.is_file() and retention.read_ids(path) and retention.outside_path() is None:
         raise BackupError(
-            "the snapshot erases principals and VIGIL_UPGRADE_DIR is unset; "
+            f"the snapshot erases principals, but {retention.UNSET_MESSAGE}; "
             "set it, then restore again"
         )
 

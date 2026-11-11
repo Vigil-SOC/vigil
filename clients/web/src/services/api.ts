@@ -1473,6 +1473,8 @@ export interface AuditRetention {
   pending_on: string | null
   unconfirmed: boolean
   erasure_unconfirmed: boolean
+  /** Why a due erasure is waiting (the list can't be written); null when fine. */
+  blocked: string | null
   erasures: AuditErasure[]
 }
 
