@@ -573,7 +573,9 @@ def _list_lock():
     """
     manager = get_db_manager()
     manager.initialize()  # a no-op once the process has its engine
-    with manager.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+    with manager.engine.connect().execution_options(
+        isolation_level="AUTOCOMMIT"
+    ) as conn:
         conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _LIST_LOCK})
         try:
             yield
