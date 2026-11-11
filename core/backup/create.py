@@ -8,7 +8,9 @@ queueing when the session advisory lock is already held.
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -25,13 +27,24 @@ from core.audit.retention import list_text
 from core.backup.connection import backup_database_config
 from core.config import REPO_ROOT, get_settings, vigil_path
 from core.intent import intent_file
+from core.secrets import get_secret
 from core.storage.connection import DatabaseConfig
 from core.version import __version__
+
+logger = logging.getLogger(__name__)
 
 # Session lock, distinct from services/api/routers/auth.py _BOOTSTRAP_LOCK.
 LOCK_CLASSID = 1287
 LOCK_OBJID = 1
 SKIPPED_MESSAGE = "skipped: a backup is already running"
+
+# The wrapping key (JWT_SECRET_KEY) is kept out of the snapshot's copy of .env and
+# written as a second snapshot in the same repository (#4181): tagged
+# ``wrapping-key`` and ``main-<id>`` of the snapshot it pairs with.
+WRAPPING_TAG = "wrapping-key"
+PAIR_PREFIX = "main-"
+WRAPPING_FILE = "vigil-wrapping-key"
+_JWT_ENV_LINE = re.compile(r"^(\s*(?:export\s+)?JWT_SECRET_KEY\s*=)(.*)$")
 
 PRE_RESTORE_PREFIX = ".vigil-pre-restore-"
 STAGE_PREFIX = ".vigil-restore-stage-"
@@ -143,6 +156,7 @@ def create_snapshot(
                         f"{exc}; failed to remove snapshot {snap}: {detail}"
                     ) from exc
                 raise
+            _write_wrapping_key(repo, passphrase, snap, priority, extra_env)
             return snap
     finally:
         lock.close()
@@ -363,7 +377,7 @@ def _locations(staging: Path, bifrost_data: str | None) -> list[Location]:
         # Unset, skills sit in the State Directory and are copied with it.
         _skills(settings.vigil_skills_path or ""),
         _file_or_absent("intent", intent_file()),
-        _file_or_absent("env", REPO_ROOT / ".env"),
+        _env(staging),
         _bifrost(staging, bifrost_data),
     ]
     return locations
@@ -386,6 +400,51 @@ def _file_or_absent(name: str, path: Path) -> Location:
     if path.is_file():
         return Location(name, "included", path=str(path))
     return Location(name, "skipped", reason="absent")
+
+
+def _env(staging: Path) -> Location:
+    """The repo-root .env without its JWT_SECRET_KEY line, staged as a copy."""
+    src = REPO_ROOT / ".env"
+    if not src.is_file():
+        return Location("env", "skipped", reason="absent")
+    dest = staging / "env" / ".env"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    kept = [
+        line
+        for line in src.read_text(
+            encoding="utf-8", errors="surrogateescape"
+        ).splitlines(keepends=True)
+        if not _JWT_ENV_LINE.match(line.rstrip("\r\n"))
+    ]
+    dest.write_text("".join(kept), encoding="utf-8", errors="surrogateescape")
+    os.chmod(dest, 0o600)
+    return Location("env", "included", path=str(dest))
+
+
+def _write_wrapping_key(
+    repo: str,
+    passphrase: Path,
+    main_id: str,
+    priority: list[str],
+    extra_env: Mapping[str, str] | None,
+) -> None:
+    """The second snapshot, after the main one passed verification. The main
+    snapshot restores without it, so a failure here is logged, not raised."""
+    secret = get_secret("JWT_SECRET_KEY")
+    if not secret:
+        logger.warning("JWT_SECRET_KEY is not set here; no wrapping-key snapshot")
+        return
+    proc = subprocess.run(
+        priority
+        + ["restic", "-r", repo, "backup", "--stdin", "--stdin-filename", WRAPPING_FILE]
+        + ["--tag", WRAPPING_TAG, "--tag", PAIR_PREFIX + main_id],
+        env=_restic_env(passphrase, extra_env),
+        input=secret,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        logger.warning("wrapping-key snapshot failed: %s", _output(proc))
 
 
 def _bifrost(staging: Path, bifrost_data: str | None) -> Location:

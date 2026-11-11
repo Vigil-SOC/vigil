@@ -38,7 +38,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from core.auth import mfa_coverage, password_validator, token_expiry
+from core.auth import key_age, mfa_coverage, password_validator, token_expiry
 from core.auth.auth_cookies import warn_if_cookie_insecure_in_production
 from core.auth.bootstrap_code import announce_setup_code
 from core.auth.key_ring import adopt_when_ready
@@ -228,6 +228,7 @@ warn_if_cookie_insecure_in_production()
 mfa_coverage.register()
 password_validator.register()
 token_expiry.register()
+key_age.register()
 app.add_middleware(CSRFMiddleware)
 
 # Security headers added AFTER CORS so it is the outermost middleware on the
@@ -669,6 +670,7 @@ async def _startup(app: FastAPI):
     app.state.key_ring_task = asyncio.create_task(adopt_when_ready())
     app.state.setup_code_task = asyncio.create_task(announce_setup_code())
     if not _testing:
+        app.state.key_age_task = asyncio.create_task(key_age.run())
         from services.api.dormancy import run as dormancy_sweeper
 
         app.state.dormancy_task = asyncio.create_task(dormancy_sweeper())
@@ -704,7 +706,12 @@ def _start_audit_feed(app) -> None:
 
 
 async def _stop_setup_code(app) -> None:
-    for name in ("key_ring_task", "setup_code_task", "dormancy_task"):
+    for name in (
+        "key_ring_task",
+        "key_age_task",
+        "setup_code_task",
+        "dormancy_task",
+    ):
         task = getattr(app.state, name, None)
         if task is None:
             continue

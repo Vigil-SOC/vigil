@@ -309,6 +309,22 @@ def missing_permission(user_id: str, permission: str, session=None) -> Optional[
         return missing_permission(user_id, permission, owned)
 
 
+def holders(permission: str) -> list[str]:
+    """Principal ids of the active people, service accounts apart, who hold
+    ``permission``: who a notice about it is for. (Not the MCP token holders.)"""
+    with unit_of_work() as session:
+        people = (
+            session.query(User.user_id, User.principal_id)
+            .filter(User.is_active.is_(True), User.service_account.isnot(True))
+            .all()
+        )
+        return [
+            principal
+            for user_id, principal in people
+            if missing_permission(user_id, permission, session) is None
+        ]
+
+
 def deny_unless(user_id: str, permission: str, session=None) -> None:
     """403 naming the permission the gate declares."""
     missing = missing_permission(user_id, permission, session)

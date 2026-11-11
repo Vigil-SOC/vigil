@@ -74,6 +74,12 @@ source_modules =
     core.ingestion
 forbidden_modules =
     core.federation
+ignore_imports =
+    ; The key ring's host command stops runs on an emergency rotation. The
+    ; imports sit inside that command, which the ingestion path never runs.
+    core.auth.key_ring -> core.auth.sign_in_runs
+    core.auth.key_ring -> core.workflows.run_cancel
+    core.auth.key_ring -> core.workflows.workflow_run_service
 
 [importlinter:contract:tools]
 name = core reaches tools/ at exactly one place, and that place is named here
