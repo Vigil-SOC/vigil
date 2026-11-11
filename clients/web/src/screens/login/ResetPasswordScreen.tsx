@@ -27,10 +27,16 @@ export default function ResetPasswordScreen() {
     setError('')
     setLoading(true)
     try {
-      await authApi.confirmPasswordReset({ token, new_password: password })
+      const res = await authApi.confirmPasswordReset({ token, new_password: password })
       navigate('/login', {
         replace: true,
-        state: { notice: 'Password updated. Sign in with your new password.' },
+        state: {
+          notice:
+            'Password updated. Sign in with your new password.' +
+            (res.data?.recovery_codes_removed
+              ? ' Your old recovery codes were removed: make new ones in your security settings after you sign in.'
+              : ''),
+        },
       })
     } catch (err: any) {
       setError(requestErrorMessage(err, 'Could not reset your password. Please try again.'))

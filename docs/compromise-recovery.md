@@ -36,13 +36,14 @@ Every emergency rotation also stops every running agent run (reason "emergency k
 | `run` | Tokens held by runs stop working. The runs are stopped anyway. |
 | `setup`, `webauthn`, `sso` | Links, codes and challenges in flight stop working; people ask again. |
 | `mfa` | Authenticator secrets move under a new key. This does not help if the database was copied (see 4). |
-| `pepper` | Every stored password and recovery-code hash moves under a new key; the old key stays, decrypt-only. |
+| `pepper` | Every earlier pepper key is retired and nothing is re-encrypted, so every stored password and recovery-code hash becomes unreadable. Everyone must reset their password (see 4a). |
 
 Choose by what leaked:
 
 - **A sign-in token or the `signin` key**: `emergency signin`.
 - **A run token, or the agent layer's host**: `emergency run`, then `emergency signin` if the host also held sessions.
-- **Not sure, or the host was taken over**: `emergency all`, then 3.
+- **The pepper, or a database copy together with the ring**: `emergency pepper` (see 4a). It makes everyone reset their password.
+- **Not sure, or the host was taken over**: `emergency all`, then 3. `all` includes `pepper`, so everyone resets their password.
 
 ## 3. The wrapping key (`JWT_SECRET_KEY`)
 
@@ -64,7 +65,20 @@ The authenticator secrets are encrypted under the `mfa` key. Someone holding bot
 
 For one person, reset their two-step sign-in from Settings > Users, or on the host with `python scripts/reset_password.py --reset-mfa <user>`.
 
-A restore that cannot open the ring does this itself: it replaces the ring, clears the authenticator secrets nobody can read, and the restore notice says how many people must enrol again. Passwords are not touched.
+A restore that cannot open the ring does this itself: it replaces the ring, clears the authenticator secrets nobody can read, and the restore notice says how many people must enrol again, and how many must reset their password (see 4a).
+
+## 4a. The pepper was lost or exposed
+
+Passwords and recovery codes are stored encrypted under the `pepper` key. A normal `rotate pepper` re-encrypts them under a new key and keeps the old one, which does nothing if the old key and the database leaked together. `emergency pepper` instead retires every earlier pepper key and re-encrypts nothing: the stored hashes can no longer be read by anyone, a stolen copy included.
+
+What people see, and what you do:
+
+- **Sign-in.** A person whose password can no longer be read is told their password must be reset. The attempt is not a wrong password: it adds nothing to the failed count and never locks the account. The trail records `auth.sign_in_failed` with the reason `password_reset_required`.
+- **Reset.** The usual reset link works without reading the old password, and the minimum password age does not apply. With mail on, the person uses Forgot password. With mail off, issue a link from the host: `scripts/reset-password.sh <username>` (Compose: `docker exec deeptempo-backend python scripts/reset_password.py <username>`). The `auth.password_reset` trail entry counts the history entries it could not read (`history_skipped`).
+- **Recovery codes.** They are removed at the reset when they can't be read. The person makes new ones in their two-step settings; the authenticator app and security keys are not touched.
+- **Service accounts** are not affected: their gateway writes its password again at its next start.
+- **A restore** whose ring cannot be opened (4, 5) replaces the pepper too. The restore notice counts the people who must reset their password, and the restore's trail entry records it as `passwords_to_reset`. A pepper version retired before the restore stays retired after it.
+- **`recover_admin`** gives a role, never touches a password. If the person it names must also reset their password, issue the link as above.
 
 ## 5. Backups and the wrapping key
 

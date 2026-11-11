@@ -201,6 +201,8 @@ def erase(
         if not reason:
             raise RetentionError("erasing an audit manager needs a reason")
         return _defer(session, actor, principal_id, reason, now, updated_by)
+    # The feed row first, as every other path takes it, before the trail lock.
+    _lock_feed(session)
     _perform(session, principal_id)
     # Immediate. The trail entry is the record of the action, not a seven-day
     # announcement, so it is not tracked as unconfirmed.
@@ -414,10 +416,10 @@ def _announce(session, actor: str, principal_id: str, reason: str):
 
 
 def _perform(session, principal_id: str) -> None:
-    # The label and the account come first on an immediate erasure. The
-    # beside-columns wait until this transaction holds the trail lock: the
-    # leader takes that lock and then locks window rows, so updating those
-    # rows first deadlocks with the tick.
+    # Lock order, everywhere: the feed row, then the trail lock, then window or
+    # retention rows. The caller holds the feed row. The beside-columns wait
+    # until this transaction holds the trail lock: the leader takes that lock
+    # and then locks window rows, so updating those rows first deadlocks.
     _blank_label(session, principal_id)
     _revoke(session, principal_id)
     _drop_notices(session, principal_id)
@@ -776,11 +778,12 @@ def _remember(session, seq: int) -> None:
 
 
 def _lock_feed(session) -> None:
-    """The feed row, before the retention row and before the trail lock.
+    """The feed row, before the trail lock and before window or retention rows.
 
-    ``maintenance_and_send`` holds this row, then the trail lock, then the
-    retention row. A save that takes the retention row first and appends
-    (the insert takes the trail lock) deadlocks with that tick.
+    The one lock order: feed row, then the trail lock, then window or retention
+    rows. ``maintenance_and_send`` takes them so, and so must every save, export
+    and erasure that appends (the insert takes the trail lock); taking the trail
+    lock first deadlocks with that tick or with another holder of the feed row.
     """
     _announcements(session)
 

@@ -184,6 +184,11 @@ export default function LoginScreen() {
         setRecovery(false)
         if (key) void askKey(o)
         else setError(!app && o.detail ? o.detail : 'Enter your 2FA code to continue.')
+      } else if (err?.response?.data?.detail?.code === 'password_reset_required') {
+        // the key that protected the stored password is gone: nothing was counted, a reset is the way in
+        const d = err.response.data.detail
+        if (d.by_mail) openForgot()
+        setError(d.message)
       } else {
         setError(
           requestErrorMessage(

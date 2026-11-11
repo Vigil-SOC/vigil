@@ -1888,7 +1888,7 @@ export const authApi = {
       email,
     } satisfies Schema<'PasswordResetRequest'>),
   confirmPasswordReset: (payload: Schema<'PasswordResetConfirm'>) =>
-    api.post<{ message: string }>('/auth/password-reset/confirm', payload),
+    api.post<{ message: string; recovery_codes_removed?: boolean }>('/auth/password-reset/confirm', payload),
   /** Revokes every token the user holds and clears the auth cookies, so the
    *  caller is signed out once this resolves. */
   changePassword: (body: Schema<'ChangePasswordRequest'>) =>
