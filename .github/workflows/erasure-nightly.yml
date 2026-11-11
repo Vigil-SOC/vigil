@@ -1,0 +1,347 @@
+name: Erasure nightly
+
+# Parallel erasures across two backend replicas on two nodes lose no id (#4295).
+#
+# The erasure list (erased-principals.txt) is one file in the State Directory, and
+# every replica appends to it under a Postgres advisory lock. On kind: a cluster with
+# two worker nodes, an NFS ReadWriteMany claim as the State Directory, and two backend
+# pods forced onto different nodes. N throwaway accounts are erased at once, half
+# through each pod, and the list must then hold every id exactly once. A second
+# release on default values (a per-pod emptyDir) must refuse an erasure with the
+# message the backend gives, rather than lose the id quietly.
+#
+# Red for: a pod that is not Ready, two backend pods on one node, a request that is
+# not 2xx, an id missing from the list as either pod reads it, an id in it that was not
+# erased, an id listed twice (each named), or an emptyDir install that does not refuse.
+# On failure the list, both pods' logs and the pod placement are uploaded.
+#
+# Only what the API needs runs: the backend (built from Dockerfile.backend and loaded
+# into kind), the chart's Postgres and Redis. No Medic, daemon, workers or Bifrost.
+# The RWX storage is the nfs-ganesha server-and-external provisioner (a pod that
+# serves NFS and carves a directory per claim); kind's node image ships the NFS
+# client (the "NFS client" step installs nfs-common on a node if one ever stops
+# shipping it). Not a pull request check: the epic (#4275) accepts none.
+
+on:
+  schedule:
+    # Not nightly.yml's 02:00 or medic-nightly.yml's 03:30: each wants its own runner.
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CLUSTER: erasure
+  # Accounts erased at once. Enough that both pods hold several in flight together.
+  N: 30
+  # The artifact on failure: what the run saw, not the chart or its generated secrets.
+  WORK: /tmp/erasure
+  CHART: /tmp/erasure-chart
+  LIB: /tmp/erasure-lib.sh
+
+jobs:
+  parallel-erasures:
+    name: Parallel erasures, two replicas on two nodes
+    if: github.event_name == 'workflow_dispatch' || github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.15.2
+
+      - name: Install kind
+        uses: helm/kind-action@v1
+        with:
+          install_only: true
+
+      - name: Build the backend image
+        run: docker build -f infra/docker/Dockerfile.backend -t vigil-backend:kind .
+
+      - name: Cluster with two worker nodes
+        run: |
+          mkdir -p "$WORK"
+          cat > "$WORK/kind.yaml" <<'EOF'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes:
+            - role: control-plane
+            - role: worker
+            - role: worker
+          EOF
+          kind create cluster --name "$CLUSTER" --config "$WORK/kind.yaml" --wait 0s
+          kubectl wait --for=condition=Ready nodes --all --timeout=300s
+          kind load docker-image vigil-backend:kind --name "$CLUSTER"
+
+      # The kubelet on each node mounts the NFS volume, so each needs mount.nfs.
+      - name: NFS client on the nodes
+        run: |
+          for node in "$CLUSTER-worker" "$CLUSTER-worker2"; do
+            docker exec "$node" sh -c 'command -v mount.nfs' >/dev/null 2>&1 || {
+              echo "$node has no NFS client; installing nfs-common"
+              docker exec "$node" sh -c 'apt-get update -qq && apt-get install -y -qq nfs-common'
+            }
+            docker exec "$node" sh -c 'command -v mount.nfs'
+          done
+
+      - name: NFS ReadWriteMany storage
+        run: |
+          helm repo add nfs-ganesha https://kubernetes-sigs.github.io/nfs-ganesha-server-and-external-provisioner/
+          helm repo update nfs-ganesha
+          helm install nfs nfs-ganesha/nfs-server-provisioner -n nfs --create-namespace \
+            --set storageClass.name=nfs --set 'storageClass.mountOptions[0]=vers=4.1' \
+            --wait --timeout 300s
+
+      # The chart without its subcharts (all off here), as medic-tests/kind/e2e.sh does,
+      # so no repo fetch is needed. Both releases install from this copy.
+      - name: Prepare the chart
+        run: |
+          mkdir -p "$CHART"
+          cp -R infra/helm/vigil "$CHART/vigil"
+          rm -rf "$CHART/vigil/medic-tests" "$CHART/vigil/Chart.lock"
+          python3 - "$CHART/vigil/Chart.yaml" <<'PY'
+          import re, sys
+          p = sys.argv[1]
+          text = open(p).read()
+          open(p, "w").write(re.split(r"^dependencies:", text, flags=re.M)[0])
+          PY
+          # What both releases share: the backend alone, with its Postgres and Redis.
+          cat > "$CHART/common.yaml" <<EOF
+          agentWorker: {replicaCount: 0}
+          daemon: {enabled: false}
+          llmWorker: {enabled: false}
+          agentServe: {enabled: false}
+          mcpRunner: {enabled: false}
+          agentShell: {enabled: false}
+          bifrost: {enabled: false}
+          backend:
+            image: {repository: vigil-backend, tag: kind, pullPolicy: Never}
+          upgrade:
+            acknowledgeVersion: "$(sed -n 's/^appVersion: *//p' "$CHART/vigil/Chart.yaml" | tr -d "\"'")"
+            acknowledgeReason: "erasure nightly: throwaway cluster; nothing to restore"
+          secrets:
+            postgresPassword: "$(openssl rand -hex 12)"
+            vigilAppPassword: "$(openssl rand -hex 12)"
+            jwtSecretKey: "$(openssl rand -hex 24)"
+          EOF
+          # Two backend pods can never share a node.
+          cat > "$CHART/spread.yaml" <<'EOF'
+          backend:
+            affinity:
+              podAntiAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  - topologyKey: kubernetes.io/hostname
+                    labelSelector:
+                      matchLabels:
+                        app.kubernetes.io/component: backend
+          EOF
+          # Shell both steps use. call OUTFILE PORT METHOD PATH [JSON]: the status code on
+          # stdout, the body in OUTFILE. The CSRF header and cookie carry the same made-up
+          # value: the check is double-submit.
+          cat > "$LIB" <<'EOF'
+          call() {
+            local out=$1 port=$2 method=$3 path=$4 body=${5:-} auth=()
+            [[ -z ${TOKEN:-} ]] || auth=(-H "Authorization: Bearer $TOKEN")
+            curl -sS -o "$out" -w '%{http_code}' -X "$method" "http://127.0.0.1:$port$path" \
+              "${auth[@]}" -H 'Content-Type: application/json' \
+              -H 'X-CSRF-Token: erasure' -H 'Cookie: csrf_token=erasure' ${body:+-d "$body"}
+          }
+          expect() { # STATUS WANTED WHAT: the response body is printed on a mismatch
+            [[ $1 =~ ^$2$ ]] || { echo "::error::$3: HTTP $1"; cat "$WORK/body.json"; exit 1; }
+          }
+          totp() { # a base32 secret → the current 6-digit code (RFC 6238)
+            python3 -c 'import base64,hashlib,hmac,struct,sys,time
+          k = base64.b32decode(sys.argv[1].upper() + "=" * (-len(sys.argv[1]) % 8))
+          h = hmac.new(k, struct.pack(">Q", int(time.time()) // 30), hashlib.sha1).digest()
+          o = h[-1] & 15
+          print("%06d" % ((struct.unpack(">I", h[o:o + 4])[0] & 0x7FFFFFFF) % 10**6))' "$1"
+          }
+          # admin_session NAMESPACE PORT: the first admin through the pod behind PORT, signed
+          # in with MFA set up (erasing, like creating a user, asks a person for a second
+          # factor). Sets TOKEN.
+          admin_session() {
+            local ns=$1 port=$2 log code secret
+            for _ in $(seq 60); do # the setup code is in a pod's log once the schema is there
+              log=$(kubectl -n "$ns" logs -l app.kubernetes.io/component=backend --tail=-1 || true)
+              code=$(grep -o 'First-run setup code: [0-9a-f]*' <<<"$log" | head -1 | awk '{print $NF}') || true
+              [[ -n $code ]] && break
+              sleep 5
+            done
+            [[ -n $code ]] || { echo "::error::no setup code in the backend logs of $ns"; exit 1; }
+            PASS="Aa1!$(openssl rand -hex 12)"
+            TOKEN=
+            expect "$(call "$WORK/body.json" "$port" POST /api/auth/bootstrap \
+              "{\"username\":\"erasure-admin\",\"email\":\"erasure-admin@example.com\",\"password\":\"$PASS\",\"setup_code\":\"$code\"}")" 201 bootstrap
+            expect "$(call "$WORK/body.json" "$port" POST /api/auth/login \
+              "{\"username_or_email\":\"erasure-admin\",\"password\":\"$PASS\"}")" 200 login
+            TOKEN=$(jq -r .access_token "$WORK/body.json")
+            expect "$(call "$WORK/body.json" "$port" POST /api/auth/mfa/setup)" 200 'MFA setup'
+            secret=$(jq -r .secret "$WORK/body.json")
+            expect "$(call "$WORK/body.json" "$port" POST /api/auth/mfa/verify \
+              "{\"code\":\"$(totp "$secret")\",\"password\":\"$PASS\"}")" 200 'MFA verify'
+          }
+          EOF
+
+      # Durable shape. emptyDir=null removes the chart's default emptyDir: setting only
+      # the claimName would merge into it, and the chart would still see an ephemeral
+      # volume and leave VIGIL_ERASURE_DIR unset.
+      - name: Install Vigil on the shared claim
+        run: |
+          kubectl create namespace durable
+          kubectl apply -n durable -f - <<'EOF'
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata: {name: vigil-state}
+          spec:
+            accessModes: [ReadWriteMany]
+            storageClassName: nfs
+            resources: {requests: {storage: 1Gi}}
+          EOF
+          kubectl -n durable wait --for=jsonpath='{.status.phase}'=Bound pvc/vigil-state --timeout=120s
+          helm install durable "$CHART/vigil" -n durable -f "$CHART/common.yaml" -f "$CHART/spread.yaml" \
+            --set backend.replicaCount=2 \
+            --set stateDirectory.volume.emptyDir=null \
+            --set stateDirectory.volume.persistentVolumeClaim.claimName=vigil-state
+          kubectl -n durable rollout status deploy/durable-vigil-backend --timeout=600s
+
+      - name: The two backend pods are on two nodes
+        run: |
+          kubectl -n durable get pods -o wide
+          nodes=$(kubectl -n durable get pods -l app.kubernetes.io/component=backend \
+            -o jsonpath='{range .items[*]}{.spec.nodeName}{"\n"}{end}')
+          [[ $(wc -l <<<"$nodes") == 2 && $(sort -u <<<"$nodes" | wc -l) == 2 ]] \
+            || { echo "::error::the backend pods are not on two different nodes: $nodes"; exit 1; }
+          for pod in $(kubectl -n durable get pods -l app.kubernetes.io/component=backend -o name); do
+            dir=$(kubectl -n durable exec "$pod" -- printenv VIGIL_ERASURE_DIR)
+            [[ $dir == /var/lib/vigil ]] || { echo "::error::$pod has VIGIL_ERASURE_DIR='$dir'"; exit 1; }
+          done
+
+      - name: Parallel erasures
+        run: |
+          set -euo pipefail
+          # One port-forward per pod (not the Service), so each pod takes half the requests.
+          pods=($(kubectl -n durable get pods -l app.kubernetes.io/component=backend -o jsonpath='{.items[*].metadata.name}'))
+          ports=(18081 18082)
+          for i in 0 1; do
+            kubectl -n durable port-forward "pod/${pods[$i]}" "${ports[$i]}:6987" >"$WORK/pf-$i.log" 2>&1 &
+            for _ in $(seq 60); do curl -fs "http://127.0.0.1:${ports[$i]}/api/health" >/dev/null && break; sleep 1; done
+          done
+          trap 'kill $(jobs -p) 2>/dev/null || true' EXIT
+
+          . "$LIB"
+          admin_session durable "${ports[0]}"
+
+          # The admin holds audit.manage and the role the throwaways get does not.
+          expect "$(call "$WORK/body.json" "${ports[0]}" GET /api/audit/retention)" 200 'GET /api/audit/retention'
+          expect "$(call "$WORK/body.json" "${ports[0]}" GET /api/users/roles/list)" 200 'role list'
+          [[ $(jq -r '.roles[] | select(.role_id == "role-admin") | .permissions["audit.manage"]' "$WORK/body.json") == true ]] \
+            || { echo "::error::role-admin does not hold audit.manage"; exit 1; }
+          [[ $(jq -r '.roles[] | select(.role_id == "role-viewer") | .permissions["audit.manage"] // false' "$WORK/body.json") == false ]] \
+            || { echo "::error::role-viewer holds audit.manage: its erasure would wait seven days"; exit 1; }
+
+          # N throwaway accounts. Erasure blanks one without audit.manage at once.
+          for i in $(seq "$N"); do
+            expect "$(call "$WORK/body.json" "${ports[0]}" POST /api/users/ \
+              "{\"username\":\"erase-$i\",\"email\":\"erase-$i@example.com\",\"password\":\"Aa1!$(openssl rand -hex 12)\",\"full_name\":\"Erase $i\",\"role_id\":\"role-viewer\"}")" 201 "create erase-$i"
+          done
+          # The user API does not show a principal_id; read each from the database.
+          psql() { kubectl -n durable exec sts/durable-vigil-postgres -- psql -U deeptempo -d deeptempo_soc -At -c "$1"; }
+          psql "SELECT principal_id FROM users WHERE username LIKE 'erase-%' ORDER BY principal_id" > "$WORK/expected.txt"
+          [[ $(wc -l < "$WORK/expected.txt") == "$N" ]] || { echo "::error::expected $N principals, found $(wc -l < "$WORK/expected.txt")"; exit 1; }
+
+          # Every erasure at once, alternating between the pods.
+          mkdir -p "$WORK/results"
+          export TOKEN WORK
+          erase_one() { # PRINCIPAL PORT
+            curl -sS -o "$WORK/results/$1.body" -w '%{http_code}' -X POST "http://127.0.0.1:$2/api/audit/erasure" \
+              -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+              -H 'X-CSRF-Token: erasure' -H 'Cookie: csrf_token=erasure' \
+              -d "{\"principal_id\":\"$1\",\"reason\":\"erasure nightly\"}" > "$WORK/results/$1.code" || echo 000 > "$WORK/results/$1.code"
+          }
+          export -f erase_one
+          awk -v a="${ports[0]}" -v b="${ports[1]}" '{print $1, (NR % 2 ? a : b)}' "$WORK/expected.txt" \
+            | xargs -P "$N" -L1 bash -c 'erase_one "$@"' _
+          : > "$WORK/refused-requests.txt"
+          while read -r pid; do
+            c=$(cat "$WORK/results/$pid.code")
+            [[ $c =~ ^2 ]] || echo "$pid HTTP $c $(cat "$WORK/results/$pid.body")" >> "$WORK/refused-requests.txt"
+          done < "$WORK/expected.txt"
+          if [[ -s $WORK/refused-requests.txt ]]; then
+            cat "$WORK/refused-requests.txt"
+            echo "::error::$(wc -l < "$WORK/refused-requests.txt") of $N erasures were not 2xx; the first: $(head -1 "$WORK/refused-requests.txt")"
+            exit 1
+          fi
+
+          # The list as each pod reads it: every id once, and no other.
+          bad=0
+          for i in 0 1; do
+            kubectl -n durable exec "pod/${pods[$i]}" -- cat /var/lib/vigil/erased-principals.txt > "$WORK/list-$i.txt"
+            sort "$WORK/list-$i.txt" | grep . > "$WORK/actual-$i.txt" || true
+            uniq -d "$WORK/actual-$i.txt" > "$WORK/duplicated-$i.txt"
+            sort -u "$WORK/actual-$i.txt" > "$WORK/unique-$i.txt"
+            comm -23 "$WORK/expected.txt" "$WORK/unique-$i.txt" > "$WORK/missing-$i.txt"
+            comm -13 "$WORK/expected.txt" "$WORK/unique-$i.txt" > "$WORK/unexpected-$i.txt"
+            echo "${pods[$i]}: erased $N, the list has $(wc -l < "$WORK/actual-$i.txt") lines: $(wc -l < "$WORK/missing-$i.txt") missing, $(wc -l < "$WORK/unexpected-$i.txt") unexpected, $(wc -l < "$WORK/duplicated-$i.txt") listed twice"
+            for kind in missing unexpected duplicated; do
+              [[ -s $WORK/$kind-$i.txt ]] || continue
+              bad=1
+              echo "::error::${pods[$i]} reads a list with $kind ids: $(tr '\n' ' ' < "$WORK/$kind-$i.txt")"
+            done
+          done
+          [[ $bad == 0 ]] || exit 1
+          # The accounts really are blanked.
+          [[ $(psql "SELECT count(*) FROM users WHERE username LIKE 'erased-%'") == "$N" ]] \
+            || { echo "::error::not every erased account reads as Erased"; exit 1; }
+
+      # The same install on default values (a per-pod emptyDir), in its own namespace:
+      # there is no shared place for the list, so an erasure must refuse and say what to change.
+      - name: An emptyDir install refuses an erasure
+        run: |
+          set -euo pipefail
+          kubectl create namespace ephemeral
+          helm install ephemeral "$CHART/vigil" -n ephemeral -f "$CHART/common.yaml" --set backend.replicaCount=1
+          kubectl -n ephemeral rollout status deploy/ephemeral-vigil-backend --timeout=600s
+          kubectl -n ephemeral port-forward deploy/ephemeral-vigil-backend 18083:6987 >"$WORK/pf-2.log" 2>&1 &
+          trap 'kill $(jobs -p) 2>/dev/null || true' EXIT
+          for _ in $(seq 60); do curl -fs http://127.0.0.1:18083/api/health >/dev/null && break; sleep 1; done
+
+          . "$LIB"
+          admin_session ephemeral 18083
+
+          # The wording the backend ships, read from its image rather than copied here.
+          want=$(kubectl -n ephemeral exec deploy/ephemeral-vigil-backend -- python -c 'from core.audit.retention import UNSET_MESSAGE; print(UNSET_MESSAGE)')
+          status=$(call "$WORK/refused.json" 18083 POST /api/audit/erasure '{"principal_id":"nobody","reason":"erasure nightly"}')
+          cat "$WORK/refused.json"; echo
+          [[ $status == 400 && $(jq -r .detail "$WORK/refused.json") == "$want" ]] \
+            || { echo "::error::an emptyDir install answered HTTP $status, not the refusal: $want"; exit 1; }
+
+      - name: Pod placement, logs and the list
+        if: failure()
+        run: |
+          mkdir -p "$WORK/logs"
+          kubectl get pods -A -o wide > "$WORK/logs/pods.txt" || true
+          for ns in durable ephemeral; do
+            for pod in $(kubectl -n "$ns" get pods -o name 2>/dev/null); do
+              name=${pod#pod/}
+              kubectl -n "$ns" logs "$pod" --all-containers --tail=-1 > "$WORK/logs/$ns-$name.log" 2>&1 || true
+              kubectl -n "$ns" logs "$pod" --all-containers --previous --tail=-1 > "$WORK/logs/$ns-$name.previous.log" 2>&1 || true
+              # Not Ready: why.
+              [[ $(kubectl -n "$ns" get "$pod" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}') == True ]] \
+                || kubectl -n "$ns" describe "$pod" > "$WORK/logs/$ns-$name.describe.txt" 2>&1 || true
+            done
+          done
+          kubectl -n durable exec deploy/durable-vigil-backend -- cat /var/lib/vigil/erased-principals.txt \
+            > "$WORK/erased-principals.txt" 2>&1 || true
+          kubectl get events -A --sort-by=.lastTimestamp > "$WORK/logs/events.txt" || true
+
+      - name: Upload the list and the logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: erasure-nightly
+          path: ${{ env.WORK }}
+          if-no-files-found: warn
