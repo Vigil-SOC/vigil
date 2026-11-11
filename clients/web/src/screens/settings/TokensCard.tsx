@@ -80,12 +80,17 @@ function Reveal({ token, onDone }: { token: string; onDone: () => void }) {
 }
 
 /**
- * Your own API tokens, and for a `users.write` holder everyone's.
+ * Your own API tokens, and for a `users.write` holder everyone's. With `account`,
+ * one service account's instead: the holder mints and rotates them for it.
  *
  * A token calls the API and Vigil's MCP server as its holder, as a program and
  * never as a person: it cannot change an account or mint another token.
  */
-export default function TokensCard({ notify, canManage }: SectionProps & { canManage: boolean }) {
+export default function TokensCard({
+  notify,
+  canManage,
+  account,
+}: SectionProps & { canManage: boolean; account?: { user_id: string; username: string } }) {
   const [own, setOwn] = useState<ApiToken[] | null>(null)
   const [failed, setFailed] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -101,18 +106,18 @@ export default function TokensCard({ notify, canManage }: SectionProps & { canMa
   const [status, setStatus] = useState('')
   const [allFailed, setAllFailed] = useState(false)
 
+  const accountId = account?.user_id
   const loadOwn = useCallback(() => {
-    tokensApi
-      .listOwn()
+    ;(accountId ? tokensApi.listAll({ holder: accountId }) : tokensApi.listOwn())
       .then((r) => {
         setOwn(r.data.tokens)
         setFailed(false)
       })
       .catch(() => setFailed(true))
-  }, [])
+  }, [accountId])
 
   const loadAll = useCallback(() => {
-    if (!canManage) return
+    if (!canManage || accountId) return
     tokensApi
       .listAll({ holder: holder || undefined, status: (status || undefined) as ApiTokenStatus | undefined })
       .then((r) => {
@@ -121,7 +126,7 @@ export default function TokensCard({ notify, canManage }: SectionProps & { canMa
         setAllFailed(false)
       })
       .catch(() => setAllFailed(true))
-  }, [canManage, holder, status])
+  }, [canManage, accountId, holder, status])
 
   useEffect(loadOwn, [loadOwn])
   useEffect(loadAll, [loadAll])
@@ -144,7 +149,7 @@ export default function TokensCard({ notify, canManage }: SectionProps & { canMa
 
   const mint = () =>
     act(async () => {
-      const r = await tokensApi.mint(label.trim(), Number(days))
+      const r = await tokensApi.mint(label.trim(), Number(days), accountId)
       setRevealed(r.data.token)
       setLabel('')
     }, 'Could not mint a token')
@@ -176,9 +181,13 @@ export default function TokensCard({ notify, canManage }: SectionProps & { canMa
     <>
       <SettingsCard
         wide
-        id="tokens"
-        title="API tokens"
-        desc="A token lets a program call Vigil’s API and MCP server as you. What it may do is what your account may do, and it is recorded against your name. A token can never change an account or mint another token."
+        id={account ? `tokens-${account.user_id}` : 'tokens'}
+        title={account ? `Tokens of ${account.username}` : 'API tokens'}
+        desc={
+          account
+            ? 'A token lets the integration call Vigil’s API as this service account, with what its role allows. Each lasts a year; rotate before it ends. Minting and rotating is a person’s act: a token can never mint another token.'
+            : 'A token lets a program call Vigil’s API and MCP server as you. What it may do is what your account may do, and it is recorded against your name. A token can never change an account or mint another token.'
+        }
         actions={
           <button className="btn ghost" onClick={reload}>
             <Icon name="refresh" /> Refresh
@@ -194,11 +203,13 @@ export default function TokensCard({ notify, canManage }: SectionProps & { canMa
                 value={label}
                 maxLength={200}
                 aria-label="Token label"
-                placeholder="What holds it — “the platform”, “my laptop”"
+                placeholder={
+                  account ? 'What holds it — “the audit forwarder”' : 'What holds it — “the platform”, “my laptop”'
+                }
                 onChange={(e) => setLabel(e.target.value)}
               />
             </div>
-            <Select value={days} options={LIFETIMES} onSelect={setDays} name="Lasts" />
+            {!account && <Select value={days} options={LIFETIMES} onSelect={setDays} name="Lasts" />}
             <button className="btn primary" disabled={busy || !label.trim()} onClick={mint}>
               <Icon name="plus" /> Mint
             </button>
@@ -210,18 +221,18 @@ export default function TokensCard({ notify, canManage }: SectionProps & { canMa
                 compact
                 error
                 icon="alert"
-                title="Couldn’t load your tokens"
+                title={account ? 'Couldn’t load its tokens' : 'Couldn’t load your tokens'}
                 primary={{ label: 'Retry', onClick: loadOwn, icon: 'refresh' }}
               />
             ) : (
-              <EmptyState compact loading icon="link" title="Loading your tokens…" />
+              <EmptyState compact loading icon="link" title={account ? 'Loading its tokens…' : 'Loading your tokens…'} />
             )
           ) : own.length === 0 ? (
             <EmptyState
               compact
               icon="link"
               title="No tokens yet"
-              body="Mint one above to let a program call Vigil as you."
+              body={account ? 'Mint one above to give the integration access.' : 'Mint one above to let a program call Vigil as you.'}
             />
           ) : (
             <div className="table-wrap">
@@ -302,12 +313,12 @@ export default function TokensCard({ notify, canManage }: SectionProps & { canMa
         />
       </SettingsCard>
 
-      {canManage && (
+      {canManage && !account && (
         <SettingsCard
           wide
           id="all-tokens"
           title="All API tokens"
-          desc="Every token on this install, whoever holds it. You can revoke any of them, including one held by someone with more access than you; the holder is told. Only a token’s holder can rotate it."
+          desc="Every token on this install, whoever holds it. You can revoke any of them, including one held by someone with more access than you; the holder is told. Only a token’s holder can rotate it, or for a service account, a holder of users.write (from its row under Service accounts)."
           actions={
             <>
               <Select value={holder} options={holderOptions} onSelect={setHolder} name="Holder" searchable />

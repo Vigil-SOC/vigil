@@ -4061,6 +4061,11 @@
   "nullable": false,
   "type": "character varying(100)"
  },
+ "column users.accountable_principal_id": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
  "column users.created_at": {
   "default": "now()",
   "nullable": false,
@@ -4158,7 +4163,7 @@
  },
  "column users.password_hash": {
   "default": null,
-  "nullable": false,
+  "nullable": true,
   "type": "character varying(255)"
  },
  "column users.password_history": {
@@ -4169,6 +4174,11 @@
  "column users.principal_id": {
   "default": null,
   "nullable": false,
+  "type": "text"
+ },
+ "column users.purpose": {
+  "default": null,
+  "nullable": true,
   "type": "text"
  },
  "column users.role_id": {
@@ -4560,6 +4570,7 @@
  "constraint tool_effect_classes.tool_effect_classes_effect_class_check": "CHECK (((effect_class)::text = ANY ((ARRAY['read'::character varying, 'read_unverified'::character varying, 'reversible'::character varying, 'irreversible'::character varying])::text[])))",
  "constraint tool_effect_classes.tool_effect_classes_pkey": "PRIMARY KEY (tool_name)",
  "constraint user_preferences.user_preferences_pkey": "PRIMARY KEY (user_id)",
+ "constraint users.users_accountable_principal_id_fkey": "FOREIGN KEY (accountable_principal_id) REFERENCES principals(principal_id) ON DELETE RESTRICT",
  "constraint users.users_email_key": "UNIQUE (email)",
  "constraint users.users_pkey": "PRIMARY KEY (user_id)",
  "constraint users.users_principal_id_fkey": "FOREIGN KEY (principal_id) REFERENCES principals(principal_id) ON DELETE RESTRICT",

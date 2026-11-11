@@ -276,6 +276,11 @@ export interface User {
   login_count: number
   principal_kind: 'person' | 'service_account'
   managed_by_medic: boolean
+  /** a service account's purpose, and the person answerable for it (never Medic's) */
+  purpose: string | null
+  accountable: { user_id: string; username: string; full_name: string } | null
+  /** that person is deactivated, deleted or erased: reassign */
+  accountable_gone: boolean
   /** sign-in is refused now; locked_until is empty for a lock until an Unlock or a reset link */
   locked: boolean
   locked_until: string | null
