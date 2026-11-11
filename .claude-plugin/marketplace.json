@@ -1,0 +1,19 @@
+{
+  "name": "vigil",
+  "owner": {
+    "name": "Vigil-SOC",
+    "url": "https://github.com/Vigil-SOC"
+  },
+  "metadata": {
+    "description": "The Claude Code client for Vigil, the open SOC platform."
+  },
+  "plugins": [
+    {
+      "name": "vigil",
+      "source": "./clients/claude-code",
+      "description": "Work your own Vigil SOC from Claude Code over its /mcp surface.",
+      "license": "Apache-2.0",
+      "homepage": "https://vigilsoc.org"
+    }
+  ]
+}

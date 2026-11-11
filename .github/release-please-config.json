@@ -48,6 +48,11 @@
           "jsonpath": "$.packages[''].version"
         },
         {
+          "type": "json",
+          "path": "clients/claude-code/.claude-plugin/plugin.json",
+          "jsonpath": "$.version"
+        },
+        {
           "type": "yaml",
           "path": "infra/helm/vigil/Chart.yaml",
           "jsonpath": "$.appVersion"
