@@ -8,7 +8,7 @@ the only link that exists; there is no ``finding_ids`` column.
 
 from typing import Annotated, Any, Optional
 
-from pydantic import BeforeValidator, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
 from core.storage.schemas.base import JsonList, OptDateTime, ORMSchema, StrList
 from core.storage.schemas.finding import FindingSchema
@@ -39,6 +39,16 @@ def _to_finding_ids(value: Any) -> Any:
 FindingIds = Annotated[list[str], BeforeValidator(_to_finding_ids)]
 
 
+class CaseTeam(BaseModel):
+    """The case's owning team, on reads."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    is_default: bool
+
+
 class CaseBaseSchema(ORMSchema):
     """Case fields common to both rendering modes."""
 
@@ -48,6 +58,7 @@ class CaseBaseSchema(ORMSchema):
     status: Optional[str] = None
     priority: Optional[str] = None
     assignee: Optional[str] = None
+    team: Optional[CaseTeam] = None
     tags: StrList = []
     notes: JsonList = []
     timeline: JsonList = []

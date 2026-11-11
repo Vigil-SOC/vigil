@@ -37,6 +37,18 @@ class NotFoundError(SOCError):
         super().__init__(message, code)
 
 
+class TeamRefused(SOCError):
+    """A team change the caller can correct.
+
+    Lives here so the case insert, which is storage, can raise it without
+    importing the teams module (that module imports auth).
+    """
+
+    def __init__(self, message: str, status_code: int = 409):
+        super().__init__(message, "TEAM_REFUSED")
+        self.status_code = status_code
+
+
 def default_on_error(default, *, level: str = "exception", passthrough: tuple = ()):
     """Log and return ``default`` if the wrapped function raises.
 

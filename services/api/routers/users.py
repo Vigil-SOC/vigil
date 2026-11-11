@@ -16,6 +16,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
+from core import teams
 from core.audit import retention
 from core.auth import current_user as current_user_module
 from core.auth import (
@@ -59,7 +60,7 @@ from core.config import get_settings
 from core.platform.email_service import mail_is_configured, send_email
 from core.platform.notices import notify
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.storage.models import AuthLink, Case, Principal, Role, User
+from core.storage.models import AuthLink, Case, Principal, Role, Team, User
 from core.storage.schemas import RoleSchema, UserSchema
 from core.storage.schemas.base import IsoDateTime
 from core.storage.unit_of_work import unit_of_work
@@ -610,11 +611,20 @@ def list_users(
         )
 
 
+class PersonTeam(BaseModel):
+    """One team a person is on. Archived teams are left out: they accept no one."""
+
+    id: str
+    name: str
+    is_default: bool
+
+
 class Person(BaseModel):
     """One current person, as a picker shows them."""
 
     username: str
     display_name: Optional[str] = None
+    teams: list[PersonTeam] = []
 
 
 @router.get("/people", response_model=list[Person])
@@ -646,7 +656,18 @@ def list_people(
             func.lower(func.coalesce(func.nullif(User.full_name, ""), User.username))
         )
     ).all()
-    return [Person(username=u, display_name=(n or "").strip() or None) for u, n in rows]
+    held = teams.teams_for(session, {username for username, _name in rows})
+    return [
+        Person(
+            username=username,
+            display_name=(name or "").strip() or None,
+            teams=[
+                PersonTeam(id=team.team_id, name=team.name, is_default=team.is_default)
+                for team in held.get(username, [])
+            ],
+        )
+        for username, name in rows
+    ]
 
 
 class InviteRequest(BaseModel):
@@ -655,6 +676,8 @@ class InviteRequest(BaseModel):
     email: EmailStr = Field(max_length=200)
     role_id: str
     channel: Literal["email", "copy"]
+    # Named instead of the default team. Needs teams.manage; absent joins the default.
+    team_ids: Optional[list[str]] = None
 
 
 class ResendRequest(BaseModel):
@@ -671,6 +694,7 @@ class InviteEntry(BaseModel):
     issued_at: IsoDateTime
     expires_at: IsoDateTime
     expired: bool
+    team_ids: list[str] = []
 
 
 class InviteList(BaseModel):
@@ -706,6 +730,7 @@ def _invite_entry(session: Session, row: AuthLink) -> InviteEntry:
         issued_at=row.issued_at,
         expires_at=row.expires_at,
         expired=invites.is_expired(row),
+        team_ids=list(row.team_ids or []),
     )
 
 
@@ -759,7 +784,12 @@ def _refuse_held_address(session: Session, email: str) -> None:
 
 
 def _issue_invite(
-    session: Session, current_user: User, email: str, role_id: str, channel: str
+    session: Session,
+    current_user: User,
+    email: str,
+    role_id: str,
+    channel: str,
+    team_ids: Optional[list[str]] = None,
 ) -> InviteIssued:
     settings = get_settings()
     base = settings.vigil_frontend_url.strip()
@@ -780,8 +810,9 @@ def _issue_invite(
     # An address is a sign-in name: hold it so two invites or sign-ups can't race.
     claim_sign_in_names(session, email)
     _refuse_held_address(session, email)
+    chosen = teams.check_invite_teams(session, team_ids)
     row, token = invites.issue(
-        session, email, role_id, current_user.principal_id, channel
+        session, email, role_id, current_user.principal_id, channel, chosen
     )
     entry = _invite_entry(session, row)
     if channel == invites.EMAIL:
@@ -839,8 +870,15 @@ def create_invite(
     with _denials(current_user, "invite.create"):
         deny_unless(current_user.user_id, "users.write")
         _refuse_invite_actor(current_user, session)
+        if any((team_id or "").strip() for team_id in (request.team_ids or [])):
+            deny_unless(current_user.user_id, "teams.manage")
         return _issue_invite(
-            session, current_user, str(request.email), request.role_id, request.channel
+            session,
+            current_user,
+            str(request.email),
+            request.role_id,
+            request.channel,
+            request.team_ids,
         )
 
 
@@ -865,7 +903,12 @@ def resend_invite(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Invite not found"
             )
         return _issue_invite(
-            session, current_user, row.email, row.role_id, request.channel
+            session,
+            current_user,
+            row.email,
+            row.role_id,
+            request.channel,
+            list(row.team_ids or []),
         )
 
 
@@ -886,6 +929,178 @@ def revoke_invite(
         )
     invites.revoke(session, row, current_user.principal_id)
     return {"message": "Invite revoked"}
+
+
+class TeamOut(BaseModel):
+    id: str
+    name: str
+    is_default: bool
+    archived: bool
+
+
+class TeamMemberOut(BaseModel):
+    user_id: str
+    username: str
+    display_name: Optional[str] = None
+
+
+class TeamDetail(TeamOut):
+    members: list[TeamMemberOut]
+
+
+class TeamName(BaseModel):
+    name: str = Field(min_length=1, max_length=teams.NAME_MAX)
+
+
+class TeamMemberAdd(BaseModel):
+    user_id: str
+
+
+class TeamMemberRemoved(BaseModel):
+    user_id: str
+    warning: Optional[str] = None
+
+
+def _team_out(team) -> TeamOut:
+    return TeamOut(
+        id=team.team_id,
+        name=team.name,
+        is_default=team.is_default,
+        archived=team.archived_at is not None,
+    )
+
+
+def _team_detail(session: Session, team) -> TeamDetail:
+    return TeamDetail(
+        **_team_out(team).model_dump(),
+        members=[
+            TeamMemberOut(
+                user_id=user.user_id,
+                username=user.username,
+                display_name=(user.full_name or "").strip() or None,
+            )
+            for user in teams.members_of(session, team.team_id)
+        ],
+    )
+
+
+@router.get("/teams", response_model=list[TeamOut])
+def list_teams(
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Every team, archived included (users.read)."""
+    with _denials(current_user, "team.list"):
+        deny_unless(current_user.user_id, "users.read")
+    return [_team_out(team) for team in teams.list_teams(session)]
+
+
+@router.post("/teams", response_model=TeamOut, status_code=status.HTTP_201_CREATED)
+def create_team(
+    body: TeamName,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Create a team (teams.manage)."""
+    with _denials(current_user, "team.create"):
+        deny_unless(current_user.user_id, "teams.manage")
+    return _team_out(
+        teams.create_team(session, body.name, actor=current_user.principal_id)
+    )
+
+
+@router.get("/teams/{team_id}", response_model=TeamDetail)
+def get_team(
+    team_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """One team and its members (users.read)."""
+    with _denials(current_user, "team.read"):
+        deny_unless(current_user.user_id, "users.read")
+    team = session.get(Team, team_id)
+    if team is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Team not found"
+        )
+    return _team_detail(session, team)
+
+
+@router.post("/teams/{team_id}/rename", response_model=TeamOut)
+def rename_team(
+    team_id: str,
+    body: TeamName,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Rename a team, archived names included in the uniqueness check (teams.manage)."""
+    with _denials(current_user, "team.rename"):
+        deny_unless(current_user.user_id, "teams.manage")
+    return _team_out(
+        teams.rename_team(session, team_id, body.name, actor=current_user.principal_id)
+    )
+
+
+@router.post("/teams/{team_id}/archive", response_model=TeamOut)
+def archive_team(
+    team_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Archive a team once every case on it is closed. The default team cannot be."""
+    with _denials(current_user, "team.archive"):
+        deny_unless(current_user.user_id, "teams.manage")
+    return _team_out(
+        teams.archive_team(session, team_id, actor=current_user.principal_id)
+    )
+
+
+@router.post("/teams/{team_id}/unarchive", response_model=TeamOut)
+def unarchive_team(
+    team_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Bring an archived team back (teams.manage)."""
+    with _denials(current_user, "team.unarchive"):
+        deny_unless(current_user.user_id, "teams.manage")
+    return _team_out(
+        teams.unarchive_team(session, team_id, actor=current_user.principal_id)
+    )
+
+
+@router.post(
+    "/teams/{team_id}/members",
+    response_model=TeamDetail,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_team_member(
+    team_id: str,
+    body: TeamMemberAdd,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Add a person to a team. An archived team accepts no one (teams.manage)."""
+    with _denials(current_user, "team.member_add"):
+        deny_unless(current_user.user_id, "teams.manage")
+    teams.add_member(session, team_id, body.user_id, actor=current_user.principal_id)
+    return _team_detail(session, session.get(Team, team_id))
+
+
+@router.delete("/teams/{team_id}/members/{user_id}", response_model=TeamMemberRemoved)
+def remove_team_member(
+    team_id: str,
+    user_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Remove a person from a team (teams.manage)."""
+    with _denials(current_user, "team.member_remove"):
+        deny_unless(current_user.user_id, "teams.manage")
+    warning = teams.remove_member(
+        session, team_id, user_id, actor=current_user.principal_id
+    )
+    return TeamMemberRemoved(user_id=user_id, warning=warning)
 
 
 @router.get("/{user_id}")
@@ -1976,6 +2191,10 @@ def reactivate_user(
         "user.enabled",
         actor=current_user.principal_id,
         principal=user.principal_id,
+    )
+    # Someone already deactivated at the upgrade has no team. Joining is recorded.
+    teams.join_default_if_none(
+        session, user.principal_id, actor=current_user.principal_id
     )
     who = current_user.full_name or current_user.username
     _tell_person(

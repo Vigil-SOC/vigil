@@ -16,7 +16,7 @@ from sqlalchemy import (
     Text,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.storage.models.base import Base
@@ -213,6 +213,10 @@ class AuthLink(Base):
     # Failed tries (a refused password or a taken username).
     attempts: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=text("0")
+    )
+    # Teams chosen for the account, kept until accept. Null joins the default team.
+    team_ids: Mapped[Optional[list[str]]] = mapped_column(
+        ARRAY(String(50)), nullable=True
     )
 
     __table_args__ = (

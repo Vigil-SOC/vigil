@@ -981,6 +981,16 @@
             "title": "Tags",
             "type": "array"
           },
+          "team": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CaseTeam"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "timeline": {
             "default": [],
             "items": {},
@@ -2032,6 +2042,16 @@
             ],
             "title": "Sla Seconds Left"
           },
+          "team": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CaseTeam"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -2344,6 +2364,16 @@
             "title": "Tags",
             "type": "array"
           },
+          "team": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CaseTeam"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "timeline": {
             "default": [],
             "items": {},
@@ -2536,6 +2566,16 @@
             "title": "Tags",
             "type": "array"
           },
+          "team": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CaseTeam"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "timeline": {
             "default": [],
             "items": {},
@@ -2612,6 +2652,30 @@
           "by_priority"
         ],
         "title": "CaseSummaryResponse",
+        "type": "object"
+      },
+      "CaseTeam": {
+        "description": "The case's owning team, on reads.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "is_default": {
+            "title": "Is Default",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "is_default"
+        ],
+        "title": "CaseTeam",
         "type": "object"
       },
       "CaseUnresolvedFinding": {

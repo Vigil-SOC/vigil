@@ -499,13 +499,12 @@ def create_case(
         priority=priority or severity or "medium",
         description=description,
         status=status,
+        assignee=assignee,
     )
     if not case:
         return {"error": "Failed to create case"}
-    # assignee and tags are edits, applied after the case exists.
+    # Tags are an edit after the case exists. The owner is on the creation entry.
     edits: Args = {}
-    if assignee is not None:
-        edits["assignee"] = assignee
     if tags:
         edits["tags"] = tags
     if edits:

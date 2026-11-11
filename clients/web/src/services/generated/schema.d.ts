@@ -7013,6 +7013,150 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/teams": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Teams
+         * @description Every team, archived included (users.read).
+         */
+        get: operations["get_api_users_teams"];
+        put?: never;
+        /**
+         * Create Team
+         * @description Create a team (teams.manage).
+         */
+        post: operations["post_api_users_teams"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/teams/{team_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Team
+         * @description One team and its members (users.read).
+         */
+        get: operations["get_api_users_teams_team_id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/teams/{team_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Archive Team
+         * @description Archive a team once every case on it is closed. The default team cannot be.
+         */
+        post: operations["post_api_users_teams_team_id_archive"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/teams/{team_id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add Team Member
+         * @description Add a person to a team. An archived team accepts no one (teams.manage).
+         */
+        post: operations["post_api_users_teams_team_id_members"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/teams/{team_id}/members/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Team Member
+         * @description Remove a person from a team (teams.manage).
+         */
+        delete: operations["delete_api_users_teams_team_id_members_user_id"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/teams/{team_id}/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rename Team
+         * @description Rename a team, archived names included in the uniqueness check (teams.manage).
+         */
+        post: operations["post_api_users_teams_team_id_rename"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/teams/{team_id}/unarchive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unarchive Team
+         * @description Bring an archived team back (teams.manage).
+         */
+        post: operations["post_api_users_teams_team_id_unarchive"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users/{user_id}": {
         parameters: {
             query?: never;
@@ -9641,6 +9785,7 @@ export interface components {
              * @default []
              */
             tags: string[];
+            team?: components["schemas"]["CaseTeam"] | null;
             /**
              * Timeline
              * @default []
@@ -10046,6 +10191,7 @@ export interface components {
             sla_paused: boolean;
             /** Sla Seconds Left */
             sla_seconds_left?: number | null;
+            team?: components["schemas"]["CaseTeam"] | null;
             /** Title */
             title: string;
             /** Workflow Id */
@@ -10362,6 +10508,7 @@ export interface components {
              * @default []
              */
             tags: string[];
+            team?: components["schemas"]["CaseTeam"] | null;
             /**
              * Timeline
              * @default []
@@ -10428,6 +10575,7 @@ export interface components {
              * @default []
              */
             tags: string[];
+            team?: components["schemas"]["CaseTeam"] | null;
             /**
              * Timeline
              * @default []
@@ -10538,6 +10686,18 @@ export interface components {
         CaseTasksResponse: {
             /** Tasks */
             tasks: components["schemas"]["CaseTaskRead"][];
+        };
+        /**
+         * CaseTeam
+         * @description The case's owning team, on reads.
+         */
+        CaseTeam: {
+            /** Id */
+            id: string;
+            /** Is Default */
+            is_default: boolean;
+            /** Name */
+            name: string;
         };
         /** CaseUnresolvedFinding */
         CaseUnresolvedFinding: {
@@ -11836,6 +11996,11 @@ export interface components {
             link_id: string;
             /** Role Id */
             role_id: string;
+            /**
+             * Team Ids
+             * @default []
+             */
+            team_ids: string[];
         };
         /**
          * InviteIssued
@@ -11877,6 +12042,8 @@ export interface components {
             email: string;
             /** Role Id */
             role_id: string;
+            /** Team Ids */
+            team_ids?: string[] | null;
         };
         /** InvokeRequest */
         InvokeRequest: {
@@ -12702,8 +12869,25 @@ export interface components {
         Person: {
             /** Display Name */
             display_name?: string | null;
+            /**
+             * Teams
+             * @default []
+             */
+            teams: components["schemas"]["PersonTeam"][];
             /** Username */
             username: string;
+        };
+        /**
+         * PersonTeam
+         * @description One team a person is on. Archived teams are left out: they accept no one.
+         */
+        PersonTeam: {
+            /** Id */
+            id: string;
+            /** Is Default */
+            is_default: boolean;
+            /** Name */
+            name: string;
         };
         /** PhaseUpdate */
         PhaseUpdate: {
@@ -14088,6 +14272,56 @@ export interface components {
             status?: string | null;
             /** Title */
             title?: string | null;
+        };
+        /** TeamDetail */
+        TeamDetail: {
+            /** Archived */
+            archived: boolean;
+            /** Id */
+            id: string;
+            /** Is Default */
+            is_default: boolean;
+            /** Members */
+            members: components["schemas"]["TeamMemberOut"][];
+            /** Name */
+            name: string;
+        };
+        /** TeamMemberAdd */
+        TeamMemberAdd: {
+            /** User Id */
+            user_id: string;
+        };
+        /** TeamMemberOut */
+        TeamMemberOut: {
+            /** Display Name */
+            display_name?: string | null;
+            /** User Id */
+            user_id: string;
+            /** Username */
+            username: string;
+        };
+        /** TeamMemberRemoved */
+        TeamMemberRemoved: {
+            /** User Id */
+            user_id: string;
+            /** Warning */
+            warning?: string | null;
+        };
+        /** TeamName */
+        TeamName: {
+            /** Name */
+            name: string;
+        };
+        /** TeamOut */
+        TeamOut: {
+            /** Archived */
+            archived: boolean;
+            /** Id */
+            id: string;
+            /** Is Default */
+            is_default: boolean;
+            /** Name */
+            name: string;
         };
         /**
          * TemplateCreate
@@ -27207,6 +27441,279 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EndedSignIns"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_users_teams: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_users_teams: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeamName"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_users_teams_team_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                team_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_users_teams_team_id_archive: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                team_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_users_teams_team_id_members: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                team_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeamMemberAdd"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_users_teams_team_id_members_user_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                team_id: string;
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamMemberRemoved"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_users_teams_team_id_rename: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                team_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeamName"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_users_teams_team_id_unarchive: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                team_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamOut"];
                 };
             };
             /** @description Validation Error */

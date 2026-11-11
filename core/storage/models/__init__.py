@@ -83,6 +83,7 @@ from core.storage.models.exclusion import IpExclusion
 from core.storage.models.finding import Finding, FindingMitrePrediction
 from core.storage.models.medic import MedicLastSeen
 from core.storage.models.skill import SkillRead
+from core.storage.models.team import Team, TeamMembership
 from core.storage.models.workflow import (
     FINISHED_INVESTIGATION_STATUSES,
     IN_FLIGHT_INVESTIGATION_STATUSES,
@@ -173,6 +174,8 @@ __all__ = [
     "SketchMapping",
     "SkillRead",
     "SystemConfig",
+    "Team",
+    "TeamMembership",
     "ThreatIndicator",
     "ToolEffectClass",
     "User",

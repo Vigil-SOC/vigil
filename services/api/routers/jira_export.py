@@ -116,6 +116,8 @@ def export_case_to_jira(
         description += (
             f"*Created:* {case.created_at.isoformat() if case.created_at else 'N/A'}\n"
         )
+        team_name = case.team.name if case.team is not None else "Unknown"
+        description += f"*Team:* {team_name}\n"
         description += f"*Assigned To:* {case.assignee or 'Unassigned'}\n\n"
 
         if case.description:

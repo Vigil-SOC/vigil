@@ -26,6 +26,7 @@ from core.cases.closure import (
     trust_word,
 )
 from core.exceptions import NotFoundError, default_on_error
+from core.storage.case_insert import insert_case
 from core.storage.models import (
     Case,
     CaseAuditLog,
@@ -213,8 +214,8 @@ class CaseWorkflowService:
             timestamp = utcnow().strftime("%Y%m%d%H%M%S")
             case_id = f"case-{timestamp}"
 
-            # Create case
-            case = Case(
+            case = insert_case(
+                session,
                 case_id=case_id,
                 title=title,
                 description=description or template.description or "",
@@ -237,9 +238,6 @@ class CaseWorkflowService:
                 activities=[],
                 resolution_steps=[],
             )
-
-            session.add(case)
-            session.flush()  # Flush to get case_id
 
             # Create tasks from template
             if template.task_templates:

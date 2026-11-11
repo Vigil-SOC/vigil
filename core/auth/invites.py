@@ -173,7 +173,12 @@ def open_for(session: Session, email: str, lock: bool = False) -> Optional[AuthL
 
 
 def issue(
-    session: Session, email: str, role_id: str, inviter: str, channel: str
+    session: Session,
+    email: str,
+    role_id: str,
+    inviter: str,
+    channel: str,
+    team_ids: Optional[list[str]] = None,
 ) -> tuple[AuthLink, str]:
     """A new link for ``email``, replacing any open one. Returns the row and the
     value, which is not kept anywhere."""
@@ -191,6 +196,7 @@ def issue(
         channel=channel,
         issued_at=now,
         expires_at=now + LIFETIME[channel],
+        team_ids=team_ids or None,
     )
     session.add(row)
     session.flush()
@@ -202,6 +208,7 @@ def issue(
         link_id=row.link_id,
         role_id=role_id,
         channel=channel,
+        team_ids=team_ids or None,
     )
     return row, token
 

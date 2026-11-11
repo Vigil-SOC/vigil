@@ -130,6 +130,8 @@ class QueueItem:
     sla_paused: bool = False
     # From core.cases.assignee.owner_states; None when unassigned.
     owner_state: Optional[str] = None
+    # {id, name, is_default} of the owning team.
+    team: Optional[dict] = None
 
 
 def queue_item(
@@ -167,4 +169,13 @@ def queue_item(
         description=row.description,
         sla_paused=row.is_paused,
         owner_state=owner_state,
+        team=(
+            {
+                "id": row.team_id,
+                "name": row.team_name,
+                "is_default": row.team_is_default,
+            }
+            if row.team_id
+            else None
+        ),
     )

@@ -648,6 +648,7 @@ def open_case(
     description: str,
     status: str = "open",
     case_id: Optional[str] = None,
+    assignee: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Create a case and give it the default SLA for its priority.
 
@@ -660,6 +661,7 @@ def open_case(
         description=description,
         status=status,
         case_id=case_id,
+        assignee=assignee,
     )
     if not case:
         return None
