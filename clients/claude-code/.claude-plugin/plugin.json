@@ -1,0 +1,28 @@
+{
+  "name": "vigil",
+  "version": "1.0.2",
+  "description": "Work your own Vigil SOC from Claude Code: read the queue and cases, start and steer investigations and hunts, see what waits on a person, and read the trail. Vigil's kernel does the work; the session starts, steers and reads it.",
+  "author": {
+    "name": "Vigil-SOC",
+    "url": "https://github.com/Vigil-SOC"
+  },
+  "homepage": "https://vigilsoc.org",
+  "repository": "https://github.com/Vigil-SOC/vigil",
+  "license": "Apache-2.0",
+  "keywords": ["security", "soc", "mcp", "incident-response", "threat-hunting"],
+  "userConfig": {
+    "vigil_url": {
+      "type": "string",
+      "title": "Vigil address",
+      "description": "Base URL of your Vigil backend, without /mcp (for example http://localhost:6987).",
+      "required": true
+    },
+    "credential": {
+      "type": "string",
+      "title": "Vigil MCP credential",
+      "description": "A token minted in Settings or with python -m core.auth.mcp_token <username>.",
+      "required": true,
+      "sensitive": true
+    }
+  }
+}
