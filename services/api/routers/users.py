@@ -82,6 +82,31 @@ ROUTER_META = RouterMeta(
 
 
 # Request/Response Models
+SERVICE_ACCOUNT_NAME = r"^[a-z0-9][a-z0-9._-]{2,63}$"
+
+
+class CreateServiceAccountRequest(BaseModel):
+    """Create a token-only account for an integration, with the person answerable for it."""
+
+    name: str = Field(pattern=SERVICE_ACCOUNT_NAME)
+    purpose: str = Field(min_length=1, max_length=500)
+    role_id: str = "role-viewer"
+    # The accountable person's user id (their principal id).
+    accountable: str
+
+    @field_validator("purpose")
+    @classmethod
+    def _purpose(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("A purpose is required")
+        return value
+
+
+class ReassignRequest(BaseModel):
+    accountable: str
+
+
 class UpdateUserRequest(BaseModel):
     """Update user request: profile and role. Status changes have their own routes."""
 
@@ -427,6 +452,21 @@ def _dump_accounts(session: Session, users: list[User]) -> list[dict]:
         .all()
     )
     linked = sso.linked_principals(session)
+    # Who each service account answers to: worked out here, never stored.
+    answerable = {
+        user.principal_id: (user, gone is not None)
+        for user, gone in session.query(User, Principal.deleted_at)
+        .join(Principal, Principal.principal_id == User.principal_id)
+        .filter(
+            User.principal_id.in_(
+                [
+                    u.accountable_principal_id
+                    for u in users
+                    if u.accountable_principal_id
+                ]
+            )
+        )
+    }
     now = utcnow()
     dumped = []
     for user in users:
@@ -441,6 +481,22 @@ def _dump_accounts(session: Session, users: list[User]) -> list[dict]:
             principals.SERVICE_ACCOUNT if machine else principals.PERSON
         )
         entry["managed_by_medic"] = _is_medic(user)
+        entry["purpose"] = user.purpose
+        entry["accountable"] = None
+        entry["accountable_gone"] = False
+        if machine and not _is_medic(user):
+            person, deleted_person = answerable.get(
+                user.accountable_principal_id, (None, True)
+            )
+            entry["accountable_gone"] = (
+                deleted_person or not person.is_active or _is_erased(person)
+            )
+            if person is not None and not _is_erased(person):
+                entry["accountable"] = {
+                    "user_id": person.user_id,
+                    "username": person.username,
+                    "full_name": person.full_name,
+                }
         # Stored on the role. AuthService.check_permission refuses them for a
         # non-person, so for this account they do nothing.
         entry["no_effect"] = (
@@ -471,6 +527,7 @@ def list_users(
     limit: int = Query(100, ge=1, le=1000),
     role_id: Optional[str] = None,
     is_active: Optional[bool] = None,
+    service_account: Optional[bool] = None,
     search: Optional[str] = None,
     account_status: AccountStatus = Query("current", alias="status"),
     *,
@@ -485,6 +542,7 @@ def list_users(
         limit: Maximum number of users to return
         role_id: Filter by role ID
         is_active: Filter by active status
+        service_account: Only service accounts (true) or only people (false)
         search: Search in username, email, or full name
         account_status: "current" (not deleted or erased), "all", or one status
         current_user: Current authenticated user
@@ -511,6 +569,13 @@ def list_users(
 
         if is_active is not None:
             query = query.filter(User.is_active == is_active)
+
+        if service_account is not None:
+            query = query.filter(
+                User.service_account.is_(True)
+                if service_account
+                else User.service_account.isnot(True)
+            )
 
         if search:
             search_pattern = f"%{search}%"
@@ -1123,6 +1188,151 @@ def unlock_user(
         actor=current_user.principal_id,
         principal=user.principal_id,
         identity_confirmed_by=body.identity_confirmed_by,
+    )
+    return _dump_accounts(session, [user])[0]
+
+
+@router.post(
+    "/service-accounts",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[_step_up("users.write")],
+)
+def create_service_account(
+    request: CreateServiceAccountRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Create a service account: no password, no MFA, signed in by token only.
+    users.write, a person's own act, and a role the caller covers; a role holding
+    audit.read needs audit.forward too. Tokens are minted on /api/tokens."""
+    with _denials(current_user, "user.create_service_account"):
+        deny_unless(current_user.user_id, "users.write")
+        if not _acts_as_person(current_user, session):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Creating a service account needs a person's own sign-in",
+            )
+        role = session.get(Role, request.role_id)
+        if role is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role ID"
+            )
+        _refuse_uncovered(
+            current_user, role.permissions, session, "Cannot assign this role"
+        )
+        if "audit.read" in _granted(role.permissions):
+            _refuse_audit_read_to_machine(current_user, session)
+    person = _accountable_person(session, request.accountable)
+    name, email = request.name, f"{request.name}@service.invalid"
+    # medic-* is Medic's: the enable flow names and retires accounts of that kind.
+    if name.startswith("medic-"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="That name is reserved for Medic's account",
+        )
+    claim_sign_in_names(session, name, email)
+    if identifier_in_use(session, name) or identifier_in_use(session, email):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username or email already exists",
+        )
+    user = User(
+        user_id=f"user-{uuid.uuid4().hex[:12]}",
+        username=name,
+        email=email,
+        password_hash=None,
+        full_name=name,
+        role_id=role.role_id,
+        is_active=True,
+        is_verified=True,
+        service_account=True,
+        purpose=request.purpose,
+        accountable_principal_id=person.principal_id,
+    )
+    principals.add_for_user(session, user)
+    session.add(user)
+    session.flush()
+    trail_events.record(
+        session,
+        "user.created",
+        {"personal": trail_events.personal(user)},
+        actor=current_user.principal_id,
+        principal=user.principal_id,
+        role_id=user.role_id,
+        service_account=True,
+        accountable=person.principal_id,
+    )
+    logger.info(f"Service account created by {current_user.username}: {name}")
+    return _dump_accounts(session, [user])[0]
+
+
+def _accountable_person(session: Session, user_id: str) -> User:
+    """An active person who is not deleted, erased or a service account."""
+    person = _not_deleted(session.query(User)).filter(User.user_id == user_id).first()
+    if (
+        person is None
+        or not person.is_active
+        or _is_erased(person)
+        or not _is_person_account(person, session)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The accountable person must be an active person, not a service account",
+        )
+    return person
+
+
+@router.put(
+    "/service-accounts/{user_id}/accountable",
+    dependencies=[_step_up("users.write")],
+)
+def reassign_service_account(
+    user_id: str,
+    body: ReassignRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Name another person accountable for a service account. users.write over the
+    account, and a person's own act; recorded in the trail."""
+    with _denials(current_user, "user.reassign_service_account"):
+        deny_unless(current_user.user_id, "users.write")
+        if not _acts_as_person(current_user, session):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Reassigning needs a person's own sign-in",
+            )
+        user = _live_user(session, user_id)
+        if not _is_service_account(user) or _is_medic(user):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only a service account made on this screen has an accountable person",
+            )
+        _require_privileges_cover_target(current_user, user, session, action="reassign")
+    person = _accountable_person(session, body.accountable)
+    previous = user.accountable_principal_id
+    user.accountable_principal_id = person.principal_id
+    session.flush()
+    trail_events.record(
+        session,
+        "user.accountable_changed",
+        actor=current_user.principal_id,
+        principal=user.principal_id,
+        accountable=person.principal_id,
+        previous_accountable=previous,
+    )
+    who = current_user.full_name or current_user.username
+    when_committed(
+        session,
+        lambda: notify(
+            person.principal_id,
+            "service_account",
+            "You are accountable for a service account",
+            f"{who} made you accountable for the service account {user.username}.",
+            link="/settings?section=users",
+        ),
+    )
+    logger.info(
+        f"Service account reassigned by {current_user.username}: {user.username}"
     )
     return _dump_accounts(session, [user])[0]
 

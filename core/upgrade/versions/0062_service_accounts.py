@@ -1,8 +1,8 @@
-"""Single-use links: invites to set up an account (#4226)."""
+"""Service accounts for integrations: no password, a purpose, an accountable person (#4224)."""
 
 from core.upgrade.revision import run_sql
 
-revision = "0062_auth_links"
+revision = "0062_service_accounts"
 down_revision = "0061_users_cutoff_drop"
 
 

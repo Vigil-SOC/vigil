@@ -71,6 +71,12 @@ def issue_link(session, who: str, base_url: str) -> int:
             file=sys.stderr,
         )
         return 1
+    if user.service_account is True:
+        print(
+            f"{user.username!r} is a service account: it has no password to reset.",
+            file=sys.stderr,
+        )
+        return 1
     if not user.is_active:
         print(
             f"User {user.username!r} is inactive; reactivate it before resetting.",

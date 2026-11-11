@@ -200,9 +200,12 @@ class AuthService:
 
     @staticmethod
     @default_on_error(False, passthrough=(key_ring.KeyRingError,))
-    def verify_password(password: str, stored_hash: str) -> bool:
+    def verify_password(password: str, stored_hash: Optional[str]) -> bool:
         """Verify a password against its hash (PBKDF2, or a bcrypt from before).
-        An unreadable key ring raises: it is not a wrong password."""
+        An unreadable key ring raises: it is not a wrong password. No hash (a
+        token-only service account) is a wrong password."""
+        if not stored_hash:
+            return False
         return password_hash.verify(password, stored_hash)
 
     @staticmethod

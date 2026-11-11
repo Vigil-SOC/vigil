@@ -13,6 +13,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext'
 import { signInsApi } from '../../services/api'
 import InvitesCard from './InvitesCard'
+import ServiceAccountsCard from './ServiceAccountsCard'
 import SsoCard from './SsoCard'
 import TokensCard from './TokensCard'
 import UserMethodsDialog from './UserMethodsDialog'
@@ -61,6 +62,7 @@ export default function UsersSection({ notify }: SectionProps) {
     <>
       {hasPermission('roles.manage') && <SsoCard notify={notify} />}
       <PeopleAndRoles notify={notify} />
+      {hasPermission('users.read') && <ServiceAccountsCard notify={notify} canWrite={hasPermission('users.write')} />}
       <TokensCard notify={notify} canManage={hasPermission('users.write')} />
     </>
   )
@@ -373,7 +375,8 @@ function PeopleAndRoles({ notify }: SectionProps) {
                     <div className="flex flex-col items-start gap-1">
                       {u.has_sso && <span className="chip sel">SSO</span>}
                       {u.has_password && <span className="chip">Password</span>}
-                      {!u.has_sso && !u.has_password && <span className="muted">—</span>}
+                      {u.principal_kind === 'service_account' && !u.has_password && <span className="chip">Token only</span>}
+                      {!u.has_sso && !u.has_password && u.principal_kind !== 'service_account' && <span className="muted">—</span>}
                     </div>
                   </td>
                   <td>
