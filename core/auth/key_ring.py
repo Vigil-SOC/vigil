@@ -4,7 +4,7 @@
 ``JWT_SECRET_KEY``, which stays outside the database. A purpose has one
 ``current`` key and, after a rotation, older ones: signing keys stay
 ``verify_only`` until their overlap ends (then ``retired``, material deleted),
-the MFA key stays ``decrypt_only``.
+the MFA and pepper keys stay ``decrypt_only``.
 
 Version 1 of each purpose is the value derived from the secret before the ring
 existed, so tokens issued then keep verifying. Adoption writes version 1 and a
@@ -65,7 +65,9 @@ class KeyRingError(RuntimeError):
 @dataclass(frozen=True)
 class Purpose:
     overlap: Optional[timedelta]  # how long a signing key verifies after rotation
-    derive: Callable[[str], bytes]  # version 1: what the secret gave before the ring
+    # Version 1: what the secret gave before the ring. None: nothing did, so the
+    # purpose starts at one random key, as a purpose added later does.
+    derive: Optional[Callable[[str], bytes]]
 
     @property
     def encrypts(self) -> bool:
@@ -89,6 +91,8 @@ PURPOSES: dict[str, Purpose] = {
     "reset": Purpose(timedelta(hours=1), lambda s: s.encode()),
     "setup": Purpose(timedelta(hours=24), _hmac("vigil-bootstrap-setup")),
     "mfa": Purpose(None, lambda s: hashlib.sha256(s.encode()).digest()),
+    # The pepper (#4298): password and recovery-code hashes are encrypted under it.
+    "pepper": Purpose(None, None),
     # Security-key challenges (#4234): minutes long, bound to the account.
     "webauthn": Purpose(timedelta(minutes=10), _hmac("vigil-webauthn-challenge")),
     # Single sign-on's browser binding (#4284): state, nonce and verifier, 5 minutes.
@@ -382,6 +386,92 @@ def _reencrypt_mfa(session, fernet: MultiFernet) -> int:
     return moved
 
 
+def _rewrite_hashes(
+    session, marker: str, change: Callable[[str], Optional[str]]
+) -> int:
+    """Replace each stored hash ``change`` returns a new string for, in
+    ``users.password_hash``, ``password_history`` and ``mfa_recovery_codes``, on
+    rows that carry ``marker``. Returns how many entries changed."""
+    rows = session.execute(
+        text("""
+            SELECT user_id, password_hash, password_history, mfa_recovery_codes
+            FROM public.users WHERE password_hash LIKE :m
+                OR password_history::text LIKE :j OR mfa_recovery_codes::text LIKE :j
+            FOR UPDATE
+        """),
+        {"m": marker + "%", "j": '%"' + marker + "%"},
+    ).all()
+
+    def swap(entries):
+        out = [change(e) if isinstance(e, str) else None for e in entries or []]
+        return [n or e for n, e in zip(out, entries or [])], sum(
+            n is not None for n in out
+        )
+
+    moved = 0
+    for user_id, current, history, codes in rows:
+        (new_current,), a = swap([current])
+        new_history, b = swap(history)
+        new_codes, c = swap(codes)
+        if a + b + c:
+            session.execute(
+                text("""
+                    UPDATE public.users SET password_hash = :p,
+                        password_history = CAST(:h AS jsonb),
+                        mfa_recovery_codes = CAST(:c AS jsonb) WHERE user_id = :u
+                """),
+                {
+                    "p": new_current,
+                    "h": json.dumps(new_history),
+                    "c": json.dumps(new_codes),
+                    "u": user_id,
+                },
+            )
+        moved += a + b + c
+    return moved
+
+
+def _reencrypt_hashes(session, keys: list[Key]) -> int:
+    """Move every pepper-wrapped hash under the current key, naming it. Tokens no
+    key opens are left as they are."""
+    fernet = encryptor_from(keys)
+    kid = next(k.kid for k in keys if k.state == "current")
+
+    def move(entry: str) -> Optional[str]:
+        name, _, token = entry.partition("$")
+        if not name.startswith("pepper-"):
+            return None
+        try:
+            return f"{kid}${fernet.rotate(token.encode()).decode()}"
+        except InvalidToken:
+            logger.error("A stored hash is not under a key in the ring (%s)", name)
+            return None
+
+    return _rewrite_hashes(session, "pepper-", move)
+
+
+def _wrap_hashes(session, secret: str) -> int:
+    """Wrap every bare PBKDF2 hash under the current pepper (bcrypt and empty
+    entries stay as they are); a second run finds nothing. Does nothing when
+    ``secret`` cannot open the ring: only a process that can read it may wrap."""
+    from core.auth import password_hash
+
+    try:
+        keys = _read(session, secret).get("pepper", [])
+    except KeyRingError:
+        return 0
+    current = next((k for k in keys if k.state == "current"), None)
+    if current is None:
+        return 0
+    return _rewrite_hashes(
+        session,
+        password_hash.SCHEME + "$",
+        lambda e: (
+            password_hash.seal(e, current) if password_hash.is_plain_pbkdf2(e) else None
+        ),
+    )
+
+
 def _add_missing(session, secret: str) -> list[str]:
     """A current key for each purpose the adopted ring lacks, as a fresh random
     version 1: nothing derived from the secret existed for it before."""
@@ -395,7 +485,13 @@ def _add_missing(session, secret: str) -> list[str]:
         _read(session, secret)  # a wrong secret must not add a row nobody can open
         for purpose in missing:
             _insert(session, secret, purpose, 1, "current", _new_material())
-        _trail(session, "auth.keys_adopted", purposes=missing, mfa_secrets=0)
+        _trail(
+            session,
+            "auth.keys_adopted",
+            purposes=missing,
+            mfa_secrets=0,
+            password_hashes=_wrap_hashes(session, secret) if "pepper" in missing else 0,
+        )
     return missing
 
 
@@ -408,6 +504,15 @@ def adopt(session=None, *, secret: Optional[str] = None) -> bool:
         _advisory(session)  # the winner commits; the others then see its rows
         if session.execute(text("SELECT 1 FROM public.auth_keys LIMIT 1")).first():
             added = _add_missing(session, secret)
+            if "pepper" not in added and (wrapped := _wrap_hashes(session, secret)):
+                # A hash an older replica wrote since: wrap it too.
+                _trail(
+                    session,
+                    "auth.keys_adopted",
+                    purposes=[],
+                    mfa_secrets=0,
+                    password_hashes=wrapped,
+                )
             forget()  # another replica adopted, or this added keys
             if added:
                 logger.info("key ring: added %s", ", ".join(added))
@@ -415,6 +520,10 @@ def adopt(session=None, *, secret: Optional[str] = None) -> bool:
         now = _now()
         fresh = {}
         for purpose, spec in PURPOSES.items():
+            if spec.derive is None:
+                fresh[purpose] = _new_material()
+                _insert(session, secret, purpose, 1, "current", fresh[purpose])
+                continue
             v1 = spec.derive(secret)
             if spec.encrypts:
                 _insert(session, secret, purpose, 1, "decrypt_only", v1)
@@ -430,12 +539,20 @@ def adopt(session=None, *, secret: Optional[str] = None) -> bool:
                 [_fernet(fresh["mfa"]), _fernet(PURPOSES["mfa"].derive(secret))]
             ),
         )
+        wrapped = _wrap_hashes(session, secret)
         _trail(
-            session, "auth.keys_adopted", purposes=sorted(PURPOSES), mfa_secrets=moved
+            session,
+            "auth.keys_adopted",
+            purposes=sorted(PURPOSES),
+            mfa_secrets=moved,
+            password_hashes=wrapped,
         )
     forget()
     logger.info(
-        "key ring adopted: %d purposes, %d MFA secrets moved", len(PURPOSES), moved
+        "key ring adopted: %d purposes, %d MFA secrets moved, %d hashes wrapped",
+        len(PURPOSES),
+        moved,
+        wrapped,
     )
     return True
 
@@ -451,7 +568,8 @@ def rotate(
 ) -> Optional[int]:
     """A new current key for ``purpose``; the old one verifies for ``overlap``
     (the purpose's own by default, none for a restore or an emergency). The MFA
-    key goes decrypt-only and every secret moves under the new one. Returns the
+    key goes decrypt-only and every secret moves under the new one: MFA secrets
+    for ``mfa``, every stored password and recovery-code hash for ``pepper``. Returns the
     version, or None when ``older_than`` is set and the current key is younger
     (checked under the lock, so replicas never rotate twice)."""
     spec = PURPOSES[purpose]
@@ -515,11 +633,13 @@ def rotate(
                     operator=operator,
                 )
         _insert(session, secret, purpose, version, "current", new_material)
-        moved = None
+        moved = {}
         if spec.encrypts:  # the key just written reads as current
-            moved = _reencrypt_mfa(
-                session, encryptor_from(_read(session, secret)[purpose])
-            )
+            keys = _read(session, secret)[purpose]
+            if purpose == "pepper":
+                moved["password_hashes"] = _reencrypt_hashes(session, keys)
+            else:
+                moved["mfa_secrets"] = _reencrypt_mfa(session, encryptor_from(keys))
         _trail(
             session,
             "auth.key_rotated",
@@ -527,7 +647,7 @@ def rotate(
             purpose=purpose,
             version=version,
             previous=old,
-            mfa_secrets=moved,
+            **moved,
             overlap_seconds=None if spec.encrypts else int(overlap.total_seconds()),
         )
     forget()

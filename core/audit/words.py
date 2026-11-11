@@ -58,6 +58,7 @@ _KEY_PURPOSES = {
     "reset": "reset-link",
     "setup": "first-run code",
     "mfa": "authenticator-secret",
+    "pepper": "password-hash",
     "webauthn": "security-key-challenge",
     "sso": "single sign-on state",
 }
