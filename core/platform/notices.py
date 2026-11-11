@@ -17,8 +17,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 from sqlalchemy import func
 
-from core.auth import sign_ins
 from core.platform.email_service import mail_is_configured, send_email
+from core.platform.user_agent import browser_of
 from core.storage.connection import get_db_manager
 from core.storage.models import CaseNotification, SignIn, User
 from core.time import utcnow
@@ -96,7 +96,7 @@ def _sign_in_limit_message(session, row: CaseNotification) -> str:
     where = []
     if sign_in and sign_in.user_agent:
         where.append(
-            sign_ins.browser_of(sign_in.user_agent)
+            browser_of(sign_in.user_agent)
             + (f" ({sign_in.device})" if sign_in.device else "")
         )
     if sign_in and sign_in.address:

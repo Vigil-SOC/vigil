@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy import event, or_
 from sqlalchemy.orm import Session
 
+from core.platform.user_agent import browser_of
 from core.storage.models import Principal, SignIn, User
 from core.storage.schemas.base import IsoDateTime, OptDateTime
 from core.storage.unit_of_work import unit_of_work
@@ -145,47 +146,6 @@ class EndedSignIns(BaseModel):
     ended: int
     # The caller's own sign-in was among them: its cookies are cleared.
     signed_out: bool = False
-
-
-def browser_of(user_agent: Optional[str]) -> str:
-    """A coarse "Browser on OS" from a user agent, for a list. No dependency."""
-    ua = user_agent or ""
-    browser = next(
-        (
-            name
-            for token, name in (
-                ("Edg/", "Edge"),
-                ("OPR/", "Opera"),
-                ("Firefox/", "Firefox"),
-                ("FxiOS", "Firefox"),
-                ("CriOS", "Chrome"),
-                ("Chrome/", "Chrome"),
-                ("Safari/", "Safari"),
-            )
-            if token in ua
-        ),
-        None,
-    )
-    os_ = next(
-        (
-            name
-            for token, name in (
-                ("iPhone", "iOS"),
-                ("iPad", "iOS"),
-                ("Android", "Android"),
-                ("Windows", "Windows"),
-                ("Macintosh", "macOS"),
-                ("CrOS", "ChromeOS"),
-                ("Linux", "Linux"),
-                ("X11", "Linux"),
-            )
-            if token in ua
-        ),
-        None,
-    )
-    if browser and os_:
-        return f"{browser} on {os_}"
-    return browser or os_ or "Unknown browser"
 
 
 def shape(row: SignIn, current: Optional[str] = None) -> dict:
