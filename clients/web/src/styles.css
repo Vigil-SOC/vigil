@@ -5490,6 +5490,54 @@
       text-align: center;
    }
 
+   .sso-require {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+   }
+
+   .sso-require .toggle {
+      flex: none;
+      margin-top: 1px;
+   }
+
+   .sso-conditions {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--r);
+      background: var(--bg-2);
+   }
+
+   .sso-cond {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: 12.5px;
+      color: var(--tx-2);
+      overflow-wrap: anywhere;
+   }
+
+   .sso-cond svg {
+      flex: none;
+      margin-top: 2px;
+   }
+
+   .sso-cond.ok {
+      color: var(--ok);
+   }
+
+   .sso-cond.warn {
+      color: var(--med);
+   }
+
+   .sso-cond code {
+      font-family: var(--mono);
+      color: var(--tx);
+   }
+
    .sso-foot {
       display: flex;
       flex-wrap: wrap;
@@ -7402,6 +7450,11 @@
    border: 1px solid var(--accent);
    border-radius: var(--r);
    transition: all .14s;
+}
+
+/* the accent button as a link: "Sign in with SSO" while it is required */
+.auth a.btn-signin {
+   text-decoration: none;
 }
 
 .auth .btn-signin:hover:not(:disabled) {

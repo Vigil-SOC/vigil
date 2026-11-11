@@ -7,6 +7,7 @@ store, and the read model says only whether one is set.
 """
 
 import json
+from datetime import datetime
 from typing import NamedTuple, Optional
 
 import httpx
@@ -50,8 +51,11 @@ class SsoSettings(BaseModel):
     group_roles: list[GroupRole] = Field(default_factory=list, max_length=200)
     default_role_id: str = DEFAULT_ROLE
     groups_claim: str = Field("groups", min_length=1, max_length=128)
-    # Its switch is built by a sibling issue; nothing here changes it.
+    # Password sign-in and reset links are refused for people while on (#4286).
     require_sso: bool = False
+    # When the discovery URL or client ID last changed; None: before this was kept,
+    # which no sign-in qualifies against until the next such save.
+    provider_changed_at: Optional[datetime] = None
 
 
 class Stored(NamedTuple):

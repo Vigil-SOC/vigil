@@ -27,6 +27,7 @@ from core.auth import (
     session_policy,
     sign_ins,
     sso,
+    sso_settings,
     step_up,
     trail_events,
 )
@@ -60,7 +61,11 @@ from core.auth.current_user import (
     setup_needed,
 )
 from core.auth.deactivation import when_committed
-from core.auth.identity import claim_sign_in_names, identifier_in_use
+from core.auth.identity import (
+    claim_sign_in_names,
+    identifier_in_use,
+    matching_accounts,
+)
 from core.auth.mcp_credential_service import looks_like_api_token
 from core.auth.password_reset import (
     decode_reset_token,
@@ -217,6 +222,8 @@ class BootstrapStatusResponse(BaseModel):
     required: bool
     # Single sign-on is on: the login page offers "Sign in with SSO".
     sso_enabled: bool = False
+    # Require single sign-on is in force: the page offers only "Sign in with SSO".
+    require_sso: bool = False
 
 
 class BootstrapRequest(BaseModel):
@@ -500,8 +507,11 @@ def bootstrap_status(session: UnitOfWorkSession):
     an instance with an empty user table cannot be signed into at all. The
     login screen asks this to offer first-account creation instead.
     """
+    s = sso_settings.settings()
     return BootstrapStatusResponse(
-        required=not has_human_user(session), sso_enabled=sso.is_on()
+        required=not has_human_user(session),
+        sso_enabled=sso.is_on(s),
+        require_sso=sso.required(s),
     )
 
 
@@ -809,6 +819,21 @@ def login(
             reason or refusal.get("reason"),
             refusal.get("principal"),
         )
+
+    # Require single sign-on: refuse before the password is checked, so it neither
+    # counts toward a lock nor tells a right password from a wrong one. Only a
+    # service account goes on, and not from a browser, where it is refused anyway:
+    # there every name, known or not, gets the same answer.
+    if sso.required():
+        matches = matching_accounts(session, payload.username_or_email)
+        machine = len(matches) == 1 and _is_service_account(matches[0])
+        if not machine or _is_browser_request(request):
+            if len(matches) == 1:
+                refusal["principal"] = matches[0].principal_id
+            failed("sso_required")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail=sso.REQUIRED_DETAIL
+            )
 
     # Authenticate user
     try:
@@ -2624,8 +2649,11 @@ def password_reset_request(
     """
     settings = get_settings()
     user = session.query(User).filter(User.email == body.email).first()
-    # A service account's password belongs to its program: no reset mail.
-    if user and user.is_active and not _is_service_account(user):
+    # A service account's password belongs to its program: no reset mail. Nor
+    # any while single sign-on is required; the answer stays the same.
+    if sso.required():
+        logger.info("Password reset refused: single sign-on is required")
+    elif user and user.is_active and not _is_service_account(user):
         token = generate_reset_token(user)
         link = reset_link(default_base_url(settings), token)
         subject = "Vigil SOC — password reset"
@@ -2680,6 +2708,11 @@ async def password_reset_confirm(
     token so any existing sessions die. A rejected password leaves the
     token usable.
     """
+    # A link issued before single sign-on was required is not honoured now.
+    if await asyncio.to_thread(sso.required):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=sso.REQUIRED_DETAIL
+        )
     claim = decode_reset_token(body.token)
     if not claim:
         raise HTTPException(
