@@ -17,18 +17,19 @@ from core.cases.assignee import (
     OwnerNotCurrent,
     require_current_owner,
     resolve_assignee,
-    resolve_escalation_target,
     task_is_open,
     with_owner_state,
 )
+from core.cases.case_handoff import ESCALATE_REPLACED
+from core.cases.case_handoff import move_case as move_case_row
 from core.cases.case_status import CaseStatus
 from core.response.approval_service import ActionStatus, ActionType, ApprovalService
 from core.response.ceiling import ceiling_read
 from core.storage.connection import get_db_session
+from core.storage.schemas.case import CaseSchema
 from core.storage.schemas.case_entities import (
     CaseClosureInfoSchema,
     CaseCommentSchema,
-    CaseEscalationSchema,
     CaseEvidenceSchema,
     CaseIOCSchema,
     CaseRelationshipSchema,
@@ -1153,72 +1154,56 @@ def link_related_cases(
 
 
 @mcp.tool()
-@requires("cases.assign")
 @requires("cases.write")
+def move_case(
+    case_id: str,
+    team: str,
+    source_team_id: str,
+    reason: Optional[str] = None,
+    owner: Optional[str] = None,
+) -> str:
+    """Move a case to a team, named uniquely ignoring case.
+
+    ``source_team_id`` is the team id on the case you read. An unknown or
+    archived team is refused. A person sends a reason. Not a frozen tool.
+    """
+    from core.exceptions import SOCError
+
+    try:
+        with service_session() as session:
+            moved = move_case_row(
+                session,
+                case_id,
+                source_team_id=source_team_id,
+                destination_name=team,
+                reason=reason,
+                owner=owner,
+                username=actor(),
+                user_id=None,
+                http=False,
+            )
+            payload = CaseSchema.dump(moved)
+        return jdump({"success": True, "case": payload})
+    except SOCError as exc:
+        return jdump({"error": exc.message, "code": exc.code})
+    except Exception as e:
+        return jdump({"error": str(e)})
+
+
+@mcp.tool()
 def escalate_case(
     case_id: str,
     escalated_to: str,
     reason: str,
     urgency_level: str = "high",
 ) -> str:
-    """
-    Escalate a case to higher tier or management.
-
-    Args:
-        case_id: The case ID
-        escalated_to: Who to escalate to (username/team)
-        reason: Reason for escalation
-        urgency_level: Urgency ("low", "medium", "high", "critical")
-
-    Example:
-        escalate_case("case-123", "soc-manager",
-                     "Suspected APT activity requires management approval",
-                     urgency_level="critical")
-    """
-    try:
-        from core.cases import case_records_service
-        from core.cases.case_workflow_service import CaseWorkflowService
-
-        with service_session() as session:
-            # Before the call: it swallows errors into a bare False.
-            escalated_to = resolve_escalation_target(session, escalated_to)
-            escalated = CaseWorkflowService().escalate_case(
-                case_id=case_id,
-                escalated_from=actor(),
-                escalated_to=escalated_to,
-                reason=reason,
-                urgency_level=urgency_level,
-                session=session,
-            )
-            if not escalated:
-                return jdump({"error": f"Could not escalate {case_id}"})
-
-            session.flush()
-            # Read back the way POST /{case_id}/escalate does: the service
-            # reports whether it escalated, not which row it wrote.
-            escalations = case_records_service.list_escalations(session, case_id)
-            payload = CaseEscalationSchema.dump(escalations[-1]) if escalations else {}
-
-        add_case_activity(
-            case_id,
-            "escalation",
-            f"Case escalated to {escalated_to}: {reason}",
-            {
-                "escalation_id": payload.get("escalation_id"),
-                "urgency": urgency_level,
-            },
-        )
-
-        return jdump(
-            {
-                "success": True,
-                "escalation_id": payload.get("escalation_id"),
-                "message": f"Escalated {case_id} to {escalated_to}",
-                "escalation": payload,
-            }
-        )
-    except Exception as e:
-        return jdump({"error": str(e)})
+    """Escalation has been replaced by the beta move and ``move_case``."""
+    return jdump(
+        {
+            "error": ESCALATE_REPLACED.format(case_id=case_id),
+            "code": "ESCALATE_REPLACED",
+        }
+    )
 
 
 @mcp.tool()

@@ -107,7 +107,22 @@ def _to(field: str) -> Callable[[Mapping[str, Any]], str]:
 
 
 def _assign(p: Mapping[str, Any]) -> str:
-    return "Unassigned the case" if p.get("unassigned") else "Assigned the case"
+    return "Handed the case back" if p.get("unassigned") else "Assigned the case"
+
+
+def _move(p: Mapping[str, Any]) -> str:
+    source = str(p.get("from_team_name") or "").strip()
+    dest = str(p.get("to_team_name") or "").strip()
+    if source and dest:
+        return f"Moved the case from {source} to {dest}"
+    if dest:
+        return f"Moved the case to {dest}"
+    return "Moved the case"
+
+
+def _reopen_team(p: Mapping[str, Any]) -> str:
+    dest = str(p.get("to_team_name") or "").strip() or "the default team"
+    return f"Reopened the case onto {dest}, team archived, automatic"
 
 
 def _findings(verb: str, key: str) -> Callable[[Mapping[str, Any]], str]:
@@ -392,6 +407,9 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "case.status": _to("status"),
     "case.priority": _to("priority"),
     "case.assign": _assign,
+    "case.move": _move,
+    "case.claim": "Claimed the case",
+    "case.reopen": _reopen_team,
     "case.edit": lambda p: "Edited the case" + _fields(p.get("changed")),
     "case.findings.link": _findings("Linked", "linked"),
     "case.findings.unlink": _findings("Unlinked", "unlinked"),
