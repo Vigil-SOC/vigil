@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from core.audit.retention import ERASED_PREFIX, is_erased
 from core.audit.trail import SYSTEM
 from core.auth import (
+    invites,
     key_ring,
     mfa_methods,
     principals,
@@ -94,6 +95,7 @@ from core.time import utcnow
 from services.api.middleware.auth import get_current_active_user
 from services.api.middleware.auth_rate_key import (
     bootstrap_rate_key,
+    invite_rate_key,
     login_rate_key,
     refresh_rate_key,
     reset_confirm_rate_key,
@@ -1298,6 +1300,8 @@ def _sso_account(session: Session, s, claims: dict, notes: dict) -> Optional[Use
             raise sso.Refused("email_ambiguous")
         user = matches[0] if matches else None
         if user is None:
+            # Signing in here answers a pending invite for the address.
+            invites.revoke_for_sso(session, email)
             if identifier_in_use(session, email):
                 raise sso.Refused("email_in_use")
             notes["linked_by"] = "created"
@@ -1386,7 +1390,6 @@ def _sso_sign_in(
             provider=s.issuer,
             group=match[1] if match else None,
         )
-        # Invites (#4226) are not on main yet; whichever lands second revokes a pending one here.
     else:
         changed = []
         if name and name != user.full_name:
@@ -2634,9 +2637,10 @@ def remove_security_key(
     return {"message": "Security key removed"}
 
 
-# Public self-registration was removed intentionally. All user creation
-# goes through the admin-gated POST /api/users/ endpoint (services/api/routers/users.py)
-# which validates the requested role against the caller's privileges.
+# Public self-registration was removed intentionally. An account is made by an
+# admin-gated invite (POST /api/users/invites in services/api/routers/users.py,
+# which checks the role against the caller's privileges) that the invitee accepts
+# below, or by first-run bootstrap.
 
 
 @router.post("/password-reset/request")
@@ -2794,6 +2798,177 @@ async def password_reset_confirm(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to reset password",
         )
+
+
+class InviteCheck(BaseModel):
+    """What the accept screen shows: the fixed address and a username to start from."""
+
+    email: str
+    username: str
+
+
+class AcceptInvite(BaseModel):
+    token: str
+    username: str
+    password: str
+
+
+_INVITE_STALE = (
+    "The person who sent this invite can't grant this role any more. "
+    "Ask for a new invite."
+)
+
+
+def _invite_refused(detail: str) -> JSONResponse:
+    # Returned, not raised: a raise rolls back what the refusal recorded.
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST, content={"detail": detail}
+    )
+
+
+def _invite_problem(session: Session, row) -> Optional[str]:
+    """Why this link can't be used now, or None. The inviter has to still be an
+    active person whose permissions cover the role, and the role has to exist."""
+    from services.api.routers.users import (
+        _is_erased,
+        _is_person_account,
+        _uncovered,
+    )
+
+    if not invites.usable(row):
+        invites.note_expired(session, row)
+        return invites.INVALID
+    inviter = (
+        session.query(User, Principal.deleted_at)
+        .join(Principal, Principal.principal_id == User.principal_id)
+        .filter(User.principal_id == row.invited_by)
+        .first()
+    )
+    role = session.get(Role, row.role_id)
+    if inviter is None or role is None:
+        return _INVITE_STALE
+    user, deleted_at = inviter
+    if (
+        deleted_at is not None
+        or not user.is_active
+        or _is_erased(user)
+        or not _is_person_account(user, session)
+        or not AuthService.check_permission(user.user_id, "users.write", session)
+        or _uncovered(user, role.permissions, session)
+    ):
+        return _INVITE_STALE
+    return None
+
+
+@router.get("/invite", response_model=InviteCheck)
+@limiter.limit("30/minute", key_func=invite_rate_key)
+def invite_check(
+    request: Request,
+    session: UnitOfWorkSession,
+    x_invite_token: Annotated[str, Header()] = "",
+):
+    """Check an invite link for the accept screen. Opening it uses nothing up.
+    The value travels in a header, so no log line carries it."""
+    row = invites.find(session, x_invite_token) if x_invite_token else None
+    if row is None:
+        return _invite_refused(invites.INVALID)
+    if problem := _invite_problem(session, row):
+        return _invite_refused(problem)
+    return InviteCheck(email=row.email, username=invites.suggested_username(row.email))
+
+
+@router.post("/accept-invite")
+@limiter.limit("10/minute", key_func=invite_rate_key)
+def accept_invite(
+    request: Request,
+    body: AcceptInvite,
+    session: UnitOfWorkSession,
+):
+    """Set up the account an invite is for. The submission that creates it uses
+    the link up; a refused password or a taken username leaves it usable, up to
+    ``invites.MAX_ATTEMPTS`` tries. Signing in is the normal login afterwards."""
+    # Locked, so two submissions of one link can't both create an account.
+    row = invites.find(session, body.token, lock=True) if body.token else None
+    if row is None:
+        return _invite_refused(invites.INVALID)
+    if problem := _invite_problem(session, row):
+        return _invite_refused(problem)
+
+    def refused(reason: str, detail: str) -> JSONResponse:
+        row.attempts += 1
+        trail_events.record(
+            session,
+            "invite.failed",
+            {"source_ip": client_host(request), "personal": {"email": row.email}},
+            actor=SYSTEM,
+            link_id=row.link_id,
+            reason=reason,
+            attempts=row.attempts,
+        )
+        return _invite_refused(detail)
+
+    username = body.username.strip()
+    if bad := invites.username_problem(username):
+        return refused("username_invalid", bad)
+    claim_sign_in_names(session, username, row.email)
+    if identifier_in_use(session, username, except_link_id=row.link_id):
+        return refused("username_taken", "That username is taken. Choose another.")
+    try:
+        validate_password_strength(body.password, user_inputs=[username, row.email])
+    except PasswordPolicyError as exc:
+        return refused("weak_password", exc.as_detail())
+
+    user = AuthService.create_user(
+        username=username,
+        email=row.email,
+        password=body.password,
+        full_name=username,
+        role_id=row.role_id,
+        session=session,
+        invite_link_id=row.link_id,
+    )
+    if user is None:
+        return refused(
+            "address_in_use",
+            "An account for this address already exists. Ask for a new invite.",
+        )
+    row.used_at = utcnow()
+    trail_events.record(
+        session,
+        "user.created",
+        {"personal": trail_events.personal(user)},
+        actor=user.principal_id,
+        principal=user.principal_id,
+        role_id=user.role_id,
+        via="invite",
+        invited_by=row.invited_by,
+    )
+    trail_events.record(
+        session,
+        "invite.accepted",
+        {"source_ip": client_host(request), "personal": {"email": row.email}},
+        actor=user.principal_id,
+        principal=user.principal_id,
+        link_id=row.link_id,
+        role_id=user.role_id,
+        invited_by=row.invited_by,
+    )
+    # The account holds the address now; the used link keeps only who it became.
+    row.principal_id = user.principal_id
+    row.email = None
+    inviter = row.invited_by
+    when_committed(
+        session,
+        lambda: notify(
+            inviter,
+            "invite_accepted",
+            "Invite accepted",
+            f"{username} accepted your invite and now has an account.",
+            link="/settings",
+        ),
+    )
+    logger.info("Invite %s accepted: account %s created", row.link_id, user.username)
+    return {"message": "Account created. Sign in with your new password."}
 
 
 # Read by _refuse_service_account at request time; the endpoints are defined above.

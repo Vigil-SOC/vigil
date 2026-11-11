@@ -115,6 +115,14 @@ def reset_confirm_rate_key(request: Request) -> str:
     return f"reset-confirm:missing:{client_host(request)}"
 
 
+def invite_rate_key(request: Request) -> str:
+    """One bucket per invite link: its token is in the body, or the GET's header."""
+    token = request.headers.get("x-invite-token") or _body(request).get("token")
+    if isinstance(token, str) and token.strip():
+        return f"invite:{hashlib.sha256(token.strip().encode()).hexdigest()}"
+    return f"invite:missing:{client_host(request)}"
+
+
 def bootstrap_rate_key(request: Request) -> str:
     username = _subject(_body(request).get("username"))
     if username:

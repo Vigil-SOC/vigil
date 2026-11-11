@@ -12,6 +12,7 @@ import {
 } from '../../shared/ui'
 import { useAuth } from '../../contexts/AuthContext'
 import { signInsApi } from '../../services/api'
+import InvitesCard from './InvitesCard'
 import SsoCard from './SsoCard'
 import TokensCard from './TokensCard'
 import UserMethodsDialog from './UserMethodsDialog'
@@ -31,7 +32,6 @@ import type { SectionProps } from './types'
 const EMPTY_FORM: UserPayload = {
   username: '',
   email: '',
-  password: '',
   full_name: '',
   role_id: '',
 }
@@ -89,7 +89,6 @@ function PeopleAndRoles({ notify }: SectionProps) {
     phase,
     error,
     reload,
-    createUser,
     updateUser,
     deleteUser,
     changeStatus,
@@ -201,23 +200,11 @@ function PeopleAndRoles({ notify }: SectionProps) {
     }
   }
 
-  const openCreate = () => {
-    if (roles.length === 0) {
-      notify('err', 'Roles not loaded yet — try Refresh.')
-      return
-    }
-    setEditing(null)
-    setForm({ ...EMPTY_FORM, role_id: defaultRoleId })
-    setDialogError('')
-    setDialogOpen(true)
-  }
-
   const openEdit = (u: User) => {
     setEditing(u)
     setForm({
       username: u.username,
       email: u.email,
-      password: '',
       full_name: u.full_name,
       role_id: u.role_id,
     })
@@ -226,12 +213,6 @@ function PeopleAndRoles({ notify }: SectionProps) {
   }
 
   const validate = (): string | null => {
-    if (!editing) {
-      if (!form.username.trim()) return 'Username is required'
-      // Length and strength are the server's policy. A copy of those numbers
-      // here would drift from a deployment's session policy.
-      if (!form.password) return 'Enter a password.'
-    }
     if (!form.full_name.trim()) return 'Full name is required'
     if (!form.email.trim()) return 'Email is required'
     if (!EMAIL_RE.test(form.email.trim())) return 'Enter a valid email address'
@@ -249,18 +230,14 @@ function PeopleAndRoles({ notify }: SectionProps) {
     setDialogError('')
     try {
       const email = form.email.trim()
-      if (editing) {
-        await updateUser(editing.user_id, {
-          full_name: form.full_name,
-          email,
-          // Medic's account is not reassigned; the server refuses it too.
-          ...(editingMedic ? {} : { role_id: form.role_id }),
-        })
-        notify('ok', `Updated ${form.username || editing.username}.`)
-      } else {
-        await createUser({ ...form, email })
-        notify('ok', `Created ${form.username}.`)
-      }
+      if (!editing) return
+      await updateUser(editing.user_id, {
+        full_name: form.full_name,
+        email,
+        // Medic's account is not reassigned; the server refuses it too.
+        ...(editingMedic ? {} : { role_id: form.role_id }),
+      })
+      notify('ok', `Updated ${form.username || editing.username}.`)
       setDialogOpen(false)
     } catch (e) {
       setDialogError(errText(e, 'Failed to save user'))
@@ -319,11 +296,6 @@ function PeopleAndRoles({ notify }: SectionProps) {
             {canSignOutEveryone && (
               <button className="btn ghost" onClick={() => setEveryoneOpen(true)}>
                 <Icon name="logout" /> Sign everyone out
-              </button>
-            )}
-            {canWrite && (
-              <button className="btn primary" onClick={openCreate}>
-                <Icon name="plus" /> Add User
               </button>
             )}
           </>
@@ -503,7 +475,7 @@ function PeopleAndRoles({ notify }: SectionProps) {
         <Popup
           open={dialogOpen}
           onClose={() => setDialogOpen(false)}
-          title={editing ? 'Edit User' : 'Create New User'}
+          title="Edit User"
           width={460}
         >
           <div className="flex flex-col gap-3.5">
@@ -532,15 +504,6 @@ function PeopleAndRoles({ notify }: SectionProps) {
                 onChange={(e) => setForm({ ...form, email: e.target.value })}
               />
             </Field>
-            {!editing && (
-              <Field label="Password" hint="A few unrelated words make a strong one.">
-                <TextInput
-                  type="password"
-                  value={form.password}
-                  onChange={(e) => setForm({ ...form, password: e.target.value })}
-                />
-              </Field>
-            )}
             <Field
               label="Role"
               hint={
@@ -564,7 +527,7 @@ function PeopleAndRoles({ notify }: SectionProps) {
                 Cancel
               </button>
               <button className="btn primary" onClick={handleSave} disabled={saving}>
-                {saving ? 'Saving…' : editing ? 'Update' : 'Create'}
+                {saving ? 'Saving…' : 'Update'}
               </button>
             </div>
           </div>
@@ -668,6 +631,16 @@ function PeopleAndRoles({ notify }: SectionProps) {
           onClose={() => setConfirmDelete(null)}
         />
       </SettingsCard>
+
+      {canWrite && (
+        <InvitesCard
+          notify={notify}
+          // only roles the caller may hand out; the server checks the same rule
+          roleOptions={roleOptions.filter((o) => covers(o.value))}
+          roleName={roleName}
+          defaultRoleId={defaultRoleId}
+        />
+      )}
 
       <RolesCard
         roles={roles}

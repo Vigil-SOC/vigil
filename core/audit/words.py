@@ -291,12 +291,27 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "credential.refused": "Refused a token of an inactive account",
     "credential.expiry_set": "Set an API token to expire in 90 days",
     "user.created": lambda p: "Created an account"
-    + (" through single sign-on" if p.get("via") == "sso" else ""),
+    + {"sso": " through single sign-on", "invite": " from an invite"}.get(
+        p.get("via"), ""
+    ),
     "user.updated": lambda p: "Updated an account" + _fields(p.get("changed")),
     "user.deleted": "Deleted an account",
     "user.disabled": "Disabled an account",
     "user.enabled": "Enabled an account",
     "user.restored": "Restored a deleted account",
+    "invite.sent": lambda p: "Invited someone"
+    + (" by email" if p.get("channel") == "email" else " with a copied link"),
+    "invite.accepted": "Accepted an invite and set up an account",
+    "invite.revoked": lambda p: "Revoked an invite"
+    + (
+        {
+            "replaced": " (replaced by a new link)",
+            "sso": " (they signed in through SSO)",
+        }.get(p.get("reason"), "")
+    ),
+    "invite.expired": "An invite expired unused",
+    "invite.failed": lambda p: "Failed to accept an invite"
+    + (f": {_word(p['reason'])}" if p.get("reason") else ""),
     "user.role_changed": lambda p: "Changed an account's role"
     + (f" to {p['role_id']}" if p.get("role_id") else ""),
     "role.created": _role("Created"),

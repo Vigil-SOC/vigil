@@ -177,6 +177,59 @@ class SsoLink(Base):
     )
 
 
+class AuthLink(Base):
+    """A single-use link that reaches a public screen: an invite (#4226) or, for
+    the recovery sibling, a reset. Only the SHA-256 of the random value is kept;
+    the value itself is shown once and never stored. ``core/auth/invites.py``
+    owns it.
+    """
+
+    __tablename__ = "auth_links"
+
+    link_id: Mapped[str] = mapped_column(String(50), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(10), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # The address an invite is for; a reset names its account instead.
+    email: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    principal_id: Mapped[Optional[str]] = mapped_column(
+        Text, ForeignKey("principals.principal_id", ondelete="RESTRICT"), nullable=True
+    )
+    # Not a foreign key: a role deleted since is refused at acceptance.
+    role_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    invited_by: Mapped[Optional[str]] = mapped_column(
+        Text, ForeignKey("principals.principal_id", ondelete="RESTRICT"), nullable=True
+    )
+    channel: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    issued_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Set when the trail first recorded the link as expired.
+    expired_noted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
+    # Failed tries (a refused password or a taken username).
+    attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('invite', 'reset')", name="auth_links_kind_check"),
+        Index("uq_auth_links_token_hash", "token_hash", unique=True),
+        # One open invite per address, whatever its expiry: replacing closes it.
+        Index(
+            "uq_auth_links_open_invite",
+            text("lower(email)"),
+            unique=True,
+            postgresql_where=text(
+                "kind = 'invite' AND used_at IS NULL AND revoked_at IS NULL"
+            ),
+        ),
+    )
+
+
 class User(Base):
     """
     User Model - System users with authentication and authorization.

@@ -331,7 +331,6 @@ const EMPTY_ROLES_META: RolesMeta = {
 export interface UserPayload {
   username: string
   email: string
-  password: string
   full_name: string
   role_id: string
 }
@@ -388,10 +387,6 @@ export function useUsers({ search, status, skip, limit }: UsersQuery) {
     }
   }, [reloadKey, search, status, skip, limit])
 
-  const createUser = useCallback(
-    (payload: UserPayload) => api.post('/users/', payload).then(() => reload()),
-    [reload],
-  )
   const updateUser = useCallback(
     (userId: string, patch: Partial<UserPayload>) => api.put(`/users/${userId}`, patch).then(() => reload()),
     [reload],
@@ -432,7 +427,6 @@ export function useUsers({ search, status, skip, limit }: UsersQuery) {
     phase,
     error,
     reload,
-    createUser,
     updateUser,
     deleteUser,
     changeStatus,

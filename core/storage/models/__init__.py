@@ -16,6 +16,7 @@ from core.storage.models.ai import (
     LLMProviderConfig,
 )
 from core.storage.models.auth import (
+    AuthLink,
     BreachedPassword,
     McpCredential,
     Principal,
@@ -161,6 +162,7 @@ __all__ = [
     "Principal",
     "SiemSearch",
     "DetectionRuleException",
+    "AuthLink",
     "SecurityKey",
     "SignIn",
     "SsoLink",

@@ -801,6 +801,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/accept-invite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept Invite
+         * @description Set up the account an invite is for. The submission that creates it uses
+         *     the link up; a refused password or a taken username leaves it usable, up to
+         *     ``invites.MAX_ATTEMPTS`` tries. Signing in is the normal login afterwards.
+         */
+        post: operations["post_api_auth_accept-invite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/bootstrap": {
         parameters: {
             query?: never;
@@ -878,6 +900,27 @@ export interface paths {
          *     answer is a 400; the third in a row ends the sign-in (401, never a lock).
          */
         post: operations["post_api_auth_confirm"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/invite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Invite Check
+         * @description Check an invite link for the accept screen. Opening it uses nothing up.
+         *     The value travels in a header, so no log line carries it.
+         */
+        get: operations["get_api_auth_invite"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -6741,19 +6784,71 @@ export interface paths {
          */
         get: operations["get_api_users"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/invites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
         /**
-         * Create User
-         * @description Create a new user (requires users.write permission).
-         *
-         *     Args:
-         *         request: User creation details
-         *         current_user: Current authenticated user
-         *         session: Database session
-         *
-         *     Returns:
-         *         Created user information
+         * List Invites
+         * @description Invites not yet accepted or revoked, expired ones too (users.write).
          */
-        post: operations["post_api_users"];
+        get: operations["get_api_users_invites"];
+        put?: never;
+        /**
+         * Create Invite
+         * @description Invite an address, replacing its pending invite if it has one.
+         */
+        post: operations["post_api_users_invites"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/invites/{link_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke Invite
+         * @description Cancel a pending invite; its link stops working.
+         */
+        delete: operations["delete_api_users_invites_link_id"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/invites/{link_id}/resend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resend Invite
+         * @description A new link for a pending invite; the earlier one stops working.
+         */
+        post: operations["post_api_users_invites_link_id_resend"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8858,6 +8953,15 @@ export interface components {
              */
             local_ollama_recovery_retry_limit: number;
         };
+        /** AcceptInvite */
+        AcceptInvite: {
+            /** Password */
+            password: string;
+            /** Token */
+            token: string;
+            /** Username */
+            username: string;
+        };
         /**
          * ActivityAdd
          * @description Add activity to case.
@@ -10744,25 +10848,6 @@ export interface components {
             } | null;
         };
         /**
-         * CreateUserRequest
-         * @description Create user request.
-         */
-        CreateUserRequest: {
-            /**
-             * Email
-             * Format: email
-             */
-            email: string;
-            /** Full Name */
-            full_name: string;
-            /** Password */
-            password: string;
-            /** Role Id */
-            role_id: string;
-            /** Username */
-            username: string;
-        };
-        /**
          * CustomIntegrationRequest
          * @description Request to generate a custom integration from documentation.
          */
@@ -11604,6 +11689,81 @@ export interface components {
             aggressive: components["schemas"]["InvestigationProfile"];
             balanced: components["schemas"]["InvestigationProfile"];
             conservative: components["schemas"]["InvestigationProfile"];
+        };
+        /**
+         * InviteCheck
+         * @description What the accept screen shows: the fixed address and a username to start from.
+         */
+        InviteCheck: {
+            /** Email */
+            email: string;
+            /** Username */
+            username: string;
+        };
+        /** InviteEntry */
+        InviteEntry: {
+            /**
+             * Channel
+             * @enum {string}
+             */
+            channel: "email" | "copy";
+            /** Email */
+            email: string;
+            /** Expired */
+            expired: boolean;
+            /** Expires At */
+            expires_at: string;
+            /** Invited By */
+            invited_by?: string | null;
+            /** Invited By Name */
+            invited_by_name?: string | null;
+            /** Issued At */
+            issued_at: string;
+            /** Link Id */
+            link_id: string;
+            /** Role Id */
+            role_id: string;
+        };
+        /**
+         * InviteIssued
+         * @description A new link. ``token`` and ``link`` come back once, for a copied link only;
+         *     ``link`` is empty when VIGIL_FRONTEND_URL isn't set and the console builds
+         *     it from its own address.
+         */
+        InviteIssued: {
+            invite: components["schemas"]["InviteEntry"];
+            /** Link */
+            link?: string | null;
+            /** Token */
+            token?: string | null;
+        };
+        /**
+         * InviteList
+         * @description The pending invites, and what Email needs before it can be offered.
+         */
+        InviteList: {
+            /** Email Missing */
+            email_missing: string[];
+            /** Invites */
+            invites: components["schemas"]["InviteEntry"][];
+        };
+        /**
+         * InviteRequest
+         * @description Invite an address to set up their own account.
+         */
+        InviteRequest: {
+            /**
+             * Channel
+             * @enum {string}
+             */
+            channel: "email" | "copy";
+            /**
+             * Email
+             * Format: email
+             */
+            email: string;
+            /** Role Id */
+            role_id: string;
         };
         /** InvokeRequest */
         InvokeRequest: {
@@ -12749,6 +12909,14 @@ export interface components {
             named?: {
                 [key: string]: string[];
             } | null;
+        };
+        /** ResendRequest */
+        ResendRequest: {
+            /**
+             * Channel
+             * @enum {string}
+             */
+            channel: "email" | "copy";
         };
         /**
          * ResolutionStepAdd
@@ -15803,6 +15971,39 @@ export interface operations {
             };
         };
     };
+    "post_api_auth_accept-invite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcceptInvite"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_auth_bootstrap: {
         parameters: {
             query?: never;
@@ -15913,6 +16114,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConfirmedResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_auth_invite: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-invite-token"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteCheck"];
                 };
             };
             /** @description Validation Error */
@@ -26363,7 +26595,38 @@ export interface operations {
             };
         };
     };
-    post_api_users: {
+    get_api_users_invites: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_users_invites: {
         parameters: {
             query?: never;
             header?: {
@@ -26374,7 +26637,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateUserRequest"];
+                "application/json": components["schemas"]["InviteRequest"];
             };
         };
         responses: {
@@ -26384,7 +26647,77 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    "application/json": components["schemas"]["InviteIssued"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_users_invites_link_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                link_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_users_invites_link_id_resend: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                link_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResendRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteIssued"];
                 };
             };
             /** @description Validation Error */

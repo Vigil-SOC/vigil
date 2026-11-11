@@ -951,6 +951,7 @@ class AuthService:
         full_name: str,
         role_id: str,
         session: Optional[Session] = None,
+        invite_link_id: Optional[str] = None,
     ) -> Optional[User]:
         """
         Create a new user.
@@ -962,6 +963,8 @@ class AuthService:
             full_name: Full name
             role_id: Role ID
             session: Database session (optional)
+            invite_link_id: The invite being accepted, whose pending address
+                this account takes
 
         Returns:
             Created User object or None
@@ -970,9 +973,9 @@ class AuthService:
             # Either string is a sign-in name, so each has to be free as a
             # username and as an email, not only in its own column.
             claim_sign_in_names(session, username, email)
-            if identifier_in_use(session, username) or identifier_in_use(
-                session, email
-            ):
+            if identifier_in_use(
+                session, username, except_link_id=invite_link_id
+            ) or identifier_in_use(session, email, except_link_id=invite_link_id):
                 logger.warning(f"User already exists: {username} or {email}")
                 return None
 
