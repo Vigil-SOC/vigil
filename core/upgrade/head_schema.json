@@ -644,6 +644,11 @@
   "nullable": true,
   "type": "text"
  },
+ "column auth_keys.wrapped_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp with time zone"
+ },
  "column breached_passwords.added_at": {
   "default": "now()",
   "nullable": false,

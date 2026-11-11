@@ -13,7 +13,11 @@ does it. A purpose added later gets one random current key at the next start
 (``_add_missing``). Only the API's startup adopts: a process holding the wrong
 secret must not wrap a ring nobody else can read.
 
-``python -m core.auth.key_ring rotate <purpose>`` rotates on the host.
+``python -m core.auth.key_ring`` runs on the host: ``rotate <purpose>``, ``emergency
+<purpose|all>`` (no overlap, stops every run, tells the holders of
+``sessions.manage``), ``status`` and ``inventory`` (every key's state, never its
+material). A version number is never reused: a rotation takes one above every
+row, retired ones included.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ import base64
 import getpass
 import hashlib
 import hmac
+import json
 import logging
 import secrets
 import sys
@@ -346,6 +351,16 @@ def retire_expired() -> None:
         logger.info("key ring: retired %s", ", ".join(f"{p}-{v}" for p, v in rows))
 
 
+def _next_version(session, purpose: str) -> int:
+    """One above every row of ``purpose``, retired ones too: a number is not reused."""
+    return session.execute(
+        text(
+            "SELECT coalesce(max(version), 0) + 1 FROM public.auth_keys WHERE purpose = :p"
+        ),
+        {"p": purpose},
+    ).scalar()
+
+
 def _advisory(session) -> None:
     session.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _LOCK_KEY})
 
@@ -461,7 +476,8 @@ def rotate(
         if row is None:
             raise KeyRingError(f"no current {purpose} key to rotate")
         _read(session, secret)  # a wrong secret must not add a row nobody can open
-        old, version = row[0], row[0] + 1
+        old = row[0]
+        version = _next_version(session, purpose)
         new_material = _new_material()
         if spec.encrypts:
             session.execute(
@@ -519,6 +535,193 @@ def rotate(
     return version
 
 
+def rewrap(session, old_secret: str, new_secret: str) -> int:
+    """Wrap every key that is not retired under ``new_secret`` instead; the rows
+    must open under ``old_secret``. Returns how many."""
+    old, new = _wrapper(old_secret), _wrapper(new_secret)
+    # A restore may hand this a database from before revision 0059.
+    dated = session.execute(
+        text(
+            "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' "
+            "AND table_name = 'auth_keys' AND column_name = 'wrapped_at'"
+        )
+    ).first()
+    rows = session.execute(text("""
+            SELECT purpose, version, wrapped FROM public.auth_keys
+            WHERE state <> 'retired' FOR UPDATE
+        """)).all()
+    for purpose, version, wrapped in rows:
+        try:
+            material = old.decrypt(wrapped.encode())
+        except InvalidToken as exc:
+            raise KeyRingError(
+                f"{purpose}-{version} is not under the old secret"
+            ) from exc
+        session.execute(
+            text(
+                f"UPDATE public.auth_keys SET wrapped = :w{', wrapped_at = now()' if dated else ''} "
+                "WHERE purpose = :p AND version = :v"
+            ),
+            {"w": new.encrypt(material).decode(), "p": purpose, "v": version},
+        )
+    return len(rows)
+
+
+def _reserve(session, earlier: dict[tuple[str, int], str]) -> None:
+    """Keep each (purpose, version) the ring before a restore used as a retired
+    row, unless the restored ring holds it: its number is spent."""
+    held = set(
+        session.execute(text("SELECT purpose, version FROM public.auth_keys")).all()
+    )
+    for purpose, version in sorted(earlier):
+        if (purpose, version) not in held:
+            session.execute(
+                text("""
+                    INSERT INTO public.auth_keys
+                        (purpose, version, state, wrapped, retired_at)
+                    VALUES (:p, :v, 'retired', NULL, now())
+                """),
+                {"p": purpose, "v": version},
+            )
+
+
+def reset(
+    session, secret: str, earlier: dict[tuple[str, int], str], *, operator=None
+) -> None:
+    """A ring nothing can open is replaced: every key retired, then a fresh random
+    current one per purpose under ``secret``, above every version used before
+    (``earlier``: the ring a restore replaced, as for ``reconcile``). No token or
+    MFA secret made under the old keys can be read again."""
+    _advisory(session)
+    _reserve(session, earlier)
+    for purpose in PURPOSES:
+        version = _next_version(session, purpose)
+        session.execute(
+            text("""
+                UPDATE public.auth_keys SET state = 'retired', wrapped = NULL,
+                    retired_at = now(), verify_until = NULL
+                WHERE purpose = :p AND state <> 'retired'
+            """),
+            {"p": purpose},
+        )
+        _insert(session, secret, purpose, version, "current", _new_material())
+    _trail(session, "auth.keys_reset", operator, purposes=sorted(PURPOSES))
+    forget()
+
+
+def reconcile(
+    session, secret: str, earlier: dict[tuple[str, int], str], *, operator=None
+) -> None:
+    """After a restore, keep what the ring before it had retired retired, and its
+    version numbers spent. ``earlier`` is (purpose, version) to state, read from
+    the database the restore replaced. A key still current is rotated out with
+    no overlap; a number the restored ring never held is kept as a retired row."""
+    _reserve(session, earlier)
+    for (purpose, version), state in sorted(earlier.items()):
+        if state != "retired":
+            continue
+        now_state = session.execute(  # an earlier rotation here may have retired it
+            text(
+                "SELECT state FROM public.auth_keys WHERE purpose = :p AND version = :v"
+            ),
+            {"p": purpose, "v": version},
+        ).scalar()
+        if now_state in (None, "retired"):
+            continue
+        if (
+            now_state == "current"
+            and purpose in PURPOSES
+            and not PURPOSES[purpose].encrypts
+        ):
+            rotate(
+                purpose,
+                session=session,
+                secret=secret,
+                overlap=timedelta(0),
+                operator=operator,
+            )
+            continue
+        # An encryption key would only go decrypt-only in a rotation: it is retired
+        # outright, and what it protected is for the caller to clear.
+        _retire(
+            session,
+            purpose,
+            version,
+            reason="retired_before_restore",
+            operator=operator,
+        )
+        if now_state == "current" and purpose in PURPOSES:
+            _insert(
+                session,
+                secret,
+                purpose,
+                _next_version(session, purpose),
+                "current",
+                _new_material(),
+            )
+
+
+def wrapped_since(session=None) -> Optional[datetime]:
+    """When the oldest live key was wrapped: how long the wrapping secret has been in use."""
+    with unit_of_work(session) as session:
+        return session.execute(
+            text(
+                "SELECT min(wrapped_at) FROM public.auth_keys WHERE state <> 'retired'"
+            )
+        ).scalar()
+
+
+def inventory() -> list[tuple]:
+    """Every key, retired ones included: never the material."""
+    with unit_of_work() as session:
+        return session.execute(text("""
+                SELECT purpose, version, state, created_at, verify_until, retired_at
+                FROM public.auth_keys ORDER BY purpose, version
+            """)).all()
+
+
+EMERGENCY_REASON = "emergency key change"
+
+
+def emergency(purposes: list[str], *, operator: str) -> dict:
+    """Rotate each purpose with no overlap: the old key stops verifying at once.
+    Every in-flight run is stopped through ``stop_run`` (a run token may be one of
+    the keys), and the holders of ``sessions.manage`` get one notice. Signing
+    people out is only the sign-in key's retirement; nothing else ends a session."""
+    from core.auth import sign_in_runs
+    from core.auth.mfa_coverage import SETTINGS_LINK
+    from core.auth.permissions import permission_holders
+    from core.platform.notices import notify
+    from core.workflows.run_cancel import stop_run
+
+    versions = {p: rotate(p, overlap=timedelta(0), operator=operator) for p in purposes}
+    runs = list(sign_in_runs.in_flight_runs())
+    for run_id in runs:
+        stop_run(run_id, EMERGENCY_REASON, operator)
+    signed_out = "signin" in purposes
+    message = (
+        f"An emergency key change retired the {', '.join(sorted(purposes))} "
+        f"key{'s' if len(purposes) != 1 else ''} with no overlap. "
+        + ("Everyone signs in again. " if signed_out else "")
+        + f"{len(runs)} agent run{'s' if len(runs) != 1 else ''} stopped."
+    )
+    with unit_of_work() as session:
+        holders = permission_holders("sessions.manage", session)
+    for principal in holders:
+        try:
+            notify(
+                principal,
+                "emergency_key_change",
+                "An emergency key change was made",
+                message,
+                link=SETTINGS_LINK,
+                priority="high",
+            )
+        except Exception:  # noqa: BLE001 - the keys have already changed
+            logger.exception("could not tell a session manager about the key change")
+    return {"versions": versions, "runs_stopped": len(runs), "notified": len(holders)}
+
+
 def status() -> list[tuple]:
     with unit_of_work() as session:
         return session.execute(text("""
@@ -556,7 +759,16 @@ def main(argv=None) -> int:
         "rotate", help="rotate one purpose, keeping the old key's overlap"
     )
     rot.add_argument("purpose", choices=sorted(PURPOSES))
+    emg = sub.add_parser(
+        "emergency",
+        help="rotate with no overlap, stop every run, tell the session managers",
+    )
+    emg.add_argument("purpose", choices=[*sorted(PURPOSES), "all"])
     sub.add_parser("status", help="list the keys that are not retired")
+    inv = sub.add_parser(
+        "inventory", help="every key including retired ones, never key material"
+    )
+    inv.add_argument("--json", action="store_true", help="JSON instead of TSV")
     args = parser.parse_args(argv)
 
     from core.storage.connection import init_database
@@ -569,7 +781,28 @@ def main(argv=None) -> int:
                 f"{'until ' + format(until, '%Y-%m-%d %H:%M') if until else ''}"
             )
         return 0
+    if args.command == "inventory":
+        return _print_inventory(args.json)
     try:
+        if args.command == "emergency":
+            purposes = list(PURPOSES) if args.purpose == "all" else [args.purpose]
+            result = emergency(purposes, operator=getpass.getuser())
+            print(
+                "rotated with no overlap: "
+                + ", ".join(f"{p}-{v}" for p, v in result["versions"].items())
+                + f"\nruns stopped: {result['runs_stopped']}\n"
+                f"session managers told: {result['notified']}",
+                flush=True,
+            )
+            if result["runs_stopped"]:
+                # stop_run's backstop is a timer in this process: let it fire.
+                from core.workflows.run_cancel import ESCALATE_AFTER_S
+
+                print(
+                    f"waiting {int(ESCALATE_AFTER_S)} s for the runs to end", flush=True
+                )
+                time.sleep(ESCALATE_AFTER_S + 2)
+            return 0
         version = rotate(args.purpose, operator=getpass.getuser())
     except KeyRingError as exc:
         print(exc, file=sys.stderr)
@@ -578,6 +811,21 @@ def main(argv=None) -> int:
         f"{args.purpose} is now at version {version}; replicas pick it up within "
         f"{int(REFRESH)} seconds"
     )
+    return 0
+
+
+def _print_inventory(as_json: bool) -> int:
+    header = ["purpose", "version", "state", "created", "overlap_ends", "retired"]
+    rows = [
+        [purpose, version, state, *(t.isoformat() if t else "" for t in times)]
+        for purpose, version, state, *times in inventory()
+    ]
+    if as_json:
+        print(json.dumps([dict(zip(header, r)) for r in rows], indent=2))
+    else:
+        print("\t".join(header))
+        for row in rows:
+            print("\t".join(str(c) for c in row))
     return 0
 
 

@@ -3,12 +3,20 @@
 The database dump is ``pg_dump -Fc`` under a ``pg_export_snapshot()`` id, so
 the manifest's row counts describe that dump. A second run exits without
 queueing when the session advisory lock is already held.
+
+JWT_SECRET_KEY wraps the key ring in the dump, so it is saved apart: the main
+snapshot's ``.env`` copy leaves the line out, and a second snapshot in the same
+repository (tag ``wrapping-key`` and ``main:<id>``) holds only that value. It is
+the same repository and passphrase, so this separates the key from the dump, not
+from whoever holds the repository. A secret Vigil generated into ``secrets.enc``
+stays in the state directory, which the main snapshot holds.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -25,6 +33,7 @@ from core.audit.retention import list_text
 from core.backup.connection import backup_database_config
 from core.config import REPO_ROOT, get_settings, vigil_path
 from core.intent import intent_file
+from core.secrets import get_secret
 from core.storage.connection import DatabaseConfig
 from core.version import __version__
 
@@ -32,6 +41,11 @@ from core.version import __version__
 LOCK_CLASSID = 1287
 LOCK_OBJID = 1
 SKIPPED_MESSAGE = "skipped: a backup is already running"
+
+# The snapshot that holds only the wrapping secret, tagged with the main one's id.
+WRAPPING_TAG = "wrapping-key"
+WRAPPING_FILE = "wrapping-secret"
+_JWT_LINE = re.compile(r"^\s*(?:export\s+)?JWT_SECRET_KEY\s*=")
 
 PRE_RESTORE_PREFIX = ".vigil-pre-restore-"
 STAGE_PREFIX = ".vigil-restore-stage-"
@@ -143,6 +157,7 @@ def create_snapshot(
                         f"{exc}; failed to remove snapshot {snap}: {detail}"
                     ) from exc
                 raise
+            _save_wrapping_key(repo, passphrase, snap, staging, priority, extra_env)
             return snap
     finally:
         lock.close()
@@ -363,10 +378,69 @@ def _locations(staging: Path, bifrost_data: str | None) -> list[Location]:
         # Unset, skills sit in the State Directory and are copied with it.
         _skills(settings.vigil_skills_path or ""),
         _file_or_absent("intent", intent_file()),
-        _file_or_absent("env", REPO_ROOT / ".env"),
+        _env_copy(staging, REPO_ROOT / ".env"),
         _bifrost(staging, bifrost_data),
     ]
     return locations
+
+
+def _save_wrapping_key(
+    repo: str,
+    passphrase: Path,
+    main: str,
+    staging: Path,
+    priority: list[str],
+    extra_env: Mapping[str, str] | None,
+) -> None:
+    """Write the wrapping secret as a snapshot of its own, after the main one
+    verified, so the pairing tag carries the final id. A failure removes the main
+    snapshot too: the filtered ``.env`` would leave it without its key."""
+    secret = get_secret("JWT_SECRET_KEY")
+    if not secret:
+        return  # set outside this install; nothing here holds it
+    folder = staging / "wrapping-key"
+    folder.mkdir()
+    file = folder / WRAPPING_FILE
+    file.touch(mode=0o600)
+    file.write_text(secret, encoding="utf-8")
+    pair = None
+    try:
+        # Not tagged "manual" or "scheduled": it is never counted as a backup.
+        pair = _restic_backup(
+            repo,
+            passphrase,
+            [str(file)],
+            priority,
+            (WRAPPING_TAG, f"main:{main}"),
+            extra_env,
+        )
+        raw = _checked(
+            priority + ["restic", "-r", repo, "dump", pair, str(file)],
+            env=_restic_env(passphrase, extra_env),
+            what="wrapping key",
+        )
+        if raw.stdout != secret:
+            raise BackupError("verification failed: wrapping key differs")
+    except BackupError as exc:
+        for snap in (pair, main):
+            if snap:
+                _forget_snapshot(repo, passphrase, snap, priority, extra_env)
+        raise BackupError(f"the wrapping key could not be saved: {exc}") from exc
+
+
+def _env_copy(staging: Path, path: Path) -> Location:
+    """The repo ``.env`` without its JWT_SECRET_KEY line."""
+    if not path.is_file():
+        return Location("env", "skipped", reason="absent")
+    dest = staging / "env" / path.name
+    dest.parent.mkdir()
+    original = path.read_bytes().decode("utf-8")
+    kept = [
+        line for line in original.splitlines(keepends=True) if not _JWT_LINE.match(line)
+    ]
+    dest.write_text("".join(kept), encoding="utf-8")
+    shutil.copymode(path, dest)
+    return Location("env", "included", path=str(dest))
 
 
 def _existing(name: str, path: Path, *, directory: bool) -> Location:

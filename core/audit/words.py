@@ -270,6 +270,16 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "auth.keys_adopted": "Adopted the signing and encryption key ring",
     "auth.key_rotated": lambda p: f"Rotated the {_key_purpose(p)} key",
     "auth.key_retired": lambda p: f"Retired the {_key_purpose(p)} key",
+    "auth.keys_reset": "Replaced the key ring after a restore could not open it",
+    "auth.wrapping_key_rotated": "Rotated the key that wraps the key ring",
+    "auth.wrapping_key_due": "The key that wraps the key ring is nearly a year old",
+    "auth.wrapping_key_overdue": "The key that wraps the key ring is over a year old",
+    "auth.key_rotation_failed": lambda p: (
+        f"Could not rotate the {_key_purpose(p)} key"
+        if p.get("purpose") != "wrapping"
+        else "Could not rotate the key that wraps the key ring"
+    ),
+    "auth.key_rotation_recovered": "Key rotation works again",
     "credential.minted": "Issued an API token",
     "credential.rotated": lambda p: "Rotated an API token"
     + (" (suspected compromise)" if p.get("compromised") else ""),

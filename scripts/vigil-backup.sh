@@ -8,8 +8,9 @@
 # Layers, from most to least authoritative:
 #   1. Native snapshot   ./start.sh backup  (encrypted restic repo: Postgres
 #      pg_dump -Fc under an exported snapshot, ~/.vigil incl. master.key and
-#      secrets.enc, .env, investigations, Bifrost). Proven restorable with
-#      `restore --test` before this script reports success.
+#      secrets.enc, .env without its JWT_SECRET_KEY line, investigations, Bifrost;
+#      plus a second snapshot in the same repo holding only JWT_SECRET_KEY).
+#      Proven restorable with `restore --test` before this script reports success.
 #   2. Independent dump  pg_dump -Fc via the Postgres container, checked with
 #      pg_restore --list. Restorable without any Vigil code.
 #   3. Extras bundle     what a snapshot of data does not hold: uncommitted
